@@ -8,6 +8,10 @@
 //! remains a separate training target.
 
 use crate::artifact::Digest;
+use crate::native_actor_features::{NativeActorFeatureObservation, NativeActorFeatureView};
+use crate::native_actor_view::{
+    ActorViewObservationPhase, NativeActorViewObservation, NativeEpisodeActorView,
+};
 use dusklight_evidence::native_episode_shard::{
     NativeEpisodeShard, NativeRawPad, NativeTerminalReason,
 };
@@ -108,6 +112,32 @@ pub struct NativeEpisodeHistoryView {
     /// current entry to its corresponding decision input.
     pub transitions: Vec<EpisodeHistoryTransition>,
     pub view_sha256: Digest,
+}
+
+/// Borrowed, fully authenticated join between a temporal index and the
+/// complete typed actor sets derived from the same native shard.
+#[derive(Debug)]
+pub struct BoundNativeActorHistory<'a> {
+    history: &'a NativeEpisodeHistoryView,
+    actor_features: &'a NativeActorFeatureView,
+}
+
+#[derive(Debug)]
+pub struct ResolvedNativeActorTransition<'a> {
+    pub transition: &'a EpisodeHistoryTransition,
+    pub before: &'a NativeActorFeatureObservation,
+    pub after: &'a NativeActorFeatureObservation,
+}
+
+#[derive(Debug)]
+pub struct ResolvedNativeActorDecision<'a> {
+    pub decision: &'a EpisodeHistoryDecision,
+    pub current: &'a NativeActorFeatureObservation,
+    pub completed: Vec<ResolvedNativeActorTransition<'a>>,
+    /// The current transition is exposed only as a target. It is never part of
+    /// `completed`, so its post-simulation actor set cannot leak into policy
+    /// input.
+    pub target: ResolvedNativeActorTransition<'a>,
 }
 
 impl NativeEpisodeHistoryView {
@@ -266,6 +296,50 @@ impl NativeEpisodeHistoryView {
             .collect())
     }
 
+    pub fn bind_actor_features<'a>(
+        &'a self,
+        actor_view: &'a NativeEpisodeActorView,
+        actor_features: &'a NativeActorFeatureView,
+    ) -> Result<BoundNativeActorHistory<'a>, NativeEpisodeHistoryError> {
+        self.validate()?;
+        actor_view
+            .validate()
+            .map_err(|error| NativeEpisodeHistoryError::new(error.to_string()))?;
+        actor_features
+            .validate()
+            .map_err(|error| NativeEpisodeHistoryError::new(error.to_string()))?;
+        if actor_view.native_shard_sha256 != self.native_shard_sha256
+            || actor_view.observation_schema != self.observation_schema
+            || actor_features.source_actor_view_sha256 != actor_view.view_sha256
+            || actor_view.observations.len() != self.boundaries.len()
+            || actor_features.observations.len() != self.boundaries.len()
+        {
+            return Err(NativeEpisodeHistoryError::new(
+                "actor history sources are detached or have incompatible cardinality",
+            ));
+        }
+        for (index, ((boundary, source), features)) in self
+            .boundaries
+            .iter()
+            .zip(&actor_view.observations)
+            .zip(&actor_features.observations)
+            .enumerate()
+        {
+            if boundary.source_observation_ordinal as usize != index
+                || !actor_observation_matches(boundary, source)
+                || !actor_feature_observation_matches(boundary, features)
+            {
+                return Err(NativeEpisodeHistoryError::new(
+                    "actor history boundary does not match its typed observation ordinal",
+                ));
+            }
+        }
+        Ok(BoundNativeActorHistory {
+            history: self,
+            actor_features,
+        })
+    }
+
     pub fn validate(&self) -> Result<(), NativeEpisodeHistoryError> {
         self.validate_content()?;
         if self.view_sha256 != self.compute_identity()? {
@@ -376,6 +450,105 @@ impl NativeEpisodeHistoryView {
     }
 }
 
+impl BoundNativeActorHistory<'_> {
+    pub fn len(&self) -> usize {
+        self.history.decisions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.history.decisions.is_empty()
+    }
+
+    pub fn resolve(
+        &self,
+        decision_index: usize,
+    ) -> Result<ResolvedNativeActorDecision<'_>, NativeEpisodeHistoryError> {
+        let decision = self.history.decisions.get(decision_index).ok_or_else(|| {
+            NativeEpisodeHistoryError::new("bound actor-history decision index is out of range")
+        })?;
+        let transition = &self.history.transitions[decision_index];
+        let current = &self.actor_features.observations[decision.current_boundary_index as usize];
+        let completed = decision
+            .completed_transition_indices
+            .iter()
+            .map(|index| self.resolve_transition(*index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let target = self.resolve_transition(u32::try_from(decision_index).map_err(|_| {
+            NativeEpisodeHistoryError::new("bound actor-history decision index overflowed")
+        })?)?;
+        if target.transition != transition {
+            return Err(NativeEpisodeHistoryError::new(
+                "bound actor-history target index is detached",
+            ));
+        }
+        Ok(ResolvedNativeActorDecision {
+            decision,
+            current,
+            completed,
+            target,
+        })
+    }
+
+    fn resolve_transition(
+        &self,
+        transition_index: u32,
+    ) -> Result<ResolvedNativeActorTransition<'_>, NativeEpisodeHistoryError> {
+        let transition = self
+            .history
+            .transitions
+            .get(transition_index as usize)
+            .ok_or_else(|| {
+                NativeEpisodeHistoryError::new(
+                    "bound actor-history transition index is out of range",
+                )
+            })?;
+        Ok(ResolvedNativeActorTransition {
+            transition,
+            before: &self.actor_features.observations[transition.before_boundary_index as usize],
+            after: &self.actor_features.observations[transition.after_boundary_index as usize],
+        })
+    }
+}
+
+fn actor_observation_matches(
+    boundary: &EpisodeHistoryBoundary,
+    observation: &NativeActorViewObservation,
+) -> bool {
+    boundary.episode_id == observation.episode_id
+        && boundary.step_index == observation.step_index
+        && phase_matches(boundary.phase, observation.phase)
+        && boundary.boundary_index == observation.boundary_index
+        && boundary.state_identity_xxh3_128 == observation.state_identity_xxh3_128
+        && boundary.stage == observation.stage
+        && boundary.room == observation.room
+}
+
+fn actor_feature_observation_matches(
+    boundary: &EpisodeHistoryBoundary,
+    observation: &NativeActorFeatureObservation,
+) -> bool {
+    boundary.episode_id == observation.episode_id
+        && boundary.step_index == observation.step_index
+        && phase_matches(boundary.phase, observation.phase)
+        && boundary.boundary_index == observation.boundary_index
+        && boundary.state_identity_xxh3_128 == observation.state_identity_xxh3_128
+        && boundary.stage == observation.stage
+        && boundary.room == observation.room
+}
+
+fn phase_matches(history: EpisodeHistoryPhase, actor: ActorViewObservationPhase) -> bool {
+    matches!(
+        (history, actor),
+        (
+            EpisodeHistoryPhase::PreInput,
+            ActorViewObservationPhase::PreInput
+        ) | (
+            EpisodeHistoryPhase::PostSimulation,
+            ActorViewObservationPhase::PostSimulation
+        )
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn boundary(
     episode_id: &str,
@@ -463,7 +636,62 @@ impl Error for NativeEpisodeHistoryError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::native_actor_features::{ActorFeatureSpec, NativeActorFeatureView};
+    use crate::native_actor_view::NativeEpisodeActorView;
     use dusklight_evidence::native_episode_shard::NativeObservationPhase;
+    use dusklight_world::actor_profile_catalog::{
+        ACTOR_PROFILE_CATALOG_SCHEMA, ActorProfileCatalog, ActorProfileEntry,
+    };
+
+    fn catalog_for(shard: &NativeEpisodeShard) -> ActorProfileCatalog {
+        let mut names = shard
+            .episodes
+            .iter()
+            .flat_map(|episode| &episode.steps)
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+            .flat_map(|observation| &observation.actors)
+            .map(|actor| actor.profile_name)
+            .collect::<Vec<_>>();
+        names.sort_unstable();
+        names.dedup();
+        let mut catalog = ActorProfileCatalog {
+            schema: ACTOR_PROFILE_CATALOG_SCHEMA.into(),
+            identity: String::new(),
+            profiles: names
+                .into_iter()
+                .enumerate()
+                .map(|(slot, profile_name)| ActorProfileEntry {
+                    slot: slot as u32,
+                    present: true,
+                    layer_id: Some(u32::MAX - 2),
+                    list_id: Some(7),
+                    list_priority: Some(u16::MAX - 2),
+                    profile_name: Some(profile_name),
+                    process_size: Some(512),
+                    auxiliary_size: Some(0),
+                    parameters: Some(0),
+                    is_leaf: Some(true),
+                    draw_priority: Some(slot as i16),
+                    is_actor: Some(true),
+                    status: Some(0),
+                    group: Some(2),
+                    cull_type: Some(0),
+                })
+                .collect(),
+        };
+        catalog.identity = catalog.computed_identity().unwrap();
+        catalog
+    }
+
+    fn actor_views(
+        shard: &mut NativeEpisodeShard,
+    ) -> (NativeEpisodeActorView, NativeActorFeatureView) {
+        let catalog = catalog_for(shard);
+        shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let actor_view = NativeEpisodeActorView::build(shard, &catalog).unwrap();
+        let features = NativeActorFeatureView::build(&actor_view, ActorFeatureSpec::all()).unwrap();
+        (actor_view, features)
+    }
 
     fn shard_with_steps(steps: usize, episodes: usize) -> NativeEpisodeShard {
         let mut shard = NativeEpisodeShard::decode(include_bytes!(
@@ -597,5 +825,59 @@ mod tests {
         let mut detached = shard;
         detached.content_sha256 = Digest::ZERO;
         assert!(NativeEpisodeHistoryView::build(&detached, 1).is_err());
+    }
+
+    #[test]
+    fn binds_complete_typed_actor_sets_without_admitting_the_current_target() {
+        let mut shard = shard_with_steps(4, 2);
+        let history = NativeEpisodeHistoryView::build(&shard, 2).unwrap();
+        let (actor_view, features) = actor_views(&mut shard);
+        let bound = history.bind_actor_features(&actor_view, &features).unwrap();
+        assert_eq!(bound.len(), 8);
+        assert!(!bound.is_empty());
+
+        let decision = bound.resolve(3).unwrap();
+        assert_eq!(decision.current.phase, ActorViewObservationPhase::PreInput);
+        assert_eq!(decision.current.actors.len(), 257);
+        assert_eq!(decision.completed.len(), 2);
+        assert_eq!(
+            decision
+                .completed
+                .iter()
+                .map(|item| item.transition.step_index)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(decision.completed.iter().all(|item| {
+            item.before.phase == ActorViewObservationPhase::PreInput
+                && item.after.phase == ActorViewObservationPhase::PostSimulation
+                && item.transition.step_index < decision.decision.step_index
+        }));
+        assert_eq!(decision.target.transition.step_index, 3);
+        assert_eq!(decision.target.before, decision.current);
+        assert_eq!(
+            decision.target.after.phase,
+            ActorViewObservationPhase::PostSimulation
+        );
+
+        let episode_reset = bound.resolve(4).unwrap();
+        assert!(episode_reset.completed.is_empty());
+        assert_eq!(episode_reset.decision.step_index, 0);
+    }
+
+    #[test]
+    fn rejects_an_actor_view_from_a_different_authenticated_shard() {
+        let shard = shard_with_steps(2, 1);
+        let history = NativeEpisodeHistoryView::build(&shard, 2).unwrap();
+        let mut other = shard.clone();
+        other.content_sha256 = Digest([0x55; 32]);
+        let (actor_view, features) = actor_views(&mut other);
+        assert!(
+            history
+                .bind_actor_features(&actor_view, &features)
+                .unwrap_err()
+                .to_string()
+                .contains("detached")
+        );
     }
 }

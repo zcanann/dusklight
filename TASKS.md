@@ -917,8 +917,16 @@ PAD and gameplay sequence as ordinary playback.
     zero-history episode starts (`9703f20c...6c32f`; content
     `4a31a883...bf7e`). This supplies temporal information only: it has no
     desired outcome, reward, action preference or technique-specific sequence.
-    Typed-view materialization and held-out single-frame/stack/recurrent
-    comparison remain open before the parent item can close.
+  - [x] Bind that temporal index to the complete typed actor-feature view from
+    the same authenticated native shard. Each resolved decision exposes the
+    current pre-input actor set and only completed earlier actor transitions;
+    the current post-simulation actor set remains a target and cannot enter
+    policy input. The join fails closed on shard, schema, view digest,
+    cardinality, episode, step, phase, boundary, state, stage or room mismatch,
+    and tests cover episode reset and rejection of a detached authenticated
+    shard. This is generic learner input plumbing, not an attempted or encoded
+    technique. Held-out single-frame/stack/recurrent comparison remains open
+    before the parent item can close.
 
 **Gate 3:** the same model-facing contracts execute raw input, precise
 continuous adjustments and stateful tactics; every execution exports an
