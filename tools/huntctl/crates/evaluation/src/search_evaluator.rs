@@ -976,12 +976,13 @@ fn bind_population_objective(
 }
 
 fn validate_anchored_game_args(arguments: &[String]) -> Result<(), EvaluateError> {
-    if !arguments.is_empty() {
-        return Err(EvaluateError::InvalidConfig(
-            "anchored evaluation rejects game_args_prefix so CVars, timing, stage, and proof inputs cannot diverge from its execution contract".into(),
-        ));
+    match arguments {
+        [] => Ok(()),
+        [flag, fixture] if flag == "--automation-card-fixture" && !fixture.is_empty() => Ok(()),
+        _ => Err(EvaluateError::InvalidConfig(
+            "anchored evaluation only accepts the timeline-bound --automation-card-fixture game argument; CVars, timing, stage, and proof inputs cannot diverge from its execution contract".into(),
+        )),
     }
-    Ok(())
 }
 
 fn validate_anchored_execution_paths(

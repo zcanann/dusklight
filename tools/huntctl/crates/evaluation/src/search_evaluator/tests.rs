@@ -118,6 +118,23 @@ fn attempt_outcomes_keep_all_terminal_classes_distinct() {
 
 #[test]
 fn anchored_parser_requires_exact_program_source_and_crawl_evidence() {
+    assert!(
+        validate_anchored_game_args(&[
+            "--automation-card-fixture".into(),
+            "/repository/orig/process-boot".into(),
+        ])
+        .is_ok()
+    );
+    assert!(validate_anchored_game_args(&["--automation-card-fixture".into()]).is_err());
+    assert!(
+        validate_anchored_game_args(&[
+            "--automation-card-fixture".into(),
+            "/repository/orig/process-boot".into(),
+            "--cvar".into(),
+            "game.instantSaves=true".into(),
+        ])
+        .is_err()
+    );
     assert!(validate_anchored_game_args(&["--stage".into(), "F_SP103,1,1,3".into()]).is_err());
     assert!(validate_anchored_game_args(&["--stage=F_SP103,1,1,3".into()]).is_err());
     let unique = SystemTime::now()

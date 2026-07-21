@@ -37,7 +37,7 @@ use huntctl::tape::InputTape;
 use serde_json::{Value, json};
 use std::error::Error;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 struct SearchExecutionConfig {
@@ -89,6 +89,94 @@ fn search_execution_config(args: &[String]) -> Result<SearchExecutionConfig, Box
         timeout: timeout_option(args)?,
         harness: None,
     })
+}
+
+fn bind_route_origin_card_fixture(
+    timeline: &huntctl::timeline::Timeline,
+    boot: &huntctl::tape::TapeBoot,
+    execution: &mut SearchExecutionConfig,
+) -> Result<(), Box<dyn Error>> {
+    if !execution.game_args_prefix.is_empty() {
+        return Err(
+            "route-aware search does not accept --game-arg; its execution contract is fixed".into(),
+        );
+    }
+    if !matches!(boot, huntctl::tape::TapeBoot::Process) {
+        return Ok(());
+    }
+    let Some(relative) = timeline
+        .origin
+        .as_ref()
+        .and_then(|origin| origin.card_fixture.as_deref())
+    else {
+        return Ok(());
+    };
+    if execution.harness.is_some() {
+        return Err(
+            "timeline origin card fixtures are not representable by the authenticated run-request/v2 contract"
+                .into(),
+        );
+    }
+    let fixture = validated_route_card_fixture_root(relative, &execution.working_directory)?;
+    execution
+        .game_args_prefix
+        .push("--automation-card-fixture".into());
+    execution.game_args_prefix.push(
+        fixture
+            .to_str()
+            .ok_or("timeline origin card fixture path is not UTF-8")?
+            .to_owned(),
+    );
+    Ok(())
+}
+
+fn validated_route_card_fixture_root(
+    relative: &Path,
+    repository_root: &Path,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("timeline origin card fixture is not a contained relative path".into());
+    }
+    let root = fs::canonicalize(repository_root)?;
+    let mut candidate = root.clone();
+    for component in relative.components() {
+        candidate.push(component.as_os_str());
+        let metadata = fs::symlink_metadata(&candidate).map_err(|error| {
+            format!(
+                "cannot inspect timeline origin card fixture {}: {error}",
+                candidate.display()
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "timeline origin card fixture {} contains a symbolic link",
+                candidate.display()
+            )
+            .into());
+        }
+    }
+    if !candidate.is_dir() {
+        return Err(format!(
+            "timeline origin card fixture {} is not a directory",
+            candidate.display()
+        )
+        .into());
+    }
+    let fixture = fs::canonicalize(&candidate)?;
+    if !fixture.starts_with(&root) {
+        return Err(format!(
+            "timeline origin card fixture {} escapes repository root {}",
+            fixture.display(),
+            root.display()
+        )
+        .into());
+    }
+    Ok(fixture)
 }
 
 pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -500,7 +588,8 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             };
 
             let output = required_path(search_args, "--output")?;
-            let execution = search_execution_config(search_args)?;
+            let mut execution = search_execution_config(search_args)?;
+            bind_route_origin_card_fixture(&timeline, &prefix.tape.boot, &mut execution)?;
             let game = execution.game;
             let dvd = execution.dvd;
             let working_directory = execution.working_directory;
@@ -516,12 +605,6 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             let repetitions = u32_option(search_args, "--repetitions", 3)?;
             let timeout = execution.timeout;
             let rng_seed = u64_option(search_args, "--rng-seed", 1)?;
-            if !execution.game_args_prefix.is_empty() {
-                return Err(
-                    "route search does not accept --game-arg; its execution contract is fixed"
-                        .into(),
-                );
-            }
             if generations == 0
                 || size == 0
                 || elite_count == 0
@@ -677,7 +760,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     dvd: dvd.clone(),
                     output_root: output,
                     working_directory,
-                    game_args_prefix: Vec::new(),
+                    game_args_prefix: execution.game_args_prefix,
                     generations,
                     population_size: size,
                     elite_count,
@@ -763,6 +846,8 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 frames: through_goal.tape.frames[prefix.tape.frames.len()..].to_vec(),
             };
             let candidate = Candidate::from_absolute_tape(segment.profile, &suffix)?;
+            let mut execution = search_execution_config(search_args)?;
+            bind_route_origin_card_fixture(&timeline, &prefix.tape.boot, &mut execution)?;
 
             let select_goal = |segment_id: &str,
                                requested: Option<String>,
@@ -858,7 +943,6 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             )?;
             let program_path = objective_root.join("milestones.dmsp");
             fs::write(&program_path, &compiled.bytes)?;
-            let execution = search_execution_config(search_args)?;
             let summary = golf_anchored_inputs(&AnchoredInputGolfConfig {
                 candidate,
                 objective: AnchoredObjectiveConfig {
@@ -1546,5 +1630,102 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         _ => usage_error(),
+    }
+}
+
+#[cfg(test)]
+mod route_card_fixture_tests {
+    use super::*;
+    use huntctl::tape::TapeBoot;
+
+    fn temporary_root(name: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "huntctl-route-card-fixture-{name}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    fn execution(root: &Path) -> SearchExecutionConfig {
+        SearchExecutionConfig {
+            game: root.join("dusklight"),
+            dvd: root.join("game.iso"),
+            working_directory: root.to_path_buf(),
+            game_args_prefix: Vec::new(),
+            timeout: Duration::from_secs(1),
+            harness: None,
+        }
+    }
+
+    #[test]
+    fn process_boot_route_binds_its_declared_card_fixture() {
+        let root = temporary_root("process");
+        let fixture = root.join("orig/process-boot");
+        fs::create_dir_all(&fixture).unwrap();
+        let timeline = huntctl::timeline::Timeline::parse(
+            "timeline test\norigin boot predicate process_boot source process_boot.milestones card_fixture orig/process-boot\n",
+        )
+        .unwrap();
+        let mut execution = execution(&root);
+
+        bind_route_origin_card_fixture(&timeline, &TapeBoot::Process, &mut execution).unwrap();
+
+        assert_eq!(
+            execution.game_args_prefix,
+            [
+                "--automation-card-fixture".to_owned(),
+                fs::canonicalize(&fixture)
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .to_owned(),
+            ]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn stage_boot_route_does_not_apply_the_process_card_fixture() {
+        let root = temporary_root("stage");
+        fs::create_dir_all(root.join("orig/process-boot")).unwrap();
+        let timeline = huntctl::timeline::Timeline::parse(
+            "timeline test\norigin boot predicate process_boot source process_boot.milestones card_fixture orig/process-boot\n",
+        )
+        .unwrap();
+        let mut execution = execution(&root);
+        let boot = TapeBoot::Stage {
+            stage: "F_SP103".into(),
+            room: 0,
+            point: 0,
+            layer: -1,
+            save_slot: None,
+            fixture: None,
+        };
+
+        bind_route_origin_card_fixture(&timeline, &boot, &mut execution).unwrap();
+
+        assert!(execution.game_args_prefix.is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn route_binding_rejects_uncontrolled_game_arguments() {
+        let root = temporary_root("arguments");
+        fs::create_dir_all(&root).unwrap();
+        let timeline = huntctl::timeline::Timeline::parse(
+            "timeline test\norigin boot predicate process_boot source process_boot.milestones\n",
+        )
+        .unwrap();
+        let mut execution = execution(&root);
+        execution.game_args_prefix = vec!["--stage".into(), "F_SP103,0,0,-1".into()];
+
+        let error = bind_route_origin_card_fixture(&timeline, &TapeBoot::Process, &mut execution)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("does not accept --game-arg"));
+        fs::remove_dir_all(root).unwrap();
     }
 }
