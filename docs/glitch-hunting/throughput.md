@@ -248,3 +248,33 @@ removal smaller than run-to-run noise. The farming path still uses a hidden SDL
 window as an event/size anchor and creates a Dawn null device plus metadata
 resources. It does not initialize an SDL/ImGui renderer backend, create shader
 or pipeline objects, present, or issue queue operations.
+
+## Single-worker suffix profile
+
+A normal-fidelity 128-candidate Windows batch on 2026-07-20 measured the
+routine farming path with state-hash verification disabled. It completed all
+128 125-tick episodes: 16,000 transitions in 24.966 seconds, or 640.87
+transitions/second and 5.13 episodes/second. Checkpoint restore used 2.504
+seconds across 127 restores (19.71 milliseconds each). Inclusive simulation
+used 10.229 seconds, observation capture used 0.354 seconds, and corpus encoding
+used 1.165 seconds. The 526,802,688 uncompressed episode bytes became 9,212,650
+compressed bytes, or 575.79 compressed bytes per transition. Policy application
+used 1.943 milliseconds; learned policy inference was not present and is not
+reported as zero. The GPU sink reported no code creation or queue operations.
+
+Inside the inclusive simulation boundary, actor draw traversal accounted for
+1.596 seconds and the CPU painter for 4.694 seconds. An audit build then tried
+suppressing each boundary independently and together from process start. The
+ordinary control verified the exact frame-440 `gameplay-ready-f-sp103` source
+fingerprint. Every suppression mode reached that frame with no stage and no
+player, so it failed before a suffix episode could begin. These callbacks are
+therefore simulation-relevant despite their graphics-facing names. The audit
+switches were removed; this result is evidence against the optimization, not a
+new fidelity mode.
+
+The batch request SHA-256 was
+`95afa6e2af879e994c7780c724a0d81c81b8d54c7b2f90f9faba2fb4c3a0a54b`;
+the result SHA-256 was
+`bf517ee05b8349de78dc6d87a86790d659203984f405401fd4099865bd492e46`;
+and the native episode-shard SHA-256 was
+`e3f4e1c4870419f7f558e7d2d45a249684522d1909010e7ad44ce8e8b08e9aae`.

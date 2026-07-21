@@ -702,9 +702,15 @@ silent truncation or future leakage, and preserves deterministic cold playback.
     with no determinism conflict. The hidden SDL event/size anchor and Dawn
     null device remain, but no visible window, renderer backend, presentation,
     GPU code creation or queue operation occurs in the farming path.
-- [ ] Attempt to skip CPU draw traversal only after audited A/B/A runs prove
+- [x] Attempt to skip CPU draw traversal only after audited A/B/A runs prove
   identical future gameplay across representative movement, actor, event and
-  loading states. A mismatch blocks the optimization.
+  loading states. A mismatch blocks the optimization. The first fail-closed
+  process-boot audit found exactly that mismatch: the ordinary control reached
+  and verified the frame-440 `gameplay-ready-f-sp103` boundary, while suppressing
+  actor draw traversal, the CPU painter, or both left the stage empty with no
+  player at the same boundary. The experimental switches were removed and both
+  paths remain mandatory simulation work; no broader parity campaign or unsafe
+  fast mode was promoted.
 - [x] Run fixed logical ticks uncapped; never alter the simulated framerate to
   increase throughput. Headless mode selects the unpaced host loop while
   enabling one deterministic 30 Hz simulation tick per admitted outer-loop
@@ -716,6 +722,15 @@ silent truncation or future leakage, and preserves deterministic cold playback.
   mind rather than an arbitrary client limit.
 - [ ] Publish useful transitions/second, episode throughput, restore cost,
   observation cost, inference cost, corpus bytes/transition and CPU/GPU share.
+  - [x] Publish a normal-fidelity 128-candidate single-worker suffix profile
+    with state-hash verification disabled, matching the routine farming policy.
+    It retained 16,000 transitions in 24.966 seconds (640.87 transitions/s,
+    5.13 episodes/s), spent 2.504 seconds across 127 restores, 10.229 seconds in
+    inclusive simulation, 0.354 seconds capturing observations and 1.165
+    seconds encoding the corpus. Its 9,212,650 compressed bytes are 575.79 bytes
+    per transition. GPU code and queue work remained absent. Real policy
+    inference, CPU-utilization attribution and a scaled-worker comparison remain
+    open before the parent item can close.
 
 **Gate 2:** the trajectory-producing learner loop is materially faster than
 cold prefix replay, and every approved fast mode produces the same realized
