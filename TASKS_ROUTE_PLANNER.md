@@ -1875,7 +1875,14 @@ Deliverable: researchers can extend the model without editing core code.
 
 ### Phase 7 — Solver
 
-- [ ] Implement backward relevance expansion from goals.
+- [x] Implement backward relevance expansion from goals.
+  - `BackwardRelevance` computes a deterministic catalog-only fixed point from
+    the goal's state dependencies through every matching transition/writer/
+    technique producer, then through guards, readers, writer gates,
+    obstructions/resolvers, obligations, reconstruction rules, and witnessed
+    temporal actions. It retains unresolved frontier dependencies and all
+    relevant IDs, handles OR producers and cycles, excludes unrelated mechanics,
+    and deliberately makes no forward reachability claim.
 - [ ] Combine it with forward stateful feasibility from the start.
   - [x] Implement bounded forward state search over exact snapshots, typed
         transition effects, action-local resolver/technique selections, and

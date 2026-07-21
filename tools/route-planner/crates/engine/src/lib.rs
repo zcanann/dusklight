@@ -16,6 +16,7 @@ pub mod logic;
 pub mod native_observation;
 pub mod native_snapshot;
 pub mod refinement;
+pub mod relevance;
 pub mod route_book;
 pub mod snapshot;
 pub mod solver;
