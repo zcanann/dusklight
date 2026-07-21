@@ -352,17 +352,16 @@ probe, demonstration, curriculum, option, reward term or preferred action.
       interaction. Actor activation and a dedicated loading perturbation remain
       open.
     - [x] Expand the identical sweep to one default-layer spawn from 16
-      deterministically spaced catalog stages in one explicit parallel batch.
-      All 16 additions classified ready, including `D_MN09`, whose inventory is
-      unreadable offline; the ledger now has 20/20 ready cases. Its 3,200 exact-
-      PAD records form 18 actual-stage cells with no truncated channel, 2,053
-      varying and 584 ambiguous field paths (`93f1fff9...bd5f1`). Background
-      collision and realized surfaces are present in 16 cells and explicitly
-      ambiguous across the two loading slices. The paired terminal-population
-      report verifies 1,344 actors, 139 profiles and 331 stage/profile cells
-      with 19,843 present, 4,228 varying, 875 absent and 81 ambiguous typed
-      field paths (`d4aabd9b...0c921`). This remains a stratified
-      20/9,084-candidate sample and supplies no route label, desired value or
+      deterministically spaced catalog stages, then resume through the next 64
+      pending catalog identities in bounded parallel batches. All 84 cases
+      classified ready, including `D_MN09`, whose inventory is unreadable
+      offline. Their 13,440 exact-PAD records form 21 actual-stage cells with no
+      truncated channel, 2,454 varying and 746 ambiguous field paths
+      (`2a02c701...563b63`). The paired terminal-population report verifies
+      6,785 complete actors, 195 profiles and 471 stage/profile cells with
+      26,655 present, 7,407 varying, 1,257 absent and 173 ambiguous typed field
+      paths (`85cf2a62...db6c5`, ledger `2ae6940c...f76a2c`). This remains an
+      84/9,084-candidate sample and supplies no route label, desired value or
       preferred action.
     - [x] Exercise a second generic action family across eight dungeon stages in
       one repeatable explicit-candidate batch. The nine-worker basic-action pass
