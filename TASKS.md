@@ -857,11 +857,27 @@ PAD and gameplay sequence as ordinary playback.
     learned model identities and metrics bind the comparison artifact. This
     proves the trainable path and failure-detection experiment, not a live-corpus
     promotion; the equal-budget native held-out comparison remains open.
-- [ ] Keep immutable world geometry out of the per-tick flat vector. Supply
+- [x] Keep immutable world geometry out of the per-tick flat vector. Supply
   bounded spatial queries, connectivity and semantic surface/trigger tokens by
   reference to the authenticated world artifact, with a graph path for models
   that need context around a bend. Retain the source query and coverage proof
-  so a larger view can be derived without rerunning gameplay.
+  so a larger view can be derived without rerunning gameplay. World surface
+  graph v1 reconstructs immutable KCL surfaces and their semantic collision and
+  trigger tokens once per authenticated inventory, reports exact-edge coverage
+  separately, and derives declared-tolerance vertex connectivity without
+  inventing walkability or joining coordinates across rooms. Bounded multi-seed
+  hop queries retain their request, returned coverage, truncation and source
+  graph identity. Native surface-graph view v1 then expands the stable surface
+  IDs already present in the sealed geometry view entirely offline, binding the
+  source episode shard, geometry view, inventory, spatial index and graph
+  digests; no gameplay is recollected and no route or outcome is supplied. A
+  live F_SP103 view covered all 500 pre/post observations, expanded 16,000
+  geometry probes into 124,540 returned graph nodes (141,822 reachable before
+  the declared 256-node cap), and explicitly reported 406 truncated
+  neighborhoods in sealed view `7400ebfb...151c`. Its static graph contains
+  10,790 nodes and 15,265 adjacency edges in `40fc5216...fcc96`; the source
+  geometry view is `cce8dd0d...84dcbe` and native shard is
+  `054be263...94306`.
 - [ ] Provide both absolute context and Link-, camera-, surface-, actor- and
   goal-relative features. Generic physics relationships are observations, not
   route rewards.

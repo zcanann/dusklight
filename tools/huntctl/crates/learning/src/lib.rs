@@ -46,6 +46,7 @@ pub mod native_collision_view;
 pub mod native_episode_history;
 pub mod native_geometry_view;
 pub mod native_replay_corpus;
+pub mod native_surface_graph_view;
 pub mod offline_rl;
 pub mod online_lineage;
 pub mod option_policy;
