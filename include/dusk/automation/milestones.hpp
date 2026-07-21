@@ -454,6 +454,32 @@ struct MilestoneObservation {
     };
     EventTransitionState eventTransition;
 
+    // Engine-owned clocks and pause/load gates sampled without advancing any
+    // subsystem. These counters deliberately remain separate: the framework
+    // counter advances for every game-management pass, while the gameplay,
+    // demo, message-free demo and HUD timer domains can stop independently.
+    struct ClockDomainState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint32_t frameworkFrames = 0;
+        std::uint32_t gameplayFrames = 0;
+        bool globalPause = false;
+        bool scenePaused = false;
+        std::int8_t scenePauseTimer = 0;
+        std::int8_t sceneNextPauseTimer = 0;
+        bool overlapRequestActive = false;
+        bool overlapFadeoutPeek = false;
+        ChannelStatus demoStatus = ChannelStatus::NotSampled;
+        std::int32_t demoMode = 0;
+        std::uint32_t demoFrame = 0;
+        std::uint32_t demoFrameNoMessage = 0;
+        std::uint32_t demoFlags = 0;
+        ChannelStatus timerStatus = ChannelStatus::NotSampled;
+        std::int32_t timerMode = -1;
+        std::int32_t timerNowMs = 0;
+        std::int32_t timerLimitMs = 0;
+    };
+    ClockDomainState clockDomains;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

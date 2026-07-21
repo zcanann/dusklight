@@ -42,6 +42,7 @@ const OBSERVATION_VERSION_V19: u16 = 19;
 const OBSERVATION_VERSION_V20: u16 = 20;
 const OBSERVATION_VERSION_V21: u16 = 21;
 const OBSERVATION_VERSION_V22: u16 = 22;
+const OBSERVATION_VERSION_V23: u16 = 23;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -93,6 +94,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V19: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V20: &str = "dusklight-learning-observation/v20";
 pub const LEARNING_OBSERVATION_SCHEMA_V21: &str = "dusklight-learning-observation/v21";
 pub const LEARNING_OBSERVATION_SCHEMA_V22: &str = "dusklight-learning-observation/v22";
+pub const LEARNING_OBSERVATION_SCHEMA_V23: &str = "dusklight-learning-observation/v23";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -638,6 +640,27 @@ pub struct NativeProcessLifecycleObservation {
     pub pending_deletes: Vec<NativePendingDeleteObservation>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeClockDomainObservation {
+    pub framework_frames: u32,
+    pub gameplay_frames: u32,
+    pub global_pause: bool,
+    pub scene_paused: bool,
+    pub scene_pause_timer: i8,
+    pub scene_next_pause_timer: i8,
+    pub overlap_request_active: bool,
+    pub overlap_fadeout_peek: bool,
+    pub demo_status: NativeChannelStatus,
+    pub demo_mode: i32,
+    pub demo_frame: u32,
+    pub demo_frame_no_message: u32,
+    pub demo_flags: u32,
+    pub timer_status: NativeChannelStatus,
+    pub timer_mode: i32,
+    pub timer_now_ms: i32,
+    pub timer_limit_ms: i32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeLearningObservation {
     pub phase: NativeObservationPhase,
@@ -738,6 +761,8 @@ pub struct NativeLearningObservation {
     pub attention_candidates: Option<NativeAttentionCandidatesObservation>,
     pub event_transition_status: NativeChannelStatus,
     pub event_transition: Option<NativeEventTransitionObservation>,
+    pub clock_domains_status: NativeChannelStatus,
+    pub clock_domains: Option<NativeClockDomainObservation>,
 }
 
 #[derive(Debug)]
@@ -812,6 +837,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V20
                 | OBSERVATION_VERSION_V21
                 | OBSERVATION_VERSION_V22
+                | OBSERVATION_VERSION_V23
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -948,6 +974,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V20 => LEARNING_OBSERVATION_SCHEMA_V20,
         OBSERVATION_VERSION_V21 => LEARNING_OBSERVATION_SCHEMA_V21,
         OBSERVATION_VERSION_V22 => LEARNING_OBSERVATION_SCHEMA_V22,
+        OBSERVATION_VERSION_V23 => LEARNING_OBSERVATION_SCHEMA_V23,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1970,6 +1997,93 @@ fn decode_event_transition(
     ))
 }
 
+fn decode_clock_domains(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, Option<NativeClockDomainObservation>), NativeEpisodeShardError> {
+    let status = decode_channel_status(reader)?;
+    let flags = reader.u8()?;
+    let scene_pause_timer = reader.i8()?;
+    let scene_next_pause_timer = reader.i8()?;
+    let demo_status = decode_channel_status(reader)?;
+    let timer_status = decode_channel_status(reader)?;
+    if flags & !0x0f != 0 || reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "noncanonical clock-domain flags or reserved field",
+        ));
+    }
+    let framework_frames = reader.u32()?;
+    let gameplay_frames = reader.u32()?;
+    let demo_mode = reader.i32()?;
+    let demo_frame = reader.u32()?;
+    let demo_frame_no_message = reader.u32()?;
+    let demo_flags = reader.u32()?;
+    let timer_mode = reader.i32()?;
+    let timer_now_ms = reader.i32()?;
+    let timer_limit_ms = reader.i32()?;
+
+    let present = status == NativeChannelStatus::Present;
+    let demo_present = demo_status == NativeChannelStatus::Present;
+    let demo_empty =
+        demo_mode == 0 && demo_frame == 0 && demo_frame_no_message == 0 && demo_flags == 0;
+    let timer_present = timer_status == NativeChannelStatus::Present;
+    let timer_empty = timer_mode == -1 && timer_now_ms == 0 && timer_limit_ms == 0;
+    let outer_empty = flags == 0
+        && scene_pause_timer == 0
+        && scene_next_pause_timer == 0
+        && framework_frames == 0
+        && gameplay_frames == 0
+        && demo_status == NativeChannelStatus::NotSampled
+        && demo_empty
+        && timer_status == NativeChannelStatus::NotSampled
+        && timer_empty;
+    if !matches!(
+        status,
+        NativeChannelStatus::Present | NativeChannelStatus::Unavailable
+    ) || (present
+        && (!matches!(
+            demo_status,
+            NativeChannelStatus::Present | NativeChannelStatus::Absent
+        ) || !matches!(
+            timer_status,
+            NativeChannelStatus::Present
+                | NativeChannelStatus::Absent
+                | NativeChannelStatus::Unavailable
+        )))
+        || (!demo_present && !demo_empty)
+        || (demo_present && (demo_mode == 0 || demo_frame_no_message > demo_frame))
+        || (timer_present && timer_mode < 0)
+        || (!timer_present && !timer_empty)
+        || (!present && !outer_empty)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "clock-domain status and payload disagree",
+        ));
+    }
+
+    Ok((
+        status,
+        present.then_some(NativeClockDomainObservation {
+            framework_frames,
+            gameplay_frames,
+            global_pause: flags & (1 << 0) != 0,
+            scene_paused: flags & (1 << 1) != 0,
+            scene_pause_timer,
+            scene_next_pause_timer,
+            overlap_request_active: flags & (1 << 2) != 0,
+            overlap_fadeout_peek: flags & (1 << 3) != 0,
+            demo_status,
+            demo_mode,
+            demo_frame,
+            demo_frame_no_message,
+            demo_flags,
+            timer_status,
+            timer_mode,
+            timer_now_ms,
+            timer_limit_ms,
+        }),
+    ))
+}
+
 fn decode_camera(
     reader: &mut Reader<'_>,
 ) -> Result<NativeCameraObservation, NativeEpisodeShardError> {
@@ -2852,7 +2966,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V19
         | OBSERVATION_VERSION_V20
         | OBSERVATION_VERSION_V21
-        | OBSERVATION_VERSION_V22 => {
+        | OBSERVATION_VERSION_V22
+        | OBSERVATION_VERSION_V23 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3692,6 +3807,11 @@ fn decode_observation(
             "event-transition pending stage disagrees with core observation",
         ));
     }
+    let (clock_domains_status, clock_domains) = if observation_version >= OBSERVATION_VERSION_V23 {
+        decode_clock_domains(reader)?
+    } else {
+        (NativeChannelStatus::NotSampled, None)
+    };
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -3790,6 +3910,8 @@ fn decode_observation(
         attention_candidates,
         event_transition_status,
         event_transition,
+        clock_domains_status,
+        clock_domains,
     })
 }
 

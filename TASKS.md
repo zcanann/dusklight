@@ -813,6 +813,24 @@ human-authored successful setup.
       whatever transition ordinary gameplay reaches; it contains no named
       setup, selected event, desired destination, input sequence, route or
       reward. Door/warp/resource queues and distinct clock domains remain open.
+    - [x] Retain generic engine-owned clock and pause domains without assigning
+      them meaning. Learning observation v23 copies the framework and
+      gameplay-only frame counters, global and scene pause gates/timers,
+      overlap-request/peek state, demo mode/frame/status, and the optional HUD
+      timer's mode/current/limit values. Demo and timer subcomponents preserve
+      present/absent/unavailable independently; legacy v2-v22 shards remain
+      explicitly not sampled. Capture uses only existing read accessors and
+      globals: it does not advance a request, load, event, timer, pause state or
+      simulation clock. Corpus-inspection v14 and global temporal coverage
+      report raw presence/change, while complete-set learner adapter v5 exposes
+      `core_clock_domains` as a separately ablatable masked family. The native
+      writer and Rust decoder reject inconsistent missingness and impossible
+      demo frame relationships. Cross-language fixture
+      `9b5d1402...c9261303` and fail-closed tests pass. These are candidate
+      signals from whatever gameplay the learner reaches; there is no named
+      behavior, selected event, target timing, prescribed action, reward or
+      reproduction logic. Door/warp/resource-load phases and live temporal
+      variation remain open, so the parent is not complete.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
@@ -1262,7 +1280,7 @@ and geometry set sizes without schema changes.
   encoder that loses to the smaller view under equal data and simulator budget,
   while preserving the canonical raw evidence for a different encoder.
   - [x] Make the direct native input a declarative, schema-bound projection
-    over 23 named core/set channel families, including actor population as a
+    over 24 named core/set channel families, including actor population as a
     separate structural family so an action-only control cannot leak actor
     count, plus separately ablatable core and actor temporal deltas. Omitted
     families remove columns rather than zeroing them, and the broad view now
@@ -1283,6 +1301,27 @@ and geometry set sizes without schema changes.
     action, while nominal inverse-action heads lack the post-state, so the next
     encoder revision must distinguish action-conditioned dynamics from
     behavior cloning before feature promotion.
+  - [x] Add a selectable learned actor-attention pool without discarding the
+    complete set or silently replacing the mean/max baseline. Four seeded
+    softmax queries attend over shared per-actor embeddings; gradients update
+    both queries and actor transforms, while mean/max features remain available
+    to the same state head. Report/model v7 binds the pooling mode and reports
+    each query's norm, held-out normalized entropy and maximum weight. Tests
+    prove seeded model identity, query updates, permutation invariance and
+    bounded diagnostics. The CLI exposes `mean-max` and
+    `mean-max-learned-attention`, and the shuffled control is forced through the
+    same selected pooler. A real equal-budget Ordon comparison and cross-seed
+    attention stability measurement remain open before the parent can close.
+    The first v6 treatment improved aggregate test error only modestly (84.35%
+    versus 83.24%) and changed neither contact recall (22/30) nor actor-
+    disappearance recall (0/15). More importantly, every query remained almost
+    uniform: normalized entropy was 0.9994-0.9998 and mean maximum actor weight
+    was 2.34-2.47% over 47-48 actors (`6bc19c05...a416`; mean/max
+    `5c92ad48...d2c8`). That treatment is rejected rather than promoted on its
+    aggregate score. V7 removes a redundant square-root scale from already
+    variance-scaled query initialization; equal-budget revalidation remains
+    required, and task/goal-conditioned queries are the next alternative if
+    global queries still fail to specialize.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.

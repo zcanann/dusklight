@@ -34,7 +34,7 @@ fn native_corpus_inspection_reports_complete_cpp_shard() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "dusklight-native-corpus-inspection/v13");
+    assert_eq!(report["schema"], "dusklight-native-corpus-inspection/v14");
     assert_eq!(report["episode_count"], 2);
     assert_eq!(report["success_count"], 1);
     assert_eq!(report["failure_count"], 1);

@@ -846,6 +846,64 @@ bool append_event_transition_state(std::vector<std::uint8_t>& output,
     return true;
 }
 
+bool append_clock_domain_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    const auto& clocks = observation.clockDomains;
+    const bool present = clocks.status == Status::Present;
+    const bool unavailable = clocks.status == Status::Unavailable;
+    const bool demoPresent = clocks.demoStatus == Status::Present;
+    const bool demoAbsent = clocks.demoStatus == Status::Absent;
+    const bool demoEmpty = clocks.demoMode == 0 && clocks.demoFrame == 0 &&
+                           clocks.demoFrameNoMessage == 0 && clocks.demoFlags == 0;
+    const bool timerPresent = clocks.timerStatus == Status::Present;
+    const bool timerAbsent = clocks.timerStatus == Status::Absent;
+    const bool timerUnavailable = clocks.timerStatus == Status::Unavailable;
+    const bool timerEmpty = clocks.timerMode == -1 && clocks.timerNowMs == 0 &&
+                            clocks.timerLimitMs == 0;
+    const bool outerEmpty = clocks.frameworkFrames == 0 && clocks.gameplayFrames == 0 &&
+                            !clocks.globalPause && !clocks.scenePaused &&
+                            clocks.scenePauseTimer == 0 && clocks.sceneNextPauseTimer == 0 &&
+                            !clocks.overlapRequestActive && !clocks.overlapFadeoutPeek &&
+                            clocks.demoStatus == Status::NotSampled && demoEmpty &&
+                            clocks.timerStatus == Status::NotSampled && timerEmpty;
+    if ((!present && !unavailable) ||
+        (present && (!(demoPresent || demoAbsent) ||
+                        !(timerPresent || timerAbsent || timerUnavailable))) ||
+        (!demoPresent && !demoEmpty) ||
+        (demoPresent && (clocks.demoMode == 0 ||
+                            clocks.demoFrameNoMessage > clocks.demoFrame)) ||
+        (timerPresent && clocks.timerMode < 0) || (!timerPresent && !timerEmpty) ||
+        (!present && !outerEmpty))
+    {
+        error = "learning observation has inconsistent clock-domain state";
+        return false;
+    }
+
+    std::uint8_t flags = 0;
+    flags |= clocks.globalPause ? 1u << 0 : 0;
+    flags |= clocks.scenePaused ? 1u << 1 : 0;
+    flags |= clocks.overlapRequestActive ? 1u << 2 : 0;
+    flags |= clocks.overlapFadeoutPeek ? 1u << 3 : 0;
+    append_integer(output, static_cast<std::uint8_t>(clocks.status));
+    append_integer(output, flags);
+    append_integer(output, clocks.scenePauseTimer);
+    append_integer(output, clocks.sceneNextPauseTimer);
+    append_integer(output, static_cast<std::uint8_t>(clocks.demoStatus));
+    append_integer(output, static_cast<std::uint8_t>(clocks.timerStatus));
+    append_integer<std::uint16_t>(output, 0);
+    append_integer(output, clocks.frameworkFrames);
+    append_integer(output, clocks.gameplayFrames);
+    append_integer(output, clocks.demoMode);
+    append_integer(output, clocks.demoFrame);
+    append_integer(output, clocks.demoFrameNoMessage);
+    append_integer(output, clocks.demoFlags);
+    append_integer(output, clocks.timerMode);
+    append_integer(output, clocks.timerNowMs);
+    append_integer(output, clocks.timerLimitMs);
+    return true;
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -1454,7 +1512,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         return false;
     if (!append_process_lifecycle_records(output, observation, error))
         return false;
-    return append_event_transition_state(output, observation, error);
+    if (!append_event_transition_state(output, observation, error))
+        return false;
+    return append_clock_domain_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

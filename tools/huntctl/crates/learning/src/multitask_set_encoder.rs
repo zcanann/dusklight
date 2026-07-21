@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V5: &str =
-    "dusklight-multitask-set-encoder-report/v5";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V7: &str =
+    "dusklight-multitask-set-encoder-report/v7";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -31,6 +31,7 @@ const MAX_HIDDEN_WIDTH: usize = 256;
 const MAX_EPOCHS: usize = 2_048;
 const MAX_PARAMETERS: usize = 16_000_000;
 const ACTION_CONTEXT_WIDTH: usize = 24;
+const LEARNED_ATTENTION_HEADS: usize = 4;
 type TargetNormalization = (Vec<f64>, Vec<f64>, Vec<usize>);
 
 #[derive(Clone, Debug)]
@@ -47,6 +48,30 @@ pub struct MultiTaskSetSample {
 pub enum AuxiliaryHeadConditioning {
     PreStateAndAction,
     PreAndPostState,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MultiTaskSetPooling {
+    MeanMax,
+    MeanMaxLearnedAttention,
+}
+
+impl MultiTaskSetPooling {
+    pub fn parse(name: &str) -> Option<Self> {
+        match name {
+            "mean-max" => Some(Self::MeanMax),
+            "mean-max-learned-attention" => Some(Self::MeanMaxLearnedAttention),
+            _ => None,
+        }
+    }
+
+    fn attention_heads(self) -> usize {
+        match self {
+            Self::MeanMax => 0,
+            Self::MeanMaxLearnedAttention => LEARNED_ATTENTION_HEADS,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -69,6 +94,7 @@ pub enum NativeEncoderChannelFamily {
     CoreActionPhase,
     CoreEventContext,
     CoreEventTransition,
+    CoreClockDomains,
     CorePreviousInput,
     CoreCameraCollisionWorld,
     CoreRng,
@@ -92,11 +118,12 @@ pub enum NativeEncoderChannelFamily {
 }
 
 impl NativeEncoderChannelFamily {
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::CorePlayerMotion,
         Self::CoreActionPhase,
         Self::CoreEventContext,
         Self::CoreEventTransition,
+        Self::CoreClockDomains,
         Self::CorePreviousInput,
         Self::CoreCameraCollisionWorld,
         Self::CoreRng,
@@ -125,6 +152,7 @@ impl NativeEncoderChannelFamily {
             Self::CoreActionPhase => "core_action_phase",
             Self::CoreEventContext => "core_event_context",
             Self::CoreEventTransition => "core_event_transition",
+            Self::CoreClockDomains => "core_clock_domains",
             Self::CorePreviousInput => "core_previous_input",
             Self::CoreCameraCollisionWorld => "core_camera_collision_world",
             Self::CoreRng => "core_rng",
@@ -463,11 +491,34 @@ impl MultiTaskSetSample {
 pub fn fit_shuffled_auxiliary_control(
     actor_feature_schema_sha256: Digest,
     target_names: Vec<String>,
+    training: Vec<MultiTaskSetSample>,
+    validation_dataset_sha256: Digest,
+    validation: &[MultiTaskSetSample],
+    test: &[MultiTaskSetSample],
+    config: TrainableSetConfig,
+) -> Result<ShuffledAuxiliaryControl, TrainableSetError> {
+    fit_shuffled_auxiliary_control_with_pooling(
+        actor_feature_schema_sha256,
+        target_names,
+        training,
+        validation_dataset_sha256,
+        validation,
+        test,
+        config,
+        MultiTaskSetPooling::MeanMax,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn fit_shuffled_auxiliary_control_with_pooling(
+    actor_feature_schema_sha256: Digest,
+    target_names: Vec<String>,
     mut training: Vec<MultiTaskSetSample>,
     validation_dataset_sha256: Digest,
     validation: &[MultiTaskSetSample],
     test: &[MultiTaskSetSample],
     config: TrainableSetConfig,
+    pooling: MultiTaskSetPooling,
 ) -> Result<ShuffledAuxiliaryControl, TrainableSetError> {
     if training.is_empty() || target_names.is_empty() {
         return Err(TrainableSetError::new(
@@ -492,7 +543,7 @@ pub fn fit_shuffled_auxiliary_control(
         }
     }
     let shuffled_training_dataset_sha256 = sample_manifest_digest(&training)?;
-    let (report, model) = CompleteSetMultiTaskEncoder::fit(
+    let (report, model) = CompleteSetMultiTaskEncoder::fit_with_pooling(
         actor_feature_schema_sha256,
         shuffled_training_dataset_sha256,
         validation_dataset_sha256,
@@ -500,6 +551,7 @@ pub fn fit_shuffled_auxiliary_control(
         &training,
         validation,
         config,
+        pooling,
     )?;
     let test_evaluation = model.evaluate(test)?;
     Ok(ShuffledAuxiliaryControl {
@@ -572,12 +624,21 @@ pub struct RareEventMetrics {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AttentionHeadDiagnostics {
+    pub head: usize,
+    pub query_l2_norm: f64,
+    pub mean_normalized_entropy: f64,
+    pub mean_maximum_weight: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MultiTaskSetEncoderReport {
     pub schema: &'static str,
     pub actor_feature_schema_sha256: Digest,
     pub training_dataset_sha256: Digest,
     pub held_out_dataset_sha256: Digest,
     pub config: TrainableSetConfig,
+    pub pooling: MultiTaskSetPooling,
     pub target_names: Vec<String>,
     pub target_conditioning: Vec<AuxiliaryHeadConditioning>,
     pub target_support_training: Vec<usize>,
@@ -592,6 +653,7 @@ pub struct MultiTaskSetEncoderReport {
     pub relative_held_out_improvement: f64,
     pub heads: Vec<AuxiliaryHeadMetrics>,
     pub held_out_rare_events: Vec<RareEventMetrics>,
+    pub held_out_attention: Vec<AttentionHeadDiagnostics>,
     pub decision: MultiTaskEncoderDecision,
     pub model_sha256: Digest,
     pub promotion_authority: bool,
@@ -603,12 +665,14 @@ pub struct CompleteSetMultiTaskEncoder {
     actor_feature_schema_sha256: Digest,
     layout: FeatureLayout,
     config: TrainableSetConfig,
+    pooling: MultiTaskSetPooling,
     target_names: Vec<String>,
     target_conditioning: Vec<AuxiliaryHeadConditioning>,
     target_mean: Vec<f64>,
     target_inverse_stddev: Vec<f64>,
     node_weights: Vec<f64>,
     node_bias: Vec<f64>,
+    attention_queries: Vec<f64>,
     state_weights: Vec<f64>,
     state_bias: Vec<f64>,
     output_weights: Vec<f64>,
@@ -620,6 +684,8 @@ struct StateForward {
     node_inputs: Vec<Vec<f64>>,
     node_hidden: Vec<Vec<f64>>,
     max_indices: Vec<Option<usize>>,
+    attention_weights: Vec<Vec<f64>>,
+    attention_pools: Vec<Vec<f64>>,
     state_input: Vec<f64>,
     state_hidden: Vec<f64>,
 }
@@ -634,6 +700,7 @@ struct ConditionedForward {
 struct EncoderGradients {
     node_weights: Vec<f64>,
     node_bias: Vec<f64>,
+    attention_queries: Vec<f64>,
     state_weights: Vec<f64>,
     state_bias: Vec<f64>,
 }
@@ -648,6 +715,29 @@ impl CompleteSetMultiTaskEncoder {
         training: &[MultiTaskSetSample],
         held_out: &[MultiTaskSetSample],
         config: TrainableSetConfig,
+    ) -> Result<(MultiTaskSetEncoderReport, Self), TrainableSetError> {
+        Self::fit_with_pooling(
+            actor_feature_schema_sha256,
+            training_dataset_sha256,
+            held_out_dataset_sha256,
+            target_names,
+            training,
+            held_out,
+            config,
+            MultiTaskSetPooling::MeanMax,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn fit_with_pooling(
+        actor_feature_schema_sha256: Digest,
+        training_dataset_sha256: Digest,
+        held_out_dataset_sha256: Digest,
+        target_names: Vec<String>,
+        training: &[MultiTaskSetSample],
+        held_out: &[MultiTaskSetSample],
+        config: TrainableSetConfig,
+        pooling: MultiTaskSetPooling,
     ) -> Result<(MultiTaskSetEncoderReport, Self), TrainableSetError> {
         let dimensions = validate_samples(
             actor_feature_schema_sha256,
@@ -681,6 +771,7 @@ impl CompleteSetMultiTaskEncoder {
             target_conditioning.clone(),
             target_mean,
             target_inverse_stddev,
+            pooling,
         )?;
         let mut order = (0..training.len()).collect::<Vec<_>>();
         let mut rng = DeterministicRng::new(config.seed ^ 0x4d55_4c54_4954_4153);
@@ -705,12 +796,14 @@ impl CompleteSetMultiTaskEncoder {
             MultiTaskEncoderDecision::RetainTrainingMeanBaseline
         };
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
+        let held_out_attention = model.attention_diagnostics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V5,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V7,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
             config,
+            pooling,
             target_names,
             target_conditioning,
             target_support_training,
@@ -733,6 +826,7 @@ impl CompleteSetMultiTaskEncoder {
             relative_held_out_improvement,
             heads,
             held_out_rare_events,
+            held_out_attention,
             decision,
             model_sha256,
             promotion_authority: false,
@@ -742,6 +836,7 @@ impl CompleteSetMultiTaskEncoder {
         Ok((report, model))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn initialized(
         actor_feature_schema_sha256: Digest,
         layout: FeatureLayout,
@@ -750,8 +845,11 @@ impl CompleteSetMultiTaskEncoder {
         target_conditioning: Vec<AuxiliaryHeadConditioning>,
         target_mean: Vec<f64>,
         target_inverse_stddev: Vec<f64>,
+        pooling: MultiTaskSetPooling,
     ) -> Result<Self, TrainableSetError> {
-        let state_input_width = layout.base_input_width + 2 + config.node_hidden_width * 2;
+        let attention_heads = pooling.attention_heads();
+        let state_input_width =
+            layout.base_input_width + 2 + config.node_hidden_width * (2 + attention_heads);
         let target_width = target_names.len();
         if target_conditioning.len() != target_width {
             return Err(TrainableSetError::new(
@@ -762,6 +860,7 @@ impl CompleteSetMultiTaskEncoder {
         let parameter_count = config
             .node_hidden_width
             .checked_mul(layout.node_input_width + 1)
+            .and_then(|value| value.checked_add(attention_heads * config.node_hidden_width))
             .and_then(|value| value.checked_add(config.head_hidden_width * (state_input_width + 1)))
             .and_then(|value| value.checked_add(target_width * (head_input_width + 1)))
             .ok_or_else(|| TrainableSetError::new("multitask parameter count overflowed"))?;
@@ -773,12 +872,18 @@ impl CompleteSetMultiTaskEncoder {
         let mut rng = DeterministicRng::new(config.seed ^ 0x5348_4152_4544_0001);
         Ok(Self {
             actor_feature_schema_sha256,
+            pooling,
             node_weights: initialized_weights(
                 config.node_hidden_width,
                 layout.node_input_width,
                 &mut rng,
             ),
             node_bias: vec![0.0; config.node_hidden_width],
+            attention_queries: initialized_weights(
+                attention_heads,
+                config.node_hidden_width,
+                &mut rng,
+            ),
             state_weights: initialized_weights(
                 config.head_hidden_width,
                 state_input_width,
@@ -821,12 +926,13 @@ impl CompleteSetMultiTaskEncoder {
     }
 
     pub fn model_sha256(&self) -> Result<Digest, TrainableSetError> {
-        canonical_digest(b"dusklight.complete-set-multitask-encoder/v3\0", self)
+        canonical_digest(b"dusklight.complete-set-multitask-encoder/v5\0", self)
     }
 
     pub fn parameter_count(&self) -> usize {
         self.node_weights.len()
             + self.node_bias.len()
+            + self.attention_queries.len()
             + self.state_weights.len()
             + self.state_bias.len()
             + self.output_weights.len()
@@ -928,6 +1034,62 @@ impl CompleteSetMultiTaskEncoder {
             .collect()
     }
 
+    fn attention_diagnostics(
+        &self,
+        samples: &[MultiTaskSetSample],
+    ) -> Result<Vec<AttentionHeadDiagnostics>, TrainableSetError> {
+        let heads = self.pooling.attention_heads();
+        if heads == 0 {
+            return Ok(Vec::new());
+        }
+        let mut entropy_sum = vec![0.0; heads];
+        let mut maximum_sum = vec![0.0; heads];
+        let mut support = vec![0_usize; heads];
+        for sample in samples {
+            self.validate_transition(sample)?;
+            let forward = self.state_forward(&sample.input);
+            for (head, weights) in forward.attention_weights.iter().enumerate() {
+                if weights.is_empty() {
+                    continue;
+                }
+                let entropy = -weights
+                    .iter()
+                    .filter(|weight| **weight > 0.0)
+                    .map(|weight| weight * weight.ln())
+                    .sum::<f64>();
+                let maximum_entropy = (weights.len() as f64).ln();
+                entropy_sum[head] += if maximum_entropy > 0.0 {
+                    entropy / maximum_entropy
+                } else {
+                    0.0
+                };
+                maximum_sum[head] += weights
+                    .iter()
+                    .copied()
+                    .max_by(f64::total_cmp)
+                    .unwrap_or(0.0);
+                support[head] += 1;
+            }
+        }
+        (0..heads)
+            .map(|head| {
+                if support[head] == 0 {
+                    return Err(TrainableSetError::new(
+                        "learned attention diagnostics have no actor support",
+                    ));
+                }
+                let query = &self.attention_queries[head * self.config.node_hidden_width
+                    ..(head + 1) * self.config.node_hidden_width];
+                Ok(AttentionHeadDiagnostics {
+                    head,
+                    query_l2_norm: query.iter().map(|value| value * value).sum::<f64>().sqrt(),
+                    mean_normalized_entropy: entropy_sum[head] / support[head] as f64,
+                    mean_maximum_weight: maximum_sum[head] / support[head] as f64,
+                })
+            })
+            .collect()
+    }
+
     fn validate_input(&self, sample: &TypedSetSample) -> Result<(), TrainableSetError> {
         if sample.actor_feature_schema_sha256 != self.actor_feature_schema_sha256 {
             return Err(TrainableSetError::new(
@@ -985,11 +1147,45 @@ impl CompleteSetMultiTaskEncoder {
                 *value /= node_hidden.len() as f64;
             }
         }
+        let attention_heads = self.pooling.attention_heads();
+        let mut attention_weights = Vec::with_capacity(attention_heads);
+        let mut attention_pools = Vec::with_capacity(attention_heads);
+        for head in 0..attention_heads {
+            if node_hidden.is_empty() {
+                attention_weights.push(Vec::new());
+                attention_pools.push(vec![0.0; self.config.node_hidden_width]);
+                continue;
+            }
+            let query = &self.attention_queries
+                [head * self.config.node_hidden_width..(head + 1) * self.config.node_hidden_width];
+            let logits = node_hidden
+                .iter()
+                .map(|hidden| dot(hidden, query))
+                .collect::<Vec<_>>();
+            let maximum = logits.iter().copied().max_by(f64::total_cmp).unwrap_or(0.0);
+            let mut weights = logits
+                .iter()
+                .map(|logit| (logit - maximum).exp())
+                .collect::<Vec<_>>();
+            let denominator = weights.iter().sum::<f64>();
+            for weight in &mut weights {
+                *weight /= denominator;
+            }
+            let mut pool = vec![0.0; self.config.node_hidden_width];
+            for (hidden, weight) in node_hidden.iter().zip(&weights) {
+                for (pooled, value) in pool.iter_mut().zip(hidden) {
+                    *pooled += weight * value;
+                }
+            }
+            attention_weights.push(weights);
+            attention_pools.push(pool);
+        }
         let mut state_input = self.layout.base_input(sample);
         state_input.push(f64::from(!sample.nodes.is_empty()));
         state_input.push((sample.nodes.len() as f64).ln_1p() / (u16::MAX as f64).ln_1p());
         state_input.extend(mean_pool);
         state_input.extend(max_pool);
+        state_input.extend(attention_pools.iter().flatten().copied());
         let state_hidden = dense_tanh(
             &state_input,
             &self.state_weights,
@@ -1000,6 +1196,8 @@ impl CompleteSetMultiTaskEncoder {
             node_inputs,
             node_hidden,
             max_indices,
+            attention_weights,
+            attention_pools,
             state_input,
             state_hidden,
         }
@@ -1052,6 +1250,7 @@ impl CompleteSetMultiTaskEncoder {
         let forward = self.conditioned_forward(sample);
         let output_before = self.output_weights.clone();
         let state_before = self.state_weights.clone();
+        let attention_before = self.attention_queries.clone();
         let head_input_width = self.config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
         let present_count = sample
             .target_present
@@ -1094,6 +1293,7 @@ impl CompleteSetMultiTaskEncoder {
         let mut gradients = EncoderGradients {
             node_weights: vec![0.0; self.node_weights.len()],
             node_bias: vec![0.0; self.node_bias.len()],
+            attention_queries: vec![0.0; self.attention_queries.len()],
             state_weights: vec![0.0; self.state_weights.len()],
             state_bias: vec![0.0; self.state_bias.len()],
         };
@@ -1101,12 +1301,14 @@ impl CompleteSetMultiTaskEncoder {
             &forward.pre,
             &d_pre_hidden,
             &state_before,
+            &attention_before,
             &mut gradients,
         );
         self.accumulate_encoder_gradients(
             &forward.post,
             &d_post_hidden,
             &state_before,
+            &attention_before,
             &mut gradients,
         );
         for (weight, gradient) in self.state_weights.iter_mut().zip(gradients.state_weights) {
@@ -1123,11 +1325,20 @@ impl CompleteSetMultiTaskEncoder {
         for (bias, gradient) in self.node_bias.iter_mut().zip(gradients.node_bias) {
             *bias -= self.config.learning_rate * clip(gradient, self.config.gradient_clip);
         }
+        for (weight, gradient) in self
+            .attention_queries
+            .iter_mut()
+            .zip(gradients.attention_queries)
+        {
+            let gradient = gradient + self.config.l2_penalty * *weight;
+            *weight -= self.config.learning_rate * clip(gradient, self.config.gradient_clip);
+        }
         self.optimizer_steps += 1;
         if self
             .node_weights
             .iter()
             .chain(&self.node_bias)
+            .chain(&self.attention_queries)
             .chain(&self.state_weights)
             .chain(&self.state_bias)
             .chain(&self.output_weights)
@@ -1146,6 +1357,7 @@ impl CompleteSetMultiTaskEncoder {
         forward: &StateForward,
         d_hidden: &[f64],
         state_before: &[f64],
+        attention_before: &[f64],
         gradients: &mut EncoderGradients,
     ) {
         let d_state_pre = d_hidden
@@ -1164,13 +1376,36 @@ impl CompleteSetMultiTaskEncoder {
         }
         let pool_offset = self.layout.base_input_width + 2;
         let d_mean = &d_state_input[pool_offset..pool_offset + self.config.node_hidden_width];
-        let d_max = &d_state_input[pool_offset + self.config.node_hidden_width..];
+        let d_max = &d_state_input[pool_offset + self.config.node_hidden_width
+            ..pool_offset + self.config.node_hidden_width * 2];
+        let attention_offset = pool_offset + self.config.node_hidden_width * 2;
         let node_count = forward.node_hidden.len();
         for node_index in 0..node_count {
             for hidden in 0..self.config.node_hidden_width {
                 let mut gradient = d_mean[hidden] / node_count as f64;
                 if forward.max_indices[hidden] == Some(node_index) {
                     gradient += d_max[hidden];
+                }
+                for head in 0..self.pooling.attention_heads() {
+                    let d_pool = &d_state_input[attention_offset
+                        + head * self.config.node_hidden_width
+                        ..attention_offset + (head + 1) * self.config.node_hidden_width];
+                    let weight = forward.attention_weights[head][node_index];
+                    let score_gradient = weight
+                        * d_pool
+                            .iter()
+                            .enumerate()
+                            .map(|(feature, d_value)| {
+                                d_value
+                                    * (forward.node_hidden[node_index][feature]
+                                        - forward.attention_pools[head][feature])
+                            })
+                            .sum::<f64>();
+                    gradient += weight * d_pool[hidden]
+                        + score_gradient
+                            * attention_before[head * self.config.node_hidden_width + hidden];
+                    gradients.attention_queries[head * self.config.node_hidden_width + hidden] +=
+                        score_gradient * forward.node_hidden[node_index][hidden];
                 }
                 let delta = gradient * (1.0 - forward.node_hidden[node_index][hidden].powi(2));
                 for input in 0..self.layout.node_input_width {
@@ -1359,7 +1594,7 @@ fn native_actor_feature_schema(
     spec: &NativeEncoderFeatureSpec,
 ) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v4\0",
+        b"dusklight.native-direct-actor-features/v5\0",
         &(
             spec,
             selected_feature_names(
@@ -1430,6 +1665,29 @@ fn native_base_feature_names() -> Vec<String> {
             "event_transition_pending_point",
             "event_transition_pending_wipe",
             "event_transition_pending_wipe_speed",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    names.extend(
+        [
+            "clock_framework_frames",
+            "clock_gameplay_frames",
+            "clock_global_pause",
+            "clock_scene_paused",
+            "clock_scene_pause_timer",
+            "clock_scene_next_pause_timer",
+            "clock_overlap_request_active",
+            "clock_overlap_fadeout_peek",
+            "clock_demo_present",
+            "clock_demo_mode",
+            "clock_demo_frame",
+            "clock_demo_frame_no_message",
+            "clock_demo_flags",
+            "clock_timer_present",
+            "clock_timer_mode",
+            "clock_timer_now_ms",
+            "clock_timer_limit_ms",
         ]
         .into_iter()
         .map(str::to_owned),
@@ -1740,6 +1998,7 @@ fn native_base_feature_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::CoreActionPhase, 41);
     extend_family(&mut families, Family::CoreEventContext, 8);
     extend_family(&mut families, Family::CoreEventTransition, 14);
+    extend_family(&mut families, Family::CoreClockDomains, 17);
     extend_family(&mut families, Family::CorePreviousInput, 24);
     extend_family(&mut families, Family::CoreCameraCollisionWorld, 22);
     extend_family(&mut families, Family::CoreRng, 12);
@@ -2703,6 +2962,74 @@ fn broad_base(observation: &NativeLearningObservation) -> (Vec<f32>, Vec<bool>) 
         pending_stage.map_or(0.0, |value| f32::from(value.wipe_speed)),
         pending_stage.is_some(),
     );
+    let clocks = observation.clock_domains.as_ref();
+    let clocks_present = clocks.is_some();
+    push(
+        clocks.map_or(0.0, |value| value.framework_frames as f32),
+        clocks_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| value.gameplay_frames as f32),
+        clocks_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| f32::from(value.global_pause)),
+        clocks_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| f32::from(value.scene_paused)),
+        clocks_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| value.scene_pause_timer as f32),
+        clocks_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| value.scene_next_pause_timer as f32),
+        clocks_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| f32::from(value.overlap_request_active)),
+        clocks_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| f32::from(value.overlap_fadeout_peek)),
+        clocks_present,
+    );
+    let demo_present =
+        clocks.is_some_and(|value| value.demo_status == NativeChannelStatus::Present);
+    push(f32::from(demo_present), clocks_present);
+    push(
+        clocks.map_or(0.0, |value| value.demo_mode as f32),
+        demo_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| value.demo_frame as f32),
+        demo_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| value.demo_frame_no_message as f32),
+        demo_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| value.demo_flags as f32),
+        demo_present,
+    );
+    let timer_present =
+        clocks.is_some_and(|value| value.timer_status == NativeChannelStatus::Present);
+    push(f32::from(timer_present), clocks_present);
+    push(
+        clocks.map_or(0.0, |value| value.timer_mode as f32),
+        timer_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| value.timer_now_ms as f32),
+        timer_present,
+    );
+    push(
+        clocks.map_or(0.0, |value| value.timer_limit_ms as f32),
+        timer_present,
+    );
     for value in [
         observation.previous_input.stick_x,
         observation.previous_input.stick_y,
@@ -3120,7 +3447,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v5\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v7\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -3239,8 +3566,41 @@ mod tests {
             &native_base_feature_families(),
             &reduced,
         );
-        assert_eq!(reduced_values.len(), 194);
-        assert_eq!(reduced_present.len(), 194);
+        assert_eq!(reduced_values.len(), 211);
+        assert_eq!(reduced_present.len(), 211);
+    }
+
+    #[test]
+    fn direct_native_adapter_exposes_generic_clock_domains_with_masks() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v23.dseps"
+        ))
+        .unwrap();
+        let observation = &shard.episodes[0].steps[0].pre_input;
+        let (base, present) = broad_base(observation);
+        assert_eq!(
+            &base[76..93],
+            &[
+                1000.0, 900.0, 0.0, 1.0, 1.0, 2.0, 1.0, 0.0, 1.0, 1.0, 40.0, 35.0, 3.0, 1.0, 4.0,
+                1234.0, 5000.0,
+            ]
+        );
+        assert!(present[76..93].iter().all(|value| *value));
+
+        let mut base = base;
+        let mut present = present;
+        append_core_temporal_features(&mut base, &mut present, observation, None);
+        let reduced =
+            NativeEncoderFeatureSpec::excluding([NativeEncoderChannelFamily::CoreClockDomains])
+                .unwrap();
+        retain_feature_families(
+            &mut base,
+            &mut present,
+            &native_base_feature_families(),
+            &reduced,
+        );
+        assert_eq!(base.len(), 208);
+        assert_eq!(present.len(), 208);
     }
 
     #[test]
@@ -3279,20 +3639,20 @@ mod tests {
                 .all(|node| !node.binary[lock_membership] && !node.binary_present[lock_membership])
         );
         let (base, present) = broad_base(observation);
-        assert_eq!(base.len(), 183);
-        assert_eq!(present.len(), 183);
-        assert!(base[62..76].iter().all(|value| *value == 0.0));
-        assert!(present[62..76].iter().all(|value| !*value));
-        assert!(base[143..].iter().all(|value| *value == 0.0));
-        assert!(present[143..].iter().all(|value| !*value));
+        assert_eq!(base.len(), 200);
+        assert_eq!(present.len(), 200);
+        assert!(base[62..93].iter().all(|value| *value == 0.0));
+        assert!(present[62..93].iter().all(|value| !*value));
+        assert!(base[160..].iter().all(|value| *value == 0.0));
+        assert!(present[160..].iter().all(|value| !*value));
         let mut temporal_base = base.clone();
         let mut temporal_present = present.clone();
         append_core_temporal_features(&mut temporal_base, &mut temporal_present, observation, None);
         let all = NativeEncoderFeatureSpec::all();
-        assert_eq!(temporal_base.len(), 208);
-        assert_eq!(temporal_present.len(), 208);
-        assert_eq!(native_base_feature_names().len(), 208);
-        assert_eq!(native_base_feature_families().len(), 208);
+        assert_eq!(temporal_base.len(), 225);
+        assert_eq!(temporal_present.len(), 225);
+        assert_eq!(native_base_feature_names().len(), 225);
+        assert_eq!(native_base_feature_families().len(), 225);
         let previous_available = native_base_feature_names()
             .iter()
             .position(|name| name == "temporal_previous_state_available")
@@ -3433,6 +3793,15 @@ mod tests {
 
     #[test]
     fn feature_family_names_round_trip_and_actor_columns_require_population() {
+        assert_eq!(
+            MultiTaskSetPooling::parse("mean-max"),
+            Some(MultiTaskSetPooling::MeanMax)
+        );
+        assert_eq!(
+            MultiTaskSetPooling::parse("mean-max-learned-attention"),
+            Some(MultiTaskSetPooling::MeanMaxLearnedAttention)
+        );
+        assert_eq!(MultiTaskSetPooling::parse("nearest-actor"), None);
         for family in NativeEncoderChannelFamily::ALL {
             assert_eq!(
                 NativeEncoderChannelFamily::parse(family.name()),
@@ -3505,16 +3874,16 @@ mod tests {
         assert_eq!(binary("attention_action_candidate"), (true, true));
         assert_eq!(binary("attention_check_candidate"), (false, true));
         let (base, base_present) = broad_base(observation);
-        assert_eq!(base.len(), 183);
-        assert!(base_present[62..76].iter().all(|value| !*value));
-        assert!(base_present[143..].iter().all(|value| *value));
-        assert_eq!(base[143 + 2], 1.0);
-        assert_eq!(base[143 + 4], 1.0);
-        assert_eq!(base[175], 2.0);
-        assert_eq!(base[176], 3.0);
-        assert_eq!(base[177], 1.0);
-        assert_eq!(base[179], 1.0);
-        assert_eq!(base[181], 0.0);
+        assert_eq!(base.len(), 200);
+        assert!(base_present[62..93].iter().all(|value| !*value));
+        assert!(base_present[160..].iter().all(|value| *value));
+        assert_eq!(base[160 + 2], 1.0);
+        assert_eq!(base[160 + 4], 1.0);
+        assert_eq!(base[192], 2.0);
+        assert_eq!(base[193], 3.0);
+        assert_eq!(base[194], 1.0);
+        assert_eq!(base[196], 1.0);
+        assert_eq!(base[198], 0.0);
     }
 
     #[test]
@@ -3633,6 +4002,54 @@ mod tests {
         assert!(evaluation.relative_improvement > 0.25);
         assert!(!report.promotion_authority);
         assert_ne!(report.report_sha256, Digest::ZERO);
+    }
+
+    #[test]
+    fn learned_attention_pooling_is_seeded_trainable_and_permutation_invariant() {
+        let training = corpus(1, 48);
+        let held_out = corpus(100, 16);
+        let config = TrainableSetConfig {
+            epochs: 4,
+            node_hidden_width: 8,
+            head_hidden_width: 8,
+            ..TrainableSetConfig::default()
+        };
+        let fit = || {
+            CompleteSetMultiTaskEncoder::fit_with_pooling(
+                Digest([7; 32]),
+                Digest([8; 32]),
+                Digest([9; 32]),
+                vec!["forward_sum".into(), "inverse_difference".into()],
+                &training,
+                &held_out,
+                config,
+                MultiTaskSetPooling::MeanMaxLearnedAttention,
+            )
+            .unwrap()
+        };
+        let (report, mut model) = fit();
+        let (_, repeated) = fit();
+        assert_eq!(report.pooling, MultiTaskSetPooling::MeanMaxLearnedAttention);
+        assert_eq!(report.held_out_attention.len(), LEARNED_ATTENTION_HEADS);
+        assert_eq!(
+            model.model_sha256().unwrap(),
+            repeated.model_sha256().unwrap()
+        );
+        for head in &report.held_out_attention {
+            assert!(head.query_l2_norm.is_finite() && head.query_l2_norm > 0.0);
+            assert!((0.0..=1.0).contains(&head.mean_normalized_entropy));
+            assert!((0.0..=1.0).contains(&head.mean_maximum_weight));
+        }
+
+        let baseline = model.predict(&held_out[0]).unwrap();
+        let mut permuted = held_out[0].clone();
+        permuted.input.nodes.reverse();
+        permuted.post_input.nodes.reverse();
+        assert_eq!(baseline, model.predict(&permuted).unwrap());
+
+        let queries_before = model.attention_queries.clone();
+        model.train_one(&training[0]).unwrap();
+        assert_ne!(queries_before, model.attention_queries);
     }
 
     #[test]
