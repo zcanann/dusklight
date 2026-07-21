@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-objective-suite/v2",
-  "content_sha256": "37d1339714aaab0f9f8f472d260b059db5821f797f757f6ef15cdb372792edad",
+  "content_sha256": "816ef134a156a253dd51f36882b851b26b6141cebe43b894f9416b73aa14d251",
   "id": "core-conformance/v1",
   "description": "Cheap objective cases proving the public Dusklight harness boundary.",
   "cases": [
@@ -17,12 +17,12 @@
       },
       "scenario": {
         "path": "routes/samples/maps/fsp103_next_map_seed.fixture.json",
-        "sha256": "489ac251791de045e5a1c7687bb1077a14728cb41195a5f3981e07c053e3e44b"
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
       },
       "objective": {
         "source": {
           "path": "tests/fixtures/automation/pick_up_stone.milestones",
-          "sha256": "18ef328ea95bebde5f22f7157ac9d640852f754a573641586246ff15c184bd86"
+          "sha256": "cbf8414987bae7f3bcc64cd7ea92c39f92f370802b56a448a1e76ac2e0a38abe"
         },
         "program_sha256": "50695f5035c14760d708f7a7200287987d74e3970fdc0db25988b2593d77a068",
         "goal": "pick_up_stone"
@@ -30,7 +30,7 @@
       "observation_view": {
         "source": {
           "path": "tests/fixtures/automation/pick_up_stone.observation.json",
-          "sha256": "ce21bc9dec3afe031662008adbfd84cac6273e804dc2132c50c8c93fdd9df809"
+          "sha256": "335f4cee588ca545b3356c3b04f9c13dc9ef5d5ca86b1dc0374ea74aea5d9363"
         },
         "schema_sha256": "477ec23dd3ebead6063ad6a0fa0fec98048db7a47766a8901f004f70f2fca5ea"
       },
@@ -96,12 +96,12 @@
       },
       "scenario": {
         "path": "routes/samples/maps/fsp103_next_map_seed.fixture.json",
-        "sha256": "489ac251791de045e5a1c7687bb1077a14728cb41195a5f3981e07c053e3e44b"
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
       },
       "objective": {
         "source": {
           "path": "tests/fixtures/automation/pick_up_stone.milestones",
-          "sha256": "18ef328ea95bebde5f22f7157ac9d640852f754a573641586246ff15c184bd86"
+          "sha256": "cbf8414987bae7f3bcc64cd7ea92c39f92f370802b56a448a1e76ac2e0a38abe"
         },
         "program_sha256": "50695f5035c14760d708f7a7200287987d74e3970fdc0db25988b2593d77a068",
         "goal": "pick_up_stone"
@@ -109,7 +109,7 @@
       "observation_view": {
         "source": {
           "path": "tests/fixtures/automation/pick_up_stone.observation.json",
-          "sha256": "ce21bc9dec3afe031662008adbfd84cac6273e804dc2132c50c8c93fdd9df809"
+          "sha256": "335f4cee588ca545b3356c3b04f9c13dc9ef5d5ca86b1dc0374ea74aea5d9363"
         },
         "schema_sha256": "477ec23dd3ebead6063ad6a0fa0fec98048db7a47766a8901f004f70f2fca5ea"
       },
@@ -174,12 +174,12 @@
       },
       "scenario": {
         "path": "tests/fixtures/automation/basic_human.fixture.json",
-        "sha256": "76f870bb9db0df648ee709365363722190bd419295d9f37077728c75ccce930b"
+        "sha256": "f2d565f61140d914a53d6040f2cefb94559fcbfee5e5edbc5919285908852f65"
       },
       "objective": {
         "source": {
           "path": "routes/samples/maps/reach_point_ordon.milestones",
-          "sha256": "f7a8dad1328353708e8dd82d7ed3618c47755dabf221b04e595c57181b485e9a"
+          "sha256": "df586bcff4be224664c71703e86af05d9abe4575f0899359cb6a38f5a5f1bac5"
         },
         "program_sha256": "a8a3fe13c4958ae73d6a635120176ea1702e964bc94610ca677fae77c7bf97b0",
         "goal": "reach_point_ordon"
@@ -187,7 +187,7 @@
       "observation_view": {
         "source": {
           "path": "routes/samples/maps/reach_point_ordon.observation.json",
-          "sha256": "f41d4a37cd382787bf873b1724b25846684c6a45a65ce8e384bb74bf7422c766"
+          "sha256": "3d4aec2591e00e4aba72423b75d325da73fafbeb391ebc9ee43a862b7aacb2b1"
         },
         "schema_sha256": "615f1d5bbc3bb617193b0a22fb5ef1025d09f504c904e35dac3b50a1eb75dc4f"
       },
@@ -219,7 +219,7 @@
         "kind": "tape_source",
         "artifact": {
           "path": "routes/samples/maps/reach_point_ordon.tas",
-        "sha256": "1227a1b212be141d0bf2a4ce5a1e91eb8ce4976067317d3ba8be61e8502e21db"
+        "sha256": "f41e377879a7b3f72bad62c1fcd8ad1299f9c2176402db252482b7506404d029"
         }
       },
       "logical_tick_budget": 799,
@@ -241,12 +241,12 @@
       },
       "scenario": {
         "path": "tests/fixtures/automation/basic_human.fixture.json",
-        "sha256": "76f870bb9db0df648ee709365363722190bd419295d9f37077728c75ccce930b"
+        "sha256": "f2d565f61140d914a53d6040f2cefb94559fcbfee5e5edbc5919285908852f65"
       },
       "objective": {
         "source": {
           "path": "routes/samples/maps/reach_point_ordon.milestones",
-          "sha256": "f7a8dad1328353708e8dd82d7ed3618c47755dabf221b04e595c57181b485e9a"
+          "sha256": "df586bcff4be224664c71703e86af05d9abe4575f0899359cb6a38f5a5f1bac5"
         },
         "program_sha256": "a8a3fe13c4958ae73d6a635120176ea1702e964bc94610ca677fae77c7bf97b0",
         "goal": "reach_point_ordon"
@@ -254,7 +254,7 @@
       "observation_view": {
         "source": {
           "path": "routes/samples/maps/reach_point_ordon.observation.json",
-          "sha256": "f41d4a37cd382787bf873b1724b25846684c6a45a65ce8e384bb74bf7422c766"
+          "sha256": "3d4aec2591e00e4aba72423b75d325da73fafbeb391ebc9ee43a862b7aacb2b1"
         },
         "schema_sha256": "615f1d5bbc3bb617193b0a22fb5ef1025d09f504c904e35dac3b50a1eb75dc4f"
       },
@@ -286,7 +286,7 @@
         "kind": "tape_source",
         "artifact": {
           "path": "routes/samples/maps/reach_point_ordon_neutral.tas",
-          "sha256": "1fc38de978fff9da44cc373a72ba00500e2a2c283916f4ac54d5c1a4f28e4b2b"
+          "sha256": "082b9a3b70717677dd9b5c44be024acfcb32c854c52f62ae4d3c024ce25fa22f"
         }
       },
       "logical_tick_budget": 799,
@@ -307,12 +307,12 @@
       },
       "scenario": {
         "path": "routes/samples/maps/fsp103_next_map_seed.fixture.json",
-        "sha256": "489ac251791de045e5a1c7687bb1077a14728cb41195a5f3981e07c053e3e44b"
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
       },
       "objective": {
         "source": {
           "path": "routes/canary/stage/stage_ready.milestones",
-          "sha256": "8458a98e7f536f752ff0dc7964289098a32a06ef0e947574688ac2c0f34317aa"
+          "sha256": "621023eaa9c6feaa70f85f2bf8decaba5a97c94b5d1b1bb2632c202710b2d35d"
         },
         "program_sha256": "64ce2d4774823c3ee8d562ff54cf7d251bd321c8a8dd453ece80f2106287cfed",
         "goal": "stage_ready"
@@ -320,7 +320,7 @@
       "observation_view": {
         "source": {
           "path": "routes/canary/stage/stage_ready.observation.json",
-          "sha256": "dd79552e3384ae8d64ad2aae4b97290a886094c6e74e01991bf20064ab349ce5"
+          "sha256": "cdee8bc6285d06273f2b97552354eb7452e2688d7184402376caa7564fbd999a"
         },
         "schema_sha256": "27e58a81c51a1d7b0ab8bb1557b12e1db923f3aaa5df146eb6d5a51f388c069f"
       },
@@ -358,7 +358,7 @@
         "kind": "tape_source",
         "artifact": {
           "path": "routes/canary/stage/stage_ready_neutral.tas",
-          "sha256": "659656a99d993db4ea7cc905bf042ce5c5d40521bfdf3fe54af50bea3bdcaa63"
+          "sha256": "46dc1e598b1809cf68503da5f6e87f905bc38b7c255e8a54c78eaf9c7608e659"
         }
       },
       "logical_tick_budget": 60,
@@ -380,12 +380,12 @@
       },
       "scenario": {
         "path": "routes/samples/maps/fsp103_next_map_seed.fixture.json",
-        "sha256": "489ac251791de045e5a1c7687bb1077a14728cb41195a5f3981e07c053e3e44b"
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
       },
       "objective": {
         "source": {
           "path": "routes/canary/stage/stage_ready.milestones",
-          "sha256": "8458a98e7f536f752ff0dc7964289098a32a06ef0e947574688ac2c0f34317aa"
+          "sha256": "621023eaa9c6feaa70f85f2bf8decaba5a97c94b5d1b1bb2632c202710b2d35d"
         },
         "program_sha256": "64ce2d4774823c3ee8d562ff54cf7d251bd321c8a8dd453ece80f2106287cfed",
         "goal": "stage_ready"
@@ -393,7 +393,7 @@
       "observation_view": {
         "source": {
           "path": "routes/canary/stage/stage_ready.observation.json",
-          "sha256": "dd79552e3384ae8d64ad2aae4b97290a886094c6e74e01991bf20064ab349ce5"
+          "sha256": "cdee8bc6285d06273f2b97552354eb7452e2688d7184402376caa7564fbd999a"
         },
         "schema_sha256": "27e58a81c51a1d7b0ab8bb1557b12e1db923f3aaa5df146eb6d5a51f388c069f"
       },
@@ -431,7 +431,7 @@
         "kind": "tape_source",
         "artifact": {
           "path": "routes/canary/stage/stage_ready_wrong_stage_neutral.tas",
-          "sha256": "2b537ac9fa0dafa5703e6869ce498b22cdae09057c409f989ffc2b0c96f65a1b"
+          "sha256": "c7f183abae99d47501e7b238af4bd327f2217699067037821b7b877bdb623aa8"
         }
       },
       "logical_tick_budget": 60,
@@ -452,12 +452,12 @@
       },
       "scenario": {
         "path": "routes/samples/maps/fsp103_next_map_seed.fixture.json",
-        "sha256": "489ac251791de045e5a1c7687bb1077a14728cb41195a5f3981e07c053e3e44b"
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
       },
       "objective": {
         "source": {
           "path": "tests/fixtures/automation/talk_to_aru.milestones",
-          "sha256": "f1db4bc9e7ab71425077eea6d2e12a61a5f0eb453caaa4d8d6b82845dae46de8"
+          "sha256": "59368a7849ef2fee775d7656a97453dbe3e7a2823a3a8e0f00beb026ae30a63a"
         },
         "program_sha256": "209a78676d57e0f5c42939c27db1a5c19b8b7f2f60ce377eb2877c21a7e73c71",
         "goal": "talk_to_aru"
@@ -465,7 +465,7 @@
       "observation_view": {
         "source": {
           "path": "tests/fixtures/automation/talk_to_aru.observation.json",
-          "sha256": "fd0e71333a6336c32c824dba487f39621121540e36569056b170dab2478ed5bc"
+          "sha256": "303fc118bbcb3f19eb0d22fe13906e776877cd796fc289bc6fd2c766ae915c06"
         },
         "schema_sha256": "206ac1f00b1cbf5b40a2e0713be454155005adb84d7cbf45f674178720968b22"
       },
@@ -537,12 +537,12 @@
       },
       "scenario": {
         "path": "routes/samples/maps/fsp103_next_map_seed.fixture.json",
-        "sha256": "489ac251791de045e5a1c7687bb1077a14728cb41195a5f3981e07c053e3e44b"
+        "sha256": "659b261c34ceeb59f8cfacbc2cd7de211c8016856c3b09d6a870bbfa8c4cf540"
       },
       "objective": {
         "source": {
           "path": "tests/fixtures/automation/talk_to_aru.milestones",
-          "sha256": "f1db4bc9e7ab71425077eea6d2e12a61a5f0eb453caaa4d8d6b82845dae46de8"
+          "sha256": "59368a7849ef2fee775d7656a97453dbe3e7a2823a3a8e0f00beb026ae30a63a"
         },
         "program_sha256": "209a78676d57e0f5c42939c27db1a5c19b8b7f2f60ce377eb2877c21a7e73c71",
         "goal": "talk_to_aru"
@@ -550,7 +550,7 @@
       "observation_view": {
         "source": {
           "path": "tests/fixtures/automation/talk_to_aru.observation.json",
-          "sha256": "fd0e71333a6336c32c824dba487f39621121540e36569056b170dab2478ed5bc"
+          "sha256": "303fc118bbcb3f19eb0d22fe13906e776877cd796fc289bc6fd2c766ae915c06"
         },
         "schema_sha256": "206ac1f00b1cbf5b40a2e0713be454155005adb84d7cbf45f674178720968b22"
       },
