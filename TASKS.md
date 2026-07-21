@@ -218,6 +218,11 @@ relationship, coordinate corridor, or success sequence.
   Bounded parallel execution persists each completion independently; an
   eight-client smoke batch classified the first 16 entries as ready with
   64-145 of 64-145 actors retained per entry and no truncation.
+  The survey's observation identity is now v4 and binds the current v21 native
+  learner schema through the shared Rust evidence constant. This closes a
+  fail-closed collector regression where the v21 native writer was rejected by
+  stale v20 survey and actor-coverage checks; older evidence remains distinct
+  rather than being silently relabeled.
   - [x] Compact every validated ready trace and terminal actor snapshot into an
     authenticated zstd storage envelope while preserving the ledger's digest of
     the original bytes. Raw and compressed readers reproduce and verify that
