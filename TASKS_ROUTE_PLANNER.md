@@ -1693,6 +1693,11 @@ evidenced overlays over the generated base rather than silent edits to it.
         serialized-only no-card copy, and pending new/existing play-scene
         requests are now executable. Existing-file load-time normalization stays
         an explicit unknown, and retail-DOL evidence remains open.
+  - [x] Source-audit the distinct GZ2E01 void/hazard collision-exit and held
+        restart-room branches, lethal diversion, four death-continue destination
+        families, return-to-title reset handoff, and pre-restart live mutations.
+        Keep exact DOL sealing and witnessed traces open. See
+        `docs/route-planner/gz2e01-void-death-source-audit.md`.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
       bits, normal/abnormal cleanup, and item/event handoffs.
@@ -2019,6 +2024,11 @@ Deliverable: replayable state evidence that can validate transition rules.
           loads attached to the still-active `PROC_NAME_SCENE`. The retained last
           world remains non-traversable until independent scheduler/load progress
           is observed.
+    - [x] Source-audit void/hazard and death selection without collapsing
+          collision exits, held restart-room state, captured actor exits,
+          boss/special-stage branches, and title reset into one reload edge.
+          Executable transition programs and exact GZ2E01 binary sealing remain
+          open.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
@@ -2393,6 +2403,9 @@ Deliverable: route confidence is mechanically explainable.
 - [ ] Model void/title-state handling and save projection to a chosen slot.
   - [x] Model the chosen-slot projection/load mechanics independently of the
         still-unmodeled void/title-state preconditions and normalization rules.
+  - [x] Enumerate the source-backed void, lethal, death-continue, and title-reset
+        branches and the backing each consumes. Exact runtime programs remain
+        open until restart-parameter decoding and binary/trace evidence land.
 - [ ] Model BiTE as a selected component splice into an existing file.
   - [x] Implement the generic selected runtime-component splice into a freshly
         loaded existing file, with destination ownership and mixed provenance.
