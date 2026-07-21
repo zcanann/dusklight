@@ -2,7 +2,8 @@
 
 Status: the planner has a strict, versioned cutscene-program schema and compiler.
 For the post-Zelda tower sequence, planner-owned extractors now establish the
-exact outer event/resource/normal-exit/skip-exit topology. The JStudio phase
+exact outer event/resource/normal-exit/skip-exit topology and a generic wrapper
+join seals those records as `cutscene-wrapper-topology/v1`. The JStudio phase
 internals, archive-failure behavior, and return-place writer boundary still
 require source/runtime evidence; the model deliberately does not claim them.
 
@@ -57,3 +58,6 @@ The exact GZ2E01 wrapper is audited in
 skip SCLS exit 2 back to Zelda's tower. Remaining Zelda-specific evidence work
 is to decode the JStudio phases, identify the actual failure branch and last
 completed operation, and trace every return/restart writer and affected bit.
+The wrapper topology is deliberately not compiled to executable transitions:
+its two SCLS destinations are authored completion choices, while the behavior
+of a failed resource load is still unresolved.

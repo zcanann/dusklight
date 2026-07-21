@@ -1889,6 +1889,11 @@ Deliverable: replayable state evidence that can validate transition rules.
         normal Castle Town versus skip Zelda-tower SCLS destinations. JStudio
         phase decoding and exceptional failure semantics remain open. See
         `docs/route-planner/gz2e01-zelda-cutscene-source-audit.md`.
+  - [x] Join a named event's REVT/LBNK/SCLS records to its linked
+        `event_list.dat` staff/cut/data paths in a canonical planner-owned
+        topology artifact. Keep JStudio phases, resource-failure flow, and
+        return-place writers typed as unresolved rather than compiling guessed
+        transitions.
 - [ ] Represent partial cutscene execution conservatively: preserve confirmed
       prefix writes, retain values whose writers are confirmed skipped, and mark
       effects beyond an unknown failure/interruption boundary unknown.
@@ -2576,6 +2581,9 @@ sequence.
         `Demo07_02`; `demo07_02` runs `demo07_02.stb` plus map-tool ID 4; normal
         completion selects SCLS 1 to Castle Town and event skip selects SCLS 2
         back to Zelda's tower. The STB internals and writer ordering remain open.
+  - [x] Canonically join and validate the topology, including exact source
+        digests and explicit unresolved coverage for the STB program, failed
+        resource flow, and return-place writers.
 - [ ] Capture normal completion and actor-corruption/archive-load-failure paths;
       identify the last confirmed operation and every flag or writer that becomes
       skipped versus unknown.

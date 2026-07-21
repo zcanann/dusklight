@@ -85,6 +85,10 @@ The planner CLI currently owns twenty-six operations:
 - `extract-event-list` emits the bounded event, staff, cut, linked parameter,
   and typed value tables from one exact `event_list.dat`, retaining raw records
   and rejecting invalid references or overlapping tables.
+- `extract-cutscene-wrapper` joins one named REVT/LBNK/SCLS event to its exact
+  `event_list.dat` staff/cut/parameter graph. Its coverage record keeps JStudio
+  phases, exceptional load flow, and return-place writers unresolved until a
+  separate decoder or trace establishes them.
 - `inspect-state` exposes every live and serialized component store alongside
   exact-context friendly aliases and derived fact evaluations. It also retains
   ordered operation/boundary history, reports the last known writer of each live

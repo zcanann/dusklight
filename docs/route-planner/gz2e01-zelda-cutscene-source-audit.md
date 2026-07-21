@@ -32,6 +32,13 @@ The `extracted-event-list/v1` decoder proves that event `demo07_02` contains:
 - DIRECTOR `MAPTOOL` with `ID = 4`; and
 - the parallel ALL/DUMMY staff completion.
 
+The generic `cutscene-wrapper-topology/v1` join resolves all of those references
+and the two SCLS records into one canonical artifact with SHA-256
+`b4c74b3201720a9de93a0dd7fc4a71978579a81be339c147c474bc56514e20ec`.
+Its coverage fields explicitly classify the outer wrapper as extracted and the
+JStudio program, resource-failure control flow, and return-place writers as
+unresolved.
+
 `files/res/Object/Demo07_02.arc` has SHA-256
 `7a5de4cf1bfb197430a7631b913311e245ed249b16d97616575cb58e001ac11a`.
 Its selected `demo07_02.stb` resource has SHA-256
@@ -84,6 +91,12 @@ route-planner extract-stage-data \
 route-planner extract-event-list \
   --archive files/res/Stage/R_SP301/R00_00.arc \
   --output r-sp301-events.json
+
+route-planner extract-cutscene-wrapper \
+  --archive files/res/Stage/R_SP301/R00_00.arc \
+  --event-name demo07_02 \
+  --layer 8 \
+  --output r-sp301-demo07_02-wrapper.json
 ```
 
 Both commands reject malformed offsets, overlapping tables, out-of-range graph

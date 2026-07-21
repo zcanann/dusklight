@@ -1,5 +1,8 @@
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::cutscene::CutsceneProgram;
+use dusklight_route_planner::cutscene_import::{
+    CutsceneWrapperSourceIdentity, CutsceneWrapperTopology,
+};
 use dusklight_route_planner::evaluation::EvidencePolicy;
 use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
 use dusklight_route_planner::fact_pack::{
@@ -70,6 +73,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("compose") => compose(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
         Some("extract-event-list") => extract_event_list(&args[1..]),
+        Some("extract-cutscene-wrapper") => extract_cutscene_wrapper(&args[1..]),
         Some("extract-message-flow") => extract_message_flow(&args[1..]),
         Some("extract-orig") => extract_orig(&args[1..]),
         Some("extract-resource") => extract_resource(&args[1..]),
@@ -702,6 +706,51 @@ fn extract_stage_data(args: &[String]) -> Result<(), Box<dyn Error>> {
             "map_events": stage.map_events.len(),
             "demo_archive_banks": stage.demo_archive_banks.len(),
             "actor_placements": stage.actor_placements.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn extract_cutscene_wrapper(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let archive_path = required_path(args, "--archive")?;
+    let stage_resource_name = option(args, "--stage-resource").unwrap_or_else(|| "room.dzr".into());
+    let event_list_resource_name =
+        option(args, "--event-list-resource").unwrap_or_else(|| "event_list.dat".into());
+    let event_name = option(args, "--event-name")
+        .ok_or_else(|| "missing required --event-name <name>".to_owned())?;
+    let layer = option(args, "--layer")
+        .ok_or_else(|| "missing required --layer <0..255>".to_owned())?
+        .parse::<u8>()?;
+    let output = required_path(args, "--output")?;
+    let archive = fs::read(&archive_path)?;
+    let stage_resource = extract_unique_rarc_resource(&archive, &stage_resource_name)?;
+    let event_list_resource = extract_unique_rarc_resource(&archive, &event_list_resource_name)?;
+    let stage = parse_stage_data(&stage_resource)?;
+    let event_list = parse_event_list(&event_list_resource)?;
+    let topology = CutsceneWrapperTopology::build(
+        CutsceneWrapperSourceIdentity {
+            stage_archive_sha256: Digest(Sha256::digest(&archive).into()),
+            stage_resource_sha256: Digest(Sha256::digest(&stage_resource).into()),
+            event_list_resource_sha256: Digest(Sha256::digest(&event_list_resource).into()),
+        },
+        &stage,
+        &event_list,
+        &event_name,
+        layer,
+    )?;
+    write_file(&output, &topology.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": topology.schema,
+            "output": output,
+            "sha256": topology.digest()?,
+            "event_name": topology.event_name,
+            "demo_archive_name": topology.demo_archive_name,
+            "package_stb_file": topology.package_stb_file,
+            "normal_exit": topology.normal_exit,
+            "skip_exit": topology.skip_exit,
+            "coverage": topology.coverage,
         }))?
     );
     Ok(())
@@ -1527,6 +1576,7 @@ fn print_usage() {
             "  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]",
             "  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json",
             "  route-planner extract-event-list --archive ARCHIVE.arc [--resource event_list.dat] --output EVENTS.json",
+            "  route-planner extract-cutscene-wrapper --archive ARCHIVE.arc [--stage-resource room.dzr] [--event-list-resource event_list.dat] --event-name NAME --layer LAYER --output WRAPPER.json",
             "  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json",
             "  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json",
             "  route-planner extract-resource --archive ARCHIVE.arc --resource FILE --output FILE",

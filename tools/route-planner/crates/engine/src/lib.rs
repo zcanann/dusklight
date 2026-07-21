@@ -8,6 +8,7 @@
 
 pub mod artifact;
 pub mod cutscene;
+pub mod cutscene_import;
 pub mod evaluation;
 pub mod execution;
 pub mod fact_pack;
