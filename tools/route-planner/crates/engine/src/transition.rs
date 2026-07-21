@@ -1,7 +1,7 @@
 //! Causal transitions, activation obligations, mechanics, and techniques.
 
 use crate::artifact::Digest;
-use crate::logic::{ContextScope, PredicateExpression, RuleEvidence, ValueReference};
+use crate::logic::{ContextScope, EvidenceKind, PredicateExpression, RuleEvidence, ValueReference};
 use crate::state::{
     BackingAttachment, ComponentBinding, ComponentBindingReference, ComponentKind,
     ComponentSelector, ExecutionContext, PhysicalSlotId, PlaneRelation, PlayerForm, PlayerMount,
@@ -1595,7 +1595,30 @@ fn validate_transition(transition: &CandidateTransition) -> Result<(), PlannerCo
         validate_label("transitions.unknown.description", &unknown.description)?;
         unknown.evidence.validate("transitions.unknown.evidence")?;
     }
-    transition.evidence.validate("transitions.evidence")
+    transition.evidence.validate("transitions.evidence")?;
+    let changes_location = transition.activation.effects.iter().any(|operation| {
+        matches!(
+            operation,
+            StateOperation::SetLocation { .. } | StateOperation::SetLocationFromFields { .. }
+        )
+    });
+    let extracted_destination = transition.transition_kind == TransitionKind::EncodedMapExit
+        && changes_location
+        && transition
+            .evidence
+            .records
+            .iter()
+            .any(|record| record.kind == EvidenceKind::Extracted);
+    if extracted_destination
+        && transition.activation.physical_obligation_ids.is_empty()
+        && transition.activation.unknown_requirements.is_empty()
+    {
+        return Err(PlannerContractError::new(
+            "transitions.activation.extracted_destination",
+            "must retain a physical obligation or an explicit unknown requirement",
+        ));
+    }
+    Ok(())
 }
 
 fn validate_obligation(obligation: &FeasibilityObligation) -> Result<(), PlannerContractError> {
@@ -2011,7 +2034,7 @@ fn require_known_ids(
 mod tests {
     use super::*;
     use crate::identity::{ContextSelector, ExactContext};
-    use crate::logic::{EvidenceKind, EvidenceRecord, TruthStatus};
+    use crate::logic::{EvidenceRecord, TruthStatus};
 
     fn scope() -> ContextScope {
         ContextScope {
@@ -2116,6 +2139,35 @@ mod tests {
             catalog.validate().unwrap_err().field(),
             "transitions.activation.physical_obligation_ids"
         );
+    }
+
+    #[test]
+    fn extracted_destination_without_an_activation_contract_fails_closed() {
+        let mut catalog = locked_door_catalog();
+        let transition = &mut catalog.transitions[0];
+        transition.transition_kind = TransitionKind::EncodedMapExit;
+        transition.activation.effects = vec![StateOperation::SetLocation {
+            location: crate::state::SceneLocation {
+                stage: "D_MN05B".into(),
+                room: 1,
+                layer: 0,
+                spawn: 2,
+            },
+        }];
+        transition.evidence.records[0].kind = EvidenceKind::Extracted;
+        transition.activation.physical_obligation_ids.clear();
+        assert_eq!(
+            catalog.validate().unwrap_err().field(),
+            "transitions.activation.extracted_destination"
+        );
+
+        catalog.transitions[0].activation.unknown_requirements = vec![UnknownRequirement {
+            id: "unknown.destination-activation".into(),
+            description: "The destination is decoded but its activation physics are unknown."
+                .into(),
+            evidence: evidence(TruthStatus::Established),
+        }];
+        catalog.validate().unwrap();
     }
 
     #[test]

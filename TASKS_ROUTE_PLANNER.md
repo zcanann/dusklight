@@ -2094,11 +2094,15 @@ Deliverable: replayable state evidence that can validate transition rules.
       explicitly unknown activation requirement non-executable, reports the
       unknown transition, validates bounded frontiers, and round-trips the
       canonical graph through both the engine and file-bound CLI.
-- [ ] Keep extracted destinations non-executable until their activation contracts
+- [x] Keep extracted destinations non-executable until their activation contracts
       are discharged.
   - [x] Classify hard-guard failure, unresolved requirements, and outstanding
         physical obligations separately; modeled feasibility cannot treat an
         outstanding obligation as executable.
+  - [x] Reject any extracted encoded-map transition that changes location but
+        carries neither a physical obligation nor an explicit unknown
+        requirement. Importer and catalog-validation regressions prove a decoded
+        SCLS destination alone cannot become a validated executable edge.
 - [x] Mark candidates whose activation physics remain unknown.
   - Authorization edges now retain outstanding and evaluated-unknown physical
     obligation IDs. The graph also emits sorted candidate-level markers that

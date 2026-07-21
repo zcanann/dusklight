@@ -117,7 +117,9 @@ The planner CLI currently owns forty operations:
   groups, indexed SCLS destinations, REVT event/exit coordinates, LBNK demo
   archive selections, and authored actor placements including layer, parameters,
   position, rotations, and raw bytes. Unknown chunk formats remain listed but
-  uninterpreted.
+  uninterpreted. A decoded destination is not an activation proof: catalog
+  validation rejects extracted encoded-map location changes unless they retain
+  a physical obligation or an explicit unknown requirement.
 - `extract-event-list` emits the bounded event, staff, cut, linked parameter,
   and typed value tables from one exact `event_list.dat`, retaining raw records
   and rejecting invalid references or overlapping tables.
