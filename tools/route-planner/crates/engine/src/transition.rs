@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v25";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v26";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -204,6 +204,15 @@ pub enum StateOperation {
         destination_persistent_file_id: String,
         runtime_component_ids: Vec<String>,
         stage_bank_stages: Vec<String>,
+    },
+    /// Active-runtime form of `save_runtime_to_slot`. The executor derives the
+    /// persistent image ID from the active runtime ID and a stable suffix, and
+    /// includes every available stage bank owned by that runtime, so an
+    /// authored save-menu rule works after any prior load/lifetime handoff.
+    SaveActiveRuntimeToSlot {
+        destination_slot: PhysicalSlotId,
+        destination_id_suffix: String,
+        runtime_component_ids: Vec<String>,
     },
     /// Ends the current runtime-file lifetime, restores the exact persistent
     /// projection from a physical slot, explicitly carries selected non-card
@@ -993,6 +1002,19 @@ impl StateOperation {
                     false,
                 )?;
                 validate_stage_list("operation.stage_bank_stages", stage_bank_stages)
+            }
+            Self::SaveActiveRuntimeToSlot {
+                destination_slot,
+                destination_id_suffix,
+                runtime_component_ids,
+            } => {
+                destination_slot.validate("operation.destination_slot")?;
+                validate_stable_id("operation.destination_id_suffix", destination_id_suffix)?;
+                validate_id_list(
+                    "operation.runtime_component_ids",
+                    runtime_component_ids,
+                    false,
+                )
             }
             Self::LoadRuntimeFromSlot {
                 source_runtime_file_id,

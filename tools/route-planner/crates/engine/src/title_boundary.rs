@@ -27,6 +27,7 @@ const RESTART_COMPONENT: &str = "restart";
 const OPENING_PROCESS_CONTROL_COMPONENT: &str = "opening-process-control";
 const TITLE_CONTROL_COMPONENT: &str = "title-control";
 const NAME_SCENE_CONTROL_COMPONENT: &str = "name-scene-control";
+const SAVE_MENU_CONTROL_COMPONENT: &str = "save-menu-control";
 const RUNTIME_FILE_HEADER_COMPONENT: &str = "runtime-file.header";
 const PERSISTENT_EVENT_COMPONENT: &str = "flags.persistent-event-registers";
 const OBSERVED_EVENT_COMPONENT: &str = "flags.event";
@@ -1176,6 +1177,202 @@ pub fn gz2e01_reset_to_opening_mechanics(
             evidence: name_confirmation_evidence,
         },
     ]);
+    let successful_save_evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![
+            EvidenceRecord {
+                id: "source.gz2e01.save-menu-success".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "78acd5de6255c5031eeeb0d041509b9080b7121e68a1546d14ba75a6454f0f4e",
+                )),
+                note: "dMenu_save_c dataWrite commits the current stage, projects the selected entry, checksums it, and submits the full buffer. Only SaveSync result 1 updates mDataNum/mNoFile and enters a success UI branch.".into(),
+            },
+            EvidenceRecord {
+                id: "source.gz2e01.memory-to-card".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "7e6f09aa36af30932e8ce64423284f885ed0b4e632b22f18d6f0a6b4d104b453",
+                )),
+                note: "memory_to_card copies dSv_save_c after temporary lantern normalization, then restores the live lantern/event values. The promoted neutral branch proves those temporary transforms are identity on projected fields.".into(),
+            },
+            exact_function_evidence(
+                "binary.gz2e01.put-save",
+                "eb3032a28f0a4d08684d74894785c1760a241020d907b12bee19e350eda1caf9",
+                "putSave__10dSv_info_cFi at VA 0x800350f0, size 0x5c, code SHA-256 f94364f83aed527671a218a8e0a5b2a9e541578fbd775176981f22df31fddd6e.",
+            ),
+            exact_function_evidence(
+                "binary.gz2e01.memory-to-card",
+                "5b65a8833c8fb246e5c0292e0f22ecf6b05f5e3a123f2f18ee33c343a9805f1e",
+                "memory_to_card__10dSv_info_cFPci at VA 0x80035798, size 0x26c, code SHA-256 7cf6fc958ed1e4cdcf4b3e168364cbd7a42a545a1812d139a4442e41ae5fd8e9.",
+            ),
+            exact_function_evidence(
+                "binary.gz2e01.save-menu-data-write",
+                "cf1308d2ecb1741549ce173a76f7e7c0ff8fe7343156632baae499dea1836ebb",
+                "dataWrite__12dMenu_save_cFv at VA 0x801f2840, size 0xa4, code SHA-256 b6a30e6925392a2c876f0f002e93afeb257da6878b989515c12fe83b58c6ac35.",
+            ),
+            exact_function_evidence(
+                "binary.gz2e01.save-menu-wait",
+                "8b8f2e635426fdd8dc3e4cf4c49953ef1518e6836dca669acbd5cd5706ad0394",
+                "memCardDataSaveWait__12dMenu_save_cFv at VA 0x801f28e4, size 0xa8, code SHA-256 ab833e5d0f988b09921e3788272ebaa325767f91f649af3209ff0bcff6b40778.",
+            ),
+            exact_function_evidence(
+                "binary.gz2e01.save-menu-wait-2",
+                "c0bdf0610b4b25b22ddf5dab9745bbf8dfdd8267d02daaf878186335eb3b1d88",
+                "memCardDataSaveWait2__12dMenu_save_cFv at VA 0x801f298c, size 0x1d0, code SHA-256 206affd3eccd29c55beed5853501307985d355504ab3c4d5ebbb076dd719022f.",
+            ),
+        ],
+    };
+    let save_field = |field: &str| ValueReference::ComponentField {
+        component_id: SAVE_MENU_CONTROL_COMPONENT.into(),
+        field: field.into(),
+    };
+    let neutral_lantern_event_projection = PredicateExpression::Any {
+        terms: vec![
+            pending_compare(
+                ValueReference::RawBits {
+                    component_id: PERSISTENT_EVENT_COMPONENT.into(),
+                    byte_offset: 0x1b,
+                    byte_width: 1,
+                    mask: 0x08,
+                },
+                StateValue::Unsigned(0x08),
+            ),
+            pending_compare(
+                ValueReference::RawBits {
+                    component_id: PERSISTENT_EVENT_COMPONENT.into(),
+                    byte_offset: 0x1b,
+                    byte_width: 1,
+                    mask: 0x30,
+                },
+                StateValue::Unsigned(0),
+            ),
+        ],
+    };
+    let neutral_lantern_item_projection = pending_compare(
+        ValueReference::ComponentField {
+            component_id: INVENTORY_COMPONENT.into(),
+            field: "acquired_item_bits".into(),
+        },
+        StateValue::Bytes(vec![0; 32]),
+    );
+    let saved_runtime_component_ids = vec![
+        PERSISTENT_EVENT_COMPONENT.into(),
+        INVENTORY_COMPONENT.into(),
+        RETURN_PLACE_COMPONENT.into(),
+        DUNGEON_SIX_SAVE_COMPONENT.into(),
+        PLAYER_INFO_COMPONENT.into(),
+        LIGHT_DROP_COMPONENT.into(),
+    ];
+    for index in 0_u64..3 {
+        let slot = index + 1;
+        for (family, use_types, success_phase) in [
+            ("continue", vec![1_u64, 2], "game_continue_disp"),
+            ("event", vec![3_u64, 4], "save_end"),
+        ] {
+            file_select_branch_transitions.push(CandidateTransition {
+                id: format!("transition.gz2e01.save-menu-complete-slot-{slot}-{family}"),
+                label: format!("Complete a successful save to slot {slot} ({family} UI)"),
+                scope: reset_transition.scope.clone(),
+                transition_kind: TransitionKind::Other,
+                approach_id: format!("save-menu.success.slot-{slot}.{family}"),
+                activation: ActivationContract {
+                    hard_guards: PredicateExpression::All {
+                        terms: vec![
+                            pending_compare(
+                                ValueReference::WorldExecutionActive,
+                                StateValue::Boolean(true),
+                            ),
+                            pending_compare(
+                                save_field("phase"),
+                                StateValue::Text("data_save_wait2".into()),
+                            ),
+                            pending_compare(save_field("buffer_loaded"), StateValue::Boolean(true)),
+                            pending_compare(
+                                save_field("selected_index_raw"),
+                                StateValue::Unsigned(index),
+                            ),
+                            pending_compare(
+                                save_field("command_state_raw"),
+                                StateValue::Unsigned(1),
+                            ),
+                            pending_compare(save_field("wait_timer_raw"), StateValue::Unsigned(0)),
+                            PredicateExpression::Any {
+                                terms: use_types
+                                    .into_iter()
+                                    .map(|use_type| {
+                                        pending_compare(
+                                            save_field("use_type_raw"),
+                                            StateValue::Unsigned(use_type),
+                                        )
+                                    })
+                                    .collect(),
+                            },
+                            neutral_lantern_event_projection.clone(),
+                            neutral_lantern_item_projection.clone(),
+                        ],
+                    },
+                    physical_obligation_ids: Vec::new(),
+                    effects: vec![
+                        StateOperation::SaveActiveRuntimeToSlot {
+                            destination_slot: PhysicalSlotId(slot as u8),
+                            destination_id_suffix: format!("save-slot-{slot}"),
+                            runtime_component_ids: saved_runtime_component_ids.clone(),
+                        },
+                        StateOperation::WriteFields {
+                            component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+                            fields: BTreeMap::from([
+                                ("data_num_raw".into(), StateValue::Unsigned(index)),
+                                ("no_file_raw".into(), StateValue::Unsigned(0)),
+                            ]),
+                        },
+                        StateOperation::Write {
+                            target: ComponentFieldTarget {
+                                component_id: SAVE_MENU_CONTROL_COMPONENT.into(),
+                                field: "phase".into(),
+                            },
+                            value: StateValue::Text(success_phase.into()),
+                        },
+                    ],
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: successful_save_evidence.clone(),
+            });
+        }
+    }
+    file_select_branch_transitions.push(CandidateTransition {
+        id: "transition.gz2e01.save-menu-write-failed".into(),
+        label: "Report a failed physical save without changing any slot".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::Other,
+        approach_id: "save-menu.failure".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: vec![
+                    pending_compare(
+                        ValueReference::WorldExecutionActive,
+                        StateValue::Boolean(true),
+                    ),
+                    pending_compare(
+                        save_field("phase"),
+                        StateValue::Text("data_save_wait2".into()),
+                    ),
+                    pending_compare(save_field("command_state_raw"), StateValue::Unsigned(2)),
+                    pending_compare(save_field("wait_timer_raw"), StateValue::Unsigned(0)),
+                ],
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: vec![StateOperation::Write {
+                target: ComponentFieldTarget {
+                    component_id: SAVE_MENU_CONTROL_COMPONENT.into(),
+                    field: "phase".into(),
+                },
+                value: StateValue::Text("memcard_command_end2".into()),
+            }],
+            unknown_requirements: Vec::new(),
+        },
+        evidence: successful_save_evidence,
+    });
     let play_scene_request_evidence = RuleEvidence {
         truth: TruthStatus::Established,
         records: vec![
@@ -1856,6 +2053,27 @@ mod tests {
         );
         component.binding = ComponentBinding::Session {
             session_id: "process".into(),
+        };
+        component.lifetime = SemanticLifetime::Session;
+        component.serialization_owner = SerializationOwner::None;
+        component
+    }
+
+    fn save_menu_control(selected_index: u64, command_state: u64, use_type: u64) -> StateComponent {
+        let mut component = component(
+            SAVE_MENU_CONTROL_COMPONENT,
+            ComponentKind::Session,
+            [
+                ("buffer_loaded", StateValue::Boolean(true)),
+                ("command_state_raw", StateValue::Unsigned(command_state)),
+                ("phase", StateValue::Text("data_save_wait2".into())),
+                ("selected_index_raw", StateValue::Unsigned(selected_index)),
+                ("use_type_raw", StateValue::Unsigned(use_type)),
+                ("wait_timer_raw", StateValue::Unsigned(0)),
+            ],
+        );
+        component.binding = ComponentBinding::Session {
+            session_id: "save-menu".into(),
         };
         component.lifetime = SemanticLifetime::Session;
         component.serialization_owner = SerializationOwner::None;
@@ -3449,6 +3667,170 @@ mod tests {
                     spawn: 9,
                 }),
             }
+        );
+    }
+
+    #[test]
+    fn successful_save_seals_only_the_selected_slot_and_failure_seals_none() {
+        let (content, runtime) = context();
+        let catalog = gz2e01_reset_to_opening_mechanics(&content, &runtime).unwrap();
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let transition = |id: &str| {
+            catalog
+                .transitions
+                .iter()
+                .find(|transition| transition.id == id)
+                .unwrap()
+        };
+        let classify = |state: &PlannerExecutionState, id: &str| {
+            PredicateEvaluator::new(
+                &state.snapshot,
+                &facts,
+                &[],
+                &BTreeMap::new(),
+                EvidencePolicy::RESEARCH,
+            )
+            .unwrap()
+            .assess_transition(
+                transition(id),
+                &BTreeSet::new(),
+                &BTreeSet::new(),
+                FeasibilityMode::Modeled,
+            )
+            .classification
+        };
+
+        let mut before = snapshot(runtime);
+        let persistent_events = before
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == PERSISTENT_EVENT_COMPONENT)
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &mut persistent_events.payload else {
+            unreachable!()
+        };
+        bytes[0x1b] = 0;
+        before
+            .environment
+            .components
+            .push(save_menu_control(1, 1, 1));
+        before
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let mut success = PlannerExecutionState::new(before).unwrap();
+        assert_eq!(
+            classify(
+                &success,
+                "transition.gz2e01.save-menu-complete-slot-2-continue"
+            ),
+            TransitionClassification::Executable
+        );
+        assert_eq!(
+            classify(
+                &success,
+                "transition.gz2e01.save-menu-complete-slot-1-continue"
+            ),
+            TransitionClassification::GuardBlocked
+        );
+        assert_eq!(
+            classify(
+                &success,
+                "transition.gz2e01.save-menu-complete-slot-2-event"
+            ),
+            TransitionClassification::GuardBlocked
+        );
+        assert_eq!(
+            classify(&success, "transition.gz2e01.save-menu-write-failed"),
+            TransitionClassification::GuardBlocked
+        );
+        let active_runtime = success.snapshot.environment.active_runtime_file.clone();
+        success
+            .apply_operations(
+                "transition.gz2e01.save-menu-complete-slot-2-continue",
+                "snapshot.save-slot-2-complete",
+                &transition("transition.gz2e01.save-menu-complete-slot-2-continue")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            success.snapshot.environment.active_runtime_file, active_runtime,
+            "saving does not end or replace the live runtime lifetime"
+        );
+        assert_eq!(success.snapshot.environment.physical_slots.len(), 1);
+        assert_eq!(
+            success.snapshot.environment.physical_slots[0].slot,
+            PhysicalSlotId(2)
+        );
+        assert_eq!(
+            success.snapshot.environment.physical_slots[0].persistent_file_id,
+            "file-0.save-slot-2"
+        );
+        let image = &success.persistent_file_images["file-0.save-slot-2"];
+        assert!(
+            image
+                .runtime_components
+                .iter()
+                .any(|component| component.id == PLAYER_INFO_COMPONENT)
+        );
+        assert_eq!(image.stage_banks.len(), 1);
+        assert!(matches!(
+            &image.stage_banks[0].owner,
+            SerializationOwner::StageBank { runtime_file_id, stage }
+                if runtime_file_id == "file-0.save-slot-2" && stage == "R_SP107"
+        ));
+        assert_eq!(
+            fields_for(&success, RUNTIME_FILE_HEADER_COMPONENT)["data_num_raw"],
+            StateValue::Unsigned(1)
+        );
+        assert_eq!(
+            fields_for(&success, RUNTIME_FILE_HEADER_COMPONENT)["no_file_raw"],
+            StateValue::Unsigned(0)
+        );
+        assert_eq!(
+            fields_for(&success, SAVE_MENU_CONTROL_COMPONENT)["phase"],
+            StateValue::Text("game_continue_disp".into())
+        );
+
+        let mut failed_before = snapshot(context().1);
+        failed_before
+            .environment
+            .components
+            .push(save_menu_control(1, 2, 1));
+        failed_before
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let mut failed = PlannerExecutionState::new(failed_before).unwrap();
+        assert_eq!(
+            classify(&failed, "transition.gz2e01.save-menu-write-failed"),
+            TransitionClassification::Executable
+        );
+        failed
+            .apply_operations(
+                "transition.gz2e01.save-menu-write-failed",
+                "snapshot.save-failed",
+                &transition("transition.gz2e01.save-menu-write-failed")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert!(failed.snapshot.environment.physical_slots.is_empty());
+        assert!(failed.persistent_file_images.is_empty());
+        assert_eq!(
+            fields_for(&failed, RUNTIME_FILE_HEADER_COMPONENT)["data_num_raw"],
+            StateValue::Unsigned(3),
+            "failed SaveSync must not claim the selected slot"
+        );
+        assert_eq!(
+            fields_for(&failed, SAVE_MENU_CONTROL_COMPONENT)["phase"],
+            StateValue::Text("memcard_command_end2".into())
         );
     }
 

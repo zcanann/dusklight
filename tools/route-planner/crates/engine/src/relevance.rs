@@ -682,6 +682,10 @@ impl RelevanceBuilder {
             StateOperation::SaveRuntimeToSlot {
                 runtime_component_ids,
                 ..
+            }
+            | StateOperation::SaveActiveRuntimeToSlot {
+                runtime_component_ids,
+                ..
             } => {
                 self.dependencies.extend(
                     runtime_component_ids
@@ -938,6 +942,7 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             StateDependency::AnyState,
         ],
         StateOperation::SaveRuntimeToSlot { .. }
+        | StateOperation::SaveActiveRuntimeToSlot { .. }
         | StateOperation::LoadRuntimeFromSlot { .. }
         | StateOperation::LoadActiveRuntimeFromSlot { .. }
         | StateOperation::BeginRuntimeFileLifetime { .. } => vec![StateDependency::AnyState],

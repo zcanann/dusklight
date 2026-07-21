@@ -165,8 +165,60 @@ the edge unknown instead of silently finishing the UI.
 
 None of these operations writes a physical slot. In particular,
 `dFile_select_c::nameInput2()` sets `mIsSelectEnd` but never calls `dataSave()`.
-The later memory-to-card normalization and successful platform write remain a
-separate open audit.
+The later memory-to-card projection and platform write are the separate path
+described below.
+
+## Successful physical save: promoted neutral branch
+
+The ordinary in-game save menu uses a distinct asynchronous pipeline from
+file-select name confirmation. Five exact GZ2E01 functions seal the promoted
+path:
+
+| Function | VA | Size | Code SHA-256 | Artifact SHA-256 |
+| --- | ---: | ---: | --- | --- |
+| `putSave__10dSv_info_cFi` | `0x800350f0` | `0x5c` | `f94364f83aed527671a218a8e0a5b2a9e541578fbd775176981f22df31fddd6e` | `eb3032a28f0a4d08684d74894785c1760a241020d907b12bee19e350eda1caf9` |
+| `memory_to_card__10dSv_info_cFPci` | `0x80035798` | `0x26c` | `7cf6fc958ed1e4cdcf4b3e168364cbd7a42a545a1812d139a4442e41ae5fd8e9` | `5b65a8833c8fb246e5c0292e0f22ecf6b05f5e3a123f2f18ee33c343a9805f1e` |
+| `dataWrite__12dMenu_save_cFv` | `0x801f2840` | `0xa4` | `b6a30e6925392a2c876f0f002e93afeb257da6878b989515c12fe83b58c6ac35` | `cf1308d2ecb1741549ce173a76f7e7c0ff8fe7343156632baae499dea1836ebb` |
+| `memCardDataSaveWait__12dMenu_save_cFv` | `0x801f28e4` | `0xa8` | `ab833e5d0f988b09921e3788272ebaa325767f91f649af3209ff0bcff6b40778` | `8b8f2e635426fdd8dc3e4cf4c49953ef1518e6836dca669acbd5cd5706ad0394` |
+| `memCardDataSaveWait2__12dMenu_save_cFv` | `0x801f298c` | `0x1d0` | `206affd3eccd29c55beed5853501307985d355504ab3c4d5ebbb076dd719022f` | `c0bdf0610b4b25b22ddf5dab9745bbf8dfdd8267d02daaf878186335eb3b1d88` |
+
+`dataWrite()` commits the current live stage memory into its saved stage bank,
+projects live `dSv_save_c` into the selected zero-based entry of the already
+loaded three-entry buffer, recalculates that entry's checksum, and submits the
+whole game file. Writing the whole buffer does not semantically replace the
+other two slots: their loaded entries are unchanged.
+
+Submission is not success. `memCardDataSaveWait()` polls until the command
+finishes, and `memCardDataSaveWait2()` distinguishes result `1` from result `2`
+after the wait timer expires. Only result `1` writes `mDataNum` to the selected
+index, clears `mNoFile`, refreshes the displayed save data, and enters either
+the continue prompt (`mUseType` 1/2) or event save-end path (`mUseType` 3/4).
+Result `2` enters the error UI and must not create a sealed planner slot or
+claim either header write.
+
+Mechanics catalog v26 promotes that successful completion for the exact neutral
+projection currently expressible by native components. The guards require:
+
+- active world execution and an observed loaded save buffer;
+- `data_save_wait2`, command result `1`, timer zero, one selected index, and an
+  exact use type;
+- either the monkey-lantern recovery event bit set or both transient stolen /
+  dropped bits clear; and
+- all projected first-item acquisition bytes zero, which proves that the
+  conditional missing-lantern inventory/oil rewrite cannot run.
+
+The active-runtime save operation derives its persistent image identity at
+execution time, so it remains valid after arbitrary prior loads. It seals the
+named runtime-file projection plus every available stage bank, overwrites only
+the selected physical slot, and leaves the active runtime lifetime intact. A
+separate failure transition proves that result `2` changes no slot.
+
+This is deliberately not yet the universal `memory_to_card` transform. When
+the lantern is acquired but absent from slot 1, the serialized image temporarily
+receives the lantern and backed-up oil; when recovery is incomplete, stolen and
+dropped event bits are temporarily cleared. Total-time/date fields also remain
+outside the current player-info projection. Those transformed branches stay
+open rather than inheriting the neutral result.
 
 ## Transition to play scene
 
@@ -188,7 +240,7 @@ activating world state, just as the earlier title-to-name-scene request does.
 
 ## Required executable-model checks
 
-Mechanics catalog v25 and execution state v15 now prove the backing-store and
+Mechanics catalog v26 and execution state v15 now prove the backing-store and
 branching subset below:
 
 - blank, existing, and no-card guards cannot all execute from one observed
@@ -236,6 +288,6 @@ its digest-verified sealed image copy, lifetime cut, and all route-relevant
 selection and both pending play-scene request shapes remain independently
 executable.
 
-The save-time `memory_to_card` normalization path, successful physical write,
-void/death restart selection, and build/platform variants remain separate audit
-and implementation tasks.
+The non-neutral `memory_to_card` lantern/event projection, unprojected time/date
+fields, void/death restart selection, and build/platform variants remain
+separate audit and implementation tasks.

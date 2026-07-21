@@ -676,6 +676,53 @@ impl PlannerExecutionState {
         Ok(())
     }
 
+    fn affected_save_component_ids(
+        &self,
+        source_runtime_file_id: &str,
+        runtime_component_ids: &[String],
+        selected_stage_banks: Option<&[String]>,
+    ) -> Vec<String> {
+        let stage_is_selected = |stage: &str| {
+            selected_stage_banks.is_none_or(|stages| {
+                stages
+                    .binary_search_by(|candidate| candidate.as_str().cmp(stage))
+                    .is_ok()
+            })
+        };
+        let mut ids = runtime_component_ids.to_vec();
+        ids.extend(
+            self.snapshot
+                .environment
+                .components
+                .iter()
+                .filter(|component| {
+                    matches!(
+                        &component.serialization_owner,
+                        SerializationOwner::StageBank { runtime_file_id, stage }
+                            if runtime_file_id == source_runtime_file_id
+                                && stage_is_selected(stage)
+                    )
+                })
+                .map(|component| component.id.clone()),
+        );
+        ids.extend(
+            self.serialized_components
+                .iter()
+                .flat_map(|(owner, components)| {
+                    let selected = matches!(
+                        owner,
+                        SerializationOwner::StageBank { runtime_file_id, stage }
+                            if runtime_file_id == source_runtime_file_id && stage_is_selected(stage)
+                    );
+                    components
+                        .iter()
+                        .filter(move |_| selected)
+                        .map(|component| component.id.clone())
+                }),
+        );
+        ids
+    }
+
     fn affected_component_ids(&self, operation: &StateOperation) -> Vec<String> {
         let mut ids = match operation {
             StateOperation::Write { target, .. }
@@ -805,45 +852,19 @@ impl PlannerExecutionState {
                 runtime_component_ids,
                 stage_bank_stages,
                 ..
-            } => {
-                let selected_stages = stage_bank_stages
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<BTreeSet<_>>();
-                let mut ids = runtime_component_ids.clone();
-                ids.extend(
-                    self.snapshot
-                        .environment
-                        .components
-                        .iter()
-                        .filter(|component| {
-                            matches!(
-                                &component.serialization_owner,
-                                SerializationOwner::StageBank { runtime_file_id, stage }
-                                    if runtime_file_id == source_runtime_file_id
-                                        && selected_stages.contains(stage.as_str())
-                            )
-                        })
-                        .map(|component| component.id.clone()),
-                );
-                ids.extend(
-                    self.serialized_components
-                        .iter()
-                        .flat_map(|(owner, components)| {
-                            let selected = matches!(
-                                owner,
-                                SerializationOwner::StageBank { runtime_file_id, stage }
-                                    if runtime_file_id == source_runtime_file_id
-                                        && selected_stages.contains(stage.as_str())
-                            );
-                            components
-                                .iter()
-                                .filter(move |_| selected)
-                                .map(|component| component.id.clone())
-                        }),
-                );
-                ids
-            }
+            } => self.affected_save_component_ids(
+                source_runtime_file_id,
+                runtime_component_ids,
+                Some(stage_bank_stages),
+            ),
+            StateOperation::SaveActiveRuntimeToSlot {
+                runtime_component_ids,
+                ..
+            } => self.affected_save_component_ids(
+                &self.snapshot.environment.active_runtime_file.id,
+                runtime_component_ids,
+                None,
+            ),
             StateOperation::LoadRuntimeFromSlot {
                 source_runtime_file_id,
                 runtime_component_ids,
@@ -1668,6 +1689,9 @@ impl PlannerExecutionState {
             operation @ StateOperation::SaveRuntimeToSlot { .. } => {
                 self.save_runtime_to_slot(application_id, operation)?
             }
+            operation @ StateOperation::SaveActiveRuntimeToSlot { .. } => {
+                self.save_active_runtime_to_slot(application_id, operation)?
+            }
             operation @ StateOperation::LoadRuntimeFromSlot { .. } => {
                 self.load_runtime_from_slot(application_id, operation)?
             }
@@ -2318,6 +2342,55 @@ impl PlannerExecutionState {
         self.persistent_file_images
             .insert(destination_persistent_file_id.clone(), image);
         Ok(())
+    }
+
+    fn save_active_runtime_to_slot(
+        &mut self,
+        application_id: &str,
+        operation: &StateOperation,
+    ) -> Result<(), PlannerContractError> {
+        let StateOperation::SaveActiveRuntimeToSlot {
+            destination_slot,
+            destination_id_suffix,
+            runtime_component_ids,
+        } = operation
+        else {
+            unreachable!("active-runtime save helper is called only for its operation variant")
+        };
+        let source_runtime_file_id = self.snapshot.environment.active_runtime_file.id.clone();
+        let destination_persistent_file_id =
+            format!("{source_runtime_file_id}.{destination_id_suffix}");
+        crate::validate_stable_id(
+            "operation.save_active_runtime_to_slot.destination_persistent_file_id",
+            &destination_persistent_file_id,
+        )?;
+        let stage_bank_stages = self
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .map(|component| &component.serialization_owner)
+            .chain(self.serialized_components.keys())
+            .filter_map(|owner| match owner {
+                SerializationOwner::StageBank {
+                    runtime_file_id,
+                    stage,
+                } if runtime_file_id == &source_runtime_file_id => Some(stage.clone()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        self.save_runtime_to_slot(
+            application_id,
+            &StateOperation::SaveRuntimeToSlot {
+                source_runtime_file_id,
+                destination_slot: *destination_slot,
+                destination_persistent_file_id,
+                runtime_component_ids: runtime_component_ids.clone(),
+                stage_bank_stages,
+            },
+        )
     }
 
     fn load_runtime_from_slot(
@@ -3143,6 +3216,7 @@ fn history_event_writes_field(
             | StateOperation::Serialize { .. }
             | StateOperation::ReplaceCustomStore { .. }
             | StateOperation::SaveRuntimeToSlot { .. }
+            | StateOperation::SaveActiveRuntimeToSlot { .. }
             | StateOperation::BeginRuntimeFileLifetime { .. }
             | StateOperation::Bind { .. }
             | StateOperation::Rebind { .. }
@@ -6034,6 +6108,37 @@ mod tests {
         assert_eq!(
             semantic_with_history,
             without_ended_history.semantic_digest().unwrap()
+        );
+    }
+
+    #[test]
+    fn active_runtime_save_derives_the_persistent_identity_at_execution_time() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state
+            .apply_operations(
+                "boundary.dynamic-save-slot-1",
+                "snapshot.dynamic-save-complete",
+                &[StateOperation::SaveActiveRuntimeToSlot {
+                    destination_slot: PhysicalSlotId(1),
+                    destination_id_suffix: "save-slot-1".into(),
+                    runtime_component_ids: vec!["raw.flags".into(), "save.main".into()],
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(
+            state.snapshot.environment.physical_slots[0].persistent_file_id,
+            "file-0.save-slot-1"
+        );
+        let image = &state.persistent_file_images["file-0.save-slot-1"];
+        assert_eq!(image.source_runtime_file_id, "file-0");
+        assert_eq!(
+            image
+                .runtime_components
+                .iter()
+                .map(|component| component.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["raw.flags", "save.main"]
         );
     }
 

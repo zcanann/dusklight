@@ -184,3 +184,11 @@ slot availability is a three-valued state reference: verified image presence is
 true, an explicit absent observation is false, and uncaptured/not-sampled state
 remains unknown. A structured-field operation can attach a return-place-derived
 pending world load to the active process without activating that world.
+
+The neutral successful-save milestone advances mechanics catalog to v26.
+`save_active_runtime_to_slot` derives the persistent image identity from the
+runtime that is active at execution, selects every available stage bank owned
+by that runtime, and delegates to the existing atomic slot projection. This
+keeps authored save-menu mechanics valid across prior load/lifetime handoffs
+without weakening slot authorization or treating a failed asynchronous command
+as a sealed image.

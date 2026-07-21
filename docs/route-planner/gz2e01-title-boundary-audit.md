@@ -27,6 +27,11 @@ and symbol table:
 | `nameInputFade__14dFile_select_cFv` | `0x8018759c` | `0x104` | `1972401d18a34e1f1d8c6ab180df465df2c17d34a9fc03dbcdda37b1229249d8` | `ecb601568e64364a3adfc779bf737949371a1460c1daca3651ec31ef1631c726` |
 | `nameInput2Move__14dFile_select_cFv` | `0x801876a0` | `0xac` | `a96931c928651f29eea71bf214964abe46f8af5a7a3006581153fef732c614e5` | `9da639084fa4d342c1154c2669aa65eb22c81d3fa52b9281f0ab100c15a86f33` |
 | `nameInput2__14dFile_select_cFv` | `0x8018774c` | `0xd8` | `32fb5e79113d0a52bde235fd8c1fb3c052b66445bc1b7264e8c065d53e5ea87b` | `e7a2a4b3ed67e42938aa0a28f2deaa66edab757618d0bcacdaef3598e627cc13` |
+| `putSave__10dSv_info_cFi` | `0x800350f0` | `0x5c` | `f94364f83aed527671a218a8e0a5b2a9e541578fbd775176981f22df31fddd6e` | `eb3032a28f0a4d08684d74894785c1760a241020d907b12bee19e350eda1caf9` |
+| `memory_to_card__10dSv_info_cFPci` | `0x80035798` | `0x26c` | `7cf6fc958ed1e4cdcf4b3e168364cbd7a42a545a1812d139a4442e41ae5fd8e9` | `5b65a8833c8fb246e5c0292e0f22ecf6b05f5e3a123f2f18ee33c343a9805f1e` |
+| `dataWrite__12dMenu_save_cFv` | `0x801f2840` | `0xa4` | `b6a30e6925392a2c876f0f002e93afeb257da6878b989515c12fe83b58c6ac35` | `cf1308d2ecb1741549ce173a76f7e7c0ff8fe7343156632baae499dea1836ebb` |
+| `memCardDataSaveWait__12dMenu_save_cFv` | `0x801f28e4` | `0xa8` | `ab833e5d0f988b09921e3788272ebaa325767f91f649af3209ff0bcff6b40778` | `8b8f2e635426fdd8dc3e4cf4c49953ef1518e6836dca669acbd5cd5706ad0394` |
+| `memCardDataSaveWait2__12dMenu_save_cFv` | `0x801f298c` | `0x1d0` | `206affd3eccd29c55beed5853501307985d355504ab3c4d5ebbb076dd719022f` | `c0bdf0610b4b25b22ddf5dab9745bbf8dfdd8267d02daaf878186335eb3b1d88` |
 
 The retained artifacts use symbol-table SHA-256
 `8b8c98b86b6270543709adbbd489ca4a5cd4fa5c30fd4a410420702fd37a085a`.
@@ -242,6 +247,24 @@ reads stage, room, and player-status/spawn from its restored return-place
 component with layer -1. Both retain active `PROC_NAME_SCENE`, record the
 requested `PROC_PLAY_SCENE`, and leave the prior world location non-traversable.
 
+## Successful save completion
+
+The catalog now also closes the neutral new-file path through an independently
+observed successful in-game save-menu command. Exact artifacts seal current
+stage-bank commit, runtime-to-buffer projection, asynchronous wait, and the
+result-1/result-2 split. Result 1 derives a persistent image from whatever
+runtime is active, includes every available stage bank, replaces only the
+selected physical slot, writes the selected zero-based `mDataNum`, clears
+`mNoFile`, and retains the live runtime lifetime. Result 2 enters the error path
+without changing a slot or either header field.
+
+This promotion is guarded to the identity subset of `memory_to_card`: lantern
+recovery is complete or both transient monkey-lantern bits are already clear,
+and all projected acquisition bytes are zero. The conditional lantern/oil
+projection therefore cannot run. The transformed lantern/event branches and
+unprojected save timestamps remain open. See
+`gz2e01-file-select-branches.md` for the exact functions and guard boundary.
+
 That member-level distinction is central to file-0 and Back in Time reasoning.
 Future projection coverage must continue adding ordered writers and explicitly
 preserved members rather than approximating the title transition as “clear
@@ -249,8 +272,8 @@ all.”
 
 Still open:
 
-- audit save-time `memory_to_card` normalization and the successful physical
-  save branch;
+- execute the transformed `memory_to_card` lantern/event branches and project
+  save timestamps;
 - audit void and death restart selection, including their special-stage and
   boss-room branches; and
 - produce traces that distinguish pending scene requests from completed world
