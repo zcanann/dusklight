@@ -141,16 +141,17 @@ the same goal without demonstration-relative features.
 
 ## 0. Audit whether a learner can see enough of the game
 
-This comes before selecting another glitch to reproduce. The purpose is to
+This comes before selecting a learner discovery benchmark. The purpose is to
 collect and validate information that a learner could use, not for a human or
-scripted controller to perform the documented technique.
+scripted controller to perform a documented technique.
 
 **Research boundary:** a catalog entry may contribute observation fields,
 action capabilities, temporal requirements, or a read-only success oracle. It
 must not become an authored setup, attempted reproduction, route, tactic,
 checkpoint, reward corridor, or frame sequence. Researchers stop at specifying
 what information and authority a learner would need; discovering how to use
-them is learner work.
+them is learner work. A published procedure must never be translated into a
+probe, demonstration, curriculum, option, reward term or preferred action.
 
 ### 0A. Survey every bootable world entry
 
@@ -249,10 +250,17 @@ them is learner work.
     realized work geometry through a typed read-only component. Observation
     v11 records the known mode/contact flags, cached line, wall cylinder,
     offsets, water mode and all three wall circles; ordinary episode ordering
-    supplies the raw per-tick sequence from which history can be derived. A
-    neutral 16-entry D_MN01 batch verified component presence and actor
-    invariants in all 16/16 cases (`4e3c8311...207df1ee`). Generic movement and
-    contact probes plus a bounded-history learner view remain open. A 30-tick
+    supplies the raw per-tick sequence from which history can be derived.
+    Gameplay-trace collision channel v2 retains that cached solver state at
+    every sampled tick while keeping its v1 128-byte prefix stable; old traces
+    decode it as explicitly absent. A neutral 16-entry D_MN01 batch verified
+    component presence and actor invariants in all 16/16 cases
+    (`4e3c8311...207df1ee`). A fresh 90-tick generic movement probe using the
+    rebuilt trace-v2 binary observed both empty/initialized wall tables (0/3),
+    water modes (1/2), two solver flag states, 29 ground heights and 29 player
+    positions. This proves action-driven capture variation, not a useful model
+    representation or deliberate contact coverage. Contact probes and a
+    bounded-history learner view remain open. A 30-tick
     neutral follow-up proved that the initially empty wall table becomes the
     expected initialized three-circle solver (`63b32d58...c004fe04`), but it
     still does not establish action/contact variation, so the parent
@@ -272,6 +280,15 @@ them is learner work.
 - [ ] Run short generic observation probes where safe—idle, movement, camera,
   targeting, contact, basic actions, actor activation and loading—and use them
   only to expose changing fields. They are not route or glitch attempts.
+  - [x] Add identity-bound neutral, movement, camera, targeting and basic-action
+    survey profiles. Each profile changes only its declared PAD factor, owns
+    only port zero, records the exact generated tape, and rejects a run unless
+    every observed applied PAD matches. Probe type and duration are part of the
+    resumable ledger identity. These profiles measure channel variation; they
+    contain no map path, actor target, published setup or success reward.
+  - [ ] Add general contact, actor-activation and loading probes without
+    encoding a known route or interaction sequence, then run a stratified
+    cross-map sample and report which typed fields actually vary.
 - [ ] Visually inspect a stratified sample and reconcile visible actors,
   collision, triggers and state transitions against captured data.
 - [ ] Publish a machine-readable coverage matrix by stage and actor profile:
