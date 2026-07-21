@@ -13,7 +13,7 @@ planner behavior.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns seven operations:
+The planner CLI currently owns eight operations:
 
 - `compose` validates deterministic refinement-pack stacks and emits a canonical
   composed fact/mechanics catalog.
@@ -22,8 +22,12 @@ The planner CLI currently owns seven operations:
 - `inspect-state` exposes every live and serialized component store alongside
   exact-context friendly aliases and derived fact evaluations.
 - `project-graph` emits a planner-native causal graph with typed relations and
-  collapsible predicate regions; it does not use TAS timeline graph schemas.
+  collapsible predicate regions and optional route-book plan regions; it does
+  not use TAS timeline graph schemas.
 - `state-from-snapshot` materializes an executable planner state.
+- `validate-route-book` checks a route book's goals, predicates, action
+  references, nested regions, methods, directives, and annotations against an
+  exact base or composed catalog without adding mechanics.
 - `solve` runs bounded causal reachability against planner-owned catalogs.
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
   lines for a future planner editor or other clients.

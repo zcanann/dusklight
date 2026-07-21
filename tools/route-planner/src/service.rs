@@ -8,6 +8,7 @@ use dusklight_route_planner::graph::PlannerGraph;
 use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
+use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 
@@ -27,6 +28,11 @@ pub enum PlannerServiceRequest {
         request_id: String,
         pack: Box<RefinementPack>,
     },
+    ValidateRouteBook {
+        request_id: String,
+        book: Box<RouteBook>,
+        catalog: Box<ComposedPlannerCatalog>,
+    },
     Compose {
         request_id: String,
         facts: Box<FactCatalog>,
@@ -36,6 +42,7 @@ pub enum PlannerServiceRequest {
     ProjectGraph {
         request_id: String,
         catalog: Box<ComposedPlannerCatalog>,
+        route_book: Option<Box<RouteBook>>,
     },
     InspectState {
         request_id: String,
@@ -58,6 +65,7 @@ impl PlannerServiceRequest {
     pub fn request_id(&self) -> &str {
         match self {
             Self::ValidateRefinementPack { request_id, .. }
+            | Self::ValidateRouteBook { request_id, .. }
             | Self::Compose { request_id, .. }
             | Self::ProjectGraph { request_id, .. }
             | Self::InspectState { request_id, .. }
@@ -88,6 +96,10 @@ pub enum PlannerServicePayload {
         pack_id: String,
         pack_sha256: Digest,
     },
+    RouteBookValid {
+        route_book_id: String,
+        route_book_sha256: Digest,
+    },
     ComposedCatalog {
         catalog: Box<ComposedPlannerCatalog>,
         catalog_sha256: Digest,
@@ -117,6 +129,14 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                     pack_sha256,
                 })
         }
+        PlannerServiceRequest::ValidateRouteBook { book, catalog, .. } => book
+            .validate_against(&catalog.facts, &catalog.mechanics)
+            .and_then(|()| {
+                Ok(PlannerServicePayload::RouteBookValid {
+                    route_book_id: book.manifest.id.clone(),
+                    route_book_sha256: book.digest()?,
+                })
+            }),
         PlannerServiceRequest::Compose {
             facts,
             mechanics,
@@ -129,8 +149,17 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 catalog_sha256,
             })
         }),
-        PlannerServiceRequest::ProjectGraph { catalog, .. } => {
-            PlannerGraph::project_composed(&catalog).and_then(|graph| {
+        PlannerServiceRequest::ProjectGraph {
+            catalog,
+            route_book,
+            ..
+        } => {
+            let graph = if let Some(book) = route_book {
+                PlannerGraph::project_composed_with_route_book(&catalog, &book)
+            } else {
+                PlannerGraph::project_composed(&catalog)
+            };
+            graph.and_then(|graph| {
                 let graph_sha256 = graph.digest()?;
                 Ok(PlannerServicePayload::Graph {
                     graph: Box::new(graph),
@@ -275,6 +304,7 @@ mod tests {
         let response = handle_request(PlannerServiceRequest::ProjectGraph {
             request_id: "request.graph".into(),
             catalog,
+            route_book: None,
         });
         let PlannerServiceOutcome::Ok { payload } = response.outcome else {
             panic!("projection should succeed");

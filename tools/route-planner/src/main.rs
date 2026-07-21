@@ -8,6 +8,7 @@ use dusklight_route_planner::graph::PlannerGraph;
 use dusklight_route_planner::identity::{ContentIdentity, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
+use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
@@ -45,6 +46,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("project-graph") => project_graph(&args[1..]),
         Some("serve-stdio") => serve_stdio(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
+        Some("validate-route-book") => validate_route_book(&args[1..]),
         Some("solve") => solve(&args[1..]),
         Some("help" | "--help" | "-h") | None => {
             print_usage();
@@ -55,6 +57,46 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn validate_route_book(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let route_book_path = required_path(args, "--route-book")?;
+    let book = RouteBook::decode_canonical(&fs::read(route_book_path)?)?;
+    let (facts, mechanics) = match (
+        option(args, "--catalog"),
+        option(args, "--facts"),
+        option(args, "--mechanics"),
+    ) {
+        (Some(path), None, None) => {
+            let catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?;
+            (catalog.facts, catalog.mechanics)
+        }
+        (None, Some(facts), Some(mechanics)) => (
+            FactCatalog::decode_canonical(&fs::read(facts)?)?,
+            MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?,
+        ),
+        _ => {
+            return Err(
+                "validate-route-book requires either --catalog CATALOG.json or both --facts FACTS.json and --mechanics MECHANICS.json"
+                    .into(),
+            );
+        }
+    };
+    book.validate_against(&facts, &mechanics)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": book.schema,
+            "route_book_id": book.manifest.id,
+            "sha256": book.digest()?,
+            "goals": book.goal_ids.len(),
+            "steps": book.steps.len(),
+            "methods": book.methods.len(),
+            "regions": book.regions.len(),
+            "directives": book.directives.len(),
+        }))?
+    );
+    Ok(())
 }
 
 fn inspect_state_command(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -123,18 +165,31 @@ fn serve_stdio(args: &[String]) -> Result<(), Box<dyn Error>> {
 
 fn project_graph(args: &[String]) -> Result<(), Box<dyn Error>> {
     let output = required_path(args, "--output")?;
+    let route_book = if let Some(path) = option(args, "--route-book") {
+        Some(RouteBook::decode_canonical(&fs::read(path)?)?)
+    } else {
+        None
+    };
     let catalog_path = option(args, "--catalog");
     let facts_path = option(args, "--facts");
     let mechanics_path = option(args, "--mechanics");
     let graph = match (catalog_path, facts_path, mechanics_path) {
         (Some(path), None, None) => {
             let catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?;
-            PlannerGraph::project_composed(&catalog)?
+            if let Some(book) = &route_book {
+                PlannerGraph::project_composed_with_route_book(&catalog, book)?
+            } else {
+                PlannerGraph::project_composed(&catalog)?
+            }
         }
         (None, Some(facts), Some(mechanics)) => {
             let facts = FactCatalog::decode_canonical(&fs::read(facts)?)?;
             let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?;
-            PlannerGraph::project(&facts, &mechanics)?
+            if let Some(book) = &route_book {
+                PlannerGraph::project_with_route_book(&facts, &mechanics, book)?
+            } else {
+                PlannerGraph::project(&facts, &mechanics)?
+            }
         }
         _ => {
             return Err(
@@ -156,6 +211,7 @@ fn project_graph(args: &[String]) -> Result<(), Box<dyn Error>> {
             "edges": graph.edges.len(),
             "regions": graph.regions.len(),
             "refinement_stack_sha256": graph.refinement_stack_sha256,
+            "route_book_sha256": graph.route_book_sha256,
         }))?
     );
     Ok(())
@@ -417,6 +473,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
     );
 }

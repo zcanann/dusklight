@@ -5,13 +5,14 @@ use crate::logic::{
     ComparisonOperator, FactCatalog, PredicateExpression, ValueReference,
 };
 use crate::refinement::ComposedPlannerCatalog;
+use crate::route_book::{CollapsePolicy, RouteActionRef, RouteBook};
 use crate::transition::{MechanicsCatalog, ObligationDetail, ResolutionKind};
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v1";
+pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -20,6 +21,7 @@ pub struct PlannerGraph {
     pub fact_catalog_sha256: Digest,
     pub mechanics_catalog_sha256: Digest,
     pub refinement_stack_sha256: Option<Digest>,
+    pub route_book_sha256: Option<Digest>,
     pub nodes: Vec<PlannerGraphNode>,
     pub edges: Vec<PlannerGraphEdge>,
     pub regions: Vec<PlannerGraphRegion>,
@@ -53,6 +55,12 @@ pub enum PlannerNodePayload {
     Reader { reader_id: String },
     Reconstruction { reconstruction_rule_id: String },
     Microtrace { microtrace_id: String },
+    PlanRegion {
+        plan_region_id: String,
+        collapse_policy: CollapsePolicy,
+    },
+    PlanMethod { method_id: String },
+    ReferenceStep { step_id: String },
     ExternalAction { action_id: String },
     ExternalFact { fact_id: String },
     Predicate { operator: PredicateOperator },
@@ -99,6 +107,10 @@ pub enum PlannerGraphRelation {
     Interprets,
     ReconstructsWhen,
     Demonstrates,
+    Alternative,
+    Contains,
+    SelectsAction,
+    Selected,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -118,6 +130,7 @@ pub enum PlannerRegionKind {
     Facts,
     Mechanics,
     Predicate,
+    Plan,
 }
 
 impl PlannerGraph {
@@ -125,30 +138,59 @@ impl PlannerGraph {
         facts: &FactCatalog,
         mechanics: &MechanicsCatalog,
     ) -> Result<Self, PlannerContractError> {
-        Self::project_with_stack(facts, mechanics, None)
+        Self::project_with_context(facts, mechanics, None, None)
     }
 
     pub fn project_composed(
         catalog: &ComposedPlannerCatalog,
     ) -> Result<Self, PlannerContractError> {
         catalog.validate()?;
-        Self::project_with_stack(
+        Self::project_with_context(
             &catalog.facts,
             &catalog.mechanics,
             Some(catalog.refinement_stack.digest()?),
+            None,
         )
     }
 
-    fn project_with_stack(
+    pub fn project_with_route_book(
+        facts: &FactCatalog,
+        mechanics: &MechanicsCatalog,
+        book: &RouteBook,
+    ) -> Result<Self, PlannerContractError> {
+        Self::project_with_context(facts, mechanics, None, Some(book))
+    }
+
+    pub fn project_composed_with_route_book(
+        catalog: &ComposedPlannerCatalog,
+        book: &RouteBook,
+    ) -> Result<Self, PlannerContractError> {
+        catalog.validate()?;
+        Self::project_with_context(
+            &catalog.facts,
+            &catalog.mechanics,
+            Some(catalog.refinement_stack.digest()?),
+            Some(book),
+        )
+    }
+
+    fn project_with_context(
         facts: &FactCatalog,
         mechanics: &MechanicsCatalog,
         refinement_stack_sha256: Option<Digest>,
+        route_book: Option<&RouteBook>,
     ) -> Result<Self, PlannerContractError> {
         facts.validate()?;
         mechanics.validate()?;
+        if let Some(book) = route_book {
+            book.validate_against(facts, mechanics)?;
+        }
         let mut builder = GraphBuilder::new();
         builder.project_facts(facts)?;
         builder.project_mechanics(mechanics)?;
+        if let Some(book) = route_book {
+            builder.project_route_book(book)?;
+        }
         builder.nodes.sort_by(|left, right| left.id.cmp(&right.id));
         builder.edges.sort_by(|left, right| left.id.cmp(&right.id));
         builder.regions.sort_by(|left, right| left.id.cmp(&right.id));
@@ -157,6 +199,7 @@ impl PlannerGraph {
             fact_catalog_sha256: facts.digest()?,
             mechanics_catalog_sha256: mechanics.digest()?,
             refinement_stack_sha256,
+            route_book_sha256: route_book.map(RouteBook::digest).transpose()?,
             nodes: builder.nodes,
             edges: builder.edges,
             regions: builder.regions,
@@ -184,6 +227,12 @@ impl PlannerGraph {
         if self.refinement_stack_sha256 == Some(Digest::ZERO) {
             return Err(PlannerContractError::new(
                 "refinement_stack_sha256",
+                "must be absent or nonzero",
+            ));
+        }
+        if self.route_book_sha256 == Some(Digest::ZERO) {
+            return Err(PlannerContractError::new(
+                "route_book_sha256",
                 "must be absent or nonzero",
             ));
         }
@@ -523,6 +572,157 @@ impl GraphBuilder {
         Ok(())
     }
 
+    fn project_route_book(&mut self, book: &RouteBook) -> Result<(), PlannerContractError> {
+        self.regions.push(PlannerGraphRegion {
+            id: "region.plans".into(),
+            label: book.manifest.label.clone(),
+            parent_region_id: None,
+            owner_node_id: None,
+            region_kind: PlannerRegionKind::Plan,
+            collapsed_by_default: false,
+        });
+        for region in &book.regions {
+            let node_id = format!("plan-region/{}", region.id);
+            let graph_region_id = plan_region_graph_id(&region.id);
+            self.add_node(PlannerGraphNode {
+                id: node_id.clone(),
+                label: region.label.clone(),
+                region_id: Some(graph_region_id.clone()),
+                payload: PlannerNodePayload::PlanRegion {
+                    plan_region_id: region.id.clone(),
+                    collapse_policy: region.collapse_policy,
+                },
+            })?;
+            self.regions.push(PlannerGraphRegion {
+                id: graph_region_id,
+                label: region.label.clone(),
+                parent_region_id: Some(
+                    region
+                        .parent_region_id
+                        .as_deref()
+                        .map(plan_region_graph_id)
+                        .unwrap_or_else(|| "region.plans".into()),
+                ),
+                owner_node_id: Some(node_id),
+                region_kind: PlannerRegionKind::Plan,
+                // A route book may request collapse, but only a plan/proof
+                // projection can prove continuation equivalence or attach
+                // residual differences. The catalog projection stays expanded.
+                collapsed_by_default: false,
+            });
+        }
+        for method in &book.methods {
+            let owner = format!("plan-method/{}", method.id);
+            self.add_node(PlannerGraphNode {
+                id: owner.clone(),
+                label: method.label.clone(),
+                region_id: Some(plan_region_graph_id(&method.region_id)),
+                payload: PlannerNodePayload::PlanMethod {
+                    method_id: method.id.clone(),
+                },
+            })?;
+            self.add_edge(
+                &format!("plan-region/{}", method.region_id),
+                &owner,
+                PlannerGraphRelation::Alternative,
+                book.regions
+                    .iter()
+                    .find(|region| region.id == method.region_id)
+                    .and_then(|region| {
+                        region
+                            .method_ids
+                            .iter()
+                            .position(|id| id == &method.id)
+                            .map(|index| index as u32)
+                    }),
+            )?;
+        }
+        for step in &book.steps {
+            let owner = format!("plan-step/{}", step.id);
+            self.add_node(PlannerGraphNode {
+                id: owner.clone(),
+                label: step.label.clone(),
+                region_id: Some(
+                    step.region_id
+                        .as_deref()
+                        .map(plan_region_graph_id)
+                        .unwrap_or_else(|| "region.plans".into()),
+                ),
+                payload: PlannerNodePayload::ReferenceStep {
+                    step_id: step.id.clone(),
+                },
+            })?;
+            self.add_edge(
+                &owner,
+                &action_node_id(&step.action),
+                PlannerGraphRelation::SelectsAction,
+                None,
+            )?;
+            let parent = step
+                .region_id
+                .as_deref()
+                .map(plan_region_graph_id)
+                .unwrap_or_else(|| "region.plans".into());
+            if let Some(predicate) = &step.precondition {
+                self.project_predicate_in_region(
+                    &owner,
+                    "precondition",
+                    predicate,
+                    PlannerGraphRelation::Requires,
+                    &parent,
+                )?;
+            }
+            if let Some(predicate) = &step.postcondition {
+                self.project_predicate_in_region(
+                    &owner,
+                    "postcondition",
+                    predicate,
+                    PlannerGraphRelation::Demonstrates,
+                    &parent,
+                )?;
+            }
+        }
+        for method in &book.methods {
+            for (index, step) in method.step_ids.iter().enumerate() {
+                self.add_edge(
+                    &format!("plan-method/{}", method.id),
+                    &format!("plan-step/{step}"),
+                    PlannerGraphRelation::Contains,
+                    Some(index as u32),
+                )?;
+            }
+        }
+        for region in &book.regions {
+            let owner = format!("plan-region/{}", region.id);
+            let parent = plan_region_graph_id(&region.id);
+            if let Some(predicate) = &region.entry_predicate {
+                self.project_predicate_in_region(
+                    &owner,
+                    "entry",
+                    predicate,
+                    PlannerGraphRelation::Requires,
+                    &parent,
+                )?;
+            }
+            self.project_predicate_in_region(
+                &owner,
+                "outcome",
+                &region.outcome_predicate,
+                PlannerGraphRelation::Demonstrates,
+                &parent,
+            )?;
+            if let Some(selected) = &region.selected_method_id {
+                self.add_edge(
+                    &owner,
+                    &format!("plan-method/{selected}"),
+                    PlannerGraphRelation::Selected,
+                    None,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
     fn add_record_node(
         &mut self,
         id: &str,
@@ -544,15 +744,27 @@ impl GraphBuilder {
         expression: &PredicateExpression,
         relation: PlannerGraphRelation,
     ) -> Result<(), PlannerContractError> {
+        let parent = if owner.starts_with("fact/") {
+            "region.facts"
+        } else {
+            "region.mechanics"
+        };
+        self.project_predicate_in_region(owner, role, expression, relation, parent)
+    }
+
+    fn project_predicate_in_region(
+        &mut self,
+        owner: &str,
+        role: &str,
+        expression: &PredicateExpression,
+        relation: PlannerGraphRelation,
+        parent_region_id: &str,
+    ) -> Result<(), PlannerContractError> {
         let region_id = format!("region.predicate.{owner}.{role}").replace('/', ".");
         self.regions.push(PlannerGraphRegion {
             id: region_id.clone(),
             label: format!("{role} requirements"),
-            parent_region_id: Some(if owner.starts_with("fact/") {
-                "region.facts".into()
-            } else {
-                "region.mechanics".into()
-            }),
+            parent_region_id: Some(parent_region_id.into()),
             owner_node_id: Some(owner.into()),
             region_kind: PlannerRegionKind::Predicate,
             collapsed_by_default: true,
@@ -707,6 +919,20 @@ impl GraphBuilder {
 
 fn fact_node_id(fact_id: &str) -> String {
     format!("fact/{fact_id}")
+}
+
+fn plan_region_graph_id(region_id: &str) -> String {
+    format!("region.plan.{region_id}")
+}
+
+fn action_node_id(action: &RouteActionRef) -> String {
+    match action {
+        RouteActionRef::Transition { transition_id } => format!("transition/{transition_id}"),
+        RouteActionRef::Technique { technique_id } => format!("technique/{technique_id}"),
+        RouteActionRef::Resolver { resolver_id } => format!("resolver/{resolver_id}"),
+        RouteActionRef::Writer { writer_id } => format!("writer/{writer_id}"),
+        RouteActionRef::Microtrace { microtrace_id } => format!("microtrace/{microtrace_id}"),
+    }
 }
 
 fn comparison_label(operator: ComparisonOperator) -> String {
@@ -896,6 +1122,15 @@ fn validate_node_payload(payload: &PlannerNodePayload) -> Result<(), PlannerCont
         PlannerNodePayload::Microtrace { microtrace_id } => {
             Some(("nodes.payload.microtrace_id", microtrace_id))
         }
+        PlannerNodePayload::PlanRegion { plan_region_id, .. } => {
+            Some(("nodes.payload.plan_region_id", plan_region_id))
+        }
+        PlannerNodePayload::PlanMethod { method_id } => {
+            Some(("nodes.payload.method_id", method_id))
+        }
+        PlannerNodePayload::ReferenceStep { step_id } => {
+            Some(("nodes.payload.step_id", step_id))
+        }
         PlannerNodePayload::ExternalAction { action_id } => {
             Some(("nodes.payload.action_id", action_id))
         }
@@ -937,8 +1172,12 @@ mod tests {
         ContextScope, DerivedFact, EvidenceKind, EvidenceRecord, RuleEvidence, TruthStatus,
         FACT_CATALOG_SCHEMA,
     };
+    use crate::route_book::{
+        CollapsePolicy, PlanMethod, PlanRegion, ReferenceStep, RouteActionRef, RouteBook,
+        RouteBookManifest, ROUTE_BOOK_SCHEMA,
+    };
     use crate::transition::{
-        Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog,
+        Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, RouteCost, Technique,
     };
 
     fn scope() -> ContextScope {
@@ -1002,7 +1241,19 @@ mod tests {
             reconstruction_rules: Vec::new(),
             obstructions: Vec::new(),
             resolvers: Vec::new(),
-            techniques: Vec::new(),
+            techniques: vec![Technique {
+                id: "technique.ordon-return".into(),
+                label: "Return to Ordon".into(),
+                scope: scope(),
+                prerequisites: PredicateExpression::True,
+                operations: Vec::new(),
+                discharged_obligation_ids: Vec::new(),
+                introduced_obligation_ids: Vec::new(),
+                cost: RouteCost {
+                    axes: BTreeMap::new(),
+                },
+                evidence: evidence(),
+            }],
             microtraces: Vec::new(),
             goals: vec![Goal {
                 id: "goal.ordon".into(),
@@ -1018,6 +1269,59 @@ mod tests {
             }],
         };
         (facts, mechanics)
+    }
+
+    fn route_book() -> RouteBook {
+        RouteBook {
+            schema: ROUTE_BOOK_SCHEMA.into(),
+            manifest: RouteBookManifest {
+                id: "route-book.ordon".into(),
+                version: "1.0.0".into(),
+                label: "Ordon routes".into(),
+                author: "Route research".into(),
+                source: "Graph test".into(),
+                scope: scope(),
+                refinement_stack_sha256: None,
+            },
+            goal_ids: vec!["goal.ordon".into()],
+            constraints: Vec::new(),
+            directives: Vec::new(),
+            steps: vec![ReferenceStep {
+                id: "step.return".into(),
+                label: "Return to Ordon".into(),
+                scope: scope(),
+                action: RouteActionRef::Technique {
+                    technique_id: "technique.ordon-return".into(),
+                },
+                precondition: None,
+                postcondition: Some(PredicateExpression::Fact {
+                    fact_id: "fact.can-return".into(),
+                }),
+                region_id: Some("region.return".into()),
+                annotation_ids: Vec::new(),
+            }],
+            methods: vec![PlanMethod {
+                id: "method.return".into(),
+                label: "Known return".into(),
+                scope: scope(),
+                region_id: "region.return".into(),
+                step_ids: vec!["step.return".into()],
+            }],
+            regions: vec![PlanRegion {
+                id: "region.return".into(),
+                label: "Reach Ordon".into(),
+                scope: scope(),
+                parent_region_id: None,
+                entry_predicate: None,
+                outcome_predicate: PredicateExpression::Fact {
+                    fact_id: "fact.can-return".into(),
+                },
+                method_ids: vec!["method.return".into()],
+                selected_method_id: Some("method.return".into()),
+                collapse_policy: CollapsePolicy::OnlyContinuationEquivalent,
+            }],
+            annotations: Vec::new(),
+        }
     }
 
     #[test]
@@ -1042,7 +1346,7 @@ mod tests {
                 .iter()
                 .filter(|region| region.region_kind == PlannerRegionKind::Predicate)
                 .count(),
-            3
+            4
         );
         assert!(graph.regions.iter().filter(|region| {
             region.region_kind == PlannerRegionKind::Predicate
@@ -1063,5 +1367,33 @@ mod tests {
         assert_eq!(first.digest().unwrap(), second.digest().unwrap());
         assert!(first.nodes.windows(2).all(|pair| pair[0].id < pair[1].id));
         assert!(first.edges.windows(2).all(|pair| pair[0].id < pair[1].id));
+    }
+
+    #[test]
+    fn route_book_projects_as_nested_preferences_without_replacing_mechanics() {
+        let (facts, mechanics) = catalogs();
+        let book = route_book();
+        let graph = PlannerGraph::project_with_route_book(&facts, &mechanics, &book).unwrap();
+        assert_eq!(graph.route_book_sha256, Some(book.digest().unwrap()));
+        assert!(graph.nodes.iter().any(|node| matches!(
+            node.payload,
+            PlannerNodePayload::PlanRegion { .. }
+        )));
+        assert!(graph.nodes.iter().any(|node| matches!(
+            node.payload,
+            PlannerNodePayload::PlanMethod { .. }
+        )));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.relation == PlannerGraphRelation::SelectsAction
+                && edge.target_node_id == "technique/technique.ordon-return"
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.relation == PlannerGraphRelation::Selected
+                && edge.target_node_id == "plan-method/method.return"
+        }));
+        assert!(graph.regions.iter().filter(|region| {
+            region.region_kind == PlannerRegionKind::Plan
+                && region.id != "region.plans"
+        }).all(|region| !region.collapsed_by_default));
     }
 }

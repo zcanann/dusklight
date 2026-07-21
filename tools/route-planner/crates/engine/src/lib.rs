@@ -15,6 +15,7 @@ pub mod identity;
 pub mod logic;
 pub mod native_snapshot;
 pub mod refinement;
+pub mod route_book;
 pub mod snapshot;
 pub mod solver;
 pub mod state;

@@ -509,11 +509,11 @@ The current code shows:
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
 - Planner service schema v1 provides a typed JSON-lines transport owned by the
-  standalone planner runtime. `route-planner serve-stdio` accepts refinement
-  validation, catalog composition, graph projection, state inspection, and solve
-  requests; every response retains its request ID and returns either a typed
-  payload or a structured field/detail error. It imports no Huntctl CLI, TAS
-  timeline, WorkbenchGraph, playback, or browser-state types.
+  standalone planner runtime. `route-planner serve-stdio` accepts refinement and
+  route-book validation, catalog composition, graph projection, state inspection,
+  and solve requests; every response retains its request ID and returns either a
+  typed payload or a structured field/detail error. It imports no Huntctl CLI,
+  TAS timeline, WorkbenchGraph, playback, or browser-state types.
 - State-inspection schema v1 preserves the full execution-state document—live
   components, serialized owner stores, bindings, lifetimes, provenance, gates,
   cleanup, runtime-file identity, physical slots, location, and player state—
@@ -521,6 +521,19 @@ The current code shows:
   exact context and evidence policy. `route-planner inspect-state` and the
   service protocol expose the same projection, so raw inventory/flag bytes and
   their semantic names remain inspectable together.
+- Route-book schema v1 is a validated, exact-context-scoped preference layer over
+  mechanics. It can name goals and path constraints, reference ordered actions,
+  define alternative methods and nested plan regions, request pin/ban/prefer
+  behavior, and attach non-semantic annotations. It deliberately has no effects
+  or loss fields: every referenced action and predicate must validate against
+  the fact/mechanics catalog. `route-planner validate-route-book` and the typed
+  service validate books without composing them into mechanics.
+- Planner graph schema v2 can optionally project a route book as distinct plan
+  region, method, and reference-step nodes connected to the underlying causal
+  actions. Region outcomes and step pre/postconditions remain nested predicate
+  graphs. A book's collapse policy is surfaced, but the catalog projection does
+  not mark a region collapsed before a solver proof establishes continuation
+  equivalence or supplies residual-state differences.
 
 Primary source anchors:
 
@@ -1669,12 +1682,20 @@ Deliverable: every route and failure is inspectable rather than magical.
 - [ ] Implement nested proof/plan regions with familiar subgraph navigation while
       preserving planner-specific AND/OR, cycles, and continuation-distinct
       frontier states.
+  - [x] Define and validate nested route-book regions, alternative methods,
+        ordered reference steps, and typed action references; project them into
+        the planner graph without adding mechanics or inferred losses.
+  - [ ] Project solver proofs/frontiers into those regions and prove collapse
+        safety from continuation equivalence or explicit residual differences.
 - [ ] Keep fact resolution, validation, solver/proof work, graph projection, and
       authoritative mutations in Rust; keep the browser a typed rendering and
       command surface.
 - [ ] Share or extract UI/infrastructure code only after a domain-independent seam
       is demonstrated; visual consistency does not depend on shared graph models.
 - [ ] Add route canvas, alternatives, pin/ban/prefer, and collapse controls.
+  - [x] Define validated route-book directives and collapse policies and expose
+        plan alternatives through the planner graph/service contracts.
+  - [ ] Add the browser interactions and revision-checked mutation commands.
 - [ ] Add inventory/flag/component state inspector with before/after diff.
   - [x] Add a planner-owned headless state-inspection projection for live and
         serialized stores, raw/structured payloads, bindings, provenance, and
@@ -1687,7 +1708,8 @@ Deliverable: every route and failure is inspectable rather than magical.
       provenance, coverage, confidence, and route costs.
 - [ ] Add semantic build/language comparison and prevent silent closest-build
       fallback.
-- [ ] Keep route annotation separate from mechanics refinement.
+- [x] Keep route annotations in route books as non-semantic targets/text,
+      separate from mechanics refinement packs.
 
 Deliverable: a planner-specific UI suitable for both simple routes and deep
 research, recognizably related to the TAS Route Workbench without inheriting its
