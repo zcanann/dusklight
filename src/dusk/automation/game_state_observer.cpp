@@ -174,6 +174,7 @@ int capture_milestone_actor(void* candidate, void* context) {
         actor->eventInfo.mCondition != dEvtCnd_CANDEMO_e || actor->eventInfo.mEventId != -1 ||
         actor->eventInfo.mMapToolId != 0xff || actor->eventInfo.mIndex != 0;
     const bool returnPlaceWriterPresent = fopAcM_GetName(actor) == fpcNm_KYTAG14_e;
+    const bool enemyBasePresent = actor->group == fopAc_ENEMY_e;
     MilestoneObservation::Actor snapshot{
         .runtimeGeneration = runtimeGeneration,
         .actorType = actor->actor_type,
@@ -236,6 +237,7 @@ int capture_milestone_actor(void* candidate, void* context) {
         .attentionPresent = attentionPresent,
         .eventParticipationPresent = eventParticipationPresent,
         .returnPlaceWriterPresent = returnPlaceWriterPresent,
+        .enemyBasePresent = enemyBasePresent,
     };
     if (attentionPresent) {
         snapshot.attention.flags = actor->attention_info.flags;
@@ -279,6 +281,18 @@ int capture_milestone_actor(void* candidate, void* context) {
         component.eligible = component.noTelopClear && component.eventSetSatisfied &&
                              component.eventUnsetSatisfied && component.switchSetSatisfied &&
                              component.switchUnsetSatisfied;
+    }
+    if (enemyBasePresent) {
+        const auto* enemy = static_cast<const fopEn_enemy_c*>(actor);
+        auto& component = snapshot.enemyBase;
+        component.flags = enemy->mFlags;
+        component.throwMode = enemy->mThrowMode;
+        component.downPositionX = enemy->mDownPos.x;
+        component.downPositionY = enemy->mDownPos.y;
+        component.downPositionZ = enemy->mDownPos.z;
+        component.headLockPositionX = enemy->mHeadLockPos.x;
+        component.headLockPositionY = enemy->mHeadLockPos.y;
+        component.headLockPositionZ = enemy->mHeadLockPos.z;
     }
     storage->actors.push_back(snapshot);
     return 1;

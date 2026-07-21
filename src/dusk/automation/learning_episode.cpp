@@ -24,6 +24,9 @@ constexpr std::size_t EpisodeBlockHeaderSize = 64;
 constexpr std::size_t EpisodePayloadHeaderSize = 24;
 constexpr std::uint32_t ShardComplete = 1u << 0;
 constexpr std::uint16_t EpisodeSuccess = 1u << 0;
+// Stable fopAc_Group_e wire value. Keep the serializer independent of the
+// heavyweight game actor header used only by the read-only observer adapter.
+constexpr std::uint8_t EnemyActorGroup = 2;
 
 bool is_lower_hex(const std::string_view value, const std::size_t size) {
     return value.size() == size && std::ranges::all_of(value, [](const char byte) {
@@ -527,20 +530,24 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         return false;
     }
     for (const MilestoneObservation::Actor& actor : observation.actors) {
-        if (!actor.returnPlaceWriterPresent)
-            continue;
-        const auto& writer = actor.returnPlaceWriter;
-        const bool guardsSatisfied = writer.noTelopClear && writer.eventSetSatisfied &&
-                                     writer.eventUnsetSatisfied && writer.switchSetSatisfied &&
-                                     writer.switchUnsetSatisfied;
-        if (actor.actorName != fpcNm_KYTAG14_e ||
-            (writer.requiredEventSet == 0xffff && !writer.eventSetSatisfied) ||
-            (writer.requiredEventUnset == 0xffff && !writer.eventUnsetSatisfied) ||
-            (writer.requiredSwitchSet == 0xff && !writer.switchSetSatisfied) ||
-            (writer.requiredSwitchUnset == 0xff && !writer.switchUnsetSatisfied) ||
-            writer.eligible != guardsSatisfied)
-        {
-            error = "learning observation has inconsistent return-place writer";
+        if (actor.returnPlaceWriterPresent) {
+            const auto& writer = actor.returnPlaceWriter;
+            const bool guardsSatisfied = writer.noTelopClear && writer.eventSetSatisfied &&
+                                         writer.eventUnsetSatisfied && writer.switchSetSatisfied &&
+                                         writer.switchUnsetSatisfied;
+            if (actor.actorName != fpcNm_KYTAG14_e ||
+                (writer.requiredEventSet == 0xffff && !writer.eventSetSatisfied) ||
+                (writer.requiredEventUnset == 0xffff && !writer.eventUnsetSatisfied) ||
+                (writer.requiredSwitchSet == 0xff && !writer.switchSetSatisfied) ||
+                (writer.requiredSwitchUnset == 0xff && !writer.switchUnsetSatisfied) ||
+                writer.eligible != guardsSatisfied)
+            {
+                error = "learning observation has inconsistent return-place writer";
+                return false;
+            }
+        }
+        if (actor.enemyBasePresent != (actor.group == EnemyActorGroup)) {
+            error = "learning observation has inconsistent enemy-base component";
             return false;
         }
     }
@@ -759,6 +766,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         componentMask |= actor.attentionPresent ? 1u << 0 : 0;
         componentMask |= actor.eventParticipationPresent ? 1u << 1 : 0;
         componentMask |= actor.returnPlaceWriterPresent ? 1u << 2 : 0;
+        componentMask |= actor.enemyBasePresent ? 1u << 3 : 0;
         append_integer(output, componentMask);
         append_integer<std::uint16_t>(output, 0);
 
@@ -815,6 +823,17 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         append_integer(output,
             actor.returnPlaceWriterPresent ? writer.requiredSwitchUnset : std::uint8_t{0});
         append_integer<std::uint16_t>(output, 0);
+
+        const auto& enemy = actor.enemyBase;
+        append_integer(output, actor.enemyBasePresent ? enemy.flags : std::uint16_t{0});
+        append_integer(output, actor.enemyBasePresent ? enemy.throwMode : std::uint8_t{0});
+        append_integer<std::uint8_t>(output, 0);
+        for (const float value : {enemy.downPositionX, enemy.downPositionY, enemy.downPositionZ,
+                 enemy.headLockPositionX, enemy.headLockPositionY, enemy.headLockPositionZ})
+        {
+            if (!append_float(output, actor.enemyBasePresent ? value : 0.0F, error))
+                return false;
+        }
 
         std::uint8_t backingMask = 0;
         backingMask |= actor.heapPresent ? 1u << 0 : 0;

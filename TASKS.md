@@ -249,11 +249,26 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     controller. A header census found action/mode-shaped members in 224 of 769
     actor headers and animation-shaped members in 518, with incompatible types
     (`u8`, `s16`, `int`, member-function pointers), offsets and semantics;
-    `fopEn_enemy_c` only adds shared enemy flags and one animation frame. The
+    `fopEn_enemy_c` adds shared enemy flags, throw mode and two semantic
+    positions. Its `mAnmFrame` drives only the shared ball-model effect and is
+    not a universal enemy animation phase. The
     learner contract must therefore use versioned, profile-bound typed
     components with explicit absence and validation. Host addresses, member
     pointers, guessed offsets and opaque object bytes are forbidden as features.
     This architecture result does not claim those typed components are built.
+  - [x] Add the first profile-family component without turning a documented
+    interaction into a target. Observation v15 captures the typed shared
+    `fopEn_enemy_c` flags, throw mode, down position and head-lock position for
+    every active enemy, with explicit absence for other actors and legacy
+    shards. Actor view v6 retains the component and actor-feature view v3 makes
+    it an independently selectable, masked family. The independent terminal
+    actor walk carries the same values for parity checking; native-writer,
+    Rust-reader, legacy-missingness, learner-view and coverage tests pass. The
+    ball-effect animation frame, pointers, effect IDs and opaque bytes are
+    deliberately excluded. This is generic information collection only: no
+    enemy is selected, no desired state is supplied and no action or reward is
+    implied. Live cross-profile variation evidence remains part of the open
+    parent audit.
   - [x] Audit actor state temporally from the complete native episode set rather
     than treating duplicated pre/post snapshots as independent samples. Native
     corpus inspection v5 reconstructs each episode's unique boundary sequence,
@@ -447,6 +462,14 @@ probe, demonstration, curriculum, option, reward term or preferred action.
 
 ### 0B. Use Skybook as an observation/action requirements corpus
 
+Skybook is an audit corpus, not a task list for the harness. We inspect it to
+discover classes of information, control authority, history and read-only
+outcome evidence that are missing from the learner boundary. Dusklight code
+must not contain a named-glitch reproducer, its setup, its action ordering or a
+reward that encodes its solution. Triggering any catalogued behavior remains a
+learner evaluation performed only after the generic capability boundary is
+ready.
+
 - [x] Index the Skybook catalog by underlying mechanism: precision movement and
   collision, actor displacement/interaction, targeting/camera, item and
   animation concurrency, event/trigger/loading state, RNG/timers, and actor
@@ -481,28 +504,24 @@ probe, demonstration, curriculum, option, reward term or preferred action.
 - [ ] Turn discovered gaps into stable universal channels or explicitly typed
   optional extensions. A map- or boss-specific extension must remain masked
   elsewhere and must not reorder or invalidate the cross-map schema.
-- [ ] Use the Telma's Bar text-displacement case as a concrete
-  **learner-readiness audit**, not as a manually authored reproduction:
-  - construct a reproducible source-state fixture through ordinary boot
-    configuration, with the retail progression flags that naturally place
-    post-twilight Telma and Louise in the bar;
-  - verify that generic observations expose every potentially relevant actor,
-    interaction/attention volume, dialogue and event owner/phase, cutscene
-    transition, and the fixed shared text-progression state over time. Add
-    missing facts only as stable typed channels that remain meaningful outside
-    this room; do not expose a precomputed success hint;
-  - verify that the learner can express unrestricted frame-exact PAD and can
-    observe enough history to associate simultaneous or interrupted
-    interactions with later text state;
-  - define a read-only outcome predicate for displaced text progression (and
-    its later one-box-at-a-time observable behavior) without describing which
-    actor to approach first, where to stand, or when to press a button;
-  - after the information boundary passes audit, give a learner only the
-    source state, generic action surface, generic observations and outcome
-    predicate. The known Louise/Telma ordering is withheld from demonstrations,
-    tactics, shaping, curricula and search code. A successful exact PAD tape is
-    evidence that the learner discovered the interaction, not input supplied
-    to it.
+- [ ] Convert the corpus review into a capability backlog, grouped by reusable
+  signal rather than named technique: actor-local state machines, interaction
+  ownership/volumes, animation and action phases, collision and attachment
+  relationships, event/dialogue/loading transitions, counters/timers/RNG, and
+  generic read-only state-change or invariant-violation oracles. A single typed
+  extension should satisfy many cases; a case-specific extension is allowed
+  only when it models a genuine game subsystem and is explicitly masked
+  elsewhere.
+- [ ] Validate each new capability with neutral collection tests and temporal
+  coverage reports. Validation proves that the field is authentic, phase
+  correct, complete when promised, varying somewhere in the game, and stable
+  across replay. It does not prove that we know a sequence which exploits it.
+- [ ] After the boundary is sufficiently complete, run learner-only discovery
+  evaluations on withheld cases. The evaluator may provide a reproducible
+  source state, generic observations/actions and a minimal read-only terminal
+  oracle. Published input order, coordinates, timing, demonstrations, shaped
+  corridors and scripted setup behavior remain unavailable. A promoted exact
+  PAD tape must therefore be discovered by the learner and cold-replayable.
 - [x] Produce a learner-readiness matrix linking mechanism requirements to
   captured channels, actions and proof oracles. Do not select a specific
   Skybook glitch as an optimization target until this audit is reviewed. The
