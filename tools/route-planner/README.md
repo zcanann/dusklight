@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns nine operations:
+The planner CLI currently owns ten operations:
 
 - `compose` validates deterministic refinement-pack stacks and emits a canonical
   composed fact/mechanics catalog.
@@ -35,5 +35,8 @@ The planner CLI currently owns nine operations:
   can apply an optional route book's scoped constraints, action directives,
   ordered conditioned methods, cost/evidence thresholds, and deterministic soft
   preferences.
+- `solve-portable` expands a route book's exact/equivalent context scope,
+  requires one explicit start state per exact context, solves each context
+  independently, and reports whether the route reaches its goal everywhere.
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
-  lines for a future planner editor or other clients.
+  lines for a future planner editor or other clients, including portable solves.

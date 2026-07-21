@@ -2,8 +2,9 @@
 //!
 //! This crate owns the authoritative planner IR, validation, fact-pack identity,
 //! solving, proofs, and planner graph projection as those layers are implemented.
-//! It may consume portable automation identities and read-only world facts. It
-//! does not depend on TAS timelines, playback, native execution, or browser code.
+//! It also owns the portable observation and world-fact inputs accepted by the
+//! planner. It does not depend on TAS timelines, playback, native execution, or
+//! browser code.
 
 pub mod artifact;
 pub mod evaluation;

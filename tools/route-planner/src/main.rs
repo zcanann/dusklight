@@ -5,7 +5,7 @@ use dusklight_route_planner::fact_pack::{
     FactPackSource, SourceArtifactKind,
 };
 use dusklight_route_planner::graph::PlannerGraph;
-use dusklight_route_planner::identity::{ContentIdentity, RuntimeConfiguration};
+use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
@@ -19,7 +19,9 @@ use dusklight_route_planner_runtime::service::{
 };
 use dusklight_route_planner_runtime::{
     RuntimeEvidenceMode, RuntimeFeasibilityMode, RuntimeSolveOptions, solve_catalog_goal,
-    solve_catalog_route_book_goal, solve_composed_catalog_goal, solve_composed_route_book_goal,
+    solve_catalog_portable_route_book_goal, solve_catalog_route_book_goal,
+    solve_composed_catalog_goal, solve_composed_portable_route_book_goal,
+    solve_composed_route_book_goal,
 };
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
@@ -48,6 +50,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
         Some("validate-route-book") => validate_route_book(&args[1..]),
         Some("solve") => solve(&args[1..]),
+        Some("solve-portable") => solve_portable(&args[1..]),
         Some("help" | "--help" | "-h") | None => {
             print_usage();
             Ok(())
@@ -445,26 +448,7 @@ fn solve(args: &[String]) -> Result<(), Box<dyn Error>> {
             );
         }
     };
-    let defaults = RuntimeSolveOptions::default();
-    let options = RuntimeSolveOptions {
-        max_depth: usize_option(args, "--max-depth", defaults.max_depth)?,
-        max_states: usize_option(args, "--max-states", defaults.max_states)?,
-        max_resolution_combinations: usize_option(
-            args,
-            "--max-resolution-combinations",
-            defaults.max_resolution_combinations,
-        )?,
-        feasibility_mode: if flag(args, "--upper-bound") {
-            RuntimeFeasibilityMode::UpperBound
-        } else {
-            RuntimeFeasibilityMode::Modeled
-        },
-        evidence_mode: if flag(args, "--research") {
-            RuntimeEvidenceMode::Research
-        } else {
-            RuntimeEvidenceMode::EstablishedOnly
-        },
-    };
+    let options = solve_options(args)?;
     let report = match &input {
         CatalogInput::Composed(catalog) => match &route_book {
             Some(book) => {
@@ -489,6 +473,99 @@ fn solve(args: &[String]) -> Result<(), Box<dyn Error>> {
     write_file(&output, &bytes)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
     Ok(())
+}
+
+fn solve_portable(args: &[String]) -> Result<(), Box<dyn Error>> {
+    enum CatalogInput {
+        Composed(ComposedPlannerCatalog),
+        Base(FactCatalog, MechanicsCatalog),
+    }
+
+    let state_paths = repeated_option(args, "--state");
+    if state_paths.is_empty() {
+        return Err("solve-portable requires at least one --state STATE.json".into());
+    }
+    let states = state_paths
+        .into_iter()
+        .map(|path| -> Result<PlannerExecutionState, Box<dyn Error>> {
+            Ok(PlannerExecutionStateDocument::decode_canonical(&fs::read(path)?)?.into_state()?)
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let equivalence_sets = repeated_option(args, "--equivalence-set")
+        .into_iter()
+        .map(|path| -> Result<EquivalenceSet, Box<dyn Error>> {
+            Ok(EquivalenceSet::decode_canonical(&fs::read(path)?)?)
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let route_book = RouteBook::decode_canonical(&fs::read(required_path(args, "--route-book")?)?)?;
+    let output = required_path(args, "--output")?;
+    let goal_id = option(args, "--goal").ok_or("missing required --goal ID")?;
+    let input = match (
+        option(args, "--catalog"),
+        option(args, "--facts"),
+        option(args, "--mechanics"),
+    ) {
+        (Some(path), None, None) => {
+            CatalogInput::Composed(ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?)
+        }
+        (None, Some(facts), Some(mechanics)) => CatalogInput::Base(
+            FactCatalog::decode_canonical(&fs::read(facts)?)?,
+            MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?,
+        ),
+        _ => {
+            return Err(
+                "solve-portable requires either --catalog CATALOG.json or both --facts FACTS.json and --mechanics MECHANICS.json"
+                    .into(),
+            );
+        }
+    };
+    let options = solve_options(args)?;
+    let report = match &input {
+        CatalogInput::Composed(catalog) => solve_composed_portable_route_book_goal(
+            states,
+            catalog,
+            &equivalence_sets,
+            &route_book,
+            &goal_id,
+            options,
+        )?,
+        CatalogInput::Base(facts, mechanics) => solve_catalog_portable_route_book_goal(
+            states,
+            facts,
+            mechanics,
+            &equivalence_sets,
+            &route_book,
+            &goal_id,
+            options,
+        )?,
+    };
+    let bytes = serde_json::to_vec_pretty(&report)?;
+    write_file(&output, &bytes)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
+}
+
+fn solve_options(args: &[String]) -> Result<RuntimeSolveOptions, Box<dyn Error>> {
+    let defaults = RuntimeSolveOptions::default();
+    Ok(RuntimeSolveOptions {
+        max_depth: usize_option(args, "--max-depth", defaults.max_depth)?,
+        max_states: usize_option(args, "--max-states", defaults.max_states)?,
+        max_resolution_combinations: usize_option(
+            args,
+            "--max-resolution-combinations",
+            defaults.max_resolution_combinations,
+        )?,
+        feasibility_mode: if flag(args, "--upper-bound") {
+            RuntimeFeasibilityMode::UpperBound
+        } else {
+            RuntimeFeasibilityMode::Modeled
+        },
+        evidence_mode: if flag(args, "--research") {
+            RuntimeEvidenceMode::Research
+        } else {
+            RuntimeEvidenceMode::EstablishedOnly
+        },
+    })
 }
 
 fn option(args: &[String], name: &str) -> Option<String> {
@@ -534,6 +611,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
     );
 }

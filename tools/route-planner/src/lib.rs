@@ -11,15 +11,17 @@ use dusklight_route_planner::PlannerContractError;
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::evaluation::{EvidencePolicy, FeasibilityMode};
 use dusklight_route_planner::execution::PlannerExecutionState;
-use dusklight_route_planner::identity::EquivalenceSet;
+use dusklight_route_planner::identity::{ContextSelector, EquivalenceSet, ExactContext};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::ComposedPlannerCatalog;
 use dusklight_route_planner::route_book::RouteBook;
-use dusklight_route_planner::solver::{ForwardSolver, SearchResult, SolverOptions};
+use dusklight_route_planner::solver::{ForwardSolver, SearchResult, SearchStatus, SolverOptions};
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v2";
+pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -73,6 +75,31 @@ pub struct SolveReport {
     pub feasibility_mode: RuntimeFeasibilityMode,
     pub evidence_mode: RuntimeEvidenceMode,
     pub result: SearchResult,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PortableSearchStatus {
+    ReachedAll,
+    UnreachableInSome,
+    UnknownInSome,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortableContextSolveReport {
+    pub exact_context: ExactContext,
+    pub report: SolveReport,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PortableSolveReport {
+    pub schema: String,
+    pub goal_id: String,
+    pub route_book_sha256: Digest,
+    pub status: PortableSearchStatus,
+    pub contexts: Vec<PortableContextSolveReport>,
 }
 
 pub fn solve_catalog_goal(
@@ -237,11 +264,164 @@ pub fn solve_composed_route_book_goal(
     Ok(report)
 }
 
+pub fn solve_catalog_portable_route_book_goal(
+    states: Vec<PlannerExecutionState>,
+    facts: &FactCatalog,
+    mechanics: &MechanicsCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: &RouteBook,
+    goal_id: &str,
+    options: RuntimeSolveOptions,
+) -> Result<PortableSolveReport, PlannerContractError> {
+    route_book.validate_against(facts, mechanics)?;
+    let expected_contexts = expand_route_book_contexts(route_book, equivalence_sets)?;
+    let mut states_by_context = BTreeMap::new();
+    for state in states {
+        state.validate()?;
+        let exact_context = state
+            .snapshot
+            .environment
+            .runtime_configuration
+            .exact_context()?;
+        if !expected_contexts.contains(&exact_context) {
+            return Err(PlannerContractError::new(
+                "states",
+                "contains a context outside the route-book manifest scope",
+            ));
+        }
+        if states_by_context.insert(exact_context, state).is_some() {
+            return Err(PlannerContractError::new(
+                "states",
+                "contains duplicate start states for one exact context",
+            ));
+        }
+    }
+    if states_by_context.len() != expected_contexts.len() {
+        return Err(PlannerContractError::new(
+            "states",
+            "must contain exactly one start state for every selected exact context",
+        ));
+    }
+
+    let mut contexts = Vec::with_capacity(expected_contexts.len());
+    for exact_context in expected_contexts {
+        let state = states_by_context.remove(&exact_context).ok_or_else(|| {
+            PlannerContractError::new("states", "is missing a selected exact context")
+        })?;
+        let report = solve_catalog_route_book_goal(
+            state,
+            facts,
+            mechanics,
+            equivalence_sets,
+            route_book,
+            goal_id,
+            options,
+        )?;
+        contexts.push(PortableContextSolveReport {
+            exact_context,
+            report,
+        });
+    }
+    Ok(PortableSolveReport {
+        schema: PORTABLE_SOLVE_REPORT_SCHEMA.into(),
+        goal_id: goal_id.to_owned(),
+        route_book_sha256: route_book.digest()?,
+        status: portable_status(&contexts),
+        contexts,
+    })
+}
+
+pub fn solve_composed_portable_route_book_goal(
+    states: Vec<PlannerExecutionState>,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: &RouteBook,
+    goal_id: &str,
+    options: RuntimeSolveOptions,
+) -> Result<PortableSolveReport, PlannerContractError> {
+    catalog.validate()?;
+    route_book.validate_against_composed(catalog)?;
+    let mut portable = solve_catalog_portable_route_book_goal(
+        states,
+        &catalog.facts,
+        &catalog.mechanics,
+        equivalence_sets,
+        route_book,
+        goal_id,
+        options,
+    )?;
+    for context in &mut portable.contexts {
+        context.report.refinement_stack_sha256 = Some(catalog.refinement_stack.digest()?);
+        context.report.refinement_pack_ids = catalog
+            .refinement_stack
+            .entries
+            .iter()
+            .map(|entry| entry.pack_id.clone())
+            .collect();
+    }
+    Ok(portable)
+}
+
+fn expand_route_book_contexts(
+    route_book: &RouteBook,
+    equivalence_sets: &[EquivalenceSet],
+) -> Result<BTreeSet<ExactContext>, PlannerContractError> {
+    let sets = equivalence_sets
+        .iter()
+        .map(|set| {
+            set.validate()?;
+            Ok((set.id.as_str(), set))
+        })
+        .collect::<Result<BTreeMap<_, _>, PlannerContractError>>()?;
+    let mut contexts = BTreeSet::new();
+    for selector in &route_book.manifest.scope.selectors {
+        match selector {
+            ContextSelector::Exact { context } => {
+                contexts.insert(context.clone());
+            }
+            ContextSelector::Equivalent { equivalence_set_id } => {
+                let set = sets.get(equivalence_set_id.as_str()).ok_or_else(|| {
+                    PlannerContractError::new(
+                        "route_book.manifest.scope",
+                        format!("references unknown equivalence set {equivalence_set_id}"),
+                    )
+                })?;
+                contexts.extend(set.contexts.iter().cloned());
+            }
+        }
+    }
+    if contexts.is_empty() {
+        return Err(PlannerContractError::new(
+            "route_book.manifest.scope",
+            "does not expand to any exact contexts",
+        ));
+    }
+    Ok(contexts)
+}
+
+fn portable_status(contexts: &[PortableContextSolveReport]) -> PortableSearchStatus {
+    if contexts
+        .iter()
+        .all(|context| context.report.result.status == SearchStatus::Reached)
+    {
+        PortableSearchStatus::ReachedAll
+    } else if contexts
+        .iter()
+        .any(|context| context.report.result.status == SearchStatus::Unknown)
+    {
+        PortableSearchStatus::UnknownInSome
+    } else {
+        PortableSearchStatus::UnreachableInSome
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dusklight_route_planner::identity::ContextSelector;
-    use dusklight_route_planner::identity::{RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
+    use dusklight_route_planner::identity::{
+        ContextSelector, EQUIVALENCE_SET_SCHEMA, EquivalenceEvidence, EquivalenceEvidenceKind,
+        RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
+    };
     use dusklight_route_planner::logic::{
         ComparisonOperator, ContextScope, FACT_CATALOG_SCHEMA, PredicateExpression, ValueReference,
     };
@@ -256,7 +436,7 @@ mod tests {
     use dusklight_route_planner::transition::{Goal, MECHANICS_CATALOG_SCHEMA};
     use std::collections::BTreeMap;
 
-    fn state() -> PlannerExecutionState {
+    fn state_for(content_byte: u8, stage: &str) -> PlannerExecutionState {
         PlannerExecutionState::new(StateSnapshot {
             schema: STATE_SNAPSHOT_SCHEMA.into(),
             id: "snapshot.runtime-test".into(),
@@ -265,7 +445,7 @@ mod tests {
                 schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
                 runtime_configuration: RuntimeConfiguration {
                     schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
-                    content_sha256: Digest([1; 32]),
+                    content_sha256: Digest([content_byte; 32]),
                     language: "en".into(),
                     settings: BTreeMap::new(),
                 },
@@ -279,7 +459,7 @@ mod tests {
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
                 location: SceneLocation {
-                    stage: "F_SP103".into(),
+                    stage: stage.into(),
                     room: 0,
                     layer: 0,
                     spawn: 0,
@@ -300,6 +480,10 @@ mod tests {
             semantic_observations: Vec::new(),
         })
         .unwrap()
+    }
+
+    fn state() -> PlannerExecutionState {
+        state_for(1, "F_SP103")
     }
 
     #[test]
@@ -406,5 +590,124 @@ mod tests {
             route_report.route_book_sha256,
             Some(route_book.digest().unwrap())
         );
+    }
+
+    #[test]
+    fn portable_solve_expands_scope_and_solves_every_exact_context_independently() {
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let mechanics = MechanicsCatalog {
+            schema: MECHANICS_CATALOG_SCHEMA.into(),
+            transitions: Vec::new(),
+            obligations: Vec::new(),
+            writers: Vec::new(),
+            gates: Vec::new(),
+            readers: Vec::new(),
+            reconstruction_rules: Vec::new(),
+            obstructions: Vec::new(),
+            resolvers: Vec::new(),
+            techniques: Vec::new(),
+            microtraces: Vec::new(),
+            goals: vec![Goal {
+                id: "goal.ordon-spring".into(),
+                label: "Reach Ordon Spring".into(),
+                predicate: PredicateExpression::Compare {
+                    left: ValueReference::LocationStage,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("F_SP103".into()),
+                    },
+                },
+            }],
+        };
+        let reached_state = state_for(1, "F_SP103");
+        let unreachable_state = state_for(2, "F_SP00");
+        let contexts = vec![
+            reached_state
+                .snapshot
+                .environment
+                .runtime_configuration
+                .exact_context()
+                .unwrap(),
+            unreachable_state
+                .snapshot
+                .environment
+                .runtime_configuration
+                .exact_context()
+                .unwrap(),
+        ];
+        let equivalence_set = EquivalenceSet {
+            schema: EQUIVALENCE_SET_SCHEMA.into(),
+            id: "equivalence.portable-test".into(),
+            semantic_scope: "route.test".into(),
+            contexts: contexts.clone(),
+            evidence: vec![EquivalenceEvidence {
+                kind: EquivalenceEvidenceKind::CommunityVerification,
+                source_id: "fixture.portable-test".into(),
+                source_sha256: Digest([9; 32]),
+            }],
+        };
+        equivalence_set.validate().unwrap();
+        let route_book = RouteBook {
+            schema: ROUTE_BOOK_SCHEMA.into(),
+            manifest: RouteBookManifest {
+                id: "route.portable-test".into(),
+                version: "1.0.0".into(),
+                label: "Portable route test".into(),
+                author: "route planner tests".into(),
+                source: "in-memory fixture".into(),
+                scope: ContextScope {
+                    selectors: vec![ContextSelector::Equivalent {
+                        equivalence_set_id: equivalence_set.id.clone(),
+                    }],
+                },
+                refinement_stack_sha256: None,
+            },
+            goal_ids: vec!["goal.ordon-spring".into()],
+            constraints: Vec::new(),
+            directives: Vec::new(),
+            steps: Vec::new(),
+            methods: Vec::new(),
+            regions: Vec::new(),
+            annotations: Vec::new(),
+        };
+
+        let report = solve_catalog_portable_route_book_goal(
+            vec![unreachable_state, reached_state],
+            &facts,
+            &mechanics,
+            std::slice::from_ref(&equivalence_set),
+            &route_book,
+            "goal.ordon-spring",
+            RuntimeSolveOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(report.schema, PORTABLE_SOLVE_REPORT_SCHEMA);
+        assert_eq!(report.status, PortableSearchStatus::UnreachableInSome);
+        assert_eq!(report.contexts.len(), 2);
+        assert_eq!(report.contexts[0].exact_context, contexts[0]);
+        assert_eq!(
+            report.contexts[0].report.result.status,
+            SearchStatus::Reached
+        );
+        assert_eq!(
+            report.contexts[1].report.result.status,
+            SearchStatus::UnreachableUnderModel
+        );
+
+        let error = solve_catalog_portable_route_book_goal(
+            vec![state_for(1, "F_SP103")],
+            &facts,
+            &mechanics,
+            &[equivalence_set],
+            &route_book,
+            "goal.ordon-spring",
+            RuntimeSolveOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(error.field(), "states");
     }
 }

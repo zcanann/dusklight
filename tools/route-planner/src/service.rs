@@ -2,7 +2,8 @@
 
 use crate::inspection::{StateInspection, inspect_state};
 use crate::{
-    RuntimeSolveOptions, SolveReport, solve_composed_catalog_goal, solve_composed_route_book_goal,
+    PortableSolveReport, RuntimeSolveOptions, SolveReport, solve_composed_catalog_goal,
+    solve_composed_portable_route_book_goal, solve_composed_route_book_goal,
 };
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::execution::PlannerExecutionStateDocument;
@@ -14,7 +15,7 @@ use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v1";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v2";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +70,15 @@ pub enum PlannerServiceRequest {
         #[serde(default)]
         route_book: Option<Box<RouteBook>>,
     },
+    SolvePortable {
+        request_id: String,
+        states: Vec<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        route_book: Box<RouteBook>,
+        goal_id: String,
+        options: RuntimeSolveOptions,
+    },
 }
 
 impl PlannerServiceRequest {
@@ -80,7 +90,8 @@ impl PlannerServiceRequest {
             | Self::Compose { request_id, .. }
             | Self::ProjectGraph { request_id, .. }
             | Self::InspectState { request_id, .. }
-            | Self::Solve { request_id, .. } => request_id,
+            | Self::Solve { request_id, .. }
+            | Self::SolvePortable { request_id, .. } => request_id,
         }
     }
 }
@@ -129,6 +140,9 @@ pub enum PlannerServicePayload {
     },
     SolveReport {
         report: Box<SolveReport>,
+    },
+    PortableSolveReport {
+        report: Box<PortableSolveReport>,
     },
 }
 
@@ -243,6 +257,31 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 report: Box::new(report),
             })
         }),
+        PlannerServiceRequest::SolvePortable {
+            states,
+            catalog,
+            equivalence_sets,
+            route_book,
+            goal_id,
+            options,
+            ..
+        } => states
+            .into_iter()
+            .map(PlannerExecutionStateDocument::into_state)
+            .collect::<Result<Vec<_>, _>>()
+            .and_then(|states| {
+                solve_composed_portable_route_book_goal(
+                    states,
+                    &catalog,
+                    &equivalence_sets,
+                    &route_book,
+                    &goal_id,
+                    options,
+                )
+            })
+            .map(|report| PlannerServicePayload::PortableSolveReport {
+                report: Box::new(report),
+            }),
     };
     match result {
         Ok(payload) => success_response(Some(request_id), payload),

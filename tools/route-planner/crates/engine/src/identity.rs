@@ -375,6 +375,27 @@ impl EquivalenceSet {
     pub fn proves(&self, context: &ExactContext) -> bool {
         self.contexts.binary_search(context).is_ok()
     }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let set: Self = serde_json::from_slice(bytes)?;
+        set.validate()?;
+        if set.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "equivalence_set",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(set)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
 }
 
 fn validate_language(value: &str) -> Result<(), PlannerContractError> {

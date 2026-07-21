@@ -302,6 +302,29 @@ An obstruction says why a particular approach cannot currently complete. A
 bypass resolves that obstruction for a stated approach and scope. It does not
 erase the underlying world fact for every route.
 
+Authored obstructions bind declaratively to candidate actions. An author may
+name a stable action ID, or select an action structurally by action kind,
+source-state predicate/region, destination scene, approach, and exact-context
+scope. Catalog composition resolves that selector to concrete candidate-action
+IDs and emits ordinary `blocks` dependencies automatically. The solver never
+depends on a route author remembering to wire the same obstruction into a route
+book.
+
+This behaves like a typed rewrite of traversability:
+
+```text
+authorized(action, state)
+  -> authorized(action, state)
+     AND every active bound obstruction has an applicable resolution
+```
+
+`active_when` remains a state predicate, so one physical edge may be blocked in
+twilight or from one side and open otherwise. Exact-one selectors fail on zero
+or multiple matches; explicitly plural selectors expand deterministically and
+retain the authored selector and source provenance. Changing the extracted
+catalog reruns binding and changes the composed-catalog digest, preventing stale
+bindings from silently surviving a build update.
+
 ### 3.8 Evidence and truth are separate
 
 A fact can be extracted from a build, observed in a trace, reported by a route
@@ -376,18 +399,18 @@ The repository already contains useful foundations:
 
 - World extraction for placements, spawns, SCLS scene changes, and collision.
 - A read-only milestone model.
-- A routes crate for concrete timelines.
-- A workbench graph with nested single-entry/single-exit subgraphs.
-- Existing proof/search infrastructure.
 - Save, stage, event, actor, and title-flow source needed to ground mechanics.
+- Existing TAS route/editor output may serve as non-authoritative examples and
+  visual references, but is not an implementation foundation or prerequisite.
 
-Reuse these at the level appropriate to each asset. Concrete route timelines
-remain authored route books; extracted data and rules become the knowledge base.
-The existing Route Workbench supplies a strong visual and interaction precedent
-for nested plan regions, but its timeline tree, playback authority, and graph
-schema are not the planner's causal model. Share a generic primitive only when it
-has a clean domain-independent boundary; do not make code reuse a prerequisite
-for a consistent look and feel.
+The planner owns every production contract and tool it needs. Source knowledge
+and extracted facts become its knowledge base through planner-owned adapters;
+concrete routes remain planner route books. Existing UI may provide visual
+precedent for nested plan regions, but its timeline tree, playback authority,
+and graph schema are not the planner's causal model. No planner milestone waits
+on Huntctl becoming stable or usable. A generic primitive may be extracted later
+only after a clean domain-independent boundary is demonstrated and without
+making it a planner dependency.
 
 ### 4.2 Source-grounded save/runtime findings
 
@@ -508,10 +531,11 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Planner service schema v1 provides a typed JSON-lines transport owned by the
+- Planner service schema v2 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
-  inspection, and solve requests; every response retains its request ID and
+  inspection, exact-context solve, and portable multi-context solve requests;
+  every response retains its request ID and
   returns either a typed payload or a structured field/detail error. It imports
   no Huntctl CLI, TAS timeline, WorkbenchGraph, playback, or browser-state types.
 - State-inspection schema v1 preserves the full execution-state document—live
@@ -1319,9 +1343,10 @@ silent fact after export or sharing.
 
 ### 5.18 UX surfaces
 
-#### Relationship to the TAS Route Workbench
+#### Independent planner editor and optional visual precedent
 
-The planner should feel like a sibling of the existing huntctl Route Workbench:
+The planner may use screenshots or interaction conventions from the existing TAS
+Route Workbench as visual inspiration:
 
 - The same general dark graph-canvas vocabulary, compact node cards, curved
   edges, selection treatment, details pane, and restrained status colors.
@@ -1333,7 +1358,8 @@ The planner should feel like a sibling of the existing huntctl Route Workbench:
 - Revision-checked edits, explicit previews for consequential mutations, and
   recoverable local drafts where appropriate.
 
-This is visual/product continuity, not a requirement to extend the current
+This is optional visual/product continuity, not a requirement to build, run, or
+extend the current
 `WorkbenchGraph` or timeline schema. The TAS workbench projects a mostly
 parent-linked concrete playback history. The planner projects a potentially
 cyclic AND/OR causal graph with alternative producers, requirements,
@@ -1345,7 +1371,8 @@ tool and has no build-time or runtime dependency on Huntctl/TAS crates. It owns
 its engine, schemas, CLI/service, graph projection, and eventual editor. If the
 TAS tooling later chooses to consume a stable planner interface, that is a
 separate downstream integration decision by its maintainers; this plan neither
-implements nor presumes it.
+implements nor presumes it. Huntctl availability, stability, or completion is
+never a planner acceptance criterion.
 
 Give the planner its own versioned schemas and Rust domain crate/server surface.
 Rust owns fact-pack resolution, validation, semantic state transitions, solving,
@@ -1631,6 +1658,14 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
         not delete or falsify the underlying obstruction.
   - [x] Load those records from canonical refinement packs into deterministic,
         base-digest-bound composed runtime catalogs.
+  - [ ] Add authored obstruction selectors and a deterministic composition pass
+        that binds them to candidate actions by stable ID or structural
+        source/destination/approach/context matching, emitting graph `blocks`
+        dependencies without route-book wiring.
+  - [ ] Require explicit exact-one versus plural cardinality, fail closed on
+        unmatched or ambiguous selectors, retain selector/provenance in the
+        compiled binding, and add stale-binding regression tests across catalog
+        digest changes.
 - [ ] Support direction, form, mount, twilight, actor, void, and layer scope.
 - [ ] Classify candidates as feasible, obstructed, or unknown.
   - [x] Implement the loss-aware per-snapshot classification primitive, including
@@ -1693,8 +1728,9 @@ Deliverable: researchers can extend the model without editing core code.
         objective after route depth.
   - [x] Execute cumulative per-axis technique-cost thresholds and strict
         route-level evidence thresholds.
-  - [ ] Validate portable multi-context route books independently in every
-        selected exact context.
+  - [x] Validate portable multi-context route books independently in every
+        selected exact context, requiring one start state per expanded context
+        and returning per-context proofs plus a fail-closed aggregate status.
 - [ ] Add multi-objective cost and K-alternative plan search.
 - [x] Return reachable, unreachable-under-model, or unknown.
   - [x] Expose canonical fact/mechanics/execution-state artifacts through a
@@ -1722,7 +1758,7 @@ Deliverable: a headless query API and deterministic fixture suite.
 
 Deliverable: every route and failure is inspectable rather than magical.
 
-### Phase 9 — Workbench UX and authoring
+### Phase 9 — Independent planner UX and authoring
 
 - [ ] Define an independent versioned planner graph-projection schema and Rust
       crate/server API; do not overload timeline `WorkbenchGraph` or playback
@@ -1737,9 +1773,11 @@ Deliverable: every route and failure is inspectable rather than magical.
   - [x] Add revision-checked, atomic authoritative route-book edit commands to
         the planner CLI and typed service.
   - [ ] Add an HTTP/WebSocket adapter if the browser client requires one.
-- [ ] Match the Route Workbench's visual grammar and navigation conventions with
-      a side-by-side design inventory of reusable colors, spacing, node anatomy,
-      camera controls, breadcrumbs, selection, grouping, and detail-pane patterns.
+- [ ] Define the planner's own visual grammar and navigation conventions for
+      colors, spacing, node anatomy, camera controls, breadcrumbs, selection,
+      grouping, and detail panes. Existing TAS screenshots may inform this work,
+      but no source import, running Huntctl instance, or shared component is
+      required.
 - [ ] Implement nested proof/plan regions with familiar subgraph navigation while
       preserving planner-specific AND/OR, cycles, and continuation-distinct
       frontier states.
