@@ -343,6 +343,15 @@ fn record_transition(
         before.event_handoff.as_ref(),
         after.event_handoff.as_ref()
     );
+    record!(
+        "message_session.status",
+        before.message_session_status != after.message_session_status
+    );
+    record_optional!(
+        "message_session.value",
+        before.message_session.as_ref(),
+        after.message_session.as_ref()
+    );
 }
 
 pub fn inspect_global_temporal_coverage(shards: &[NativeEpisodeShard]) -> GlobalTemporalCoverage {

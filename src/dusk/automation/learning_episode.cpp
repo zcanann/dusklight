@@ -369,8 +369,8 @@ bool append_planner_runtime_state(std::vector<std::uint8_t>& output,
     }
     if (runtime.status != Status::Present || !validStatus(runtime.backingAttachmentStatus) ||
         (attached && (runtime.noFileRaw != 0 || runtime.dataNumRaw >= 3 ||
-                        runtime.attachedPhysicalSlot != runtime.dataNumRaw + 1 ||
-                        attachedSlotMask != (1u << runtime.dataNumRaw))) ||
+                         runtime.attachedPhysicalSlot != runtime.dataNumRaw + 1 ||
+                         attachedSlotMask != (1u << runtime.dataNumRaw))) ||
         (!attached && (runtime.attachedPhysicalSlot != -1 || attachedSlotMask != 0)))
     {
         error = "learning observation has inconsistent runtime-file backing";
@@ -382,14 +382,13 @@ bool append_planner_runtime_state(std::vector<std::uint8_t>& output,
     const auto& handoff = observation.eventHandoff;
     const auto fixedStringIsCanonical = [](const auto& value) {
         const auto terminator = std::ranges::find(value, '\0');
-        return terminator == value.end() ||
-               std::ranges::all_of(terminator, value.end(), [](const char byte) { return byte == 0; });
+        return terminator == value.end() || std::ranges::all_of(terminator, value.end(),
+                                                [](const char byte) { return byte == 0; });
     };
     if (returnPlace.status != Status::Present || restart.status != Status::Present ||
         !fixedStringIsCanonical(returnPlace.stage) || !validStatus(handoff.status) ||
         !validStatus(handoff.eventNameStatus) || !validStatus(handoff.messageFlowStatus) ||
-        !validStatus(handoff.messageCutStatus) ||
-        !validStatus(handoff.pendingCleanupStatus) ||
+        !validStatus(handoff.messageCutStatus) || !validStatus(handoff.pendingCleanupStatus) ||
         !validStatus(handoff.playerControlStatus) || !validStatus(handoff.noTelopStatus) ||
         (handoff.eventNameStatus == Status::Present &&
             !fixedStringIsCanonical(handoff.eventName)) ||
@@ -435,9 +434,8 @@ bool append_planner_runtime_state(std::vector<std::uint8_t>& output,
     append_integer(output, restart.roomParam);
     append_integer(output, restart.lastMode);
 
-    for (const Status status : {handoff.status, handoff.eventNameStatus,
-             handoff.messageFlowStatus, handoff.pendingCleanupStatus,
-             handoff.playerControlStatus, handoff.noTelopStatus})
+    for (const Status status : {handoff.status, handoff.eventNameStatus, handoff.messageFlowStatus,
+             handoff.pendingCleanupStatus, handoff.playerControlStatus, handoff.noTelopStatus})
         append_integer(output, statusByte(status));
     append_integer(output, handoff.preItemNo);
     append_integer(output, handoff.getItemNo);
@@ -463,6 +461,50 @@ bool append_planner_runtime_state(std::vector<std::uint8_t>& output,
         return false;
     output.insert(output.end(), handoff.eventName.begin(), handoff.eventName.end());
     return true;
+}
+
+bool append_message_session_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    using Message = MilestoneObservation::MessageSessionState;
+    const auto& message = observation.messageSession;
+    constexpr std::uint16_t KnownFlags =
+        Message::TalkNow | Message::TalkMessage | Message::AutoMessage | Message::KillPending |
+        Message::CameraCancel | Message::Send | Message::SendControl;
+    const bool statusValid = message.status == Status::Present ||
+                             message.status == Status::Absent ||
+                             message.status == Status::Unavailable;
+    const bool emptyPayload =
+        message.procedure == 0 && message.messageId == 0 && message.messageIndex == 0 &&
+        message.nodeIndex == 0 && message.flowId == 0 && message.selectionCount == 0 &&
+        message.selectionCursor == 0 && message.selectionPush == 0 && message.outputType == 0 &&
+        message.flags == 0 && !message.talkActor.present;
+    const bool talkActorJoined =
+        !message.talkActor.present ||
+        std::ranges::binary_search(observation.actors, message.talkActor.runtimeGeneration, {},
+            &MilestoneObservation::Actor::runtimeGeneration);
+    if (!statusValid || (message.flags & ~KnownFlags) != 0 ||
+        (message.status != Status::Present && !emptyPayload) ||
+        message.talkActor.present != message.talkActor.homePositionPresent || !talkActorJoined)
+    {
+        error = "learning observation has inconsistent message-session state";
+        return false;
+    }
+
+    append_integer(output, static_cast<std::uint8_t>(message.status));
+    append_integer<std::uint8_t>(output, 0);
+    append_integer(output, message.procedure);
+    append_integer(output, message.messageId);
+    append_integer(output, message.messageIndex);
+    append_integer(output, message.nodeIndex);
+    append_integer(output, message.flowId);
+    append_integer(output, message.selectionCount);
+    append_integer(output, message.selectionCursor);
+    append_integer(output, message.selectionPush);
+    append_integer(output, message.outputType);
+    append_integer(output, message.flags);
+    append_integer<std::uint16_t>(output, 0);
+    return append_actor_identity(output, message.talkActor, error);
 }
 
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
@@ -566,8 +608,10 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         &relationships.attentionLookActor,
     };
     for (const MilestoneObservation::ActorIdentity* identity : relationshipActors) {
-        const bool joined = !identity->present || std::ranges::binary_search(observation.actors,
-            identity->runtimeGeneration, {}, &MilestoneObservation::Actor::runtimeGeneration);
+        const bool joined =
+            !identity->present ||
+            std::ranges::binary_search(observation.actors, identity->runtimeGeneration, {},
+                &MilestoneObservation::Actor::runtimeGeneration);
         if (identity->present != identity->homePositionPresent ||
             (!observation.playerRelationshipsPresent && identity->present) || !joined)
         {
@@ -807,21 +851,18 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             writerGuardMask |= writer.switchUnsetSatisfied ? 1u << 4 : 0;
             writerGuardMask |= writer.eligible ? 1u << 5 : 0;
         }
-        append_integer(
-            output, actor.returnPlaceWriterPresent ? writer.saveRoom : std::int8_t{0});
-        append_integer(
-            output, actor.returnPlaceWriterPresent ? writer.savePoint : std::uint8_t{0});
-        append_integer(
-            output, actor.returnPlaceWriterPresent ? writer.switchRoom : std::int8_t{0});
+        append_integer(output, actor.returnPlaceWriterPresent ? writer.saveRoom : std::int8_t{0});
+        append_integer(output, actor.returnPlaceWriterPresent ? writer.savePoint : std::uint8_t{0});
+        append_integer(output, actor.returnPlaceWriterPresent ? writer.switchRoom : std::int8_t{0});
         append_integer(output, writerGuardMask);
-        append_integer(output,
-            actor.returnPlaceWriterPresent ? writer.requiredEventSet : std::uint16_t{0});
-        append_integer(output,
-            actor.returnPlaceWriterPresent ? writer.requiredEventUnset : std::uint16_t{0});
-        append_integer(output,
-            actor.returnPlaceWriterPresent ? writer.requiredSwitchSet : std::uint8_t{0});
-        append_integer(output,
-            actor.returnPlaceWriterPresent ? writer.requiredSwitchUnset : std::uint8_t{0});
+        append_integer(
+            output, actor.returnPlaceWriterPresent ? writer.requiredEventSet : std::uint16_t{0});
+        append_integer(
+            output, actor.returnPlaceWriterPresent ? writer.requiredEventUnset : std::uint16_t{0});
+        append_integer(
+            output, actor.returnPlaceWriterPresent ? writer.requiredSwitchSet : std::uint8_t{0});
+        append_integer(
+            output, actor.returnPlaceWriterPresent ? writer.requiredSwitchUnset : std::uint8_t{0});
         append_integer<std::uint16_t>(output, 0);
 
         const auto& enemy = actor.enemyBase;
@@ -958,12 +999,12 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     append_integer(output, resources.collectedMirrorBits);
 
     const MilestoneObservation::PlayerRelationships emptyRelationships{};
-    const auto& retainedRelationships = observation.playerRelationshipsPresent
-                                            ? observation.playerRelationships
-                                            : emptyRelationships;
+    const auto& retainedRelationships = observation.playerRelationshipsPresent ?
+                                            observation.playerRelationships :
+                                            emptyRelationships;
     const std::uint8_t relationshipStatus = observation.playerRelationshipsPresent ? 1 :
-                                            observation.playerPresent               ? 3 :
-                                                                                      2;
+                                            observation.playerPresent              ? 3 :
+                                                                                     2;
     append_integer(output, relationshipStatus);
     append_integer(output, static_cast<std::uint8_t>(relationshipActors.size()));
     append_integer<std::uint16_t>(output, 0);
@@ -987,12 +1028,11 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     }
 
     const MilestoneObservation::PlayerCollisionSolver emptySolver{};
-    const auto& solver = observation.playerCollisionSolverPresent ?
-                             observation.playerCollisionSolver :
-                             emptySolver;
+    const auto& solver =
+        observation.playerCollisionSolverPresent ? observation.playerCollisionSolver : emptySolver;
     const std::uint8_t solverStatus = observation.playerCollisionSolverPresent ? 1 :
-                                      observation.playerPresent                 ? 3 :
-                                                                                  2;
+                                      observation.playerPresent                ? 3 :
+                                                                                 2;
     append_integer(output, solverStatus);
     append_integer(output, static_cast<std::uint8_t>(solver.wallCircles.size()));
     append_integer<std::uint16_t>(output, 0);
@@ -1022,7 +1062,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             !append_float(output, wall.realizedRadius, error))
             return false;
     }
-    return append_planner_runtime_state(output, observation, error);
+    if (!append_planner_runtime_state(output, observation, error))
+        return false;
+    return append_message_session_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

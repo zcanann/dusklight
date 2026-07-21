@@ -626,6 +626,23 @@ human-authored successful setup.
       `1f17770d...3c36a`;
   - [ ] triggers, exits, loading/event state, goal state, clocks and RNG
     identity beyond the currently retained scene-exit and core channels.
+    - [x] Capture the global message session without casting the active talk
+      partner to a selected NPC class. Learning observation v16 reads the
+      existing message object through its public accessors and retains channel
+      status, procedure, message ID/index, flow/node cursor, selection state,
+      output type, named control flags and a pointer-free talk-actor identity
+      joined to the complete actor population. The older NPC-scoped flow field
+      remains decodable but is no longer the only dialogue signal. The native
+      writer rejects unknown flags, dangling actors and status/payload
+      disagreement; the Rust decoder preserves v2-v15 missingness, temporal
+      coverage reports the channel, and the route-planner snapshot projects it
+      as generic `MessageFlow` state. Cross-language v16 fixture
+      `44c8b137...a4e6b19` and fail-closed tests pass. This exposes information
+      from whatever dialogue the learner reaches; it contains no NPC setup,
+      input timing, target outcome or reward.
+      A clean-build neutral live sample remains unclaimed because upstream
+      Aurora's Null backend failed during renderer initialization before the
+      first simulation tick.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

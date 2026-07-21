@@ -293,6 +293,36 @@ struct MilestoneObservation {
     };
     EventHandoffState eventHandoff;
 
+    // Global message-system state, observed through public read accessors. This
+    // is deliberately independent of any NPC class or authored dialogue flow:
+    // a learner sees the currently realized message session without the
+    // observer advancing it or encoding how it was reached.
+    struct MessageSessionState {
+        enum Flag : std::uint16_t {
+            TalkNow = 1u << 0,
+            TalkMessage = 1u << 1,
+            AutoMessage = 1u << 2,
+            KillPending = 1u << 3,
+            CameraCancel = 1u << 4,
+            Send = 1u << 5,
+            SendControl = 1u << 6,
+        };
+
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint16_t procedure = 0;
+        std::uint32_t messageId = 0;
+        std::int32_t messageIndex = 0;
+        std::uint16_t nodeIndex = 0;
+        std::int16_t flowId = 0;
+        std::uint8_t selectionCount = 0;
+        std::uint8_t selectionCursor = 0;
+        std::uint8_t selectionPush = 0;
+        std::uint8_t outputType = 0;
+        std::uint16_t flags = 0;
+        ActorIdentity talkActor;
+    };
+    MessageSessionState messageSession;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

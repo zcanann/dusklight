@@ -294,8 +294,8 @@ struct ObservationFixture {
             .homePositionZ = -10.0F,
         };
         observation.eventHandoff.eventNameStatus = MilestoneObservation::ChannelStatus::Present;
-        observation.eventHandoff.eventName =
-            {'D', 'E', 'F', 'A', 'U', 'L', 'T', '_', 'G', 'E', 'T', 'I', 'T', 'E', 'M', '\0'};
+        observation.eventHandoff.eventName = {
+            'D', 'E', 'F', 'A', 'U', 'L', 'T', '_', 'G', 'E', 'T', 'I', 'T', 'E', 'M', '\0'};
         observation.eventHandoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Present;
         observation.eventHandoff.messageFlowId = 0x777;
         observation.eventHandoff.messageNodeIndex = 0x12;
@@ -303,12 +303,36 @@ struct ObservationFixture {
             MilestoneObservation::ChannelStatus::Unavailable;
         observation.eventHandoff.pendingCleanupStatus =
             MilestoneObservation::ChannelStatus::Unavailable;
-        observation.eventHandoff.playerControlStatus =
-            MilestoneObservation::ChannelStatus::Present;
+        observation.eventHandoff.playerControlStatus = MilestoneObservation::ChannelStatus::Present;
         observation.eventHandoff.playerControlModeFlags = 0x1234;
         observation.eventHandoff.playerControlDoStatus = 0x15;
         observation.eventHandoff.noTelopStatus = MilestoneObservation::ChannelStatus::Present;
         observation.eventHandoff.noTelop = true;
+        observation.messageSession.status = MilestoneObservation::ChannelStatus::Present;
+        observation.messageSession.procedure = 6;
+        observation.messageSession.messageId = 0x123456;
+        observation.messageSession.messageIndex = 17;
+        observation.messageSession.nodeIndex = 9;
+        observation.messageSession.flowId = 0x777;
+        observation.messageSession.selectionCount = 3;
+        observation.messageSession.selectionCursor = 1;
+        observation.messageSession.selectionPush = 2;
+        observation.messageSession.outputType = 4;
+        observation.messageSession.flags = MilestoneObservation::MessageSessionState::TalkNow |
+                                           MilestoneObservation::MessageSessionState::TalkMessage |
+                                           MilestoneObservation::MessageSessionState::Send;
+        observation.messageSession.talkActor = {
+            .present = true,
+            .runtimeGeneration = 7,
+            .actorName = 0x123,
+            .setId = 4,
+            .homeRoom = 0,
+            .currentRoom = 0,
+            .homePositionPresent = true,
+            .homePositionX = 10.0F,
+            .homePositionY = 2.0F,
+            .homePositionZ = -10.0F,
+        };
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -705,6 +729,20 @@ void test_runtime_file_attachment_fails_closed() {
     REQUIRE(error.find("inconsistent runtime-file backing") != std::string::npos);
 }
 
+void test_message_session_fails_closed() {
+    ObservationFixture fixture;
+    fixture.observation.messageSession.status = MilestoneObservation::ChannelStatus::Absent;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent message-session state") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -787,6 +825,7 @@ int main(const int argc, char** argv) {
     test_temporary_event_register_bank_is_required();
     test_player_resources_presence_matches_player_presence();
     test_runtime_file_attachment_fails_closed();
+    test_message_session_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

@@ -35,6 +35,7 @@ const OBSERVATION_VERSION_V12: u16 = 12;
 const OBSERVATION_VERSION_V13: u16 = 13;
 const OBSERVATION_VERSION_V14: u16 = 14;
 const OBSERVATION_VERSION_V15: u16 = 15;
+const OBSERVATION_VERSION_V16: u16 = 16;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -53,9 +54,9 @@ pub use collision_solver::{
 #[path = "native_episode_planner.rs"]
 mod planner;
 pub use planner::{
-    NativeEventHandoffObservation, NativeMessageFlowObservation, NativePhysicalSlotObservation,
-    NativePlayerControlObservation, NativeRestartObservation, NativeReturnPlaceObservation,
-    NativeRuntimeFileObservation,
+    NativeEventHandoffObservation, NativeMessageFlowObservation, NativeMessageSessionObservation,
+    NativePhysicalSlotObservation, NativePlayerControlObservation, NativeRestartObservation,
+    NativeReturnPlaceObservation, NativeRuntimeFileObservation,
 };
 
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V1: &str = "dusklight-native-episode-shard/v1";
@@ -74,6 +75,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V12: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V13: &str = "dusklight-learning-observation/v13";
 pub const LEARNING_OBSERVATION_SCHEMA_V14: &str = "dusklight-learning-observation/v14";
 pub const LEARNING_OBSERVATION_SCHEMA_V15: &str = "dusklight-learning-observation/v15";
+pub const LEARNING_OBSERVATION_SCHEMA_V16: &str = "dusklight-learning-observation/v16";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -645,6 +647,8 @@ pub struct NativeLearningObservation {
     pub restart: Option<NativeRestartObservation>,
     pub event_handoff_status: NativeChannelStatus,
     pub event_handoff: Option<NativeEventHandoffObservation>,
+    pub message_session_status: NativeChannelStatus,
+    pub message_session: Option<NativeMessageSessionObservation>,
 }
 
 #[derive(Debug)]
@@ -712,6 +716,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V13
                 | OBSERVATION_VERSION_V14
                 | OBSERVATION_VERSION_V15
+                | OBSERVATION_VERSION_V16
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -841,6 +846,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V13 => LEARNING_OBSERVATION_SCHEMA_V13,
         OBSERVATION_VERSION_V14 => LEARNING_OBSERVATION_SCHEMA_V14,
         OBSERVATION_VERSION_V15 => LEARNING_OBSERVATION_SCHEMA_V15,
+        OBSERVATION_VERSION_V16 => LEARNING_OBSERVATION_SCHEMA_V16,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1442,6 +1448,85 @@ fn decode_planner_runtime_channels(
                 .then_some(player_control_raw),
             no_telop_status,
             no_telop: (no_telop_status == NativeChannelStatus::Present).then_some(no_telop_raw),
+        }),
+    ))
+}
+
+fn decode_message_session(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, Option<NativeMessageSessionObservation>), NativeEpisodeShardError>
+{
+    const TALK_NOW: u16 = 1 << 0;
+    const TALK_MESSAGE: u16 = 1 << 1;
+    const AUTO_MESSAGE: u16 = 1 << 2;
+    const KILL_PENDING: u16 = 1 << 3;
+    const CAMERA_CANCEL: u16 = 1 << 4;
+    const SEND: u16 = 1 << 5;
+    const SEND_CONTROL: u16 = 1 << 6;
+    const KNOWN_FLAGS: u16 =
+        TALK_NOW | TALK_MESSAGE | AUTO_MESSAGE | KILL_PENDING | CAMERA_CANCEL | SEND | SEND_CONTROL;
+
+    let status = decode_channel_status(reader)?;
+    if reader.u8()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero message-session reserved byte",
+        ));
+    }
+    let procedure = reader.u16()?;
+    let message_id = reader.u32()?;
+    let message_index = reader.i32()?;
+    let node_index = reader.u16()?;
+    let flow_id = reader.i16()?;
+    let selection_count = reader.u8()?;
+    let selection_cursor = reader.u8()?;
+    let selection_push = reader.u8()?;
+    let output_type = reader.u8()?;
+    let flags = reader.u16()?;
+    if reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero message-session reserved field",
+        ));
+    }
+    let talk_actor = decode_actor_identity(reader)?;
+    if flags & !KNOWN_FLAGS != 0
+        || matches!(status, NativeChannelStatus::NotSampled)
+        || (status != NativeChannelStatus::Present
+            && (procedure != 0
+                || message_id != 0
+                || message_index != 0
+                || node_index != 0
+                || flow_id != 0
+                || selection_count != 0
+                || selection_cursor != 0
+                || selection_push != 0
+                || output_type != 0
+                || flags != 0
+                || talk_actor.present))
+    {
+        return Err(NativeEpisodeShardError::new(
+            "message-session status and payload disagree",
+        ));
+    }
+    Ok((
+        status,
+        (status == NativeChannelStatus::Present).then_some(NativeMessageSessionObservation {
+            procedure,
+            message_id,
+            message_index,
+            node_index,
+            flow_id,
+            selection_count,
+            selection_cursor,
+            selection_push,
+            output_type,
+            talk_now: flags & TALK_NOW != 0,
+            talk_message: flags & TALK_MESSAGE != 0,
+            auto_message: flags & AUTO_MESSAGE != 0,
+            kill_pending: flags & KILL_PENDING != 0,
+            camera_cancel: flags & CAMERA_CANCEL != 0,
+            send: flags & SEND != 0,
+            send_control: flags & SEND_CONTROL != 0,
+            talk_actor,
         }),
     ))
 }
@@ -2223,7 +2308,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V12
         | OBSERVATION_VERSION_V13
         | OBSERVATION_VERSION_V14
-        | OBSERVATION_VERSION_V15 => {
+        | OBSERVATION_VERSION_V15
+        | OBSERVATION_VERSION_V16 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -2832,6 +2918,24 @@ fn decode_observation(
             None,
         )
     };
+    let (message_session_status, message_session) =
+        if observation_version >= OBSERVATION_VERSION_V16 {
+            decode_message_session(reader)?
+        } else {
+            (NativeChannelStatus::NotSampled, None)
+        };
+    if message_session.as_ref().is_some_and(|message| {
+        message.talk_actor.present
+            && actors
+                .binary_search_by_key(&u64::from(message.talk_actor.runtime_generation), |actor| {
+                    actor.runtime_generation
+                })
+                .is_err()
+    }) {
+        return Err(NativeEpisodeShardError::new(
+            "message-session talk actor is outside the complete actor population",
+        ));
+    }
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -2920,6 +3024,8 @@ fn decode_observation(
         restart,
         event_handoff_status,
         event_handoff,
+        message_session_status,
+        message_session,
     })
 }
 

@@ -8,6 +8,7 @@
 #include "d/actor/d_a_title.h"
 #include "d/d_camera.h"
 #include "d/d_com_inf_game.h"
+#include "d/d_msg_object.h"
 #include "d/d_s_name.h"
 #include "d/d_s_play.h"
 #include "dusk/automation/file_select_observer.hpp"
@@ -25,26 +26,15 @@
 namespace dusk::automation {
 
 struct MilestoneCollisionReadAdapter {
-    static constexpr u32 KnownFlags = dBgS_Acch::FLAG_GRND_NONE |
-                                      dBgS_Acch::FLAG_WALL_NONE |
-                                      dBgS_Acch::FLAG_ROOF_NONE |
-                                      dBgS_Acch::FLAG_WALL_HIT |
-                                      dBgS_Acch::FLAG_GROUND_HIT |
-                                      dBgS_Acch::FLAG_GROUND_FIND |
-                                      dBgS_Acch::FLAG_GROUND_LANDING |
-                                      dBgS_Acch::FLAG_GROUND_AWAY |
-                                      dBgS_Acch::FLAG_ROOF_HIT |
-                                      dBgS_Acch::FLAG_WATER_NONE |
-                                      dBgS_Acch::FLAG_WATER_HIT |
-                                      dBgS_Acch::FLAG_WATER_IN |
-                                      dBgS_Acch::FLAG_LINE_CHECK |
-                                      dBgS_Acch::FLAG_LINE_CHECK_NONE |
-                                      dBgS_Acch::FLAG_CLR_SPEED_Y |
-                                      dBgS_Acch::FLAG_LINE_CHECK_HIT |
-                                      dBgS_Acch::FLAG_MOVE_BG_ONLY |
-                                      dBgS_Acch::FLAG_GND_THIN_CELLING_OFF |
-                                      dBgS_Acch::FLAG_WALL_SORT |
-                                      dBgS_Acch::FLAG_LINE_DOWN;
+    static constexpr u32 KnownFlags =
+        dBgS_Acch::FLAG_GRND_NONE | dBgS_Acch::FLAG_WALL_NONE | dBgS_Acch::FLAG_ROOF_NONE |
+        dBgS_Acch::FLAG_WALL_HIT | dBgS_Acch::FLAG_GROUND_HIT | dBgS_Acch::FLAG_GROUND_FIND |
+        dBgS_Acch::FLAG_GROUND_LANDING | dBgS_Acch::FLAG_GROUND_AWAY | dBgS_Acch::FLAG_ROOF_HIT |
+        dBgS_Acch::FLAG_WATER_NONE | dBgS_Acch::FLAG_WATER_HIT | dBgS_Acch::FLAG_WATER_IN |
+        dBgS_Acch::FLAG_LINE_CHECK | dBgS_Acch::FLAG_LINE_CHECK_NONE | dBgS_Acch::FLAG_CLR_SPEED_Y |
+        dBgS_Acch::FLAG_LINE_CHECK_HIT | dBgS_Acch::FLAG_MOVE_BG_ONLY |
+        dBgS_Acch::FLAG_GND_THIN_CELLING_OFF | dBgS_Acch::FLAG_WALL_SORT |
+        dBgS_Acch::FLAG_LINE_DOWN;
 
     static u32 flags(const dBgS_Acch& value) { return value.m_flags & KnownFlags; }
     static int wallTableSize(const dBgS_Acch& value) { return value.m_tbl_size; }
@@ -52,9 +42,7 @@ struct MilestoneCollisionReadAdapter {
     static const cM3dGLin& line(const dBgS_Acch& value) { return value.m_lin; }
     static const cM3dGCyl& wallCylinder(const dBgS_Acch& value) { return value.m_wall_cyl; }
     static float groundCheckOffset(const dBgS_Acch& value) { return value.m_gnd_chk_offset; }
-    static float roofCorrectionHeight(const dBgS_Acch& value) {
-        return value.m_roof_crr_height;
-    }
+    static float roofCorrectionHeight(const dBgS_Acch& value) { return value.m_roof_crr_height; }
     static float waterCheckOffset(const dBgS_Acch& value) { return value.m_wtr_chk_offset; }
 
     static u32 wallFlags(const dBgS_AcchCir& value) { return value.m_flags & 0x6u; }
@@ -272,9 +260,8 @@ int capture_milestone_actor(void* candidate, void* context) {
         component.eventUnsetSatisfied =
             writer->mEventID2 == 0xffff ||
             !dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[writer->mEventID2]);
-        component.switchSetSatisfied =
-            writer->mSwitchNo1 == 0xff ||
-            dComIfGs_isSwitch(writer->mSwitchNo1, component.switchRoom);
+        component.switchSetSatisfied = writer->mSwitchNo1 == 0xff ||
+                                       dComIfGs_isSwitch(writer->mSwitchNo1, component.switchRoom);
         component.switchUnsetSatisfied =
             writer->mSwitchNo2 == 0xff ||
             !dComIfGs_isSwitch(writer->mSwitchNo2, component.switchRoom);
@@ -578,8 +565,7 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         destination.fill('\0');
         if (source == nullptr)
             return;
-        for (std::size_t index = 0;
-             index < destination.size() && source[index] != '\0'; ++index)
+        for (std::size_t index = 0; index < destination.size() && source[index] != '\0'; ++index)
             destination[index] = source[index];
     };
 
@@ -633,7 +619,7 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     handoff.noTelopStatus = MilestoneObservation::ChannelStatus::Present;
     handoff.noTelop = dComIfGs_isTmpBit(dSv_event_tmp_flag_c::NO_TELOP) != 0;
     handoff.playerControlStatus = link == nullptr ? MilestoneObservation::ChannelStatus::Absent :
-                                                     MilestoneObservation::ChannelStatus::Present;
+                                                    MilestoneObservation::ChannelStatus::Present;
     handoff.playerControlModeFlags = link == nullptr ? 0 : link->mModeFlg;
     handoff.playerControlDoStatus =
         static_cast<std::uint8_t>(link == nullptr ? 0 : dComIfGp_getDoStatus());
@@ -686,6 +672,33 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         }
     } else {
         handoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Unavailable;
+    }
+
+    auto& message = observation.messageSession;
+    dMsgObject_c* messageObject = dMsgObject_getMsgObjectClass();
+    if (messageObject == nullptr) {
+        message.status = MilestoneObservation::ChannelStatus::Absent;
+    } else {
+        using Message = MilestoneObservation::MessageSessionState;
+        message.status = MilestoneObservation::ChannelStatus::Present;
+        message.procedure = dMsgObject_c::getStatus();
+        message.messageId = dMsgObject_c::getMessageID();
+        message.messageIndex = dMsgObject_c::getIdx();
+        message.nodeIndex = dMsgObject_c::getNodeIdx();
+        message.flowId = dMsgObject_c::getNowTalkFlowNo();
+        message.selectionCount = dMsgObject_c::getSelectWordFlag();
+        message.selectionCursor = dMsgObject_c::getSelectCursorPos();
+        message.selectionPush = messageObject->getSelectPushFlag();
+        message.outputType = dMsgObject_c::getMsgOutputType();
+        message.flags = static_cast<std::uint16_t>(
+            (dMsgObject_isTalkNowCheck() ? Message::TalkNow : 0) |
+            (messageObject->isTalkMessage() ? Message::TalkMessage : 0) |
+            (messageObject->isAutoMessageFlag() ? Message::AutoMessage : 0) |
+            (messageObject->isKillMessageFlagLocal() ? Message::KillPending : 0) |
+            (messageObject->isCameraCancelFlagLocal() ? Message::CameraCancel : 0) |
+            (messageObject->isMsgSendLocal() ? Message::Send : 0) |
+            (messageObject->isMsgSendControlLocal() ? Message::SendControl : 0));
+        message.talkActor = actorIdentity(dMsgObject_c::getpTalkActor());
     }
 
     if (player != nullptr) {
@@ -747,8 +760,8 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         const fpc_ProcID itemId = link->getItemID();
         relationships.targetedActor = actorIdentity(link->mTargetedActor);
         relationships.rideActor = actorIdentity(link->mRideAcKeep.getActorConst());
-        relationships.heldItemActor = actorIdentity(
-            itemId == fpcM_ERROR_PROCESS_ID_e ? nullptr : fopAcM_SearchByID(itemId));
+        relationships.heldItemActor =
+            actorIdentity(itemId == fpcM_ERROR_PROCESS_ID_e ? nullptr : fopAcM_SearchByID(itemId));
         relationships.grabbedActor = grabbedActor;
         relationships.thrownBoomerangActor =
             actorIdentity(link->mThrowBoomerangAcKeep.getActorConst());
@@ -770,8 +783,7 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         solver.lineStart = {line.GetStart().x, line.GetStart().y, line.GetStart().z};
         solver.lineEnd = {line.GetEnd().x, line.GetEnd().y, line.GetEnd().z};
         const cM3dGCyl& cylinder = MilestoneCollisionReadAdapter::wallCylinder(collision);
-        solver.wallCylinderCenter = {
-            cylinder.GetC().x, cylinder.GetC().y, cylinder.GetC().z};
+        solver.wallCylinderCenter = {cylinder.GetC().x, cylinder.GetC().y, cylinder.GetC().z};
         solver.wallCylinderRadius = cylinder.GetR();
         solver.wallCylinderHeight = cylinder.GetH();
         solver.groundCheckOffset = MilestoneCollisionReadAdapter::groundCheckOffset(collision);
@@ -787,8 +799,7 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
                 MilestoneCollisionReadAdapter::wallRadiusSquared(source);
             destination.wallHeight = MilestoneCollisionReadAdapter::wallHeight(source);
             destination.wallRadius = MilestoneCollisionReadAdapter::wallRadius(source);
-            destination.directWallHeight =
-                MilestoneCollisionReadAdapter::directWallHeight(source);
+            destination.directWallHeight = MilestoneCollisionReadAdapter::directWallHeight(source);
             const cM3dGCir& circle = MilestoneCollisionReadAdapter::realizedCircle(source);
             destination.realizedCenter = {circle.GetCx(), circle.GetHeight(), circle.GetCy()};
             destination.realizedRadius = circle.GetR();
