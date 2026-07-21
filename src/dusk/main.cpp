@@ -23,6 +23,7 @@
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
+#include "dusk/macos_application.hpp"
 #endif
 #endif
 
@@ -209,6 +210,14 @@ int RunWindowsGuiEntryPoint() {
 }
 #else
 int DuskMain(int argc, char* argv[]) {
+#if defined(__APPLE__)
+    for (int i = 1; i < argc; ++i) {
+        if (std::string_view(argv[i]) == "--headless") {
+            dusk::ConfigureMacOSHeadlessLaunch();
+            break;
+        }
+    }
+#endif
     const int result = game_main(argc, argv);
     if (dusk::RestartRequested && RestartProcess(argc, argv)) {
         return 0;
