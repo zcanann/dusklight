@@ -95,6 +95,7 @@ pub enum NativeEncoderChannelFamily {
     CoreEventContext,
     CoreEventTransition,
     CoreClockDomains,
+    CoreWarpSession,
     CorePreviousInput,
     CoreCameraCollisionWorld,
     CoreRng,
@@ -118,12 +119,13 @@ pub enum NativeEncoderChannelFamily {
 }
 
 impl NativeEncoderChannelFamily {
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 26] = [
         Self::CorePlayerMotion,
         Self::CoreActionPhase,
         Self::CoreEventContext,
         Self::CoreEventTransition,
         Self::CoreClockDomains,
+        Self::CoreWarpSession,
         Self::CorePreviousInput,
         Self::CoreCameraCollisionWorld,
         Self::CoreRng,
@@ -153,6 +155,7 @@ impl NativeEncoderChannelFamily {
             Self::CoreEventContext => "core_event_context",
             Self::CoreEventTransition => "core_event_transition",
             Self::CoreClockDomains => "core_clock_domains",
+            Self::CoreWarpSession => "core_warp_session",
             Self::CorePreviousInput => "core_previous_input",
             Self::CoreCameraCollisionWorld => "core_camera_collision_world",
             Self::CoreRng => "core_rng",
@@ -1594,7 +1597,7 @@ fn native_actor_feature_schema(
     spec: &NativeEncoderFeatureSpec,
 ) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v5\0",
+        b"dusklight.native-direct-actor-features/v6\0",
         &(
             spec,
             selected_feature_names(
@@ -1688,6 +1691,35 @@ fn native_base_feature_names() -> Vec<String> {
             "clock_timer_mode",
             "clock_timer_now_ms",
             "clock_timer_limit_ms",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    names.extend(
+        [
+            "warp_request_kind",
+            "warp_selection_present",
+            "warp_selection_position_x",
+            "warp_selection_position_y",
+            "warp_selection_position_z",
+            "warp_selection_angle",
+            "warp_selection_room",
+            "warp_selection_parameter",
+            "warp_selection_player",
+            "warp_selection_stage_matches_current",
+            "warp_return_mark_present",
+            "warp_return_position_x",
+            "warp_return_position_y",
+            "warp_return_position_z",
+            "warp_return_angle",
+            "warp_return_room",
+            "warp_return_accept_stage",
+            "warp_return_stage_matches_current",
+            "warp_target_point_present",
+            "warp_target_point",
+            "warp_selected_point_present",
+            "warp_selected_point",
+            "warp_transport_match",
         ]
         .into_iter()
         .map(str::to_owned),
@@ -1999,6 +2031,7 @@ fn native_base_feature_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::CoreEventContext, 8);
     extend_family(&mut families, Family::CoreEventTransition, 14);
     extend_family(&mut families, Family::CoreClockDomains, 17);
+    extend_family(&mut families, Family::CoreWarpSession, 23);
     extend_family(&mut families, Family::CorePreviousInput, 24);
     extend_family(&mut families, Family::CoreCameraCollisionWorld, 22);
     extend_family(&mut families, Family::CoreRng, 12);
@@ -3030,6 +3063,77 @@ fn broad_base(observation: &NativeLearningObservation) -> (Vec<f32>, Vec<bool>) 
         clocks.map_or(0.0, |value| value.timer_limit_ms as f32),
         timer_present,
     );
+    let warp = observation.warp_session.as_ref();
+    let warp_present = warp.is_some();
+    push(
+        warp.map_or(0.0, |value| f32::from(value.request_kind)),
+        warp_present,
+    );
+    let selection = warp.and_then(|value| value.selection.as_ref());
+    push(f32::from(selection.is_some()), warp_present);
+    for index in 0..3 {
+        push(
+            selection.map_or(0.0, |value| value.position[index]),
+            selection.is_some(),
+        );
+    }
+    push(
+        selection.map_or(0.0, |value| f32::from(value.angle)),
+        selection.is_some(),
+    );
+    push(
+        selection.map_or(0.0, |value| f32::from(value.room)),
+        selection.is_some(),
+    );
+    push(
+        selection.map_or(0.0, |value| f32::from(value.parameter)),
+        selection.is_some(),
+    );
+    push(
+        selection.map_or(0.0, |value| f32::from(value.player)),
+        selection.is_some(),
+    );
+    push(
+        selection.map_or(0.0, |value| f32::from(value.stage == observation.stage)),
+        selection.is_some(),
+    );
+    let return_mark = warp.and_then(|value| value.return_mark.as_ref());
+    push(f32::from(return_mark.is_some()), warp_present);
+    for index in 0..3 {
+        push(
+            return_mark.map_or(0.0, |value| value.position[index]),
+            return_mark.is_some(),
+        );
+    }
+    push(
+        return_mark.map_or(0.0, |value| f32::from(value.angle)),
+        return_mark.is_some(),
+    );
+    push(
+        return_mark.map_or(0.0, |value| f32::from(value.room)),
+        return_mark.is_some(),
+    );
+    push(
+        return_mark.map_or(0.0, |value| f32::from(value.accept_stage)),
+        return_mark.is_some(),
+    );
+    push(
+        return_mark.map_or(0.0, |value| f32::from(value.stage == observation.stage)),
+        return_mark.is_some(),
+    );
+    let target_point = warp.and_then(|value| value.target_point);
+    push(f32::from(target_point.is_some()), warp_present);
+    push(target_point.map_or(0.0, f32::from), target_point.is_some());
+    let selected_point = warp.and_then(|value| value.selected_point);
+    push(f32::from(selected_point.is_some()), warp_present);
+    push(
+        selected_point.map_or(0.0, f32::from),
+        selected_point.is_some(),
+    );
+    push(
+        warp.map_or(0.0, |value| f32::from(value.transport_match)),
+        warp_present,
+    );
     for value in [
         observation.previous_input.stick_x,
         observation.previous_input.stick_y,
@@ -3566,8 +3670,8 @@ mod tests {
             &native_base_feature_families(),
             &reduced,
         );
-        assert_eq!(reduced_values.len(), 211);
-        assert_eq!(reduced_present.len(), 211);
+        assert_eq!(reduced_values.len(), 234);
+        assert_eq!(reduced_present.len(), 234);
     }
 
     #[test]
@@ -3599,8 +3703,49 @@ mod tests {
             &native_base_feature_families(),
             &reduced,
         );
-        assert_eq!(base.len(), 208);
-        assert_eq!(present.len(), 208);
+        assert_eq!(base.len(), 231);
+        assert_eq!(present.len(), 231);
+    }
+
+    #[test]
+    fn direct_native_adapter_exposes_generic_warp_session_with_masks() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v25.dseps"
+        ))
+        .unwrap();
+        let observation = &shard.episodes[0].steps[0].pre_input;
+        let (base, present) = broad_base(observation);
+        assert_eq!(
+            &base[93..116],
+            &[
+                3.0, 1.0, 100.0, 200.0, -300.0, 4608.0, 2.0, 4.0, 1.0, 0.0, 1.0, 10.0, 20.0, 30.0,
+                -4608.0, 5.0, 3.0, 0.0, 1.0, 9.0, 1.0, 6.0, 0.0,
+            ]
+        );
+        assert!(present[93..116].iter().all(|value| *value));
+
+        let legacy = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v24.dseps"
+        ))
+        .unwrap();
+        let (legacy_base, legacy_present) = broad_base(&legacy.episodes[0].steps[0].pre_input);
+        assert!(legacy_base[93..116].iter().all(|value| *value == 0.0));
+        assert!(legacy_present[93..116].iter().all(|value| !*value));
+
+        let mut base = base;
+        let mut present = present;
+        append_core_temporal_features(&mut base, &mut present, observation, None);
+        let reduced =
+            NativeEncoderFeatureSpec::excluding([NativeEncoderChannelFamily::CoreWarpSession])
+                .unwrap();
+        retain_feature_families(
+            &mut base,
+            &mut present,
+            &native_base_feature_families(),
+            &reduced,
+        );
+        assert_eq!(base.len(), 225);
+        assert_eq!(present.len(), 225);
     }
 
     #[test]
@@ -3639,20 +3784,22 @@ mod tests {
                 .all(|node| !node.binary[lock_membership] && !node.binary_present[lock_membership])
         );
         let (base, present) = broad_base(observation);
-        assert_eq!(base.len(), 200);
-        assert_eq!(present.len(), 200);
+        assert_eq!(base.len(), 223);
+        assert_eq!(present.len(), 223);
         assert!(base[62..93].iter().all(|value| *value == 0.0));
         assert!(present[62..93].iter().all(|value| !*value));
-        assert!(base[160..].iter().all(|value| *value == 0.0));
-        assert!(present[160..].iter().all(|value| !*value));
+        assert!(base[93..116].iter().all(|value| *value == 0.0));
+        assert!(present[93..116].iter().all(|value| !*value));
+        assert!(base[183..].iter().all(|value| *value == 0.0));
+        assert!(present[183..].iter().all(|value| !*value));
         let mut temporal_base = base.clone();
         let mut temporal_present = present.clone();
         append_core_temporal_features(&mut temporal_base, &mut temporal_present, observation, None);
         let all = NativeEncoderFeatureSpec::all();
-        assert_eq!(temporal_base.len(), 225);
-        assert_eq!(temporal_present.len(), 225);
-        assert_eq!(native_base_feature_names().len(), 225);
-        assert_eq!(native_base_feature_families().len(), 225);
+        assert_eq!(temporal_base.len(), 248);
+        assert_eq!(temporal_present.len(), 248);
+        assert_eq!(native_base_feature_names().len(), 248);
+        assert_eq!(native_base_feature_families().len(), 248);
         let previous_available = native_base_feature_names()
             .iter()
             .position(|name| name == "temporal_previous_state_available")
@@ -3874,16 +4021,17 @@ mod tests {
         assert_eq!(binary("attention_action_candidate"), (true, true));
         assert_eq!(binary("attention_check_candidate"), (false, true));
         let (base, base_present) = broad_base(observation);
-        assert_eq!(base.len(), 200);
+        assert_eq!(base.len(), 223);
         assert!(base_present[62..93].iter().all(|value| !*value));
-        assert!(base_present[160..].iter().all(|value| *value));
-        assert_eq!(base[160 + 2], 1.0);
-        assert_eq!(base[160 + 4], 1.0);
-        assert_eq!(base[192], 2.0);
-        assert_eq!(base[193], 3.0);
-        assert_eq!(base[194], 1.0);
-        assert_eq!(base[196], 1.0);
-        assert_eq!(base[198], 0.0);
+        assert!(base_present[93..116].iter().all(|value| !*value));
+        assert!(base_present[183..].iter().all(|value| *value));
+        assert_eq!(base[183 + 2], 1.0);
+        assert_eq!(base[183 + 4], 1.0);
+        assert_eq!(base[215], 2.0);
+        assert_eq!(base[216], 3.0);
+        assert_eq!(base[217], 1.0);
+        assert_eq!(base[219], 1.0);
+        assert_eq!(base[221], 0.0);
     }
 
     #[test]

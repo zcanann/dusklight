@@ -940,6 +940,18 @@ human-authored successful setup.
       current v25 schema while existing v4/v24 ledgers remain distinct.
       Profile-specific door state, resource-load outcomes and live variation
       remain open, so the parent is incomplete.
+    - [x] Promote the v25 warp session through the shared complete-set adapter
+      as an independently selectable `core_warp_session` family. Direct native
+      feature schema v6 emits 23 masked values: request kind, independent
+      selection/return presence and numeric payloads, semantic same-stage
+      relations, target/selected portal presence and IDs, and the transport
+      match. Destination stage bytes remain canonical evidence rather than
+      opaque digest features; only their typed equality to the current stage is
+      derived. Legacy v2-v24 observations mask the entire family, nested absent
+      destinations mask only their payloads, and excluding the family removes
+      exactly its columns. All 206 learning tests pass, including exact v25,
+      legacy-missingness and ablation coverage. No feature names a preferred
+      portal, route, action, timing or reward.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
