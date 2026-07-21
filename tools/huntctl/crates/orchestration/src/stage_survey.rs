@@ -39,7 +39,7 @@ const BUTTON_B: u16 = 0x0200;
 const BUTTON_X: u16 = 0x0400;
 const BUTTON_Y: u16 = 0x0800;
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StageSurveyProbeKind {
     #[default]
@@ -48,6 +48,7 @@ pub enum StageSurveyProbeKind {
     Camera,
     Targeting,
     BasicActions,
+    ContactSweep,
 }
 
 impl StageSurveyProbeKind {
@@ -56,6 +57,7 @@ impl StageSurveyProbeKind {
             Self::Neutral => 1,
             Self::Movement | Self::Camera | Self::Targeting => 4,
             Self::BasicActions => 16,
+            Self::ContactSweep => 80,
         }
     }
 }
@@ -720,7 +722,7 @@ pub fn execute_stage_survey_attempt(
     }
 }
 
-fn survey_probe_tape(
+pub(crate) fn survey_probe_tape(
     candidate: &StageBootCandidate,
     policy: &StageSurveyPolicy,
 ) -> Result<InputTape, StageSurveyError> {
@@ -760,6 +762,28 @@ fn survey_probe_tape(
             {
                 let frame_index = stride * (index + 1);
                 frames[frame_index].pads[0].buttons = button;
+            }
+        }
+        StageSurveyProbeKind::ContactSweep => {
+            const DIRECTIONS: [(i8, i8); 8] = [
+                (0, 100),
+                (71, 71),
+                (100, 0),
+                (71, -71),
+                (0, -100),
+                (-71, -71),
+                (-100, 0),
+                (-71, 71),
+            ];
+            let active = active_probe_frames(&mut frames);
+            let active_len = active.len();
+            for (index, frame) in active.iter_mut().enumerate() {
+                let phase = index * (DIRECTIONS.len() * 2) / active_len;
+                if phase % 2 == 0 {
+                    let (stick_x, stick_y) = DIRECTIONS[phase / 2];
+                    frame.pads[0].stick_x = stick_x;
+                    frame.pads[0].stick_y = stick_y;
+                }
             }
         }
     }
@@ -906,7 +930,10 @@ fn validate_successful_probe(
     })
 }
 
-fn applied_pad_matches_frame(applied: Option<&TraceAppliedPads>, frame: &InputFrame) -> bool {
+pub(crate) fn applied_pad_matches_frame(
+    applied: Option<&TraceAppliedPads>,
+    frame: &InputFrame,
+) -> bool {
     let Some(applied) = applied else {
         return false;
     };
@@ -1434,6 +1461,49 @@ mod tests {
     }
 
     #[test]
+    fn contact_sweep_covers_eight_directions_with_neutral_release_phases() {
+        let tape = survey_probe_tape(
+            &catalog().candidates[0],
+            &StageSurveyPolicy {
+                probe_ticks: 80,
+                probe: StageSurveyProbeKind::ContactSweep,
+                host_timeout_millis: 120_000,
+                maximum_attempts_per_case: 1,
+                fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
+            },
+        )
+        .unwrap();
+        assert!(tape.frames[..20].iter().all(neutral_frame));
+        assert!(tape.frames[60..].iter().all(neutral_frame));
+        let active = &tape.frames[20..60];
+        for direction in [
+            (0, 100),
+            (71, 71),
+            (100, 0),
+            (71, -71),
+            (0, -100),
+            (-71, -71),
+            (-100, 0),
+            (-71, 71),
+        ] {
+            assert!(
+                active
+                    .iter()
+                    .any(|frame| { (frame.pads[0].stick_x, frame.pads[0].stick_y) == direction })
+            );
+        }
+        assert!(active.iter().any(neutral_frame));
+        assert!(tape.frames.iter().all(|frame| {
+            frame.owned_ports == 1
+                && frame.pads[0].buttons == 0
+                && frame.pads[0].substick_x == 0
+                && frame.pads[0].substick_y == 0
+                && frame.pads[0].trigger_left == 0
+                && frame.pads[0].trigger_right == 0
+        }));
+    }
+
+    #[test]
     fn neutral_policy_preserves_legacy_canonical_shape_and_probe_minima_fail_closed() {
         let catalog = catalog();
         let neutral = ledger(&catalog, 1);
@@ -1458,6 +1528,12 @@ mod tests {
                 .unwrap()
                 .contains("\"probe\":\"movement\"")
         );
+
+        movement.policy.probe = StageSurveyProbeKind::ContactSweep;
+        movement.policy.probe_ticks = 79;
+        assert!(movement.validate(&catalog).is_err());
+        movement.policy.probe_ticks = 80;
+        assert!(movement.validate(&catalog).is_ok());
     }
 
     #[test]

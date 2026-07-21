@@ -66,10 +66,10 @@ the same goal without demonstration-relative features.
   card fixture and passed the same Rust invariant checks.
 - Learning-observation v5 and milestone language 1.8 retain and query the exact
   256-byte temporary-event register bank through the authenticated read-only
-  observation boundary. A Telma/Louise boot fixture was used to verify actor,
-  event-byte and cold-boot observation plumbing. That is coverage evidence only;
-  the fixture is not an active glitch target, successful setup, demonstration,
-  or justification for specializing the learner around that interaction.
+  observation boundary. A conditional-stage fixture verified actor, event-byte
+  and cold-boot observation plumbing. That is coverage evidence only, not an
+  active glitch target, successful setup, demonstration, or justification for
+  specializing the learner around a documented interaction.
 - Learning-observation v9 adds a typed, read-only player-resource component:
   health and capacities, currencies, time, ammunition, dungeon state,
   inventory/equipment selection, bottle and bomb quantities, and stable
@@ -301,15 +301,47 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     four distinct state-series identities and had zero rejected cases
     (`3d8905e9...35ce75`, `95e1e49c...87a97f`, `6c1ec783...9ddea`,
     `0ad7448a...42fa0`). None configured a goal.
+  - [x] Add a generic contact sweep that exercises eight stick directions with
+    neutral release phases while owning only port zero. It has no buttons,
+    target, objective, stage-specific path or interaction sequence; its purpose
+    is to expose changing collision/contact fields for the coverage audit.
   - [ ] Add general contact, actor-activation and loading probes without
     encoding a known route or interaction sequence, then run a stratified
     cross-map sample and report which typed fields actually vary.
+    - [x] Run the same 160-tick contact sweep from four catalog identities in
+      `D_MN01`, `F_SP103`, `F_SP104` and `F_SP115`. All four runs consumed the
+      generated PAD exactly, classified ready and retained 640 authenticated
+      records with no truncated channel. The stage/probe matrix found 129, 41,
+      117 and 125 varying field paths in those requested stages; background
+      collision and realized surface fields varied in the three stable scenes.
+      The `F_SP103` sample crossed an ordinary loading boundary after 71 records,
+      so its remaining 89 records are correctly attributed to `F_SP00` and the
+      temporarily absent player/camera/collision channels remain explicit. The
+      sealed report is `3cd25180...3a8ac`. This is broad observation coverage,
+      not evidence that the sweep sought or completed any particular contact or
+      interaction. Actor activation and a dedicated loading perturbation remain
+      open.
 - [ ] Visually inspect a stratified sample and reconcile visible actors,
   collision, triggers and state transitions against captured data.
 - [ ] Publish a machine-readable coverage matrix by stage and actor profile:
   present, varying, absent, ambiguous, truncated, or requiring a typed
   extension. The survey must distinguish "not in this scene" from "not seen by
   the observer."
+  - [x] Publish the authenticated stage/probe field matrix and revalidate every
+    source trace against its generated generic tape, exact applied PAD, requested
+    channel envelope and observed boot origin. A common D_MN01 movement, camera,
+    targeting and basic-action sample verified all four 90-record cases. All 13
+    requested channels were present; recursively flattened typed fields exposed
+    119-121 varying paths per probe and explicitly classified the bounded
+    selected-actor payload as truncated. The sealed report is
+    `cc7883fb...18a739`. This is observation evidence only: it contains no goal,
+    reward, proposed action or raw field values. Actor-profile and stratified
+    cross-map coverage remain open. The current matrix also recursively exposes
+    wildcard paths inside actor/surface arrays, counts record presence separately
+    from repeated entity values, and preserves requested, origin and final boot
+    states plus per-stage record slices. The four-case contact sample therefore
+    produced five correctly attributed stage cells instead of assigning a
+    cross-map trace wholesale to its final stage (`3cd25180...3a8ac`).
 
 ### 0B. Use Skybook as an observation/action requirements corpus
 

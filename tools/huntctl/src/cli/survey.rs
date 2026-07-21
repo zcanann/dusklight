@@ -3,6 +3,9 @@
 use crate::{option, repeated_option, required_path, u32_option, u64_option, usize_option};
 use huntctl::stage_actor_coverage::StageActorCoverageReport;
 use huntctl::stage_boot_catalog::StageBootCatalog;
+use huntctl::stage_observation_coverage::{
+    ObservationCoverageCaseStatus, StageObservationCoverageReport, StageObservationCoverageSource,
+};
 use huntctl::stage_survey::{
     STAGE_SURVEY_FIDELITY, StageSurveyExecutionConfig, StageSurveyLedger, StageSurveyPolicy,
     StageSurveyProbeKind, execute_stage_survey_attempt, stage_survey_identity,
@@ -25,8 +28,52 @@ pub(crate) fn command_survey(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("status") => command_status(&args[1..]),
         Some("run") => command_run(&args[1..]),
         Some("actor-coverage") => command_actor_coverage(&args[1..]),
-        _ => Err("survey commands: init, status, run, actor-coverage".into()),
+        Some("observation-coverage") => command_observation_coverage(&args[1..]),
+        _ => Err("survey commands: init, status, run, actor-coverage, observation-coverage".into()),
     }
+}
+
+fn command_observation_coverage(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let catalog_path = required_path(args, "--catalog")?;
+    let output = required_path(args, "--output")?;
+    let ledger_paths = repeated_option(args, "--ledger")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    let state_roots = repeated_option(args, "--state-root")
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    if ledger_paths.is_empty() || ledger_paths.len() != state_roots.len() {
+        return Err(
+            "survey observation-coverage requires one --state-root for every --ledger".into(),
+        );
+    }
+    let catalog = load_catalog(&catalog_path)?;
+    let ledgers = ledger_paths
+        .iter()
+        .map(|path| load_ledger(path, &catalog))
+        .collect::<Result<Vec<_>, _>>()?;
+    let sources = ledgers
+        .iter()
+        .zip(&state_roots)
+        .map(|(ledger, state_root)| StageObservationCoverageSource { ledger, state_root })
+        .collect::<Vec<_>>();
+    let report = StageObservationCoverageReport::build(&catalog, &sources)?;
+    write_ledger(&output, &report.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "report_sha256": report.report_sha256,
+            "sources": report.sources.len(),
+            "cases": report.cases.len(),
+            "verified_cases": report.cases.iter().filter(|case| case.status == ObservationCoverageCaseStatus::VerifiedTrace).count(),
+            "cells": report.cells.len(),
+        }))?
+    );
+    Ok(())
 }
 
 fn command_actor_coverage(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -243,9 +290,10 @@ fn policy_from_args(args: &[String]) -> Result<StageSurveyPolicy, Box<dyn Error>
             "camera" => StageSurveyProbeKind::Camera,
             "targeting" => StageSurveyProbeKind::Targeting,
             "basic-actions" => StageSurveyProbeKind::BasicActions,
+            "contact-sweep" => StageSurveyProbeKind::ContactSweep,
             value => {
                 return Err(format!(
-                    "unknown survey probe {value:?}; expected neutral, movement, camera, targeting, or basic-actions"
+                    "unknown survey probe {value:?}; expected neutral, movement, camera, targeting, basic-actions, or contact-sweep"
                 )
                 .into());
             }

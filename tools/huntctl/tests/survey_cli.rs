@@ -4,6 +4,7 @@ use huntctl::stage_boot_catalog::{
     STAGE_BOOT_CATALOG_SCHEMA, StageBootCandidate, StageBootCatalog, StageCatalogStatus,
     StageInventoryStatus,
 };
+use huntctl::stage_observation_coverage::StageObservationCoverageReport;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -170,6 +171,52 @@ fn initializes_and_reopens_a_content_bound_survey_ledger() {
         .output()
         .unwrap();
     assert!(!duplicate.status.success());
+
+    let coverage_path = root.join("observation-coverage.json");
+    let coverage = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["survey", "observation-coverage", "--catalog"])
+        .arg(&catalog_path)
+        .args(["--ledger"])
+        .arg(&ledger_path)
+        .args(["--state-root"])
+        .arg(root.join("state"))
+        .args(["--output"])
+        .arg(&coverage_path)
+        .output()
+        .unwrap();
+    assert!(
+        coverage.status.success(),
+        "{}",
+        String::from_utf8_lossy(&coverage.stderr)
+    );
+    let coverage_summary: Value = serde_json::from_slice(&coverage.stdout).unwrap();
+    assert_eq!(
+        coverage_summary["schema"],
+        "dusklight-stage-observation-coverage/v1"
+    );
+    assert_eq!(coverage_summary["sources"], 1);
+    assert_eq!(coverage_summary["cases"], 0);
+    assert_eq!(coverage_summary["cells"], 0);
+    StageObservationCoverageReport::decode_canonical(&fs::read(coverage_path).unwrap()).unwrap();
+
+    let mismatched_sources = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["survey", "observation-coverage", "--catalog"])
+        .arg(&catalog_path)
+        .args(["--ledger"])
+        .arg(&ledger_path)
+        .args(["--ledger"])
+        .arg(&ledger_path)
+        .args(["--state-root"])
+        .arg(root.join("state"))
+        .args(["--output"])
+        .arg(root.join("invalid-coverage.json"))
+        .output()
+        .unwrap();
+    assert!(!mismatched_sources.status.success());
+    assert!(
+        String::from_utf8_lossy(&mismatched_sources.stderr)
+            .contains("one --state-root for every --ledger")
+    );
 
     fs::remove_dir_all(root).unwrap();
 }
