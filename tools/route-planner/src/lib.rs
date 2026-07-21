@@ -423,17 +423,27 @@ mod tests {
         RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
     };
     use dusklight_route_planner::logic::{
-        ComparisonOperator, ContextScope, FACT_CATALOG_SCHEMA, PredicateExpression, ValueReference,
+        ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA,
+        FriendlyAlias, PredicateExpression, RawFactBinding, RuleEvidence, TruthStatus,
+        ValueReference,
+    };
+    use dusklight_route_planner::refinement::{
+        REFINEMENT_PACK_SCHEMA, RefinementOperation, RefinementPack, RefinementPackManifest,
+        RefinementRule,
     };
     use dusklight_route_planner::route_book::{ROUTE_BOOK_SCHEMA, RouteBookManifest};
     use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use dusklight_route_planner::solver::SearchStatus;
     use dusklight_route_planner::state::{
-        BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm,
-        PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
-        StateValue,
+        BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
+        ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm,
+        PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
+        SceneLocation, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
     };
-    use dusklight_route_planner::transition::{Goal, MECHANICS_CATALOG_SCHEMA};
+    use dusklight_route_planner::transition::{
+        ActivationContract, CandidateTransition, Goal, MECHANICS_CATALOG_SCHEMA, StateOperation,
+        TransitionKind,
+    };
     use std::collections::BTreeMap;
 
     fn state_for(content_byte: u8, stage: &str) -> PlannerExecutionState {
@@ -487,6 +497,18 @@ mod tests {
 
     fn state() -> PlannerExecutionState {
         state_for(1, "F_SP103")
+    }
+
+    fn established_evidence(id: &str) -> RuleEvidence {
+        RuleEvidence {
+            truth: TruthStatus::Established,
+            records: vec![EvidenceRecord {
+                id: id.into(),
+                kind: EvidenceKind::Extracted,
+                source_sha256: Some(Digest([8; 32])),
+                note: "Synthetic local-bank regression fixture.".into(),
+            }],
+        }
     }
 
     #[test]
@@ -712,5 +734,270 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.field(), "states");
+    }
+
+    #[test]
+    fn hypothetical_local_bank_rebind_is_typed_binding_sensitive_and_removable() {
+        let mut start = state_for(1, "ForestTemple");
+        start.snapshot.environment.components.push(StateComponent {
+            id: "local.stage-bank".into(),
+            component_kind: ComponentKind::StageMemory,
+            payload: ComponentPayload::Raw {
+                bytes: vec![0b0000_0100],
+                known_mask: vec![0xff],
+            },
+            binding: ComponentBinding::Stage {
+                stage: "ForestTemple".into(),
+            },
+            lifetime: SemanticLifetime::StageLoad,
+            serialization_owner: SerializationOwner::StageBank {
+                stage: "ForestTemple".into(),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::ExtractedFact,
+                source_id: "fixture.forest-local-bank".into(),
+                source_sha256: Some(Digest([7; 32])),
+                transition_id: None,
+            }],
+        });
+        start.validate().unwrap();
+        let exact_scope = ContextScope {
+            selectors: vec![ContextSelector::Exact {
+                context: start
+                    .snapshot
+                    .environment
+                    .runtime_configuration
+                    .exact_context()
+                    .unwrap(),
+            }],
+        };
+        let alias = |id: &str, label: &str, stage: &str| FriendlyAlias {
+            id: id.into(),
+            label: label.into(),
+            scope: exact_scope.clone(),
+            raw: RawFactBinding {
+                component_kind: ComponentKind::StageMemory,
+                binding: ComponentBinding::Stage {
+                    stage: stage.into(),
+                },
+                byte_offset: 0,
+                mask: vec![0b0000_0100],
+                expected: vec![0b0000_0100],
+            },
+            evidence: established_evidence(&format!("evidence.{id}")),
+        };
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: vec![
+                alias(
+                    "fact.forest.local-switch",
+                    "Forest Temple local switch",
+                    "ForestTemple",
+                ),
+                alias(
+                    "fact.temple.local-switch",
+                    "Temple of Time local switch",
+                    "TempleOfTime",
+                ),
+            ],
+            derived_facts: Vec::new(),
+        };
+        let mechanics = MechanicsCatalog {
+            schema: MECHANICS_CATALOG_SCHEMA.into(),
+            transitions: vec![CandidateTransition {
+                id: "transition.consume-temple-switch".into(),
+                label: "Consume the rebound Temple of Time interpretation".into(),
+                scope: exact_scope.clone(),
+                transition_kind: TransitionKind::Other,
+                approach_id: "approach.temple-switch".into(),
+                activation: ActivationContract {
+                    hard_guards: PredicateExpression::Fact {
+                        fact_id: "fact.temple.local-switch".into(),
+                    },
+                    physical_obligation_ids: Vec::new(),
+                    effects: vec![StateOperation::SetLocation {
+                        location: SceneLocation {
+                            stage: "RebindGoal".into(),
+                            room: 0,
+                            layer: 0,
+                            spawn: 0,
+                        },
+                    }],
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: established_evidence("evidence.transition.temple-switch"),
+            }],
+            obligations: Vec::new(),
+            writers: Vec::new(),
+            gates: Vec::new(),
+            readers: Vec::new(),
+            reconstruction_rules: Vec::new(),
+            obstructions: Vec::new(),
+            resolvers: Vec::new(),
+            techniques: Vec::new(),
+            microtraces: Vec::new(),
+            goals: vec![Goal {
+                id: "goal.rebind-downstream".into(),
+                label: "Reach a state gated by the rebound local switch".into(),
+                predicate: PredicateExpression::Compare {
+                    left: ValueReference::LocationStage,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("RebindGoal".into()),
+                    },
+                },
+            }],
+        };
+        let overlay = RefinementPack {
+            schema: REFINEMENT_PACK_SCHEMA.into(),
+            manifest: RefinementPackManifest {
+                id: "what-if.local-bank-rebind".into(),
+                version: "1.0.0".into(),
+                author: "Route planner regression fixture".into(),
+                source: "Explicit local what-if overlay".into(),
+                scope: exact_scope,
+                precedence: 1_000,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+            },
+            rules: vec![RefinementRule {
+                id: "technique.preserve-and-rebind-local-bank".into(),
+                label: "Hypothetically preserve and rebind the stage-local bank".into(),
+                operation: RefinementOperation::ComponentTransform {
+                    prerequisite: PredicateExpression::Compare {
+                        left: ValueReference::LocationStage,
+                        operator: ComparisonOperator::Equal,
+                        right: ValueReference::Literal {
+                            value: StateValue::Text("ForestTemple".into()),
+                        },
+                    },
+                    operations: vec![
+                        StateOperation::Preserve {
+                            selector: ComponentSelector::Id {
+                                component_id: "local.stage-bank".into(),
+                            },
+                        },
+                        StateOperation::Rebind {
+                            selector: ComponentSelector::Id {
+                                component_id: "local.stage-bank".into(),
+                            },
+                            binding: ComponentBinding::Stage {
+                                stage: "TempleOfTime".into(),
+                            },
+                        },
+                    ],
+                },
+                evidence: RuleEvidence {
+                    truth: TruthStatus::Hypothetical,
+                    records: vec![EvidenceRecord {
+                        id: "evidence.what-if.local-bank-rebind".into(),
+                        kind: EvidenceKind::Theorycraft,
+                        source_sha256: None,
+                        note: "No transfer is claimed; this pack asks what follows if one exists."
+                            .into(),
+                    }],
+                },
+            }],
+        };
+
+        let base = ComposedPlannerCatalog::compose(&facts, &mechanics, &[]).unwrap();
+        let baseline = solve_composed_catalog_goal(
+            start.clone(),
+            &base,
+            &[],
+            "goal.rebind-downstream",
+            RuntimeSolveOptions {
+                evidence_mode: RuntimeEvidenceMode::Research,
+                ..RuntimeSolveOptions::default()
+            },
+        )
+        .unwrap();
+        assert_ne!(baseline.result.status, SearchStatus::Reached);
+
+        let composed =
+            ComposedPlannerCatalog::compose(&facts, &mechanics, std::slice::from_ref(&overlay))
+                .unwrap();
+        let established_only = solve_composed_catalog_goal(
+            start.clone(),
+            &composed,
+            &[],
+            "goal.rebind-downstream",
+            RuntimeSolveOptions::default(),
+        )
+        .unwrap();
+        assert_ne!(established_only.result.status, SearchStatus::Reached);
+        let research = solve_composed_catalog_goal(
+            start.clone(),
+            &composed,
+            &[],
+            "goal.rebind-downstream",
+            RuntimeSolveOptions {
+                evidence_mode: RuntimeEvidenceMode::Research,
+                ..RuntimeSolveOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(research.result.status, SearchStatus::Reached);
+        assert_eq!(
+            research.refinement_pack_ids,
+            vec!["what-if.local-bank-rebind"]
+        );
+        assert_eq!(
+            research
+                .result
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "technique.preserve-and-rebind-local-bank",
+                "transition.consume-temple-switch"
+            ]
+        );
+
+        let transform = &composed.mechanics.techniques[0];
+        assert_eq!(transform.evidence.truth, TruthStatus::Hypothetical);
+        let mut rebound = start.clone();
+        rebound
+            .apply_operations(
+                &transform.id,
+                "snapshot.local-bank-rebound",
+                &transform.operations,
+            )
+            .unwrap();
+        let before_component = &start.snapshot.environment.components[0];
+        let after_component = &rebound.snapshot.environment.components[0];
+        assert_eq!(before_component.payload, after_component.payload);
+        assert_eq!(
+            after_component.binding,
+            ComponentBinding::Stage {
+                stage: "TempleOfTime".into()
+            }
+        );
+        assert_eq!(
+            after_component.provenance[0],
+            before_component.provenance[0]
+        );
+        assert_eq!(after_component.provenance.len(), 2);
+        assert_eq!(
+            after_component.provenance[1].transition_id.as_deref(),
+            Some("technique.preserve-and-rebind-local-bank")
+        );
+
+        let removed = ComposedPlannerCatalog::compose(&facts, &mechanics, &[]).unwrap();
+        assert_eq!(removed, base);
+        let after_removal = solve_composed_catalog_goal(
+            start,
+            &removed,
+            &[],
+            "goal.rebind-downstream",
+            RuntimeSolveOptions {
+                evidence_mode: RuntimeEvidenceMode::Research,
+                ..RuntimeSolveOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(after_removal.result.status, baseline.result.status);
+        assert_eq!(after_removal.result.steps, baseline.result.steps);
     }
 }

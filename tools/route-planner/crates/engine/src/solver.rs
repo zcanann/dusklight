@@ -1458,17 +1458,24 @@ mod tests {
     use crate::artifact::Digest;
     use crate::identity::{ContextSelector, RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
     use crate::logic::{
-        ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA,
-        RuleEvidence, TruthStatus, ValueReference,
+        ComparisonOperator, ContextScope, DerivedFact, EvidenceKind, EvidenceRecord,
+        FACT_CATALOG_SCHEMA, FriendlyAlias, RawFactBinding, RuleEvidence, TruthStatus,
+        ValueReference,
+    };
+    use crate::refinement::{
+        ComposedPlannerCatalog, REFINEMENT_PACK_SCHEMA, RefinementOperation, RefinementPack,
+        RefinementPackManifest, RefinementRule,
     };
     use crate::route_book::{
         CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_SCHEMA, ReferenceStep,
         RouteBookManifest, RouteConstraint, RouteDirective, RouteDirectiveKind,
     };
-    use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
+    use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateDiff, StateSnapshot};
     use crate::state::{
-        BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm,
-        PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
+        BackingAttachment, BoundaryKind, ComponentBinding, ComponentKind, ComponentPayload,
+        ComponentProvenance, ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment,
+        PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
+        RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, StateComponent,
         StateValue,
     };
     use crate::transition::{
@@ -1804,6 +1811,212 @@ mod tests {
             vec!["obligation.gate-open"]
         );
         assert!(result.steps[1].selected_technique_ids.is_empty());
+    }
+
+    #[test]
+    fn hypothetical_local_bank_rebind_changes_semantics_without_changing_payload() {
+        let mut snapshot = snapshot();
+        snapshot.environment.components = vec![StateComponent {
+            id: "stage.local-bank".into(),
+            component_kind: ComponentKind::StageMemory,
+            payload: ComponentPayload::Raw {
+                bytes: vec![0x01],
+                known_mask: vec![0xff],
+            },
+            binding: ComponentBinding::Stage {
+                stage: "D_MN05".into(),
+            },
+            lifetime: SemanticLifetime::StageLoad,
+            serialization_owner: SerializationOwner::StageBank {
+                stage: "D_MN05".into(),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::TraceObservation,
+                source_id: "trace.forest-local-bank".into(),
+                source_sha256: Some(Digest([6; 32])),
+                transition_id: None,
+            }],
+        }];
+        let exact_scope = scope(&snapshot);
+        let raw_binding = |stage: &str| RawFactBinding {
+            component_kind: ComponentKind::StageMemory,
+            binding: ComponentBinding::Stage {
+                stage: stage.into(),
+            },
+            byte_offset: 0,
+            mask: vec![0x01],
+            expected: vec![0x01],
+        };
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: vec![
+                FriendlyAlias {
+                    id: "local.forest-switch".into(),
+                    label: "Forest local switch".into(),
+                    scope: exact_scope.clone(),
+                    raw: raw_binding("D_MN05"),
+                    evidence: evidence(TruthStatus::Established),
+                },
+                FriendlyAlias {
+                    id: "local.tot-switch".into(),
+                    label: "Temple of Time local switch".into(),
+                    scope: exact_scope.clone(),
+                    raw: raw_binding("D_MN06"),
+                    evidence: evidence(TruthStatus::Established),
+                },
+            ],
+            derived_facts: vec![DerivedFact {
+                id: "path.tot-open".into(),
+                label: "Temple of Time path is open".into(),
+                scope: exact_scope.clone(),
+                rule: PredicateExpression::Fact {
+                    fact_id: "local.tot-switch".into(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            }],
+        };
+        let mut mechanics = catalog(vec![transition(
+            &snapshot,
+            "transition.a-to-b",
+            "STAGE_A",
+            "STAGE_B",
+            vec!["obligation.tot-path".into()],
+        )]);
+        mechanics.obligations = vec![FeasibilityObligation {
+            id: "obligation.tot-path".into(),
+            label: "Temple of Time local path is open".into(),
+            scope: exact_scope.clone(),
+            obligation_kind: ObligationKind::ActorState,
+            detail: ObligationDetail::Predicate {
+                predicate: PredicateExpression::Fact {
+                    fact_id: "path.tot-open".into(),
+                },
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let technique = Technique {
+            id: "technique.hypothetical-local-bank-rebind".into(),
+            label: "Preserve Forest local memory and interpret it as Temple of Time".into(),
+            scope: exact_scope.clone(),
+            prerequisites: PredicateExpression::True,
+            operations: vec![
+                StateOperation::Preserve {
+                    selector: ComponentSelector::Id {
+                        component_id: "stage.local-bank".into(),
+                    },
+                },
+                StateOperation::Rebind {
+                    selector: ComponentSelector::Id {
+                        component_id: "stage.local-bank".into(),
+                    },
+                    binding: ComponentBinding::Stage {
+                        stage: "D_MN06".into(),
+                    },
+                },
+            ],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::from([("theorycraft".into(), 1)]),
+            },
+            evidence: evidence(TruthStatus::Hypothetical),
+        };
+        let pack = RefinementPack {
+            schema: REFINEMENT_PACK_SCHEMA.into(),
+            manifest: RefinementPackManifest {
+                id: "pack.hypothetical-local-bank-rebind".into(),
+                version: "1.0.0".into(),
+                author: "Route planner acceptance fixture".into(),
+                source: "Hypothetical local-bank transfer".into(),
+                scope: exact_scope,
+                precedence: 100,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+            },
+            rules: vec![RefinementRule {
+                id: "rule.add-local-bank-rebind".into(),
+                label: "Add the hypothetical local-bank rebind".into(),
+                operation: RefinementOperation::AddTechnique {
+                    technique: technique.clone(),
+                },
+                evidence: evidence(TruthStatus::Hypothetical),
+            }],
+        };
+        let composed = ComposedPlannerCatalog::compose(&facts, &mechanics, &[pack]).unwrap();
+        let options = SolverOptions {
+            evidence_policy: EvidencePolicy::RESEARCH,
+            ..SolverOptions::default()
+        };
+
+        let without_overlay = ForwardSolver::new(&facts, &mechanics, &[], options)
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_ne!(without_overlay.status, SearchStatus::Reached);
+
+        let reached = ForwardSolver::new(&composed.facts, &composed.mechanics, &[], options)
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(reached.status, SearchStatus::Reached);
+        assert_eq!(
+            reached
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "technique.hypothetical-local-bank-rebind",
+                "transition.a-to-b"
+            ]
+        );
+        assert!(reached.steps[1].selected_technique_ids.is_empty());
+
+        let before = PlannerExecutionState::new(snapshot).unwrap();
+        let mut rebound = before.clone();
+        rebound
+            .apply_operations(
+                &technique.id,
+                "snapshot.rebound-local-bank",
+                &technique.operations,
+            )
+            .unwrap();
+        let diff = StateDiff::between(
+            &before.snapshot,
+            &rebound.snapshot,
+            BoundaryKind::WrongStateRespawn,
+        )
+        .unwrap();
+        assert_eq!(diff.component_deltas.len(), 1);
+        assert_eq!(
+            diff.component_deltas[0].payload_sha256_before,
+            diff.component_deltas[0].payload_sha256_after
+        );
+        assert!(diff.component_deltas[0].raw_byte_deltas.is_empty());
+        assert_ne!(
+            diff.component_deltas[0].binding_before,
+            diff.component_deltas[0].binding_after
+        );
+        let evaluator = PredicateEvaluator::new(
+            &rebound.snapshot,
+            &facts,
+            &[],
+            &rebound.gate_states,
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator.evaluate(&PredicateExpression::Fact {
+                fact_id: "path.tot-open".into(),
+            }),
+            EvaluatedTruth::True
+        );
     }
 
     #[test]

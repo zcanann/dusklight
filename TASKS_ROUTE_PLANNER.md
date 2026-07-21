@@ -1737,7 +1737,11 @@ Deliverable: the intentionally permissive logic graph with honest uncertainty.
 - [ ] Encode an evidence-backed BiTE preservation matrix.
 - [ ] Encode the shared Auru recent-item store/writer/consumer mechanism separately
       from build-specific activation feasibility and external HD evidence.
-- [ ] Add a hypothetical local-bank rebind refinement for testing.
+- [x] Add a hypothetical local-bank rebind refinement for testing.
+  - [x] Compose a hypothetical preserve/rebind technique, keep its raw payload
+        byte-identical, derive the destination-stage alias and downstream
+        transition from the new binding, and prove removing the overlay removes
+        the route without a handwritten obligation discharge.
 - [x] Add diagnostics for aliases that change under a binding.
 
 Deliverable: one generic system for known and proposed wrong-state transfers.
@@ -1997,12 +2001,12 @@ Deliverable: route confidence is mechanically explainable.
 
 #### 11D. Local-bank rebind
 
-- [ ] Snapshot a Forest Temple-bound payload.
-- [ ] Add hypothetical preservation and Temple of Time rebind.
+- [x] Snapshot a Forest Temple-bound payload.
+- [x] Add hypothetical preservation and Temple of Time rebind.
 - [x] Verify raw bytes remain identical while aliases change.
-- [ ] Derive downstream effects only from the new interpretation.
+- [x] Derive downstream effects only from the new interpretation.
 - [ ] Display mixed provenance and hypothesis dependency.
-- [ ] Remove overlay and verify base reachability returns unchanged.
+- [x] Remove overlay and verify base reachability returns unchanged.
 
 #### 11E. Fanadi save-location lock
 
