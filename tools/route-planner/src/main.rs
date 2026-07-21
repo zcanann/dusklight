@@ -6,11 +6,13 @@ use dusklight_route_planner::fact_pack::{
 };
 use dusklight_route_planner::identity::{ContentIdentity, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
+use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
 use dusklight_route_planner_runtime::{
     RuntimeEvidenceMode, RuntimeFeasibilityMode, RuntimeSolveOptions, solve_catalog_goal,
+    solve_composed_catalog_goal,
 };
 use dusklight_world::world_context::WorldContext;
 use dusklight_world::world_inventory::WorldInventory;
@@ -31,6 +33,7 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
+        Some("compose") => compose(&args[1..]),
         Some("extract-world") => extract_world(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
         Some("solve") => solve(&args[1..]),
@@ -43,6 +46,42 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn compose(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let facts_path = required_path(args, "--facts")?;
+    let mechanics_path = required_path(args, "--mechanics")?;
+    let output = required_path(args, "--output")?;
+    let pack_paths = repeated_option(args, "--pack");
+    let facts = FactCatalog::decode_canonical(&fs::read(facts_path)?)?;
+    let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics_path)?)?;
+    let mut packs = Vec::with_capacity(pack_paths.len());
+    for path in pack_paths {
+        packs.push(RefinementPack::decode_canonical(&fs::read(path)?)?);
+    }
+    let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &packs)?;
+    let bytes = catalog.canonical_bytes()?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": catalog.schema,
+            "output": output,
+            "sha256": catalog.digest()?,
+            "base_fact_catalog_sha256": catalog.base_fact_catalog_sha256,
+            "base_mechanics_catalog_sha256": catalog.base_mechanics_catalog_sha256,
+            "bytes": bytes.len(),
+            "packs": catalog.refinement_stack.entries.len(),
+            "aliases": catalog.facts.aliases.len(),
+            "derived_facts": catalog.facts.derived_facts.len(),
+            "transitions": catalog.mechanics.transitions.len(),
+            "obligations": catalog.mechanics.obligations.len(),
+            "obstructions": catalog.mechanics.obstructions.len(),
+            "resolvers": catalog.mechanics.resolvers.len(),
+            "techniques": catalog.mechanics.techniques.len(),
+        }))?
+    );
+    Ok(())
 }
 
 fn extract_world(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -159,42 +198,63 @@ fn state_from_snapshot(args: &[String]) -> Result<(), Box<dyn Error>> {
 }
 
 fn solve(args: &[String]) -> Result<(), Box<dyn Error>> {
+    enum CatalogInput {
+        Composed(ComposedPlannerCatalog),
+        Base(FactCatalog, MechanicsCatalog),
+    }
+
     let state_path = required_path(args, "--state")?;
-    let facts_path = required_path(args, "--facts")?;
-    let mechanics_path = required_path(args, "--mechanics")?;
     let output = required_path(args, "--output")?;
     let goal_id = option(args, "--goal").ok_or("missing required --goal ID")?;
     let state =
         PlannerExecutionStateDocument::decode_canonical(&fs::read(state_path)?)?.into_state()?;
-    let facts = FactCatalog::decode_canonical(&fs::read(facts_path)?)?;
-    let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics_path)?)?;
+    let catalog_path = option(args, "--catalog");
+    let facts_path = option(args, "--facts");
+    let mechanics_path = option(args, "--mechanics");
+    let input = match (catalog_path, facts_path, mechanics_path) {
+        (Some(path), None, None) => {
+            let catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?;
+            CatalogInput::Composed(catalog)
+        }
+        (None, Some(facts), Some(mechanics)) => CatalogInput::Base(
+            FactCatalog::decode_canonical(&fs::read(facts)?)?,
+            MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?,
+        ),
+        _ => {
+            return Err(
+                "solve requires either --catalog CATALOG.json or both --facts FACTS.json and --mechanics MECHANICS.json"
+                    .into(),
+            );
+        }
+    };
     let defaults = RuntimeSolveOptions::default();
-    let report = solve_catalog_goal(
-        state,
-        &facts,
-        &mechanics,
-        &[],
-        &goal_id,
-        RuntimeSolveOptions {
-            max_depth: usize_option(args, "--max-depth", defaults.max_depth)?,
-            max_states: usize_option(args, "--max-states", defaults.max_states)?,
-            max_resolution_combinations: usize_option(
-                args,
-                "--max-resolution-combinations",
-                defaults.max_resolution_combinations,
-            )?,
-            feasibility_mode: if flag(args, "--upper-bound") {
-                RuntimeFeasibilityMode::UpperBound
-            } else {
-                RuntimeFeasibilityMode::Modeled
-            },
-            evidence_mode: if flag(args, "--research") {
-                RuntimeEvidenceMode::Research
-            } else {
-                RuntimeEvidenceMode::EstablishedOnly
-            },
+    let options = RuntimeSolveOptions {
+        max_depth: usize_option(args, "--max-depth", defaults.max_depth)?,
+        max_states: usize_option(args, "--max-states", defaults.max_states)?,
+        max_resolution_combinations: usize_option(
+            args,
+            "--max-resolution-combinations",
+            defaults.max_resolution_combinations,
+        )?,
+        feasibility_mode: if flag(args, "--upper-bound") {
+            RuntimeFeasibilityMode::UpperBound
+        } else {
+            RuntimeFeasibilityMode::Modeled
         },
-    )?;
+        evidence_mode: if flag(args, "--research") {
+            RuntimeEvidenceMode::Research
+        } else {
+            RuntimeEvidenceMode::EstablishedOnly
+        },
+    };
+    let report = match &input {
+        CatalogInput::Composed(catalog) => {
+            solve_composed_catalog_goal(state, catalog, &[], &goal_id, options)?
+        }
+        CatalogInput::Base(facts, mechanics) => {
+            solve_catalog_goal(state, facts, mechanics, &[], &goal_id, options)?
+        }
+    };
     let bytes = serde_json::to_vec_pretty(&report)?;
     write_file(&output, &bytes)?;
     println!("{}", serde_json::to_string_pretty(&report)?);
@@ -244,6 +304,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json --facts FACTS.json --mechanics MECHANICS.json --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]"
     );
 }

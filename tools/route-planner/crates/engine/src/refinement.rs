@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v2";
 pub const REFINEMENT_STACK_SCHEMA: &str = "dusklight.route-planner.refinement-stack/v1";
-pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v1";
+pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -144,6 +144,8 @@ pub struct RefinementStack {
 #[serde(deny_unknown_fields)]
 pub struct ComposedPlannerCatalog {
     pub schema: String,
+    pub base_fact_catalog_sha256: Digest,
+    pub base_mechanics_catalog_sha256: Digest,
     pub facts: FactCatalog,
     pub mechanics: MechanicsCatalog,
     pub refinement_stack: RefinementStack,
@@ -495,6 +497,8 @@ impl ComposedPlannerCatalog {
         sort_catalogs(&mut facts, &mut mechanics);
         let composed = Self {
             schema: COMPOSED_CATALOG_SCHEMA.into(),
+            base_fact_catalog_sha256: base_facts.digest()?,
+            base_mechanics_catalog_sha256: base_mechanics.digest()?,
             facts,
             mechanics,
             refinement_stack,
@@ -506,6 +510,18 @@ impl ComposedPlannerCatalog {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != COMPOSED_CATALOG_SCHEMA {
             return Err(PlannerContractError::new("schema", "is unsupported"));
+        }
+        if self.base_fact_catalog_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "base_fact_catalog_sha256",
+                "must be nonzero",
+            ));
+        }
+        if self.base_mechanics_catalog_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "base_mechanics_catalog_sha256",
+                "must be nonzero",
+            ));
         }
         self.facts.validate()?;
         self.mechanics.validate()?;
@@ -562,7 +578,12 @@ fn apply_replacements(
             ));
         }
         if matches!(replacement_kind, ReplacementKind::Replace | ReplacementKind::Supersede) {
-            let replacement_id = replacement_rule_id.as_ref().expect("validated replacement ID");
+            let replacement_id = replacement_rule_id.as_ref().ok_or_else(|| {
+                PlannerContractError::new(
+                    "rules.replacement_rule_id",
+                    "is required for replace or supersede",
+                )
+            })?;
             let replacement = pack
                 .rules
                 .iter()
@@ -846,7 +867,12 @@ fn reject_dependency_cycles(
 mod tests {
     use super::*;
     use crate::identity::{ContextSelector, ExactContext};
-    use crate::logic::{EvidenceKind, EvidenceRecord, TruthStatus};
+    use crate::logic::{
+        EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, TruthStatus,
+    };
+    use crate::transition::{
+        MECHANICS_CATALOG_SCHEMA, ObligationDetail, ObligationKind,
+    };
 
     fn scope() -> ContextScope {
         ContextScope {
@@ -890,6 +916,39 @@ mod tests {
                 operation,
                 evidence: evidence(TruthStatus::Hypothetical),
             }],
+        }
+    }
+
+    fn empty_catalogs() -> (FactCatalog, MechanicsCatalog) {
+        (
+            FactCatalog {
+                schema: FACT_CATALOG_SCHEMA.into(),
+                aliases: Vec::new(),
+                derived_facts: Vec::new(),
+            },
+            MechanicsCatalog {
+                schema: MECHANICS_CATALOG_SCHEMA.into(),
+                transitions: Vec::new(),
+                obligations: Vec::new(),
+                writers: Vec::new(),
+                gates: Vec::new(),
+                readers: Vec::new(),
+                reconstruction_rules: Vec::new(),
+                obstructions: Vec::new(),
+                resolvers: Vec::new(),
+                techniques: Vec::new(),
+                microtraces: Vec::new(),
+                goals: Vec::new(),
+            },
+        )
+    }
+
+    fn rule(id: &str, operation: RefinementOperation) -> RefinementRule {
+        RefinementRule {
+            id: id.into(),
+            label: format!("Rule {id}"),
+            operation,
+            evidence: evidence(TruthStatus::Hypothetical),
         }
     }
 
@@ -984,5 +1043,195 @@ mod tests {
         let mut value = serde_json::to_value(pack).unwrap();
         value["browser_only"] = serde_json::json!(true);
         assert!(serde_json::from_value::<RefinementPack>(value).is_err());
+    }
+
+    #[test]
+    fn composition_compiles_obstructions_transforms_and_writer_suppression() {
+        let (facts, mut mechanics) = empty_catalogs();
+        mechanics.writers.push(WriterRule {
+            id: "writer.savmem".into(),
+            scope: scope(),
+            activation: PredicateExpression::True,
+            operation: StateOperation::SetGate {
+                gate_id: "gate.return-place".into(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        });
+        let pack = RefinementPack {
+            schema: REFINEMENT_PACK_SCHEMA.into(),
+            manifest: RefinementPackManifest {
+                id: "research.ordon-wall".into(),
+                version: "1.0.0".into(),
+                author: "Route research".into(),
+                source: "Local theorycraft".into(),
+                scope: scope(),
+                precedence: 10,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+            },
+            rules: vec![
+                rule(
+                    "a.obligation",
+                    RefinementOperation::AddObligation {
+                        obligation: FeasibilityObligation {
+                            id: "obligation.reach-wall".into(),
+                            label: "Reach the far side of the wall".into(),
+                            scope: scope(),
+                            obligation_kind: ObligationKind::Geometry,
+                            detail: ObligationDetail::Unresolved {
+                                research_question: "Can the wall be crossed?".into(),
+                            },
+                            evidence: evidence(TruthStatus::Established),
+                        },
+                    },
+                ),
+                rule(
+                    "b.obstruction",
+                    RefinementOperation::AddObstruction {
+                        obstruction: Obstruction {
+                            id: "obstruction.ordon-wall".into(),
+                            label: "Ordon wall".into(),
+                            scope: scope(),
+                            blocked_action_id: "transition.ordon-return".into(),
+                            approach_id: "approach.ordon-wall".into(),
+                            active_when: PredicateExpression::True,
+                            obligation_ids: vec!["obligation.reach-wall".into()],
+                            evidence: evidence(TruthStatus::Established),
+                        },
+                    },
+                ),
+                rule(
+                    "c.assume-absent",
+                    RefinementOperation::AssumeObstructionAbsent {
+                        obstruction_id: "obstruction.ordon-wall".into(),
+                        when: PredicateExpression::True,
+                    },
+                ),
+                rule(
+                    "d.component-transform",
+                    RefinementOperation::ComponentTransform {
+                        prerequisite: PredicateExpression::True,
+                        operations: vec![StateOperation::SetGate {
+                            gate_id: "gate.what-if-transfer".into(),
+                        }],
+                    },
+                ),
+                rule(
+                    "e.suppress-writer",
+                    RefinementOperation::SuppressWriter {
+                        writer_id: "writer.savmem".into(),
+                        when: PredicateExpression::True,
+                    },
+                ),
+            ],
+        };
+
+        let composed = ComposedPlannerCatalog::compose(&facts, &mechanics, &[pack]).unwrap();
+        assert_eq!(composed.mechanics.obligations.len(), 1);
+        assert_eq!(composed.mechanics.obstructions.len(), 1);
+        assert_eq!(composed.mechanics.resolvers.len(), 1);
+        assert_eq!(
+            composed.mechanics.resolvers[0].resolution_kind,
+            ResolutionKind::AssumeAbsent
+        );
+        assert_eq!(composed.mechanics.techniques.len(), 1);
+        assert_eq!(
+            composed.mechanics.gates[0].blocked_writer_ids,
+            ["writer.savmem"]
+        );
+        let bytes = composed.canonical_bytes().unwrap();
+        assert_eq!(
+            ComposedPlannerCatalog::decode_canonical(&bytes).unwrap(),
+            composed
+        );
+    }
+
+    #[test]
+    fn duplicate_additions_require_an_explicit_replacement() {
+        let (facts, mut mechanics) = empty_catalogs();
+        let writer = WriterRule {
+            id: "writer.savmem".into(),
+            scope: scope(),
+            activation: PredicateExpression::True,
+            operation: StateOperation::SetGate {
+                gate_id: "gate.return-place".into(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        mechanics.writers.push(writer.clone());
+        let duplicate = pack(
+            "duplicate.writer",
+            10,
+            RefinementOperation::AddWriter { writer },
+        );
+        assert_eq!(
+            ComposedPlannerCatalog::compose(&facts, &mechanics, &[duplicate])
+                .unwrap_err()
+                .field(),
+            "writers"
+        );
+    }
+
+    #[test]
+    fn replacement_and_disable_precedence_is_deterministic() {
+        let (facts, mut mechanics) = empty_catalogs();
+        mechanics.goals.push(Goal {
+            id: "goal.original".into(),
+            label: "Original goal".into(),
+            predicate: PredicateExpression::True,
+        });
+        let replacement = RefinementPack {
+            schema: REFINEMENT_PACK_SCHEMA.into(),
+            manifest: RefinementPackManifest {
+                id: "replace.goal".into(),
+                version: "1.0.0".into(),
+                author: "Route research".into(),
+                source: "Local theorycraft".into(),
+                scope: scope(),
+                precedence: 10,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+            },
+            rules: vec![
+                rule(
+                    "a.replace",
+                    RefinementOperation::ReplaceRecord {
+                        target_id: "goal.original".into(),
+                        replacement_kind: ReplacementKind::Replace,
+                        replacement_rule_id: Some("b.goal".into()),
+                    },
+                ),
+                rule(
+                    "b.goal",
+                    RefinementOperation::AddGoal {
+                        goal: Goal {
+                            id: "goal.replacement".into(),
+                            label: "Replacement goal".into(),
+                            predicate: PredicateExpression::True,
+                        },
+                    },
+                ),
+            ],
+        };
+        let disable = pack(
+            "disable.goal",
+            20,
+            RefinementOperation::ReplaceRecord {
+                target_id: "goal.replacement".into(),
+                replacement_kind: ReplacementKind::Disable,
+                replacement_rule_id: None,
+            },
+        );
+
+        let first = ComposedPlannerCatalog::compose(
+            &facts,
+            &mechanics,
+            &[disable.clone(), replacement.clone()],
+        )
+        .unwrap();
+        let second =
+            ComposedPlannerCatalog::compose(&facts, &mechanics, &[replacement, disable]).unwrap();
+        assert_eq!(first, second);
+        assert!(first.mechanics.goals.is_empty());
     }
 }

@@ -12,3 +12,12 @@ planner behavior.
 ```text
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
+
+The planner CLI currently owns four artifact operations:
+
+- `compose` validates deterministic refinement-pack stacks and emits a canonical
+  composed fact/mechanics catalog.
+- `extract-world` converts generic canonical world artifacts into conservative
+  planner facts and unresolved physical obligations.
+- `state-from-snapshot` materializes an executable planner state.
+- `solve` runs bounded causal reachability against planner-owned catalogs.

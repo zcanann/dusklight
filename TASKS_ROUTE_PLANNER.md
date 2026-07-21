@@ -486,6 +486,20 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
+- Refinement-pack schema v2 and composed-catalog schema v2 now live entirely in
+  the planner workspace. `route-planner compose` validates canonical packs,
+  dependency digests, conflicts, deterministic precedence, explicit
+  replacement/disable operations, and all resulting cross-references before it
+  emits a canonical catalog. The output seals the base fact/mechanics digests
+  and the ordered pack stack, so removal of a pack can recompute consequences
+  instead of relying on handwritten `loses` lists.
+- Composition can add obligations, obstructions, resolvers, techniques,
+  writers/gates/readers, reconstruction rules, witnessed microtraces, goals,
+  aliases, and derived facts. What-if component transforms compile to ordinary
+  techniques; writer suppression compiles to an ordinary gate; assume-absent
+  compiles to an explicitly hypothetical resolver. `route-planner solve` can
+  consume the composed artifact directly and records its active refinement
+  stack in the solve report.
 
 Primary source anchors:
 
@@ -1534,7 +1548,8 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
   - [x] Evaluate obstruction activation and resolver applicability as separate
         scoped/evidenced rules; a resolver discharges named obligations but does
         not delete or falsify the underlying obstruction.
-  - [ ] Load those records from refinement packs into composed runtime catalogs.
+  - [x] Load those records from canonical refinement packs into deterministic,
+        base-digest-bound composed runtime catalogs.
 - [ ] Support direction, form, mount, twilight, actor, void, and layer scope.
 - [ ] Classify candidates as feasible, obstructed, or unknown.
   - [x] Implement the loss-aware per-snapshot classification primitive, including
@@ -1551,14 +1566,20 @@ verified route.
 
 ### Phase 6 — Technique and refinement packs
 
-- [ ] Build validated authoring for techniques and obstruction resolvers.
-- [ ] Encode exact setup, component operations, discharged obligations, and cost.
-- [ ] Allow a technique to supply a witnessed microtrace with exact pre/post state
-      and timing rather than a global named Boolean.
+- [x] Build validated pack contracts for techniques and obstruction resolvers.
+- [x] Encode exact setup, component operations, discharged obligations, and cost.
+- [x] Allow a pack to supply a witnessed microtrace with exact pre/post state and
+      timing rather than a global named Boolean.
 - [ ] Add built-in packs for ordinary movement and selected sequence breaks.
 - [ ] Add route-local and ephemeral what-if overlays.
-- [ ] Distinguish bypass, avoid, supersede, and assume-absent operations.
-- [ ] Add import/export and conflict diagnostics.
+- [x] Distinguish satisfy, bypass, avoid, supersede, and assume-absent resolver
+      operations, plus explicit record replace/supersede/disable operations.
+- [ ] Add complete import/export and conflict diagnostics.
+  - [x] Add strict canonical pack import, deterministic composition, canonical
+        composed-catalog export, dependency-digest checks, and fail-closed
+        conflict/replacement errors to the planner-owned CLI.
+  - [ ] Add structured multi-error diagnostics, pack export authoring, and editor
+        fix suggestions.
 
 Deliverable: researchers can extend the model without editing core code.
 

@@ -10,6 +10,7 @@ use dusklight_route_planner::evaluation::{EvidencePolicy, FeasibilityMode};
 use dusklight_route_planner::execution::PlannerExecutionState;
 use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::FactCatalog;
+use dusklight_route_planner::refinement::ComposedPlannerCatalog;
 use dusklight_route_planner::solver::{ForwardSolver, SearchResult, SolverOptions};
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::Serialize;
@@ -60,6 +61,8 @@ pub struct SolveReport {
     pub execution_state_sha256: Digest,
     pub fact_catalog_sha256: Digest,
     pub mechanics_catalog_sha256: Digest,
+    pub refinement_stack_sha256: Option<Digest>,
+    pub refinement_pack_ids: Vec<String>,
     pub equivalence_set_count: usize,
     pub feasibility_mode: RuntimeFeasibilityMode,
     pub evidence_mode: RuntimeEvidenceMode,
@@ -104,11 +107,39 @@ pub fn solve_catalog_goal(
         execution_state_sha256,
         fact_catalog_sha256: facts.digest()?,
         mechanics_catalog_sha256: mechanics.digest()?,
+        refinement_stack_sha256: None,
+        refinement_pack_ids: Vec::new(),
         equivalence_set_count: equivalence_sets.len(),
         feasibility_mode: options.feasibility_mode,
         evidence_mode: options.evidence_mode,
         result,
     })
+}
+
+pub fn solve_composed_catalog_goal(
+    state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    goal_id: &str,
+    options: RuntimeSolveOptions,
+) -> Result<SolveReport, PlannerContractError> {
+    catalog.validate()?;
+    let mut report = solve_catalog_goal(
+        state,
+        &catalog.facts,
+        &catalog.mechanics,
+        equivalence_sets,
+        goal_id,
+        options,
+    )?;
+    report.refinement_stack_sha256 = Some(catalog.refinement_stack.digest()?);
+    report.refinement_pack_ids = catalog
+        .refinement_stack
+        .entries
+        .iter()
+        .map(|entry| entry.pack_id.clone())
+        .collect();
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -218,5 +249,22 @@ mod tests {
         assert_eq!(report.result.status, SearchStatus::Reached);
         assert!(report.result.steps.is_empty());
         assert_ne!(report.fact_catalog_sha256, Digest::ZERO);
+        assert_eq!(report.refinement_stack_sha256, None);
+
+        let composed = ComposedPlannerCatalog::compose(&facts, &mechanics, &[]).unwrap();
+        let composed_report = solve_composed_catalog_goal(
+            state(),
+            &composed,
+            &[],
+            "goal.ordon-spring",
+            RuntimeSolveOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(composed_report.result.status, SearchStatus::Reached);
+        assert_eq!(
+            composed_report.refinement_stack_sha256,
+            Some(composed.refinement_stack.digest().unwrap())
+        );
+        assert!(composed_report.refinement_pack_ids.is_empty());
     }
 }
