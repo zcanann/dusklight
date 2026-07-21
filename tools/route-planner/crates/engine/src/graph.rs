@@ -1818,6 +1818,7 @@ mod tests {
                 inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
+                execution_context: crate::state::ExecutionContext::World,
                 location: SceneLocation {
                     stage: "STAGE_A".into(),
                     room: 0,

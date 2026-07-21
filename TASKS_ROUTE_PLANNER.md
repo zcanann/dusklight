@@ -517,7 +517,7 @@ The current code shows:
   actor-bound components with trace provenance. The target, raw predicate
   selectors, evaluated guard values, and eligibility remain distinct fields so
   later source/extracted rules can connect them to their real backing stores.
-- Snapshot schema v6 keeps observed slot descriptors separate from verified
+- Snapshot schema v8 keeps observed slot descriptors separate from verified
   serialized slot contents, permits unknown runtime origin/backing and
   player-control state, retains ended/suspended runtime-file lifetimes, and
   diffs those lifetimes plus slot observation/content changes independently.
@@ -589,7 +589,7 @@ The current code shows:
   audited production profiles, actor entry contracts, and further handler
   audits remain open. See
   `docs/route-planner/message-flow-programs.md`.
-- Planner service schema v21 provides a typed JSON-lines transport owned by the
+- Planner service schema v22 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -602,15 +602,16 @@ The current code shows:
   obstruction IDs, discharged/unknown obligations, and temporal witnesses. The
   planner-owned `project-feasibility-diff` command and service expose it without
   changing the base graph or route book.
-- State-inspection schema v9 preserves the full execution-state document—live
+- State-inspection schema v10 preserves the full execution-state document—live
   components, serialized owner stores, bindings, lifetimes, provenance, gates,
-  cleanup, runtime-file identity, physical slots, location, and player state—
+  cleanup, runtime-file identity, physical slots, execution process, retained
+  world location, pending world load, and player state—
   while evaluating every friendly alias and derived fact under the selected
   exact context and evidence policy. `route-planner inspect-state` and the
   service protocol expose the same projection, so raw inventory/flag bytes,
   their semantic names, ordered mutations, last field writers, and gate history
   remain inspectable together.
-- State-inspection-diff schema v8 combines the raw/component boundary diff with
+- State-inspection-diff schema v9 combines the raw/component boundary diff with
   before/after friendly fact evaluations. It classifies binding-only changes,
   payload changes, direct derived-fact dependency changes, relevant gate reads,
   runtime-context changes, serialized owner-store changes, and sealed persistent-
@@ -1658,6 +1659,13 @@ evidenced overlays over the generated base rather than silent edits to it.
     identity, topology, geometry/live state, messages/events, and storage.
 - [ ] Catalogue all save/runtime components and reset boundaries.
 - [ ] Audit title, no-file, save-slot, load, void, death, and savewarp flows.
+  - [x] Audit and model the exact GZ2E01 successful reset-to-opening prefix:
+        GCN reset/menu/fader guards, restart-room parameter zeroing, the
+        `PROC_OPENING_SCENE` handoff, and its pending F_SP102 load. Execution
+        state now distinguishes non-world processes from loaded maps, so a
+        title/file-select process cannot make the retained last map traversable.
+        Opening initialization, no-file/file-select, void, and death suffixes
+        remain open. See `docs/route-planner/gz2e01-title-boundary-audit.md`.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
       bits, normal/abnormal cleanup, and item/event handoffs.
@@ -1952,6 +1960,9 @@ Deliverable: replayable state evidence that can validate transition rules.
         `docs/route-planner/backing-store-boundaries.md`.
   - [ ] Model concrete title-return/void handling and build-specific save-time
         normalization/clearing as evidenced transition programs.
+    - [x] Model the exact GZ2E01 reset-to-opening prefix as a guarded title-return
+          transition with an explicit process context and pending world-load
+          request; do not conflate that request with a completed map load.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
@@ -2190,7 +2201,7 @@ Deliverable: a headless query API and deterministic fixture suite.
       each reached approach; retain the closest unresolved witness on failure.
 - [x] Show component transformation and provenance histories.
 - [x] Show last-writer and gate history for latched values.
-  - Execution-state schema v9 records every typed operation and every resolved
+  - Execution-state schema v10 records every typed operation and every resolved
     per-component boundary disposition with contiguous application-local order,
     affected component IDs, source sequence, and result snapshot. State
     inspection exposes the full log, a direct last-writer result for each live

@@ -13,13 +13,15 @@ use dusklight_route_planner::logic::{
     FactCatalog, PredicateExpression, RawFactBinding, TruthStatus, ValueReference,
 };
 use dusklight_route_planner::snapshot::{DeltaKind, StateDiff};
-use dusklight_route_planner::state::{BoundaryKind, ComponentPayload, SerializationOwner};
+use dusklight_route_planner::state::{
+    BoundaryKind, ComponentBindingReference, ComponentPayload, SerializationOwner,
+};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v9";
-pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v8";
+pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v10";
+pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v9";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -143,6 +145,7 @@ pub enum FactDeltaCause {
     ComponentPayloadChanged { component_ids: Vec<String> },
     DependencyChanged { fact_ids: Vec<String> },
     RuntimeContextChanged,
+    ExecutionContextChanged,
     GateStateChanged,
     Unclassified,
 }
@@ -277,6 +280,8 @@ pub fn inspect_state_diff(
         .collect::<BTreeSet<_>>();
     let runtime_context_changed = before.snapshot.environment.runtime_configuration
         != after.snapshot.environment.runtime_configuration;
+    let execution_context_changed = before.snapshot.environment.execution_context
+        != after.snapshot.environment.execution_context;
     let gates_changed = before.gate_states != after.gate_states;
     let execution_history_common_prefix_len = before
         .execution_history
@@ -290,7 +295,24 @@ pub fn inspect_state_diff(
         let after_fact = after_facts[fact_id];
         let mut causes = match before_fact.source_kind {
             InspectedFactKind::Alias => {
-                alias_delta_causes(before_fact.raw_binding.as_ref(), &state_diff, before, after)
+                let mut causes = alias_delta_causes(
+                    before_fact.raw_binding.as_ref(),
+                    &state_diff,
+                    before,
+                    after,
+                );
+                if execution_context_changed
+                    && before_fact.raw_binding.as_ref().is_some_and(|binding| {
+                        matches!(
+                            &binding.binding,
+                            ComponentBindingReference::CurrentStage
+                                | ComponentBindingReference::CurrentRoom
+                        )
+                    })
+                {
+                    causes.push(FactDeltaCause::ExecutionContextChanged);
+                }
+                causes
             }
             InspectedFactKind::Derived => {
                 let derived = facts.derived_facts.iter().find(|fact| fact.id == fact_id);
@@ -319,6 +341,11 @@ pub fn inspect_state_diff(
                     && derived.is_some_and(|fact| references_runtime_context(&fact.rule))
                 {
                     causes.push(FactDeltaCause::RuntimeContextChanged);
+                }
+                if execution_context_changed
+                    && derived.is_some_and(|fact| references_execution_context(&fact.rule))
+                {
+                    causes.push(FactDeltaCause::ExecutionContextChanged);
                 }
                 causes
             }
@@ -557,6 +584,27 @@ fn references_runtime_context(expression: &PredicateExpression) -> bool {
     })
 }
 
+fn references_execution_context(expression: &PredicateExpression) -> bool {
+    predicate_references_value(expression, |value| {
+        matches!(
+            value,
+            ValueReference::ExecutionProcess
+                | ValueReference::WorldExecutionActive
+                | ValueReference::LocationStage
+                | ValueReference::LocationRoom
+                | ValueReference::LocationLayer
+                | ValueReference::LocationSpawn
+                | ValueReference::PlayerForm
+                | ValueReference::PlayerMount
+                | ValueReference::PlayerControl
+                | ValueReference::PlayerRotationX
+                | ValueReference::PlayerRotationY
+                | ValueReference::PlayerRotationZ
+                | ValueReference::PlayerAction
+        )
+    })
+}
+
 fn predicate_references_value(
     expression: &PredicateExpression,
     predicate: impl Copy + Fn(&ValueReference) -> bool,
@@ -627,6 +675,7 @@ mod tests {
                 inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
+                execution_context: dusklight_route_planner::state::ExecutionContext::World,
                 location: SceneLocation {
                     stage: "F_SP103".into(),
                     room: 0,

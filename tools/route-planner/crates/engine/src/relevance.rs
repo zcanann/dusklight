@@ -51,6 +51,7 @@ pub enum StateDependency {
         key: String,
     },
     RuntimeFileContext,
+    ExecutionContext,
     LocationStage,
     LocationRoom,
     LocationLayer,
@@ -325,6 +326,9 @@ impl RelevanceBuilder {
                 byte_width: u32::from(*byte_width),
             },
             ValueReference::RuntimeLanguage => StateDependency::RuntimeLanguage,
+            ValueReference::ExecutionProcess | ValueReference::WorldExecutionActive => {
+                StateDependency::ExecutionContext
+            }
             ValueReference::RuntimeSetting { key } => {
                 StateDependency::RuntimeSetting { key: key.clone() }
             }
@@ -692,6 +696,7 @@ impl RelevanceBuilder {
             | StateOperation::Initialize { .. }
             | StateOperation::Restore { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
+            | StateOperation::SetExecutionContext { .. }
             | StateOperation::SetLocation { .. }
             | StateOperation::SetPlayerForm { .. }
             | StateOperation::SetPlayerMount { .. }
@@ -844,12 +849,14 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             vec![StateDependency::AnyState]
         }
         StateOperation::SetLocation { .. } => vec![
+            StateDependency::ExecutionContext,
             StateDependency::LocationStage,
             StateDependency::LocationRoom,
             StateDependency::LocationLayer,
             StateDependency::LocationSpawn,
         ],
         StateOperation::SetLocationFromFields { .. } => vec![
+            StateDependency::ExecutionContext,
             StateDependency::LocationStage,
             StateDependency::LocationRoom,
             StateDependency::LocationLayer,
@@ -883,6 +890,7 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         | StateOperation::Rebind { .. }
         | StateOperation::SetActiveRuntimeFile { .. }
         | StateOperation::Project { .. } => vec![StateDependency::AnyState],
+        StateOperation::SetExecutionContext { .. } => vec![StateDependency::ExecutionContext],
         StateOperation::ScheduleCleanup { .. }
         | StateOperation::CancelCleanup { .. }
         | StateOperation::Interrupt { .. } => Vec::new(),

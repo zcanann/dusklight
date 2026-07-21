@@ -53,6 +53,7 @@ use dusklight_route_planner::return_place::gz2e01_tower_return_place_mechanics;
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::state::BoundaryKind;
+use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use dusklight_route_planner::world_data::{WorldContext, WorldInventory};
 use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
@@ -92,6 +93,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("compile-message-entries") => compile_message_entries(&args[1..]),
         Some("compile-message-flows") => compile_message_flows(&args[1..]),
         Some("compile-return-place-mechanics") => compile_return_place_mechanics(&args[1..]),
+        Some("compile-title-boundary-mechanics") => compile_title_boundary_mechanics(&args[1..]),
         Some("construct-message-flows") => construct_message_flows(&args[1..]),
         Some("compose") => compose(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
@@ -205,6 +207,26 @@ fn compile_return_place_mechanics(args: &[String]) -> Result<(), Box<dyn Error>>
             "writers": mechanics.writers.len(),
             "gates": mechanics.gates.len(),
             "readers": mechanics.readers.len(),
+            "transitions": mechanics.transitions.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn compile_title_boundary_mechanics(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let content_path = required_path(args, "--content-identity")?;
+    let runtime_path = required_path(args, "--runtime-configuration")?;
+    let output = required_path(args, "--output")?;
+    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let runtime = RuntimeConfiguration::decode_canonical(&fs::read(runtime_path)?)?;
+    let mechanics = gz2e01_reset_to_opening_mechanics(&content, &runtime)?;
+    write_file(&output, &mechanics.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": mechanics.schema,
+            "output": output,
+            "sha256": mechanics.digest()?,
             "transitions": mechanics.transitions.len(),
         }))?
     );
@@ -1908,6 +1930,7 @@ fn print_usage() {
             "  route-planner compile-message-entries --bundle BUNDLE.json --message-flow-set COMPILED.json --contracts ENTRIES.json --output COMPILED_ENTRIES.json --manifest MANIFEST.json",
             "  route-planner compile-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json [--overlays OVERLAYS.json] --output COMPILED.json --manifest MANIFEST.json",
             "  route-planner compile-return-place-mechanics --content-identity CONTENT.json --runtime-configuration RUNTIME.json --output MECHANICS.json",
+            "  route-planner compile-title-boundary-mechanics --content-identity CONTENT.json --runtime-configuration RUNTIME.json --output MECHANICS.json",
             "  route-planner construct-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json --output PROGRAMS.json",
             "  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--message-flow-set MESSAGE.json]... [--message-entry-set ENTRIES.json]... [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json",
             "  route-planner diff-orig --left LEFT.json --right RIGHT.json [--left-locale LOCALE --right-locale LOCALE] --output DIFF.json",

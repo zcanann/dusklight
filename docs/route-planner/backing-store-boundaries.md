@@ -117,3 +117,10 @@ reinterpretation. The milestone advances the directly containing schemas:
 Canonical decoders fail closed on prior shapes. They do not synthesize a
 runtime-file ID for an old stage-only owner, because doing so could merge stores
 that were physically distinct.
+
+The later explicit process-context milestone advances execution environment to
+v7, state snapshot/diff to v8/v7, execution state to v10, fact catalog to v7,
+mechanics catalog to v17, state inspection/diff to v10/v9, and planner service
+to v22.
+See `gz2e01-title-boundary-audit.md`; the versions above record the earlier
+runtime-file-coordinate milestone rather than the current wire versions.

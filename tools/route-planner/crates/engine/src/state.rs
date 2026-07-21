@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v6";
+pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v7";
 pub const BOUNDARY_POLICY_SCHEMA: &str = "dusklight.route-planner.boundary-policy/v2";
 pub const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
 pub const MAX_STATE_COLLECTION: usize = 65_536;
@@ -84,6 +84,24 @@ pub struct SceneLocation {
     pub room: i8,
     pub layer: i8,
     pub spawn: i16,
+}
+
+/// Which top-level game process currently owns execution.
+///
+/// `location` retains the last active world location while a non-world scene
+/// (title, file select, and similar processes) is active. Consumers must use
+/// this context before treating that retained location as reachable world
+/// state. A process may carry the world load request it is preparing without
+/// claiming that the destination has loaded yet.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExecutionContext {
+    World,
+    Process {
+        process_name: String,
+        pending_world_load: Option<SceneLocation>,
+    },
+    Unknown,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -398,6 +416,7 @@ pub struct ExecutionEnvironment {
     pub inactive_runtime_files: Vec<RuntimeFile>,
     pub physical_slots: Vec<PhysicalSlot>,
     pub physical_slot_observations: Vec<PhysicalSlotObservation>,
+    pub execution_context: ExecutionContext,
     pub location: SceneLocation,
     pub player: PlayerState,
     pub components: Vec<StateComponent>,
@@ -499,6 +518,12 @@ impl SceneLocation {
     }
 }
 
+impl ExecutionContext {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        validate_execution_context(self)
+    }
+}
+
 impl StateComponent {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         validate_stable_id("components.id", &self.id)?;
@@ -562,6 +587,7 @@ impl ExecutionEnvironment {
                 Ok(())
             },
         )?;
+        validate_execution_context(&self.execution_context)?;
         validate_location(&self.location)?;
         validate_player(&self.player)?;
         validate_sorted_collection(
@@ -662,13 +688,23 @@ impl ComponentBindingReference {
             Self::ActiveRuntimeFile => ComponentBinding::RuntimeFile {
                 runtime_file_id: environment.active_runtime_file.id.clone(),
             },
-            Self::CurrentStage => ComponentBinding::Stage {
-                stage: environment.location.stage.clone(),
-            },
-            Self::CurrentRoom => ComponentBinding::Room {
-                stage: environment.location.stage.clone(),
-                room: environment.location.room,
-            },
+            Self::CurrentStage => {
+                if !matches!(environment.execution_context, ExecutionContext::World) {
+                    return None;
+                }
+                ComponentBinding::Stage {
+                    stage: environment.location.stage.clone(),
+                }
+            }
+            Self::CurrentRoom => {
+                if !matches!(environment.execution_context, ExecutionContext::World) {
+                    return None;
+                }
+                ComponentBinding::Room {
+                    stage: environment.location.stage.clone(),
+                    room: environment.location.room,
+                }
+            }
             Self::Projected {
                 component_id,
                 projection,
@@ -794,6 +830,22 @@ fn validate_backing(backing: &BackingAttachment) -> Result<(), PlannerContractEr
 
 fn validate_location(location: &SceneLocation) -> Result<(), PlannerContractError> {
     validate_game_name("location.stage", &location.stage)
+}
+
+fn validate_execution_context(context: &ExecutionContext) -> Result<(), PlannerContractError> {
+    match context {
+        ExecutionContext::World | ExecutionContext::Unknown => Ok(()),
+        ExecutionContext::Process {
+            process_name,
+            pending_world_load,
+        } => {
+            validate_game_name("execution_context.process_name", process_name)?;
+            if let Some(location) = pending_world_load {
+                validate_location(location)?;
+            }
+            Ok(())
+        }
+    }
 }
 
 fn validate_player(player: &PlayerState) -> Result<(), PlannerContractError> {
@@ -1225,6 +1277,7 @@ mod tests {
             inactive_runtime_files: Vec::new(),
             physical_slots: Vec::new(),
             physical_slot_observations: Vec::new(),
+            execution_context: ExecutionContext::World,
             location: SceneLocation {
                 stage: "F_SP103".into(),
                 room: 0,

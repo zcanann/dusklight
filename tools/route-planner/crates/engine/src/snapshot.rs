@@ -3,16 +3,16 @@
 use crate::artifact::Digest;
 use crate::state::{
     BoundaryKind, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
-    ExecutionEnvironment, PhysicalSlot, PhysicalSlotObservation, RuntimeFile, RuntimeFileLifecycle,
-    SemanticLifetime, SerializationOwner, StateComponent,
+    ExecutionContext, ExecutionEnvironment, PhysicalSlot, PhysicalSlotObservation, RuntimeFile,
+    RuntimeFileLifecycle, SemanticLifetime, SerializationOwner, StateComponent,
 };
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v7";
-pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v6";
+pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v8";
+pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v7";
 pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v6";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -117,6 +117,9 @@ pub struct StateDiff {
     pub runtime_file_after: RuntimeFile,
     pub inactive_runtime_files_before: Vec<RuntimeFile>,
     pub inactive_runtime_files_after: Vec<RuntimeFile>,
+    pub execution_context_before: ExecutionContext,
+    pub execution_context_after: ExecutionContext,
+    pub execution_context_changed: bool,
     pub location_changed: bool,
     pub player_changed: bool,
     pub static_world_objects_changed: bool,
@@ -229,6 +232,10 @@ impl StateDiff {
             runtime_file_after: after.environment.active_runtime_file.clone(),
             inactive_runtime_files_before: before.environment.inactive_runtime_files.clone(),
             inactive_runtime_files_after: after.environment.inactive_runtime_files.clone(),
+            execution_context_before: before.environment.execution_context.clone(),
+            execution_context_after: after.environment.execution_context.clone(),
+            execution_context_changed: before.environment.execution_context
+                != after.environment.execution_context,
             location_changed: before.environment.location != after.environment.location,
             player_changed: before.environment.player != after.environment.player,
             static_world_objects_changed: before.environment.static_world_objects
@@ -283,6 +290,16 @@ impl StateDiff {
             "inactive_runtime_files_after",
             &self.inactive_runtime_files_after,
         )?;
+        self.execution_context_before.validate()?;
+        self.execution_context_after.validate()?;
+        if self.execution_context_changed
+            != (self.execution_context_before != self.execution_context_after)
+        {
+            return Err(PlannerContractError::new(
+                "execution_context_changed",
+                "must agree with the before and after execution contexts",
+            ));
+        }
         validate_delta_order(
             "slot_deltas",
             self.slot_deltas.iter().map(|delta| delta.slot),
@@ -658,6 +675,7 @@ mod tests {
                 inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
+                execution_context: crate::state::ExecutionContext::World,
                 location: SceneLocation {
                     stage: "F_SP103".into(),
                     room: 0,

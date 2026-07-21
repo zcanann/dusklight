@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v6";
+pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v7";
 pub const MAX_PREDICATE_DEPTH: usize = 64;
 pub const MAX_PREDICATE_CHILDREN: usize = 4_096;
 
@@ -98,6 +98,8 @@ pub enum ValueReference {
         mask: u64,
     },
     RuntimeLanguage,
+    ExecutionProcess,
+    WorldExecutionActive,
     RuntimeSetting {
         key: String,
     },
@@ -433,6 +435,8 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
             validate_stable_id("value.flow_component_id", flow_component_id)
         }
         ValueReference::RuntimeLanguage
+        | ValueReference::ExecutionProcess
+        | ValueReference::WorldExecutionActive
         | ValueReference::LocationStage
         | ValueReference::LocationRoom
         | ValueReference::LocationLayer

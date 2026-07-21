@@ -550,6 +550,7 @@ pub fn snapshot_native_observation(
             inactive_runtime_files: Vec::new(),
             physical_slots: Vec::new(),
             physical_slot_observations,
+            execution_context: crate::state::ExecutionContext::World,
             location: SceneLocation {
                 stage: observation.stage.clone(),
                 room: observation.room,

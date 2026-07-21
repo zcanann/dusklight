@@ -6,8 +6,8 @@ use crate::logic::{
     TruthStatus, ValueReference,
 };
 use crate::state::{
-    ActorLifecycle, ComponentPayload, PlaneRelation, PlayerForm, PlayerMount,
-    SpatialConnectionStatus, SpatialVolumeShape, StateComponent, StateValue,
+    ActorLifecycle, ComponentKind, ComponentPayload, ExecutionContext, PlaneRelation, PlayerForm,
+    PlayerMount, SpatialConnectionStatus, SpatialVolumeShape, StateComponent, StateValue,
 };
 use crate::transition::{
     CandidateTransition, FeasibilityObligation, GateRule, ObligationDetail, ReaderRule,
@@ -219,6 +219,27 @@ pub struct PredicateEvaluator<'a> {
 }
 
 impl<'a> PredicateEvaluator<'a> {
+    fn world_execution_active(&self) -> bool {
+        matches!(
+            self.snapshot.environment.execution_context,
+            ExecutionContext::World
+        )
+    }
+
+    fn world_location(&self) -> Option<&crate::state::SceneLocation> {
+        self.world_execution_active()
+            .then_some(&self.snapshot.environment.location)
+    }
+
+    fn world_player(&self) -> Option<&crate::state::PlayerState> {
+        self.world_execution_active()
+            .then_some(&self.snapshot.environment.player)
+    }
+
+    fn component_readable(&self, component: &StateComponent) -> bool {
+        component.component_kind != ComponentKind::ActorInstance || self.world_execution_active()
+    }
+
     pub fn new(
         snapshot: &'a crate::snapshot::StateSnapshot,
         facts: &'a FactCatalog,
@@ -471,6 +492,9 @@ impl<'a> PredicateEvaluator<'a> {
     }
 
     fn player_inside_volume(&self, reference: &VolumeReference) -> EvaluatedTruth {
+        if !self.world_execution_active() {
+            return EvaluatedTruth::Unknown;
+        }
         let Some(volume) = self
             .snapshot
             .environment
@@ -536,6 +560,9 @@ impl<'a> PredicateEvaluator<'a> {
         source_region_id: &str,
         destination_region_id: &str,
     ) -> Option<SpatialConnectionStatus> {
+        if !self.world_execution_active() {
+            return None;
+        }
         self.snapshot
             .environment
             .spatial_connections
@@ -549,6 +576,9 @@ impl<'a> PredicateEvaluator<'a> {
     }
 
     fn player_on_plane_side(&self, plane_id: &str, relation: PlaneRelation) -> EvaluatedTruth {
+        if !self.world_execution_active() {
+            return EvaluatedTruth::Unknown;
+        }
         let Some(plane) = self
             .snapshot
             .environment
@@ -579,6 +609,9 @@ impl<'a> PredicateEvaluator<'a> {
     }
 
     fn interaction_actor_loaded(&self, instance_id: &str) -> EvaluatedTruth {
+        if !self.world_execution_active() {
+            return EvaluatedTruth::Unknown;
+        }
         match self
             .snapshot
             .environment
@@ -987,6 +1020,7 @@ impl<'a> PredicateEvaluator<'a> {
                 component.component_kind == binding.component_kind
                     && component.binding == resolved_binding
                     && matches!(component.payload, ComponentPayload::Raw { .. })
+                    && self.component_readable(component)
             })
             .collect::<Vec<_>>();
         let [component] = matches.as_slice() else {
@@ -1022,14 +1056,18 @@ impl<'a> PredicateEvaluator<'a> {
             ValueReference::ComponentField {
                 component_id,
                 field,
-            } => structured_field(
-                self.snapshot
+            } => {
+                let component = self
+                    .snapshot
                     .environment
                     .components
                     .iter()
-                    .find(|component| component.id == *component_id)?,
-                field,
-            ),
+                    .find(|component| component.id == *component_id)?;
+                if !self.component_readable(component) {
+                    return None;
+                }
+                structured_field(component, field)
+            }
             ValueReference::BoundComponentField {
                 component_kind,
                 binding,
@@ -1045,6 +1083,7 @@ impl<'a> PredicateEvaluator<'a> {
                         component.component_kind == *component_kind
                             && component.binding == resolved_binding
                             && matches!(component.payload, ComponentPayload::Structured { .. })
+                            && self.component_readable(component)
                     });
                 let component = matches.next()?;
                 if matches.next().is_some() {
@@ -1057,17 +1096,18 @@ impl<'a> PredicateEvaluator<'a> {
                 byte_offset,
                 byte_width,
                 mask,
-            } => raw_bits(
-                self.snapshot
+            } => {
+                let component = self
+                    .snapshot
                     .environment
                     .components
                     .iter()
-                    .find(|component| component.id == *component_id)?,
-                *byte_offset,
-                *byte_width,
-                *mask,
-            )
-            .map(StateValue::Unsigned),
+                    .find(|component| component.id == *component_id)?;
+                if !self.component_readable(component) {
+                    return None;
+                }
+                raw_bits(component, *byte_offset, *byte_width, *mask).map(StateValue::Unsigned)
+            }
             ValueReference::BoundRawBits {
                 component_kind,
                 binding,
@@ -1085,6 +1125,7 @@ impl<'a> PredicateEvaluator<'a> {
                         component.component_kind == *component_kind
                             && component.binding == resolved_binding
                             && matches!(component.payload, ComponentPayload::Raw { .. })
+                            && self.component_readable(component)
                     });
                 let component = matches.next()?;
                 if matches.next().is_some() {
@@ -1099,6 +1140,24 @@ impl<'a> PredicateEvaluator<'a> {
                     .language
                     .clone(),
             )),
+            ValueReference::ExecutionProcess => {
+                match &self.snapshot.environment.execution_context {
+                    crate::state::ExecutionContext::Process { process_name, .. } => {
+                        Some(StateValue::Text(process_name.clone()))
+                    }
+                    crate::state::ExecutionContext::World
+                    | crate::state::ExecutionContext::Unknown => None,
+                }
+            }
+            ValueReference::WorldExecutionActive => {
+                match self.snapshot.environment.execution_context {
+                    crate::state::ExecutionContext::World => Some(StateValue::Boolean(true)),
+                    crate::state::ExecutionContext::Process { .. } => {
+                        Some(StateValue::Boolean(false))
+                    }
+                    crate::state::ExecutionContext::Unknown => None,
+                }
+            }
             ValueReference::RuntimeSetting { key } => self
                 .snapshot
                 .environment
@@ -1106,53 +1165,52 @@ impl<'a> PredicateEvaluator<'a> {
                 .settings
                 .get(key)
                 .map(configuration_value),
-            ValueReference::LocationStage => Some(StateValue::Text(
-                self.snapshot.environment.location.stage.clone(),
-            )),
-            ValueReference::LocationRoom => Some(StateValue::Signed(
-                self.snapshot.environment.location.room.into(),
-            )),
-            ValueReference::LocationLayer => Some(StateValue::Signed(
-                self.snapshot.environment.location.layer.into(),
-            )),
-            ValueReference::LocationSpawn => Some(StateValue::Signed(
-                self.snapshot.environment.location.spawn.into(),
-            )),
-            ValueReference::PlayerForm => player_form_value(&self.snapshot.environment.player.form),
+            ValueReference::LocationStage => self
+                .world_location()
+                .map(|location| StateValue::Text(location.stage.clone())),
+            ValueReference::LocationRoom => self
+                .world_location()
+                .map(|location| StateValue::Signed(location.room.into())),
+            ValueReference::LocationLayer => self
+                .world_location()
+                .map(|location| StateValue::Signed(location.layer.into())),
+            ValueReference::LocationSpawn => self
+                .world_location()
+                .map(|location| StateValue::Signed(location.spawn.into())),
+            ValueReference::PlayerForm => self
+                .world_player()
+                .and_then(|player| player_form_value(&player.form)),
             ValueReference::PlayerMount => self
-                .snapshot
-                .environment
-                .player
+                .world_player()?
                 .mount
                 .as_ref()
                 .and_then(player_mount_value),
-            ValueReference::PlayerControl => self
-                .snapshot
-                .environment
-                .player
-                .has_control
-                .map(StateValue::Boolean),
-            ValueReference::PlayerRotationX => Some(StateValue::Signed(
-                self.snapshot.environment.player.rotation[0].into(),
-            )),
-            ValueReference::PlayerRotationY => Some(StateValue::Signed(
-                self.snapshot.environment.player.rotation[1].into(),
-            )),
-            ValueReference::PlayerRotationZ => Some(StateValue::Signed(
-                self.snapshot.environment.player.rotation[2].into(),
-            )),
-            ValueReference::PlayerAction => Some(StateValue::Text(
-                self.snapshot.environment.player.action.clone(),
-            )),
-            ValueReference::ActorField { instance_id, field } => self
-                .snapshot
-                .environment
-                .live_world_objects
-                .iter()
-                .find(|actor| actor.instance_id == *instance_id)?
-                .fields
-                .get(field)
-                .cloned(),
+            ValueReference::PlayerControl => {
+                self.world_player()?.has_control.map(StateValue::Boolean)
+            }
+            ValueReference::PlayerRotationX => self
+                .world_player()
+                .map(|player| StateValue::Signed(player.rotation[0].into())),
+            ValueReference::PlayerRotationY => self
+                .world_player()
+                .map(|player| StateValue::Signed(player.rotation[1].into())),
+            ValueReference::PlayerRotationZ => self
+                .world_player()
+                .map(|player| StateValue::Signed(player.rotation[2].into())),
+            ValueReference::PlayerAction => self
+                .world_player()
+                .map(|player| StateValue::Text(player.action.clone())),
+            ValueReference::ActorField { instance_id, field } => {
+                self.world_location()?;
+                self.snapshot
+                    .environment
+                    .live_world_objects
+                    .iter()
+                    .find(|actor| actor.instance_id == *instance_id)?
+                    .fields
+                    .get(field)
+                    .cloned()
+            }
             ValueReference::GateState { gate_id } => self
                 .gate_states
                 .get(gate_id)
@@ -1346,10 +1404,11 @@ mod tests {
     use crate::state::{
         ActorLifecycle, BackingAttachment, ComponentBinding, ComponentBindingProjection,
         ComponentBindingReference, ComponentKind, ComponentPayload, ComponentProvenance,
-        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, LiveWorldObject, PlaneRelation,
-        PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
-        RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, SpatialConnection,
-        SpatialConnectionStatus, SpatialPlane, SpatialVolume, SpatialVolumeShape, StateComponent,
+        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment, LiveWorldObject,
+        PlaneRelation, PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile,
+        RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
+        SerializationOwner, SpatialConnection, SpatialConnectionStatus, SpatialPlane,
+        SpatialVolume, SpatialVolumeShape, StateComponent,
     };
     use crate::transition::{
         ActivationContract, ObligationKind, StateOperation, TemporalWindow, TransitionKind,
@@ -1417,6 +1476,7 @@ mod tests {
                 inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
+                execution_context: crate::state::ExecutionContext::World,
                 location: SceneLocation {
                     stage: "F_SP103".into(),
                     room: 0,
@@ -2740,6 +2800,18 @@ mod tests {
                 .classification,
             ObligationClassification::EvaluationUnknown
         );
+
+        snapshot.environment.execution_context = ExecutionContext::Process {
+            process_name: "PROC_OPENING_SCENE".into(),
+            pending_world_load: None,
+        };
+        let process_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            process_evaluator
+                .assess_obligation(&void_side, &[])
+                .classification,
+            ObligationClassification::EvaluationUnknown
+        );
     }
 
     #[test]
@@ -2750,8 +2822,30 @@ mod tests {
             static_object_id: None,
             actor_type: "npc.test".into(),
             lifecycle: ActorLifecycle::Loaded,
-            fields: BTreeMap::new(),
+            fields: BTreeMap::from([("ready".into(), StateValue::Boolean(true))]),
         }];
+        snapshot.environment.components.push(StateComponent {
+            id: "actor-instance.test".into(),
+            component_kind: ComponentKind::ActorInstance,
+            payload: ComponentPayload::Structured {
+                fields: BTreeMap::from([("executing".into(), StateValue::Boolean(true))]),
+            },
+            binding: ComponentBinding::Actor {
+                instance_id: "actor.test".into(),
+            },
+            lifetime: SemanticLifetime::RoomLoad,
+            serialization_owner: SerializationOwner::None,
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::TraceObservation,
+                source_id: "trace.actor-test".into(),
+                source_sha256: Some(Digest([12; 32])),
+                transition_id: None,
+            }],
+        });
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
         snapshot.environment.spatial_volumes = vec![
             SpatialVolume {
                 object_id: "actor.test".into(),
@@ -2777,10 +2871,11 @@ mod tests {
         snapshot.environment.player.position = [2.0, 0.0, 0.0];
         snapshot.environment.validate().unwrap();
         let facts = facts(&snapshot, TruthStatus::Established);
+        let obligation_scope = scope(&snapshot);
         let obligation = |volume_id: &str| FeasibilityObligation {
             id: format!("obligation.{volume_id}"),
             label: format!("Inside {volume_id}"),
-            scope: scope(&snapshot),
+            scope: obligation_scope.clone(),
             obligation_kind: ObligationKind::Interaction,
             detail: ObligationDetail::Interaction {
                 actor_instance_id: "actor.test".into(),
@@ -2795,18 +2890,51 @@ mod tests {
             },
             evidence: evidence(TruthStatus::Established),
         };
-        let evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        let world_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
         assert_eq!(
-            evaluator
+            world_evaluator
                 .assess_obligation(&obligation("sphere"), &[])
                 .classification,
             ObligationClassification::Satisfied
         );
         assert_eq!(
-            evaluator
+            world_evaluator
                 .assess_obligation(&obligation("cylinder"), &[])
                 .classification,
             ObligationClassification::Satisfied
+        );
+        assert_eq!(
+            world_evaluator.resolve_value(&ValueReference::ActorField {
+                instance_id: "actor.test".into(),
+                field: "ready".into(),
+            }),
+            Some(StateValue::Boolean(true))
+        );
+
+        snapshot.environment.execution_context = ExecutionContext::Process {
+            process_name: "PROC_OPENING_SCENE".into(),
+            pending_world_load: None,
+        };
+        let process_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            process_evaluator
+                .assess_obligation(&obligation("sphere"), &[])
+                .classification,
+            ObligationClassification::EvaluationUnknown
+        );
+        assert_eq!(
+            process_evaluator.resolve_value(&ValueReference::ActorField {
+                instance_id: "actor.test".into(),
+                field: "ready".into(),
+            }),
+            None
+        );
+        assert_eq!(
+            process_evaluator.resolve_value(&ValueReference::ComponentField {
+                component_id: "actor-instance.test".into(),
+                field: "executing".into(),
+            }),
+            None
         );
     }
 }

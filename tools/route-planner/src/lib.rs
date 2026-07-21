@@ -475,6 +475,7 @@ mod tests {
                 inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
+                execution_context: dusklight_route_planner::state::ExecutionContext::World,
                 location: SceneLocation {
                     stage: stage.into(),
                     room: 0,

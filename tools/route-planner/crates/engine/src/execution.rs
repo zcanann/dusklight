@@ -5,9 +5,9 @@ use crate::snapshot::StateSnapshot;
 use crate::state::{
     BackingAttachment, BoundaryDisposition, BoundaryPolicy, ComponentBinding,
     ComponentBindingReference, ComponentKind, ComponentPayload, ComponentProvenance,
-    ComponentSelector, PhysicalSlot, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
-    RuntimeFileOrigin, SceneLocation, SerializationOwner, StateComponent, StateValue,
-    validate_serialization_owner,
+    ComponentSelector, ExecutionContext, PhysicalSlot, ProvenanceSourceKind, RuntimeFile,
+    RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SerializationOwner, StateComponent,
+    StateValue, validate_serialization_owner,
 };
 use crate::transition::{StateOperation, TemporalWindow};
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v9";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v10";
 pub const PERSISTENT_FILE_IMAGE_SCHEMA: &str = "dusklight.route-planner.persistent-file-image/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -828,6 +828,7 @@ impl PlannerExecutionState {
                     flow_component_id, ..
                 } => vec![flow_component_id.clone()],
                 StateOperation::SetActiveRuntimeFile { .. }
+                | StateOperation::SetExecutionContext { .. }
                 | StateOperation::SetLocation { .. }
                 | StateOperation::SetLocationFromFields { .. }
                 | StateOperation::SetPlayerForm { .. }
@@ -1351,7 +1352,11 @@ impl PlannerExecutionState {
             StateOperation::SetActiveRuntimeFile { runtime_file } => {
                 self.snapshot.environment.active_runtime_file = runtime_file.clone();
             }
+            StateOperation::SetExecutionContext { context } => {
+                self.snapshot.environment.execution_context = context.clone();
+            }
             StateOperation::SetLocation { location } => {
+                self.snapshot.environment.execution_context = ExecutionContext::World;
                 self.snapshot.environment.location = location.clone();
             }
             StateOperation::SetLocationFromFields {
@@ -1420,6 +1425,7 @@ impl PlannerExecutionState {
                         "does not fit an i16 spawn number",
                     )
                 })?;
+                self.snapshot.environment.execution_context = ExecutionContext::World;
                 self.snapshot.environment.location = SceneLocation {
                     stage,
                     room,
@@ -2407,6 +2413,7 @@ fn history_event_writes_field(
             | StateOperation::Bind { .. }
             | StateOperation::Rebind { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
+            | StateOperation::SetExecutionContext { .. }
             | StateOperation::SetLocation { .. }
             | StateOperation::SetLocationFromFields { .. }
             | StateOperation::SetPlayerForm { .. }
@@ -2707,6 +2714,7 @@ mod tests {
                 inactive_runtime_files: Vec::new(),
                 physical_slots: Vec::new(),
                 physical_slot_observations: Vec::new(),
+                execution_context: ExecutionContext::World,
                 location: SceneLocation {
                     stage: "F_SP103".into(),
                     room: 0,

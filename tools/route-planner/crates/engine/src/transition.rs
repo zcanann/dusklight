@@ -3,17 +3,18 @@
 use crate::artifact::Digest;
 use crate::logic::{ContextScope, PredicateExpression, RuleEvidence, ValueReference};
 use crate::state::{
-    ComponentBinding, ComponentBindingReference, ComponentKind, ComponentSelector, PhysicalSlotId,
-    PlaneRelation, PlayerForm, PlayerMount, RuntimeFile, RuntimeFileLifecycle, SemanticLifetime,
-    SerializationOwner, StateComponent, StateValue, validate_binding as validate_component_binding,
-    validate_binding_reference, validate_component_kind, validate_serialization_owner,
+    ComponentBinding, ComponentBindingReference, ComponentKind, ComponentSelector,
+    ExecutionContext, PhysicalSlotId, PlaneRelation, PlayerForm, PlayerMount, RuntimeFile,
+    RuntimeFileLifecycle, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
+    validate_binding as validate_component_binding, validate_binding_reference,
+    validate_component_kind, validate_serialization_owner,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v16";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v17";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -173,6 +174,9 @@ pub enum StateOperation {
     },
     SetActiveRuntimeFile {
         runtime_file: RuntimeFile,
+    },
+    SetExecutionContext {
+        context: ExecutionContext,
     },
     SetLocation {
         location: crate::state::SceneLocation,
@@ -839,6 +843,7 @@ impl StateOperation {
                 }
                 Ok(())
             }
+            Self::SetExecutionContext { context } => context.validate(),
             Self::SetLocation { location } => location.validate(),
             Self::SetLocationFromFields {
                 component_id,
