@@ -18,6 +18,9 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::learning::batch::load_fqi_batch;
+use huntctl::learning::native_replay_corpus::{
+    NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
+};
 use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
     empirical_return_samples,
@@ -46,12 +49,28 @@ use huntctl::transition_evidence::{
     TransitionEvidenceBundle,
 };
 use huntctl::world_inventory::WorldInventory;
+use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+const NATIVE_REPLAY_SOURCE_SCHEMA_V1: &str = "dusklight-native-replay-source/v1";
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeReplaySourceDescriptor {
+    schema: String,
+    shard: PathBuf,
+    episode_id: String,
+    role: ReplayExperienceRole,
+    #[serde(default)]
+    policy_lineage_sha256: Option<Digest>,
+    #[serde(default)]
+    parent_entry_sha256: Option<Digest>,
+}
 
 fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     let direct_inputs = repeated_option(learn_args, "--input");
@@ -585,6 +604,104 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::write(output, &bytes)?;
             }
             println!("{}", String::from_utf8(bytes)?);
+            Ok(())
+        }
+        Some("native-replay") => {
+            let learn_args = &args[1..];
+            let source_paths = repeated_option(learn_args, "--source");
+            if source_paths.is_empty() || source_paths.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn native-replay requires 1..={MAX_LEARN_INPUT_CORPORA} --source SOURCE.json"
+                )
+                .into());
+            }
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "native replay corpus output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let previous: Option<NativeReplayCorpus> = option(learn_args, "--previous")
+                .map(PathBuf::from)
+                .map(|path| -> Result<_, Box<dyn Error>> {
+                    let corpus: NativeReplayCorpus = serde_json::from_slice(&fs::read(path)?)?;
+                    corpus.validate()?;
+                    Ok(corpus)
+                })
+                .transpose()?;
+            let mut loaded = Vec::with_capacity(source_paths.len());
+            for source_path in source_paths {
+                let descriptor_path = PathBuf::from(source_path);
+                let descriptor: NativeReplaySourceDescriptor =
+                    serde_json::from_slice(&fs::read(&descriptor_path)?)?;
+                if descriptor.schema != NATIVE_REPLAY_SOURCE_SCHEMA_V1 {
+                    return Err(format!(
+                        "native replay source has invalid schema: {}",
+                        descriptor_path.display()
+                    )
+                    .into());
+                }
+                let shard_path = if descriptor.shard.is_absolute() {
+                    descriptor.shard.clone()
+                } else {
+                    descriptor_path
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .join(&descriptor.shard)
+                };
+                loaded.push((descriptor, NativeEpisodeShard::read(shard_path)?));
+            }
+            let sources = loaded
+                .iter()
+                .map(|(descriptor, shard)| {
+                    let episode_index = shard
+                        .episodes
+                        .iter()
+                        .position(|episode| episode.id == descriptor.episode_id)
+                        .ok_or_else(|| {
+                            format!(
+                                "native replay episode {:?} is absent from shard {}",
+                                descriptor.episode_id, shard.content_sha256
+                            )
+                        })?;
+                    Ok(ReplayEpisodeSource {
+                        shard,
+                        episode_index,
+                        role: descriptor.role,
+                        policy_lineage_sha256: descriptor.policy_lineage_sha256,
+                        parent_entry_sha256: descriptor.parent_entry_sha256,
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            let corpus = NativeReplayCorpus::build(previous.as_ref(), &sources)?;
+            let bytes = serde_json::to_vec_pretty(&corpus)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeReplayCorpus)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": NATIVE_REPLAY_CORPUS_SCHEMA_V1,
+                    "generation": corpus.generation,
+                    "corpus_sha256": corpus.corpus_sha256,
+                    "parent_corpus_sha256": corpus.parent_corpus_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "report": corpus.report,
+                }))?
+            );
             Ok(())
         }
         Some("collision-history") => {

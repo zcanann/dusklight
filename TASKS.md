@@ -924,6 +924,15 @@ and geometry set sizes without schema changes.
 - [ ] Maintain a replay corpus containing demonstrations, successful and failed
   policy rollouts, randomized coverage and alternate terminal states. Preserve
   checkpoint, episode, branch and policy-generation lineage.
+  - [x] Add immutable native replay-corpus generations over authenticated
+    `.dseps` shards. `huntctl learn native-replay` classifies individual rich
+    episodes as demonstrations, policy rollouts, randomized coverage or
+    alternate-terminal experience without copying their observations; binds
+    shard/payload, checkpoint, source boundary, objective, parent-entry and
+    policy-lineage identities; rejects duplicate episodes and invalid role
+    claims; reports outcome/role/checkpoint diversity; and stores each manifest
+    content-addressed. Campaign ingestion and a live mixed-source generation
+    remain open before the parent item can close.
 - [ ] Pretrain and continually refresh the shared state encoder from every
   phase-correct transition, not only successful episodes. Compare bounded
   auxiliary objectives such as next-state/delta prediction, inverse action,

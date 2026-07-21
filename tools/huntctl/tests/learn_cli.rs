@@ -1,8 +1,10 @@
 use huntctl::artifact::Digest;
+use huntctl::learning::native_replay_corpus::NativeReplayCorpus;
 use huntctl::learning::option_values::{
     OptionActionDescriptor, OptionValueBatch, OptionValueSample,
 };
 use huntctl::native_collision_history::NativeCollisionHistoryView;
+use huntctl::native_episode_shard::NativeEpisodeShard;
 use huntctl::option_execution::OptionType;
 use huntctl::reward_shaping::{
     POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, REWARD_REPORT_SCHEMA_V1,
@@ -98,6 +100,87 @@ fn collision_history_cli_separates_past_decisions_from_auxiliary_targets() {
     assert_eq!(
         view.decisions[0].current_snapshot_index,
         view.auxiliary_targets[0].before_snapshot_index
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn native_replay_cli_classifies_rich_episodes_without_copying_the_shard() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-native-replay-{nonce}"));
+    fs::create_dir_all(&root).unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/automation/native_episode_v14.dseps");
+    let shard = NativeEpisodeShard::read(&fixture).unwrap();
+    let success = shard
+        .episodes
+        .iter()
+        .find(|episode| episode.success)
+        .unwrap();
+    let failure = shard
+        .episodes
+        .iter()
+        .find(|episode| !episode.success)
+        .unwrap();
+    let demonstration = root.join("demonstration.json");
+    let coverage = root.join("coverage.json");
+    fs::write(
+        &demonstration,
+        serde_json::to_vec_pretty(&json!({
+            "schema": "dusklight-native-replay-source/v1",
+            "shard": fixture,
+            "episode_id": success.id,
+            "role": "demonstration"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(
+        &coverage,
+        serde_json::to_vec_pretty(&json!({
+            "schema": "dusklight-native-replay-source/v1",
+            "shard": fixture,
+            "episode_id": failure.id,
+            "role": "randomized_coverage"
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output_path = root.join("replay.json");
+    let content = root.join("content");
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "native-replay", "--source"])
+        .arg(&demonstration)
+        .args(["--source"])
+        .arg(&coverage)
+        .args(["--output"])
+        .arg(&output_path)
+        .args(["--artifact-store"])
+        .arg(&content)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["schema"], "dusklight-native-replay-corpus/v1");
+    assert_eq!(summary["report"]["entries"], 2);
+    assert_eq!(summary["report"]["successes"], 1);
+    assert_eq!(summary["report"]["failures"], 1);
+    assert_eq!(summary["content_blob"]["kind"], "native_replay_corpus");
+    let corpus: NativeReplayCorpus =
+        serde_json::from_slice(&fs::read(&output_path).unwrap()).unwrap();
+    corpus.validate().unwrap();
+    assert!(
+        corpus
+            .entries
+            .iter()
+            .all(|entry| entry.shard_sha256 == shard.content_sha256)
     );
     fs::remove_dir_all(root).unwrap();
 }
