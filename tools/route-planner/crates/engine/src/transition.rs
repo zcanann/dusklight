@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v17";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v18";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -37,6 +37,19 @@ pub enum StateOperation {
     WriteFields {
         component_id: String,
         fields: BTreeMap<String, StateValue>,
+    },
+    /// Replaces one live component's entire payload while retaining its
+    /// identity, binding, lifetime, serialization owner, and provenance.
+    ReplacePayload {
+        component_id: String,
+        payload: crate::state::ComponentPayload,
+    },
+    /// Invalidates every matching live payload and, when requested, matching
+    /// serialized-store payloads owned by the active runtime file. Physical
+    /// slot images and inactive runtime stores are never mutated.
+    InvalidatePayloads {
+        selector: ComponentSelector,
+        include_active_runtime_serialized_stores: bool,
     },
     CopyValue {
         source: ComponentFieldTarget,
@@ -178,6 +191,10 @@ pub enum StateOperation {
     SetExecutionContext {
         context: ExecutionContext,
     },
+    /// Completes the pending world load while the non-world process remains
+    /// active. This updates retained loaded-map state without authorizing
+    /// traversal.
+    CompletePendingWorldLoad,
     SetLocation {
         location: crate::state::SceneLocation,
     },
@@ -566,6 +583,14 @@ impl StateOperation {
                 }
                 Ok(())
             }
+            Self::ReplacePayload {
+                component_id,
+                payload,
+            } => {
+                validate_stable_id("operation.component_id", component_id)?;
+                payload.validate()
+            }
+            Self::InvalidatePayloads { selector, .. } => validate_component_selector(selector),
             Self::CopyValue { source, target } | Self::SetBitFromValue { source, target } => {
                 validate_field_target(source)?;
                 validate_field_target(target)?;
@@ -844,6 +869,7 @@ impl StateOperation {
                 Ok(())
             }
             Self::SetExecutionContext { context } => context.validate(),
+            Self::CompletePendingWorldLoad => Ok(()),
             Self::SetLocation { location } => location.validate(),
             Self::SetLocationFromFields {
                 component_id,

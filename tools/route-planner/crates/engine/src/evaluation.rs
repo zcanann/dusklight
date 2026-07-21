@@ -7,7 +7,8 @@ use crate::logic::{
 };
 use crate::state::{
     ActorLifecycle, ComponentKind, ComponentPayload, ExecutionContext, PlaneRelation, PlayerForm,
-    PlayerMount, SpatialConnectionStatus, SpatialVolumeShape, StateComponent, StateValue,
+    PlayerMount, RuntimeFileOrigin, SpatialConnectionStatus, SpatialVolumeShape, StateComponent,
+    StateValue,
 };
 use crate::transition::{
     CandidateTransition, FeasibilityObligation, GateRule, ObligationDetail, ReaderRule,
@@ -1140,6 +1141,19 @@ impl<'a> PredicateEvaluator<'a> {
                     .language
                     .clone(),
             )),
+            ValueReference::ActiveRuntimeFileOrigin => {
+                match &self.snapshot.environment.active_runtime_file.origin {
+                    RuntimeFileOrigin::TitleFile0 => Some(StateValue::Text("title_file_0".into())),
+                    RuntimeFileOrigin::LoadedSlot { .. } => {
+                        Some(StateValue::Text("loaded_slot".into()))
+                    }
+                    RuntimeFileOrigin::NewFile => Some(StateValue::Text("new_file".into())),
+                    RuntimeFileOrigin::Other { id } => {
+                        Some(StateValue::Text(format!("other:{id}")))
+                    }
+                    RuntimeFileOrigin::Unknown => None,
+                }
+            }
             ValueReference::ExecutionProcess => {
                 match &self.snapshot.environment.execution_context {
                     crate::state::ExecutionContext::Process { process_name, .. } => {
@@ -1157,6 +1171,22 @@ impl<'a> PredicateEvaluator<'a> {
                     }
                     crate::state::ExecutionContext::Unknown => None,
                 }
+            }
+            ValueReference::PendingWorldLoadStage => {
+                pending_world_load(&self.snapshot.environment.execution_context)
+                    .map(|location| StateValue::Text(location.stage.clone()))
+            }
+            ValueReference::PendingWorldLoadRoom => {
+                pending_world_load(&self.snapshot.environment.execution_context)
+                    .map(|location| StateValue::Signed(location.room.into()))
+            }
+            ValueReference::PendingWorldLoadLayer => {
+                pending_world_load(&self.snapshot.environment.execution_context)
+                    .map(|location| StateValue::Signed(location.layer.into()))
+            }
+            ValueReference::PendingWorldLoadSpawn => {
+                pending_world_load(&self.snapshot.environment.execution_context)
+                    .map(|location| StateValue::Signed(location.spawn.into()))
             }
             ValueReference::RuntimeSetting { key } => self
                 .snapshot
@@ -1233,6 +1263,17 @@ fn structured_field(component: &StateComponent, field: &str) -> Option<StateValu
         return None;
     };
     fields.get(field).cloned()
+}
+
+fn pending_world_load(context: &ExecutionContext) -> Option<&crate::state::SceneLocation> {
+    let ExecutionContext::Process {
+        pending_world_load: Some(location),
+        ..
+    } = context
+    else {
+        return None;
+    };
+    Some(location)
 }
 
 fn raw_bits(

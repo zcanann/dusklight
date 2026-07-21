@@ -326,9 +326,13 @@ impl RelevanceBuilder {
                 byte_width: u32::from(*byte_width),
             },
             ValueReference::RuntimeLanguage => StateDependency::RuntimeLanguage,
-            ValueReference::ExecutionProcess | ValueReference::WorldExecutionActive => {
-                StateDependency::ExecutionContext
-            }
+            ValueReference::ActiveRuntimeFileOrigin => StateDependency::RuntimeFileContext,
+            ValueReference::ExecutionProcess
+            | ValueReference::WorldExecutionActive
+            | ValueReference::PendingWorldLoadStage
+            | ValueReference::PendingWorldLoadRoom
+            | ValueReference::PendingWorldLoadLayer
+            | ValueReference::PendingWorldLoadSpawn => StateDependency::ExecutionContext,
             ValueReference::RuntimeSetting { key } => {
                 StateDependency::RuntimeSetting { key: key.clone() }
             }
@@ -666,6 +670,9 @@ impl RelevanceBuilder {
             StateOperation::LoadRuntimeFromSlot { .. } => {
                 self.dependencies.insert(StateDependency::AnyState);
             }
+            StateOperation::CompletePendingWorldLoad => {
+                self.dependencies.insert(StateDependency::ExecutionContext);
+            }
             StateOperation::SetLocationFromFields {
                 component_id,
                 stage_field,
@@ -685,6 +692,8 @@ impl RelevanceBuilder {
             }
             StateOperation::Write { .. }
             | StateOperation::WriteFields { .. }
+            | StateOperation::ReplacePayload { .. }
+            | StateOperation::InvalidatePayloads { .. }
             | StateOperation::WriteRaw { .. }
             | StateOperation::WriteBoundRaw { .. }
             | StateOperation::InvalidateRaw { .. }
@@ -761,6 +770,20 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
                 field: field.clone(),
             })
             .collect(),
+        StateOperation::ReplacePayload { component_id, .. } => {
+            vec![StateDependency::Component {
+                component_id: component_id.clone(),
+            }]
+        }
+        StateOperation::InvalidatePayloads { selector, .. } => {
+            if let crate::state::ComponentSelector::Id { component_id } = selector {
+                vec![StateDependency::Component {
+                    component_id: component_id.clone(),
+                }]
+            } else {
+                vec![StateDependency::AnyState]
+            }
+        }
         StateOperation::WriteRaw {
             component_id,
             byte_offset,
@@ -891,6 +914,13 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         | StateOperation::SetActiveRuntimeFile { .. }
         | StateOperation::Project { .. } => vec![StateDependency::AnyState],
         StateOperation::SetExecutionContext { .. } => vec![StateDependency::ExecutionContext],
+        StateOperation::CompletePendingWorldLoad => vec![
+            StateDependency::ExecutionContext,
+            StateDependency::LocationStage,
+            StateDependency::LocationRoom,
+            StateDependency::LocationLayer,
+            StateDependency::LocationSpawn,
+        ],
         StateOperation::ScheduleCleanup { .. }
         | StateOperation::CancelCleanup { .. }
         | StateOperation::Interrupt { .. } => Vec::new(),

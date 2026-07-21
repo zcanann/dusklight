@@ -21,7 +21,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v10";
-pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v9";
+pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v10";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -145,6 +145,7 @@ pub enum FactDeltaCause {
     ComponentPayloadChanged { component_ids: Vec<String> },
     DependencyChanged { fact_ids: Vec<String> },
     RuntimeContextChanged,
+    RuntimeFileContextChanged,
     ExecutionContextChanged,
     GateStateChanged,
     Unclassified,
@@ -282,6 +283,8 @@ pub fn inspect_state_diff(
         != after.snapshot.environment.runtime_configuration;
     let execution_context_changed = before.snapshot.environment.execution_context
         != after.snapshot.environment.execution_context;
+    let runtime_file_context_changed = before.snapshot.environment.active_runtime_file
+        != after.snapshot.environment.active_runtime_file;
     let gates_changed = before.gate_states != after.gate_states;
     let execution_history_common_prefix_len = before
         .execution_history
@@ -346,6 +349,11 @@ pub fn inspect_state_diff(
                     && derived.is_some_and(|fact| references_execution_context(&fact.rule))
                 {
                     causes.push(FactDeltaCause::ExecutionContextChanged);
+                }
+                if runtime_file_context_changed
+                    && derived.is_some_and(|fact| references_runtime_file_context(&fact.rule))
+                {
+                    causes.push(FactDeltaCause::RuntimeFileContextChanged);
                 }
                 causes
             }
@@ -590,6 +598,10 @@ fn references_execution_context(expression: &PredicateExpression) -> bool {
             value,
             ValueReference::ExecutionProcess
                 | ValueReference::WorldExecutionActive
+                | ValueReference::PendingWorldLoadStage
+                | ValueReference::PendingWorldLoadRoom
+                | ValueReference::PendingWorldLoadLayer
+                | ValueReference::PendingWorldLoadSpawn
                 | ValueReference::LocationStage
                 | ValueReference::LocationRoom
                 | ValueReference::LocationLayer
@@ -602,6 +614,12 @@ fn references_execution_context(expression: &PredicateExpression) -> bool {
                 | ValueReference::PlayerRotationZ
                 | ValueReference::PlayerAction
         )
+    })
+}
+
+fn references_runtime_file_context(expression: &PredicateExpression) -> bool {
+    predicate_references_value(expression, |value| {
+        matches!(value, ValueReference::ActiveRuntimeFileOrigin)
     })
 }
 

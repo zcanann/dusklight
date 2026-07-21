@@ -553,6 +553,12 @@ impl StateComponent {
     }
 }
 
+impl ComponentPayload {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        validate_payload(self)
+    }
+}
+
 impl ExecutionEnvironment {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != EXECUTION_ENVIRONMENT_SCHEMA {

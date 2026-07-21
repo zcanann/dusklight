@@ -589,7 +589,7 @@ The current code shows:
   audited production profiles, actor entry contracts, and further handler
   audits remain open. See
   `docs/route-planner/message-flow-programs.md`.
-- Planner service schema v22 provides a typed JSON-lines transport owned by the
+- Planner service schema v23 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -611,7 +611,7 @@ The current code shows:
   service protocol expose the same projection, so raw inventory/flag bytes,
   their semantic names, ordered mutations, last field writers, and gate history
   remain inspectable together.
-- State-inspection-diff schema v9 combines the raw/component boundary diff with
+- State-inspection-diff schema v10 combines the raw/component boundary diff with
   before/after friendly fact evaluations. It classifies binding-only changes,
   payload changes, direct derived-fact dependency changes, relevant gate reads,
   runtime-context changes, serialized owner-store changes, and sealed persistent-
@@ -1664,8 +1664,14 @@ evidenced overlays over the generated base rather than silent edits to it.
         `PROC_OPENING_SCENE` handoff, and its pending F_SP102 load. Execution
         state now distinguishes non-world processes from loaded maps, so a
         title/file-select process cannot make the retained last map traversable.
-        Opening initialization, no-file/file-select, void, and death suffixes
-        remain open. See `docs/route-planner/gz2e01-title-boundary-audit.md`.
+        The exact opening/file-0 initializer now requires an observed phase-4
+        scheduler state, completes the pending load without authorizing world
+        traversal, resets the canonical inventory/event/temporary/stage-memory/
+        return-place projections, and invalidates active-runtime stored stage
+        banks without touching inactive stores or physical images. Loaded/new-
+        runtime file-0 identity handoff, unprojected save members, no-file/file-
+        select, void, and death suffixes remain open. See
+        `docs/route-planner/gz2e01-title-boundary-audit.md`.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
       bits, normal/abnormal cleanup, and item/event handoffs.
@@ -1963,6 +1969,11 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Model the exact GZ2E01 reset-to-opening prefix as a guarded title-return
           transition with an explicit process context and pending world-load
           request; do not conflate that request with a completed map load.
+    - [x] Model the route-relevant exact title-origin-file-0 opening projection
+          as a second guarded transition. It requires an explicit phase-4
+          scheduler observation, replaces complete known component payloads,
+          and invalidates only active-runtime stored stage-bank projections;
+          inactive runtimes and physical images remain independent.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
@@ -2311,6 +2322,14 @@ Deliverable: route confidence is mechanically explainable.
 
 - [ ] Enter the slotless title-origin runtime file and import its exact initialized
       persistent-domain stores per build.
+  - [x] For GZ2E01, model the exact opening guard and audited initialized
+        projection: empty item slots, selected Hero's Clothes, Ordon Sword and
+        Hylian Shield, health, rupees, Epona-tamed bit, initial return place,
+        temporary event bytes, and current stage-memory fields. Equipment
+        selection does not fabricate first-item acquisition bits, while the
+        sword/shield setters' distinct collection masks are retained;
+        unprojected reset fields remain open rather than inheriting pre-title
+        values.
 - [x] Show physical slots 1–3 separately.
   - Populated slots seal distinct persistent-file images; slot 0 is rejected.
 - [ ] Model void/title-state handling and save projection to a chosen slot.

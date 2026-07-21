@@ -31,9 +31,11 @@ The planner CLI currently owns thirty-eight operations:
   ordinary dynamic savewarp reader as a standalone mechanics catalog. Actor
   execution remains a live-state dependency rather than an assumed success.
 - `compile-title-boundary-mechanics` emits the exact successful GZ2E01 reset
-  prefix: its reset/menu/fader guards, restart-room-parameter write, and the
-  opening process with its pending F_SP102 load. The pending request is not
-  exposed as an already loaded or traversable map.
+  prefix and route-relevant title-file-0 opening projection. Pending F_SP102
+  remains non-traversable and cannot reach phase 4 without an explicit process-
+  scheduler observation; the initializer replaces audited backing payloads,
+  invalidates active stored stage memory, and cannot mutate inactive stores or
+  physical-slot images.
 - `construct-message-flows` selects every message group for one exact
   content/runtime/language profile and emits canonical source programs without
   guessing unaudited backing stores.

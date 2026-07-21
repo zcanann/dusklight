@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v10";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v11";
 pub const PERSISTENT_FILE_IMAGE_SCHEMA: &str = "dusklight.route-planner.persistent-file-image/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -685,7 +685,20 @@ impl PlannerExecutionState {
                 | StateOperation::Adjust { target, .. }
                 | StateOperation::ClearField { target }
                 | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
-                StateOperation::WriteFields { component_id, .. } => vec![component_id.clone()],
+                StateOperation::WriteFields { component_id, .. }
+                | StateOperation::ReplacePayload { component_id, .. } => {
+                    vec![component_id.clone()]
+                }
+                StateOperation::InvalidatePayloads {
+                    selector,
+                    include_active_runtime_serialized_stores,
+                } => self
+                    .matching_ids_including_serialized(
+                        selector,
+                        *include_active_runtime_serialized_stores,
+                    )
+                    .into_iter()
+                    .collect(),
                 StateOperation::WriteRaw { component_id, .. }
                 | StateOperation::InvalidateRaw { component_id, .. }
                 | StateOperation::CommitLoadStageBank { component_id, .. }
@@ -829,6 +842,7 @@ impl PlannerExecutionState {
                 } => vec![flow_component_id.clone()],
                 StateOperation::SetActiveRuntimeFile { .. }
                 | StateOperation::SetExecutionContext { .. }
+                | StateOperation::CompletePendingWorldLoad
                 | StateOperation::SetLocation { .. }
                 | StateOperation::SetLocationFromFields { .. }
                 | StateOperation::SetPlayerForm { .. }
@@ -878,6 +892,49 @@ impl PlannerExecutionState {
                     fields.insert(field.clone(), value.clone());
                 }
                 mark_transition(component, application_id);
+            }
+            StateOperation::ReplacePayload {
+                component_id,
+                payload,
+            } => {
+                let component = self.component_mut(component_id)?;
+                component.payload = payload.clone();
+                mark_transition(component, application_id);
+            }
+            StateOperation::InvalidatePayloads {
+                selector,
+                include_active_runtime_serialized_stores,
+            } => {
+                let live_ids = self.matching_ids(selector);
+                let mut matched = !live_ids.is_empty();
+                for id in live_ids {
+                    let component = self.component_mut(&id)?;
+                    invalidate_payload(component);
+                    mark_transition(component, application_id);
+                }
+                if *include_active_runtime_serialized_stores {
+                    let active_runtime_file_id =
+                        self.snapshot.environment.active_runtime_file.id.clone();
+                    for (owner, components) in &mut self.serialized_components {
+                        if !owner_belongs_to_runtime(owner, &active_runtime_file_id) {
+                            continue;
+                        }
+                        for component in components
+                            .iter_mut()
+                            .filter(|component| selector_matches(selector, component))
+                        {
+                            matched = true;
+                            invalidate_payload(component);
+                            mark_transition(component, application_id);
+                        }
+                    }
+                }
+                if !matched {
+                    return Err(PlannerContractError::new(
+                        "operation.invalidate_payloads",
+                        "selector matches no live or selected serialized component",
+                    ));
+                }
             }
             StateOperation::CopyValue { source, target } => {
                 let value = self.structured_value(source, "operation.copy_value")?;
@@ -1354,6 +1411,23 @@ impl PlannerExecutionState {
             }
             StateOperation::SetExecutionContext { context } => {
                 self.snapshot.environment.execution_context = context.clone();
+            }
+            StateOperation::CompletePendingWorldLoad => {
+                let ExecutionContext::Process {
+                    process_name,
+                    pending_world_load: Some(location),
+                } = &self.snapshot.environment.execution_context
+                else {
+                    return Err(PlannerContractError::new(
+                        "operation.complete_pending_world_load",
+                        "requires a process context with one pending world load",
+                    ));
+                };
+                self.snapshot.environment.location = location.clone();
+                self.snapshot.environment.execution_context = ExecutionContext::Process {
+                    process_name: process_name.clone(),
+                    pending_world_load: None,
+                };
             }
             StateOperation::SetLocation { location } => {
                 self.snapshot.environment.execution_context = ExecutionContext::World;
@@ -2144,6 +2218,26 @@ impl PlannerExecutionState {
             .collect()
     }
 
+    fn matching_ids_including_serialized(
+        &self,
+        selector: &ComponentSelector,
+        include_active_runtime_serialized_stores: bool,
+    ) -> BTreeSet<String> {
+        let mut ids = self.matching_ids(selector);
+        if include_active_runtime_serialized_stores {
+            let active_runtime_file_id = &self.snapshot.environment.active_runtime_file.id;
+            ids.extend(
+                self.serialized_components
+                    .iter()
+                    .filter(|(owner, _)| owner_belongs_to_runtime(owner, active_runtime_file_id))
+                    .flat_map(|(_, components)| components)
+                    .filter(|component| selector_matches(selector, component))
+                    .map(|component| component.id.clone()),
+            );
+        }
+        ids
+    }
+
     fn matching_components(&self, selector: &ComponentSelector) -> Vec<&StateComponent> {
         self.snapshot
             .environment
@@ -2369,6 +2463,10 @@ fn history_event_writes_field(
                 component_id: changed,
                 fields,
             } => changed == component_id && fields.contains_key(field),
+            StateOperation::ReplacePayload {
+                component_id: changed,
+                ..
+            } => changed == component_id,
             StateOperation::AdvanceFlow {
                 flow_component_id, ..
             } => flow_component_id == component_id && field == "node_id",
@@ -2396,9 +2494,11 @@ fn history_event_writes_field(
                 destination_component_id,
                 ..
             } => destination_component_id == component_id,
-            StateOperation::ClearComponent { .. } => affected_component_ids
-                .binary_search_by(|id| id.as_str().cmp(component_id))
-                .is_ok(),
+            StateOperation::ClearComponent { .. } | StateOperation::InvalidatePayloads { .. } => {
+                affected_component_ids
+                    .binary_search_by(|id| id.as_str().cmp(component_id))
+                    .is_ok()
+            }
             StateOperation::LoadRuntimeFromSlot { .. } => affected_component_ids
                 .binary_search_by(|id| id.as_str().cmp(component_id))
                 .is_ok(),
@@ -2414,6 +2514,7 @@ fn history_event_writes_field(
             | StateOperation::Rebind { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
             | StateOperation::SetExecutionContext { .. }
+            | StateOperation::CompletePendingWorldLoad
             | StateOperation::SetLocation { .. }
             | StateOperation::SetLocationFromFields { .. }
             | StateOperation::SetPlayerForm { .. }
@@ -2459,6 +2560,15 @@ fn mark_transition(component: &mut StateComponent, application_id: &str) {
         source_sha256: None,
         transition_id: Some(application_id.into()),
     });
+}
+
+fn invalidate_payload(component: &mut StateComponent) {
+    let expected_bytes = match &component.payload {
+        ComponentPayload::Raw { bytes, .. } => Some(bytes.len() as u32),
+        ComponentPayload::Structured { .. } => None,
+        ComponentPayload::Unknown { expected_bytes } => *expected_bytes,
+    };
+    component.payload = ComponentPayload::Unknown { expected_bytes };
 }
 
 fn mark_save_restore(component: &mut StateComponent, application_id: &str) {
@@ -3497,6 +3607,198 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.field(), "operation.clear_component");
         assert_eq!(state, before);
+    }
+
+    #[test]
+    fn payload_replacement_retains_component_identity_and_is_a_whole_component_writer() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        let before = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "save.main")
+            .unwrap()
+            .clone();
+        let replacement = ComponentPayload::Structured {
+            fields: BTreeMap::from([
+                ("life".into(), StateValue::Unsigned(12)),
+                ("rupees".into(), StateValue::Unsigned(0)),
+            ]),
+        };
+
+        state
+            .apply_operations(
+                "initializer.opening-save",
+                "snapshot.opening-save-initialized",
+                &[StateOperation::ReplacePayload {
+                    component_id: "save.main".into(),
+                    payload: replacement.clone(),
+                }],
+            )
+            .unwrap();
+
+        let after = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "save.main")
+            .unwrap();
+        assert_eq!(after.payload, replacement);
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.component_kind, before.component_kind);
+        assert_eq!(after.binding, before.binding);
+        assert_eq!(after.lifetime, before.lifetime);
+        assert_eq!(after.serialization_owner, before.serialization_owner);
+        assert_eq!(
+            &after.provenance[..before.provenance.len()],
+            &before.provenance
+        );
+        assert_eq!(
+            state
+                .last_field_writer("save.main", "life")
+                .unwrap()
+                .application_id,
+            "initializer.opening-save"
+        );
+    }
+
+    #[test]
+    fn payload_invalidation_can_include_runtime_stores_but_never_physical_images() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state
+            .apply_operations(
+                "boundary.save-file-0",
+                "snapshot.file-0-saved",
+                &[StateOperation::SaveRuntimeToSlot {
+                    source_runtime_file_id: "file-0".into(),
+                    destination_slot: PhysicalSlotId(1),
+                    destination_persistent_file_id: "persistent-slot-1".into(),
+                    runtime_component_ids: vec!["raw.flags".into(), "save.main".into()],
+                    stage_bank_stages: Vec::new(),
+                }],
+            )
+            .unwrap();
+        let sealed_image = state.persistent_file_images["persistent-slot-1"].clone();
+        let sealed_digest = sealed_image.digest().unwrap();
+
+        let owner = SerializationOwner::StageBank {
+            runtime_file_id: "file-0".into(),
+            stage: "F_SP103".into(),
+        };
+        let mut stored = raw_component();
+        stored.binding = ComponentBinding::Stage {
+            stage: "F_SP103".into(),
+        };
+        stored.lifetime = SemanticLifetime::StageLoad;
+        stored.serialization_owner = owner.clone();
+        state
+            .serialized_components
+            .insert(owner.clone(), vec![stored]);
+        let inactive_owner = SerializationOwner::StageBank {
+            runtime_file_id: "inactive-file".into(),
+            stage: "F_SP103".into(),
+        };
+        let mut inactive_stored = raw_component();
+        inactive_stored.binding = ComponentBinding::Stage {
+            stage: "F_SP103".into(),
+        };
+        inactive_stored.lifetime = SemanticLifetime::StageLoad;
+        inactive_stored.serialization_owner = inactive_owner.clone();
+        let inactive_payload = inactive_stored.payload.clone();
+        state
+            .serialized_components
+            .insert(inactive_owner.clone(), vec![inactive_stored]);
+        state
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .push(RuntimeFile {
+                id: "inactive-file".into(),
+                origin: RuntimeFileOrigin::NewFile,
+                backing: BackingAttachment::MemoryOnly,
+                allowed_serialization_targets: Vec::new(),
+                lifecycle: RuntimeFileLifecycle::Suspended,
+            });
+        state.validate().unwrap();
+
+        state
+            .apply_operations(
+                "initializer.invalidate-runtime-payloads",
+                "snapshot.runtime-payloads-invalidated",
+                &[StateOperation::InvalidatePayloads {
+                    selector: id_selector("raw.flags"),
+                    include_active_runtime_serialized_stores: true,
+                }],
+            )
+            .unwrap();
+
+        let live = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "raw.flags")
+            .unwrap();
+        assert_eq!(
+            live.payload,
+            ComponentPayload::Unknown {
+                expected_bytes: Some(1)
+            }
+        );
+        assert_eq!(
+            state.serialized_components[&owner][0].payload,
+            ComponentPayload::Unknown {
+                expected_bytes: Some(1)
+            }
+        );
+        assert_eq!(
+            state.serialized_components[&inactive_owner][0].payload,
+            inactive_payload
+        );
+        assert_eq!(
+            state.persistent_file_images["persistent-slot-1"],
+            sealed_image
+        );
+        assert_eq!(
+            state.persistent_file_images["persistent-slot-1"]
+                .digest()
+                .unwrap(),
+            sealed_digest
+        );
+        assert!(matches!(
+            state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == "save.main")
+                .unwrap()
+                .payload,
+            ComponentPayload::Structured { .. }
+        ));
+        assert_eq!(
+            state
+                .last_field_writer("raw.flags", "any-field")
+                .unwrap()
+                .application_id,
+            "initializer.invalidate-runtime-payloads"
+        );
+
+        let before_failure = state.clone();
+        let error = state
+            .apply_operations(
+                "initializer.missing-payload",
+                "snapshot.not-produced",
+                &[StateOperation::InvalidatePayloads {
+                    selector: id_selector("missing.component"),
+                    include_active_runtime_serialized_stores: true,
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(error.field(), "operation.invalidate_payloads");
+        assert_eq!(state, before_failure);
     }
 
     #[test]

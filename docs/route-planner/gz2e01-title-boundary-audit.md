@@ -1,12 +1,13 @@
 # GZ2E01 title/reset boundary audit
 
-This audit covers the successful reset-to-opening prefix for the exact
-GameCube USA revision-0 executable (`GZ2E01`). It does not yet claim complete
-title, file-select, void, or death behavior.
+This audit covers the successful reset-to-opening prefix and the confirmed
+opening-phase file-0 initializer for the exact GameCube USA revision-0
+executable (`GZ2E01`). It does not yet claim complete title, file-select, void,
+or death behavior.
 
 ## Exact executable evidence
 
-Two functions were retained with the planner-owned
+The following functions were retained with the planner-owned
 `binary-function-evidence/v1` extractor from the registered GZ2E01 `main.dol`
 and symbol table:
 
@@ -14,6 +15,14 @@ and symbol table:
 | --- | ---: | ---: | --- | --- |
 | `dComIfG_changeOpeningScene__FP11scene_classs` | `0x8002cc54` | `0xf0` | `0b5c465a32ffb343d9863e04970f5c2621a5bb0b854efc974708fb0229828a41` | `658f63b09b0f43dcb5b2662dbbf140de889fe19374dac8ccee32d9545ac2d781` |
 | `dComIfG_resetToOpening__FP11scene_class` | `0x8002cd44` | `0x74` | `3cc637771d531950401a332a83b90296df2b5aa9bec6cc292ad5546fec23df30` | `bde63a102b6502e418e5a8c53cff364f66f6510420a7316a492664ab7530e28d` |
+| `phase_4__FP9dScnPly_c` | `0x8025a654` | `0x3a0` | `5e116171d689fcf368218490f24009dd176205648fd30b697bdab3a7efb179aa` | `caf6f662835287e2c74e341b2771e142c8b0a1dd6da7745775a01f1a36cb62cc` |
+| `init__10dSv_info_cFv` | `0x80034fcc` | `0x50` | `5c80b3dba87ae8f968b5e4620f0872d4355358debc63d5556adba4b8d3d4338d` | `433224e88c9c58df6d5abd49863e2a871a965f2806288e1d19fd36f1e267d93b` |
+| `init__10dSv_save_cFv` | `0x8003501c` | `0x8c` | `e405d830e4f445c950fb158ddf8f6107430524a2708d82bd1b31c7e13e804d48` | `a9953253f543fbdc9d0998e6f369fb2f0bac45b411c44baee5ff9fd34fccda9b` |
+| `init__12dSv_player_cFv` | `0x800346a4` | `0xac` | `668f452c16c5ed413535588b00c5a497b236a29f7e52f55c521b58e179968766` | `0bc0b6246b3a6cad9a8a0409ef59358fa544632ac5884b27008a3e5dd4db185b` |
+| `setInitEventBit__Fv` | `0x80035c88` | `0x4` | `f332ea5b5437103cbb6f1508679da89eec9288ad775c96c439a17fccabe3de8e` | `c40daaee608a8afd5c471d54a1a87efe7eb42695036729215a3fa413d256892f` |
+| `init__25dSv_player_return_place_cFv` | `0x80032cc8` | `0x54` | `252007ca2690e54e6a13019527739c4e55dff0f1ac1e7ec6ff8b1d425ed6ab87` | `0eeb93826008824d6810499ce61ec1c8e8065c7a06c8a9576022b76532f75917` |
+| `dComIfGs_setSelectEquipSword__FUc` | `0x8002eec0` | `0xd4` | `b0cdfc30b3f91a906cf4c8066f8eb5ec7055df50de7ade590c5c721ea0732761` | `1d014bd60aa88951beb555a13853be0068f91790989639909bcff8a088decd9e` |
+| `dComIfGs_setSelectEquipShield__FUc` | `0x8002ef94` | `0xac` | `beeb64d1fa6897f83de2674e9053189416486ca4066c39d1efb4e647bf7c7e14` | `7a7920012416bdf116d20be436514da59bf00da2e6cbab28dcc0842e33078a23` |
 
 The semantic audit uses these source-family snapshots:
 
@@ -24,6 +33,7 @@ The semantic audit uses these source-family snapshots:
 | `src/d/actor/d_a_title.cpp` | `39378bcbc78e5ffae3287f127cc48cd2c22e18723cf31cfeb5bd84a2becdc4cb` |
 | `src/d/d_s_name.cpp` | `f095894aabc198c068ee0ac9872f6c277c0e035b36c4d29d1f896e7c2eb0fe4b` |
 | `src/d/d_save.cpp` | `7e6f09aa36af30932e8ce64423284f885ed0b4e632b22f18d6f0a6b4d104b453` |
+| `src/d/d_meter2_info.cpp` | `73b58242c7f742f4ac46ddda5f5c8b39d24e73beebffaaa5aa2d8d011a641b6e` |
 
 The source snapshots explain the retained machine code but are not treated as
 additional exact retail identities.
@@ -88,29 +98,84 @@ It is restricted to the registered GZ2E01/English exact context. Its reset
 guards are ordinary component-field predicates over `reset-control`; missing
 observations make activation unknown.
 
-## Audited suffix, not yet executable
+## Confirmed opening/file-0 initialization
+
+The catalog also contains a second transition for opening phase 4. It requires
+all of the following independently observable state:
+
+- process `PROC_OPENING_SCENE`;
+- a title-origin file-0 runtime;
+- pending stage `F_SP102`, room `0`, layer `10`, spawn `100`; and
+- planner process-scheduler component `opening-process-control` at `phase_4`.
+
+The explicit scheduler guard matters: merely requesting F_SP102 does not prove
+that opening phases 0–3 and their resource work have reached phase 4. The
+transition applies the projected `dComIfGs_init()` effects and later phase-4
+writes, then completes the pending load without changing execution to `world`.
+It publishes these exact final values in the canonical snapshot components:
+
+- max life `15`, life `12`, and rupees `0`;
+- all 24 inventory slots and all selected/mixed item slots empty (`0xff`);
+- Hero's Clothes (`0x2f`), Ordon Sword (`0x28`), and Hylian Shield (`0x2c`)
+  selected;
+- bomb and bottle counts zero, bomb capacities `30`, `15`, and `10`, and all
+  projected first-item acquisition bytes zero;
+- the Ordon Sword collection bit (`collect_item_bits[1] & 0x01`) and Hylian
+  Shield collection bit (`collect_item_bits[2] & 0x04`) set by their equipment
+  setters;
+- event bit `0x0601` (Epona tamed) set; and
+- player return place `F_SP108`, room `1`, player status/start point `0`.
+
+The equipment setters receive `offItemBit = false`; they do not grant
+first-item/acquisition bits, but the sword and shield setters independently
+write their collection masks. The exact GZ2E01 `setInitEventBit`
+body is an immediate return, so the persistent event payload is 256 zero bytes
+before phase 4 changes only byte `6` with mask `1`.
+
+`dSv_info_c::init()` resets savedata, live stage memory, dungeon memory, zones,
+and temporary event state. The current native projection can replace the full
+known payloads for persistent event registers, five projected light-drop bytes,
+temporary event registers, live `dSv_memBit_c`, inventory/resources, and return
+place. The two unwritten tail-padding bytes of the 0x20 stage-memory payload
+remain unknown. Friendly label-only event/temporary/dungeon/room-switch views are
+invalidated rather than made inconsistent with their backing bytes. Existing
+serialized `DungeonMemory` stores owned by the active runtime are also
+invalidated because their representation may not expose the same raw layout.
+Inactive runtime stores and sealed physical-slot images are not touched.
+
+The initializer preserves `mRestart`, `mTurnRestart`, `mDataNum`, `mNewFile`,
+`mNoFile`, and time controls because `dSv_info_c::init()` does not write them.
+The canonical `restart` and `runtime-file.header` components are therefore
+unchanged. Option-pointer, transform-status, names/configuration, minigame,
+all 32 saved stage banks, the secondary visited-room banks, dungeon working
+memory, and zone-array fields are not all projected by current native snapshots;
+this milestone does not claim those absent fields as modeled defaults.
+
+This transition is intentionally restricted to an already identified
+title-origin file 0. Converting a loaded/new runtime into file 0 on title return
+still needs an evidenced runtime-lifetime operation; the planner does not infer
+that identity change from the reset request.
+
+## Remaining audited suffix, not yet executable
 
 The later source chain is important but intentionally not folded into this
 prefix:
 
-- opening-scene phase 4 creates `PROC_TITLE`, calls `dComIfGs_init()`, and then
-  writes several title baseline values;
+- opening-scene phase 4 also creates the title actor/process; its actor creation
+  success and later input state are not yet executable;
 - the title actor requests `PROC_NAME_SCENE` after title input;
 - GCN name-scene creation sets `mNoFile` to `0`;
 - file-select paths load a selected card image or construct new-file/no-card
   state, and successful saving updates `mDataNum` and `mNoFile`.
 
-`dSv_info_c::init()` initializes `mSavedata`, live stage memory, dungeon
-memory, zones, and temporary event state. Its body does not initialize
-`mRestart`, `mTurnRestart`, `mDataNum`, `mNewFile`, `mNoFile`, or the time
-fields. That member-level distinction is central to file-0 and Back in Time
-reasoning, but the complete opening phase also performs other writes. A later
-boundary program must therefore model the ordered writers and preserved
-members rather than approximating the whole title transition as “clear all.”
+That member-level distinction is central to file-0 and Back in Time reasoning.
+Future projection coverage must continue adding ordered writers and explicitly
+preserved members rather than approximating the title transition as “clear
+all.”
 
 Still open:
 
-- compile the opening-phase initializer with exact per-component effects;
+- model the loaded/new-runtime-to-file-0 lifetime handoff;
 - model title input and name/file-select processes;
 - model no-card, new-file, selected-slot, and successful-save branches;
 - audit void and death restart selection, including their special-stage and
