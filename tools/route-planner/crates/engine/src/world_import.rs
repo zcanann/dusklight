@@ -19,11 +19,8 @@ use crate::transition::{
     MechanicsCatalog, ObligationDetail, ObligationKind, StateOperation, TransitionKind,
     UnknownRequirement,
 };
+use crate::world_data::{PlacementKind, PlacementRecord, SourceKind, WorldContext, WorldInventory};
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
-use dusklight_world::world_context::WorldContext;
-use dusklight_world::world_inventory::{
-    PlacementKind, PlacementRecord, SourceKind, WorldInventory,
-};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -481,13 +478,13 @@ fn import_static_object(
         &[stage.as_bytes(), placement.stable_id.as_bytes()],
     );
     let binding = match placement.scope {
-        dusklight_world::world_inventory::SourceScope {
+        crate::world_data::SourceScope {
             kind: SourceKind::Stage,
             ..
         } => ComponentBinding::Stage {
             stage: stage.into(),
         },
-        dusklight_world::world_inventory::SourceScope {
+        crate::world_data::SourceScope {
             kind: SourceKind::Room,
             room: Some(room),
         } => ComponentBinding::Room {
@@ -723,14 +720,11 @@ mod tests {
         CONTENT_IDENTITY_SCHEMA, ContentFingerprint, GamePlatform, GameRegion,
         RUNTIME_CONFIGURATION_SCHEMA,
     };
-    use dusklight_world::world_context::WorldContext;
-    use dusklight_world::world_geometry::{
-        CollisionCode, KclAuthoredPrism, KclInventoryPrism, KclReconstruction, KclSourceIndices,
-        Vec3,
-    };
-    use dusklight_world::world_inventory::{
-        CollisionInventoryRecord, CollisionLoadTrigger, PlacementKind, PlacementRecord, SourceKind,
-        SourceScope, StageExitRecord, WORLD_INVENTORY_SCHEMA, WorldInventory, WorldSource,
+    use crate::world_data::{
+        CollisionCode, CollisionInventoryRecord, CollisionLoadTrigger, KclAuthoredPrism,
+        KclInventoryPrism, KclReconstruction, KclSourceIndices, PlacementKind, PlacementRecord,
+        SourceKind, SourceScope, StageExitRecord, Vec3, WORLD_INVENTORY_SCHEMA, WorldContext,
+        WorldInventory, WorldSource,
     };
 
     fn content() -> ContentIdentity {

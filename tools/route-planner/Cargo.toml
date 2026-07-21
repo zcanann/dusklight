@@ -7,7 +7,6 @@ description = "Independent runtime boundary for the Twilight Princess causal rou
 
 [dependencies]
 dusklight-route-planner = { path = "crates/engine" }
-dusklight-world = { path = "../huntctl/crates/world" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

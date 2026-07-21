@@ -248,7 +248,7 @@ mod tests {
 
     fn extractor() -> ExtractorIdentity {
         ExtractorIdentity {
-            name: "huntctl-route-facts".into(),
+            name: "route-planner-facts".into(),
             version: "0.1.0".into(),
             executable_sha256: Digest([4; 32]),
             schema_sha256: Digest([5; 32]),

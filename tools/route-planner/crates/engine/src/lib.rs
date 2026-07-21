@@ -5,14 +5,14 @@
 //! It may consume portable automation identities and read-only world facts. It
 //! does not depend on TAS timelines, playback, native execution, or browser code.
 
-pub use dusklight_automation_contracts::artifact;
-
+pub mod artifact;
 pub mod evaluation;
 pub mod execution;
 pub mod fact_pack;
 pub mod graph;
 pub mod identity;
 pub mod logic;
+pub mod native_observation;
 pub mod native_snapshot;
 pub mod refinement;
 pub mod route_book;
@@ -20,6 +20,7 @@ pub mod snapshot;
 pub mod solver;
 pub mod state;
 pub mod transition;
+pub mod world_data;
 pub mod world_import;
 
 use std::error::Error;

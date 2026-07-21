@@ -11,6 +11,7 @@ use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::transition::MechanicsCatalog;
+use dusklight_route_planner::world_data::{WorldContext, WorldInventory};
 use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
 use dusklight_route_planner_runtime::inspection::inspect_state;
 use dusklight_route_planner_runtime::service::{
@@ -20,8 +21,6 @@ use dusklight_route_planner_runtime::{
     RuntimeEvidenceMode, RuntimeFeasibilityMode, RuntimeSolveOptions, solve_catalog_goal,
     solve_composed_catalog_goal,
 };
-use dusklight_world::world_context::WorldContext;
-use dusklight_world::world_inventory::WorldInventory;
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use std::env;

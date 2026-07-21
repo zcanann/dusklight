@@ -2,6 +2,10 @@
 
 use crate::artifact::Digest;
 use crate::identity::RuntimeConfiguration;
+use crate::native_observation::{
+    NativeChannelStatus, NativeEventHandoffObservation, NativeLearningObservation,
+    NativePlayerResourcesObservation,
+};
 use crate::snapshot::{
     SNAPSHOT_CHAIN_SCHEMA, STATE_SNAPSHOT_SCHEMA, SnapshotChain, SnapshotChainEntry, StateDiff,
     StateSnapshot,
@@ -15,10 +19,6 @@ use crate::state::{
     StateValue,
 };
 use crate::{PlannerContractError, validate_stable_id};
-use dusklight_evidence::native_episode_shard::{
-    NativeChannelStatus, NativeEventHandoffObservation, NativeLearningObservation,
-    NativePlayerResourcesObservation,
-};
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
@@ -747,8 +747,11 @@ fn f32_bytes(values: &[f32]) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::identity::RUNTIME_CONFIGURATION_SCHEMA;
-    use dusklight_evidence::native_episode_shard::{
-        LEARNING_OBSERVATION_SCHEMA_V14, NativeEpisodeShard,
+    use crate::native_observation::{
+        NativeActorIdentity, NativeActorObservation, NativeMessageFlowObservation,
+        NativePhysicalSlotObservation, NativePlayerActionObservation,
+        NativePlayerRelationshipsObservation, NativeReturnPlaceWriterObservation,
+        NativeRuntimeFileObservation,
     };
 
     fn context(sequence: u64) -> NativeSnapshotContext {
@@ -768,18 +771,78 @@ mod tests {
         }
     }
 
+    fn observation() -> NativeLearningObservation {
+        NativeLearningObservation {
+            stage: "F_SP103".into(),
+            room: 0,
+            layer: 0,
+            point: 1,
+            player_present: true,
+            player_is_link: true,
+            player_position: [1.0, 2.0, 3.0],
+            player_current_angle: [0, 0x1000, 0],
+            player_form_present: true,
+            player_action: Some(NativePlayerActionObservation {
+                procedure_id: 0x1234,
+            }),
+            runtime_file_status: NativeChannelStatus::Present,
+            runtime_file: Some(NativeRuntimeFileObservation {
+                no_file_raw: 1,
+                data_num_raw: 2,
+                backing_attachment_status: NativeChannelStatus::Present,
+                attached_physical_slot: Some(2),
+                physical_slots: [
+                    NativePhysicalSlotObservation {
+                        number: 1,
+                        ..Default::default()
+                    },
+                    NativePhysicalSlotObservation {
+                        number: 2,
+                        attached_to_runtime: true,
+                        ..Default::default()
+                    },
+                    NativePhysicalSlotObservation {
+                        number: 3,
+                        ..Default::default()
+                    },
+                ],
+            }),
+            temporary_event_bytes: Some(vec![0; 256]),
+            event_handoff_status: NativeChannelStatus::Present,
+            event_handoff: Some(NativeEventHandoffObservation {
+                get_item_no: 0x43,
+                message_flow_status: NativeChannelStatus::Present,
+                message_flow: Some(NativeMessageFlowObservation {
+                    flow_id: 7,
+                    node_index: 2,
+                    cut_name_hash: 0,
+                }),
+                message_cut_status: NativeChannelStatus::Unavailable,
+                ..Default::default()
+            }),
+            actors: vec![NativeActorObservation {
+                runtime_generation: 42,
+                return_place_writer: Some(NativeReturnPlaceWriterObservation {
+                    save_room: 3,
+                    required_switch_set: 8,
+                    ..Default::default()
+                }),
+            }],
+            player_relationships_status: NativeChannelStatus::Present,
+            player_relationships: Some(NativePlayerRelationshipsObservation {
+                ride_actor: Some(NativeActorIdentity {
+                    present: true,
+                    runtime_generation: 5,
+                    actor_name: 0x123,
+                }),
+            }),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn projects_v14_backing_components_writers_and_explicit_unknowns() {
-        let shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
-        ))
-        .unwrap();
-        assert_eq!(
-            shard.metadata.observation_schema,
-            LEARNING_OBSERVATION_SCHEMA_V14
-        );
-        let observation = &shard.episodes[0].steps[0].pre_input;
-        let snapshot = snapshot_native_observation(observation, context(1)).unwrap();
+    fn projects_native_backing_components_writers_and_explicit_unknowns() {
+        let snapshot = snapshot_native_observation(&observation(), context(1)).unwrap();
         snapshot.validate().unwrap();
         assert_eq!(
             snapshot.environment.active_runtime_file.backing,
@@ -836,23 +899,17 @@ mod tests {
     }
 
     #[test]
-    fn refuses_to_invent_a_runtime_or_player_for_legacy_missing_channels() {
-        let shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v9.dseps"
-        ))
-        .unwrap();
-        let error = snapshot_native_observation(&shard.episodes[0].steps[0].pre_input, context(1))
-            .unwrap_err();
+    fn refuses_to_invent_a_runtime_or_player_for_missing_channels() {
+        let mut observation = observation();
+        observation.runtime_file_status = NativeChannelStatus::NotSampled;
+        observation.runtime_file = None;
+        let error = snapshot_native_observation(&observation, context(1)).unwrap_err();
         assert_eq!(error.field(), "native_observation.runtime_file");
     }
 
     #[test]
     fn chains_label_boundaries_and_retain_exact_raw_byte_diffs() {
-        let shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
-        ))
-        .unwrap();
-        let first = &shard.episodes[0].steps[0].pre_input;
+        let first = observation();
         let mut second = first.clone();
         second.temporary_event_bytes.as_mut().unwrap()[19] ^= 0x04;
         second
@@ -864,7 +921,7 @@ mod tests {
             .unwrap()
             .node_index += 1;
 
-        let mut evidence = NativeStateEvidence::begin(first, context(1)).unwrap();
+        let mut evidence = NativeStateEvidence::begin(&first, context(1)).unwrap();
         evidence
             .append(&second, context(2), BoundaryKind::DialogueInterruption)
             .unwrap();

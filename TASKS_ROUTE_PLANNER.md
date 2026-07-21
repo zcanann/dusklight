@@ -476,9 +476,9 @@ The current code shows:
   runtime configuration, authenticated `WorldContext`, and its complete set of
   canonical world inventories into a content-addressed planner payload. The
   planner-owned `route-planner extract-world` command emits both that payload
-  and a sealed fact-pack manifest. Huntctl does not register or expose planner
-  commands; the planner consumes its generic canonical world artifacts as
-  read-only inputs.
+  and a sealed fact-pack manifest. The planner owns the compatible input
+  contracts, their validation, and the import implementation; it does not link
+  Huntctl crates or register planner behavior there.
 - The compiler imports recognized static placements and player spawns with raw
   records and source bindings. Every SCLS destination remains an encoded-exit
   fact. An SCLS record with no collision activation join does not become a
@@ -561,8 +561,8 @@ Primary source anchors:
   compile-time build catalogue and current runtime disc detection.
 - `tools/route-planner/src/main.rs`: planner-owned world-fact extraction and
   manifest construction.
-- `tools/huntctl/src/cli/world.rs`: generic content-addressed world-context
-  construction consumed as an input, with no planner dependency.
+- `tools/route-planner/crates/engine/src/world_data.rs`: planner-owned,
+  wire-compatible world-context and world-inventory input contracts.
 - `src/d/d_file_sel_info.cpp`: an example of PAL behavior depending on selected
   language in addition to region.
 
@@ -1308,6 +1308,13 @@ cyclic AND/OR causal graph with alternative producers, requirements,
 obstructions, hypothetical edges, and multiple continuation-distinct states.
 Forcing either domain into the other's schema would erase important semantics.
 
+Ownership and dependency direction are non-negotiable: the planner is its own
+tool and has no build-time or runtime dependency on Huntctl/TAS crates. It owns
+its engine, schemas, CLI/service, graph projection, and eventual editor. If the
+TAS tooling later chooses to consume a stable planner interface, that is a
+separate downstream integration decision by its maintainers; this plan neither
+implements nor presumes it.
+
 Give the planner its own versioned schemas and Rust domain crate/server surface.
 Rust owns fact-pack resolution, validation, semantic state transitions, solving,
 proof construction, graph projection, and authoritative edits. The browser layer
@@ -1511,6 +1518,8 @@ Deliverable: replayable state evidence that can validate transition rules.
       and represent unknown inputs as unsupported rather than guessing.
 - [x] Import world-context stages, room/layer bindings, player spawns, static
       placements, raw SCLS records, and collision/SCLS activation joins.
+  - [x] Own the compatible world/native observation input contracts inside the
+        planner and remove all planner-to-Huntctl crate dependencies.
 - [ ] Import actor-driven transitions and any remaining map/room metadata not
       represented by the current world inventories.
 - [ ] Model ordinary item/NPC/event producers.

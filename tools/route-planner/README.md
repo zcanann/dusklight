@@ -5,9 +5,10 @@ does not register commands with Huntctl and does not use the TAS timeline
 workbench's graph or playback schemas.
 
 The Rust planner engine lives in `crates/engine`. This tool owns its schemas,
-CLI, reports, and future server/editor protocol. Low-level read-only world and
-evidence contracts are consumed as inputs; Huntctl does not depend on or expose
-planner behavior.
+CLI, reports, input contracts, and future server/editor protocol. It has no Rust
+dependency on Huntctl/TAS crates. Existing producers can exchange compatible,
+content-addressed data at the wire boundary; any future TAS consumption of the
+planner must be initiated downstream by that project.
 
 ```text
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
