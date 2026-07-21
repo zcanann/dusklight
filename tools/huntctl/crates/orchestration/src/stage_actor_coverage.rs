@@ -1022,6 +1022,7 @@ mod tests {
             StageSurveyPolicy {
                 probe_ticks: 30,
                 probe: StageSurveyProbeKind::Neutral,
+                native_stage_readiness_ticks: 30 * 60,
                 host_timeout_millis: 1_000,
                 maximum_attempts_per_case: 1,
                 fidelity_profile: STAGE_SURVEY_FIDELITY.into(),

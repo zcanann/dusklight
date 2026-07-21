@@ -160,8 +160,11 @@ Dusklight maps the descriptor onto its existing `--stage`/`--load-save`
 startup path, holds the
 declared controller ports neutral while loading, and starts tape frame zero only
 after the stage, room, point, layer, and player readiness check succeeds. The
-readiness wait is bounded to 60 seconds of logical startup ticks and reports
-both the requested and observed fixture on failure. The decoder remains
+readiness wait is bounded to 60 seconds of logical startup ticks by default and reports
+both the requested and observed fixture on failure. Automated catalog surveys bind a
+shorter explicit `--stage-boot-readiness-ticks` limit into their survey policy and
+executable identity, so invalid origins reach the same native diagnostic before the
+independent wall-clock watchdog. The decoder remains
 compatible with v1, v2, and v3.0 tapes. Older tapes retain process-boot or
 stage-without-save semantics as originally encoded.
 

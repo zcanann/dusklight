@@ -27,6 +27,7 @@ pub const STAGE_SURVEY_FIDELITY: &str = "headless-fixed-step-unpaced-30hz/v1";
 const MAX_ATTEMPTS_PER_CASE: u8 = 8;
 const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 const MAX_STDERR_INSPECTION_BYTES: u64 = 1024 * 1024;
+const DEFAULT_NATIVE_STAGE_READINESS_TICKS: u32 = 30 * 60;
 const EMPTY_CARD_IDENTITY_DOMAIN: &[u8] = b"dusklight-stage-survey-empty-card/v1\0";
 const OBSERVATION_SCHEMA_DOMAIN: &[u8] =
     b"dusklight-stage-survey-all-trace-plus-learning-actor-catalog/v4\0";
@@ -85,6 +86,14 @@ fn is_neutral_probe(value: &StageSurveyProbeKind) -> bool {
     *value == StageSurveyProbeKind::Neutral
 }
 
+const fn default_native_stage_readiness_ticks() -> u32 {
+    DEFAULT_NATIVE_STAGE_READINESS_TICKS
+}
+
+fn is_default_native_stage_readiness_ticks(value: &u32) -> bool {
+    *value == DEFAULT_NATIVE_STAGE_READINESS_TICKS
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct StageSurveyIdentity {
@@ -102,6 +111,11 @@ pub struct StageSurveyPolicy {
     pub probe_ticks: u32,
     #[serde(default, skip_serializing_if = "is_neutral_probe")]
     pub probe: StageSurveyProbeKind,
+    #[serde(
+        default = "default_native_stage_readiness_ticks",
+        skip_serializing_if = "is_default_native_stage_readiness_ticks"
+    )]
+    pub native_stage_readiness_ticks: u32,
     pub host_timeout_millis: u64,
     pub maximum_attempts_per_case: u8,
     pub fidelity_profile: String,
@@ -354,6 +368,7 @@ impl StageSurveyLedger {
             }
         }
         if self.policy.probe_ticks < self.policy.probe.minimum_ticks()
+            || self.policy.native_stage_readiness_ticks == 0
             || self.policy.host_timeout_millis == 0
             || self.policy.maximum_attempts_per_case == 0
             || self.policy.maximum_attempts_per_case > MAX_ATTEMPTS_PER_CASE
@@ -580,6 +595,7 @@ pub fn execute_stage_survey_attempt(
 ) -> Result<StageSurveyAttempt, StageSurveyError> {
     if attempt_number == 0
         || policy.probe_ticks < policy.probe.minimum_ticks()
+        || policy.native_stage_readiness_ticks == 0
         || policy.host_timeout_millis == 0
         || policy.fidelity_profile != STAGE_SURVEY_FIDELITY
         || !config.executable.is_file()
@@ -646,6 +662,11 @@ pub fn execute_stage_survey_attempt(
         .arg("--exit-after-tape")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    if policy.native_stage_readiness_ticks != DEFAULT_NATIVE_STAGE_READINESS_TICKS {
+        command
+            .arg("--stage-boot-readiness-ticks")
+            .arg(policy.native_stage_readiness_ticks.to_string());
+    }
     for value in SURVEY_CVARS {
         command.arg("--cvar").arg(value);
     }
@@ -1427,6 +1448,7 @@ mod tests {
             StageSurveyPolicy {
                 probe_ticks: 30,
                 probe: StageSurveyProbeKind::Neutral,
+                native_stage_readiness_ticks: DEFAULT_NATIVE_STAGE_READINESS_TICKS,
                 host_timeout_millis: 120_000,
                 maximum_attempts_per_case: maximum_attempts,
                 fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
@@ -1650,6 +1672,7 @@ mod tests {
             &StageSurveyPolicy {
                 probe_ticks: 30,
                 probe: StageSurveyProbeKind::Neutral,
+                native_stage_readiness_ticks: DEFAULT_NATIVE_STAGE_READINESS_TICKS,
                 host_timeout_millis: 120_000,
                 maximum_attempts_per_case: 1,
                 fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
@@ -1684,6 +1707,7 @@ mod tests {
                 &StageSurveyPolicy {
                     probe_ticks: 20,
                     probe,
+                    native_stage_readiness_ticks: DEFAULT_NATIVE_STAGE_READINESS_TICKS,
                     host_timeout_millis: 120_000,
                     maximum_attempts_per_case: 1,
                     fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
@@ -1739,6 +1763,7 @@ mod tests {
             &StageSurveyPolicy {
                 probe_ticks: 80,
                 probe: StageSurveyProbeKind::ContactSweep,
+                native_stage_readiness_ticks: DEFAULT_NATIVE_STAGE_READINESS_TICKS,
                 host_timeout_millis: 120_000,
                 maximum_attempts_per_case: 1,
                 fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
@@ -1782,6 +1807,7 @@ mod tests {
             &StageSurveyPolicy {
                 probe_ticks: StageSurveyProbeKind::ActorActivation.minimum_ticks(),
                 probe: StageSurveyProbeKind::ActorActivation,
+                native_stage_readiness_ticks: DEFAULT_NATIVE_STAGE_READINESS_TICKS,
                 host_timeout_millis: 120_000,
                 maximum_attempts_per_case: 1,
                 fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
@@ -1824,6 +1850,7 @@ mod tests {
             &StageSurveyPolicy {
                 probe_ticks: StageSurveyProbeKind::LoadingSweep.minimum_ticks(),
                 probe: StageSurveyProbeKind::LoadingSweep,
+                native_stage_readiness_ticks: DEFAULT_NATIVE_STAGE_READINESS_TICKS,
                 host_timeout_millis: 120_000,
                 maximum_attempts_per_case: 1,
                 fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
@@ -1861,10 +1888,26 @@ mod tests {
         let bytes = neutral.canonical_bytes(&catalog).unwrap();
         let text = std::str::from_utf8(&bytes).unwrap();
         assert!(!text.contains("\"probe\":"));
+        assert!(!text.contains("\"native_stage_readiness_ticks\":"));
         assert_eq!(
             StageSurveyLedger::decode_canonical(&bytes, &catalog).unwrap(),
             neutral
         );
+
+        let mut bounded_readiness = neutral.clone();
+        bounded_readiness.policy.native_stage_readiness_ticks = 300;
+        let bytes = bounded_readiness.canonical_bytes(&catalog).unwrap();
+        assert!(
+            std::str::from_utf8(&bytes)
+                .unwrap()
+                .contains("\"native_stage_readiness_ticks\":300")
+        );
+        assert_eq!(
+            StageSurveyLedger::decode_canonical(&bytes, &catalog).unwrap(),
+            bounded_readiness
+        );
+        bounded_readiness.policy.native_stage_readiness_ticks = 0;
+        assert!(bounded_readiness.validate(&catalog).is_err());
 
         let mut movement = neutral.clone();
         movement.policy.probe = StageSurveyProbeKind::Movement;

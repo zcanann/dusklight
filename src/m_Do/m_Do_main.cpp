@@ -673,7 +673,8 @@ static bool inputTapePlaybackFailed;
 static bool stageBootPending;
 static dusk::automation::TapeBoot stageBootDescriptor;
 static std::uint32_t stageBootReadinessTicks;
-static constexpr std::uint32_t kStageBootReadinessTickLimit = 30u * 60u;
+static constexpr std::uint32_t kDefaultStageBootReadinessTickLimit = 30u * 60u;
+static std::uint32_t stageBootReadinessTickLimit = kDefaultStageBootReadinessTickLimit;
 static dusk::automation::TapeEndBehavior inputTapeEndBehavior =
     dusk::automation::TapeEndBehavior::Release;
 static bool frameCaptureEnabled;
@@ -1074,7 +1075,7 @@ static StageFixtureLoadStatus advance_stage_fixture_loading() {
         return StageFixtureLoadStatus::Ready;
     }
     ++stageBootReadinessTicks;
-    if (stageBootReadinessTicks < kStageBootReadinessTickLimit) {
+    if (stageBootReadinessTicks < stageBootReadinessTickLimit) {
         return StageFixtureLoadStatus::Waiting;
     }
     inputTapePlaybackFailed = true;
@@ -2184,6 +2185,7 @@ int game_main(int argc, char* argv[]) {
             ("headless-submit-gpu-frames", "Audit comparator: retain null-backend GPU frame submission instead of the simulation-only render sink", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("deterministic-time-start", "Initial signed OS timer tick for fixed-step modes (default 0)", cxxopts::value<std::int64_t>())
             ("input-tape", "Play a DUSKTAPE input file from the first game tick", cxxopts::value<std::string>())
+            ("stage-boot-readiness-ticks", "Maximum logical startup ticks allowed for a stage-boot tape (default 1800)", cxxopts::value<std::uint32_t>())
             ("input-tape-fast-forward-frames", "Run this many absolute tape frames unpaced before selected-segment playback (hidden unless --input-tape-fast-forward-visible)", cxxopts::value<std::size_t>())
             ("input-tape-fast-forward-visible", "Show the unpaced rendered prefix instead of keeping its window hidden", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("input-tape-end", "Input state after the tape ends (release, hold, loop)", cxxopts::value<std::string>()->default_value("release"))
@@ -2404,6 +2406,13 @@ int game_main(int argc, char* argv[]) {
     const bool hasInputTape = parsed_arg_options.count("input-tape") != 0;
     const bool hasInputController = parsed_arg_options.count("input-controller") != 0;
     const bool hasAutomationInput = hasInputTape || hasInputController;
+    const bool hasStageBootReadinessTickLimit =
+        parsed_arg_options.count("stage-boot-readiness-ticks") != 0;
+    if (hasStageBootReadinessTickLimit && !hasInputTape) {
+        fprintf(stderr,
+                "Input Tape Error: --stage-boot-readiness-ticks requires --input-tape PATH\n");
+        return 1;
+    }
     if (parsed_arg_options.count("automation-phase-timing") != 0) {
         const std::string outputPath =
             parsed_arg_options["automation-phase-timing"].as<std::string>();
@@ -3190,6 +3199,15 @@ int game_main(int argc, char* argv[]) {
             dusk::SaveRequested = inputTape.boot.saveSlot;
             stageBootDescriptor = inputTape.boot;
             stageBootPending = true;
+            if (hasStageBootReadinessTickLimit) {
+                stageBootReadinessTickLimit =
+                    parsed_arg_options["stage-boot-readiness-ticks"].as<std::uint32_t>();
+                if (stageBootReadinessTickLimit == 0) {
+                    fprintf(stderr,
+                            "Input Tape Error: --stage-boot-readiness-ticks must be greater than zero\n");
+                    return 1;
+                }
+            }
             if (!dusk::automation::install_scenario_fixture_runtime(
                     inputTape.boot.fixture, inputTape.boot.room)) {
                 fprintf(stderr, "Input Tape Error: unsupported scenario fixture: %.*s\n",
@@ -3198,6 +3216,11 @@ int game_main(int argc, char* argv[]) {
                 return 1;
             }
         } else {
+            if (hasStageBootReadinessTickLimit) {
+                fprintf(stderr,
+                        "Input Tape Error: --stage-boot-readiness-ticks requires a stage-boot tape\n");
+                return 1;
+            }
             automationRequiresEmptyCard = true;
             dusk::automation::clear_scenario_fixture_runtime();
         }

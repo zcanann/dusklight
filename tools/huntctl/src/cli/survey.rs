@@ -342,6 +342,7 @@ fn policy_from_args(args: &[String]) -> Result<StageSurveyPolicy, Box<dyn Error>
                 .into());
             }
         },
+        native_stage_readiness_ticks: u32_option(args, "--readiness-ticks", 150)?,
         host_timeout_millis: u64_option(args, "--timeout-ms", 120_000)?,
         maximum_attempts_per_case: attempts,
         fidelity_profile: STAGE_SURVEY_FIDELITY.into(),
