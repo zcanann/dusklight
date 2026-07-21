@@ -163,6 +163,24 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
             {"index", actor.eventParticipation.index},
         };
     }
+    json returnPlaceWriter = nullptr;
+    if (actor.returnPlaceWriterPresent) {
+        returnPlaceWriter = {
+            {"save_room", actor.returnPlaceWriter.saveRoom},
+            {"save_point", actor.returnPlaceWriter.savePoint},
+            {"switch_room", actor.returnPlaceWriter.switchRoom},
+            {"required_event_set", actor.returnPlaceWriter.requiredEventSet},
+            {"required_event_unset", actor.returnPlaceWriter.requiredEventUnset},
+            {"required_switch_set", actor.returnPlaceWriter.requiredSwitchSet},
+            {"required_switch_unset", actor.returnPlaceWriter.requiredSwitchUnset},
+            {"no_telop_clear", actor.returnPlaceWriter.noTelopClear},
+            {"event_set_satisfied", actor.returnPlaceWriter.eventSetSatisfied},
+            {"event_unset_satisfied", actor.returnPlaceWriter.eventUnsetSatisfied},
+            {"switch_set_satisfied", actor.returnPlaceWriter.switchSetSatisfied},
+            {"switch_unset_satisfied", actor.returnPlaceWriter.switchUnsetSatisfied},
+            {"eligible", actor.returnPlaceWriter.eligible},
+        };
+    }
     return {
         {"runtime_generation", actor.runtimeGeneration},
         {"actor_type", actor.actorType},
@@ -206,6 +224,7 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
         {"status", actor.status},
         {"attention", std::move(attention)},
         {"event_participation", std::move(eventParticipation)},
+        {"return_place_writer", std::move(returnPlaceWriter)},
     };
 }
 

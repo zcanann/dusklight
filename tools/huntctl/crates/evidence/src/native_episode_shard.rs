@@ -33,6 +33,7 @@ const OBSERVATION_VERSION_V10: u16 = 10;
 const OBSERVATION_VERSION_V11: u16 = 11;
 const OBSERVATION_VERSION_V12: u16 = 12;
 const OBSERVATION_VERSION_V13: u16 = 13;
+const OBSERVATION_VERSION_V14: u16 = 14;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -70,6 +71,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V10: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V11: &str = "dusklight-learning-observation/v11";
 pub const LEARNING_OBSERVATION_SCHEMA_V12: &str = "dusklight-learning-observation/v12";
 pub const LEARNING_OBSERVATION_SCHEMA_V13: &str = "dusklight-learning-observation/v13";
+pub const LEARNING_OBSERVATION_SCHEMA_V14: &str = "dusklight-learning-observation/v14";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -324,6 +326,24 @@ pub struct NativeActorObservation {
     pub shape_angle: [i16; 3],
     pub attention: Option<NativeActorAttentionComponent>,
     pub event_participation: Option<NativeActorEventParticipationComponent>,
+    pub return_place_writer: Option<NativeReturnPlaceWriterComponent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeReturnPlaceWriterComponent {
+    pub save_room: i8,
+    pub save_point: u8,
+    pub switch_room: i8,
+    pub required_event_set: u16,
+    pub required_event_unset: u16,
+    pub required_switch_set: u8,
+    pub required_switch_unset: u8,
+    pub no_telop_clear: bool,
+    pub event_set_satisfied: bool,
+    pub event_unset_satisfied: bool,
+    pub switch_set_satisfied: bool,
+    pub switch_unset_satisfied: bool,
+    pub eligible: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -679,6 +699,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V11
                 | OBSERVATION_VERSION_V12
                 | OBSERVATION_VERSION_V13
+                | OBSERVATION_VERSION_V14
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -806,6 +827,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V11 => LEARNING_OBSERVATION_SCHEMA_V11,
         OBSERVATION_VERSION_V12 => LEARNING_OBSERVATION_SCHEMA_V12,
         OBSERVATION_VERSION_V13 => LEARNING_OBSERVATION_SCHEMA_V13,
+        OBSERVATION_VERSION_V14 => LEARNING_OBSERVATION_SCHEMA_V14,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2186,7 +2208,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V10
         | OBSERVATION_VERSION_V11
         | OBSERVATION_VERSION_V12
-        | OBSERVATION_VERSION_V13 => {
+        | OBSERVATION_VERSION_V13
+        | OBSERVATION_VERSION_V14 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -2336,10 +2359,16 @@ fn decode_observation(
             shape_angle: reader.i16x3()?,
             attention: None,
             event_participation: None,
+            return_place_writer: None,
         };
         if observation_version >= OBSERVATION_VERSION_V6 {
             let component_mask = reader.u16()?;
-            if component_mask & !0x3 != 0 || reader.u16()? != 0 {
+            let known_component_mask = if observation_version >= OBSERVATION_VERSION_V14 {
+                0x7
+            } else {
+                0x3
+            };
+            if component_mask & !known_component_mask != 0 || reader.u16()? != 0 {
                 return Err(NativeEpisodeShardError::new(
                     "invalid actor component header",
                 ));
@@ -2409,6 +2438,71 @@ fn decode_observation(
                 return Err(NativeEpisodeShardError::new(
                     "absent actor event component has a payload",
                 ));
+            }
+            if observation_version >= OBSERVATION_VERSION_V14 {
+                let save_room = reader.i8()?;
+                let save_point = reader.u8()?;
+                let switch_room = reader.i8()?;
+                let guard_mask = reader.u8()?;
+                let required_event_set = reader.u16()?;
+                let required_event_unset = reader.u16()?;
+                let required_switch_set = reader.u8()?;
+                let required_switch_unset = reader.u8()?;
+                if guard_mask & !0x3f != 0 || reader.u16()? != 0 {
+                    return Err(NativeEpisodeShardError::new(
+                        "invalid return-place writer payload",
+                    ));
+                }
+                if component_mask & 4 != 0 {
+                    let no_telop_clear = guard_mask & 1 != 0;
+                    let event_set_satisfied = guard_mask & 2 != 0;
+                    let event_unset_satisfied = guard_mask & 4 != 0;
+                    let switch_set_satisfied = guard_mask & 8 != 0;
+                    let switch_unset_satisfied = guard_mask & 16 != 0;
+                    let eligible = guard_mask & 32 != 0;
+                    if required_event_set == u16::MAX && !event_set_satisfied
+                        || required_event_unset == u16::MAX && !event_unset_satisfied
+                        || required_switch_set == u8::MAX && !switch_set_satisfied
+                        || required_switch_unset == u8::MAX && !switch_unset_satisfied
+                        || eligible
+                            != (no_telop_clear
+                                && event_set_satisfied
+                                && event_unset_satisfied
+                                && switch_set_satisfied
+                                && switch_unset_satisfied)
+                    {
+                        return Err(NativeEpisodeShardError::new(
+                            "inconsistent return-place writer guards",
+                        ));
+                    }
+                    actor.return_place_writer = Some(NativeReturnPlaceWriterComponent {
+                        save_room,
+                        save_point,
+                        switch_room,
+                        required_event_set,
+                        required_event_unset,
+                        required_switch_set,
+                        required_switch_unset,
+                        no_telop_clear,
+                        event_set_satisfied,
+                        event_unset_satisfied,
+                        switch_set_satisfied,
+                        switch_unset_satisfied,
+                        eligible,
+                    });
+                } else if save_room != 0
+                    || save_point != 0
+                    || switch_room != 0
+                    || guard_mask != 0
+                    || required_event_set != 0
+                    || required_event_unset != 0
+                    || required_switch_set != 0
+                    || required_switch_unset != 0
+                {
+                    return Err(NativeEpisodeShardError::new(
+                        "absent return-place writer component has a payload",
+                    ));
+                }
             }
         }
         if observation_version >= OBSERVATION_VERSION_V7 {

@@ -1,5 +1,6 @@
 #include "dusk/automation/game_state_observer.hpp"
 #include "dusk/automation/learning_episode.hpp"
+#include "f_pc/f_pc_name.h"
 
 #include <array>
 #include <chrono>
@@ -441,6 +442,23 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         kInputControllerMaximumActors + 1, fixture.actors[0]);
     for (std::size_t index = 0; index < completeActors.size(); ++index)
         completeActors[index].runtimeGeneration = index + 1;
+    completeActors[0].actorName = fpcNm_KYTAG14_e;
+    completeActors[0].returnPlaceWriterPresent = true;
+    completeActors[0].returnPlaceWriter = {
+        .saveRoom = 3,
+        .savePoint = 2,
+        .switchRoom = 0,
+        .requiredEventSet = 0x10,
+        .requiredEventUnset = 0xffff,
+        .requiredSwitchSet = 8,
+        .requiredSwitchUnset = 0xff,
+        .noTelopClear = false,
+        .eventSetSatisfied = true,
+        .eventUnsetSatisfied = true,
+        .switchSetSatisfied = true,
+        .switchUnsetSatisfied = true,
+        .eligible = false,
+    };
     completeActors.back().attentionPresent = false;
     completeActors.back().eventParticipationPresent = false;
     fixture.observation.actors = completeActors;
@@ -728,6 +746,23 @@ void test_mechanics_boundary_and_surface_identity_fail_closed() {
     REQUIRE(error.find("lacks a surface identity") != std::string::npos);
 }
 
+void test_return_place_writer_guards_fail_closed() {
+    ObservationFixture fixture;
+    fixture.actors[0].actorName = fpcNm_KYTAG14_e;
+    fixture.actors[0].returnPlaceWriterPresent = true;
+    fixture.actors[0].returnPlaceWriter.requiredEventSet = 0xffff;
+    fixture.actors[0].returnPlaceWriter.eventSetSatisfied = false;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent return-place writer") != std::string::npos);
+}
+
 }  // namespace
 
 int main(const int argc, char** argv) {
@@ -742,6 +777,7 @@ int main(const int argc, char** argv) {
     test_runtime_file_attachment_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
+    test_return_place_writer_guards_fail_closed();
     std::cout << "learning episode tests passed\n";
     return 0;
 }

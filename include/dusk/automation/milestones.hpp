@@ -314,6 +314,27 @@ struct MilestoneObservation {
             std::uint8_t index = 0;
         };
 
+        // Decoded configuration and boundary-local guard evaluation for the
+        // SavMem (KYTAG14) actor. The target is authored in actor parameters,
+        // while the predicates read shared save/temporary backing stores. Keep
+        // both so a planner can derive reachability instead of hard-coding a
+        // "save location changed" effect.
+        struct ReturnPlaceWriterComponent {
+            std::int8_t saveRoom = -1;
+            std::uint8_t savePoint = 0;
+            std::int8_t switchRoom = -1;
+            std::uint16_t requiredEventSet = 0xffff;
+            std::uint16_t requiredEventUnset = 0xffff;
+            std::uint8_t requiredSwitchSet = 0xff;
+            std::uint8_t requiredSwitchUnset = 0xff;
+            bool noTelopClear = false;
+            bool eventSetSatisfied = false;
+            bool eventUnsetSatisfied = false;
+            bool switchSetSatisfied = false;
+            bool switchUnsetSatisfied = false;
+            bool eligible = false;
+        };
+
         std::uint64_t runtimeGeneration = 0;
         std::int32_t actorType = 0;
         std::int32_t processSubtype = 0;
@@ -380,6 +401,8 @@ struct MilestoneObservation {
         AttentionComponent attention;
         bool eventParticipationPresent = false;
         EventParticipationComponent eventParticipation;
+        bool returnPlaceWriterPresent = false;
+        ReturnPlaceWriterComponent returnPlaceWriter;
     };
     std::span<const Actor> actors;
     // Total actor population visited by the observer. Current native learning

@@ -7,11 +7,12 @@ use crate::snapshot::{
     StateSnapshot,
 };
 use crate::state::{
-    BackingAttachment, BoundaryKind, CaptureStatus, ComponentBinding, ComponentKind,
-    ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment,
-    PhysicalSlotId, PhysicalSlotObservation, PlayerForm, PlayerMount, PlayerState,
-    ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
-    SemanticLifetime, SerializationOwner, StateComponent, StateValue,
+    ActorLifecycle, BackingAttachment, BoundaryKind, CaptureStatus, ComponentBinding,
+    ComponentKind, ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA,
+    ExecutionEnvironment, LiveWorldObject, PhysicalSlotId, PhysicalSlotObservation, PlayerForm,
+    PlayerMount, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
+    RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, StateComponent,
+    StateValue,
 };
 use crate::{PlannerContractError, validate_stable_id};
 use dusklight_evidence::native_episode_shard::{
@@ -309,6 +310,71 @@ pub fn snapshot_native_observation(
         runtime_owner,
         &provenance,
     );
+    let mut live_world_objects = Vec::new();
+    for actor in &observation.actors {
+        let Some(writer) = &actor.return_place_writer else {
+            continue;
+        };
+        let instance_id = format!("actor.runtime.{:016x}", actor.runtime_generation);
+        let writer_fields = fields([
+            ("target_stage", StateValue::Text(observation.stage.clone())),
+            ("save_room", StateValue::Signed(writer.save_room.into())),
+            ("save_point", StateValue::Unsigned(writer.save_point.into())),
+            ("switch_room", StateValue::Signed(writer.switch_room.into())),
+            (
+                "required_event_set",
+                StateValue::Unsigned(writer.required_event_set.into()),
+            ),
+            (
+                "required_event_unset",
+                StateValue::Unsigned(writer.required_event_unset.into()),
+            ),
+            (
+                "required_switch_set",
+                StateValue::Unsigned(writer.required_switch_set.into()),
+            ),
+            (
+                "required_switch_unset",
+                StateValue::Unsigned(writer.required_switch_unset.into()),
+            ),
+            ("no_telop_clear", StateValue::Boolean(writer.no_telop_clear)),
+            (
+                "event_set_satisfied",
+                StateValue::Boolean(writer.event_set_satisfied),
+            ),
+            (
+                "event_unset_satisfied",
+                StateValue::Boolean(writer.event_unset_satisfied),
+            ),
+            (
+                "switch_set_satisfied",
+                StateValue::Boolean(writer.switch_set_satisfied),
+            ),
+            (
+                "switch_unset_satisfied",
+                StateValue::Boolean(writer.switch_unset_satisfied),
+            ),
+            ("eligible", StateValue::Boolean(writer.eligible)),
+        ]);
+        components.push(structured_component(
+            &format!("{instance_id}.return-place-writer"),
+            ComponentKind::ActorInstance,
+            writer_fields.clone(),
+            ComponentBinding::Actor {
+                instance_id: instance_id.clone(),
+            },
+            SemanticLifetime::RoomLoad,
+            SerializationOwner::None,
+            &provenance,
+        ));
+        live_world_objects.push(LiveWorldObject {
+            instance_id,
+            static_object_id: None,
+            actor_type: "kytag14.return-place-writer".into(),
+            lifecycle: ActorLifecycle::Loaded,
+            fields: writer_fields,
+        });
+    }
     components.sort_by(|left, right| left.id.cmp(&right.id));
 
     let player = PlayerState {
@@ -360,7 +426,7 @@ pub fn snapshot_native_observation(
             components,
             static_world_objects: Vec::new(),
             persisted_object_controls: Vec::new(),
-            live_world_objects: Vec::new(),
+            live_world_objects,
         },
         semantic_observations: Vec::new(),
     };
@@ -682,7 +748,7 @@ mod tests {
     use super::*;
     use crate::identity::RUNTIME_CONFIGURATION_SCHEMA;
     use dusklight_evidence::native_episode_shard::{
-        LEARNING_OBSERVATION_SCHEMA_V13, NativeEpisodeShard,
+        LEARNING_OBSERVATION_SCHEMA_V14, NativeEpisodeShard,
     };
 
     fn context(sequence: u64) -> NativeSnapshotContext {
@@ -697,20 +763,20 @@ mod tests {
             },
             runtime_file_id: "runtime.fixture".into(),
             session_id: "session.fixture".into(),
-            evidence_id: "native.fixture.v13".into(),
+            evidence_id: "native.fixture.v14".into(),
             evidence_sha256: Digest([2; 32]),
         }
     }
 
     #[test]
-    fn projects_v13_backing_components_and_explicit_unknowns() {
+    fn projects_v14_backing_components_writers_and_explicit_unknowns() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v13.dseps"
+            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
         ))
         .unwrap();
         assert_eq!(
             shard.metadata.observation_schema,
-            LEARNING_OBSERVATION_SCHEMA_V13
+            LEARNING_OBSERVATION_SCHEMA_V14
         );
         let observation = &shard.episodes[0].steps[0].pre_input;
         let snapshot = snapshot_native_observation(observation, context(1)).unwrap();
@@ -748,6 +814,25 @@ mod tests {
             StateValue::Text("unavailable".into())
         );
         assert_eq!(fields["get_item_no"], StateValue::Unsigned(0x43));
+        let writer = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id.ends_with(".return-place-writer"))
+            .unwrap();
+        assert_eq!(writer.component_kind, ComponentKind::ActorInstance);
+        let ComponentPayload::Structured { fields } = &writer.payload else {
+            panic!("return-place writer must be structured");
+        };
+        assert_eq!(fields["save_room"], StateValue::Signed(3));
+        assert_eq!(fields["required_switch_set"], StateValue::Unsigned(8));
+        assert_eq!(fields["no_telop_clear"], StateValue::Boolean(false));
+        assert_eq!(fields["eligible"], StateValue::Boolean(false));
+        assert_eq!(snapshot.environment.live_world_objects.len(), 1);
+        assert_eq!(
+            snapshot.environment.live_world_objects[0].actor_type,
+            "kytag14.return-place-writer"
+        );
     }
 
     #[test]
@@ -764,7 +849,7 @@ mod tests {
     #[test]
     fn chains_label_boundaries_and_retain_exact_raw_byte_diffs() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v13.dseps"
+            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
         ))
         .unwrap();
         let first = &shard.episodes[0].steps[0].pre_input;

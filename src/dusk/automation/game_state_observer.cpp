@@ -3,6 +3,7 @@
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
 
 #include "d/actor/d_a_alink.h"
+#include "d/actor/d_a_kytag14.h"
 #include "d/actor/d_a_npc4.h"
 #include "d/actor/d_a_title.h"
 #include "d/d_camera.h"
@@ -172,6 +173,7 @@ int capture_milestone_actor(void* candidate, void* context) {
         actor->eventInfo.mCommand != dEvtCmd_NONE_e ||
         actor->eventInfo.mCondition != dEvtCnd_CANDEMO_e || actor->eventInfo.mEventId != -1 ||
         actor->eventInfo.mMapToolId != 0xff || actor->eventInfo.mIndex != 0;
+    const bool returnPlaceWriterPresent = fopAcM_GetName(actor) == fpcNm_KYTAG14_e;
     MilestoneObservation::Actor snapshot{
         .runtimeGeneration = runtimeGeneration,
         .actorType = actor->actor_type,
@@ -233,6 +235,7 @@ int capture_milestone_actor(void* candidate, void* context) {
         .shapeAngleZ = actor->shape_angle.z,
         .attentionPresent = attentionPresent,
         .eventParticipationPresent = eventParticipationPresent,
+        .returnPlaceWriterPresent = returnPlaceWriterPresent,
     };
     if (attentionPresent) {
         snapshot.attention.flags = actor->attention_info.flags;
@@ -249,6 +252,33 @@ int capture_milestone_actor(void* candidate, void* context) {
         snapshot.eventParticipation.eventId = actor->eventInfo.mEventId;
         snapshot.eventParticipation.mapToolId = actor->eventInfo.mMapToolId;
         snapshot.eventParticipation.index = actor->eventInfo.mIndex;
+    }
+    if (returnPlaceWriterPresent) {
+        const auto* writer = static_cast<const kytag14_class*>(actor);
+        auto& component = snapshot.returnPlaceWriter;
+        component.saveRoom = writer->mSaveRoomNo;
+        component.savePoint = writer->mSavePoint;
+        component.switchRoom = dComIfGp_roomControl_getStayNo();
+        component.requiredEventSet = writer->mEventID1;
+        component.requiredEventUnset = writer->mEventID2;
+        component.requiredSwitchSet = writer->mSwitchNo1;
+        component.requiredSwitchUnset = writer->mSwitchNo2;
+        component.noTelopClear = !dComIfGs_isTmpBit(dSv_event_tmp_flag_c::NO_TELOP);
+        component.eventSetSatisfied =
+            writer->mEventID1 == 0xffff ||
+            dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[writer->mEventID1]);
+        component.eventUnsetSatisfied =
+            writer->mEventID2 == 0xffff ||
+            !dComIfGs_isEventBit(dSv_event_flag_c::saveBitLabels[writer->mEventID2]);
+        component.switchSetSatisfied =
+            writer->mSwitchNo1 == 0xff ||
+            dComIfGs_isSwitch(writer->mSwitchNo1, component.switchRoom);
+        component.switchUnsetSatisfied =
+            writer->mSwitchNo2 == 0xff ||
+            !dComIfGs_isSwitch(writer->mSwitchNo2, component.switchRoom);
+        component.eligible = component.noTelopClear && component.eventSetSatisfied &&
+                             component.eventUnsetSatisfied && component.switchSetSatisfied &&
+                             component.switchUnsetSatisfied;
     }
     storage->actors.push_back(snapshot);
     return 1;

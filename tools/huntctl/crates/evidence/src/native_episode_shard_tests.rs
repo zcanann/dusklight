@@ -53,6 +53,10 @@ fn golden_v13() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v13.dseps")
 }
 
+fn golden_v14() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v14.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -686,6 +690,42 @@ fn decodes_v13_scoped_message_flow_without_inventing_a_cut() {
 }
 
 #[test]
+fn decodes_v14_return_place_writer_configuration_and_guards() {
+    let shard = NativeEpisodeShard::decode(golden_v14()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V14
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        let writers = observation
+            .actors
+            .iter()
+            .filter_map(|actor| actor.return_place_writer.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(writers.len(), 1);
+        let writer = writers[0];
+        assert_eq!(writer.save_room, 3);
+        assert_eq!(writer.save_point, 2);
+        assert_eq!(writer.switch_room, 0);
+        assert_eq!(writer.required_event_set, 0x10);
+        assert_eq!(writer.required_event_unset, u16::MAX);
+        assert_eq!(writer.required_switch_set, 8);
+        assert_eq!(writer.required_switch_unset, u8::MAX);
+        assert!(!writer.no_telop_clear);
+        assert!(writer.event_set_satisfied);
+        assert!(writer.event_unset_satisfied);
+        assert!(writer.switch_set_satisfied);
+        assert!(writer.switch_unset_satisfied);
+        assert!(!writer.eligible);
+    }
+}
+
+#[test]
 fn rejects_v13_slot_attachment_claim_with_unavailable_backing() {
     let shard = mutate_first_v13_episode(|expanded| {
         let prefix = [1, 1, 0, 1, 2, 2, 0, 0, 0, 0, 1, 0, 2, 0, b'F'];
@@ -851,6 +891,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V11
                             | LEARNING_OBSERVATION_SCHEMA_V12
                             | LEARNING_OBSERVATION_SCHEMA_V13
+                            | LEARNING_OBSERVATION_SCHEMA_V14
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -891,6 +932,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V11
             | LEARNING_OBSERVATION_SCHEMA_V12
             | LEARNING_OBSERVATION_SCHEMA_V13
+            | LEARNING_OBSERVATION_SCHEMA_V14
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

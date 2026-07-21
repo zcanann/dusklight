@@ -431,28 +431,39 @@ The current code shows:
 - Auru's actor separates proximity behavior, a pending presentation actor ID,
   normal memo creation, and generic `DEFAULT_GETITEM` execution. These are
   distinct state sites and ordered actions.
-- Native learning observation v13 now records `mDataNum` and `mNoFile` as
+- Native learning observation v14 records `mDataNum` and `mNoFile` as
   separate raw values, a separately statused backing attachment, and three
   distinct physical-slot descriptors. It does not infer a slotless file from a
   nonzero `mNoFile`, because the PC command-line load path overloads that field.
-- The same v13 channel records exact `PlayerReturnPlace`, restart state,
+- The same v14 channel records exact `PlayerReturnPlace`, restart state,
   `mPreItemNo`, `mGtItm`, item-partner identity, event-control flags, exact
   running-event name when bounded, `NO_TELOP`, and player-control state. Generic
   message-flow/node/cut and pending-cleanup discovery remain explicitly scoped:
-  v13 can read the active flow and node for the observed Auru and Goron-child
+  v14 can read the active flow and node for the observed Auru and Goron-child
   NPC families without advancing dialogue, records the cut independently as
   `Unavailable`, and leaves pending cleanup `Unavailable` until its ownership is
   established. Other actor families remain `Unavailable` rather than being
   cast to a guessed layout.
+- V14 also recognizes loaded SavMem (`KYTAG14`) actors and records their decoded
+  return-stage target (current stage plus configured room/point), event-set,
+  event-unset, switch-set, and switch-unset selectors, the room binding used for
+  the switch reads, `NO_TELOP` gate state, each evaluated predicate, and the
+  conjunction that makes the actor eligible to write at that boundary. This is
+  actor-instance evidence, separate from the independently observed held
+  `PlayerReturnPlace`; an eligible writer is not fabricated into a state change.
 - Physical slot contents remain `NotSampled`: the live process exposes the
   active runtime and selected slot number, not trustworthy simultaneous payloads
   for all three card slots. A future card-boundary observer must populate those
   descriptors without copying the active runtime into them.
-- Planner snapshot schema v2 losslessly projects v13 native observations into
+- Planner snapshot schema v2 losslessly projects v14 native observations into
   independently bound runtime, stage, room/zone, temporary, inventory, restart,
   return-place, and event-handoff components. Every projected component carries
   trace provenance; raw banks carry byte-knownness masks; unavailable structured
   channels retain their capture status instead of receiving zero values.
+- SavMem observations project into room-lifetime live-world objects and
+  actor-bound components with trace provenance. The target, raw predicate
+  selectors, evaluated guard values, and eligibility remain distinct fields so
+  later source/extracted rules can connect them to their real backing stores.
 - Snapshot v2 keeps observed slot descriptors separate from verified serialized
   slot contents, permits unknown runtime origin/backing and player-control state,
   and diffs slot observation changes independently from slot-content changes.
@@ -1404,6 +1415,10 @@ Deliverable: one validated runtime representation independent of authoring forma
 - [x] Snapshot typed components plus unknown/raw regions where possible.
 - [x] Record binding changes and component provenance.
 - [ ] Record return/restart values, gates, and relevant actor writes.
+  - [x] Observe held return/restart values and loaded SavMem writer targets plus
+        exact `NO_TELOP`/event/switch guard evaluations (native observation v14).
+  - [ ] Audit and observe other return/restart writers and produce traces that
+        distinguish eligible SavMem execution from an actual value change.
 - [ ] Record `mGtItm`, `mPreItemNo`, current flow/node/cut, message-progress bits,
       pending cleanup, item partner, event name, and player-control transitions.
 - [ ] Produce semantic and raw diffs across room load, stage load, save, load,

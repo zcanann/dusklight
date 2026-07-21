@@ -1,5 +1,7 @@
 #include "dusk/automation/learning_episode.hpp"
 
+#include "f_pc/f_pc_name.h"
+
 #include "dusk/automation/game_state_observer.hpp"
 
 #include <algorithm>
@@ -524,6 +526,24 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         error = "learning observation actor set is not strictly ordered";
         return false;
     }
+    for (const MilestoneObservation::Actor& actor : observation.actors) {
+        if (!actor.returnPlaceWriterPresent)
+            continue;
+        const auto& writer = actor.returnPlaceWriter;
+        const bool guardsSatisfied = writer.noTelopClear && writer.eventSetSatisfied &&
+                                     writer.eventUnsetSatisfied && writer.switchSetSatisfied &&
+                                     writer.switchUnsetSatisfied;
+        if (actor.actorName != fpcNm_KYTAG14_e ||
+            (writer.requiredEventSet == 0xffff && !writer.eventSetSatisfied) ||
+            (writer.requiredEventUnset == 0xffff && !writer.eventUnsetSatisfied) ||
+            (writer.requiredSwitchSet == 0xff && !writer.switchSetSatisfied) ||
+            (writer.requiredSwitchUnset == 0xff && !writer.switchUnsetSatisfied) ||
+            writer.eligible != guardsSatisfied)
+        {
+            error = "learning observation has inconsistent return-place writer";
+            return false;
+        }
+    }
     const auto& relationships = observation.playerRelationships;
     const std::array<const MilestoneObservation::ActorIdentity*, 11> relationshipActors{
         &relationships.targetedActor,
@@ -738,6 +758,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         std::uint16_t componentMask = 0;
         componentMask |= actor.attentionPresent ? 1u << 0 : 0;
         componentMask |= actor.eventParticipationPresent ? 1u << 1 : 0;
+        componentMask |= actor.returnPlaceWriterPresent ? 1u << 2 : 0;
         append_integer(output, componentMask);
         append_integer<std::uint16_t>(output, 0);
 
@@ -767,6 +788,33 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             output, actor.eventParticipationPresent ? participation.mapToolId : std::uint8_t{0});
         append_integer(
             output, actor.eventParticipationPresent ? participation.index : std::uint8_t{0});
+
+        const auto& writer = actor.returnPlaceWriter;
+        std::uint8_t writerGuardMask = 0;
+        if (actor.returnPlaceWriterPresent) {
+            writerGuardMask |= writer.noTelopClear ? 1u << 0 : 0;
+            writerGuardMask |= writer.eventSetSatisfied ? 1u << 1 : 0;
+            writerGuardMask |= writer.eventUnsetSatisfied ? 1u << 2 : 0;
+            writerGuardMask |= writer.switchSetSatisfied ? 1u << 3 : 0;
+            writerGuardMask |= writer.switchUnsetSatisfied ? 1u << 4 : 0;
+            writerGuardMask |= writer.eligible ? 1u << 5 : 0;
+        }
+        append_integer(
+            output, actor.returnPlaceWriterPresent ? writer.saveRoom : std::int8_t{0});
+        append_integer(
+            output, actor.returnPlaceWriterPresent ? writer.savePoint : std::uint8_t{0});
+        append_integer(
+            output, actor.returnPlaceWriterPresent ? writer.switchRoom : std::int8_t{0});
+        append_integer(output, writerGuardMask);
+        append_integer(output,
+            actor.returnPlaceWriterPresent ? writer.requiredEventSet : std::uint16_t{0});
+        append_integer(output,
+            actor.returnPlaceWriterPresent ? writer.requiredEventUnset : std::uint16_t{0});
+        append_integer(output,
+            actor.returnPlaceWriterPresent ? writer.requiredSwitchSet : std::uint8_t{0});
+        append_integer(output,
+            actor.returnPlaceWriterPresent ? writer.requiredSwitchUnset : std::uint8_t{0});
+        append_integer<std::uint16_t>(output, 0);
 
         std::uint8_t backingMask = 0;
         backingMask |= actor.heapPresent ? 1u << 0 : 0;
