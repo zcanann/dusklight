@@ -277,36 +277,12 @@ impl StageObservationCoverageReport {
                 let record_count = decoded
                     .as_ref()
                     .map_or(0, |trace| trace.records.len() as u32);
-                let mut stage_records = Vec::new();
-                if let Some(decoded) = &decoded {
-                    let stages = decoded
-                        .records
-                        .iter()
-                        .map(|record| record.stage_name.as_str())
-                        .collect::<BTreeSet<_>>();
-                    for stage in stages {
-                        let stage_record_count = decoded
-                            .records
-                            .iter()
-                            .filter(|record| record.stage_name == stage)
-                            .count() as u32;
-                        stage_records.push(StageObservationCoverageStageRecords {
-                            stage: stage.to_string(),
-                            record_count: stage_record_count,
-                        });
-                        let cell = cells
-                            .entry((stage.to_string(), source.ledger.policy.probe))
-                            .or_default();
-                        cell.case_count += 1;
-                        accumulate_records(
-                            cell,
-                            decoded
-                                .records
-                                .iter()
-                                .filter(|record| record.stage_name == stage),
-                        )?;
-                    }
-                }
+                let stage_records = decoded.as_ref().map_or_else(
+                    || Ok(Vec::new()),
+                    |decoded| {
+                        accumulate_trace_cells(&mut cells, source.ledger.policy.probe, decoded)
+                    },
+                )?;
                 cases.push(StageObservationCoverageCase {
                     ledger_sha256,
                     candidate_id: candidate.id.clone(),
@@ -718,6 +694,34 @@ fn accumulate_records<'a>(
     Ok(())
 }
 
+fn accumulate_trace_cells(
+    cells: &mut BTreeMap<(String, StageSurveyProbeKind), CellAccumulator>,
+    probe: StageSurveyProbeKind,
+    trace: &DecodedTrace,
+) -> Result<Vec<StageObservationCoverageStageRecords>, StageObservationCoverageError> {
+    let stages = trace
+        .records
+        .iter()
+        .map(|record| record.stage_name.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut stage_records = Vec::with_capacity(stages.len());
+    for stage in stages {
+        let records = trace
+            .records
+            .iter()
+            .filter(|record| record.stage_name == stage)
+            .collect::<Vec<_>>();
+        stage_records.push(StageObservationCoverageStageRecords {
+            stage: stage.to_string(),
+            record_count: records.len() as u32,
+        });
+        let cell = cells.entry((stage.to_string(), probe)).or_default();
+        cell.case_count += 1;
+        accumulate_records(cell, records)?;
+    }
+    Ok(stage_records)
+}
+
 fn flatten_value(
     path: &str,
     value: &Value,
@@ -1052,5 +1056,58 @@ mod tests {
         assert_eq!(health.value_samples, 3);
         assert_eq!(health.null_samples, 0);
         assert_eq!(health.distinct_nonnull_values, 3);
+    }
+
+    #[test]
+    fn cross_stage_trace_is_split_into_actual_stage_cells() {
+        let trace = DecodedTrace {
+            version: 5,
+            boot: Default::default(),
+            tick_rate_numerator: 30,
+            tick_rate_denominator: 1,
+            requested_channels: 0,
+            capacity_exhausted: false,
+            retention: None,
+            channel_formats: BTreeMap::new(),
+            records: vec![
+                TraceRecord {
+                    stage_name: "F_SP103".into(),
+                    ..TraceRecord::default()
+                },
+                TraceRecord {
+                    stage_name: "F_SP00".into(),
+                    ..TraceRecord::default()
+                },
+                TraceRecord {
+                    stage_name: "F_SP00".into(),
+                    ..TraceRecord::default()
+                },
+            ],
+        };
+        let mut cells = BTreeMap::new();
+        let slices =
+            accumulate_trace_cells(&mut cells, StageSurveyProbeKind::ContactSweep, &trace).unwrap();
+
+        assert_eq!(
+            slices,
+            vec![
+                StageObservationCoverageStageRecords {
+                    stage: "F_SP00".into(),
+                    record_count: 2,
+                },
+                StageObservationCoverageStageRecords {
+                    stage: "F_SP103".into(),
+                    record_count: 1,
+                },
+            ]
+        );
+        assert_eq!(
+            cells[&("F_SP00".into(), StageSurveyProbeKind::ContactSweep)].record_count,
+            2
+        );
+        assert_eq!(
+            cells[&("F_SP103".into(), StageSurveyProbeKind::ContactSweep)].record_count,
+            1
+        );
     }
 }
