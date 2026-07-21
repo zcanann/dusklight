@@ -81,6 +81,10 @@ fn golden_v20() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v20.dseps")
 }
 
+fn golden_v21() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v21.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -146,6 +150,22 @@ fn mutate_first_v18_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
 
 fn mutate_first_v19_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden_v19(), mutator)
+}
+
+fn mutate_first_v21_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_first_episode_in(golden_v21(), mutator)
+}
+
+fn first_v21_process_records_offset(expanded: &[u8]) -> usize {
+    const CREATE_RECORD_SIZE: usize = 32;
+    const DELETE_RECORD_SIZE: usize = 28;
+    let mut reader = Reader::new(expanded);
+    reader.bytes(PAYLOAD_HEADER_SIZE).unwrap();
+    let observation = decode_observation(&mut reader, OBSERVATION_VERSION_V21).unwrap();
+    let lifecycle = observation.process_lifecycle.unwrap();
+    reader.offset
+        - lifecycle.pending_creates.len() * CREATE_RECORD_SIZE
+        - lifecycle.pending_deletes.len() * DELETE_RECORD_SIZE
 }
 
 fn first_v18_event_queue_offset(expanded: &[u8]) -> usize {
@@ -1004,6 +1024,8 @@ fn decodes_v19_process_lifecycle_pressure_with_legacy_missingness() {
             );
             assert_eq!(lifecycle.pending_create_count, 2);
             assert_eq!(lifecycle.pending_delete_count, 3);
+            assert!(lifecycle.pending_creates.is_empty());
+            assert!(lifecycle.pending_deletes.is_empty());
         }
     }
 
@@ -1061,6 +1083,11 @@ fn decodes_v20_pointer_free_attention_candidate_lists() {
             7
         );
         assert_eq!(attention.action_candidates[0].attention_type, 6);
+        let lifecycle = observation.process_lifecycle.as_ref().unwrap();
+        assert_eq!(lifecycle.pending_create_count, 2);
+        assert_eq!(lifecycle.pending_delete_count, 3);
+        assert!(lifecycle.pending_creates.is_empty());
+        assert!(lifecycle.pending_deletes.is_empty());
     }
 
     let legacy = NativeEpisodeShard::decode(golden_v19()).unwrap();
@@ -1095,6 +1122,59 @@ fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("semantic priority order"), "{error}");
+}
+
+#[test]
+fn decodes_v21_ordered_pending_process_records() {
+    let shard = NativeEpisodeShard::decode(golden_v21()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V21
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        let lifecycle = observation
+            .process_lifecycle
+            .as_ref()
+            .expect("v21 process lifecycle");
+        assert_eq!(lifecycle.pending_creates.len(), 2);
+        assert_eq!(lifecycle.pending_deletes.len(), 3);
+        assert_eq!(lifecycle.pending_creates[0].runtime_generation, 100);
+        assert_eq!(
+            lifecycle.pending_creates[0].process_status,
+            NativeChannelStatus::Absent
+        );
+        assert!(lifecycle.pending_creates[0].process.is_none());
+        assert_eq!(lifecycle.pending_creates[1].runtime_generation, 101);
+        assert!(lifecycle.pending_creates[1].doing);
+        assert_eq!(
+            lifecycle.pending_creates[1]
+                .process
+                .as_ref()
+                .expect("materialized process")
+                .parameters,
+            0x1020_3040
+        );
+        assert_eq!(lifecycle.pending_deletes[0].process.runtime_generation, 200);
+        assert_eq!(lifecycle.pending_deletes[2].timer, 20);
+    }
+}
+
+#[test]
+fn rejects_v21_pending_create_presence_without_semantic_process() {
+    let shard = mutate_first_v21_episode(|expanded| {
+        let records = first_v21_process_records_offset(expanded);
+        expanded[records + 5] = 1;
+    });
+    let error = NativeEpisodeShard::decode(&shard).unwrap_err().to_string();
+    assert!(
+        error.contains("pending-create process state is inconsistent"),
+        "{error}"
+    );
 }
 
 #[test]
@@ -1288,6 +1368,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V18
                             | LEARNING_OBSERVATION_SCHEMA_V19
                             | LEARNING_OBSERVATION_SCHEMA_V20
+                            | LEARNING_OBSERVATION_SCHEMA_V21
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1335,6 +1416,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V18
             | LEARNING_OBSERVATION_SCHEMA_V19
             | LEARNING_OBSERVATION_SCHEMA_V20
+            | LEARNING_OBSERVATION_SCHEMA_V21
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

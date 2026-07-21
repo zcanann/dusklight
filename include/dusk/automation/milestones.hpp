@@ -125,10 +125,36 @@ struct MilestoneObservation {
     // boundary. Queue depths are semantic scheduler state; no queue node,
     // pointer, allocator address, or host implementation detail escapes.
     struct ProcessLifecycleState {
+        struct ProcessState {
+            std::uint32_t runtimeGeneration = 0;
+            std::int16_t processName = -1;
+            std::int16_t profileName = -1;
+            std::int32_t processType = 0;
+            std::int32_t processSubtype = 0;
+            std::uint32_t parameters = 0;
+            std::int8_t initState = 0;
+            std::uint8_t createPhase = 0;
+        };
+
+        struct PendingCreate {
+            std::uint32_t runtimeGeneration = 0;
+            bool doing = false;
+            bool cancelled = false;
+            ChannelStatus processStatus = ChannelStatus::NotSampled;
+            ProcessState process;
+        };
+
+        struct PendingDelete {
+            ProcessState process;
+            std::int16_t timer = 0;
+        };
+
         ChannelStatus status = ChannelStatus::NotSampled;
         std::uint32_t activeActorCount = 0;
         std::uint32_t pendingCreateCount = 0;
         std::uint32_t pendingDeleteCount = 0;
+        std::vector<PendingCreate> pendingCreates;
+        std::vector<PendingDelete> pendingDeletes;
     };
     ProcessLifecycleState processLifecycle;
 

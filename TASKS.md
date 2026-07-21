@@ -113,6 +113,20 @@ the same goal without demonstration-relative features.
   temporal availability/change counts. The checked cross-language fixture
   carries 257 actors and nonzero synthetic queue depths, and both sides reject
   detached counts. Live cross-map variation remains unclaimed.
+- Learning-observation v21 extends those opaque queue depths with complete,
+  ordered semantic pending-process records. Create requests retain their
+  reserved runtime generation, doing/cancelled state and explicitly
+  absent/present materialized process; create and delete records retain only
+  process name/profile/type/subtype, parameters and create state, plus the
+  delete timer. Queue nodes, pointers, layers, allocator state and guessed
+  capacities remain outside the observer. Upstream observation v20 attention
+  candidates remain byte-for-byte before this append-only payload. The
+  native-writer/Rust-reader
+  fixture proves ordered two-create/three-delete decoding, historical v19/v20
+  remain explicitly count-only, tampered presence fails closed, and corpus
+  inspection reports detailed versus count-only coverage and semantic temporal
+  changes. Full native and 87-test Rust validation pass; live variation remains
+  unclaimed.
 - Native actor-view v5 now preserves those roles as typed edges to the complete
   actor set, and actor-feature view v2 exposes an independently selectable
   player-relationship family as per-actor role flags. Present-but-empty is
@@ -448,14 +462,18 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     available native shard crossed a context boundary, so real loading and
     cross-map evidence remain open; synthetic tests only prove attribution.
   - [x] Capture process lifecycle pressure without exposing process-manager
-    internals. Observation v19 copies only complete active-actor count and the
-    pending create/delete queue depths through the automation-gated observer,
-    at the same pre/post phases as the rest of the episode. Native and
-    Rust validation bind the active count to the complete actor set, require
-    zero payload for unavailable state and preserve legacy missingness. Corpus
-    inspection and global temporal coverage report status and changes without
-    retaining desired values or assigning reward. Actor-slot capacity,
-    resource-load outcomes, allocation failure and live variation remain open.
+    internals. Observation v19 copies complete active-actor count and pending
+    create/delete depths; observation v21 additionally retains every queue
+    entry in scheduler order as typed process semantics. A create request
+    distinguishes reserved identity from an absent/present materialized
+    process, and delete records retain the process semantics plus delete timer.
+    Native and Rust bind counts to complete vectors, reject noncanonical
+    absence and preserve v19/v20 as explicitly count-only. Corpus inspection
+    v12 reports queue-size distributions, materialization status and
+    process-kind coverage without desired values or actions. No pointer, node,
+    address, allocator detail or inferred capacity crosses the boundary.
+    Actor-slot capacity, resource-load outcomes, allocation failure and live
+    variation remain open.
 - [ ] Run short generic observation probes where safe—idle, movement, camera,
   targeting, contact, basic actions, actor activation and loading—and use them
   only to expose changing fields. They are not route or glitch attempts.
@@ -662,8 +680,9 @@ human-authored successful setup.
     variable-length set with raw semantic identity fields, transform, velocity
     and type/profile metadata;
   - [x] read-only process lifecycle pressure as a typed optional global
-    component: active actor population plus pending create/delete queue depths,
-    with exact phase, legacy missingness and no pointer or capacity inference;
+    component: active actor population plus complete ordered semantic
+    pending-create/delete records, with exact phase, count-only legacy
+    missingness and no pointer or capacity inference;
   - [x] derive Link-, camera-, and structural parent-relative actor features
     without changing the canonical raw actor set. `learn actor-view` binds the
     exact native shard and pointer-free profile catalog, retains complete actor

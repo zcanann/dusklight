@@ -23,6 +23,7 @@
 #include "dusk/automation/rng.hpp"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
+#include "f_pc/f_pc_create_req.h"
 #include "f_pc/f_pc_create_tag.h"
 #include "f_pc/f_pc_delete_tag.h"
 
@@ -32,6 +33,78 @@
 #include <limits>
 
 namespace dusk::automation {
+
+namespace {
+
+MilestoneObservation::ProcessLifecycleState::ProcessState process_state(
+    const base_process_class& process) {
+    return {
+        .runtimeGeneration = process.id,
+        .processName = process.name,
+        .profileName = process.profname,
+        .processType = process.type,
+        .processSubtype = process.subtype,
+        .parameters = process.parameters,
+        .initState = process.state.init_state,
+        .createPhase = process.state.create_phase,
+    };
+}
+
+bool capture_process_lifecycle(MilestoneObservation::ProcessLifecycleState& lifecycle,
+    const std::uint32_t activeActorCount) {
+    using Status = MilestoneObservation::ChannelStatus;
+    if (g_fpcCtTg_Queue.mSize < 0 || g_fpcDtTg_Queue.mSize < 0)
+        return false;
+
+    lifecycle.pendingCreates.clear();
+    lifecycle.pendingDeletes.clear();
+    lifecycle.pendingCreates.reserve(static_cast<std::size_t>(g_fpcCtTg_Queue.mSize));
+    lifecycle.pendingDeletes.reserve(static_cast<std::size_t>(g_fpcDtTg_Queue.mSize));
+
+    for (const node_class* node = g_fpcCtTg_Queue.mpHead; node != nullptr;
+         node = node->mpNextNode) {
+        const auto* tag = reinterpret_cast<const create_tag_class*>(node);
+        const auto* request = static_cast<const create_request*>(tag->mpTagData);
+        if (request == nullptr)
+            return false;
+        auto& retained = lifecycle.pendingCreates.emplace_back();
+        retained.runtimeGeneration = request->id;
+        retained.doing = request->is_doing != 0;
+        retained.cancelled = request->is_cancel != 0;
+        if (request->process != nullptr) {
+            retained.processStatus = Status::Present;
+            retained.process = process_state(*request->process);
+            if (retained.process.runtimeGeneration != retained.runtimeGeneration)
+                return false;
+        } else {
+            retained.processStatus = Status::Absent;
+        }
+    }
+
+    for (const node_class* node = g_fpcDtTg_Queue.mpHead; node != nullptr;
+         node = node->mpNextNode) {
+        const auto* tag = reinterpret_cast<const delete_tag_class*>(node);
+        const auto* process = static_cast<const base_process_class*>(tag->base.mpTagData);
+        if (process == nullptr)
+            return false;
+        lifecycle.pendingDeletes.push_back({
+            .process = process_state(*process),
+            .timer = tag->timer,
+        });
+    }
+
+    if (lifecycle.pendingCreates.size() != static_cast<std::size_t>(g_fpcCtTg_Queue.mSize) ||
+        lifecycle.pendingDeletes.size() != static_cast<std::size_t>(g_fpcDtTg_Queue.mSize))
+        return false;
+
+    lifecycle.status = Status::Present;
+    lifecycle.activeActorCount = activeActorCount;
+    lifecycle.pendingCreateCount = static_cast<std::uint32_t>(lifecycle.pendingCreates.size());
+    lifecycle.pendingDeleteCount = static_cast<std::uint32_t>(lifecycle.pendingDeletes.size());
+    return true;
+}
+
+}  // namespace
 
 struct MilestoneCollisionReadAdapter {
     static constexpr u32 KnownFlags =
@@ -1146,12 +1219,8 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     observation.actorsTruncated = false;
 
     auto& lifecycle = observation.processLifecycle;
-    if (g_fpcCtTg_Queue.mSize >= 0 && g_fpcDtTg_Queue.mSize >= 0) {
-        lifecycle.status = MilestoneObservation::ChannelStatus::Present;
-        lifecycle.activeActorCount = storage.actorObservedCount;
-        lifecycle.pendingCreateCount = static_cast<std::uint32_t>(g_fpcCtTg_Queue.mSize);
-        lifecycle.pendingDeleteCount = static_cast<std::uint32_t>(g_fpcDtTg_Queue.mSize);
-    } else {
+    if (!capture_process_lifecycle(lifecycle, storage.actorObservedCount)) {
+        lifecycle = {};
         lifecycle.status = MilestoneObservation::ChannelStatus::Unavailable;
     }
 

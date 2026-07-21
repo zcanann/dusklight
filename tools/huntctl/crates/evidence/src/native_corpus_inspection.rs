@@ -10,15 +10,15 @@ use crate::native_dynamic_collider_temporal::{
     DynamicColliderTemporalCoverage, inspect_dynamic_collider_temporal_coverage,
 };
 use crate::native_episode_shard::{
-    NativeActorObservation, NativeChannelStatus, NativeEpisode, NativeEpisodeShard,
-    NativeLearningObservation, NativeRawPad,
+    LEARNING_OBSERVATION_SCHEMA_V21, NativeActorObservation, NativeChannelStatus, NativeEpisode,
+    NativeEpisodeShard, NativeLearningObservation, NativeRawPad,
 };
 use crate::native_global_temporal::{GlobalTemporalCoverage, inspect_global_temporal_coverage};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V11: &str = "dusklight-native-corpus-inspection/v11";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V12: &str = "dusklight-native-corpus-inspection/v12";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -79,6 +79,20 @@ pub struct NativeIdentityInspection {
     /// one outcome class while the corpus contains both outcomes. Such fields
     /// require an ablation; they are not proof of leakage by themselves.
     pub outcome_separating_candidates: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProcessLifecycleRecordCoverage {
+    pub detailed_observations: u64,
+    pub count_only_observations: u64,
+    pub pending_create_sizes: SetSizeSummary,
+    pub pending_delete_sizes: SetSizeSummary,
+    pub materialized_create_processes: u64,
+    pub unmaterialized_create_requests: u64,
+    pub doing_create_requests: u64,
+    pub cancelled_create_requests: u64,
+    pub pending_delete_records: u64,
+    pub unique_process_kinds: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -149,6 +163,7 @@ pub struct NativeCorpusInspection {
     pub actor_temporal_coverage: ActorTemporalCoverage,
     pub dynamic_collider_temporal_coverage: DynamicColliderTemporalCoverage,
     pub global_temporal_coverage: GlobalTemporalCoverage,
+    pub process_lifecycle_record_coverage: ProcessLifecycleRecordCoverage,
     pub channel_coverage: BTreeMap<String, ChannelCoverage>,
     pub player_relationship_role_presence: BTreeMap<String, u64>,
     pub missing_mask_counts: BTreeMap<String, u64>,
@@ -941,6 +956,16 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     let mut rng_sizes = SetAccumulator::default();
     let mut surface_sizes = SetAccumulator::default();
     let mut dynamic_collider_sizes = SetAccumulator::default();
+    let mut lifecycle_create_sizes = SetAccumulator::default();
+    let mut lifecycle_delete_sizes = SetAccumulator::default();
+    let mut lifecycle_detailed_observations = 0_u64;
+    let mut lifecycle_count_only_observations = 0_u64;
+    let mut lifecycle_materialized_creates = 0_u64;
+    let mut lifecycle_unmaterialized_creates = 0_u64;
+    let mut lifecycle_doing_creates = 0_u64;
+    let mut lifecycle_cancelled_creates = 0_u64;
+    let mut lifecycle_delete_records = 0_u64;
+    let mut lifecycle_process_kinds = BTreeSet::new();
     let mut actor_temporal = ActorTemporalAccumulator::default();
     let mut identities = BTreeMap::<String, IdentityValues>::new();
     let mut episode_count = 0_u64;
@@ -953,6 +978,8 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     let mut truncated_actor_observations = 0_u64;
 
     for shard in shards {
+        let detailed_lifecycle =
+            shard.metadata.observation_schema == LEARNING_OBSERVATION_SCHEMA_V21;
         *observation_schemas
             .entry(shard.metadata.observation_schema.clone())
             .or_default() += 1;
@@ -1090,6 +1117,40 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         .map_or(0, |surfaces| surfaces.surfaces.len());
                     surface_sizes.push(surface_count);
                     dynamic_collider_sizes.push(observation.dynamic_colliders.len());
+                    if let Some(lifecycle) = observation.process_lifecycle.as_ref() {
+                        if detailed_lifecycle {
+                            lifecycle_detailed_observations += 1;
+                            lifecycle_create_sizes.push(lifecycle.pending_creates.len());
+                            lifecycle_delete_sizes.push(lifecycle.pending_deletes.len());
+                            for pending in &lifecycle.pending_creates {
+                                lifecycle_doing_creates += u64::from(pending.doing);
+                                lifecycle_cancelled_creates += u64::from(pending.cancelled);
+                                if let Some(process) = pending.process.as_ref() {
+                                    lifecycle_materialized_creates += 1;
+                                    lifecycle_process_kinds.insert((
+                                        process.process_name,
+                                        process.profile_name,
+                                        process.process_type,
+                                        process.process_subtype,
+                                    ));
+                                } else {
+                                    lifecycle_unmaterialized_creates += 1;
+                                }
+                            }
+                            lifecycle_delete_records += lifecycle.pending_deletes.len() as u64;
+                            for pending in &lifecycle.pending_deletes {
+                                let process = &pending.process;
+                                lifecycle_process_kinds.insert((
+                                    process.process_name,
+                                    process.profile_name,
+                                    process.process_type,
+                                    process.process_subtype,
+                                ));
+                            }
+                        } else {
+                            lifecycle_count_only_observations += 1;
+                        }
+                    }
                     let resources = observation.player_resources.as_ref();
                     let solver_flags = observation
                         .player_collision_solver
@@ -1267,7 +1328,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V11.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V12.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -1294,6 +1355,18 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         actor_temporal_coverage,
         dynamic_collider_temporal_coverage,
         global_temporal_coverage,
+        process_lifecycle_record_coverage: ProcessLifecycleRecordCoverage {
+            detailed_observations: lifecycle_detailed_observations,
+            count_only_observations: lifecycle_count_only_observations,
+            pending_create_sizes: lifecycle_create_sizes.finish(),
+            pending_delete_sizes: lifecycle_delete_sizes.finish(),
+            materialized_create_processes: lifecycle_materialized_creates,
+            unmaterialized_create_requests: lifecycle_unmaterialized_creates,
+            doing_create_requests: lifecycle_doing_creates,
+            cancelled_create_requests: lifecycle_cancelled_creates,
+            pending_delete_records: lifecycle_delete_records,
+            unique_process_kinds: lifecycle_process_kinds.len(),
+        },
         channel_coverage,
         player_relationship_role_presence,
         missing_mask_counts,
@@ -1416,7 +1489,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V11);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V12);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -1443,7 +1516,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V11);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V12);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count
@@ -1505,6 +1578,46 @@ mod tests {
             report.channel_coverage["process_lifecycle"].present,
             report.observation_count
         );
+        assert_eq!(
+            report
+                .process_lifecycle_record_coverage
+                .count_only_observations,
+            report.observation_count
+        );
+        assert_eq!(
+            report
+                .process_lifecycle_record_coverage
+                .detailed_observations,
+            0
+        );
+    }
+
+    #[test]
+    fn audits_v21_process_lifecycle_record_coverage() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v21.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        let coverage = &report.process_lifecycle_record_coverage;
+        assert_eq!(coverage.detailed_observations, report.observation_count);
+        assert_eq!(coverage.count_only_observations, 0);
+        assert_eq!(coverage.pending_create_sizes.minimum, 2);
+        assert_eq!(coverage.pending_create_sizes.maximum, 2);
+        assert_eq!(coverage.pending_delete_sizes.minimum, 3);
+        assert_eq!(
+            coverage.materialized_create_processes,
+            report.observation_count
+        );
+        assert_eq!(
+            coverage.unmaterialized_create_requests,
+            report.observation_count
+        );
+        assert_eq!(coverage.doing_create_requests, report.observation_count);
+        assert_eq!(
+            coverage.pending_delete_records,
+            report.observation_count * 3
+        );
+        assert_eq!(coverage.unique_process_kinds, 4);
     }
 
     #[test]

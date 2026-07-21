@@ -132,8 +132,10 @@ Implementation order follows missing reusable evidence, not the order of any
 published technique. The current highest-leverage gaps are complete collision
 transition coverage, non-Link relationship edges, profile-bound item/actor
 state, remaining transition/loading clocks, and semantic lifecycle outcomes.
-Existing v18 event-queue and v19 process-pressure channels are partial evidence
-for the last two rows; their presence does not make those rows complete.
+Existing v18 event-queue and v21 semantic pending-process channels are partial
+evidence for the last two rows; their presence does not make those rows
+complete. V21 records queue order and typed create/delete process state but not
+slot/resource capacity, resource-load results or allocation outcomes.
 
 For every item, promotion requires four separate claims with evidence:
 
