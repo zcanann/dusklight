@@ -1217,16 +1217,34 @@ and geometry set sizes without schema changes.
     model still recalls 0/15 held-out positives. That remains evidence for
     missing history or actor attention—not permission to hide the miss with
     aggregate MSE or route-specific timing.
+  - [x] Add compact, past-only temporal signal to the direct native encoder
+    instead of copying complete actor snapshots into every sample. Report/model
+    v4 derives one-step Link/world deltas and joins every current actor to the
+    preceding pre-input actor set by stable runtime generation; missing prior
+    frames, new actors, context changes and optional components retain explicit
+    masks. Forward heads still cannot observe the transition's post-state, and
+    the two temporal families can be removed without recollecting gameplay. On
+    the same frozen Ordon split, seed, eight epochs and 92,000 optimizer steps,
+    the merged 23-family temporal view improved the untouched test split by
+    84.12%, versus 78.07% with both temporal families removed. Their
+    independently shuffled controls reached -0.77% and -1.34%, respectively
+    (`d33d98d4...53482`; model `83b03421...724bc`; no-temporal report
+    `a8813ade...4415`). Temporal input also raised contact recall from 12/30 to
+    22/30 with one false positive in each treatment, but both still recalled
+    0/15 actor disappearances. Temporal state therefore carries real held-out
+    signal, but does not rescue the lifecycle head; actor selection/gating or a
+    stronger temporal set encoder remains an open, falsifiable next step.
 - [ ] Measure learned feature selection rather than assuming that more inputs
   helped: report attention/gating stability, held-out prediction by channel,
   rare-event recall and controlled channel-family ablations. Reject a broad
   encoder that loses to the smaller view under equal data and simulator budget,
   while preserving the canonical raw evidence for a different encoder.
   - [x] Make the direct native input a declarative, schema-bound projection
-    over 19 named core/set channel families, including actor population as a
+    over 23 named core/set channel families, including actor population as a
     separate structural family so an action-only control cannot leak actor
-    count. Omitted families remove columns rather than zeroing them, and the
-    broad view now includes typed native trigger-volume state. Report held-out
+    count, plus separately ablatable core and actor temporal deltas. Omitted
+    families remove columns rather than zeroing them, and the broad view now
+    includes typed native trigger-volume state. Report held-out
     confusion counts, recall, specificity, F1, balanced accuracy and clamped
     Brier score for contact, procedure, mode and actor-disappearance events
     against the training-mean classifier. On equal two-epoch / 23,000-step

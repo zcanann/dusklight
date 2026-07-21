@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V3: &str =
-    "dusklight-multitask-set-encoder-report/v3";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V4: &str =
+    "dusklight-multitask-set-encoder-report/v4";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -73,7 +73,9 @@ pub enum NativeEncoderChannelFamily {
     CoreRng,
     CoreGoal,
     CoreAttentionCandidates,
+    CoreTemporalDelta,
     ActorPopulation,
+    ActorTemporalDelta,
     ActorIdentity,
     ActorMotion,
     ActorLifecyclePhysics,
@@ -89,7 +91,7 @@ pub enum NativeEncoderChannelFamily {
 }
 
 impl NativeEncoderChannelFamily {
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 23] = [
         Self::CorePlayerMotion,
         Self::CoreActionPhase,
         Self::CoreEventContext,
@@ -98,7 +100,9 @@ impl NativeEncoderChannelFamily {
         Self::CoreRng,
         Self::CoreGoal,
         Self::CoreAttentionCandidates,
+        Self::CoreTemporalDelta,
         Self::ActorPopulation,
+        Self::ActorTemporalDelta,
         Self::ActorIdentity,
         Self::ActorMotion,
         Self::ActorLifecyclePhysics,
@@ -123,7 +127,9 @@ impl NativeEncoderChannelFamily {
             Self::CoreRng => "core_rng",
             Self::CoreGoal => "core_goal",
             Self::CoreAttentionCandidates => "core_attention_candidates",
+            Self::CoreTemporalDelta => "core_temporal_delta",
             Self::ActorPopulation => "actor_population",
+            Self::ActorTemporalDelta => "actor_temporal_delta",
             Self::ActorIdentity => "actor_identity",
             Self::ActorMotion => "actor_motion",
             Self::ActorLifecyclePhysics => "actor_lifecycle_physics",
@@ -209,7 +215,8 @@ impl NativeEncoderFeatureSpec {
 fn actor_column_family(family: NativeEncoderChannelFamily) -> bool {
     matches!(
         family,
-        NativeEncoderChannelFamily::ActorIdentity
+        NativeEncoderChannelFamily::ActorTemporalDelta
+            | NativeEncoderChannelFamily::ActorIdentity
             | NativeEncoderChannelFamily::ActorMotion
             | NativeEncoderChannelFamily::ActorLifecyclePhysics
             | NativeEncoderChannelFamily::ActorLinkRelative
@@ -283,6 +290,11 @@ impl NativeMultiTaskActorCorpus {
                 .ok_or_else(|| {
                     TrainableSetError::new("native multitask step is absent from episode")
                 })?;
+            let previous_pre_input = example
+                .step_index
+                .checked_sub(1)
+                .and_then(|index| episode.steps.get(index as usize))
+                .map(|step| &step.pre_input);
             if hex_128(step.pre_input.state_identity) != example.pre_input_state_xxh3_128
                 || hex_128(step.post_simulation.state_identity)
                     != example.post_simulation_state_xxh3_128
@@ -297,6 +309,12 @@ impl NativeMultiTaskActorCorpus {
                 ));
             }
             let (mut base, mut base_present) = broad_base(&step.pre_input);
+            append_core_temporal_features(
+                &mut base,
+                &mut base_present,
+                &step.pre_input,
+                previous_pre_input,
+            );
             retain_feature_families(
                 &mut base,
                 &mut base_present,
@@ -305,7 +323,7 @@ impl NativeMultiTaskActorCorpus {
             );
             let (targets, target_present) = native_targets(example);
             let mut nodes = if feature_spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
-                native_actor_nodes(&step.pre_input)
+                native_actor_nodes(&step.pre_input, previous_pre_input)
             } else {
                 Vec::new()
             };
@@ -313,6 +331,12 @@ impl NativeMultiTaskActorCorpus {
                 retain_node_feature_families(node, &feature_spec);
             }
             let (mut post_base, mut post_base_present) = broad_base(&step.post_simulation);
+            append_core_temporal_features(
+                &mut post_base,
+                &mut post_base_present,
+                &step.post_simulation,
+                Some(&step.pre_input),
+            );
             suppress_base_family(
                 &mut post_base,
                 &mut post_base_present,
@@ -326,7 +350,7 @@ impl NativeMultiTaskActorCorpus {
             );
             let mut post_nodes =
                 if feature_spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
-                    native_actor_nodes(&step.post_simulation)
+                    native_actor_nodes(&step.post_simulation, Some(&step.pre_input))
                 } else {
                     Vec::new()
                 };
@@ -679,7 +703,7 @@ impl CompleteSetMultiTaskEncoder {
         };
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V3,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V4,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
@@ -794,7 +818,7 @@ impl CompleteSetMultiTaskEncoder {
     }
 
     pub fn model_sha256(&self) -> Result<Digest, TrainableSetError> {
-        canonical_digest(b"dusklight.complete-set-multitask-encoder/v2\0", self)
+        canonical_digest(b"dusklight.complete-set-multitask-encoder/v3\0", self)
     }
 
     pub fn parameter_count(&self) -> usize {
@@ -1460,6 +1484,33 @@ fn native_base_feature_names() -> Vec<String> {
         .into_iter()
         .map(str::to_owned),
     );
+    for prefix in ["temporal_player_position", "temporal_player_velocity"] {
+        extend_vec3_feature_names(&mut names, prefix);
+    }
+    names.extend(
+        [
+            "temporal_player_forward_speed_delta",
+            "temporal_camera_yaw_delta",
+            "temporal_ground_height_delta",
+            "temporal_roof_height_delta",
+            "temporal_previous_state_available",
+            "temporal_player_comparable",
+            "temporal_procedure_changed",
+            "temporal_mode_changed",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    names.extend((0..8).map(|bit| format!("temporal_contact_changed_bit_{bit}")));
+    names.extend(
+        [
+            "temporal_event_running_changed",
+            "temporal_event_id_changed",
+            "temporal_context_changed",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
     names
 }
 
@@ -1571,6 +1622,12 @@ fn native_actor_continuous_names() -> Vec<String> {
             format!("{prefix}_angle_s16"),
         ]);
     }
+    extend_vec3_feature_names(&mut names, "temporal_position_delta");
+    extend_vec3_feature_names(&mut names, "temporal_velocity_delta");
+    names.push("temporal_forward_speed_delta".into());
+    extend_vec3_feature_names(&mut names, "temporal_current_angle_delta_s16");
+    extend_vec3_feature_names(&mut names, "temporal_shape_angle_delta_s16");
+    extend_vec3_feature_names(&mut names, "temporal_attention_position_delta");
     names
 }
 
@@ -1614,6 +1671,32 @@ fn native_actor_binary_names() -> Vec<String> {
             "attention_lock_candidate",
             "attention_action_candidate",
             "attention_check_candidate",
+            "temporal_previous_actor_present",
+            "temporal_base_state_changed",
+            "temporal_actor_type_changed",
+            "temporal_process_subtype_changed",
+            "temporal_parameters_changed",
+            "temporal_status_changed",
+            "temporal_condition_changed",
+            "temporal_home_room_changed",
+            "temporal_old_room_changed",
+            "temporal_current_room_changed",
+            "temporal_group_changed",
+            "temporal_argument_changed",
+            "temporal_pause_flag_changed",
+            "temporal_process_init_state_changed",
+            "temporal_process_create_phase_changed",
+            "temporal_cull_type_changed",
+            "temporal_demo_actor_id_changed",
+            "temporal_carry_type_changed",
+            "temporal_health_changed",
+            "temporal_heap_present_changed",
+            "temporal_model_present_changed",
+            "temporal_joint_collision_present_changed",
+            "temporal_attention_presence_changed",
+            "temporal_event_presence_changed",
+            "temporal_enemy_presence_changed",
+            "temporal_trigger_presence_changed",
         ]
         .into_iter()
         .map(str::to_owned),
@@ -1632,6 +1715,7 @@ fn native_base_feature_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::CoreRng, 12);
     extend_family(&mut families, Family::CoreGoal, 9);
     extend_family(&mut families, Family::CoreAttentionCandidates, 40);
+    extend_family(&mut families, Family::CoreTemporalDelta, 25);
     families
 }
 
@@ -1663,6 +1747,7 @@ fn native_actor_continuous_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::ActorEnemyBase, 6);
     extend_family(&mut families, Family::ActorTriggerVolume, 11);
     extend_family(&mut families, Family::ActorAttentionCandidates, 9);
+    extend_family(&mut families, Family::ActorTemporalDelta, 16);
     families
 }
 
@@ -1679,6 +1764,7 @@ fn native_actor_binary_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::ActorPlayerRelationships, 11);
     extend_family(&mut families, Family::ActorTriggerVolume, 3);
     extend_family(&mut families, Family::ActorAttentionCandidates, 3);
+    extend_family(&mut families, Family::ActorTemporalDelta, 26);
     families
 }
 
@@ -1771,16 +1857,44 @@ fn extend_vec3_feature_names(names: &mut Vec<String>, prefix: &str) {
     names.extend(["x", "y", "z"].map(|axis| format!("{prefix}_{axis}")));
 }
 
-fn native_actor_nodes(observation: &NativeLearningObservation) -> Vec<TypedSetNode> {
+fn native_actor_nodes(
+    observation: &NativeLearningObservation,
+    previous: Option<&NativeLearningObservation>,
+) -> Vec<TypedSetNode> {
     let actors_by_generation = observation
         .actors
         .iter()
         .map(|actor| (actor.runtime_generation, actor))
         .collect::<BTreeMap<_, _>>();
+    let previous_comparable = previous.is_some_and(|previous| {
+        observation.stage == previous.stage
+            && observation.room == previous.room
+            && observation.layer == previous.layer
+    });
+    let previous_actors_by_generation = previous
+        .filter(|_| previous_comparable)
+        .map(|observation| {
+            observation
+                .actors
+                .iter()
+                .map(|actor| (actor.runtime_generation, actor))
+                .collect::<BTreeMap<_, _>>()
+        })
+        .unwrap_or_default();
     observation
         .actors
         .iter()
-        .map(|actor| native_actor_node(observation, actor, &actors_by_generation))
+        .map(|actor| {
+            native_actor_node(
+                observation,
+                actor,
+                &actors_by_generation,
+                previous_actors_by_generation
+                    .get(&actor.runtime_generation)
+                    .copied(),
+                previous_comparable,
+            )
+        })
         .collect()
 }
 
@@ -1799,6 +1913,8 @@ fn native_actor_node(
     observation: &NativeLearningObservation,
     actor: &NativeActorObservation,
     actors_by_generation: &BTreeMap<u64, &NativeActorObservation>,
+    previous_actor: Option<&NativeActorObservation>,
+    previous_observation_available: bool,
 ) -> TypedSetNode {
     let attention_available =
         observation.attention_candidates_status == NativeChannelStatus::Present;
@@ -2146,6 +2262,60 @@ fn native_actor_node(
             candidate.is_some(),
         );
     }
+    let actor_comparable = previous_actor.is_some();
+    push_continuous3(
+        &mut continuous,
+        &mut continuous_present,
+        previous_actor.map_or([0.0; 3], |previous| {
+            subtract3(actor.position, previous.position)
+        }),
+        actor_comparable,
+    );
+    push_continuous3(
+        &mut continuous,
+        &mut continuous_present,
+        previous_actor.map_or([0.0; 3], |previous| {
+            subtract3(actor.velocity, previous.velocity)
+        }),
+        actor_comparable,
+    );
+    push_continuous(
+        &mut continuous,
+        &mut continuous_present,
+        previous_actor.map_or(0.0, |previous| actor.forward_speed - previous.forward_speed),
+        actor_comparable,
+    );
+    for (current, previous) in [
+        (
+            actor.current_angle,
+            previous_actor.map(|actor| actor.current_angle),
+        ),
+        (
+            actor.shape_angle,
+            previous_actor.map(|actor| actor.shape_angle),
+        ),
+    ] {
+        push_continuous3(
+            &mut continuous,
+            &mut continuous_present,
+            previous.map_or([0.0; 3], |previous| {
+                std::array::from_fn(|index| f32::from(current[index].wrapping_sub(previous[index])))
+            }),
+            previous.is_some(),
+        );
+    }
+    let attention_pair = actor
+        .attention
+        .as_ref()
+        .zip(previous_actor.and_then(|previous| previous.attention.as_ref()));
+    push_continuous3(
+        &mut continuous,
+        &mut continuous_present,
+        attention_pair.map_or([0.0; 3], |(current, previous)| {
+            subtract3(current.position, previous.position)
+        }),
+        attention_pair.is_some(),
+    );
 
     let mut binary = Vec::new();
     let mut binary_present = Vec::new();
@@ -2222,6 +2392,40 @@ fn native_actor_node(
     );
     for candidate in [lock_candidate, action_candidate, check_candidate] {
         boolean(candidate.is_some(), attention_available);
+    }
+    boolean(previous_actor.is_some(), previous_observation_available);
+    let previous_available = previous_actor.is_some();
+    let changed = previous_actor.map(|previous| {
+        [
+            actor.base_state_available != previous.base_state_available,
+            actor.actor_type != previous.actor_type,
+            actor.process_subtype != previous.process_subtype,
+            actor.parameters != previous.parameters,
+            actor.status != previous.status,
+            actor.condition != previous.condition,
+            actor.home_room != previous.home_room,
+            actor.old_room != previous.old_room,
+            actor.current_room != previous.current_room,
+            actor.group != previous.group,
+            actor.argument != previous.argument,
+            actor.pause_flag != previous.pause_flag,
+            actor.process_init_state != previous.process_init_state,
+            actor.process_create_phase != previous.process_create_phase,
+            actor.cull_type != previous.cull_type,
+            actor.demo_actor_id != previous.demo_actor_id,
+            actor.carry_type != previous.carry_type,
+            actor.health != previous.health,
+            actor.heap_present != previous.heap_present,
+            actor.model_present != previous.model_present,
+            actor.joint_collision_present != previous.joint_collision_present,
+            actor.attention.is_some() != previous.attention.is_some(),
+            actor.event_participation.is_some() != previous.event_participation.is_some(),
+            actor.enemy_base.is_some() != previous.enemy_base.is_some(),
+            actor.trigger_volume.is_some() != previous.trigger_volume.is_some(),
+        ]
+    });
+    for value in changed.unwrap_or([false; 25]) {
+        boolean(value, previous_available);
     }
     debug_assert_eq!(categorical.len(), native_actor_categorical_names().len());
     debug_assert_eq!(continuous.len(), native_actor_continuous_names().len());
@@ -2541,9 +2745,136 @@ fn broad_base(observation: &NativeLearningObservation) -> (Vec<f32>, Vec<bool>) 
     (values, present)
 }
 
+fn append_core_temporal_features(
+    values: &mut Vec<f32>,
+    present: &mut Vec<bool>,
+    current: &NativeLearningObservation,
+    previous: Option<&NativeLearningObservation>,
+) {
+    let comparable = previous.is_some_and(|previous| {
+        current.player_present
+            && previous.player_present
+            && current.player_is_link == previous.player_is_link
+            && current.stage == previous.stage
+            && current.room == previous.room
+            && current.layer == previous.layer
+    });
+    let player_delta = |current: [f32; 3], select: fn(&NativeLearningObservation) -> [f32; 3]| {
+        previous
+            .filter(|_| comparable)
+            .map_or([0.0; 3], |observation| {
+                subtract3(current, select(observation))
+            })
+    };
+    push_continuous3(
+        values,
+        present,
+        player_delta(current.player_position, |value| value.player_position),
+        comparable,
+    );
+    push_continuous3(
+        values,
+        present,
+        player_delta(current.player_velocity, |value| value.player_velocity),
+        comparable,
+    );
+    push_continuous(
+        values,
+        present,
+        previous.map_or(0.0, |previous| {
+            current.player_forward_speed - previous.player_forward_speed
+        }),
+        comparable,
+    );
+    let camera_pair = current
+        .camera_yaw_radians
+        .zip(previous.and_then(|previous| previous.camera_yaw_radians));
+    push_continuous(
+        values,
+        present,
+        camera_pair.map_or(0.0, |(current, previous)| current - previous),
+        camera_pair.is_some() && comparable,
+    );
+    for (current_height, previous_height) in [
+        (
+            current.player_ground_height,
+            previous.and_then(|value| value.player_ground_height),
+        ),
+        (
+            current.player_roof_height,
+            previous.and_then(|value| value.player_roof_height),
+        ),
+    ] {
+        let pair = current_height.zip(previous_height);
+        push_continuous(
+            values,
+            present,
+            pair.map_or(0.0, |(current, previous)| current - previous),
+            pair.is_some() && comparable,
+        );
+    }
+    push_continuous(values, present, f32::from(previous.is_some()), true);
+    push_continuous(values, present, f32::from(comparable), true);
+    push_continuous(
+        values,
+        present,
+        previous.map_or(0.0, |previous| {
+            f32::from(current.player_procedure != previous.player_procedure)
+        }),
+        comparable,
+    );
+    push_continuous(
+        values,
+        present,
+        previous.map_or(0.0, |previous| {
+            f32::from(current.player_mode_flags != previous.player_mode_flags)
+        }),
+        comparable,
+    );
+    for bit in 0..8 {
+        push_continuous(
+            values,
+            present,
+            previous.map_or(0.0, |previous| {
+                f32::from((current.player_contacts ^ previous.player_contacts) & (1_u8 << bit) != 0)
+            }),
+            comparable,
+        );
+    }
+    push_continuous(
+        values,
+        present,
+        previous.map_or(0.0, |previous| {
+            f32::from(current.event_running != previous.event_running)
+        }),
+        previous.is_some(),
+    );
+    push_continuous(
+        values,
+        present,
+        previous.map_or(0.0, |previous| {
+            f32::from(current.event_id != previous.event_id)
+        }),
+        previous.is_some(),
+    );
+    push_continuous(
+        values,
+        present,
+        previous.map_or(0.0, |previous| {
+            f32::from(
+                current.stage != previous.stage
+                    || current.room != previous.room
+                    || current.layer != previous.layer
+                    || current.point != previous.point,
+            )
+        }),
+        previous.is_some(),
+    );
+}
+
 fn sample_manifest_digest(samples: &[MultiTaskSetSample]) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-multitask-sample-dataset/v2\0",
+        b"dusklight.native-multitask-sample-dataset/v3\0",
         &samples
             .iter()
             .map(|sample| {
@@ -2709,7 +3040,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v3\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v4\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -2805,7 +3136,7 @@ mod tests {
         .unwrap();
         let observation = &shard.episodes[0].steps[0].pre_input;
         assert!(!observation.actors_truncated);
-        let nodes = native_actor_nodes(observation);
+        let nodes = native_actor_nodes(observation, None);
         assert_eq!(nodes.len(), observation.actors.len());
         assert_eq!(
             nodes.iter().map(|node| node.stable_id).collect::<Vec<_>>(),
@@ -2837,11 +3168,28 @@ mod tests {
         assert_eq!(present.len(), 169);
         assert!(base[129..].iter().all(|value| *value == 0.0));
         assert!(present[129..].iter().all(|value| !*value));
+        let mut temporal_base = base.clone();
+        let mut temporal_present = present.clone();
+        append_core_temporal_features(&mut temporal_base, &mut temporal_present, observation, None);
         let all = NativeEncoderFeatureSpec::all();
-        assert_eq!(native_base_feature_names().len(), 169);
-        assert_eq!(native_base_feature_families().len(), 169);
-        let mut post_base = base.clone();
-        let mut post_present = present.clone();
+        assert_eq!(temporal_base.len(), 194);
+        assert_eq!(temporal_present.len(), 194);
+        assert_eq!(native_base_feature_names().len(), 194);
+        assert_eq!(native_base_feature_families().len(), 194);
+        let previous_available = native_base_feature_names()
+            .iter()
+            .position(|name| name == "temporal_previous_state_available")
+            .unwrap();
+        assert_eq!(temporal_base[previous_available], 0.0);
+        assert!(temporal_present[previous_available]);
+        let actor_previous_available = native_actor_binary_names()
+            .iter()
+            .position(|name| name == "temporal_previous_actor_present")
+            .unwrap();
+        assert!(!nodes[0].binary[actor_previous_available]);
+        assert!(!nodes[0].binary_present[actor_previous_available]);
+        let mut post_base = temporal_base.clone();
+        let mut post_present = temporal_present.clone();
         suppress_base_family(
             &mut post_base,
             &mut post_present,
@@ -2852,8 +3200,8 @@ mod tests {
                 assert_eq!(post_base[index], 0.0);
                 assert!(!post_present[index]);
             } else {
-                assert_eq!(post_base[index], base[index]);
-                assert_eq!(post_present[index], present[index]);
+                assert_eq!(post_base[index], temporal_base[index]);
+                assert_eq!(post_present[index], temporal_present[index]);
             }
         }
         assert_ne!(native_actor_feature_schema(&all).unwrap(), Digest::ZERO);
@@ -2875,6 +3223,74 @@ mod tests {
             native_actor_feature_schema(&reduced).unwrap(),
             native_actor_feature_schema(&all).unwrap()
         );
+    }
+
+    #[test]
+    fn temporal_features_are_past_only_and_join_actors_by_runtime_generation() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v15.dseps"
+        ))
+        .unwrap();
+        let previous = shard.episodes[0].steps[0].pre_input.clone();
+        let mut current = previous.clone();
+        current.player_position[0] += 1.25;
+        current.player_velocity[2] -= 0.5;
+        let actor = current.actors.first_mut().unwrap();
+        let stable_id = actor.runtime_generation;
+        actor.position[0] += 3.5;
+        actor.velocity[1] -= 2.0;
+        actor.status ^= 1;
+
+        let (mut base, mut present) = broad_base(&current);
+        append_core_temporal_features(&mut base, &mut present, &current, Some(&previous));
+        let base_names = native_base_feature_names();
+        let player_delta_x = base_names
+            .iter()
+            .position(|name| name == "temporal_player_position_x")
+            .unwrap();
+        assert_eq!(base[player_delta_x], 1.25);
+        assert!(present[player_delta_x]);
+
+        let node = native_actor_nodes(&current, Some(&previous))
+            .into_iter()
+            .find(|node| node.stable_id == stable_id)
+            .unwrap();
+        let continuous_names = native_actor_continuous_names();
+        let position_delta_x = continuous_names
+            .iter()
+            .position(|name| name == "temporal_position_delta_x")
+            .unwrap();
+        let velocity_delta_y = continuous_names
+            .iter()
+            .position(|name| name == "temporal_velocity_delta_y")
+            .unwrap();
+        assert_eq!(node.continuous[position_delta_x], 3.5);
+        assert!(node.continuous_present[position_delta_x]);
+        assert_eq!(node.continuous[velocity_delta_y], -2.0);
+        assert!(node.continuous_present[velocity_delta_y]);
+
+        let binary_names = native_actor_binary_names();
+        let previous_actor_present = binary_names
+            .iter()
+            .position(|name| name == "temporal_previous_actor_present")
+            .unwrap();
+        let status_changed = binary_names
+            .iter()
+            .position(|name| name == "temporal_status_changed")
+            .unwrap();
+        assert!(node.binary[previous_actor_present]);
+        assert!(node.binary_present[previous_actor_present]);
+        assert!(node.binary[status_changed]);
+        assert!(node.binary_present[status_changed]);
+
+        current.room = current.room.wrapping_add(1);
+        let context_changed_node = native_actor_nodes(&current, Some(&previous))
+            .into_iter()
+            .find(|node| node.stable_id == stable_id)
+            .unwrap();
+        assert!(!context_changed_node.binary[previous_actor_present]);
+        assert!(!context_changed_node.binary_present[previous_actor_present]);
+        assert!(!context_changed_node.continuous_present[position_delta_x]);
     }
 
     #[test]
@@ -2930,7 +3346,7 @@ mod tests {
         ))
         .unwrap();
         let observation = &shard.episodes[0].steps[0].pre_input;
-        let node = native_actor_nodes(observation)
+        let node = native_actor_nodes(observation, None)
             .into_iter()
             .find(|node| node.stable_id == 7)
             .unwrap();

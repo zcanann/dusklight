@@ -3554,10 +3554,10 @@ fn decode_observation(
             "attention-candidate actor or player availability is inconsistent",
         ));
     }
-    if observation_version >= OBSERVATION_VERSION_V21 {
-        if let Some(lifecycle) = process_lifecycle.as_mut() {
-            decode_pending_process_records(reader, lifecycle)?;
-        }
+    if observation_version >= OBSERVATION_VERSION_V21
+        && let Some(lifecycle) = process_lifecycle.as_mut()
+    {
+        decode_pending_process_records(reader, lifecycle)?;
     }
     Ok(NativeLearningObservation {
         phase,
