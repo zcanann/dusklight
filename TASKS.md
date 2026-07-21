@@ -813,6 +813,24 @@ human-authored successful setup.
       whatever transition ordinary gameplay reaches; it contains no named
       setup, selected event, desired destination, input sequence, route or
       reward. Door/warp/resource queues and distinct clock domains remain open.
+    - [x] Retain generic engine-owned clock and pause domains without assigning
+      them meaning. Learning observation v23 copies the framework and
+      gameplay-only frame counters, global and scene pause gates/timers,
+      overlap-request/peek state, demo mode/frame/status, and the optional HUD
+      timer's mode/current/limit values. Demo and timer subcomponents preserve
+      present/absent/unavailable independently; legacy v2-v22 shards remain
+      explicitly not sampled. Capture uses only existing read accessors and
+      globals: it does not advance a request, load, event, timer, pause state or
+      simulation clock. Corpus-inspection v14 and global temporal coverage
+      report raw presence/change, while complete-set learner adapter v5 exposes
+      `core_clock_domains` as a separately ablatable masked family. The native
+      writer and Rust decoder reject inconsistent missingness and impossible
+      demo frame relationships. Cross-language fixture
+      `9b5d1402...c9261303` and fail-closed tests pass. These are candidate
+      signals from whatever gameplay the learner reaches; there is no named
+      behavior, selected event, target timing, prescribed action, reward or
+      reproduction logic. Door/warp/resource-load phases and live temporal
+      variation remain open, so the parent is not complete.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

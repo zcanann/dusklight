@@ -27,8 +27,11 @@ their rank, type, weight, distance and angle. The candidate lists are also
 available to the shared complete-actor-set encoder through explicit masks;
 the generic event-manager and pending scene-handoff state now additionally
 retains event-data readiness, camera-play state, current event identity/goal,
-pending destination, and wipe mode/speed. These channels do not prescribe an
-actor, event, destination, route, or input. Other items
+pending destination, and wipe mode/speed. Engine-owned framework/gameplay
+frame counters, global/scene pause gates, overlap-request state, demo progress,
+and the optional HUD timer are also retained with nested missingness. These
+channels do not prescribe an actor, event, destination, timing target, route,
+or input. Other items
 in this baseline remain evidence channels unless separately promoted through
 learner evaluation.
 
@@ -51,9 +54,11 @@ The audit uses these controlled capability names:
 - **item/projectile state**: typed lifecycle, trajectory, collision and item
   action state;
 - **event/loading state**: the message session, pending generic event
-  requests/participants, event-manager readiness/current identity/goal, and
-  pending destination/wipe state are captured; door, warp and resource queues
-  plus their distinct time domains remain incomplete;
+  requests/participants, event-manager readiness/current identity/goal,
+  pending destination/wipe state, framework/gameplay clocks, pause gates,
+  overlap requests, demo progress and the optional HUD timer are captured;
+  door, warp and resource queues plus their distinct time domains remain
+  incomplete;
 - **lifecycle/capacity state**: process creation/deletion, actor slots,
   resource loads and heap/allocation outcomes.
 
@@ -99,7 +104,8 @@ in this order of cross-case reuse:
 3. typed item/projectile lifecycle, trajectory, collision and action state;
 4. typed enemy/action/animation/timer components with explicit masks;
 5. remaining trigger, door, warp and loading queues with explicit clock
-   domains (generic message and pending event-request state are now captured);
+   domains (generic message, pending event-request state and several
+   engine-owned simulation/pause/demo clocks are now captured);
 6. process lifecycle, actor-slot occupancy, resource capacity and allocation
    outcomes.
 
@@ -136,9 +142,10 @@ Implementation order follows missing reusable evidence, not the order of any
 published technique. The current highest-leverage gaps are complete collision
 transition coverage, non-Link relationship edges, profile-bound item/actor
 state, remaining transition/loading clocks, and semantic lifecycle outcomes.
-Existing v18 event-queue, v21 semantic pending-process, and v22 generic
-event-transition channels are partial evidence for the last two rows; their
-presence does not make those rows complete. V21 records queue order and typed
+Existing v18 event-queue, v21 semantic pending-process, v22 generic
+event-transition and v23 clock-domain channels are partial evidence for the
+last two rows; their presence does not make those rows complete. V21 records
+queue order and typed
 create/delete process state but not slot/resource capacity, resource-load
 results or allocation outcomes.
 

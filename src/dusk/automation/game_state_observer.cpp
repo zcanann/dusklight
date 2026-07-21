@@ -14,6 +14,7 @@
 #include "d/actor/d_a_title.h"
 #include "d/d_camera.h"
 #include "d/d_com_inf_game.h"
+#include "d/d_demo.h"
 #include "d/d_msg_object.h"
 #include "d/d_s_name.h"
 #include "d/d_s_play.h"
@@ -23,9 +24,11 @@
 #include "dusk/automation/rng.hpp"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
+#include "f_op/f_op_overlap_mng.h"
 #include "f_pc/f_pc_create_req.h"
 #include "f_pc/f_pc_create_tag.h"
 #include "f_pc/f_pc_delete_tag.h"
+#include "SSystem/SComponent/c_counter.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1152,6 +1155,38 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         transition.nextWipeSpeed = dComIfGp_getNextStageWipeSpeed();
     } else {
         transition.nextStageStatus = MilestoneObservation::ChannelStatus::Absent;
+    }
+
+    auto& clocks = observation.clockDomains;
+    clocks.status = MilestoneObservation::ChannelStatus::Present;
+    clocks.frameworkFrames = g_Counter.mCounter0;
+    clocks.gameplayFrames = g_Counter.mTimer;
+    clocks.globalPause = dComIfGp_isPauseFlag() != 0;
+    clocks.scenePaused = dScnPly_c::isPause() != 0;
+    clocks.scenePauseTimer = dScnPly_c::pauseTimer;
+    clocks.sceneNextPauseTimer = dScnPly_c::nextPauseTimer;
+    clocks.overlapRequestActive = fopOvlpM_IsDoingReq() != 0;
+    clocks.overlapFadeoutPeek = fopOvlpM_IsPeek() != 0;
+    if (dDemo_c::getMode() == 0) {
+        clocks.demoStatus = MilestoneObservation::ChannelStatus::Absent;
+    } else {
+        clocks.demoStatus = MilestoneObservation::ChannelStatus::Present;
+        clocks.demoMode = dDemo_c::getMode();
+        clocks.demoFrame = dDemo_c::getFrame();
+        clocks.demoFrameNoMessage = dDemo_c::getFrameNoMsg();
+        clocks.demoFlags = dDemo_c::isStatus(~std::uint32_t{0});
+    }
+    const bool timerObjectPresent = dComIfG_getTimerPtr() != nullptr;
+    const std::int32_t timerMode = dComIfG_getTimerMode();
+    if (timerObjectPresent && timerMode >= 0) {
+        clocks.timerStatus = MilestoneObservation::ChannelStatus::Present;
+        clocks.timerMode = timerMode;
+        clocks.timerNowMs = dComIfG_getTimerNowTimeMs();
+        clocks.timerLimitMs = dComIfG_getTimerLimitTimeMs();
+    } else if (!timerObjectPresent && timerMode == -1) {
+        clocks.timerStatus = MilestoneObservation::ChannelStatus::Absent;
+    } else {
+        clocks.timerStatus = MilestoneObservation::ChannelStatus::Unavailable;
     }
 
     if (player != nullptr) {

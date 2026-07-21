@@ -89,6 +89,10 @@ fn golden_v22() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v22.dseps")
 }
 
+fn golden_v23() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v23.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -1163,6 +1167,60 @@ fn decodes_v22_generic_event_transition_state_with_legacy_missingness() {
 }
 
 #[test]
+fn decodes_v23_generic_clock_domains_with_legacy_missingness() {
+    let shard = NativeEpisodeShard::decode(golden_v23()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V23
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(
+            observation.clock_domains_status,
+            NativeChannelStatus::Present
+        );
+        assert_eq!(
+            observation.clock_domains.as_ref().unwrap(),
+            &NativeClockDomainObservation {
+                framework_frames: 1000,
+                gameplay_frames: 900,
+                global_pause: false,
+                scene_paused: true,
+                scene_pause_timer: 1,
+                scene_next_pause_timer: 2,
+                overlap_request_active: true,
+                overlap_fadeout_peek: false,
+                demo_status: NativeChannelStatus::Present,
+                demo_mode: 1,
+                demo_frame: 40,
+                demo_frame_no_message: 35,
+                demo_flags: 3,
+                timer_status: NativeChannelStatus::Present,
+                timer_mode: 4,
+                timer_now_ms: 1234,
+                timer_limit_ms: 5000,
+            }
+        );
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v22()).unwrap();
+    assert!(legacy.episodes.iter().all(|episode| {
+        episode.steps.iter().all(|step| {
+            [&step.pre_input, &step.post_simulation]
+                .into_iter()
+                .all(|observation| {
+                    observation.clock_domains_status == NativeChannelStatus::NotSampled
+                        && observation.clock_domains.is_none()
+                })
+        })
+    }));
+}
+
+#[test]
 fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
     let unknown_type = mutate_first_v18_episode(|expanded| {
         let queue = first_v18_event_queue_offset(expanded);
@@ -1429,6 +1487,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V20
                             | LEARNING_OBSERVATION_SCHEMA_V21
                             | LEARNING_OBSERVATION_SCHEMA_V22
+                            | LEARNING_OBSERVATION_SCHEMA_V23
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1478,6 +1537,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V20
             | LEARNING_OBSERVATION_SCHEMA_V21
             | LEARNING_OBSERVATION_SCHEMA_V22
+            | LEARNING_OBSERVATION_SCHEMA_V23
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

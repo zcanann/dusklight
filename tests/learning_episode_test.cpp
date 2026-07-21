@@ -454,6 +454,22 @@ struct ObservationFixture {
         observation.eventTransition.nextPoint = 3;
         observation.eventTransition.nextWipe = 5;
         observation.eventTransition.nextWipeSpeed = 2;
+        observation.clockDomains.status = MilestoneObservation::ChannelStatus::Present;
+        observation.clockDomains.frameworkFrames = 1000;
+        observation.clockDomains.gameplayFrames = 900;
+        observation.clockDomains.scenePaused = true;
+        observation.clockDomains.scenePauseTimer = 1;
+        observation.clockDomains.sceneNextPauseTimer = 2;
+        observation.clockDomains.overlapRequestActive = true;
+        observation.clockDomains.demoStatus = MilestoneObservation::ChannelStatus::Present;
+        observation.clockDomains.demoMode = 1;
+        observation.clockDomains.demoFrame = 40;
+        observation.clockDomains.demoFrameNoMessage = 35;
+        observation.clockDomains.demoFlags = 3;
+        observation.clockDomains.timerStatus = MilestoneObservation::ChannelStatus::Present;
+        observation.clockDomains.timerMode = 4;
+        observation.clockDomains.timerNowMs = 1234;
+        observation.clockDomains.timerLimitMs = 5000;
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -1026,6 +1042,32 @@ void test_event_transition_fails_closed() {
     REQUIRE(error.find("inconsistent event-transition") != std::string::npos);
 }
 
+void test_clock_domains_fail_closed() {
+    ObservationFixture invalidDemo;
+    invalidDemo.observation.clockDomains.demoFrameNoMessage =
+        invalidDemo.observation.clockDomains.demoFrame + 1;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, invalidDemo.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent clock-domain") != std::string::npos);
+
+    ObservationFixture invalidTimer;
+    invalidTimer.observation.clockDomains.timerStatus =
+        MilestoneObservation::ChannelStatus::Absent;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, invalidTimer.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent clock-domain") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -1129,6 +1171,7 @@ int main(const int argc, char** argv) {
     test_process_lifecycle_fails_closed();
     test_attention_candidates_fail_closed();
     test_event_transition_fails_closed();
+    test_clock_domains_fail_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();
