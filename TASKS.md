@@ -198,6 +198,19 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     and 58 profiles with zero rejections (`061ed9a4...cb0a`). This proves the
     capture path on the surveyed slice; the parent item remains open until all
     successful catalog entries have equivalent evidence.
+  - [x] Report learner-facing field coverage per actor profile from that same
+    independently parity-checked population. Stage actor coverage v4 hashes
+    each typed field value, records fixed-vector components separately, and
+    publishes per-profile sample, truth and distinct-value counts without raw
+    values or any desired state. A current v14 observer sample verified 313
+    complete actors across three stages and 59 profiles; all 59 aggregate
+    profiles and all 83 stage/profile cells exposed the same 55 typed paths,
+    while 43 aggregate profiles showed variation in at least one field. The
+    sealed report is `b7cec857...644f2` (ledger `0b468521...3bf0d`). A fourth
+    `F_SP103` case was excluded fail-closed as `actor_catalog_incomplete` while
+    crossing a load boundary. This is terminal-boundary coverage over a small
+    sample, not proof of temporal variation or all-stage completeness, so the
+    parent item remains open.
 - [ ] Audit universal actor information: stable runtime identity and spawn
   generation, authored placement identity, transform, velocity, scale,
   collision/body information, action/procedure and animation state,
@@ -304,14 +317,7 @@ probe, demonstration, curriculum, option, reward term or preferred action.
   - [x] Add a generic contact sweep that exercises eight stick directions with
     neutral release phases while owning only port zero. It has no buttons,
     target, objective, stage-specific path or interaction sequence; its purpose
-    is to expose changing collision/contact fields for the coverage audit. A
-    four-origin, 160-tick pass over D_MN01, F_SP103, F_SP104 and F_SP115
-    authenticated every trace and exact applied PAD with zero rejected cases
-    (ledger `39461b82...7cca29`). Ordinary movement from F_SP103 crossed into
-    F_SP00, so the matrix attributes its 71 pre-transition and 89 post-transition
-    records to separate actual-stage cells instead of mislabeling all 160 as the
-    requested boot stage. The five-cell coverage report is
-    `3cd25180...3a8ac`; this is state-variation evidence, not route success.
+    is to expose changing collision/contact fields for the coverage audit.
   - [ ] Add general contact, actor-activation and loading probes without
     encoding a known route or interaction sequence, then run a stratified
     cross-map sample and report which typed fields actually vary.
