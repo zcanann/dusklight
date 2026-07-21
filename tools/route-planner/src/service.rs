@@ -8,7 +8,7 @@ use dusklight_route_planner::graph::PlannerGraph;
 use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
-use dusklight_route_planner::route_book::RouteBook;
+use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 
@@ -32,6 +32,12 @@ pub enum PlannerServiceRequest {
         request_id: String,
         book: Box<RouteBook>,
         catalog: Box<ComposedPlannerCatalog>,
+    },
+    EditRouteBook {
+        request_id: String,
+        book: Box<RouteBook>,
+        catalog: Box<ComposedPlannerCatalog>,
+        edit_batch: Box<RouteBookEditBatch>,
     },
     Compose {
         request_id: String,
@@ -66,6 +72,7 @@ impl PlannerServiceRequest {
         match self {
             Self::ValidateRefinementPack { request_id, .. }
             | Self::ValidateRouteBook { request_id, .. }
+            | Self::EditRouteBook { request_id, .. }
             | Self::Compose { request_id, .. }
             | Self::ProjectGraph { request_id, .. }
             | Self::InspectState { request_id, .. }
@@ -100,6 +107,11 @@ pub enum PlannerServicePayload {
         route_book_id: String,
         route_book_sha256: Digest,
     },
+    EditedRouteBook {
+        book: Box<RouteBook>,
+        previous_route_book_sha256: Digest,
+        route_book_sha256: Digest,
+    },
     ComposedCatalog {
         catalog: Box<ComposedPlannerCatalog>,
         catalog_sha256: Digest,
@@ -129,14 +141,31 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                     pack_sha256,
                 })
         }
-        PlannerServiceRequest::ValidateRouteBook { book, catalog, .. } => book
-            .validate_against(&catalog.facts, &catalog.mechanics)
-            .and_then(|()| {
+        PlannerServiceRequest::ValidateRouteBook { book, catalog, .. } => {
+            book.validate_against_composed(&catalog).and_then(|()| {
                 Ok(PlannerServicePayload::RouteBookValid {
                     route_book_id: book.manifest.id.clone(),
                     route_book_sha256: book.digest()?,
                 })
-            }),
+            })
+        }
+        PlannerServiceRequest::EditRouteBook {
+            book,
+            catalog,
+            edit_batch,
+            ..
+        } => book.digest().and_then(|previous_route_book_sha256| {
+            edit_batch
+                .apply_composed(&book, &catalog)
+                .and_then(|edited| {
+                    let route_book_sha256 = edited.digest()?;
+                    Ok(PlannerServicePayload::EditedRouteBook {
+                        book: Box::new(edited),
+                        previous_route_book_sha256,
+                        route_book_sha256,
+                    })
+                })
+        }),
         PlannerServiceRequest::Compose {
             facts,
             mechanics,

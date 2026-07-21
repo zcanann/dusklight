@@ -8,7 +8,7 @@ use dusklight_route_planner::graph::PlannerGraph;
 use dusklight_route_planner::identity::{ContentIdentity, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
-use dusklight_route_planner::route_book::RouteBook;
+use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
@@ -42,6 +42,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("compose") => compose(&args[1..]),
         Some("extract-world") => extract_world(&args[1..]),
+        Some("edit-route-book") => edit_route_book(&args[1..]),
         Some("inspect-state") => inspect_state_command(&args[1..]),
         Some("project-graph") => project_graph(&args[1..]),
         Some("serve-stdio") => serve_stdio(&args[1..]),
@@ -59,30 +60,74 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn validate_route_book(args: &[String]) -> Result<(), Box<dyn Error>> {
+fn edit_route_book(args: &[String]) -> Result<(), Box<dyn Error>> {
     let route_book_path = required_path(args, "--route-book")?;
+    let edits_path = required_path(args, "--edits")?;
+    let output = required_path(args, "--output")?;
     let book = RouteBook::decode_canonical(&fs::read(route_book_path)?)?;
-    let (facts, mechanics) = match (
+    let batch = RouteBookEditBatch::decode_canonical(&fs::read(edits_path)?)?;
+    let previous_sha256 = book.digest()?;
+    let edited = match (
         option(args, "--catalog"),
         option(args, "--facts"),
         option(args, "--mechanics"),
     ) {
         (Some(path), None, None) => {
             let catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?;
-            (catalog.facts, catalog.mechanics)
+            batch.apply_composed(&book, &catalog)?
         }
-        (None, Some(facts), Some(mechanics)) => (
-            FactCatalog::decode_canonical(&fs::read(facts)?)?,
-            MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?,
-        ),
+        (None, Some(facts), Some(mechanics)) => {
+            let facts = FactCatalog::decode_canonical(&fs::read(facts)?)?;
+            let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?;
+            batch.apply(&book, &facts, &mechanics)?
+        }
+        _ => {
+            return Err(
+                "edit-route-book requires either --catalog CATALOG.json or both --facts FACTS.json and --mechanics MECHANICS.json"
+                    .into(),
+            );
+        }
+    };
+    let bytes = edited.canonical_bytes()?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": edited.schema,
+            "route_book_id": edited.manifest.id,
+            "previous_sha256": previous_sha256,
+            "sha256": edited.digest()?,
+            "output": output,
+            "bytes": bytes.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn validate_route_book(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let route_book_path = required_path(args, "--route-book")?;
+    let book = RouteBook::decode_canonical(&fs::read(route_book_path)?)?;
+    match (
+        option(args, "--catalog"),
+        option(args, "--facts"),
+        option(args, "--mechanics"),
+    ) {
+        (Some(path), None, None) => {
+            let catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?;
+            book.validate_against_composed(&catalog)?;
+        }
+        (None, Some(facts), Some(mechanics)) => {
+            let facts = FactCatalog::decode_canonical(&fs::read(facts)?)?;
+            let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?;
+            book.validate_against(&facts, &mechanics)?;
+        }
         _ => {
             return Err(
                 "validate-route-book requires either --catalog CATALOG.json or both --facts FACTS.json and --mechanics MECHANICS.json"
                     .into(),
             );
         }
-    };
-    book.validate_against(&facts, &mechanics)?;
+    }
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
@@ -473,6 +518,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
     );
 }

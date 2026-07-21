@@ -13,10 +13,12 @@ planner behavior.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns eight operations:
+The planner CLI currently owns nine operations:
 
 - `compose` validates deterministic refinement-pack stacks and emits a canonical
   composed fact/mechanics catalog.
+- `edit-route-book` applies an atomic, expected-digest-checked batch of typed
+  route-book edits and emits a fully revalidated canonical revision.
 - `extract-world` converts generic canonical world artifacts into conservative
   planner facts and unresolved physical obligations.
 - `inspect-state` exposes every live and serialized component store alongside

@@ -166,6 +166,7 @@ impl PlannerGraph {
         book: &RouteBook,
     ) -> Result<Self, PlannerContractError> {
         catalog.validate()?;
+        book.validate_against_composed(catalog)?;
         Self::project_with_context(
             &catalog.facts,
             &catalog.mechanics,

@@ -500,7 +500,7 @@ The current code shows:
   compiles to an explicitly hypothetical resolver. `route-planner solve` can
   consume the composed artifact directly and records its active refinement
   stack in the solve report.
-- Planner graph schema v1 is an independent, canonical projection of fact and
+- Planner graph schema v2 is an independent, canonical projection of fact and
   mechanics catalogs. It exposes typed fact, goal, transition, obligation,
   obstruction, resolver, technique, writer/gate/reader, reconstruction, and
   microtrace nodes with causal edge kinds. Every nested predicate is projected
@@ -510,10 +510,10 @@ The current code shows:
   command emits this artifact from either base or composed catalogs.
 - Planner service schema v1 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
-  route-book validation, catalog composition, graph projection, state inspection,
-  and solve requests; every response retains its request ID and returns either a
-  typed payload or a structured field/detail error. It imports no Huntctl CLI,
-  TAS timeline, WorkbenchGraph, playback, or browser-state types.
+  route-book validation/editing, catalog composition, graph projection, state
+  inspection, and solve requests; every response retains its request ID and
+  returns either a typed payload or a structured field/detail error. It imports
+  no Huntctl CLI, TAS timeline, WorkbenchGraph, playback, or browser-state types.
 - State-inspection schema v1 preserves the full execution-state document—live
   components, serialized owner stores, bindings, lifetimes, provenance, gates,
   cleanup, runtime-file identity, physical slots, location, and player state—
@@ -534,6 +534,12 @@ The current code shows:
   graphs. A book's collapse policy is surfaced, but the catalog projection does
   not mark a region collapsed before a solver proof establishes continuation
   equivalence or supplies residual-state differences.
+- Route-book edit-batch schema v1 provides revision-checked authoritative
+  mutations. Each atomic batch names the expected book digest and can update
+  goals, constraints, directives, steps, methods, regions, selection/collapse
+  policy, and annotations. Rust applies edits to a clone, sorts canonical sets,
+  revalidates all graph references and per-step/per-method context scopes, and
+  emits a new canonical revision only if the entire batch succeeds.
 
 Primary source anchors:
 
@@ -1674,8 +1680,9 @@ Deliverable: every route and failure is inspectable rather than magical.
         relations and ordered, collapsible predicate subgraphs.
   - [x] Add a planner-owned typed stdio server transport for validation,
         composition, graph projection, and solving.
-  - [ ] Add revision-checked authoritative edit commands and an HTTP/WebSocket
-        adapter if the browser client requires one.
+  - [x] Add revision-checked, atomic authoritative route-book edit commands to
+        the planner CLI and typed service.
+  - [ ] Add an HTTP/WebSocket adapter if the browser client requires one.
 - [ ] Match the Route Workbench's visual grammar and navigation conventions with
       a side-by-side design inventory of reusable colors, spacing, node anatomy,
       camera controls, breadcrumbs, selection, grouping, and detail-pane patterns.
@@ -1695,7 +1702,10 @@ Deliverable: every route and failure is inspectable rather than magical.
 - [ ] Add route canvas, alternatives, pin/ban/prefer, and collapse controls.
   - [x] Define validated route-book directives and collapse policies and expose
         plan alternatives through the planner graph/service contracts.
-  - [ ] Add the browser interactions and revision-checked mutation commands.
+  - [x] Add revision-checked mutation commands for goals, constraints,
+        directives, steps, methods, regions, selections, collapse policies, and
+        annotations.
+  - [ ] Add the browser interactions.
 - [ ] Add inventory/flag/component state inspector with before/after diff.
   - [x] Add a planner-owned headless state-inspection projection for live and
         serialized stores, raw/structured payloads, bindings, provenance, and

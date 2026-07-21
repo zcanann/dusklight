@@ -5,6 +5,7 @@
 
 use crate::artifact::Digest;
 use crate::logic::{ContextScope, FactCatalog, PredicateExpression};
+use crate::refinement::ComposedPlannerCatalog;
 use crate::transition::{MechanicsCatalog, PathConstraint};
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,8 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const ROUTE_BOOK_SCHEMA: &str = "dusklight.route-planner.route-book/v1";
+pub const ROUTE_BOOK_EDIT_BATCH_SCHEMA: &str =
+    "dusklight.route-planner.route-book-edit-batch/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -138,6 +141,40 @@ pub enum AnnotationTarget {
     Step { step_id: String },
     Method { method_id: String },
     Region { region_id: String },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteBookEditBatch {
+    pub schema: String,
+    pub expected_route_book_sha256: Digest,
+    pub edits: Vec<RouteBookEdit>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RouteBookEdit {
+    SetGoalIds { goal_ids: Vec<String> },
+    UpsertConstraint { constraint: RouteConstraint },
+    RemoveConstraint { constraint_id: String },
+    UpsertDirective { directive: RouteDirective },
+    RemoveDirective { directive_id: String },
+    UpsertStep { step: ReferenceStep },
+    RemoveStep { step_id: String },
+    UpsertMethod { method: PlanMethod },
+    RemoveMethod { method_id: String },
+    UpsertRegion { region: PlanRegion },
+    RemoveRegion { region_id: String },
+    SetSelectedMethod {
+        region_id: String,
+        method_id: Option<String>,
+    },
+    SetCollapsePolicy {
+        region_id: String,
+        collapse_policy: CollapsePolicy,
+    },
+    UpsertAnnotation { annotation: RouteAnnotation },
+    RemoveAnnotation { annotation_id: String },
 }
 
 impl RouteBookManifest {
@@ -466,6 +503,24 @@ impl RouteBook {
         Ok(())
     }
 
+    pub fn validate_against_composed(
+        &self,
+        catalog: &ComposedPlannerCatalog,
+    ) -> Result<(), PlannerContractError> {
+        catalog.validate()?;
+        self.validate_against(&catalog.facts, &catalog.mechanics)?;
+        if let Some(expected) = self.manifest.refinement_stack_sha256 {
+            let actual = catalog.refinement_stack.digest()?;
+            if expected != actual {
+                return Err(PlannerContractError::new(
+                    "manifest.refinement_stack_sha256",
+                    "does not match the composed catalog",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
         self.validate()?;
         canonical_json(self)
@@ -486,6 +541,265 @@ impl RouteBook {
     pub fn digest(&self) -> Result<Digest, PlannerContractError> {
         Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
     }
+}
+
+impl RouteBookEditBatch {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != ROUTE_BOOK_EDIT_BATCH_SCHEMA {
+            return Err(PlannerContractError::new("schema", "is unsupported"));
+        }
+        if self.expected_route_book_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "expected_route_book_sha256",
+                "must be nonzero",
+            ));
+        }
+        if self.edits.is_empty() || self.edits.len() > 4_096 {
+            return Err(PlannerContractError::new(
+                "edits",
+                "must contain between 1 and 4096 commands",
+            ));
+        }
+        for edit in &self.edits {
+            validate_edit(edit)?;
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let batch: Self = serde_json::from_slice(bytes)?;
+        batch.validate()?;
+        if batch.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "route_book_edit_batch",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(batch)
+    }
+
+    pub fn apply(
+        &self,
+        book: &RouteBook,
+        facts: &FactCatalog,
+        mechanics: &MechanicsCatalog,
+    ) -> Result<RouteBook, PlannerContractError> {
+        self.validate()?;
+        book.validate_against(facts, mechanics)?;
+        if book.digest()? != self.expected_route_book_sha256 {
+            return Err(PlannerContractError::new(
+                "expected_route_book_sha256",
+                "does not match the current route book",
+            ));
+        }
+        let mut edited = book.clone();
+        for edit in &self.edits {
+            apply_edit(&mut edited, edit)?;
+        }
+        sort_route_book(&mut edited);
+        edited.validate_against(facts, mechanics)?;
+        Ok(edited)
+    }
+
+    pub fn apply_composed(
+        &self,
+        book: &RouteBook,
+        catalog: &ComposedPlannerCatalog,
+    ) -> Result<RouteBook, PlannerContractError> {
+        book.validate_against_composed(catalog)?;
+        let edited = self.apply(book, &catalog.facts, &catalog.mechanics)?;
+        edited.validate_against_composed(catalog)?;
+        Ok(edited)
+    }
+}
+
+fn validate_edit(edit: &RouteBookEdit) -> Result<(), PlannerContractError> {
+    match edit {
+        RouteBookEdit::SetGoalIds { goal_ids } => validate_sorted_ids("goal_ids", goal_ids, false),
+        RouteBookEdit::UpsertConstraint { constraint } => {
+            validate_stable_id("constraint.id", &constraint.id)?;
+            constraint.scope.validate("constraint.scope")?;
+            validate_constraint(&constraint.constraint)
+        }
+        RouteBookEdit::RemoveConstraint { constraint_id } => {
+            validate_stable_id("constraint_id", constraint_id)
+        }
+        RouteBookEdit::UpsertDirective { directive } => {
+            validate_stable_id("directive.id", &directive.id)?;
+            directive.scope.validate("directive.scope")?;
+            validate_directive(&directive.directive)
+        }
+        RouteBookEdit::RemoveDirective { directive_id } => {
+            validate_stable_id("directive_id", directive_id)
+        }
+        RouteBookEdit::UpsertStep { step } => {
+            validate_stable_id("step.id", &step.id)?;
+            validate_label("step.label", &step.label)?;
+            step.scope.validate("step.scope")?;
+            validate_action(&step.action)?;
+            if let Some(predicate) = &step.precondition {
+                predicate.validate()?;
+            }
+            if let Some(predicate) = &step.postcondition {
+                predicate.validate()?;
+            }
+            Ok(())
+        }
+        RouteBookEdit::RemoveStep { step_id } => validate_stable_id("step_id", step_id),
+        RouteBookEdit::UpsertMethod { method } => {
+            validate_stable_id("method.id", &method.id)?;
+            validate_label("method.label", &method.label)?;
+            method.scope.validate("method.scope")?;
+            validate_stable_id("method.region_id", &method.region_id)?;
+            if method.step_ids.is_empty() {
+                return Err(PlannerContractError::new(
+                    "method.step_ids",
+                    "must not be empty",
+                ));
+            }
+            Ok(())
+        }
+        RouteBookEdit::RemoveMethod { method_id } => validate_stable_id("method_id", method_id),
+        RouteBookEdit::UpsertRegion { region } => {
+            validate_stable_id("region.id", &region.id)?;
+            validate_label("region.label", &region.label)?;
+            region.scope.validate("region.scope")?;
+            region.outcome_predicate.validate()
+        }
+        RouteBookEdit::RemoveRegion { region_id }
+        | RouteBookEdit::SetSelectedMethod { region_id, .. }
+        | RouteBookEdit::SetCollapsePolicy { region_id, .. } => {
+            validate_stable_id("region_id", region_id)?;
+            if let RouteBookEdit::SetSelectedMethod {
+                method_id: Some(method_id),
+                ..
+            } = edit
+            {
+                validate_stable_id("method_id", method_id)?;
+            }
+            Ok(())
+        }
+        RouteBookEdit::UpsertAnnotation { annotation } => {
+            validate_stable_id("annotation.id", &annotation.id)?;
+            validate_annotation_target(&annotation.target)?;
+            validate_label("annotation.body", &annotation.body)
+        }
+        RouteBookEdit::RemoveAnnotation { annotation_id } => {
+            validate_stable_id("annotation_id", annotation_id)
+        }
+    }
+}
+
+fn apply_edit(book: &mut RouteBook, edit: &RouteBookEdit) -> Result<(), PlannerContractError> {
+    match edit {
+        RouteBookEdit::SetGoalIds { goal_ids } => book.goal_ids.clone_from(goal_ids),
+        RouteBookEdit::UpsertConstraint { constraint } => {
+            upsert(&mut book.constraints, constraint.clone(), |record| &record.id)
+        }
+        RouteBookEdit::RemoveConstraint { constraint_id } => {
+            remove(&mut book.constraints, constraint_id, |record| &record.id)?
+        }
+        RouteBookEdit::UpsertDirective { directive } => {
+            upsert(&mut book.directives, directive.clone(), |record| &record.id)
+        }
+        RouteBookEdit::RemoveDirective { directive_id } => {
+            remove(&mut book.directives, directive_id, |record| &record.id)?
+        }
+        RouteBookEdit::UpsertStep { step } => {
+            upsert(&mut book.steps, step.clone(), |record| &record.id)
+        }
+        RouteBookEdit::RemoveStep { step_id } => {
+            remove(&mut book.steps, step_id, |record| &record.id)?
+        }
+        RouteBookEdit::UpsertMethod { method } => {
+            upsert(&mut book.methods, method.clone(), |record| &record.id)
+        }
+        RouteBookEdit::RemoveMethod { method_id } => {
+            remove(&mut book.methods, method_id, |record| &record.id)?
+        }
+        RouteBookEdit::UpsertRegion { region } => {
+            upsert(&mut book.regions, region.clone(), |record| &record.id)
+        }
+        RouteBookEdit::RemoveRegion { region_id } => {
+            remove(&mut book.regions, region_id, |record| &record.id)?
+        }
+        RouteBookEdit::SetSelectedMethod {
+            region_id,
+            method_id,
+        } => {
+            let region = book
+                .regions
+                .iter_mut()
+                .find(|region| &region.id == region_id)
+                .ok_or_else(|| PlannerContractError::new("region_id", "is unknown"))?;
+            region.selected_method_id.clone_from(method_id);
+        }
+        RouteBookEdit::SetCollapsePolicy {
+            region_id,
+            collapse_policy,
+        } => {
+            let region = book
+                .regions
+                .iter_mut()
+                .find(|region| &region.id == region_id)
+                .ok_or_else(|| PlannerContractError::new("region_id", "is unknown"))?;
+            region.collapse_policy = *collapse_policy;
+        }
+        RouteBookEdit::UpsertAnnotation { annotation } => {
+            upsert(&mut book.annotations, annotation.clone(), |record| &record.id)
+        }
+        RouteBookEdit::RemoveAnnotation { annotation_id } => {
+            remove(&mut book.annotations, annotation_id, |record| &record.id)?
+        }
+    }
+    Ok(())
+}
+
+fn upsert<T, F>(records: &mut Vec<T>, value: T, get_id: F)
+where
+    F: Fn(&T) -> &String,
+{
+    let id = get_id(&value).clone();
+    if let Some(existing) = records.iter_mut().find(|record| get_id(record) == &id) {
+        *existing = value;
+    } else {
+        records.push(value);
+    }
+}
+
+fn remove<T, F>(
+    records: &mut Vec<T>,
+    id: &str,
+    get_id: F,
+) -> Result<(), PlannerContractError>
+where
+    F: Fn(&T) -> &String,
+{
+    let before = records.len();
+    records.retain(|record| get_id(record) != id);
+    if records.len() == before {
+        Err(PlannerContractError::new(
+            "edit.id",
+            format!("cannot remove unknown ID {id}"),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn sort_route_book(book: &mut RouteBook) {
+    book.goal_ids.sort();
+    book.constraints.sort_by(|left, right| left.id.cmp(&right.id));
+    book.directives.sort_by(|left, right| left.id.cmp(&right.id));
+    book.steps.sort_by(|left, right| left.id.cmp(&right.id));
+    book.methods.sort_by(|left, right| left.id.cmp(&right.id));
+    book.regions.sort_by(|left, right| left.id.cmp(&right.id));
+    book.annotations.sort_by(|left, right| left.id.cmp(&right.id));
 }
 
 fn validate_constraint(constraint: &PathConstraint) -> Result<(), PlannerContractError> {
@@ -1140,5 +1454,61 @@ mod tests {
                 .field(),
             "steps.scope"
         );
+    }
+
+    #[test]
+    fn revision_checked_edit_batches_are_atomic_and_revalidated() {
+        let (facts, mechanics) = catalogs();
+        let book = route_book_fixture();
+        let batch = RouteBookEditBatch {
+            schema: ROUTE_BOOK_EDIT_BATCH_SCHEMA.into(),
+            expected_route_book_sha256: book.digest().unwrap(),
+            edits: vec![
+                RouteBookEdit::SetSelectedMethod {
+                    region_id: "region.obtain-rod".into(),
+                    method_id: Some("method.ordinary".into()),
+                },
+                RouteBookEdit::SetCollapsePolicy {
+                    region_id: "region.obtain-rod".into(),
+                    collapse_policy: CollapsePolicy::ShowResidualDifferences,
+                },
+            ],
+        };
+        let edited = batch.apply(&book, &facts, &mechanics).unwrap();
+        assert_eq!(
+            edited.regions[0].selected_method_id.as_deref(),
+            Some("method.ordinary")
+        );
+        assert_eq!(
+            edited.regions[0].collapse_policy,
+            CollapsePolicy::ShowResidualDifferences
+        );
+        assert_ne!(edited.digest().unwrap(), book.digest().unwrap());
+
+        let mut stale = batch;
+        stale.expected_route_book_sha256 = Digest([9; 32]);
+        assert_eq!(
+            stale.apply(&book, &facts, &mechanics).unwrap_err().field(),
+            "expected_route_book_sha256"
+        );
+    }
+
+    #[test]
+    fn invalid_edit_batch_does_not_partially_mutate_the_source_book() {
+        let (facts, mechanics) = catalogs();
+        let book = route_book_fixture();
+        let original_digest = book.digest().unwrap();
+        let batch = RouteBookEditBatch {
+            schema: ROUTE_BOOK_EDIT_BATCH_SCHEMA.into(),
+            expected_route_book_sha256: original_digest,
+            edits: vec![RouteBookEdit::RemoveStep {
+                step_id: "step.ordinary-quest".into(),
+            }],
+        };
+        assert_eq!(
+            batch.apply(&book, &facts, &mechanics).unwrap_err().field(),
+            "methods.step_ids"
+        );
+        assert_eq!(book.digest().unwrap(), original_digest);
     }
 }
