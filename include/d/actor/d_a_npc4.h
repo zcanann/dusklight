@@ -167,8 +167,20 @@ public:
     void setAttnPos(cXyz* i_attnPos) { mAttnPos_p = i_attnPos; }
 };
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+namespace dusk::automation {
+struct MilestoneNpcFlowReadAdapter;
+}
+#endif
+
 class daNpcF_c : public fopAc_ac_c {
 protected:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // DUSKLIGHT OBSERVATION-ONLY APERTURE: exposes the embedded dialogue-flow
+    // object for exact, read-only capture by fork instrumentation.
+    friend struct dusk::automation::MilestoneNpcFlowReadAdapter;
+#endif
+
     /* 0x568 */ mDoExt_McaMorfSO* mAnm_p;
     /* 0x56C */ mDoExt_bckAnm mBckAnm;
     /* 0x588 */ mDoExt_btpAnm mBtpAnm;

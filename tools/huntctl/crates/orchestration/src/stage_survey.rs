@@ -839,7 +839,7 @@ fn validate_successful_probe(
         || actor_catalog.truncated
         || actor_catalog.observed_actor_count != actor_catalog.retained_actor_count
         || actor_catalog.learning_actor_population.source_schema
-            != "dusklight-learning-observation/v12"
+            != "dusklight-learning-observation/v13"
         || actor_catalog.learning_actor_population.truncated
         || actor_catalog.learning_actor_population.observed_actor_count
             != actor_catalog.learning_actor_population.retained_actor_count
@@ -848,7 +848,7 @@ fn validate_successful_probe(
         || actor_catalog
             .learning_dynamic_collision_population
             .source_schema
-            != "dusklight-learning-observation/v12"
+            != "dusklight-learning-observation/v13"
         || !actor_catalog.learning_dynamic_collision_population.present
         || actor_catalog
             .learning_dynamic_collision_population
@@ -865,13 +865,13 @@ fn validate_successful_probe(
                 .colliders
                 .len()
         || actor_catalog.learning_player_resources.source_schema
-            != "dusklight-learning-observation/v12"
+            != "dusklight-learning-observation/v13"
         || !actor_catalog.learning_player_resources.present
         || actor_catalog.learning_player_relationships.source_schema
-            != "dusklight-learning-observation/v12"
+            != "dusklight-learning-observation/v13"
         || !actor_catalog.learning_player_relationships.present
         || actor_catalog.learning_player_collision_solver.source_schema
-            != "dusklight-learning-observation/v12"
+            != "dusklight-learning-observation/v13"
         || !actor_catalog.learning_player_collision_solver.present
     {
         return Err("actor_catalog_incomplete");

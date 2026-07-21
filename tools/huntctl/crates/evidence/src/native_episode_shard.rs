@@ -32,6 +32,7 @@ const OBSERVATION_VERSION_V9: u16 = 9;
 const OBSERVATION_VERSION_V10: u16 = 10;
 const OBSERVATION_VERSION_V11: u16 = 11;
 const OBSERVATION_VERSION_V12: u16 = 12;
+const OBSERVATION_VERSION_V13: u16 = 13;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -68,6 +69,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V9: &str = "dusklight-learning-observation
 pub const LEARNING_OBSERVATION_SCHEMA_V10: &str = "dusklight-learning-observation/v10";
 pub const LEARNING_OBSERVATION_SCHEMA_V11: &str = "dusklight-learning-observation/v11";
 pub const LEARNING_OBSERVATION_SCHEMA_V12: &str = "dusklight-learning-observation/v12";
+pub const LEARNING_OBSERVATION_SCHEMA_V13: &str = "dusklight-learning-observation/v13";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -676,6 +678,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V10
                 | OBSERVATION_VERSION_V11
                 | OBSERVATION_VERSION_V12
+                | OBSERVATION_VERSION_V13
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -802,6 +805,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V10 => LEARNING_OBSERVATION_SCHEMA_V10,
         OBSERVATION_VERSION_V11 => LEARNING_OBSERVATION_SCHEMA_V11,
         OBSERVATION_VERSION_V12 => LEARNING_OBSERVATION_SCHEMA_V12,
+        OBSERVATION_VERSION_V13 => LEARNING_OBSERVATION_SCHEMA_V13,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1205,6 +1209,7 @@ type PlannerRuntimeChannels = (
 
 fn decode_planner_runtime_channels(
     reader: &mut Reader<'_>,
+    observation_version: u16,
 ) -> Result<PlannerRuntimeChannels, NativeEpisodeShardError> {
     let runtime_status = decode_channel_status(reader)?;
     let backing_attachment_status = decode_channel_status(reader)?;
@@ -1307,7 +1312,17 @@ fn decode_planner_runtime_channels(
         mode_flags: reader.u32()?,
         do_status: reader.u8()?,
     };
-    if reader.u8()? != 0 || reader.u16()? != 0 {
+    let message_cut_status = if observation_version >= OBSERVATION_VERSION_V13 {
+        decode_channel_status(reader)?
+    } else {
+        if reader.u8()? != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "nonzero legacy planner event reserved byte",
+            ));
+        }
+        NativeChannelStatus::NotSampled
+    };
+    if reader.u16()? != 0 {
         return Err(NativeEpisodeShardError::new(
             "nonzero planner event reserved field",
         ));
@@ -1322,6 +1337,8 @@ fn decode_planner_runtime_channels(
                 cut_name_hash: 0,
             }))
         || (pending_cleanup_status != NativeChannelStatus::Present && pending_cleanup_raw != 0)
+        || (message_cut_status != NativeChannelStatus::Present
+            && message_flow_raw.cut_name_hash != 0)
         || (player_control_status != NativeChannelStatus::Present
             && player_control_raw
                 != (NativePlayerControlObservation {
@@ -1381,6 +1398,7 @@ fn decode_planner_runtime_channels(
             message_flow_status,
             message_flow: (message_flow_status == NativeChannelStatus::Present)
                 .then_some(message_flow_raw),
+            message_cut_status,
             pending_cleanup_status,
             pending_cleanup_flags: (pending_cleanup_status == NativeChannelStatus::Present)
                 .then_some(pending_cleanup_raw),
@@ -2167,7 +2185,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V9
         | OBSERVATION_VERSION_V10
         | OBSERVATION_VERSION_V11
-        | OBSERVATION_VERSION_V12 => {
+        | OBSERVATION_VERSION_V12
+        | OBSERVATION_VERSION_V13 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -2656,7 +2675,7 @@ fn decode_observation(
         event_handoff_status,
         event_handoff,
     ) = if observation_version >= OBSERVATION_VERSION_V12 {
-        decode_planner_runtime_channels(reader)?
+        decode_planner_runtime_channels(reader, observation_version)?
     } else {
         (
             NativeChannelStatus::NotSampled,

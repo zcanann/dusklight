@@ -3,6 +3,7 @@
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
 
 #include "d/actor/d_a_alink.h"
+#include "d/actor/d_a_npc4.h"
 #include "d/actor/d_a_title.h"
 #include "d/d_camera.h"
 #include "d/d_com_inf_game.h"
@@ -81,6 +82,18 @@ struct MilestoneEventManagerReadAdapter {
         const dEvDtEvent_c& event = base.mEventP[eventIndex];
         return event.mEventState == dEvDt_State_START_e ? event.mName : nullptr;
     }
+};
+
+struct MilestoneNpcFlowReadAdapter {
+    static const dMsgFlow_c& flow(const daNpcF_c& npc) { return npc.mFlow; }
+};
+
+struct MilestoneMessageFlowReadAdapter {
+    static bool active(const dMsgFlow_c& flow) {
+        return flow.mFlowNodeTBL != nullptr && flow.mNodeIdx != 0xffff;
+    }
+    static std::uint16_t flowId(const dMsgFlow_c& flow) { return flow.mFlow; }
+    static std::uint16_t nodeIndex(const dMsgFlow_c& flow) { return flow.mNodeIdx; }
 };
 
 TitleMenuObservation MenuStateObserver::captureTitle() {
@@ -422,8 +435,9 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         }
         return identity;
     };
-    const MilestoneObservation::ActorIdentity talkPartner =
-        actorIdentity(link == nullptr ? nullptr : fopAcM_getTalkEventPartner(link));
+    const fopAc_ac_c* talkPartnerActor =
+        link == nullptr ? nullptr : fopAcM_getTalkEventPartner(link);
+    const MilestoneObservation::ActorIdentity talkPartner = actorIdentity(talkPartnerActor);
     const fpc_ProcID grabbedId = link == nullptr ? fpcM_ERROR_PROCESS_ID_e : link->getGrabActorID();
     const MilestoneObservation::ActorIdentity grabbedActor = actorIdentity(
         grabbedId == fpcM_ERROR_PROCESS_ID_e ? nullptr : fopAcM_SearchByID(grabbedId));
@@ -609,6 +623,25 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     } else {
         handoff.status = MilestoneObservation::ChannelStatus::Unavailable;
         handoff.eventNameStatus = MilestoneObservation::ChannelStatus::Unavailable;
+    }
+
+    handoff.messageCutStatus = MilestoneObservation::ChannelStatus::Unavailable;
+    if (talkPartnerActor == nullptr) {
+        handoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Absent;
+    } else if (fopAcM_GetName(talkPartnerActor) == fpcNm_NPC_RAFREL_e ||
+               fopAcM_GetName(talkPartnerActor) == fpcNm_NPC_GRC_e)
+    {
+        const auto& npc = *static_cast<const daNpcF_c*>(talkPartnerActor);
+        const dMsgFlow_c& flow = MilestoneNpcFlowReadAdapter::flow(npc);
+        if (MilestoneMessageFlowReadAdapter::active(flow)) {
+            handoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Present;
+            handoff.messageFlowId = MilestoneMessageFlowReadAdapter::flowId(flow);
+            handoff.messageNodeIndex = MilestoneMessageFlowReadAdapter::nodeIndex(flow);
+        } else {
+            handoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Absent;
+        }
+    } else {
+        handoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Unavailable;
     }
 
     if (player != nullptr) {

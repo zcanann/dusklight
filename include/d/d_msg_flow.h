@@ -19,6 +19,12 @@ enum {
 class fopAc_ac_c;
 struct msg_class;
 
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+namespace dusk::automation {
+struct MilestoneMessageFlowReadAdapter;
+}
+#endif
+
 // all mesg_flow_node structs members might be wrong
 struct mesg_flow_node {
     /* 0x00 */ u8 type;
@@ -189,6 +195,12 @@ public:
     static eventFunc mEventList[43];
 
 private:
+#if DUSK_ENABLE_AUTOMATION_OBSERVERS
+    // DUSKLIGHT OBSERVATION-ONLY APERTURE: exposes immutable flow cursor state
+    // to fork instrumentation without advancing or mutating the dialogue.
+    friend struct dusk::automation::MilestoneMessageFlowReadAdapter;
+#endif
+
     /* 0x04 */ u8* mFlow_p;
     /* 0x08 */ u8* mLabelInfo_p;
     /* 0x0C */ union mesg_flow {

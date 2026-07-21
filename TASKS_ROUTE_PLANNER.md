@@ -431,20 +431,24 @@ The current code shows:
 - Auru's actor separates proximity behavior, a pending presentation actor ID,
   normal memo creation, and generic `DEFAULT_GETITEM` execution. These are
   distinct state sites and ordered actions.
-- Native learning observation v12 now records `mDataNum` and `mNoFile` as
+- Native learning observation v13 now records `mDataNum` and `mNoFile` as
   separate raw values, a separately statused backing attachment, and three
   distinct physical-slot descriptors. It does not infer a slotless file from a
   nonzero `mNoFile`, because the PC command-line load path overloads that field.
-- The same v12 channel records exact `PlayerReturnPlace`, restart state,
+- The same v13 channel records exact `PlayerReturnPlace`, restart state,
   `mPreItemNo`, `mGtItm`, item-partner identity, event-control flags, exact
   running-event name when bounded, `NO_TELOP`, and player-control state. Generic
-  message-flow/node/cut and pending-cleanup discovery remain explicitly
-  `Unavailable` until actor/flow instrumentation can observe them safely.
+  message-flow/node/cut and pending-cleanup discovery remain explicitly scoped:
+  v13 can read the active flow and node for the observed Auru and Goron-child
+  NPC families without advancing dialogue, records the cut independently as
+  `Unavailable`, and leaves pending cleanup `Unavailable` until its ownership is
+  established. Other actor families remain `Unavailable` rather than being
+  cast to a guessed layout.
 - Physical slot contents remain `NotSampled`: the live process exposes the
   active runtime and selected slot number, not trustworthy simultaneous payloads
   for all three card slots. A future card-boundary observer must populate those
   descriptors without copying the active runtime into them.
-- Planner snapshot schema v2 losslessly projects v12 native observations into
+- Planner snapshot schema v2 losslessly projects v13 native observations into
   independently bound runtime, stage, room/zone, temporary, inventory, restart,
   return-place, and event-handoff components. Every projected component carries
   trace provenance; raw banks carry byte-knownness masks; unavailable structured

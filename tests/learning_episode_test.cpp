@@ -283,7 +283,10 @@ struct ObservationFixture {
         observation.eventHandoff.eventNameStatus = MilestoneObservation::ChannelStatus::Present;
         observation.eventHandoff.eventName =
             {'D', 'E', 'F', 'A', 'U', 'L', 'T', '_', 'G', 'E', 'T', 'I', 'T', 'E', 'M', '\0'};
-        observation.eventHandoff.messageFlowStatus =
+        observation.eventHandoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Present;
+        observation.eventHandoff.messageFlowId = 0x777;
+        observation.eventHandoff.messageNodeIndex = 0x12;
+        observation.eventHandoff.messageCutStatus =
             MilestoneObservation::ChannelStatus::Unavailable;
         observation.eventHandoff.pendingCleanupStatus =
             MilestoneObservation::ChannelStatus::Unavailable;

@@ -281,6 +281,7 @@ struct MilestoneObservation {
         ChannelStatus messageFlowStatus = ChannelStatus::Unavailable;
         std::uint16_t messageFlowId = 0;
         std::uint16_t messageNodeIndex = 0;
+        ChannelStatus messageCutStatus = ChannelStatus::NotSampled;
         std::uint32_t messageCutHash = 0;
         ChannelStatus pendingCleanupStatus = ChannelStatus::Unavailable;
         std::uint32_t pendingCleanupFlags = 0;

@@ -49,6 +49,10 @@ fn golden_v12() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v12.dseps")
 }
 
+fn golden_v13() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v13.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -104,8 +108,8 @@ fn mutate_first_v9_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden_v9(), mutator)
 }
 
-fn mutate_first_v12_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
-    mutate_first_episode_in(golden_v12(), mutator)
+fn mutate_first_v13_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_first_episode_in(golden_v13(), mutator)
 }
 
 fn mutate_first_episode_in(source: &[u8], mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
@@ -629,6 +633,7 @@ fn decodes_v12_planner_runtime_channels_without_conflating_slots() {
             NativeChannelStatus::Unavailable
         );
         assert!(handoff.message_flow.is_none());
+        assert_eq!(handoff.message_cut_status, NativeChannelStatus::NotSampled);
         assert_eq!(
             handoff.pending_cleanup_status,
             NativeChannelStatus::Unavailable
@@ -654,13 +659,40 @@ fn decodes_v12_planner_runtime_channels_without_conflating_slots() {
 }
 
 #[test]
-fn rejects_v12_slot_attachment_claim_with_unavailable_backing() {
-    let shard = mutate_first_v12_episode(|expanded| {
+fn decodes_v13_scoped_message_flow_without_inventing_a_cut() {
+    let shard = NativeEpisodeShard::decode(golden_v13()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V13
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        let handoff = observation.event_handoff.as_ref().unwrap();
+        assert_eq!(handoff.message_flow_status, NativeChannelStatus::Present);
+        assert_eq!(
+            handoff.message_flow,
+            Some(NativeMessageFlowObservation {
+                flow_id: 0x777,
+                node_index: 0x12,
+                cut_name_hash: 0,
+            })
+        );
+        assert_eq!(handoff.message_cut_status, NativeChannelStatus::Unavailable);
+    }
+}
+
+#[test]
+fn rejects_v13_slot_attachment_claim_with_unavailable_backing() {
+    let shard = mutate_first_v13_episode(|expanded| {
         let prefix = [1, 1, 0, 1, 2, 2, 0, 0, 0, 0, 1, 0, 2, 0, b'F'];
         let offset = expanded
             .windows(prefix.len())
             .position(|candidate| candidate == prefix)
-            .expect("v12 player-resource/runtime boundary");
+            .expect("v13 player-resource/runtime boundary");
         expanded[offset + 1] = 3;
     });
     assert!(
@@ -818,6 +850,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V10
                             | LEARNING_OBSERVATION_SCHEMA_V11
                             | LEARNING_OBSERVATION_SCHEMA_V12
+                            | LEARNING_OBSERVATION_SCHEMA_V13
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -857,6 +890,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V10
             | LEARNING_OBSERVATION_SCHEMA_V11
             | LEARNING_OBSERVATION_SCHEMA_V12
+            | LEARNING_OBSERVATION_SCHEMA_V13
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

@@ -65,6 +65,7 @@ pub struct NativeEventHandoffObservation {
     pub event_name: Option<String>,
     pub message_flow_status: NativeChannelStatus,
     pub message_flow: Option<NativeMessageFlowObservation>,
+    pub message_cut_status: NativeChannelStatus,
     pub pending_cleanup_status: NativeChannelStatus,
     pub pending_cleanup_flags: Option<u32>,
     pub player_control_status: NativeChannelStatus,

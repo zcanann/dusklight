@@ -476,6 +476,10 @@ fn event_handoff_fields(value: &NativeEventHandoffObservation) -> BTreeMap<Strin
             StateValue::Text(status_text(value.message_flow_status).into()),
         ),
         (
+            "message_cut_status",
+            StateValue::Text(status_text(value.message_cut_status).into()),
+        ),
+        (
             "pending_cleanup_status",
             StateValue::Text(status_text(value.pending_cleanup_status).into()),
         ),
@@ -497,10 +501,12 @@ fn event_handoff_fields(value: &NativeEventHandoffObservation) -> BTreeMap<Strin
             "node_index".into(),
             StateValue::Unsigned(flow.node_index.into()),
         );
-        output.insert(
-            "cut_name_hash".into(),
-            StateValue::Unsigned(flow.cut_name_hash.into()),
-        );
+        if value.message_cut_status == NativeChannelStatus::Present {
+            output.insert(
+                "cut_name_hash".into(),
+                StateValue::Unsigned(flow.cut_name_hash.into()),
+            );
+        }
     }
     if let Some(flags) = value.pending_cleanup_flags {
         output.insert(
@@ -620,7 +626,7 @@ mod tests {
     use super::*;
     use crate::identity::RUNTIME_CONFIGURATION_SCHEMA;
     use dusklight_evidence::native_episode_shard::{
-        LEARNING_OBSERVATION_SCHEMA_V12, NativeEpisodeShard,
+        LEARNING_OBSERVATION_SCHEMA_V13, NativeEpisodeShard,
     };
 
     fn context(sequence: u64) -> NativeSnapshotContext {
@@ -635,20 +641,20 @@ mod tests {
             },
             runtime_file_id: "runtime.fixture".into(),
             session_id: "session.fixture".into(),
-            evidence_id: "native.fixture.v12".into(),
+            evidence_id: "native.fixture.v13".into(),
             evidence_sha256: Digest([2; 32]),
         }
     }
 
     #[test]
-    fn projects_v12_backing_components_and_explicit_unknowns() {
+    fn projects_v13_backing_components_and_explicit_unknowns() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v12.dseps"
+            "../../../../../tests/fixtures/automation/native_episode_v13.dseps"
         ))
         .unwrap();
         assert_eq!(
             shard.metadata.observation_schema,
-            LEARNING_OBSERVATION_SCHEMA_V12
+            LEARNING_OBSERVATION_SCHEMA_V13
         );
         let observation = &shard.episodes[0].steps[0].pre_input;
         let snapshot = snapshot_native_observation(observation, context(1)).unwrap();
@@ -679,6 +685,10 @@ mod tests {
         };
         assert_eq!(
             fields["message_flow_status"],
+            StateValue::Text("present".into())
+        );
+        assert_eq!(
+            fields["message_cut_status"],
             StateValue::Text("unavailable".into())
         );
         assert_eq!(fields["get_item_no"], StateValue::Unsigned(0x43));

@@ -383,13 +383,14 @@ bool append_planner_runtime_state(std::vector<std::uint8_t>& output,
     if (returnPlace.status != Status::Present || restart.status != Status::Present ||
         !fixedStringIsCanonical(returnPlace.stage) || !validStatus(handoff.status) ||
         !validStatus(handoff.eventNameStatus) || !validStatus(handoff.messageFlowStatus) ||
+        !validStatus(handoff.messageCutStatus) ||
         !validStatus(handoff.pendingCleanupStatus) ||
         !validStatus(handoff.playerControlStatus) || !validStatus(handoff.noTelopStatus) ||
         (handoff.eventNameStatus == Status::Present &&
             !fixedStringIsCanonical(handoff.eventName)) ||
         (handoff.messageFlowStatus != Status::Present &&
-            (handoff.messageFlowId != 0 || handoff.messageNodeIndex != 0 ||
-                handoff.messageCutHash != 0)) ||
+            (handoff.messageFlowId != 0 || handoff.messageNodeIndex != 0)) ||
+        (handoff.messageCutStatus != Status::Present && handoff.messageCutHash != 0) ||
         (handoff.pendingCleanupStatus != Status::Present && handoff.pendingCleanupFlags != 0) ||
         (handoff.playerControlStatus != Status::Present &&
             (handoff.playerControlModeFlags != 0 || handoff.playerControlDoStatus != 0)) ||
@@ -451,7 +452,7 @@ bool append_planner_runtime_state(std::vector<std::uint8_t>& output,
     append_integer(output, handoff.pendingCleanupFlags);
     append_integer(output, handoff.playerControlModeFlags);
     append_integer(output, handoff.playerControlDoStatus);
-    append_integer<std::uint8_t>(output, 0);
+    append_integer(output, statusByte(handoff.messageCutStatus));
     append_integer<std::uint16_t>(output, 0);
     if (!append_actor_identity(output, handoff.itemPartner, error))
         return false;
