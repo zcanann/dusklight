@@ -33,9 +33,10 @@ The planner CLI currently owns twenty-three operations:
   are identified separately from payload changes, so identical bytes receiving
   a new semantic interpretation remain visible.
 - `diff-orig` compares two canonical extracted bundles at both archive-byte and
-  decoded-record levels. Optional left/right locale selection pairs message
-  groups across language bundles; missing groups, zero-group locale coverage,
-  and ignored message archives remain explicit instead of implying equality.
+  decoded-record levels while sealing both exact input bundle digests. Optional
+  left/right locale selection pairs message groups and ignored candidates across
+  language bundles; missing groups, zero-group locale coverage, and ignored
+  message archives remain explicit instead of implying equality.
 - `extract-world` converts generic canonical world artifacts into conservative
   planner facts and unresolved physical obligations.
 - `extract-resource` performs bounded Yaz0/RARC extraction of one uniquely

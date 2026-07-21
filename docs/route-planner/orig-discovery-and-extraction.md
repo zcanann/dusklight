@@ -148,7 +148,10 @@ route-planner diff-orig \
 
 Each stage, message-flow, and ignored-candidate record is classified as byte
 identical, raw-changed but decoded-semantic-equal, semantic-changed, or uncovered
-on one side. Locale comparisons also carry each side's decoded group count, so
+on one side. The artifact seals both exact input-bundle digests independently
+from their content-identity digests. Locale comparisons normalize ignored
+candidate names across the selected locale directories and also carry each
+side's decoded group count, so
 an absent or currently undecoded language bundle cannot produce a misleading
 empty-equivalence result. The artifact does not claim behavior equivalence for
 data the current extractors do not decode; adding those domains remains an
