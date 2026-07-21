@@ -1879,8 +1879,13 @@ Deliverable: replayable state evidence that can validate transition rules.
   - [x] Add a planner-owned cutscene-program schema/compiler whose phase and
         resource guards auto-compile into ordinary transitions; normal, skip,
         interruption, scene-change, and load-failure branches retain distinct
-        transition kinds and exact ordered effects. Concrete program extraction
-        remains open. See `docs/route-planner/cutscene-phase-programs.md`.
+        transition kinds and exact ordered effects. See
+        `docs/route-planner/cutscene-phase-programs.md`.
+  - [x] Add bounded planner-owned `event_list.dat`, REVT, and LBNK extraction;
+        prove the exact GZ2E01 `demo07_02` package/map-tool wrapper and its
+        normal Castle Town versus skip Zelda-tower SCLS destinations. JStudio
+        phase decoding and exceptional failure semantics remain open. See
+        `docs/route-planner/gz2e01-zelda-cutscene-source-audit.md`.
 - [ ] Represent partial cutscene execution conservatively: preserve confirmed
       prefix writes, retain values whose writers are confirmed skipped, and mark
       effects beyond an unknown failure/interruption boundary unknown.
@@ -2564,6 +2569,10 @@ sequence.
 - [ ] Trace the post-Zelda cutscene as ordered phases, including its Castle Town
       scene change, actor/archive loads, event writes, return/restart-place
       writers, and cleanup.
+  - [x] Extract the exact outer retail event topology: R_SP301 layer 8 selects
+        `Demo07_02`; `demo07_02` runs `demo07_02.stb` plus map-tool ID 4; normal
+        completion selects SCLS 1 to Castle Town and event skip selects SCLS 2
+        back to Zelda's tower. The STB internals and writer ordering remain open.
 - [ ] Capture normal completion and actor-corruption/archive-load-failure paths;
       identify the last confirmed operation and every flag or writer that becomes
       skipped versus unknown.

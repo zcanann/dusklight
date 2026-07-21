@@ -12,7 +12,7 @@ name might suggest.
 |---|---|---|
 | `orig-input-scan/v1` | Disc-header product/platform/region/revision, normalized `sys/` and `files/` manifest, executable/game-data/resource digests, candidate archive paths | Friendly identity, runtime language selection, decoded records, behavior |
 | `supported-build-registry/v1` | Exact full-fingerprint-to-friendly-ID mapping | Nearest-build fallback, implied cross-build equivalence |
-| `extracted-orig-bundle/v2` | Source manifest; generic actor/scaled/door placements; STAG message group; indexed SCLS destinations; decoded numbered BMG flow graphs; explicit ignored message candidates | KCL/PLC, player-spawn and treasure records, most DZS/DZR chunk bodies, actor parameter meaning, actor/cutscene transitions, message text, runtime bindings |
+| `extracted-orig-bundle/v3` | Source manifest; generic actor/scaled/door placements; STAG message group; indexed SCLS destinations; REVT event/exit coordinates; LBNK demo-archive selections; decoded numbered BMG flow graphs; explicit ignored message candidates | KCL/PLC, player-spawn and treasure records, most DZS/DZR chunk bodies, actor parameter meaning, JStudio cutscene internals, message text, runtime bindings |
 | `message-flow-entry-contract-set/v2` and `compiled-message-flow-entry-set/v2` | Exact compiled-flow schema/digest, stage/message resource joins, optional raw actor placement identity, resolved flow label, authored guards, obligations, unknowns, speaker context, and deterministic entry mechanics | Unauthored callers, inferred interaction geometry, actor behavior not established by placement, or equivalence across builds/languages |
 | `dusklight-world-context/v1` | One game-data digest and sorted stage-to-inventory/spatial-index digests | Product/revision identity, runtime configuration, the inventory or spatial records themselves |
 | `dusklight-world-inventory/v1` | Source records; chunk directory; actor/scaled/door/treasure/player placements; SCLS; KCL prisms and decoded PLC words; inferred same-room collision/SCLS joins | Actor-specific guards and lifecycle, dynamic collision, paths/rails/volumes, source-confirmed activation behavior |
@@ -23,7 +23,7 @@ name might suggest.
 The planner owns its copies of the `WorldContext` and `WorldInventory` wire
 contracts in `world_data.rs`. The compatible producer currently lives elsewhere
 in the repository, but the planner has no Rust dependency on Huntctl and must
-not acquire one. `extracted-orig-bundle/v2` is planner-native. There is not yet a
+not acquire one. `extracted-orig-bundle/v3` is planner-native. There is not yet a
 transform from that bundle into `WorldInventory` or directly into a complete
 planner fact pack.
 

@@ -78,9 +78,13 @@ The planner CLI currently owns twenty-six operations:
   query-table indices remain present so the two coordinate systems cannot be
   conflated.
 - `extract-stage-data` emits planner-owned DZS/DZR chunk records, STAG message
-  groups, indexed SCLS destinations, and authored actor placements including
-  layer, parameters, position, rotations, and raw bytes. Unknown chunk formats
-  remain listed but uninterpreted.
+  groups, indexed SCLS destinations, REVT event/exit coordinates, LBNK demo
+  archive selections, and authored actor placements including layer, parameters,
+  position, rotations, and raw bytes. Unknown chunk formats remain listed but
+  uninterpreted.
+- `extract-event-list` emits the bounded event, staff, cut, linked parameter,
+  and typed value tables from one exact `event_list.dat`, retaining raw records
+  and rejecting invalid references or overlapping tables.
 - `inspect-state` exposes every live and serialized component store alongside
   exact-context friendly aliases and derived fact evaluations. It also retains
   ordered operation/boundary history, reports the last known writer of each live
@@ -127,7 +131,7 @@ The planner CLI currently owns twenty-six operations:
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
   lines for a future planner editor or other clients, including portable solves.
 
-The three low-level extraction commands are read-only with respect to `orig/`.
+The low-level extraction commands are read-only with respect to `orig/`.
 They write only the explicitly named output and record SHA-256 identities for
 both the source archive and extracted resource. They do not call or link
 Huntctl/TAS tooling.

@@ -1643,6 +1643,8 @@ mod tests {
                         chunks: Vec::new(),
                         stage_information: None,
                         scene_transitions: Vec::new(),
+                        map_events: Vec::new(),
+                        demo_archive_banks: Vec::new(),
                         actor_placements: vec![ExtractedActorPlacement {
                             chunk_tag: "ACTR".into(),
                             record_index: 4,
@@ -1669,6 +1671,8 @@ mod tests {
                             raw_hex: "00000003".into(),
                         }),
                         scene_transitions: Vec::new(),
+                        map_events: Vec::new(),
+                        demo_archive_banks: Vec::new(),
                         actor_placements: Vec::new(),
                     },
                 },

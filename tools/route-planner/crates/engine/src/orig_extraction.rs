@@ -12,7 +12,9 @@ const RARC_FILE_ENTRY_SIZE: usize = 0x14;
 const MAX_RARC_FILE_ENTRIES: usize = 100_000;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
-pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v2";
+const MAX_EVENT_RECORDS: usize = 1_000_000;
+pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v3";
+pub const EXTRACTED_EVENT_LIST_SCHEMA: &str = "dusklight.route-planner.extracted-event-list/v1";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -20,7 +22,116 @@ pub struct ExtractedStageData {
     pub chunks: Vec<ExtractedStageChunk>,
     pub stage_information: Option<ExtractedStageInformation>,
     pub scene_transitions: Vec<ExtractedSceneTransition>,
+    pub map_events: Vec<ExtractedMapEvent>,
+    pub demo_archive_banks: Vec<ExtractedDemoArchiveBank>,
     pub actor_placements: Vec<ExtractedActorPlacement>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedMapEvent {
+    pub record_index: u32,
+    pub event_type: u8,
+    pub map_tool_id: u8,
+    pub priority: u8,
+    pub normal_exit_id: Option<u8>,
+    pub skip_exit_id: Option<u8>,
+    pub event_name: Option<String>,
+    pub switch_no: Option<u8>,
+    pub raw_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedDemoArchiveBank {
+    pub layer: u8,
+    pub bank: Option<u8>,
+    pub bank2: Option<u8>,
+    pub archive_name: Option<String>,
+    pub raw_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedEventList {
+    pub resource_size: u32,
+    pub events: Vec<ExtractedEvent>,
+    pub staff: Vec<ExtractedEventStaff>,
+    pub cuts: Vec<ExtractedEventCut>,
+    pub data: Vec<ExtractedEventData>,
+    pub float_data_bits: Vec<u32>,
+    pub integer_data: Vec<i32>,
+    pub string_data_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedEvent {
+    pub index: u32,
+    pub name: String,
+    pub priority: i32,
+    pub staff_indices: Vec<u32>,
+    pub finish_flags: [i32; 3],
+    pub raw_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedEventStaff {
+    pub index: u32,
+    pub name: String,
+    pub tag_id: i32,
+    pub flag_id: u32,
+    pub staff_type: i32,
+    pub start_cut_index: u32,
+    pub raw_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedEventCut {
+    pub index: u32,
+    pub name: String,
+    pub tag_id: u32,
+    pub start_flags: [i32; 3],
+    pub flag_id: u32,
+    pub data_index: Option<u32>,
+    pub next_cut_index: Option<u32>,
+    pub raw_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedEventData {
+    pub index: u32,
+    pub name: String,
+    pub data_type: i32,
+    pub value_index: u32,
+    pub value_count: u32,
+    pub next_data_index: Option<u32>,
+    pub value: ExtractedEventDataValue,
+    pub raw_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExtractedEventDataValue {
+    FloatBits {
+        values: Vec<u32>,
+    },
+    VectorBits {
+        values: Vec<u32>,
+    },
+    UnknownFloatBits {
+        values: Vec<u32>,
+    },
+    Integers {
+        values: Vec<i32>,
+    },
+    StringBytes {
+        raw_hex: String,
+        ascii: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -293,6 +404,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     let mut chunks = Vec::with_capacity(chunk_count);
     let mut stage_information = None;
     let mut scene_transitions = Vec::new();
+    let mut map_events = Vec::new();
+    let mut demo_archive_banks = Vec::new();
     let mut actor_placements = Vec::new();
     let mut recognized_ranges = Vec::new();
     let mut total_records = 0_usize;
@@ -397,6 +510,80 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
             continue;
         }
 
+        if tag == "REVT" {
+            for record_index in 0..record_count {
+                let offset = start + record_index as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let event_type = record[0];
+                if event_type > 2 {
+                    return Err(PlannerContractError::new(
+                        "orig.stage.revt.event_type",
+                        "is outside the source-audited 0..=2 dispatch",
+                    ));
+                }
+                let event_name = if matches!(event_type, 1 | 2) {
+                    Some(parse_fixed_ascii(
+                        &record[0x0d..0x1a],
+                        "orig.stage.revt.event_name",
+                        false,
+                    )?)
+                } else {
+                    None
+                };
+                map_events.push(ExtractedMapEvent {
+                    record_index,
+                    event_type,
+                    map_tool_id: record[4],
+                    priority: record[6],
+                    normal_exit_id: {
+                        let exit_id = if event_type == 0 {
+                            record[0x17]
+                        } else {
+                            record[7]
+                        };
+                        (exit_id != u8::MAX).then_some(exit_id)
+                    },
+                    skip_exit_id: (record[9] != u8::MAX).then_some(record[9]),
+                    event_name,
+                    switch_no: (record[0x1b] != u8::MAX).then_some(record[0x1b]),
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
+        if tag == "LBNK" {
+            for layer in 0..record_count {
+                let offset = start + layer as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let bank = (record[0] != u8::MAX).then_some(record[0]);
+                let bank2 = (record[1] != u8::MAX).then_some(record[1]);
+                if let Some(value) = bank
+                    && (value >= 100 || bank2.is_none_or(|value| value >= 100))
+                {
+                    return Err(PlannerContractError::new(
+                        "orig.stage.lbnk",
+                        "configured demo archive bank coordinates must be below 100",
+                    ));
+                }
+                demo_archive_banks.push(ExtractedDemoArchiveBank {
+                    layer: layer.try_into().map_err(|_| {
+                        PlannerContractError::new(
+                            "orig.stage.lbnk.layer",
+                            "must fit in one layer byte",
+                        )
+                    })?,
+                    bank,
+                    bank2,
+                    archive_name: bank
+                        .zip(bank2)
+                        .map(|(bank, bank2)| format!("Demo{bank:02}_{bank2:02}")),
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
         let Some((_, scaled, layer)) = actor_layout else {
             unreachable!("all other recognized records are actor placements")
         };
@@ -459,16 +646,355 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
         chunks,
         stage_information,
         scene_transitions,
+        map_events,
+        demo_archive_banks,
         actor_placements,
     })
+}
+
+/// Decode the engine's fixed-table `event_list.dat` format. This captures the
+/// authored event/staff/cut/data graph; it does not infer actor callbacks or
+/// JStudio `.stb` contents.
+pub fn parse_event_list(input: &[u8]) -> Result<ExtractedEventList, PlannerContractError> {
+    const HEADER_SIZE: usize = 0x40;
+    const EVENT_SIZE: usize = 0xb0;
+    const STAFF_SIZE: usize = 0x50;
+    const CUT_SIZE: usize = 0x50;
+    const DATA_SIZE: usize = 0x40;
+
+    require_range(input, 0, HEADER_SIZE, "orig.event_list.header")?;
+    let table = |offset: usize,
+                 record_size: usize,
+                 field: &'static str|
+     -> Result<(usize, usize), PlannerContractError> {
+        let start = read_u32(input, offset, field)? as usize;
+        let count = read_i32(input, offset + 4, field)?;
+        if count < 0 || count as usize > MAX_EVENT_RECORDS {
+            return Err(PlannerContractError::new(
+                field,
+                format!("count must be between 0 and {MAX_EVENT_RECORDS}"),
+            ));
+        }
+        let bytes = (count as usize)
+            .checked_mul(record_size)
+            .ok_or_else(|| PlannerContractError::new(field, "size overflow"))?;
+        if start < HEADER_SIZE && bytes != 0 {
+            return Err(PlannerContractError::new(field, "overlaps the header"));
+        }
+        require_range(input, start, bytes, field)?;
+        Ok((start, count as usize))
+    };
+
+    let (event_top, event_count) = table(0x00, EVENT_SIZE, "orig.event_list.events")?;
+    let (staff_top, staff_count) = table(0x08, STAFF_SIZE, "orig.event_list.staff")?;
+    let (cut_top, cut_count) = table(0x10, CUT_SIZE, "orig.event_list.cuts")?;
+    let (data_top, data_count) = table(0x18, DATA_SIZE, "orig.event_list.data")?;
+    let (float_top, float_count) = table(0x20, 4, "orig.event_list.float_data")?;
+    let (integer_top, integer_count) = table(0x28, 4, "orig.event_list.integer_data")?;
+    let (string_top, string_count) = table(0x30, 1, "orig.event_list.string_data")?;
+
+    let mut ranges = [
+        (event_top, event_top + event_count * EVENT_SIZE, "events"),
+        (staff_top, staff_top + staff_count * STAFF_SIZE, "staff"),
+        (cut_top, cut_top + cut_count * CUT_SIZE, "cuts"),
+        (data_top, data_top + data_count * DATA_SIZE, "data"),
+        (float_top, float_top + float_count * 4, "float_data"),
+        (integer_top, integer_top + integer_count * 4, "integer_data"),
+        (string_top, string_top + string_count, "string_data"),
+    ];
+    ranges.sort_by_key(|range| range.0);
+    let nonempty_ranges = ranges
+        .iter()
+        .filter(|range| range.0 != range.1)
+        .collect::<Vec<_>>();
+    for pair in nonempty_ranges.windows(2) {
+        if pair[0].1 > pair[1].0 {
+            return Err(PlannerContractError::new(
+                "orig.event_list.tables",
+                format!("tables {} and {} overlap", pair[0].2, pair[1].2),
+            ));
+        }
+    }
+
+    let float_data_bits = (0..float_count)
+        .map(|index| read_u32(input, float_top + index * 4, "orig.event_list.float_data"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let integer_data = (0..integer_count)
+        .map(|index| {
+            read_i32(
+                input,
+                integer_top + index * 4,
+                "orig.event_list.integer_data",
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let string_data = &input[string_top..string_top + string_count];
+
+    let mut events = Vec::with_capacity(event_count);
+    for index in 0..event_count {
+        let offset = event_top + index * EVENT_SIZE;
+        let record = &input[offset..offset + EVENT_SIZE];
+        require_dense_index(record, 0x20, index, "orig.event_list.event.index")?;
+        let staff_in_event = read_i32(record, 0x7c, "orig.event_list.event.staff_count")?;
+        if !(0..=20).contains(&staff_in_event) {
+            return Err(PlannerContractError::new(
+                "orig.event_list.event.staff_count",
+                "must be between 0 and 20",
+            ));
+        }
+        let mut staff_indices = Vec::with_capacity(staff_in_event as usize);
+        for ordinal in 0..staff_in_event as usize {
+            let staff_index = read_i32(
+                record,
+                0x2c + ordinal * 4,
+                "orig.event_list.event.staff_index",
+            )?;
+            if staff_index < 0 || staff_index as usize >= staff_count {
+                return Err(PlannerContractError::new(
+                    "orig.event_list.event.staff_index",
+                    "references a staff record outside the table",
+                ));
+            }
+            staff_indices.push(staff_index as u32);
+        }
+        events.push(ExtractedEvent {
+            index: index as u32,
+            name: parse_fixed_ascii(&record[..0x20], "orig.event_list.event.name", false)?,
+            priority: read_i32(record, 0x28, "orig.event_list.event.priority")?,
+            staff_indices,
+            finish_flags: [
+                read_i32(record, 0x88, "orig.event_list.event.start_flag")?,
+                read_i32(record, 0x8c, "orig.event_list.event.start_flag")?,
+                read_i32(record, 0x90, "orig.event_list.event.start_flag")?,
+            ],
+            raw_hex: hex_bytes(record),
+        });
+    }
+
+    let mut staff = Vec::with_capacity(staff_count);
+    for index in 0..staff_count {
+        let offset = staff_top + index * STAFF_SIZE;
+        let record = &input[offset..offset + STAFF_SIZE];
+        require_dense_index(record, 0x24, index, "orig.event_list.staff.index")?;
+        let start_cut = read_i32(record, 0x30, "orig.event_list.staff.start_cut")?;
+        if start_cut < 0 || start_cut as usize >= cut_count {
+            return Err(PlannerContractError::new(
+                "orig.event_list.staff.start_cut",
+                "references a cut outside the table",
+            ));
+        }
+        staff.push(ExtractedEventStaff {
+            index: index as u32,
+            name: parse_fixed_ascii(&record[..8], "orig.event_list.staff.name", false)?,
+            tag_id: read_i32(record, 0x20, "orig.event_list.staff.tag_id")?,
+            flag_id: read_u32(record, 0x28, "orig.event_list.staff.flag_id")?,
+            staff_type: read_i32(record, 0x2c, "orig.event_list.staff.type")?,
+            start_cut_index: start_cut as u32,
+            raw_hex: hex_bytes(record),
+        });
+    }
+
+    let mut cuts = Vec::with_capacity(cut_count);
+    for index in 0..cut_count {
+        let offset = cut_top + index * CUT_SIZE;
+        let record = &input[offset..offset + CUT_SIZE];
+        require_dense_index(record, 0x24, index, "orig.event_list.cut.index")?;
+        cuts.push(ExtractedEventCut {
+            index: index as u32,
+            name: parse_fixed_ascii(&record[..0x20], "orig.event_list.cut.name", false)?,
+            tag_id: read_u32(record, 0x20, "orig.event_list.cut.tag_id")?,
+            start_flags: [
+                read_i32(record, 0x28, "orig.event_list.cut.start_flag")?,
+                read_i32(record, 0x2c, "orig.event_list.cut.start_flag")?,
+                read_i32(record, 0x30, "orig.event_list.cut.start_flag")?,
+            ],
+            flag_id: read_u32(record, 0x34, "orig.event_list.cut.flag_id")?,
+            data_index: optional_table_index(
+                read_i32(record, 0x38, "orig.event_list.cut.data_index")?,
+                data_count,
+                "orig.event_list.cut.data_index",
+            )?,
+            next_cut_index: optional_table_index(
+                read_i32(record, 0x3c, "orig.event_list.cut.next_cut_index")?,
+                cut_count,
+                "orig.event_list.cut.next_cut_index",
+            )?,
+            raw_hex: hex_bytes(record),
+        });
+    }
+
+    let mut data = Vec::with_capacity(data_count);
+    for index in 0..data_count {
+        let offset = data_top + index * DATA_SIZE;
+        let record = &input[offset..offset + DATA_SIZE];
+        require_dense_index(record, 0x20, index, "orig.event_list.data.index")?;
+        let data_type = read_i32(record, 0x24, "orig.event_list.data.type")?;
+        let value_index = read_i32(record, 0x28, "orig.event_list.data.value_index")?;
+        let value_count = read_i32(record, 0x2c, "orig.event_list.data.value_count")?;
+        if value_index < 0 || value_count <= 0 {
+            return Err(PlannerContractError::new(
+                "orig.event_list.data.value",
+                "must have a nonnegative index and positive count",
+            ));
+        }
+        let value_index = value_index as usize;
+        let value_count = value_count as usize;
+        let value = match data_type {
+            0..=2 => {
+                let values = slice_values(
+                    &float_data_bits,
+                    value_index,
+                    value_count,
+                    "orig.event_list.data.float_value",
+                )?
+                .to_vec();
+                match data_type {
+                    0 => ExtractedEventDataValue::FloatBits { values },
+                    1 => ExtractedEventDataValue::VectorBits { values },
+                    2 => ExtractedEventDataValue::UnknownFloatBits { values },
+                    _ => unreachable!(),
+                }
+            }
+            3 => ExtractedEventDataValue::Integers {
+                values: slice_values(
+                    &integer_data,
+                    value_index,
+                    value_count,
+                    "orig.event_list.data.integer_value",
+                )?
+                .to_vec(),
+            },
+            4 => {
+                let bytes = slice_values(
+                    string_data,
+                    value_index,
+                    value_count,
+                    "orig.event_list.data.string_value",
+                )?;
+                let end = bytes
+                    .iter()
+                    .position(|byte| *byte == 0)
+                    .unwrap_or(bytes.len());
+                let ascii = (bytes[..end].iter().all(u8::is_ascii_graphic)
+                    && bytes[end..].iter().all(|byte| *byte == 0))
+                .then(|| std::str::from_utf8(&bytes[..end]).ok().map(str::to_owned))
+                .flatten();
+                ExtractedEventDataValue::StringBytes {
+                    raw_hex: hex_bytes(bytes),
+                    ascii,
+                }
+            }
+            _ => {
+                return Err(PlannerContractError::new(
+                    "orig.event_list.data.type",
+                    "is outside the source-audited 0..=4 dispatch",
+                ));
+            }
+        };
+        data.push(ExtractedEventData {
+            index: index as u32,
+            name: parse_fixed_ascii(&record[..0x20], "orig.event_list.data.name", false)?,
+            data_type,
+            value_index: value_index as u32,
+            value_count: value_count as u32,
+            next_data_index: optional_table_index(
+                read_i32(record, 0x30, "orig.event_list.data.next_data_index")?,
+                data_count,
+                "orig.event_list.data.next_data_index",
+            )?,
+            value,
+            raw_hex: hex_bytes(record),
+        });
+    }
+
+    Ok(ExtractedEventList {
+        resource_size: input.len().try_into().map_err(|_| {
+            PlannerContractError::new("orig.event_list", "resource size exceeds u32")
+        })?,
+        events,
+        staff,
+        cuts,
+        data,
+        float_data_bits,
+        integer_data,
+        string_data_hex: hex_bytes(string_data),
+    })
+}
+
+fn require_dense_index(
+    record: &[u8],
+    offset: usize,
+    expected: usize,
+    field: &'static str,
+) -> Result<(), PlannerContractError> {
+    if read_u32(record, offset, field)? as usize != expected {
+        return Err(PlannerContractError::new(
+            field,
+            "must equal the record's dense table index",
+        ));
+    }
+    Ok(())
+}
+
+fn optional_table_index(
+    value: i32,
+    count: usize,
+    field: &'static str,
+) -> Result<Option<u32>, PlannerContractError> {
+    if value == -1 {
+        return Ok(None);
+    }
+    if value < 0 || value as usize >= count {
+        return Err(PlannerContractError::new(
+            field,
+            "references a record outside its table",
+        ));
+    }
+    Ok(Some(value as u32))
+}
+
+fn slice_values<'a, T>(
+    values: &'a [T],
+    start: usize,
+    count: usize,
+    field: &'static str,
+) -> Result<&'a [T], PlannerContractError> {
+    let end = start
+        .checked_add(count)
+        .ok_or_else(|| PlannerContractError::new(field, "range overflow"))?;
+    values
+        .get(start..end)
+        .ok_or_else(|| PlannerContractError::new(field, "range exceeds its backing table"))
 }
 
 fn recognized_stage_record_size(tag: &str) -> Option<usize> {
     match tag {
         "STAG" => Some(0x3c),
         "SCLS" => Some(0x0d),
+        "REVT" => Some(0x1c),
+        "LBNK" => Some(0x03),
         _ => None,
     }
+}
+
+fn parse_fixed_ascii(
+    bytes: &[u8],
+    field: &'static str,
+    allow_empty: bool,
+) -> Result<String, PlannerContractError> {
+    let end = bytes
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(bytes.len());
+    if (!allow_empty && end == 0) || !bytes[..end].iter().all(u8::is_ascii_graphic) {
+        return Err(PlannerContractError::new(
+            field,
+            "must contain printable ASCII before its first NUL",
+        ));
+    }
+    std::str::from_utf8(&bytes[..end])
+        .map(str::to_owned)
+        .map_err(|_| PlannerContractError::new(field, "must be UTF-8"))
 }
 
 fn hex_bytes(bytes: &[u8]) -> String {
@@ -1073,6 +1599,13 @@ fn read_u32(input: &[u8], offset: usize, field: &str) -> Result<u32, PlannerCont
     ))
 }
 
+fn read_i32(input: &[u8], offset: usize, field: &str) -> Result<i32, PlannerContractError> {
+    require_range(input, offset, 4, field)?;
+    Ok(i32::from_be_bytes(
+        input[offset..offset + 4].try_into().unwrap(),
+    ))
+}
+
 fn read_i16(input: &[u8], offset: usize, field: &str) -> Result<i16, PlannerContractError> {
     require_range(input, offset, 2, field)?;
     Ok(i16::from_be_bytes(
@@ -1122,6 +1655,79 @@ fn nul_terminated<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn event_list_fixture() -> Vec<u8> {
+        let mut bytes = vec![0; 0x314];
+        for (header, top, count) in [
+            (0x00, 0x40_u32, 1_i32),
+            (0x08, 0xf0, 2),
+            (0x10, 0x190, 3),
+            (0x18, 0x280, 2),
+            (0x20, 0x300, 0),
+            (0x28, 0x300, 1),
+            (0x30, 0x304, 16),
+        ] {
+            bytes[header..header + 4].copy_from_slice(&top.to_be_bytes());
+            bytes[header + 4..header + 8].copy_from_slice(&count.to_be_bytes());
+        }
+
+        let event = &mut bytes[0x40..0xf0];
+        event[..10].copy_from_slice(b"demo07_02\0");
+        event[0x20..0x24].copy_from_slice(&0_u32.to_be_bytes());
+        event[0x28..0x2c].copy_from_slice(&100_i32.to_be_bytes());
+        event[0x2c..0x30].copy_from_slice(&0_i32.to_be_bytes());
+        event[0x30..0x34].copy_from_slice(&1_i32.to_be_bytes());
+        event[0x7c..0x80].copy_from_slice(&2_i32.to_be_bytes());
+        for offset in [0x88, 0x8c, 0x90] {
+            event[offset..offset + 4].copy_from_slice(&(-1_i32).to_be_bytes());
+        }
+
+        for (index, name, staff_type, start_cut) in [
+            (0_usize, b"PACKAGE".as_slice(), 11_i32, 0_i32),
+            (1, b"DIRECTOR", 6, 2),
+        ] {
+            let start = 0xf0 + index * 0x50;
+            let record = &mut bytes[start..start + 0x50];
+            record[..name.len()].copy_from_slice(name);
+            record[0x24..0x28].copy_from_slice(&(index as u32).to_be_bytes());
+            record[0x2c..0x30].copy_from_slice(&staff_type.to_be_bytes());
+            record[0x30..0x34].copy_from_slice(&start_cut.to_be_bytes());
+        }
+
+        for (index, name, data_index, next_cut) in [
+            (0_usize, "PLAY", 0_i32, 1_i32),
+            (1, "WAIT", -1, -1),
+            (2, "MAPTOOL", 1, -1),
+        ] {
+            let start = 0x190 + index * 0x50;
+            let record = &mut bytes[start..start + 0x50];
+            record[..name.len()].copy_from_slice(name.as_bytes());
+            record[0x24..0x28].copy_from_slice(&(index as u32).to_be_bytes());
+            for offset in [0x28, 0x2c, 0x30] {
+                record[offset..offset + 4].copy_from_slice(&(-1_i32).to_be_bytes());
+            }
+            record[0x34..0x38].copy_from_slice(&(3_u32 + index as u32).to_be_bytes());
+            record[0x38..0x3c].copy_from_slice(&data_index.to_be_bytes());
+            record[0x3c..0x40].copy_from_slice(&next_cut.to_be_bytes());
+        }
+
+        for (index, name, data_type, value_index, value_count) in [
+            (0_usize, "FileName", 4_i32, 0_i32, 16_i32),
+            (1, "ID", 3, 0, 1),
+        ] {
+            let start = 0x280 + index * 0x40;
+            let record = &mut bytes[start..start + 0x40];
+            record[..name.len()].copy_from_slice(name.as_bytes());
+            record[0x20..0x24].copy_from_slice(&(index as u32).to_be_bytes());
+            record[0x24..0x28].copy_from_slice(&data_type.to_be_bytes());
+            record[0x28..0x2c].copy_from_slice(&value_index.to_be_bytes());
+            record[0x2c..0x30].copy_from_slice(&value_count.to_be_bytes());
+            record[0x30..0x34].copy_from_slice(&(-1_i32).to_be_bytes());
+        }
+        bytes[0x300..0x304].copy_from_slice(&4_i32.to_be_bytes());
+        bytes[0x304..0x312].copy_from_slice(b"demo07_02.stb\0");
+        bytes
+    }
 
     fn bmg_fixture() -> Vec<u8> {
         let mut bmg = vec![0; 0x20];
@@ -1225,6 +1831,69 @@ mod tests {
         assert_eq!(parsed.scene_transitions[1].scene_layer, Some(2));
         assert_eq!(parsed.scene_transitions[1].time_hour, Some(7));
         assert_eq!(parsed.scene_transitions[1].wipe_time, 2);
+    }
+
+    #[test]
+    fn parses_demo_banks_and_map_event_exit_coordinates() {
+        let mut stage = vec![0; 0x70];
+        stage[..4].copy_from_slice(&2_u32.to_be_bytes());
+        stage[4..8].copy_from_slice(b"REVT");
+        stage[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        stage[12..16].copy_from_slice(&0x20_u32.to_be_bytes());
+        stage[16..20].copy_from_slice(b"LBNK");
+        stage[20..24].copy_from_slice(&15_u32.to_be_bytes());
+        stage[24..28].copy_from_slice(&0x40_u32.to_be_bytes());
+        let map_event = &mut stage[0x20..0x3c];
+        map_event[..13].copy_from_slice(&[2, 2, 3, 3, 4, 0xff, 100, 1, 3, 2, 0xff, 0xff, 0]);
+        map_event[13..23].copy_from_slice(b"demo07_02\0");
+        map_event[0x1a] = 0xff;
+        map_event[0x1b] = 0xff;
+        stage[0x40..0x40 + 45].fill(0xff);
+        stage[0x40 + 8 * 3..0x40 + 8 * 3 + 3].copy_from_slice(&[7, 2, 0xff]);
+
+        let parsed = parse_stage_data(&stage).unwrap();
+        assert_eq!(parsed.chunks[0].recognized_record_size, Some(0x1c));
+        assert_eq!(parsed.map_events[0].map_tool_id, 4);
+        assert_eq!(parsed.map_events[0].normal_exit_id, Some(1));
+        assert_eq!(parsed.map_events[0].skip_exit_id, Some(2));
+        assert_eq!(
+            parsed.map_events[0].event_name.as_deref(),
+            Some("demo07_02")
+        );
+        assert_eq!(
+            parsed.demo_archive_banks[8].archive_name.as_deref(),
+            Some("Demo07_02")
+        );
+    }
+
+    #[test]
+    fn parses_event_staff_cut_and_typed_data_tables() {
+        let parsed = parse_event_list(&event_list_fixture()).unwrap();
+        assert_eq!(parsed.events[0].name, "demo07_02");
+        assert_eq!(parsed.events[0].staff_indices, [0, 1]);
+        assert_eq!(parsed.staff[0].name, "PACKAGE");
+        assert_eq!(parsed.staff[0].start_cut_index, 0);
+        assert_eq!(parsed.cuts[0].name, "PLAY");
+        assert_eq!(parsed.cuts[0].data_index, Some(0));
+        assert_eq!(parsed.cuts[0].next_cut_index, Some(1));
+        assert_eq!(
+            parsed.data[0].value,
+            ExtractedEventDataValue::StringBytes {
+                raw_hex: "64656d6f30375f30322e737462000000".into(),
+                ascii: Some("demo07_02.stb".into()),
+            }
+        );
+        assert_eq!(
+            parsed.data[1].value,
+            ExtractedEventDataValue::Integers { values: vec![4] }
+        );
+
+        let mut invalid = event_list_fixture();
+        invalid[0xf0 + 0x30..0xf0 + 0x34].copy_from_slice(&99_i32.to_be_bytes());
+        assert_eq!(
+            parse_event_list(&invalid).unwrap_err().field(),
+            "orig.event_list.staff.start_cut"
+        );
     }
 
     #[test]

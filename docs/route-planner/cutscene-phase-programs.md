@@ -1,8 +1,10 @@
 # Cutscene phase programs and exceptional branches
 
 Status: the planner has a strict, versioned cutscene-program schema and compiler.
-Concrete post-Zelda tower phases and archive-failure behavior still require
-source/runtime evidence; the generic model deliberately does not claim them.
+For the post-Zelda tower sequence, planner-owned extractors now establish the
+exact outer event/resource/normal-exit/skip-exit topology. The JStudio phase
+internals, archive-failure behavior, and return-place writer boundary still
+require source/runtime evidence; the model deliberately does not claim them.
 
 ## Why this is a program
 
@@ -49,6 +51,9 @@ that normal scene-change and resource-failure branches compile to distinct
 transition kinds, confirmed prefix writes remain ordered, the unaudited suffix
 is invalidated, and no return-place write is invented.
 
-Remaining Zelda-specific evidence work is unchanged: identify the real event,
-cut, phase, archive/actor request, branch point, scene-change operation, all
-return/restart writers, and the exact effects reached before and after failure.
+The exact GZ2E01 wrapper is audited in
+`gz2e01-zelda-cutscene-source-audit.md`: `demo07_02` selects
+`Demo07_02/demo07_02.stb`, map-tool ID 4, normal SCLS exit 1 to Castle Town, and
+skip SCLS exit 2 back to Zelda's tower. Remaining Zelda-specific evidence work
+is to decode the JStudio phases, identify the actual failure branch and last
+completed operation, and trace every return/restart writer and affected bit.

@@ -22,8 +22,8 @@ use dusklight_route_planner::orig_discovery::{
     bundled_supported_build_registry, extract_orig_bundle, scan_orig_tree,
 };
 use dusklight_route_planner::orig_extraction::{
-    EXTRACTED_STAGE_DATA_SCHEMA, extract_unique_rarc_resource, list_rarc_resource_names,
-    parse_message_flow, parse_stage_data,
+    EXTRACTED_EVENT_LIST_SCHEMA, EXTRACTED_STAGE_DATA_SCHEMA, extract_unique_rarc_resource,
+    list_rarc_resource_names, parse_event_list, parse_message_flow, parse_stage_data,
 };
 use dusklight_route_planner::refinement::{
     ComposedPlannerCatalog, RefinementLayers, RefinementPack,
@@ -69,6 +69,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("construct-message-flows") => construct_message_flows(&args[1..]),
         Some("compose") => compose(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
+        Some("extract-event-list") => extract_event_list(&args[1..]),
         Some("extract-message-flow") => extract_message_flow(&args[1..]),
         Some("extract-orig") => extract_orig(&args[1..]),
         Some("extract-resource") => extract_resource(&args[1..]),
@@ -698,6 +699,8 @@ fn extract_stage_data(args: &[String]) -> Result<(), Box<dyn Error>> {
             "resource_sha256": resource_sha256,
             "chunks": stage.chunks.len(),
             "scene_transitions": stage.scene_transitions.len(),
+            "map_events": stage.map_events.len(),
+            "demo_archive_banks": stage.demo_archive_banks.len(),
             "actor_placements": stage.actor_placements.len(),
         }))?
     );
@@ -724,6 +727,40 @@ fn extract_resource(args: &[String]) -> Result<(), Box<dyn Error>> {
             "resource": resource_name,
             "resource_sha256": resource_sha256,
             "bytes": resource.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn extract_event_list(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let archive_path = required_path(args, "--archive")?;
+    let resource_name = option(args, "--resource").unwrap_or_else(|| "event_list.dat".into());
+    let output = required_path(args, "--output")?;
+    let archive = fs::read(&archive_path)?;
+    let resource = extract_unique_rarc_resource(&archive, &resource_name)?;
+    let event_list = parse_event_list(&resource)?;
+    let archive_sha256 = Digest(Sha256::digest(&archive).into());
+    let resource_sha256 = Digest(Sha256::digest(&resource).into());
+    let bytes = serde_json::to_vec_pretty(&json!({
+        "schema": EXTRACTED_EVENT_LIST_SCHEMA,
+        "archive": archive_path,
+        "archive_sha256": archive_sha256,
+        "resource": resource_name,
+        "resource_sha256": resource_sha256,
+        "event_list": event_list,
+    }))?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": EXTRACTED_EVENT_LIST_SCHEMA,
+            "output": output,
+            "archive_sha256": archive_sha256,
+            "resource_sha256": resource_sha256,
+            "events": event_list.events.len(),
+            "staff": event_list.staff.len(),
+            "cuts": event_list.cuts.len(),
+            "data": event_list.data.len(),
         }))?
     );
     Ok(())
@@ -1489,6 +1526,7 @@ fn print_usage() {
             "  route-planner diff-orig --left LEFT.json --right RIGHT.json [--left-locale LOCALE --right-locale LOCALE] --output DIFF.json",
             "  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]",
             "  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json",
+            "  route-planner extract-event-list --archive ARCHIVE.arc [--resource event_list.dat] --output EVENTS.json",
             "  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json",
             "  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json",
             "  route-planner extract-resource --archive ARCHIVE.arc --resource FILE --output FILE",
