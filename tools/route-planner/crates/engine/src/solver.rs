@@ -11,7 +11,12 @@ use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
 use crate::transition::{MechanicsCatalog, PathConstraint, StateOperation};
 use crate::{PlannerContractError, artifact::Digest};
 use serde::Serialize;
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+#[derive(Clone)]
+struct RouteActionSequence {
+    actions: Vec<RouteActionRef>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SolverOptions {
@@ -37,7 +42,11 @@ fn compile_route_policy(
         banned_actions: BTreeSet::new(),
         required_predicates: Vec::new(),
         forbidden_predicates: Vec::new(),
+        required_sequences: Vec::new(),
+        banned_sequences: Vec::new(),
     };
+    let mut required_methods = BTreeMap::<String, RouteActionSequence>::new();
+    let mut banned_methods = BTreeMap::<String, RouteActionSequence>::new();
 
     for constraint in book
         .constraints
@@ -87,10 +96,23 @@ fn compile_route_policy(
                 require_searchable_action(action, &directive.id)?;
                 policy.banned_actions.insert(action.clone());
             }
-            RouteDirectiveKind::PreferAction { .. }
-            | RouteDirectiveKind::PinMethod { .. }
-            | RouteDirectiveKind::BanMethod { .. }
-            | RouteDirectiveKind::PreferMethod { .. } => {
+            RouteDirectiveKind::PinMethod { method_id } => {
+                let sequence = compile_method_sequence(book, method_id, evaluator, true)?
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "route_book.directives.method_id",
+                            "required method unexpectedly had no active sequence",
+                        )
+                    })?;
+                required_methods.insert(method_id.clone(), sequence);
+            }
+            RouteDirectiveKind::BanMethod { method_id } => {
+                if let Some(sequence) = compile_method_sequence(book, method_id, evaluator, false)?
+                {
+                    banned_methods.insert(method_id.clone(), sequence);
+                }
+            }
+            RouteDirectiveKind::PreferAction { .. } | RouteDirectiveKind::PreferMethod { .. } => {
                 return Err(PlannerContractError::new(
                     "route_book.directives",
                     format!(
@@ -102,16 +124,21 @@ fn compile_route_policy(
         }
     }
 
-    if let Some(region) = book.regions.iter().find(|region| {
-        evaluator.scope_applies(&region.scope) && region.selected_method_id.is_some()
-    }) {
-        return Err(PlannerContractError::new(
-            "route_book.regions.selected_method_id",
-            format!(
-                "region {} selects a method, but ordered method execution is not yet supported",
-                region.id
-            ),
-        ));
+    for region in book
+        .regions
+        .iter()
+        .filter(|region| evaluator.scope_applies(&region.scope))
+    {
+        if let Some(method_id) = &region.selected_method_id {
+            let sequence =
+                compile_method_sequence(book, method_id, evaluator, true)?.ok_or_else(|| {
+                    PlannerContractError::new(
+                        "route_book.regions.selected_method_id",
+                        "selected method unexpectedly had no active sequence",
+                    )
+                })?;
+            required_methods.insert(method_id.clone(), sequence);
+        }
     }
     if let Some(action) = policy
         .required_actions
@@ -123,7 +150,81 @@ fn compile_route_policy(
             format!("action {action:?} is both required and banned"),
         ));
     }
+    if let Some(method_id) = required_methods
+        .keys()
+        .find(|method_id| banned_methods.contains_key(*method_id))
+    {
+        return Err(PlannerContractError::new(
+            "route_book",
+            format!("method {method_id} is both required and banned"),
+        ));
+    }
+    if let Some((method_id, action)) = required_methods.iter().find_map(|(method_id, sequence)| {
+        sequence
+            .actions
+            .iter()
+            .find(|action| policy.banned_actions.contains(*action))
+            .map(|action| (method_id, action))
+    }) {
+        return Err(PlannerContractError::new(
+            "route_book",
+            format!("required method {method_id} contains banned action {action:?}"),
+        ));
+    }
+    policy.required_sequences = required_methods.into_values().collect();
+    policy.banned_sequences = banned_methods.into_values().collect();
     Ok(policy)
+}
+
+fn compile_method_sequence(
+    book: &RouteBook,
+    method_id: &str,
+    evaluator: &PredicateEvaluator<'_>,
+    required: bool,
+) -> Result<Option<RouteActionSequence>, PlannerContractError> {
+    let method = book
+        .methods
+        .iter()
+        .find(|method| method.id == method_id)
+        .ok_or_else(|| {
+            PlannerContractError::new(
+                "route_book.directives.method_id",
+                format!("references unknown method {method_id}"),
+            )
+        })?;
+    if !evaluator.scope_applies(&method.scope) {
+        if required {
+            return Err(PlannerContractError::new(
+                "route_book.methods.scope",
+                format!("required method {method_id} does not apply to the starting context"),
+            ));
+        }
+        return Ok(None);
+    }
+    let mut actions = Vec::with_capacity(method.step_ids.len());
+    for step_id in &method.step_ids {
+        let step = book
+            .steps
+            .iter()
+            .find(|step| step.id == *step_id)
+            .ok_or_else(|| {
+                PlannerContractError::new(
+                    "route_book.methods.step_ids",
+                    format!("references unknown step {step_id}"),
+                )
+            })?;
+        if step.precondition.is_some() || step.postcondition.is_some() {
+            return Err(PlannerContractError::new(
+                "route_book.methods.step_ids",
+                format!(
+                    "method {method_id} uses conditioned step {step_id}; action-boundary predicate checks are not yet executable"
+                ),
+            ));
+        }
+        require_searchable_action(&step.action, method_id)?;
+        actions.push(step.action.clone());
+    }
+    Ok(Some(RouteActionSequence { actions }))
 }
 
 fn require_searchable_action(
@@ -216,6 +317,16 @@ struct SearchNode {
     steps: Vec<SearchStep>,
     depth: usize,
     satisfied_required_actions: BTreeSet<RouteActionRef>,
+    required_sequence_progress: Vec<usize>,
+    banned_sequence_progress: Vec<usize>,
+}
+
+#[derive(Eq, Ord, PartialEq, PartialOrd)]
+struct SearchIdentity {
+    state_sha256: Digest,
+    satisfied_required_actions: Vec<RouteActionRef>,
+    required_sequence_progress: Vec<usize>,
+    banned_sequence_progress: Vec<usize>,
 }
 
 struct RouteSearchPolicy {
@@ -223,6 +334,8 @@ struct RouteSearchPolicy {
     banned_actions: BTreeSet<RouteActionRef>,
     required_predicates: Vec<PredicateExpression>,
     forbidden_predicates: Vec<PredicateExpression>,
+    required_sequences: Vec<RouteActionSequence>,
+    banned_sequences: Vec<RouteActionSequence>,
 }
 
 pub struct ForwardSolver<'a> {
@@ -298,6 +411,18 @@ impl<'a> ForwardSolver<'a> {
             steps: Vec::new(),
             depth: 0,
             satisfied_required_actions: BTreeSet::new(),
+            required_sequence_progress: vec![
+                0;
+                route_policy.as_ref().map_or(0, |policy| policy
+                    .required_sequences
+                    .len())
+            ],
+            banned_sequence_progress: vec![
+                0;
+                route_policy
+                    .as_ref()
+                    .map_or(0, |policy| policy.banned_sequences.len())
+            ],
         }]);
         let mut visited = BTreeSet::new();
         let mut unknown_transition_ids = BTreeSet::new();
@@ -308,13 +433,16 @@ impl<'a> ForwardSolver<'a> {
 
         while let Some(node) = queue.pop_front() {
             let state_identity = node.state.semantic_digest()?;
-            let search_identity = (
-                state_identity,
-                node.satisfied_required_actions
+            let search_identity = SearchIdentity {
+                state_sha256: state_identity,
+                satisfied_required_actions: node
+                    .satisfied_required_actions
                     .iter()
                     .cloned()
                     .collect::<Vec<_>>(),
-            );
+                required_sequence_progress: node.required_sequence_progress.clone(),
+                banned_sequence_progress: node.banned_sequence_progress.clone(),
+            };
             if !visited.insert(search_identity) {
                 continue;
             }
@@ -360,10 +488,18 @@ impl<'a> ForwardSolver<'a> {
                     .required_actions
                     .is_subset(&node.satisfied_required_actions)
             });
+            let required_sequences_satisfied = route_policy.as_ref().is_none_or(|policy| {
+                policy
+                    .required_sequences
+                    .iter()
+                    .zip(&node.required_sequence_progress)
+                    .all(|(sequence, progress)| *progress == sequence.actions.len())
+            });
             match evaluator.evaluate(goal) {
                 EvaluatedTruth::True
                     if required_predicates == EvaluatedTruth::True
-                        && required_actions_satisfied =>
+                        && required_actions_satisfied
+                        && required_sequences_satisfied =>
                 {
                     return Ok(SearchResult {
                         status: SearchStatus::Reached,
@@ -428,7 +564,7 @@ impl<'a> ForwardSolver<'a> {
                     &node,
                     next,
                     std::slice::from_ref(&action),
-                    route_policy.as_ref().map(|policy| &policy.required_actions),
+                    route_policy.as_ref(),
                     SearchStep {
                         action_kind: SearchActionKind::Technique,
                         action_id: technique.id.clone(),
@@ -620,7 +756,7 @@ impl<'a> ForwardSolver<'a> {
                                 }))
                                 .chain(std::iter::once(transition_action.clone()))
                                 .collect::<Vec<_>>(),
-                            route_policy.as_ref().map(|policy| &policy.required_actions),
+                            route_policy.as_ref(),
                             SearchStep {
                                 action_kind: SearchActionKind::Transition,
                                 action_id: transition.id.clone(),
@@ -663,29 +799,51 @@ impl<'a> ForwardSolver<'a> {
     fn enqueue_if_new(
         &self,
         queue: &mut VecDeque<SearchNode>,
-        visited: &BTreeSet<(Digest, Vec<RouteActionRef>)>,
+        visited: &BTreeSet<SearchIdentity>,
         node: &SearchNode,
         next: PlannerExecutionState,
         applied_actions: &[RouteActionRef],
-        required_actions: Option<&BTreeSet<RouteActionRef>>,
+        route_policy: Option<&RouteSearchPolicy>,
         mut step: SearchStep,
     ) -> Result<(), PlannerContractError> {
         let result = next.semantic_digest()?;
         let mut satisfied_required_actions = node.satisfied_required_actions.clone();
-        if let Some(required_actions) = required_actions {
+        let mut required_sequence_progress = node.required_sequence_progress.clone();
+        let mut banned_sequence_progress = node.banned_sequence_progress.clone();
+        if let Some(policy) = route_policy {
             for action in applied_actions {
-                if required_actions.contains(action) {
+                if policy.required_actions.contains(action) {
                     satisfied_required_actions.insert(action.clone());
                 }
             }
+            advance_sequence_progress(
+                &policy.required_sequences,
+                &mut required_sequence_progress,
+                applied_actions,
+            );
+            advance_sequence_progress(
+                &policy.banned_sequences,
+                &mut banned_sequence_progress,
+                applied_actions,
+            );
+            if policy
+                .banned_sequences
+                .iter()
+                .zip(&banned_sequence_progress)
+                .any(|(sequence, progress)| *progress == sequence.actions.len())
+            {
+                return Ok(());
+            }
         }
-        let search_identity = (
-            result,
-            satisfied_required_actions
+        let search_identity = SearchIdentity {
+            state_sha256: result,
+            satisfied_required_actions: satisfied_required_actions
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>(),
-        );
+            required_sequence_progress: required_sequence_progress.clone(),
+            banned_sequence_progress: banned_sequence_progress.clone(),
+        };
         if visited.contains(&search_identity) {
             return Ok(());
         }
@@ -697,8 +855,24 @@ impl<'a> ForwardSolver<'a> {
             steps,
             depth: node.depth + 1,
             satisfied_required_actions,
+            required_sequence_progress,
+            banned_sequence_progress,
         });
         Ok(())
+    }
+}
+
+fn advance_sequence_progress(
+    sequences: &[RouteActionSequence],
+    progress: &mut [usize],
+    applied_actions: &[RouteActionRef],
+) {
+    for action in applied_actions {
+        for (sequence, progress) in sequences.iter().zip(progress.iter_mut()) {
+            if sequence.actions.get(*progress) == Some(action) {
+                *progress += 1;
+            }
+        }
     }
 }
 
@@ -759,7 +933,8 @@ mod tests {
         RuleEvidence, TruthStatus, ValueReference,
     };
     use crate::route_book::{
-        ROUTE_BOOK_SCHEMA, RouteBookManifest, RouteDirective, RouteDirectiveKind,
+        CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_SCHEMA, ReferenceStep,
+        RouteBookManifest, RouteDirective, RouteDirectiveKind,
     };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use crate::state::{
@@ -1035,6 +1210,104 @@ mod tests {
                 },
             ],
         );
+        let solver = ForwardSolver::new_with_route_book(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions::default(),
+            &book,
+        )
+        .unwrap();
+        let result = solver
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert_eq!(
+            result
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["transition.a-to-d", "transition.d-to-b"]
+        );
+    }
+
+    #[test]
+    fn selected_method_requires_its_actions_in_authored_order() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![
+            transition(
+                &snapshot,
+                "transition.a-to-b",
+                "STAGE_A",
+                "STAGE_B",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.a-to-d",
+                "STAGE_A",
+                "STAGE_D",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.d-to-b",
+                "STAGE_D",
+                "STAGE_B",
+                Vec::new(),
+            ),
+        ]);
+        mechanics.goals = vec![goal("goal.b", "STAGE_B")];
+        let facts = facts();
+        let mut book = route_book(&snapshot, Vec::new());
+        book.steps = vec![
+            ReferenceStep {
+                id: "step.detour-enter".into(),
+                label: "Enter detour".into(),
+                scope: scope(&snapshot),
+                action: RouteActionRef::Transition {
+                    transition_id: "transition.a-to-d".into(),
+                },
+                precondition: None,
+                postcondition: None,
+                region_id: Some("region.detour".into()),
+                annotation_ids: Vec::new(),
+            },
+            ReferenceStep {
+                id: "step.detour-exit".into(),
+                label: "Exit detour".into(),
+                scope: scope(&snapshot),
+                action: RouteActionRef::Transition {
+                    transition_id: "transition.d-to-b".into(),
+                },
+                precondition: None,
+                postcondition: None,
+                region_id: Some("region.detour".into()),
+                annotation_ids: Vec::new(),
+            },
+        ];
+        book.methods = vec![PlanMethod {
+            id: "method.detour".into(),
+            label: "Take detour".into(),
+            scope: scope(&snapshot),
+            region_id: "region.detour".into(),
+            step_ids: vec!["step.detour-enter".into(), "step.detour-exit".into()],
+        }];
+        book.regions = vec![PlanRegion {
+            id: "region.detour".into(),
+            label: "Detour".into(),
+            scope: scope(&snapshot),
+            parent_region_id: None,
+            entry_predicate: Some(stage_is("STAGE_A")),
+            outcome_predicate: stage_is("STAGE_B"),
+            method_ids: vec!["method.detour".into()],
+            selected_method_id: Some("method.detour".into()),
+            collapse_policy: CollapsePolicy::Never,
+        }];
         let solver = ForwardSolver::new_with_route_book(
             &facts,
             &mechanics,

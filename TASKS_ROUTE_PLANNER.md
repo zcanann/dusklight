@@ -546,8 +546,15 @@ The current code shows:
   state reached without a pinned action does not erase a later compliant path.
   Planner CLI/service solve requests accept an optional route book and seal its
   digest into solve-report schema v2. Unsupported costs, preferences,
-  writer/microtrace execution, and ordered method selections fail closed rather
+  writer/microtrace execution, and conditioned method steps fail closed rather
   than being silently ignored.
+- Selected and pinned route-book methods now compile to ordered action
+  subsequences; banned methods prune a path when their ordered subsequence is
+  completed. Sequence progress participates in search identity, so revisiting
+  identical game state at a different point in a method remains distinct.
+  Method/action contradictions are rejected before search. Step-local pre/post
+  predicates still fail closed until the executor can retain intermediate
+  boundaries inside combined resolver/technique/transition setups.
 
 Primary source anchors:
 
@@ -1661,8 +1668,10 @@ Deliverable: researchers can extend the model without editing core code.
   - [x] Apply scoped require/forbid predicates and techniques plus pin/ban
         executable-action directives during forward search, with route-book
         identity retained in standalone reports.
-  - [ ] Execute cost/evidence thresholds, soft preferences, ordered methods,
-        and portable multi-context route books.
+  - [x] Track ordered unconditioned pin/ban/selected method subsequences as part
+        of search identity.
+  - [ ] Execute cost/evidence thresholds, soft preferences, conditioned method
+        steps, and portable multi-context route books.
 - [ ] Add multi-objective cost and K-alternative plan search.
 - [x] Return reachable, unreachable-under-model, or unknown.
   - [x] Expose canonical fact/mechanics/execution-state artifacts through a
