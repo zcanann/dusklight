@@ -891,6 +891,11 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         renderer->discardedGpuFrameCount - mProfile.discardedGpuFramesAtStart;
     const bool gpuFramesDiscarded = submittedCommandBuffers == 0 &&
                                     discardedGpuFrames >= candidateTicks;
+    const bool gpuCodeCreationAbsent = renderer->createdShaderModuleCount == 0 &&
+                                       renderer->createdRenderPipelineCount == 0 &&
+                                       renderer->createdComputePipelineCount == 0;
+    const bool gpuQueueOperationsAbsent = renderer->submittedCommandBufferCount == 0 &&
+                                          renderer->directQueueWriteCount == 0;
     const nlohmann::json timing{
         {"schema", "dusklight-suffix-batch-timing/v1"},
         {"batch_wall_micros", mProfile.complete ? nlohmann::json(mProfile.batchWallMicros) :
@@ -944,9 +949,18 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                 {"status", gpuFramesDiscarded ? "discarded" : "timestamp_unavailable"},
                 {"micros", nullptr},
                 {"submitted_command_buffers", submittedCommandBuffers},
+                {"submitted_command_buffers_process_total", renderer->submittedCommandBufferCount},
                 {"discarded_frames", discardedGpuFrames},
+                {"direct_queue_writes_process_total", renderer->directQueueWriteCount},
+                {"gpu_queue_operations_absent", gpuQueueOperationsAbsent},
+                {"created_shader_modules_process_total", renderer->createdShaderModuleCount},
+                {"created_render_pipelines_process_total", renderer->createdRenderPipelineCount},
+                {"created_compute_pipelines_process_total", renderer->createdComputePipelineCount},
+                {"gpu_code_creation_absent", gpuCodeCreationAbsent},
                 {"reason", gpuFramesDiscarded
-                    ? "simulation-only render sink discarded every candidate frame before GPU encoding"
+                    ? (gpuCodeCreationAbsent && gpuQueueOperationsAbsent
+                          ? "simulation-only render sink created no shader or pipeline objects, issued no queue operations, and discarded every candidate frame before GPU encoding"
+                          : "simulation-only render sink discarded every candidate frame before GPU encoding but GPU setup or queue operations were observed")
                     : "Aurora exposes submission counts but no authenticated GPU timestamps"},
             }},
         }},

@@ -223,23 +223,28 @@ Headless farming now retains the ordinary CPU draw traversal and GX FIFO drain,
 but discards each completed renderer packet before per-frame pipeline lookup,
 GPU command encoding, and queue submission. The prior Dawn null-backend path is
 available through `--headless-submit-gpu-frames` only as an audit comparator.
-Suffix-batch timing artifacts report command-buffer submissions and discarded
-frames explicitly; absent authenticated GPU timestamps remain `null` rather
-than being reported as zero time.
+Suffix-batch timing artifacts report per-batch and process-total command-buffer
+submissions, direct queue writes, shader modules, render/compute pipelines and
+discarded frames explicitly; absent authenticated GPU timestamps remain `null`
+rather than being reported as zero time.
 
 A Windows discard/submit/discard proof on 2026-07-20 ran the same two 125-tick
-Ordon candidates from the same 440-tick source boundary. The discard runs each
-reported zero submitted command buffers and 250 discarded frames. The null
-backend comparator reported 251 submissions and zero discarded frames. Across
-the three runs, the six authenticated native episode payloads formed two
+Ordon candidates from the same 440-tick source boundary. Each discard process
+reported zero command-buffer submissions, zero direct queue writes, zero
+shader modules, zero render/compute pipelines, and 250 discarded candidate
+frames. The null-backend comparator reported 690 process submissions (440
+prefix plus 250 candidate frames), 154 shader modules, 155 render pipelines
+and zero discarded frames. Across the three runs, the six authenticated native
+episode payloads formed two
 duplicate-trajectory groups with three byte-identical copies each and no
 determinism conflict. The complete observation stream included 1,500 samples,
 47-48 actors per sample, 24-25 dynamic colliders, six player collision
 surfaces, and no truncated actor observations.
 
-This is a renderer-work invariant, not a throughput win claim. The three batch
-wall times were 5.498, 5.714, and 5.540 seconds; state validation dominated this
-particular two-candidate run, and the Dawn null backend made submission removal
-smaller than run-to-run noise. Aurora still creates the null device and
-startup-only utility pipelines, so the full no-shader-compilation task remains
-open.
+This is a renderer-work invariant, not a throughput win claim. The final three
+batch wall times were 6.053, 6.015, and 5.896 seconds; state validation dominated
+this particular two-candidate run, and the Dawn null backend made renderer
+removal smaller than run-to-run noise. The farming path still uses a hidden SDL
+window as an event/size anchor and creates a Dawn null device plus metadata
+resources. It does not initialize an SDL/ImGui renderer backend, create shader
+or pipeline objects, present, or issue queue operations.

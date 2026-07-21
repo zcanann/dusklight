@@ -660,7 +660,7 @@ silent truncation or future leakage, and preserves deterministic cold playback.
     `reused`; both retained identical candidate payloads, restore identity and
     byte-identical authenticated episode shards. Real policy-inference and GPU
     timestamp instrumentation remain before the parent item can close.
-- [ ] Implement a true no-present render sink: no visible window, presentation,
+- [x] Implement a true no-present render sink: no visible window, presentation,
   shader compilation, or GPU submission during farming while retaining any
   CPU-side work still required for equivalent gameplay.
   - [x] Discard simulation-only frame packets before per-frame pipeline lookup,
@@ -668,12 +668,15 @@ silent truncation or future leakage, and preserves deterministic cold playback.
     draw traversal and GX FIFO drain. The legacy null-backend submission path
     remains available only as an explicit audit comparator. A live
     discard/submit/discard proof ran the same two 125-tick candidates in fresh
-    processes: both discard runs reported zero submissions and 250 discarded
-    frames, while the comparator reported 251 submissions and zero discarded
-    frames. The six authenticated episode payloads formed two groups of three
-    byte-identical trajectories with no determinism conflict. Aurora still
-    creates its null device and startup-only utility pipelines, so the parent
-    item remains open until startup shader compilation is removed and audited.
+    processes. Both discard runs reported zero command-buffer submissions over
+    the entire process, zero direct queue writes, zero shader modules, zero
+    render/compute pipelines, and 250 discarded candidate frames. The audit
+    comparator reported 690 process submissions (440 prefix plus 250 candidate
+    frames), 154 shader modules and 155 render pipelines. The six authenticated
+    episode payloads formed two groups of three byte-identical trajectories
+    with no determinism conflict. The hidden SDL event/size anchor and Dawn
+    null device remain, but no visible window, renderer backend, presentation,
+    GPU code creation or queue operation occurs in the farming path.
 - [ ] Attempt to skip CPU draw traversal only after audited A/B/A runs prove
   identical future gameplay across representative movement, actor, event and
   loading states. A mismatch blocks the optimization.
