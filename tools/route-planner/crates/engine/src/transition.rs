@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v8";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v9";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -60,6 +60,12 @@ pub enum StateOperation {
         selector: ComponentSelector,
     },
     ClearField {
+        target: ComponentFieldTarget,
+    },
+    /// Marks a structured field unobserved/unknown by removing its known value.
+    /// This is distinct in provenance from a semantic clear performed by game
+    /// logic, even though both leave no currently known structured value.
+    InvalidateField {
         target: ComponentFieldTarget,
     },
     Initialize {
@@ -219,6 +225,12 @@ pub struct CandidateTransition {
     pub approach_id: String,
     pub activation: ActivationContract,
     pub evidence: RuleEvidence,
+}
+
+impl CandidateTransition {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        validate_transition(self)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -523,7 +535,9 @@ impl StateOperation {
             Self::ClearComponent { selector } | Self::Preserve { selector } => {
                 validate_component_selector(selector)
             }
-            Self::ClearField { target } => validate_field_target(target),
+            Self::ClearField { target } | Self::InvalidateField { target } => {
+                validate_field_target(target)
+            }
             Self::Initialize { component } => component.validate(),
             Self::Copy {
                 source,

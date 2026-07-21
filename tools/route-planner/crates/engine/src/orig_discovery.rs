@@ -1,9 +1,9 @@
 //! Deterministic discovery and extraction from a user-supplied retail `orig/` tree.
 //!
 //! The public artifacts contain normalized relative paths and digests, never
-//! host paths or original game bytes. A caller must supply an exact
-//! `ContentIdentity`; discovery verifies it instead of guessing a friendly
-//! build label from a directory name.
+//! host paths or original game bytes. Exact identities come from either the
+//! bundled audited registry or a caller-supplied registry; discovery verifies
+//! every fingerprint field instead of trusting a friendly build label.
 
 use crate::artifact::Digest;
 use crate::identity::{ContentFingerprint, ContentIdentity, GamePlatform, GameRegion};
@@ -23,6 +23,7 @@ pub const EXTRACTED_ORIG_BUNDLE_SCHEMA: &str = "dusklight.route-planner.extracte
 pub const SUPPORTED_BUILD_REGISTRY_SCHEMA: &str =
     "dusklight.route-planner.supported-build-registry/v1";
 pub const ORIG_IDENTIFICATION_SCHEMA: &str = "dusklight.route-planner.orig-identification/v1";
+const BUNDLED_SUPPORTED_BUILD_REGISTRY: &[u8] = include_bytes!("../data/supported-builds.json");
 const ORIG_FILE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.orig-file-manifest/v1";
 const MAX_ORIG_FILES: usize = 100_000;
 const MAX_ARCHIVE_INPUT_BYTES: u64 = 128 * 1024 * 1024;
@@ -382,6 +383,10 @@ impl SupportedBuildRegistry {
             support,
         })
     }
+}
+
+pub fn bundled_supported_build_registry() -> Result<SupportedBuildRegistry, PlannerContractError> {
+    SupportedBuildRegistry::decode_canonical(BUNDLED_SUPPORTED_BUILD_REGISTRY)
 }
 
 impl OrigIdentification {
@@ -1076,6 +1081,20 @@ mod tests {
             ],
         };
         assert!(duplicate.validate().is_err());
+    }
+
+    #[test]
+    fn bundled_registry_is_canonical_and_names_only_the_audited_gz2e01_identity() {
+        let registry = bundled_supported_build_registry().unwrap();
+        assert_eq!(registry.identities.len(), 1);
+        let identity = &registry.identities[0];
+        assert_eq!(identity.id, "gcn-us-1.0-gz2e01");
+        assert_eq!(identity.fingerprint.product_id, "GZ2E01");
+        assert_eq!(identity.fingerprint.revision, "1.0");
+        assert_eq!(
+            registry.canonical_bytes().unwrap(),
+            BUNDLED_SUPPORTED_BUILD_REGISTRY
+        );
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use dusklight_route_planner::artifact::Digest;
+use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::evaluation::EvidencePolicy;
 use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
 use dusklight_route_planner::fact_pack::{
@@ -10,8 +11,8 @@ use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::orig_discovery::{
-    EXTRACTED_ORIG_BUNDLE_SCHEMA, OrigSupportStatus, SupportedBuildRegistry, extract_orig_bundle,
-    scan_orig_tree,
+    EXTRACTED_ORIG_BUNDLE_SCHEMA, OrigSupportStatus, SupportedBuildRegistry,
+    bundled_supported_build_registry, extract_orig_bundle, scan_orig_tree,
 };
 use dusklight_route_planner::orig_extraction::{
     EXTRACTED_STAGE_DATA_SCHEMA, extract_unique_rarc_resource, parse_message_flow, parse_stage_data,
@@ -54,6 +55,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         Some("cache-fact-pack") => cache_fact_pack(&args[1..]),
+        Some("compile-cutscene") => compile_cutscene(&args[1..]),
         Some("compose") => compose(&args[1..]),
         Some("extract-message-flow") => extract_message_flow(&args[1..]),
         Some("extract-orig") => extract_orig(&args[1..]),
@@ -84,11 +86,29 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
+fn compile_cutscene(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let program_path = required_path(args, "--program")?;
+    let output = required_path(args, "--output")?;
+    let program = CutsceneProgram::decode_canonical(&fs::read(program_path)?)?;
+    let artifact = program.compile_artifact()?;
+    let bytes = artifact.canonical_bytes()?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": artifact.schema,
+            "program_sha256": artifact.program_sha256,
+            "transitions": artifact.transitions.len(),
+            "output": output,
+        }))?
+    );
+    Ok(())
+}
+
 fn identify_orig(args: &[String]) -> Result<(), Box<dyn Error>> {
     let orig = required_path(args, "--orig")?;
-    let registry_path = required_path(args, "--registry")?;
     let output = required_path(args, "--output")?;
-    let registry = SupportedBuildRegistry::decode_canonical(&fs::read(registry_path)?)?;
+    let registry = load_supported_build_registry(args)?;
     let requested_content_id = option(args, "--content-id");
     let requested_identity = requested_content_id
         .as_deref()
@@ -192,10 +212,49 @@ fn scan_orig(args: &[String]) -> Result<(), Box<dyn Error>> {
 
 fn extract_orig(args: &[String]) -> Result<(), Box<dyn Error>> {
     let orig = required_path(args, "--orig")?;
-    let content_path = required_path(args, "--content-identity")?;
     let output = required_path(args, "--output")?;
     let manifest_output = required_path(args, "--manifest")?;
-    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let content = if let Some(content_path) = option(args, "--content-identity") {
+        if option(args, "--registry").is_some() || option(args, "--content-id").is_some() {
+            return Err(
+                "--content-identity cannot be combined with --registry or --content-id".into(),
+            );
+        }
+        ContentIdentity::decode_canonical(&fs::read(content_path)?)?
+    } else {
+        let registry = load_supported_build_registry(args)?;
+        let requested_content_id = option(args, "--content-id");
+        let requested_identity = requested_content_id
+            .as_deref()
+            .map(|id| {
+                registry
+                    .identities
+                    .iter()
+                    .find(|identity| identity.id == id)
+                    .ok_or_else(|| format!("content ID {id} is absent from the registry"))
+            })
+            .transpose()?;
+        let product_id =
+            requested_identity.map(|identity| identity.fingerprint.product_id.as_str());
+        let scan = scan_orig_tree(&orig, product_id)?;
+        match registry
+            .identify(&scan, requested_content_id.as_deref())?
+            .support
+        {
+            OrigSupportStatus::Supported { content } => content,
+            OrigSupportStatus::Unsupported { fingerprint } => {
+                return Err(format!(
+                    "unsupported orig fingerprint for {} revision {} (executable {}, game data {}, resources {})",
+                    fingerprint.product_id,
+                    fingerprint.revision,
+                    fingerprint.executable_sha256,
+                    fingerprint.game_data_sha256,
+                    fingerprint.resource_manifest_sha256,
+                )
+                .into());
+            }
+        }
+    };
     let bundle = extract_orig_bundle(&orig, &content)?;
     let bytes = bundle.canonical_bytes()?;
     let mut sources = vec![FactPackSource {
@@ -1043,8 +1102,17 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn load_supported_build_registry(
+    args: &[String],
+) -> Result<SupportedBuildRegistry, Box<dyn Error>> {
+    match option(args, "--registry") {
+        Some(path) => Ok(SupportedBuildRegistry::decode_canonical(&fs::read(path)?)?),
+        None => Ok(bundled_supported_build_registry()?),
+    }
+}
+
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner cache-fact-pack --cache CACHE --payload PAYLOAD.json --manifest MANIFEST.json --receipt RECEIPT.json\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json\n  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json\n  route-planner extract-orig --orig ORIG_ROOT --content-identity CONTENT.json --output BUNDLE.json --manifest MANIFEST.json\n  route-planner extract-resource --archive ARCHIVE.arc --resource FILE --output FILE\n  route-planner extract-stage-data --archive ARCHIVE.arc --resource stage.dzs|room.dzr --output STAGE.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner identify-orig --orig ORIG_ROOT --registry REGISTRY.json [--content-id ID] --output IDENTIFICATION.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner materialize-fact-pack --cache CACHE --manifest-sha256 SHA256 --payload PAYLOAD.json --manifest MANIFEST.json\n  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner scan-orig --orig ORIG_ROOT [--product-id ID] --output SCAN.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
+        "Independent TP route planner:\n  route-planner cache-fact-pack --cache CACHE --payload PAYLOAD.json --manifest MANIFEST.json --receipt RECEIPT.json\n  route-planner compile-cutscene --program PROGRAM.json --output TRANSITIONS.json\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json\n  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json\n  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json\n  route-planner extract-resource --archive ARCHIVE.arc --resource FILE --output FILE\n  route-planner extract-stage-data --archive ARCHIVE.arc --resource stage.dzs|room.dzr --output STAGE.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner identify-orig --orig ORIG_ROOT [--registry REGISTRY.json] [--content-id ID] --output IDENTIFICATION.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner materialize-fact-pack --cache CACHE --manifest-sha256 SHA256 --payload PAYLOAD.json --manifest MANIFEST.json\n  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner scan-orig --orig ORIG_ROOT [--product-id ID] --output SCAN.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
     );
 }

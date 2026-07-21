@@ -119,6 +119,18 @@ impl FactPackCacheReceipt {
         self.validate()?;
         canonical_json(self)
     }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let receipt: Self = serde_json::from_slice(bytes)?;
+        receipt.validate()?;
+        if receipt.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "fact_pack_cache_receipt",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(receipt)
+    }
 }
 
 fn entry_path(cache_root: &Path, digest: Digest) -> (String, PathBuf) {
@@ -303,6 +315,10 @@ mod tests {
         let second = store_fact_pack(&fixture.0, &manifest, payload).unwrap();
         assert!(second.reused);
         assert_eq!(first.manifest_sha256, second.manifest_sha256);
+        assert_eq!(
+            FactPackCacheReceipt::decode_canonical(&first.canonical_bytes().unwrap()).unwrap(),
+            first
+        );
         let loaded = load_fact_pack(&fixture.0, first.manifest_sha256).unwrap();
         assert_eq!(loaded.manifest, manifest);
         assert_eq!(loaded.payload_bytes, payload);
@@ -322,5 +338,20 @@ mod tests {
         .unwrap();
         assert!(load_fact_pack(&fixture.0, receipt.manifest_sha256).is_err());
         assert!(store_fact_pack(&fixture.0, &manifest, payload).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_rejects_a_symlinked_content_directory() {
+        use std::os::unix::fs::symlink;
+
+        let fixture = Fixture::new();
+        let cache = fixture.0.join("cache");
+        let outside = fixture.0.join("outside");
+        fs::create_dir_all(&cache).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        symlink(&outside, cache.join("sha256")).unwrap();
+        let payload = b"derived facts\n";
+        assert!(store_fact_pack(&cache, &manifest(payload), payload).is_err());
     }
 }

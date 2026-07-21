@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 const MAX_DECODED_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const RARC_FILE_ENTRY_SIZE: usize = 0x14;
+const MAX_RARC_FILE_ENTRIES: usize = 100_000;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
 pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v2";
@@ -253,12 +254,25 @@ pub fn extract_unique_rarc_resource(
             "must be one nonempty basename without NUL or path separators",
         ));
     }
-    let decoded = if input.starts_with(b"Yaz0") {
-        decode_yaz0(input)?
-    } else {
-        input.to_vec()
-    };
+    let decoded = decode_archive(input)?;
     extract_uncompressed_rarc_resource(&decoded, resource_name)
+}
+
+/// List file basenames present in a bounded RARC/Yaz0 archive. Duplicate
+/// basenames remain duplicated so callers cannot mistake an ambiguous archive
+/// for one with a unique resource.
+pub fn list_rarc_resource_names(input: &[u8]) -> Result<Vec<String>, PlannerContractError> {
+    let decoded = decode_archive(input)?;
+    let mut names = rarc_resource_entries(&decoded)?
+        .into_iter()
+        .map(|entry| {
+            std::str::from_utf8(entry.name)
+                .map(str::to_owned)
+                .map_err(|_| PlannerContractError::new("orig.rarc.entry.name", "must be UTF-8"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    names.sort();
+    Ok(names)
 }
 
 /// Parse authored actor placements directly from a DZS/DZR resource. Unknown
@@ -929,10 +943,23 @@ fn decode_yaz0(input: &[u8]) -> Result<Vec<u8>, PlannerContractError> {
     Ok(output)
 }
 
-fn extract_uncompressed_rarc_resource(
+fn decode_archive(input: &[u8]) -> Result<Vec<u8>, PlannerContractError> {
+    if input.starts_with(b"Yaz0") {
+        decode_yaz0(input)
+    } else {
+        Ok(input.to_vec())
+    }
+}
+
+struct RarcResourceEntry<'a> {
+    name: &'a [u8],
+    offset: usize,
+    size: usize,
+}
+
+fn rarc_resource_entries(
     archive: &[u8],
-    resource_name: &str,
-) -> Result<Vec<u8>, PlannerContractError> {
+) -> Result<Vec<RarcResourceEntry<'_>>, PlannerContractError> {
     require_range(archive, 0, 0x40, "orig.rarc.header")?;
     if &archive[0..4] != b"RARC" {
         return Err(PlannerContractError::new(
@@ -949,6 +976,12 @@ fn extract_uncompressed_rarc_resource(
     }
     let info_base = 0x20_usize;
     let file_count = read_u32(archive, info_base + 8, "orig.rarc.file_count")? as usize;
+    if file_count > MAX_RARC_FILE_ENTRIES {
+        return Err(PlannerContractError::new(
+            "orig.rarc.file_count",
+            format!("exceeds bounded limit {MAX_RARC_FILE_ENTRIES}"),
+        ));
+    }
     let file_table = relative_offset(
         info_base,
         read_u32(archive, info_base + 12, "orig.rarc.file_table")?,
@@ -979,7 +1012,7 @@ fn extract_uncompressed_rarc_resource(
         ));
     }
 
-    let mut matched = None;
+    let mut resources = Vec::new();
     for index in 0..file_count {
         let entry = file_table + index * RARC_FILE_ENTRY_SIZE;
         let flags = read_u16(archive, entry + 4, "orig.rarc.entry.flags")?;
@@ -991,9 +1024,6 @@ fn extract_uncompressed_rarc_resource(
             .checked_add(name_offset)
             .ok_or_else(|| PlannerContractError::new("orig.rarc.entry.name", "offset overflow"))?;
         let name = nul_terminated(archive, name_start, "orig.rarc.entry.name")?;
-        if name != resource_name.as_bytes() {
-            continue;
-        }
         let offset = relative_offset(
             data_base,
             read_u32(archive, entry + 8, "orig.rarc.entry.offset")?,
@@ -1001,20 +1031,32 @@ fn extract_uncompressed_rarc_resource(
         )?;
         let size = read_u32(archive, entry + 12, "orig.rarc.entry.size")? as usize;
         require_range(archive, offset, size, "orig.rarc.entry.data")?;
-        if matched.replace((offset, size)).is_some() {
+        resources.push(RarcResourceEntry { name, offset, size });
+    }
+    Ok(resources)
+}
+
+fn extract_uncompressed_rarc_resource(
+    archive: &[u8],
+    resource_name: &str,
+) -> Result<Vec<u8>, PlannerContractError> {
+    let matches = rarc_resource_entries(archive)?
+        .into_iter()
+        .filter(|entry| entry.name == resource_name.as_bytes())
+        .collect::<Vec<_>>();
+    let [matched] = matches.as_slice() else {
+        if matches.len() > 1 {
             return Err(PlannerContractError::new(
                 "orig.rarc.resource",
                 format!("contains multiple files named {resource_name:?}"),
             ));
         }
-    }
-    let (offset, size) = matched.ok_or_else(|| {
-        PlannerContractError::new(
+        return Err(PlannerContractError::new(
             "orig.rarc.resource",
             format!("{resource_name:?} was not found"),
-        )
-    })?;
-    Ok(archive[offset..offset + size].to_vec())
+        ));
+    };
+    Ok(archive[matched.offset..matched.offset + matched.size].to_vec())
 }
 
 fn read_u16(input: &[u8], offset: usize, field: &str) -> Result<u16, PlannerContractError> {

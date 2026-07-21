@@ -556,7 +556,8 @@ impl PlannerExecutionState {
             | StateOperation::CopyValue { target, .. }
             | StateOperation::SetBitFromValue { target, .. }
             | StateOperation::Adjust { target, .. }
-            | StateOperation::ClearField { target } => vec![target.component_id.clone()],
+            | StateOperation::ClearField { target }
+            | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
             StateOperation::WriteRaw { component_id, .. }
             | StateOperation::InvalidateRaw { component_id, .. } => vec![component_id.clone()],
             StateOperation::ClearComponent { selector }
@@ -800,6 +801,19 @@ impl PlannerExecutionState {
                         "references an absent field",
                     ));
                 }
+                mark_transition(component, application_id);
+            }
+            StateOperation::InvalidateField { target } => {
+                let component = self.component_mut(&target.component_id)?;
+                let ComponentPayload::Structured { fields } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.invalidate_field",
+                        "requires a structured destination component",
+                    ));
+                };
+                // Missing already means unknown to structured-field readers, so
+                // invalidation is intentionally idempotent.
+                fields.remove(&target.field);
                 mark_transition(component, application_id);
             }
             StateOperation::Initialize { component } => {
@@ -1281,7 +1295,8 @@ fn history_event_writes_field(
             | StateOperation::CopyValue { target, .. }
             | StateOperation::SetBitFromValue { target, .. }
             | StateOperation::Adjust { target, .. }
-            | StateOperation::ClearField { target } => {
+            | StateOperation::ClearField { target }
+            | StateOperation::InvalidateField { target } => {
                 target.component_id == component_id && target.field == field
             }
             StateOperation::AdvanceFlow {
@@ -1644,6 +1659,41 @@ mod tests {
                 .as_deref(),
             Some("transition.enter-forest")
         );
+    }
+
+    #[test]
+    fn structured_invalidation_removes_known_value_with_distinct_provenance() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state
+            .apply_operations(
+                "cutscene.unknown-suffix",
+                "snapshot.after-unknown-suffix",
+                &[StateOperation::InvalidateField {
+                    target: ComponentFieldTarget {
+                        component_id: "save.main".into(),
+                        field: "small_keys".into(),
+                    },
+                }],
+            )
+            .unwrap();
+        let component = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "save.main")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &component.payload else {
+            unreachable!()
+        };
+        assert!(!fields.contains_key("small_keys"));
+        assert!(matches!(
+            &state.execution_history.last().unwrap().event,
+            ExecutionHistoryKind::Operation {
+                operation: StateOperation::InvalidateField { .. },
+                ..
+            }
+        ));
     }
 
     #[test]

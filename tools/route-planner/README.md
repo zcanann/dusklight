@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns twenty operations:
+The planner CLI currently owns twenty-one operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -22,6 +22,10 @@ The planner CLI currently owns twenty operations:
   cannot silently become installed knowledge. Authored obstruction selectors
   bind to concrete actions during composition, producing solver/graph
   dependencies without route-book wiring.
+- `compile-cutscene` validates a phase-level cutscene program and compiles each
+  normal, skip, interruption, scene-change, or resource-failure branch into an
+  ordinary causal transition. Confirmed prefixes remain ordered and unaudited
+  suffix targets become explicit unknownness.
 - `edit-route-book` applies an atomic, expected-digest-checked batch of typed
   route-book edits and emits a fully revalidated canonical revision.
 - `diff-state` compares two executable states across a named boundary, retaining
@@ -34,15 +38,18 @@ The planner CLI currently owns twenty operations:
   named resource from user-supplied retail data.
 - `scan-orig` discovers an extracted GameCube/Wii disc from either its game
   root or a parent `orig/` directory, reads the product/revision header, hashes
-  every regular file, and emits a path-normalized sealed scan. It never trusts
-  the directory name and rejects ambiguous roots and symlinks.
-- `extract-orig` verifies that scan against a caller-supplied exact content
-  identity, then decodes every recognized stage/room archive and message bundle
-  into one canonical derived artifact plus a fact-pack manifest. Original bytes
-  and host paths are not copied into either output.
+  every regular file below the extracted `sys/` and `files/` trees, and emits a
+  path-normalized sealed scan. It never trusts the directory name and rejects
+  ambiguous roots and symlinks.
+- `extract-orig` verifies that scan against the bundled exact-build registry by
+  default, then decodes every recognized stage/room archive and message bundle
+  into one canonical derived artifact plus a fact-pack manifest. A caller may
+  supply a replacement registry or an explicit exact identity for new-build
+  research. Original bytes and host paths are not copied into either output.
 - `identify-orig` classifies a scanned tree through a canonical registry of
-  complete fingerprints. Unknown bytes remain explicitly unsupported, while a
-  requested friendly ID whose fingerprint disagrees is rejected.
+  complete fingerprints. The binary bundles the audited GZ2E01 GameCube USA
+  identity; unknown bytes remain explicitly unsupported, while a requested
+  friendly ID whose fingerprint disagrees is rejected.
 - `cache-fact-pack` installs a verified payload/manifest pair in the planner's
   immutable manifest-digest store; identical installs are reused.
 - `materialize-fact-pack` retrieves and re-verifies that derived pack without

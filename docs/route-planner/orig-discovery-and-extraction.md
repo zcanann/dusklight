@@ -21,17 +21,21 @@ Produce a verified derived bundle and manifest:
 ```text
 route-planner extract-orig \
   --orig /path/to/orig \
-  --content-identity content.json \
   --output extracted-orig.json \
   --manifest extracted-orig.manifest.json
 ```
+
+The default path identifies the input against the bundled audited registry.
+`--content-id ID` can select one bundled entry when the parent contains multiple
+games, and `--registry REGISTRY.json` can replace the bundled registry. An
+explicit `--content-identity CONTENT.json` remains available for inspecting a
+new exact build, but cannot be combined with registry-selection options.
 
 Classify a tree against an exact supported-build registry:
 
 ```text
 route-planner identify-orig \
   --orig /path/to/orig \
-  --registry supported-builds.json \
   --output identification.json
 ```
 
@@ -43,8 +47,8 @@ explicit `unsupported` result containing the detected fingerprint; it never
 inherits a nearby build's facts.
 
 `--orig` may name the extracted game root containing `sys/` and `files/`, or a
-parent containing one or more product directories. `extract-orig` uses the
-product ID in the exact content identity to select among multiple games.
+parent containing one or more product directories. Registry-backed commands
+use the selected exact identity's product ID to select among multiple games.
 `scan-orig` requires either an unambiguous root or `--product-id`.
 
 ## Identity and failure behavior
@@ -72,10 +76,24 @@ roots, non-UTF-8 paths, and symbolic links all fail closed.
 
 The strict registry schema maps a friendly content ID to one complete
 `ContentIdentity`, is canonical and sorted, and rejects duplicate IDs or two
-labels for one fingerprint. The repository does not yet claim audited complete
-fingerprints for retail builds it cannot reproduce locally. An unknown
-fingerprint is inspectable through `scan-orig` and classifiable as unsupported,
-but is not silently treated as the nearest known revision.
+labels for one fingerprint. The bundled registry currently contains one locally
+reproduced retail identity:
+
+- `gcn-us-1.0-gz2e01`: GameCube USA, disc revision byte `0` (reported as
+  revision `1.0`), product `GZ2E01`;
+- executable SHA-256
+  `e7f197436815e66c4a11df3d7bd557d66083b641ff8a8e76439f3caba7ae60e8`;
+- normalized game-data manifest SHA-256
+  `0bc3bb229279d4b8a8c7cbe962b0bffdfecd35ff21e2d6761ad42e90a070f772`;
+- resource manifest SHA-256
+  `2ab36f6c1d9d551c1397e1cf59e13288d2684c973cb7bd0ad6878f5a3b3a2ab1`.
+
+The canonical registry source is
+`tools/route-planner/crates/engine/data/supported-builds.json` and is embedded in
+the planner binary. The repository does not claim fingerprints for retail
+builds it has not reproduced. An unknown fingerprint is inspectable through
+`scan-orig` and classifiable as unsupported, but is not silently treated as the
+nearest known revision.
 
 ## Derived artifact
 
@@ -139,6 +157,8 @@ digest before returning bytes.
 - a misleading directory name cannot change the detected product;
 - product mismatch, ambiguous roots, and symlinks fail closed;
 - exact identity verification catches digest disagreement;
+- the bundled registry is canonical and contains only the audited GZ2E01
+  identity;
 - registry lookup accepts only an exact fingerprint, reports unknown bytes as
   unsupported, and rejects a friendly-label override;
 - one call decodes synthetic stage and message archives into a canonical bundle;

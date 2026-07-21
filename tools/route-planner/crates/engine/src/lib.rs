@@ -7,6 +7,7 @@
 //! browser code.
 
 pub mod artifact;
+pub mod cutscene;
 pub mod evaluation;
 pub mod execution;
 pub mod fact_pack;

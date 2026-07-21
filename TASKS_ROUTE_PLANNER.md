@@ -551,7 +551,7 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Mechanics-catalog schema v8 makes writer, gate, and reader records executable
+- Mechanics-catalog schema v9 makes writer, gate, and reader records executable
   solver inputs rather than graph-only annotations. Reader proofs retain their
   exact raw source value and optional friendly interpretation; an unresolved or
   evidence-disallowed source makes its consuming transition unknown instead of
@@ -653,7 +653,7 @@ The current code shows:
   disallowed witnesses remain unknown, and supporting microtrace IDs survive in
   reached and blocked solver proofs. Matching microtraces also auto-bind to the
   obligation as graph `demonstrates` dependencies.
-- Mechanics-catalog schema v8 includes explicit cutscene scene-change and resource-
+- Mechanics-catalog schema v9 includes explicit cutscene scene-change and resource-
   load-failure transition classes, the reload/warp/actor transition classes above,
   player-state operations, and masked raw-knownness invalidation. This supports
   partial execution records that preserve confirmed prefix bytes while marking
@@ -1596,6 +1596,10 @@ evidenced overlays over the generated base rather than silent edits to it.
 
 - [ ] Catalogue exact supported builds, revisions, disc/executable/resource
       digests, available language bundles, and stable content IDs.
+  - [x] Register the locally reproduced GZ2E01 GameCube USA revision-0 tree as
+        `gcn-us-1.0-gz2e01` with complete executable, normalized game-data, and
+        resource-manifest digests. Other retail builds and language/configuration
+        coverage remain open.
 - [ ] Audit how language/configuration is selected, persisted, changed, and used
       to select message or other resource variants.
 - [x] Define the supported-input policy: pre-generated known fact packs for normal
@@ -1696,10 +1700,11 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [x] Auto-detect and verify supported inputs; reject label/digest disagreement
       and represent unknown inputs as unsupported rather than guessing.
   - The canonical supported-build registry accepts only complete exact
-    fingerprints. `identify-orig` automatically selects an exact match, emits a
-    typed unsupported result for unknown bytes, and treats `--content-id` only
-    as a checked selection hint. Populating audited retail entries remains the
-    separate Phase 0 evidence-catalogue task.
+    fingerprints. The planner bundles the audited GZ2E01 GameCube USA identity;
+    `identify-orig` and `extract-orig` automatically select an exact match, emit
+    or fail explicitly for unknown bytes, and treat `--content-id` only as a
+    checked selection hint. Populating the remaining audited retail entries is
+    the separate Phase 0 evidence-catalogue task.
 - [x] Import world-context stages, room/layer bindings, player spawns, static
       placements, raw SCLS records, and collision/SCLS activation joins.
   - [x] Own the compatible world/native observation input contracts inside the
@@ -1719,12 +1724,21 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.
+  - [x] Add a planner-owned cutscene-program schema/compiler whose phase and
+        resource guards auto-compile into ordinary transitions; normal, skip,
+        interruption, scene-change, and load-failure branches retain distinct
+        transition kinds and exact ordered effects. Concrete program extraction
+        remains open. See `docs/route-planner/cutscene-phase-programs.md`.
 - [ ] Represent partial cutscene execution conservatively: preserve confirmed
       prefix writes, retain values whose writers are confirmed skipped, and mark
       effects beyond an unknown failure/interruption boundary unknown.
   - [x] Add cutscene scene-change/resource-load-failure transition kinds and a
         masked raw-knownness invalidation operation, so a modeled exceptional
         branch can retain confirmed bits while invalidating only unaudited ones.
+  - [x] Add structured-field invalidation and compile authored uncertain suffix
+        targets separately from confirmed prefix operations. A skipped writer is
+        absent rather than replaced, so retained return-place state remains an
+        input to the ordinary savewarp reader.
   - [ ] Import concrete ordered phase branches and affected-bit masks from
         evidence instead of authoring guessed suffix effects.
 - [ ] Produce semantic/raw build and language diffs, with explicit unknown or

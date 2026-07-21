@@ -613,6 +613,7 @@ impl RelevanceBuilder {
             | StateOperation::Adjust { .. }
             | StateOperation::ClearComponent { .. }
             | StateOperation::ClearField { .. }
+            | StateOperation::InvalidateField { .. }
             | StateOperation::Initialize { .. }
             | StateOperation::Restore { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
@@ -662,6 +663,7 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         StateOperation::Write { target, .. }
         | StateOperation::Adjust { target, .. }
         | StateOperation::ClearField { target }
+        | StateOperation::InvalidateField { target }
         | StateOperation::CopyValue { target, .. }
         | StateOperation::SetBitFromValue { target, .. } => {
             vec![StateDependency::ComponentField {
