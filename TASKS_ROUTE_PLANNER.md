@@ -2119,6 +2119,14 @@ Deliverable: route confidence is mechanically explainable.
 
 #### 11G. Lanayru spirit and Vessel of Light
 
+Source-audit checkpoint: `docs/route-planner/lanayru-spirit-vessel-audit.md`
+separates actor placement/creation, switch-gated speak eligibility, message-flow
+item request, presentation, generic grant, the persistent Lanayru vessel bit,
+and the distinct `F_0615` story bit. The committed C++ proves the generic
+parameter decoders and `mLightDropGetFlag` mask `0x04`; exact layer, switch,
+flow node/branches, and story-bit ordering remain blocked on an original-data
+tree containing the `F_SP115` and `Seirei1` resources (`orig/` is empty).
+
 - [ ] Locate the spirit actor/event flow and every build-specific placement.
 - [ ] Identify the raw event bits, temporary bits, room/layer, form, twilight,
       approach, and cutscene prerequisites for the spirit to appear.
