@@ -2,6 +2,7 @@ use huntctl::artifact::Digest;
 use huntctl::learning::option_values::{
     OptionActionDescriptor, OptionValueBatch, OptionValueSample,
 };
+use huntctl::native_collision_history::NativeCollisionHistoryView;
 use huntctl::option_execution::OptionType;
 use huntctl::reward_shaping::{
     POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, REWARD_REPORT_SCHEMA_V1,
@@ -50,6 +51,51 @@ fn native_corpus_inspection_reports_complete_cpp_shard() {
         0
     );
     assert_eq!(report["determinism_conflicts"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn collision_history_cli_separates_past_decisions_from_auxiliary_targets() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-collision-history-{nonce}"));
+    fs::create_dir_all(&root).unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/automation/native_episode_v11.dseps");
+    let output_path = root.join("history.json");
+    let content = root.join("content");
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "collision-history", "--input"])
+        .arg(fixture)
+        .args(["--output"])
+        .arg(&output_path)
+        .args(["--history-depth", "3", "--artifact-store"])
+        .arg(&content)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema"], "dusklight-native-collision-history/v1");
+    assert_eq!(report["history_depth"], 3);
+    assert_eq!(report["decisions"], 2);
+    assert_eq!(report["auxiliary_targets"], 2);
+    assert_eq!(report["solver_present"], 2);
+    assert_eq!(report["background_present"], 2);
+    assert_eq!(report["content_blob"]["kind"], "native_collision_history");
+    let view =
+        NativeCollisionHistoryView::decode_canonical(&fs::read(&output_path).unwrap()).unwrap();
+    assert!(
+        view.decisions
+            .iter()
+            .all(|decision| decision.completed_history.is_empty())
+    );
+    assert_eq!(view.decisions[0].current, view.auxiliary_targets[0].before);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

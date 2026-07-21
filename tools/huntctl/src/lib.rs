@@ -43,7 +43,7 @@ pub use dusklight_world::{
 
 pub use dusklight_learning::{
     action_guidance, calibration, dataset, double_q, fqi, iql, low_data_baselines,
-    native_actor_view, native_geometry_view, offline_rl, reward_shaping,
+    native_actor_view, native_collision_history, native_geometry_view, offline_rl, reward_shaping,
 };
 pub use dusklight_proposals::q_search;
 

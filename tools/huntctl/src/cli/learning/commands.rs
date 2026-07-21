@@ -23,6 +23,9 @@ use huntctl::low_data_baselines::{
     empirical_return_samples,
 };
 use huntctl::native_actor_view::NativeEpisodeActorView;
+use huntctl::native_collision_history::{
+    DEFAULT_COLLISION_HISTORY_DEPTH, NativeCollisionHistoryView,
+};
 use huntctl::native_corpus_inspection::inspect_native_episode_corpus;
 use huntctl::native_episode_shard::NativeEpisodeShard;
 use huntctl::native_geometry_view::{
@@ -582,6 +585,80 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::write(output, &bytes)?;
             }
             println!("{}", String::from_utf8(bytes)?);
+            Ok(())
+        }
+        Some("collision-history") => {
+            let learn_args = &args[1..];
+            let input = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "collision history output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let history_depth = usize_option(
+                learn_args,
+                "--history-depth",
+                DEFAULT_COLLISION_HISTORY_DEPTH,
+            )?;
+            let shard = NativeEpisodeShard::read(&input)?;
+            let view = NativeCollisionHistoryView::build(&shard, history_depth)?;
+            let bytes = view.canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeCollisionHistory)?;
+            let solver_present = view
+                .decisions
+                .iter()
+                .filter(|decision| decision.current.solver.is_some())
+                .count();
+            let background_present = view
+                .decisions
+                .iter()
+                .filter(|decision| decision.current.background.is_some())
+                .count();
+            let solver_changes = view
+                .auxiliary_targets
+                .iter()
+                .filter(|target| {
+                    target.delta.solver.as_ref().is_some_and(|delta| {
+                        delta.flags_activated != 0
+                            || delta.flags_cleared != 0
+                            || delta.wall_table_size_delta != 0
+                            || delta.water_mode_changed
+                            || delta.line_start_delta != [0.0; 3]
+                            || delta.line_end_delta != [0.0; 3]
+                    })
+                })
+                .count();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": view.schema,
+                    "view_sha256": view.view_sha256,
+                    "native_shard_sha256": view.native_shard_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "history_depth": view.history_depth,
+                    "decisions": view.decisions.len(),
+                    "auxiliary_targets": view.auxiliary_targets.len(),
+                    "solver_present": solver_present,
+                    "background_present": background_present,
+                    "solver_changes": solver_changes,
+                }))?
+            );
             Ok(())
         }
         Some("geometry-view") => {
