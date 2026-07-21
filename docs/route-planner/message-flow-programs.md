@@ -130,13 +130,31 @@ a locale from a product ID or invent a backing from a handler name.
 configuration, and import profile. It selects the runtime language's locale
 bundle and emits a canonical `message-flow-program-set/v1` with one exact-scope
 program per message group. Construction fails closed when the language is not
-mapped, the selected bundle is absent, a group is ambiguous, a group exceeds
-the runtime width, or an extracted access lacks a profile-supplied store.
+mapped, the selected bundle is absent, a group is ambiguous, or a group exceeds
+the runtime width. An extracted temporary, persistent, or switch access whose
+backing is not yet audited still compiles its control-flow edge, but the
+predicate or write is retained as an explicit unknown requirement; it never
+becomes a no-op or guessed store.
+
+Native observations expose both friendly label-indexed flag arrays and exact
+register bytes. These are intentionally different component kinds. The friendly
+arrays answer “what did each known label read as?” but are not writable backing
+stores; `WriteBoundRaw` targets the unique 256-byte temporary event-register
+component. Persistent event-register bytes are not yet exposed by the native
+observation contract, so a profile must omit that binding until the raw store is
+audited and captured.
 
 Generated programs intentionally have no event contracts or cleanup edges.
 Those operations depend on source-audited handlers and callers, not on the BMG
 graph alone. Adding them later does not alter the extracted graph or the
 profile's storage semantics.
+
+The bundled GZ2E01 English profile intentionally maps only the backing stores
+that are source-audited and uniquely representable today. Persistent event
+registers, dungeon-session switches, zone switches, and one-zone switches
+remain unknown rather than being conflated with friendly observations,
+current-stage, or current-room state. See
+`gz2e01-message-import-profile.md` for the exact boundary and extraction audit.
 
 `MessageFlowResourceOverlaySet` supplies those later contracts without editing
 the generated base. Each overlay is pinned to both the import-profile digest

@@ -178,7 +178,9 @@ pub fn snapshot_native_observation(
     push_raw_component(
         &mut components,
         "flags.event",
-        ComponentKind::PersistentSave,
+        ComponentKind::Custom {
+            id: "observed-event-flag-labels".into(),
+        },
         observation.event_flags.as_deref(),
         None,
         runtime_binding.clone(),
@@ -189,7 +191,9 @@ pub fn snapshot_native_observation(
     push_raw_component(
         &mut components,
         "flags.temporary",
-        ComponentKind::TemporaryFlags,
+        ComponentKind::Custom {
+            id: "observed-temporary-flag-labels".into(),
+        },
         observation.temporary_flags.as_deref(),
         None,
         runtime_binding.clone(),
@@ -1071,6 +1075,8 @@ mod tests {
                     },
                 ],
             }),
+            event_flags: Some(vec![0; 822]),
+            temporary_flags: Some(vec![0; 185]),
             temporary_event_bytes: Some(vec![0; 256]),
             event_handoff_status: NativeChannelStatus::Present,
             event_handoff: Some(NativeEventHandoffObservation {
@@ -1399,6 +1405,57 @@ mod tests {
         assert_eq!(
             fields["action.0.distance_f32_bits"],
             StateValue::Unsigned(90.0_f32.to_bits().into())
+        );
+    }
+
+    #[test]
+    fn separates_label_observations_from_writable_temporary_register_backing() {
+        let snapshot = snapshot_native_observation(&observation(), context(1)).unwrap();
+        let event_labels = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.event")
+            .unwrap();
+        assert_eq!(
+            event_labels.component_kind,
+            ComponentKind::Custom {
+                id: "observed-event-flag-labels".into()
+            }
+        );
+        let temporary_labels = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.temporary")
+            .unwrap();
+        assert_eq!(
+            temporary_labels.component_kind,
+            ComponentKind::Custom {
+                id: "observed-temporary-flag-labels".into()
+            }
+        );
+        let temporary_registers = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.temporary-event-registers")
+            .unwrap();
+        assert_eq!(
+            temporary_registers.component_kind,
+            ComponentKind::TemporaryFlags
+        );
+        assert_eq!(
+            snapshot
+                .environment
+                .components
+                .iter()
+                .filter(|component| {
+                    component.component_kind == ComponentKind::TemporaryFlags
+                        && matches!(component.payload, ComponentPayload::Raw { .. })
+                })
+                .count(),
+            1
         );
     }
 

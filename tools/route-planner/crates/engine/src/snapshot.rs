@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v6";
+pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v7";
 pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v6";
 pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v6";
 

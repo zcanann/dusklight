@@ -41,6 +41,8 @@ pub const MESSAGE_FLOW_PROGRAM_SET_SCHEMA: &str =
 const MAX_MESSAGE_FLOW_NODES: usize = 65_535;
 const MAX_EVENT_CONTRACTS: usize = 16_384;
 const MAX_CLEANUP_EDGES: usize = 256;
+const BUNDLED_GZ2E01_ENGLISH_IMPORT_PROFILE: &[u8] =
+    include_bytes!("../data/message-import-profiles/gz2e01-en.json");
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -249,6 +251,11 @@ impl MessageFlowImportProfile {
     pub fn digest(&self) -> Result<Digest, PlannerContractError> {
         Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
     }
+}
+
+pub fn bundled_gz2e01_english_message_flow_profile()
+-> Result<MessageFlowImportProfile, PlannerContractError> {
+    MessageFlowImportProfile::decode_canonical(BUNDLED_GZ2E01_ENGLISH_IMPORT_PROFILE)
 }
 
 impl MessageFlowProgramSet {
@@ -836,7 +843,16 @@ impl MessageFlowProgram {
                             )
                     })
                 {
-                    if let Some(operation) = self.compile_persistent_write(access) {
+                    if self.bindings.persistent_flags.is_none() {
+                        unknowns.push(unknown_flag_backing(
+                            token,
+                            node_index,
+                            "persistent",
+                            access.parameter_ordinal,
+                            access.label_index,
+                            &self.evidence,
+                        ));
+                    } else if let Some(operation) = self.compile_persistent_write(access) {
                         operations.push((access.parameter_ordinal, operation));
                     } else {
                         unknowns.push(unknown_flag_coordinate(
@@ -865,7 +881,16 @@ impl MessageFlowProgram {
                             )
                     })
                 {
-                    if let Some(operation) = self.compile_temporary_write(access) {
+                    if self.bindings.temporary_flags.is_none() {
+                        unknowns.push(unknown_flag_backing(
+                            token,
+                            node_index,
+                            "temporary",
+                            access.parameter_ordinal,
+                            access.label_index,
+                            &self.evidence,
+                        ));
+                    } else if let Some(operation) = self.compile_temporary_write(access) {
                         operations.push((access.parameter_ordinal, operation));
                     } else {
                         unknowns.push(unknown_flag_coordinate(
@@ -894,9 +919,22 @@ impl MessageFlowProgram {
                     })
                     .collect::<Vec<_>>();
                 for access in accesses {
-                    operations.push((0, self.compile_switch_write(access)?));
+                    if let Some(operation) = self.compile_switch_write(access)? {
+                        operations.push((0, operation));
+                    } else {
+                        unknowns.push(unknown_requirement(
+                            token,
+                            node_index,
+                            "switch-backing",
+                            format!(
+                                "Switch store {:?} at node {node_index} has no audited backing binding",
+                                access.store
+                            ),
+                            &self.evidence,
+                        ));
+                    }
                 }
-                operations.len() == 1
+                operations.len() + unknowns.len() == 1
             }
             _ => false,
         };
@@ -937,15 +975,12 @@ impl MessageFlowProgram {
     fn compile_switch_write(
         &self,
         access: &MessageFlowSwitchAccess,
-    ) -> Result<StateOperation, PlannerContractError> {
-        let store = self.bindings.switch_store(access.store).ok_or_else(|| {
-            PlannerContractError::new(
-                "message_flow_program.bindings.switch_stores",
-                format!("has no binding for {:?}", access.store),
-            )
-        })?;
+    ) -> Result<Option<StateOperation>, PlannerContractError> {
+        let Some(store) = self.bindings.switch_store(access.store) else {
+            return Ok(None);
+        };
         let (byte_offset, mask) = store.raw_location(access.switch_index)?;
-        Ok(StateOperation::WriteBoundRaw {
+        Ok(Some(StateOperation::WriteBoundRaw {
             component_kind: store.component_kind.clone(),
             binding: store.binding.clone(),
             byte_offset,
@@ -955,7 +990,7 @@ impl MessageFlowProgram {
             } else {
                 0
             }],
-        })
+        }))
     }
 
     fn branch_access(
@@ -1015,12 +1050,9 @@ impl MessageFlowProgram {
             access.node_index == node_index
                 && access.operation == MessageFlowSwitchOperation::BranchTrueWhenClear
         }) {
-            let store = self.bindings.switch_store(access.store).ok_or_else(|| {
-                PlannerContractError::new(
-                    "message_flow_program.bindings.switch_stores",
-                    format!("has no binding for {:?}", access.store),
-                )
-            })?;
+            let Some(store) = self.bindings.switch_store(access.store) else {
+                return Ok(None);
+            };
             let (byte_offset, mask) = store.raw_location(access.switch_index)?;
             return Ok(Some(CompiledBranchAccess {
                 reference: ValueReference::BoundRawBits {
@@ -1129,26 +1161,10 @@ impl MessageFlowBindings {
 
     fn validate_for(&self, extracted: &ExtractedMessageFlow) -> Result<(), PlannerContractError> {
         self.validate()?;
-        if !extracted.temporary_flag_accesses.is_empty() && self.temporary_flags.is_none() {
-            return Err(PlannerContractError::new(
-                "message_flow_program.bindings.temporary_flags",
-                "is required by extracted temporary-flag accesses",
-            ));
-        }
-        if !extracted.persistent_flag_accesses.is_empty() && self.persistent_flags.is_none() {
-            return Err(PlannerContractError::new(
-                "message_flow_program.bindings.persistent_flags",
-                "is required by extracted persistent-flag accesses",
-            ));
-        }
         for access in &extracted.switch_accesses {
-            let binding = self.switch_store(access.store).ok_or_else(|| {
-                PlannerContractError::new(
-                    "message_flow_program.bindings.switch_stores",
-                    format!("has no binding for {:?}", access.store),
-                )
-            })?;
-            binding.raw_location(access.switch_index)?;
+            if let Some(binding) = self.switch_store(access.store) {
+                binding.raw_location(access.switch_index)?;
+            }
         }
         Ok(())
     }
@@ -1158,6 +1174,25 @@ impl MessageFlowBindings {
             .iter()
             .find(|binding| binding.store == store)
     }
+}
+
+fn unknown_flag_backing(
+    token: &str,
+    node_index: u16,
+    kind: &str,
+    parameter_ordinal: u8,
+    label_index: u16,
+    evidence: &RuleEvidence,
+) -> UnknownRequirement {
+    unknown_requirement(
+        token,
+        node_index,
+        &format!("{kind}-parameter-{parameter_ordinal}-backing"),
+        format!(
+            "Message {kind} flag label {label_index} at node {node_index} has no audited backing binding"
+        ),
+        evidence,
+    )
 }
 
 impl MessageRawStoreBinding {
@@ -2420,7 +2455,33 @@ mod tests {
     }
 
     #[test]
-    fn selected_resource_construction_rejects_ambiguity_and_unmapped_layouts() {
+    fn bundled_gz2e01_profile_maps_only_source_audited_backings() {
+        let profile = bundled_gz2e01_english_message_flow_profile().unwrap();
+        assert_eq!(profile.id, "gcn-us-1.0-gz2e01-en");
+        assert_eq!(
+            profile.language_bundles.get("en").map(String::as_str),
+            Some("us")
+        );
+        assert!(profile.bindings.temporary_flags.is_some());
+        assert!(profile.bindings.persistent_flags.is_none());
+        assert_eq!(profile.bindings.switch_stores.len(), 1);
+        assert_eq!(
+            profile.bindings.switch_stores[0].store,
+            MessageFlowSwitchStore::LoadedStageMemory
+        );
+        assert_eq!(profile.bindings.switch_stores[0].byte_offset_base, 0x08);
+        assert_eq!(profile.bindings.switch_stores[0].switch_count, 128);
+        assert!(
+            profile
+                .evidence
+                .records
+                .iter()
+                .all(|record| record.kind == EvidenceKind::SourceAudited)
+        );
+    }
+
+    #[test]
+    fn selected_resource_construction_rejects_ambiguity_and_keeps_unmapped_stores_unknown() {
         let profile = import_profile();
         let runtime = runtime_configuration();
         let first = extracted_archive(3, 3);
@@ -2439,30 +2500,84 @@ mod tests {
         );
 
         let mut missing_store = profile;
+        missing_store.bindings.temporary_flags = None;
+        missing_store.bindings.persistent_flags = None;
         missing_store.bindings.switch_stores.clear();
-        assert_eq!(
-            construct_selected_message_flow_programs(
-                missing_store.content_sha256,
-                &runtime,
-                &missing_store,
-                "us",
-                &[&first],
-            )
-            .unwrap_err()
-            .field(),
-            "message_flow_program.bindings.switch_stores"
+        let programs = construct_selected_message_flow_programs(
+            missing_store.content_sha256,
+            &runtime,
+            &missing_store,
+            "us",
+            &[&first],
+        )
+        .unwrap();
+        let compiled = programs[0].compile().unwrap();
+        let switch_event = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("event 14"))
+            .unwrap();
+        assert!(
+            switch_event
+                .activation
+                .effects
+                .iter()
+                .all(|effect| { !matches!(effect, StateOperation::WriteBoundRaw { .. }) })
+        );
+        assert!(
+            switch_event
+                .activation
+                .unknown_requirements
+                .iter()
+                .any(|requirement| requirement.id.contains("switch-backing"))
+        );
+
+        let temporary_event = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("event 10"))
+            .unwrap();
+        assert!(
+            temporary_event
+                .activation
+                .effects
+                .iter()
+                .all(|effect| { !matches!(effect, StateOperation::WriteBoundRaw { .. }) })
+        );
+        assert!(
+            temporary_event
+                .activation
+                .unknown_requirements
+                .iter()
+                .any(|requirement| requirement.id.contains("temporary-parameter-0-backing"))
+        );
+
+        let persistent_event = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("event 0"))
+            .unwrap();
+        assert!(
+            persistent_event
+                .activation
+                .effects
+                .iter()
+                .all(|effect| { !matches!(effect, StateOperation::WriteBoundRaw { .. }) })
+        );
+        assert!(
+            persistent_event
+                .activation
+                .unknown_requirements
+                .iter()
+                .any(|requirement| requirement.id.contains("persistent-parameter-0-backing"))
         );
     }
 
     #[test]
-    fn rejects_missing_bindings_bad_targets_and_inexact_control_contracts() {
-        let mut missing = program();
-        missing.bindings.temporary_flags = None;
-        assert_eq!(
-            missing.validate().unwrap_err().field(),
-            "message_flow_program.bindings.temporary_flags"
-        );
-
+    fn rejects_bad_targets_and_inexact_control_contracts() {
         let mut bad_target = program();
         let MessageFlowNode::Event {
             next_target_index, ..

@@ -1824,8 +1824,9 @@ Deliverable: replayable state evidence that can validate transition rules.
         `docs/route-planner/message-flow-programs.md`.
   - [x] Construct one canonical program per message group from every resource in
         an exact runtime-language selection. Versioned import profiles own the
-        language-to-bundle mapping and backing layouts; missing mappings,
-        ambiguous groups, and unbound stores fail closed. The standalone
+        language-to-bundle mapping and audited backing layouts; missing language
+        mappings and ambiguous groups fail closed, while unaudited switch stores
+        remain explicit unknown requirements. The standalone
         `construct-message-flows` command emits a canonical program set. See
         `docs/route-planner/message-flow-programs.md`.
   - [x] Compile selected program sets into deterministic exact-context fact and
@@ -1836,9 +1837,17 @@ Deliverable: replayable state evidence that can validate transition rules.
   - [x] Seal each compiled set with the normal fact-pack manifest and source/
         coverage records, and let `compose --message-flow-set` merge one or more
         sets transactionally into ordinary base catalogs before refinements.
+  - [x] Keep extracted accesses with unaudited backing stores as blocking unknown
+        requirements, and separate label-indexed observation arrays from the
+        unique writable temporary event-register backing in state snapshots.
   - [ ] Publish audited exact-build import profiles, attach stage/actor entry
         contracts, import additional decidable item/event/jump handlers and real
         cleanup caller predicates.
+    - [x] Publish the exact GZ2E01 English partial profile for temporary event
+          registers and current-stage save switches. Persistent event registers,
+          dungeon-session, zone, and one-zone stores remain explicit unknowns
+          pending distinct backing and speaker-zone modeling. See
+          `docs/route-planner/gz2e01-message-import-profile.md`.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.
