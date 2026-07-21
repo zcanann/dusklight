@@ -674,6 +674,52 @@ struct ObservationFixture {
     }
 };
 
+void configure_door20_actor(MilestoneObservation::Actor& actor) {
+    actor.actorName = fpcNm_DOOR20_e;
+    actor.profileName = fpcNm_DOOR20_e;
+    actor.group = 0;
+    actor.enemyBasePresent = false;
+    actor.enemyBase = {};
+    actor.parameters =
+        9u | (3u << 5) | (2u << 8) | (1u << 10) | (4u << 13) | (5u << 19) | (6u << 25) | (1u << 31);
+    actor.homeAngleX = 0x3344;
+    actor.homeAngleZ = 0x2211;
+    actor.door20Present = true;
+    actor.door20 = {
+        .kind = 9,
+        .doorModel = 3,
+        .frontOption = 2,
+        .backOption = 1,
+        .frontRoom = 4,
+        .backRoom = 5,
+        .exitNumber = 6,
+        .messageDoor = true,
+        .frontSwitch = 0x11,
+        .backSwitch = 0x22,
+        .unlockEffectSwitch = 0x33,
+        .frontSwitchSet = true,
+        .backSwitchSet = false,
+        .unlockEffectSwitchSet = true,
+        .frontEvent = 0x44,
+        .backEvent = 0x33,
+        .messageNumber = 0x3344,
+        .action = 3,
+        .activeSide = 1,
+        .eventVariant = 13,
+        .locked = true,
+        .backgroundCollisionReleased = false,
+        .unlockEffectTriggered = true,
+        .keyType = 1,
+        .enemyClearDebounce = 42,
+        .openingActive = true,
+        .closingActive = false,
+        .doorAngle = -1234,
+        .stopperSide = 1,
+        .frontStopperStatus = -1,
+        .backStopperStatus = 1,
+    };
+}
+
 void test_episode_and_shard_are_compact_and_self_delimiting(
     const std::optional<std::filesystem::path>& fixturePath) {
     ObservationFixture fixture;
@@ -713,6 +759,7 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .halfExtentZ = 60.0F,
         .yaw = 0x1234,
     };
+    configure_door20_actor(completeActors[2]);
     completeActors.back().attentionPresent = false;
     completeActors.back().eventParticipationPresent = false;
     fixture.observation.actors = completeActors;
@@ -1329,6 +1376,40 @@ void test_trigger_volume_geometry_fails_closed() {
     REQUIRE(error.find("inconsistent trigger-volume") != std::string::npos);
 }
 
+void test_door20_component_fails_closed() {
+    ObservationFixture fixture;
+    configure_door20_actor(fixture.actors[0]);
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+
+    fixture.actors[0].door20.action = 4;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent DOOR20 component state") != std::string::npos);
+
+    configure_door20_actor(fixture.actors[0]);
+    fixture.actors[0].door20.frontRoom = 5;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent DOOR20 component state") != std::string::npos);
+
+    configure_door20_actor(fixture.actors[0]);
+    fixture.actors[0].door20Present = false;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent DOOR20 component ownership") != std::string::npos);
+}
+
 }  // namespace
 
 int main(const int argc, char** argv) {
@@ -1355,6 +1436,7 @@ int main(const int argc, char** argv) {
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();
     test_trigger_volume_geometry_fails_closed();
+    test_door20_component_fails_closed();
     std::cout << "learning episode tests passed\n";
     return 0;
 }

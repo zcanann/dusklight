@@ -86,6 +86,32 @@ open sequence. The source-backed solver fixture keeps persistent unlock, pending
 key delta, actor lock/keyhole, animation, collision, and current room as separate
 state fields and transitions.
 
+## Read-only native observation boundary
+
+Learning observation v27 adds a component only when the process name is
+`fpcNm_DOOR20_e`; it does not cast other door or gate families to this layout.
+The component retains the decoded placement fields above plus the front/back
+switch results from their exact room banks. It separately retains the live
+action, usable side, event variant, lock/key type, opening and closing flags,
+realized door angle, background-collision release, unlock-effect latch,
+enemy-clear debounce and front/back stopper statuses.
+
+The native writer and independent Rust decoder recompute kind/model/options,
+rooms, exit, message mode, switches and event/message IDs from the retained raw
+parameters and home angles. They fail closed if the component belongs to a
+different profile, its authored interpretation is detached, or its transient
+enums and invariants are impossible. Actor-catalog v10 captures the same state
+through an independent actor walk and stage actor coverage v7 compares the two
+copies exactly.
+
+The component deliberately omits `field_0x67e`/`field_0x67f`: `openInitCom()`
+initializes those source/destination scratch rooms only after an opening begins,
+and the class carries no independent presence bit. It also omits the key-child
+process ID, event-table storage, member-function pointers, background/resource
+pointers and opaque bytes. The complete actor population and existing parent
+links can represent a realized key child without exposing its raw process-ID
+field as universal door state.
+
 ## Proven and unproven scope
 
 This proves the full chain for the GZ2E01 `DOOR20` placement above. It does not

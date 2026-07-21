@@ -987,6 +987,28 @@ human-authored successful setup.
         All 210 learning and 10 CLI tests pass. This is representation only: no
         archive is selected or requested, and no target outcome, action, route
         or reward is supplied.
+    - [x] Retain the first profile-bound door state without inventing a shared
+      door layout. Learning observation v27 gates a typed component exactly to
+      `fpcNm_DOOR20_e` and decodes its authored kind/model, front/back options
+      and rooms, exit, message mode, switch IDs/results and event/message IDs.
+      It also copies the actor's four-state action, front/back/neither side,
+      selected event variant, key latch/type, opening/closing flags, realized
+      angle, background-collision release, unlock-effect latch, 65-tick
+      enemy-clear debounce and front/back stopper states. Source/destination
+      scratch rooms, pointers, key-child process IDs and opaque bytes remain
+      excluded because their validity or meaning is not independently proven.
+      Native and Rust recompute every authored field from the retained actor
+      placement and reject wrong ownership, detached decoding, absent payloads,
+      invalid actions/sides/statuses, impossible switch flags and simultaneous
+      opening/closing. Actor-catalog v10 independently recaptures the component;
+      stage actor coverage v7 requires exact diagnostic/learner parity, survey
+      observation identity v7 binds the new schema, and corpus inspection v18
+      reports typed temporal changes without selecting a door. Cross-language
+      fixture `41332b30...61e8c` is 4,960 bytes and passes exact,
+      legacy-missingness and recompressed-tamper tests. The existing GZ2E01
+      Forest Temple audit proves one small-key placement, but other DOOR20
+      kinds/configurations, other door families and live temporal variation
+      remain open.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

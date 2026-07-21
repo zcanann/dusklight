@@ -68,6 +68,8 @@ struct ActorCatalogEntry {
     cXyz enemyHeadLockPosition{};
     bool triggerVolumePresent = false;
     MilestoneObservation::Actor::TriggerVolumeComponent triggerVolume;
+    bool door20Present = false;
+    MilestoneObservation::Actor::Door20Component door20;
 };
 
 struct ActorCatalogCapture {
@@ -130,6 +132,7 @@ int capture_actor(void* candidate, void* context) {
         entry.enemyHeadLockPosition = enemy->mHeadLockPos;
     }
     entry.triggerVolumePresent = capture_actor_trigger_volume(*actor, entry.triggerVolume);
+    entry.door20Present = capture_actor_door20(*actor, entry.door20);
 
     if (capture->count < capture->entries.size()) {
         capture->entries[capture->count++] = entry;
@@ -180,6 +183,56 @@ json trigger_volume_json(
         {"half_extent",
             position_json(trigger.halfExtentX, trigger.halfExtentY, trigger.halfExtentZ)},
         {"yaw", trigger.yaw},
+    };
+}
+
+json door20_json(const bool present, const MilestoneObservation::Actor::Door20Component& door) {
+    if (!present)
+        return nullptr;
+    const char* action = door.action == 0 ? "init" :
+                         door.action == 1 ? "wait" :
+                         door.action == 2 ? "stop_close" :
+                                            "demo";
+    const char* activeSide = door.activeSide == 0 ? "front" :
+                             door.activeSide == 1 ? "back" :
+                                                    "neither";
+    const char* stopperSide = door.stopperSide == 0 ? "front" : "back";
+    const auto stopperStatus = [](const std::int8_t value) {
+        return value == -1 ? "room_unavailable" : value == 0 ? "open" : "closed";
+    };
+    const auto optionalSwitch = [](const std::uint8_t id, const bool set) -> json {
+        return id == 0xff ? json(nullptr) : json{{"id", id}, {"set", set}};
+    };
+    return {
+        {"kind", door.kind},
+        {"door_model", door.doorModel},
+        {"front_option", door.frontOption},
+        {"back_option", door.backOption},
+        {"front_room", door.frontRoom},
+        {"back_room", door.backRoom},
+        {"exit_number", door.exitNumber},
+        {"message_door", door.messageDoor},
+        {"front_switch", optionalSwitch(door.frontSwitch, door.frontSwitchSet)},
+        {"back_switch", optionalSwitch(door.backSwitch, door.backSwitchSet)},
+        {"unlock_effect_switch",
+            optionalSwitch(door.unlockEffectSwitch, door.unlockEffectSwitchSet)},
+        {"front_event", door.frontEvent},
+        {"back_event", door.backEvent},
+        {"message_number", door.messageNumber},
+        {"action", action},
+        {"active_side", activeSide},
+        {"event_variant", door.eventVariant},
+        {"locked", door.locked},
+        {"background_collision_released", door.backgroundCollisionReleased},
+        {"unlock_effect_triggered", door.unlockEffectTriggered},
+        {"key_type", door.keyType},
+        {"enemy_clear_debounce", door.enemyClearDebounce},
+        {"opening_active", door.openingActive},
+        {"closing_active", door.closingActive},
+        {"door_angle", door.doorAngle},
+        {"stopper_side", stopperSide},
+        {"front_stopper_status", stopperStatus(door.frontStopperStatus)},
+        {"back_stopper_status", stopperStatus(door.backStopperStatus)},
     };
 }
 
@@ -280,6 +333,7 @@ json learning_actor_json(const MilestoneObservation::Actor& actor) {
         {"return_place_writer", std::move(returnPlaceWriter)},
         {"enemy_base", std::move(enemyBase)},
         {"trigger_volume", trigger_volume_json(actor.triggerVolumePresent, actor.triggerVolume)},
+        {"door20", door20_json(actor.door20Present, actor.door20)},
     };
 }
 
@@ -496,6 +550,7 @@ bool write_actor_catalog(
             {"enemy_base", std::move(enemyBase)},
             {"trigger_volume",
                 trigger_volume_json(actor.triggerVolumePresent, actor.triggerVolume)},
+            {"door20", door20_json(actor.door20Present, actor.door20)},
         });
     }
 
@@ -518,7 +573,7 @@ bool write_actor_catalog(
         nameEntryObserver.cursorBreakoutShadowEnabled() ? "cursor_breakout_shadow" :
                                                           "observe_only");
     json document{
-        {"schema", "dusklight.actor-catalog.v9"},
+        {"schema", "dusklight.actor-catalog.v10"},
         {"build",
             {
                 {"version", build.version},

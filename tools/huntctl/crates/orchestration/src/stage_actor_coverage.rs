@@ -10,7 +10,7 @@ use crate::stage_survey::{
 };
 use crate::stage_survey_artifact::{compressed_artifact_path, read_survey_artifact};
 use dusklight_automation_contracts::artifact::Digest;
-use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V26;
+use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V27;
 use dusklight_world::stage_boot_catalog::StageBootCatalog;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -21,7 +21,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const STAGE_ACTOR_COVERAGE_SCHEMA_V6: &str = "dusklight-stage-actor-coverage/v6";
+pub const STAGE_ACTOR_COVERAGE_SCHEMA_V7: &str = "dusklight-stage-actor-coverage/v7";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -178,6 +178,7 @@ struct ActorCatalogActor {
     is_enemy: bool,
     enemy_base: Option<LearningActorEnemyBase>,
     trigger_volume: Option<LearningActorTriggerVolume>,
+    door20: Option<LearningActorDoor20>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -235,6 +236,47 @@ struct LearningActor {
     return_place_writer: Option<LearningActorReturnPlaceWriter>,
     enemy_base: Option<LearningActorEnemyBase>,
     trigger_volume: Option<LearningActorTriggerVolume>,
+    door20: Option<LearningActorDoor20>,
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LearningActorDoor20Switch {
+    id: u8,
+    set: bool,
+}
+
+#[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LearningActorDoor20 {
+    kind: u8,
+    door_model: u8,
+    front_option: u8,
+    back_option: u8,
+    front_room: u8,
+    back_room: u8,
+    exit_number: u8,
+    message_door: bool,
+    front_switch: Option<LearningActorDoor20Switch>,
+    back_switch: Option<LearningActorDoor20Switch>,
+    unlock_effect_switch: Option<LearningActorDoor20Switch>,
+    front_event: u8,
+    back_event: u8,
+    message_number: u16,
+    action: String,
+    active_side: String,
+    event_variant: u8,
+    locked: bool,
+    background_collision_released: bool,
+    unlock_effect_triggered: bool,
+    key_type: u8,
+    enemy_clear_debounce: u8,
+    opening_active: bool,
+    closing_active: bool,
+    door_angle: i16,
+    stopper_side: String,
+    front_stopper_status: String,
+    back_stopper_status: String,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Serialize)]
@@ -529,7 +571,7 @@ impl StageActorCoverageReport {
             .filter(|case| case.status == StageActorEvidenceStatus::VerifiedCompleteSnapshot)
             .count() as u32;
         let mut report = Self {
-            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V6.into(),
+            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V7.into(),
             catalog_sha256,
             ledger_sha256,
             ready_case_count: cases.len() as u32,
@@ -546,7 +588,7 @@ impl StageActorCoverageReport {
     }
 
     pub fn validate(&self) -> Result<(), StageActorCoverageError> {
-        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V6
+        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V7
             || self.catalog_sha256 == Digest::ZERO
             || self.ledger_sha256 == Digest::ZERO
             || self.report_sha256 == Digest::ZERO
@@ -842,7 +884,7 @@ fn validate_snapshot(
         .iter()
         .map(|actor| actor.runtime_generation)
         .collect::<BTreeSet<_>>();
-    if snapshot.schema != "dusklight.actor-catalog.v9"
+    if snapshot.schema != "dusklight.actor-catalog.v10"
         || snapshot.simulation_tick != expected_simulation_tick
         || snapshot.stage != expected_stage
         || snapshot.room != expected_room
@@ -853,15 +895,31 @@ fn validate_snapshot(
         || snapshot.observed_actor_count != snapshot.retained_actor_count
         || snapshot.actors.len() != snapshot.retained_actor_count as usize
         || unique_processes.len() != snapshot.actors.len()
+        || snapshot.actors.iter().any(|actor| {
+            !valid_door20(
+                actor.actor_name,
+                actor.parameters,
+                actor.home_angle,
+                actor.door20.as_ref(),
+            )
+        })
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
-    if learning.source_schema != LEARNING_OBSERVATION_SCHEMA_V26
+    if learning.source_schema != LEARNING_OBSERVATION_SCHEMA_V27
         || learning.truncated
         || learning.observed_actor_count != learning.retained_actor_count
         || learning.retained_actor_count != snapshot.retained_actor_count
         || learning.actors.len() != learning.retained_actor_count as usize
         || unique_learning_generations.len() != learning.actors.len()
+        || learning.actors.iter().any(|actor| {
+            !valid_door20(
+                actor.actor_name,
+                actor.parameters,
+                actor.home_angle,
+                actor.door20.as_ref(),
+            )
+        })
         || snapshot
             .actors
             .iter()
@@ -871,6 +929,61 @@ fn validate_snapshot(
         return Err("learning_actor_population_invariant_mismatch".into());
     }
     Ok(snapshot)
+}
+
+fn valid_door20(
+    actor_name: i16,
+    parameters: u32,
+    home_angle: [i16; 3],
+    door: Option<&LearningActorDoor20>,
+) -> bool {
+    const DOOR20: i16 = 0x0e8;
+    let Some(door) = door else {
+        return actor_name != DOOR20;
+    };
+    if actor_name != DOOR20 {
+        return false;
+    }
+    let home_x = home_angle[0] as u16;
+    let home_z = home_angle[2] as u16;
+    let switch_matches = |switch: Option<&LearningActorDoor20Switch>, id: u8| match switch {
+        None => id == u8::MAX,
+        Some(switch) => id != u8::MAX && switch.id == id,
+    };
+    door.kind == (parameters & 0x1f) as u8
+        && door.door_model == ((parameters >> 5) & 0x7) as u8
+        && door.front_option == ((parameters >> 8) & 0x3) as u8
+        && door.back_option == ((parameters >> 10) & 0x7) as u8
+        && door.front_room == ((parameters >> 13) & 0x3f) as u8
+        && door.back_room == ((parameters >> 19) & 0x3f) as u8
+        && door.exit_number == ((parameters >> 25) & 0x3f) as u8
+        && door.message_door == (parameters >> 31 != 0)
+        && switch_matches(door.front_switch.as_ref(), (home_z & 0xff) as u8)
+        && switch_matches(door.back_switch.as_ref(), (home_z >> 8) as u8)
+        && switch_matches(door.unlock_effect_switch.as_ref(), (home_x >> 8) as u8)
+        && door.front_event == (home_x & 0xff) as u8
+        && door.back_event == (home_x >> 8) as u8
+        && door.message_number == home_x
+        && matches!(
+            door.action.as_str(),
+            "init" | "wait" | "stop_close" | "demo"
+        )
+        && matches!(door.active_side.as_str(), "front" | "back" | "neither")
+        && door.event_variant <= 18
+        && (!door.locked || door.front_option == 2 || door.back_option == 2)
+        && door.key_type <= 1
+        && (door.key_type != 1 || door.kind == 9)
+        && door.enemy_clear_debounce <= 65
+        && !(door.opening_active && door.closing_active)
+        && matches!(door.stopper_side.as_str(), "front" | "back")
+        && matches!(
+            door.front_stopper_status.as_str(),
+            "room_unavailable" | "open" | "closed"
+        )
+        && matches!(
+            door.back_stopper_status.as_str(),
+            "room_unavailable" | "open" | "closed"
+        )
 }
 
 fn same_actor_at_boundary(catalog: &ActorCatalogActor, learner: &LearningActor) -> bool {
@@ -891,6 +1004,7 @@ fn same_actor_at_boundary(catalog: &ActorCatalogActor, learner: &LearningActor) 
         && catalog.group == learner.group
         && catalog.enemy_base == learner.enemy_base
         && catalog.trigger_volume == learner.trigger_volume
+        && catalog.door20 == learner.door20
         && catalog.argument == learner.argument
         && catalog.pause_flag == learner.pause_flag
         && catalog.process_init_state == learner.process_init_state
@@ -1110,11 +1224,11 @@ mod tests {
                     "head_lock_position": [12.5, 7.0, -8.0]}}),
         ];
         let actor_bytes = serde_json::to_vec_pretty(&json!({
-            "schema": "dusklight.actor-catalog.v9", "simulation_tick": 29,
+            "schema": "dusklight.actor-catalog.v10", "simulation_tick": 29,
             "stage": "F_SP103", "room": 0, "layer": 0, "observed_actor_count": 2,
             "retained_actor_count": 2, "truncated": false, "actors": catalog_actors,
             "learning_actor_population": {
-                "source_schema": LEARNING_OBSERVATION_SCHEMA_V26,
+                "source_schema": LEARNING_OBSERVATION_SCHEMA_V27,
                 "observed_actor_count": 2, "retained_actor_count": 2,
                 "truncated": false, "actors": learning_actors
             }
@@ -1315,6 +1429,77 @@ mod tests {
         assert_eq!(flags.status, StageActorFieldCoverageStatus::Ambiguous);
         assert!(profile_identity_ambiguous(1, 2, 1, 1));
         assert!(!profile_identity_ambiguous(1, 0, 1, 1));
+    }
+
+    #[test]
+    fn door20_catalog_state_is_profile_bound_and_recomputed_from_placement() {
+        let parameters = 9u32
+            | (3u32 << 5)
+            | (2u32 << 8)
+            | (1u32 << 10)
+            | (4u32 << 13)
+            | (5u32 << 19)
+            | (6u32 << 25)
+            | (1u32 << 31);
+        let mut door = LearningActorDoor20 {
+            kind: 9,
+            door_model: 3,
+            front_option: 2,
+            back_option: 1,
+            front_room: 4,
+            back_room: 5,
+            exit_number: 6,
+            message_door: true,
+            front_switch: Some(LearningActorDoor20Switch {
+                id: 0x11,
+                set: true,
+            }),
+            back_switch: Some(LearningActorDoor20Switch {
+                id: 0x22,
+                set: false,
+            }),
+            unlock_effect_switch: Some(LearningActorDoor20Switch {
+                id: 0x33,
+                set: true,
+            }),
+            front_event: 0x44,
+            back_event: 0x33,
+            message_number: 0x3344,
+            action: "demo".into(),
+            active_side: "back".into(),
+            event_variant: 13,
+            locked: true,
+            background_collision_released: false,
+            unlock_effect_triggered: true,
+            key_type: 1,
+            enemy_clear_debounce: 42,
+            opening_active: true,
+            closing_active: false,
+            door_angle: -1234,
+            stopper_side: "back".into(),
+            front_stopper_status: "room_unavailable".into(),
+            back_stopper_status: "closed".into(),
+        };
+        assert!(valid_door20(
+            0x0e8,
+            parameters,
+            [0x3344, 0, 0x2211],
+            Some(&door)
+        ));
+        assert!(!valid_door20(
+            0x0e7,
+            parameters,
+            [0x3344, 0, 0x2211],
+            Some(&door)
+        ));
+        assert!(!valid_door20(0x0e8, parameters, [0x3344, 0, 0x2211], None));
+        door.action = "invented".into();
+        assert!(!valid_door20(
+            0x0e8,
+            parameters,
+            [0x3344, 0, 0x2211],
+            Some(&door)
+        ));
     }
 
     #[test]

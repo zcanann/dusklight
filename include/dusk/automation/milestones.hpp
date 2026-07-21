@@ -669,6 +669,51 @@ struct MilestoneObservation {
             std::int16_t yaw = 0;
         };
 
+        // Profile-bound state for the multipurpose sliding shutter actor
+        // (DOOR20). Authored fields are decoded alongside the already retained
+        // raw placement, while transient fields are copied from named control
+        // flow in daDoor20_c. Switch values are read only from their exact
+        // front-room, back-room, or actor-room backing.
+        struct Door20Component {
+            std::uint8_t kind = 0;
+            std::uint8_t doorModel = 0;
+            std::uint8_t frontOption = 0;
+            std::uint8_t backOption = 0;
+            std::uint8_t frontRoom = 0;
+            std::uint8_t backRoom = 0;
+            std::uint8_t exitNumber = 0;
+            bool messageDoor = false;
+            std::uint8_t frontSwitch = 0xff;
+            std::uint8_t backSwitch = 0xff;
+            std::uint8_t unlockEffectSwitch = 0xff;
+            bool frontSwitchSet = false;
+            bool backSwitchSet = false;
+            bool unlockEffectSwitchSet = false;
+            std::uint8_t frontEvent = 0xff;
+            std::uint8_t backEvent = 0xff;
+            std::uint16_t messageNumber = 0xffff;
+            std::uint8_t action = 0;
+            // 0/1 are the interpreted front/back sides; 2 means the player is
+            // not on either usable side according to frontCheck().
+            std::uint8_t activeSide = 2;
+            std::uint8_t eventVariant = 0;
+            bool locked = false;
+            bool backgroundCollisionReleased = false;
+            bool unlockEffectTriggered = false;
+            std::uint8_t keyType = 0;
+            std::uint8_t enemyClearDebounce = 0;
+            bool openingActive = false;
+            bool closingActive = false;
+            std::int16_t doorAngle = 0;
+            // Side used when the actor last oriented its current/opposite
+            // stopper pair (0 front, 1 back).
+            std::uint8_t stopperSide = 0;
+            // -1 means the relevant room was unavailable, 0 means no closed
+            // stopper, and 1 means a closed stopper is present.
+            std::int8_t frontStopperStatus = 0;
+            std::int8_t backStopperStatus = 0;
+        };
+
         std::uint64_t runtimeGeneration = 0;
         std::int32_t actorType = 0;
         std::int32_t processSubtype = 0;
@@ -741,6 +786,8 @@ struct MilestoneObservation {
         EnemyBaseComponent enemyBase;
         bool triggerVolumePresent = false;
         TriggerVolumeComponent triggerVolume;
+        bool door20Present = false;
+        Door20Component door20;
     };
     std::span<const Actor> actors;
     // Total actor population visited by the observer. Current native learning

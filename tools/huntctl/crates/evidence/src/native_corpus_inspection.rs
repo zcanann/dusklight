@@ -12,16 +12,17 @@ use crate::native_dynamic_collider_temporal::{
 use crate::native_episode_shard::{
     LEARNING_OBSERVATION_SCHEMA_V21, LEARNING_OBSERVATION_SCHEMA_V22,
     LEARNING_OBSERVATION_SCHEMA_V23, LEARNING_OBSERVATION_SCHEMA_V24,
-    LEARNING_OBSERVATION_SCHEMA_V25, LEARNING_OBSERVATION_SCHEMA_V26, NativeActorObservation,
-    NativeChannelStatus, NativeEpisode, NativeEpisodeShard, NativeLearningObservation,
-    NativeRawPad, NativeResourceArchiveKind, NativeResourceLoadOutcome,
+    LEARNING_OBSERVATION_SCHEMA_V25, LEARNING_OBSERVATION_SCHEMA_V26,
+    LEARNING_OBSERVATION_SCHEMA_V27, NativeActorObservation, NativeChannelStatus, NativeEpisode,
+    NativeEpisodeShard, NativeLearningObservation, NativeRawPad, NativeResourceArchiveKind,
+    NativeResourceLoadOutcome,
 };
 use crate::native_global_temporal::{GlobalTemporalCoverage, inspect_global_temporal_coverage};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V17: &str = "dusklight-native-corpus-inspection/v17";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V18: &str = "dusklight-native-corpus-inspection/v18";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -650,6 +651,79 @@ fn record_persistent_actor_changes(
         );
         record_changed_field(profile, "trigger_volume.yaw", before.yaw != after.yaw);
     }
+    record_changed_field(
+        profile,
+        "door20.present",
+        before.door20.is_some() != after.door20.is_some(),
+    );
+    if let (Some(before), Some(after)) = (&before.door20, &after.door20) {
+        record_changed_field(
+            profile,
+            "door20.authored",
+            before.kind != after.kind
+                || before.door_model != after.door_model
+                || before.front_option != after.front_option
+                || before.back_option != after.back_option
+                || before.front_room != after.front_room
+                || before.back_room != after.back_room
+                || before.exit_number != after.exit_number
+                || before.message_door != after.message_door
+                || before.front_switch != after.front_switch
+                || before.back_switch != after.back_switch
+                || before.unlock_effect_switch != after.unlock_effect_switch
+                || before.front_event != after.front_event
+                || before.back_event != after.back_event
+                || before.message_number != after.message_number,
+        );
+        record_changed_field(profile, "door20.action", before.action != after.action);
+        record_changed_field(
+            profile,
+            "door20.active_side",
+            before.active_side != after.active_side,
+        );
+        record_changed_field(
+            profile,
+            "door20.event_variant",
+            before.event_variant != after.event_variant,
+        );
+        record_changed_field(
+            profile,
+            "door20.switch_values",
+            before.front_switch_set != after.front_switch_set
+                || before.back_switch_set != after.back_switch_set
+                || before.unlock_effect_switch_set != after.unlock_effect_switch_set,
+        );
+        record_changed_field(profile, "door20.locked", before.locked != after.locked);
+        record_changed_field(
+            profile,
+            "door20.background_collision_released",
+            before.background_collision_released != after.background_collision_released,
+        );
+        record_changed_field(
+            profile,
+            "door20.unlock_effect_triggered",
+            before.unlock_effect_triggered != after.unlock_effect_triggered,
+        );
+        record_changed_field(
+            profile,
+            "door20.enemy_clear_debounce",
+            before.enemy_clear_debounce != after.enemy_clear_debounce,
+        );
+        record_changed_field(
+            profile,
+            "door20.open_close",
+            before.opening_active != after.opening_active
+                || before.closing_active != after.closing_active
+                || before.door_angle != after.door_angle,
+        );
+        record_changed_field(
+            profile,
+            "door20.stoppers",
+            before.stopper_side != after.stopper_side
+                || before.front_stopper_status != after.front_stopper_status
+                || before.back_stopper_status != after.back_stopper_status,
+        );
+    }
 }
 
 fn record_actor_temporal_episode(
@@ -1005,6 +1079,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                 | LEARNING_OBSERVATION_SCHEMA_V24
                 | LEARNING_OBSERVATION_SCHEMA_V25
                 | LEARNING_OBSERVATION_SCHEMA_V26
+                | LEARNING_OBSERVATION_SCHEMA_V27
         );
         *observation_schemas
             .entry(shard.metadata.observation_schema.clone())
@@ -1390,7 +1465,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V17.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V18.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -1555,7 +1630,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V17);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V18);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -1582,7 +1657,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V17);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V18);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count
@@ -1765,6 +1840,39 @@ mod tests {
         assert_eq!(report.resource_load_coverage.ready_entries, 4);
         assert_eq!(report.resource_load_coverage.failed_entries, 4);
         assert_eq!(report.resource_load_coverage.unique_archives, 3);
+    }
+
+    #[test]
+    fn audits_v27_door20_typed_changes_without_nominating_a_door() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v27.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        let step = &mut shard.episodes[0].steps[0];
+        let door = step
+            .post_simulation
+            .actors
+            .iter_mut()
+            .find(|actor| actor.door20.is_some())
+            .unwrap();
+        let profile_name = door.profile_name;
+        let door = door.door20.as_mut().unwrap();
+        door.action = crate::native_episode_shard::NativeDoor20Action::Wait;
+        door.locked = false;
+        door.door_angle += 1;
+
+        let report = inspect_native_episode_corpus(&[shard]);
+        let profile = report
+            .actor_temporal_coverage
+            .profiles
+            .iter()
+            .find(|profile| profile.profile_name == profile_name)
+            .unwrap();
+        assert_eq!(profile.changed_fields["door20.action"], 1);
+        assert_eq!(profile.changed_fields["door20.locked"], 1);
+        assert_eq!(profile.changed_fields["door20.open_close"], 1);
+        assert!(!profile.changed_fields.contains_key("door20.authored"));
     }
 
     #[test]

@@ -3,6 +3,7 @@
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
 
 #include "d/actor/d_a_alink.h"
+#include "d/actor/d_a_door_shutter.h"
 #include "d/actor/d_a_kytag14.h"
 #include "d/actor/d_a_npc.h"
 #include "d/actor/d_a_npc4.h"
@@ -15,6 +16,7 @@
 #include "d/d_camera.h"
 #include "d/d_com_inf_game.h"
 #include "d/d_demo.h"
+#include "d/d_door_param2.h"
 #include "d/d_meter2_info.h"
 #include "d/d_msg_object.h"
 #include "d/d_s_name.h"
@@ -617,6 +619,7 @@ int capture_milestone_actor(void* candidate, void* context) {
         component.headLockPositionZ = enemy->mHeadLockPos.z;
     }
     snapshot.triggerVolumePresent = capture_actor_trigger_volume(*actor, snapshot.triggerVolume);
+    snapshot.door20Present = capture_actor_door20(*actor, snapshot.door20);
     storage->actorPointers.push_back(actor);
     storage->actors.push_back(snapshot);
     return 1;
@@ -732,6 +735,68 @@ bool capture_actor_trigger_volume(
     const fopAc_ac_c& actor, MilestoneObservation::Actor::TriggerVolumeComponent& output) {
     output = {};
     return MilestoneTriggerReadAdapter::capture(actor, output);
+}
+
+bool capture_actor_door20(
+    const fopAc_ac_c& actor, MilestoneObservation::Actor::Door20Component& output) {
+    output = {};
+    if (fopAcM_GetName(&actor) != fpcNm_DOOR20_e)
+        return false;
+
+    auto* door = const_cast<daDoor20_c*>(static_cast<const daDoor20_c*>(&actor));
+    output.kind = static_cast<std::uint8_t>(door_param2_c::getKind(door));
+    output.doorModel = static_cast<std::uint8_t>(door_param2_c::getDoorModel(door));
+    output.frontOption = door_param2_c::getFrontOption(door);
+    output.backOption = door_param2_c::getBackOption(door);
+    output.frontRoom = door_param2_c::getFRoomNo(door);
+    output.backRoom = door_param2_c::getBRoomNo(door);
+    output.exitNumber = door_param2_c::getExitNo(door);
+    output.messageDoor = door_param2_c::isMsgDoor(door) != 0;
+    output.frontSwitch = door_param2_c::getSwbit(door);
+    output.backSwitch = door_param2_c::getSwbit2(door);
+    output.unlockEffectSwitch = door_param2_c::getSwbit3(door);
+    output.frontSwitchSet =
+        output.frontSwitch != 0xff && dComIfGs_isSwitch(output.frontSwitch, output.frontRoom);
+    output.backSwitchSet =
+        output.backSwitch != 0xff && dComIfGs_isSwitch(output.backSwitch, output.backRoom);
+    output.unlockEffectSwitchSet =
+        output.unlockEffectSwitch != 0xff && fopAcM_isSwitch(door, output.unlockEffectSwitch);
+    output.frontEvent = door_param2_c::getEventNo(door);
+    output.backEvent = door_param2_c::getEventNo2(door);
+    output.messageNumber = door_param2_c::getMsgNo(door);
+    output.action = door->getObservationAction();
+    output.activeSide = door->getObservationActiveSide();
+    output.eventVariant = door->getObservationEventVariant();
+    output.locked = door->getObservationLocked();
+    output.backgroundCollisionReleased = door->getObservationBackgroundCollisionReleased();
+    output.unlockEffectTriggered = door->getObservationUnlockEffectTriggered();
+    output.keyType = door->getObservationKeyType();
+    output.enemyClearDebounce = door->getObservationEnemyClearDebounce();
+    output.openingActive = door->getObservationOpeningActive();
+    output.closingActive = door->getObservationClosingActive();
+    output.doorAngle = door->getObservationDoorAngle();
+    output.stopperSide = door->getObservationStopperSide();
+
+    const auto status = [](const std::uint8_t value) {
+        return value == 0xff ? std::int8_t{-1} : static_cast<std::int8_t>(value);
+    };
+    const std::int8_t current = status(door->getObservationCurrentStopperStatus());
+    const std::int8_t opposite = status(door->getObservationOppositeStopperStatus());
+    if (output.stopperSide == 1) {
+        output.frontStopperStatus = opposite;
+        output.backStopperStatus = current;
+    } else {
+        output.frontStopperStatus = current;
+        output.backStopperStatus = opposite;
+    }
+    return output.action <= daDoor20_c::ACTION_DEMO && output.activeSide <= 2 &&
+           output.eventVariant <= 18 && output.keyType <= 1 &&
+           output.enemyClearDebounce <= 65 && output.stopperSide <= 1 &&
+           output.frontStopperStatus >= -1 && output.frontStopperStatus <= 1 &&
+           output.backStopperStatus >= -1 && output.backStopperStatus <= 1 &&
+           !(output.openingActive && output.closingActive) &&
+           (!output.locked || output.frontOption == 2 || output.backOption == 2) &&
+           (output.keyType != 1 || output.kind == 9);
 }
 
 ControllerObservation capture_controller_observation(ControllerObservationStorage& storage) {

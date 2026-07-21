@@ -46,9 +46,11 @@ const OBSERVATION_VERSION_V23: u16 = 23;
 const OBSERVATION_VERSION_V24: u16 = 24;
 const OBSERVATION_VERSION_V25: u16 = 25;
 const OBSERVATION_VERSION_V26: u16 = 26;
+const OBSERVATION_VERSION_V27: u16 = 27;
 const ACTION_VERSION: u16 = 2;
 const RNG_SNAPSHOT_VERSION: u32 = 1;
 const RNG_ALGORITHM_VERSION: u32 = 1;
+const ACTOR_NAME_DOOR20: i16 = 0x0e8;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
 const MAX_ACTORS: usize = u16::MAX as usize;
@@ -103,6 +105,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V23: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V24: &str = "dusklight-learning-observation/v24";
 pub const LEARNING_OBSERVATION_SCHEMA_V25: &str = "dusklight-learning-observation/v25";
 pub const LEARNING_OBSERVATION_SCHEMA_V26: &str = "dusklight-learning-observation/v26";
+pub const LEARNING_OBSERVATION_SCHEMA_V27: &str = "dusklight-learning-observation/v27";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -360,6 +363,64 @@ pub struct NativeActorObservation {
     pub return_place_writer: Option<NativeReturnPlaceWriterComponent>,
     pub enemy_base: Option<NativeEnemyBaseComponent>,
     pub trigger_volume: Option<NativeTriggerVolumeComponent>,
+    pub door20: Option<NativeDoor20Component>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeDoor20Action {
+    Init,
+    Wait,
+    StopClose,
+    Demo,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeDoor20Side {
+    Front,
+    Back,
+    Neither,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NativeDoor20StopperStatus {
+    RoomUnavailable,
+    Open,
+    Closed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeDoor20Component {
+    pub kind: u8,
+    pub door_model: u8,
+    pub front_option: u8,
+    pub back_option: u8,
+    pub front_room: u8,
+    pub back_room: u8,
+    pub exit_number: u8,
+    pub message_door: bool,
+    pub front_switch: u8,
+    pub back_switch: u8,
+    pub unlock_effect_switch: u8,
+    pub front_switch_set: bool,
+    pub back_switch_set: bool,
+    pub unlock_effect_switch_set: bool,
+    pub front_event: u8,
+    pub back_event: u8,
+    pub message_number: u16,
+    pub action: NativeDoor20Action,
+    pub active_side: NativeDoor20Side,
+    pub event_variant: u8,
+    pub locked: bool,
+    pub background_collision_released: bool,
+    pub unlock_effect_triggered: bool,
+    pub key_type: u8,
+    pub enemy_clear_debounce: u8,
+    pub opening_active: bool,
+    pub closing_active: bool,
+    pub door_angle: i16,
+    pub stopper_side: NativeDoor20Side,
+    pub front_stopper_status: NativeDoor20StopperStatus,
+    pub back_stopper_status: NativeDoor20StopperStatus,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -944,6 +1005,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V24
                 | OBSERVATION_VERSION_V25
                 | OBSERVATION_VERSION_V26
+                | OBSERVATION_VERSION_V27
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -1084,6 +1146,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V24 => LEARNING_OBSERVATION_SCHEMA_V24,
         OBSERVATION_VERSION_V25 => LEARNING_OBSERVATION_SCHEMA_V25,
         OBSERVATION_VERSION_V26 => LEARNING_OBSERVATION_SCHEMA_V26,
+        OBSERVATION_VERSION_V27 => LEARNING_OBSERVATION_SCHEMA_V27,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -3462,7 +3525,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V23
         | OBSERVATION_VERSION_V24
         | OBSERVATION_VERSION_V25
-        | OBSERVATION_VERSION_V26 => {
+        | OBSERVATION_VERSION_V26
+        | OBSERVATION_VERSION_V27 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3623,10 +3687,13 @@ fn decode_observation(
             return_place_writer: None,
             enemy_base: None,
             trigger_volume: None,
+            door20: None,
         };
         if observation_version >= OBSERVATION_VERSION_V6 {
             let component_mask = reader.u16()?;
-            let known_component_mask = if observation_version >= OBSERVATION_VERSION_V17 {
+            let known_component_mask = if observation_version >= OBSERVATION_VERSION_V27 {
+                0x3f
+            } else if observation_version >= OBSERVATION_VERSION_V17 {
                 0x1f
             } else if observation_version >= OBSERVATION_VERSION_V15 {
                 0xf
@@ -3870,6 +3937,153 @@ fn decode_observation(
                     ));
                 }
             }
+            if observation_version >= OBSERVATION_VERSION_V27 {
+                let kind = reader.u8()?;
+                let door_model = reader.u8()?;
+                let front_option = reader.u8()?;
+                let back_option = reader.u8()?;
+                let front_room = reader.u8()?;
+                let back_room = reader.u8()?;
+                let exit_number = reader.u8()?;
+                let action = reader.u8()?;
+                let active_side = reader.u8()?;
+                let event_variant = reader.u8()?;
+                let key_type = reader.u8()?;
+                let enemy_clear_debounce = reader.u8()?;
+                let front_switch = reader.u8()?;
+                let back_switch = reader.u8()?;
+                let unlock_effect_switch = reader.u8()?;
+                let stopper_side = reader.u8()?;
+                let front_event = reader.u8()?;
+                let back_event = reader.u8()?;
+                let front_stopper_status = reader.i8()?;
+                let back_stopper_status = reader.i8()?;
+                let door_angle = reader.i16()?;
+                let message_number = reader.u16()?;
+                let door_flags = reader.u16()?;
+                if door_flags & !0x01ff != 0 || reader.u16()? != 0 {
+                    return Err(NativeEpisodeShardError::new("invalid DOOR20 header"));
+                }
+                if component_mask & 32 != 0 {
+                    if actor.actor_name != ACTOR_NAME_DOOR20
+                        || kind > 31
+                        || door_model > 7
+                        || front_option > 3
+                        || back_option > 7
+                        || front_room > 63
+                        || back_room > 63
+                        || exit_number > 63
+                        || event_variant > 18
+                        || key_type > 1
+                        || enemy_clear_debounce > 65
+                        || front_switch == u8::MAX && door_flags & (1 << 1) != 0
+                        || back_switch == u8::MAX && door_flags & (1 << 2) != 0
+                        || unlock_effect_switch == u8::MAX && door_flags & (1 << 3) != 0
+                        || door_flags & (1 << 7) != 0 && door_flags & (1 << 8) != 0
+                        || door_flags & (1 << 4) != 0 && front_option != 2 && back_option != 2
+                        || key_type == 1 && kind != 9
+                    {
+                        return Err(NativeEpisodeShardError::new(
+                            "inconsistent DOOR20 component state",
+                        ));
+                    }
+                    let action = match action {
+                        0 => NativeDoor20Action::Init,
+                        1 => NativeDoor20Action::Wait,
+                        2 => NativeDoor20Action::StopClose,
+                        3 => NativeDoor20Action::Demo,
+                        _ => {
+                            return Err(NativeEpisodeShardError::new("unknown DOOR20 action"));
+                        }
+                    };
+                    let active_side = match active_side {
+                        0 => NativeDoor20Side::Front,
+                        1 => NativeDoor20Side::Back,
+                        2 => NativeDoor20Side::Neither,
+                        _ => {
+                            return Err(NativeEpisodeShardError::new("unknown DOOR20 active side"));
+                        }
+                    };
+                    let stopper_side = match stopper_side {
+                        0 => NativeDoor20Side::Front,
+                        1 => NativeDoor20Side::Back,
+                        _ => {
+                            return Err(NativeEpisodeShardError::new(
+                                "unknown DOOR20 stopper side",
+                            ));
+                        }
+                    };
+                    let stopper_status = |value| match value {
+                        -1 => Ok(NativeDoor20StopperStatus::RoomUnavailable),
+                        0 => Ok(NativeDoor20StopperStatus::Open),
+                        1 => Ok(NativeDoor20StopperStatus::Closed),
+                        _ => Err(NativeEpisodeShardError::new(
+                            "unknown DOOR20 stopper status",
+                        )),
+                    };
+                    actor.door20 = Some(NativeDoor20Component {
+                        kind,
+                        door_model,
+                        front_option,
+                        back_option,
+                        front_room,
+                        back_room,
+                        exit_number,
+                        message_door: door_flags & 1 != 0,
+                        front_switch,
+                        back_switch,
+                        unlock_effect_switch,
+                        front_switch_set: door_flags & (1 << 1) != 0,
+                        back_switch_set: door_flags & (1 << 2) != 0,
+                        unlock_effect_switch_set: door_flags & (1 << 3) != 0,
+                        front_event,
+                        back_event,
+                        message_number,
+                        action,
+                        active_side,
+                        event_variant,
+                        locked: door_flags & (1 << 4) != 0,
+                        background_collision_released: door_flags & (1 << 5) != 0,
+                        unlock_effect_triggered: door_flags & (1 << 6) != 0,
+                        key_type,
+                        enemy_clear_debounce,
+                        opening_active: door_flags & (1 << 7) != 0,
+                        closing_active: door_flags & (1 << 8) != 0,
+                        door_angle,
+                        stopper_side,
+                        front_stopper_status: stopper_status(front_stopper_status)?,
+                        back_stopper_status: stopper_status(back_stopper_status)?,
+                    });
+                } else if actor.actor_name == ACTOR_NAME_DOOR20
+                    || kind != 0
+                    || door_model != 0
+                    || front_option != 0
+                    || back_option != 0
+                    || front_room != 0
+                    || back_room != 0
+                    || exit_number != 0
+                    || action != 0
+                    || active_side != 0
+                    || event_variant != 0
+                    || key_type != 0
+                    || enemy_clear_debounce != 0
+                    || front_switch != 0
+                    || back_switch != 0
+                    || unlock_effect_switch != 0
+                    || stopper_side != 0
+                    || front_event != 0
+                    || back_event != 0
+                    || front_stopper_status != 0
+                    || back_stopper_status != 0
+                    || door_angle != 0
+                    || message_number != 0
+                    || door_flags != 0
+                {
+                    return Err(NativeEpisodeShardError::new(
+                        "absent DOOR20 component has a payload or DOOR20 owner",
+                    ));
+                }
+            }
         }
         if observation_version >= OBSERVATION_VERSION_V7 {
             let backing_mask = reader.u8()?;
@@ -3904,6 +4118,29 @@ fn decode_observation(
             actor.eye_position = reader.f32x3()?;
             actor.home_angle = reader.i16x3()?;
             actor.old_angle = reader.i16x3()?;
+        }
+        if let Some(door) = &actor.door20 {
+            let home_angle_x = actor.home_angle[0] as u16;
+            let home_angle_z = actor.home_angle[2] as u16;
+            if door.kind != (actor.parameters & 0x1f) as u8
+                || door.door_model != ((actor.parameters >> 5) & 0x7) as u8
+                || door.front_option != ((actor.parameters >> 8) & 0x3) as u8
+                || door.back_option != ((actor.parameters >> 10) & 0x7) as u8
+                || door.front_room != ((actor.parameters >> 13) & 0x3f) as u8
+                || door.back_room != ((actor.parameters >> 19) & 0x3f) as u8
+                || door.exit_number != ((actor.parameters >> 25) & 0x3f) as u8
+                || door.message_door != (actor.parameters >> 31 != 0)
+                || door.front_switch != (home_angle_z & 0xff) as u8
+                || door.back_switch != (home_angle_z >> 8) as u8
+                || door.unlock_effect_switch != (home_angle_x >> 8) as u8
+                || door.front_event != (home_angle_x & 0xff) as u8
+                || door.back_event != (home_angle_x >> 8) as u8
+                || door.message_number != home_angle_x
+            {
+                return Err(NativeEpisodeShardError::new(
+                    "DOOR20 authored fields disagree with actor placement",
+                ));
+            }
         }
         actors.push(actor);
     }

@@ -105,6 +105,10 @@ fn golden_v26() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v26.dseps")
 }
 
+fn golden_v27() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v27.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -186,6 +190,10 @@ fn mutate_first_v25_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
 
 fn mutate_first_v26_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden_v26(), mutator)
+}
+
+fn mutate_first_v27_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_first_episode_in(golden_v27(), mutator)
 }
 
 fn first_v21_process_records_offset(expanded: &[u8]) -> usize {
@@ -1538,6 +1546,124 @@ fn rejects_noncanonical_v26_resource_load_state() {
 }
 
 #[test]
+fn decodes_v27_door20_component_with_legacy_missingness() {
+    let shard = NativeEpisodeShard::decode(golden_v27()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V27
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        let actor = observation
+            .actors
+            .iter()
+            .find(|actor| actor.actor_name == ACTOR_NAME_DOOR20)
+            .expect("v27 DOOR20 actor");
+        assert_eq!(
+            actor.door20.as_ref().unwrap(),
+            &NativeDoor20Component {
+                kind: 9,
+                door_model: 3,
+                front_option: 2,
+                back_option: 1,
+                front_room: 4,
+                back_room: 5,
+                exit_number: 6,
+                message_door: true,
+                front_switch: 0x11,
+                back_switch: 0x22,
+                unlock_effect_switch: 0x33,
+                front_switch_set: true,
+                back_switch_set: false,
+                unlock_effect_switch_set: true,
+                front_event: 0x44,
+                back_event: 0x33,
+                message_number: 0x3344,
+                action: NativeDoor20Action::Demo,
+                active_side: NativeDoor20Side::Back,
+                event_variant: 13,
+                locked: true,
+                background_collision_released: false,
+                unlock_effect_triggered: true,
+                key_type: 1,
+                enemy_clear_debounce: 42,
+                opening_active: true,
+                closing_active: false,
+                door_angle: -1234,
+                stopper_side: NativeDoor20Side::Back,
+                front_stopper_status: NativeDoor20StopperStatus::RoomUnavailable,
+                back_stopper_status: NativeDoor20StopperStatus::Closed,
+            }
+        );
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v26()).unwrap();
+    assert!(legacy.episodes.iter().all(|episode| {
+        episode.steps.iter().all(|step| {
+            [&step.pre_input, &step.post_simulation]
+                .into_iter()
+                .all(|observation| {
+                    observation
+                        .actors
+                        .iter()
+                        .all(|actor| actor.door20.is_none())
+                })
+        })
+    }));
+}
+
+#[test]
+fn rejects_noncanonical_v27_door20_component() {
+    const DOOR20: [u8; 28] = [
+        9, 3, 2, 1, 4, 5, 6, 3, 1, 13, 1, 42, 0x11, 0x22, 0x33, 1, 0x44, 0x33, 0xff, 1, 0x2e, 0xfb,
+        0x44, 0x33, 0xdb, 0, 0, 0,
+    ];
+    let locate = |expanded: &[u8]| {
+        expanded
+            .windows(DOOR20.len())
+            .position(|window| window == DOOR20)
+            .expect("v27 DOOR20 block")
+    };
+
+    let invalid_action = mutate_first_v27_episode(|expanded| {
+        let offset = locate(expanded);
+        expanded[offset + 7] = 4;
+    });
+    let error = NativeEpisodeShard::decode(&invalid_action)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unknown DOOR20 action"), "{error}");
+
+    let detached_room = mutate_first_v27_episode(|expanded| {
+        let offset = locate(expanded);
+        expanded[offset + 4] = 5;
+    });
+    let error = NativeEpisodeShard::decode(&detached_room)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("DOOR20 authored fields disagree with actor placement"),
+        "{error}"
+    );
+
+    let simultaneous_motion = mutate_first_v27_episode(|expanded| {
+        let offset = locate(expanded);
+        expanded[offset + 25] = 1;
+    });
+    let error = NativeEpisodeShard::decode(&simultaneous_motion)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("inconsistent DOOR20 component state"),
+        "{error}"
+    );
+}
+
+#[test]
 fn rejects_noncanonical_v24_room_scene_phase() {
     const FIRST_ROOM: [u8; 12] = [
         0x11, 0x03, 0x02, 0x00, 0x03, 0x04, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00,
@@ -1877,6 +2003,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V24
                             | LEARNING_OBSERVATION_SCHEMA_V25
                             | LEARNING_OBSERVATION_SCHEMA_V26
+                            | LEARNING_OBSERVATION_SCHEMA_V27
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1930,6 +2057,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V24
             | LEARNING_OBSERVATION_SCHEMA_V25
             | LEARNING_OBSERVATION_SCHEMA_V26
+            | LEARNING_OBSERVATION_SCHEMA_V27
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

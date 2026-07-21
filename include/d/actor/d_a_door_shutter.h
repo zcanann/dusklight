@@ -123,6 +123,25 @@ public:
     bool checkFlag(u16 flag) { return field_0x68e & flag; }
     void setAction(u8 action) { mAction = action; }
 
+    // Read-only automation accessors for state whose meaning is established by
+    // this actor's own control flow. These do not expose pointers, event-table
+    // storage, or the source/destination scratch rooms that are only valid
+    // during part of an opening sequence.
+    u8 getObservationAction() const { return mAction; }
+    u8 getObservationActiveSide() const { return field_0x68c; }
+    u8 getObservationEventVariant() const { return field_0x6cb; }
+    bool getObservationLocked() const { return field_0x5f0; }
+    bool getObservationBackgroundCollisionReleased() const { return field_0x5c9; }
+    bool getObservationUnlockEffectTriggered() const { return field_0x672; }
+    u8 getObservationKeyType() const { return field_0x673; }
+    u8 getObservationEnemyClearDebounce() const { return field_0x68d; }
+    bool getObservationOpeningActive() const { return field_0x68e & 1; }
+    bool getObservationClosingActive() const { return field_0x68e & 2; }
+    s16 getObservationDoorAngle() const { return field_0x670; }
+    u8 getObservationStopperSide() const { return mDoorStop.field_0x9; }
+    u8 getObservationCurrentStopperStatus() const { return mDoorStop.field_0x8; }
+    u8 getObservationOppositeStopperStatus() const { return mDoorStop.field_0xa; }
+
 private:
     /* 0x56C */ request_of_phase_process_class mPhase1;
     /* 0x574 */ request_of_phase_process_class mPhase2;

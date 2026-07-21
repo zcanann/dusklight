@@ -5,7 +5,7 @@ use crate::stage_survey_artifact::{
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, TapeBoot};
-use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V26;
+use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V27;
 use dusklight_evidence::semantic_state_hash::SemanticStateHashSeries;
 use dusklight_harness_contracts::run_contract::sha256_artifact_file;
 use dusklight_trace::trace::{self, TraceAppliedPads, TraceChannel};
@@ -30,7 +30,7 @@ const MAX_STDERR_INSPECTION_BYTES: u64 = 1024 * 1024;
 const DEFAULT_NATIVE_STAGE_READINESS_TICKS: u32 = 30 * 60;
 const EMPTY_CARD_IDENTITY_DOMAIN: &[u8] = b"dusklight-stage-survey-empty-card/v1\0";
 const OBSERVATION_SCHEMA_DOMAIN: &[u8] =
-    b"dusklight-stage-survey-all-trace-plus-learning-actor-catalog/v6\0";
+    b"dusklight-stage-survey-all-trace-plus-learning-actor-catalog/v7\0";
 const SURVEY_SETTINGS_DOMAIN: &[u8] = b"dusklight-stage-survey-settings/v1\0";
 const SURVEY_CVARS: [&str; 4] = [
     "game.instantSaves=true",
@@ -1111,14 +1111,14 @@ fn validate_successful_probe(
     let actor_catalog: ActorCatalogSummary =
         serde_json::from_slice(&actor_bytes).map_err(|_| "actor_catalog_decode_failed")?;
     let final_observation = decoded.records.last().ok_or("trace_empty")?;
-    if actor_catalog.schema != "dusklight.actor-catalog.v9"
+    if actor_catalog.schema != "dusklight.actor-catalog.v10"
         || actor_catalog.simulation_tick != final_observation.simulation_tick
         || actor_catalog.stage != final_observation.stage_name
         || actor_catalog.room != final_observation.room
         || actor_catalog.layer != final_observation.layer
         || actor_catalog.truncated
         || actor_catalog.observed_actor_count != actor_catalog.retained_actor_count
-        || actor_catalog.learning_actor_population.source_schema != LEARNING_OBSERVATION_SCHEMA_V26
+        || actor_catalog.learning_actor_population.source_schema != LEARNING_OBSERVATION_SCHEMA_V27
         || actor_catalog.learning_actor_population.truncated
         || actor_catalog.learning_actor_population.observed_actor_count
             != actor_catalog.learning_actor_population.retained_actor_count
@@ -1127,7 +1127,7 @@ fn validate_successful_probe(
         || actor_catalog
             .learning_dynamic_collision_population
             .source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V26
+            != LEARNING_OBSERVATION_SCHEMA_V27
         || !actor_catalog.learning_dynamic_collision_population.present
         || actor_catalog
             .learning_dynamic_collision_population
@@ -1143,13 +1143,13 @@ fn validate_successful_probe(
                 .learning_dynamic_collision_population
                 .colliders
                 .len()
-        || actor_catalog.learning_player_resources.source_schema != LEARNING_OBSERVATION_SCHEMA_V26
+        || actor_catalog.learning_player_resources.source_schema != LEARNING_OBSERVATION_SCHEMA_V27
         || !actor_catalog.learning_player_resources.present
         || actor_catalog.learning_player_relationships.source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V26
+            != LEARNING_OBSERVATION_SCHEMA_V27
         || !actor_catalog.learning_player_relationships.present
         || actor_catalog.learning_player_collision_solver.source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V26
+            != LEARNING_OBSERVATION_SCHEMA_V27
         || !actor_catalog.learning_player_collision_solver.present
     {
         return Err("actor_catalog_incomplete");

@@ -2624,6 +2624,14 @@ sequence.
     flush, keyhole completion, collision release, open/cross/close animation,
     and reload reconstruction separate. See
     `docs/route-planner/gz2e01-forest-temple-small-key-door-audit.md`.
+  - Native learning observation v27 now makes the same distinction at runtime
+    for every loaded `DOOR20`: authored rooms/options/switches/events remain
+    separate from live lock, action, side, collision-release, open/close,
+    stopper and debounce state. The reader recomputes the authored decoding
+    from the raw retained placement, while the actor-catalog parity walk makes
+    profile-offset drift observable. This is evidence for future activation
+    and reconstruction checks, not a rule that all door families share
+    `daDoor20_c` semantics.
 
 #### 11I. Auru recent-item grant
 

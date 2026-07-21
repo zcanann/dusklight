@@ -53,6 +53,11 @@ struct MilestoneObservationStorage {
 [[nodiscard]] bool capture_actor_trigger_volume(
     const fopAc_ac_c& actor, MilestoneObservation::Actor::TriggerVolumeComponent& output);
 
+// Shared profile-bound DOOR20 adapter used by both the native episode and the
+// independent actor-catalog walk.
+[[nodiscard]] bool capture_actor_door20(
+    const fopAc_ac_c& actor, MilestoneObservation::Actor::Door20Component& output);
+
 // These functions copy already-realized state only. Their implementation is
 // compiled in one explicitly gated translation unit and contains the complete
 // field-access audit surface for these legacy automation consumers.

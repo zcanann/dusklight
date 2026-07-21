@@ -1271,6 +1271,44 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
                 return false;
             }
         }
+        if (actor.door20Present != (actor.actorName == fpcNm_DOOR20_e)) {
+            error = "learning observation has inconsistent DOOR20 component ownership";
+            return false;
+        }
+        if (actor.door20Present) {
+            const auto& door = actor.door20;
+            const std::uint16_t homeAngleX = static_cast<std::uint16_t>(actor.homeAngleX);
+            const std::uint16_t homeAngleZ = static_cast<std::uint16_t>(actor.homeAngleZ);
+            const bool authoredFieldsMatch =
+                door.kind == (actor.parameters & 0x1f) &&
+                door.doorModel == ((actor.parameters >> 5) & 0x7) &&
+                door.frontOption == ((actor.parameters >> 8) & 0x3) &&
+                door.backOption == ((actor.parameters >> 10) & 0x7) &&
+                door.frontRoom == ((actor.parameters >> 13) & 0x3f) &&
+                door.backRoom == ((actor.parameters >> 19) & 0x3f) &&
+                door.exitNumber == ((actor.parameters >> 25) & 0x3f) &&
+                door.messageDoor == ((actor.parameters >> 31) != 0) &&
+                door.frontSwitch == (homeAngleZ & 0xff) && door.backSwitch == (homeAngleZ >> 8) &&
+                door.unlockEffectSwitch == (homeAngleX >> 8) &&
+                door.frontEvent == (homeAngleX & 0xff) && door.backEvent == (homeAngleX >> 8) &&
+                door.messageNumber == homeAngleX;
+            const bool statusesValid = door.frontStopperStatus >= -1 &&
+                                       door.frontStopperStatus <= 1 &&
+                                       door.backStopperStatus >= -1 && door.backStopperStatus <= 1;
+            if (!authoredFieldsMatch || door.action > 3 || door.activeSide > 2 ||
+                door.eventVariant > 18 || door.keyType > 1 || door.enemyClearDebounce > 65 ||
+                door.stopperSide > 1 || !statusesValid ||
+                (door.frontSwitch == 0xff && door.frontSwitchSet) ||
+                (door.backSwitch == 0xff && door.backSwitchSet) ||
+                (door.unlockEffectSwitch == 0xff && door.unlockEffectSwitchSet) ||
+                (door.openingActive && door.closingActive) ||
+                (door.locked && door.frontOption != 2 && door.backOption != 2) ||
+                (door.keyType == 1 && door.kind != 9))
+            {
+                error = "learning observation has inconsistent DOOR20 component state";
+                return false;
+            }
+        }
     }
     const auto& relationships = observation.playerRelationships;
     const std::array<const MilestoneObservation::ActorIdentity*, 11> relationshipActors{
@@ -1508,6 +1546,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         componentMask |= actor.returnPlaceWriterPresent ? 1u << 2 : 0;
         componentMask |= actor.enemyBasePresent ? 1u << 3 : 0;
         componentMask |= actor.triggerVolumePresent ? 1u << 4 : 0;
+        componentMask |= actor.door20Present ? 1u << 5 : 0;
         append_integer(output, componentMask);
         append_integer<std::uint16_t>(output, 0);
 
@@ -1594,6 +1633,44 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             if (!append_float(output, actor.triggerVolumePresent ? value : 0.0F, error))
                 return false;
         }
+
+        const auto& door = actor.door20;
+        std::uint16_t doorFlags = 0;
+        if (actor.door20Present) {
+            doorFlags |= door.messageDoor ? 1u << 0 : 0;
+            doorFlags |= door.frontSwitchSet ? 1u << 1 : 0;
+            doorFlags |= door.backSwitchSet ? 1u << 2 : 0;
+            doorFlags |= door.unlockEffectSwitchSet ? 1u << 3 : 0;
+            doorFlags |= door.locked ? 1u << 4 : 0;
+            doorFlags |= door.backgroundCollisionReleased ? 1u << 5 : 0;
+            doorFlags |= door.unlockEffectTriggered ? 1u << 6 : 0;
+            doorFlags |= door.openingActive ? 1u << 7 : 0;
+            doorFlags |= door.closingActive ? 1u << 8 : 0;
+        }
+        append_integer(output, actor.door20Present ? door.kind : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.doorModel : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.frontOption : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.backOption : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.frontRoom : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.backRoom : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.exitNumber : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.action : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.activeSide : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.eventVariant : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.keyType : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.enemyClearDebounce : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.frontSwitch : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.backSwitch : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.unlockEffectSwitch : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.stopperSide : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.frontEvent : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.backEvent : std::uint8_t{0});
+        append_integer(output, actor.door20Present ? door.frontStopperStatus : std::int8_t{0});
+        append_integer(output, actor.door20Present ? door.backStopperStatus : std::int8_t{0});
+        append_integer(output, actor.door20Present ? door.doorAngle : std::int16_t{0});
+        append_integer(output, actor.door20Present ? door.messageNumber : std::uint16_t{0});
+        append_integer(output, doorFlags);
+        append_integer<std::uint16_t>(output, 0);
 
         std::uint8_t backingMask = 0;
         backingMask |= actor.heapPresent ? 1u << 0 : 0;
