@@ -852,7 +852,18 @@ fn validate_constraint(constraint: &PathConstraint) -> Result<(), PlannerContrac
             validate_stable_id("constraints.technique_id", technique_id)
         }
         PathConstraint::EvidenceAtLeast { minimum } => {
-            validate_stable_id("constraints.minimum", minimum)
+            validate_stable_id("constraints.minimum", minimum)?;
+            if matches!(
+                minimum.as_str(),
+                "established" | "contested" | "hypothetical"
+            ) {
+                Ok(())
+            } else {
+                Err(PlannerContractError::new(
+                    "constraints.minimum",
+                    "must be established, contested, or hypothetical",
+                ))
+            }
         }
         PathConstraint::CostAtMost { axis, .. } => validate_stable_id("constraints.axis", axis),
     }

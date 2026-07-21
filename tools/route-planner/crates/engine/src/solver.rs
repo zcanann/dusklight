@@ -6,7 +6,7 @@ use crate::evaluation::{
 };
 use crate::execution::PlannerExecutionState;
 use crate::identity::EquivalenceSet;
-use crate::logic::{FactCatalog, PredicateExpression};
+use crate::logic::{FactCatalog, PredicateExpression, TruthStatus};
 use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
 use crate::transition::{MechanicsCatalog, PathConstraint};
 use crate::{PlannerContractError, artifact::Digest};
@@ -50,6 +50,7 @@ pub struct SolverOptions {
 fn compile_route_policy(
     book: &RouteBook,
     evaluator: &PredicateEvaluator<'_>,
+    base_evidence_policy: EvidencePolicy,
 ) -> Result<RouteSearchPolicy, PlannerContractError> {
     if !evaluator.scope_applies(&book.manifest.scope) {
         return Err(PlannerContractError::new(
@@ -66,6 +67,9 @@ fn compile_route_policy(
         banned_sequences: Vec::new(),
         action_preferences: Vec::new(),
         method_preferences: Vec::new(),
+        cost_limits: BTreeMap::new(),
+        minimum_evidence: None,
+        evidence_policy: EvidencePolicy::ESTABLISHED_ONLY,
     };
     let mut required_methods = BTreeMap::<String, RouteActionSequence>::new();
     let mut banned_methods = BTreeMap::<String, RouteActionSequence>::new();
@@ -92,14 +96,21 @@ fn compile_route_policy(
                     technique_id: technique_id.clone(),
                 });
             }
-            PathConstraint::EvidenceAtLeast { .. } | PathConstraint::CostAtMost { .. } => {
-                return Err(PlannerContractError::new(
-                    "route_book.constraints",
-                    format!(
-                        "constraint {} is not yet executable by the bounded forward solver",
-                        constraint.id
-                    ),
-                ));
+            PathConstraint::CostAtMost { axis, maximum } => {
+                policy
+                    .cost_limits
+                    .entry(axis.clone())
+                    .and_modify(|current| *current = (*current).min(*maximum))
+                    .or_insert(*maximum);
+            }
+            PathConstraint::EvidenceAtLeast { minimum } => {
+                let minimum = parse_evidence_minimum(minimum)?;
+                if policy
+                    .minimum_evidence
+                    .is_none_or(|current| evidence_quality(minimum) > evidence_quality(current))
+                {
+                    policy.minimum_evidence = Some(minimum);
+                }
             }
         }
     }
@@ -204,7 +215,49 @@ fn compile_route_policy(
     }
     policy.required_sequences = required_methods.into_values().collect();
     policy.banned_sequences = banned_methods.into_values().collect();
+    policy.evidence_policy =
+        evidence_policy_for_minimum(base_evidence_policy, policy.minimum_evidence);
     Ok(policy)
+}
+
+fn parse_evidence_minimum(value: &str) -> Result<TruthStatus, PlannerContractError> {
+    match value {
+        "established" => Ok(TruthStatus::Established),
+        "contested" => Ok(TruthStatus::Contested),
+        "hypothetical" => Ok(TruthStatus::Hypothetical),
+        _ => Err(PlannerContractError::new(
+            "route_book.constraints.minimum",
+            "must be established, contested, or hypothetical",
+        )),
+    }
+}
+
+fn evidence_quality(status: TruthStatus) -> u8 {
+    match status {
+        TruthStatus::Established => 3,
+        TruthStatus::Contested => 2,
+        TruthStatus::Hypothetical => 1,
+        TruthStatus::Unknown => 0,
+    }
+}
+
+fn evidence_policy_for_minimum(
+    base: EvidencePolicy,
+    minimum: Option<TruthStatus>,
+) -> EvidencePolicy {
+    let required = match minimum {
+        Some(TruthStatus::Established) => EvidencePolicy::ESTABLISHED_ONLY,
+        Some(TruthStatus::Contested) => EvidencePolicy {
+            allow_contested: true,
+            allow_hypothetical: false,
+        },
+        Some(TruthStatus::Hypothetical) | None => EvidencePolicy::RESEARCH,
+        Some(TruthStatus::Unknown) => EvidencePolicy::ESTABLISHED_ONLY,
+    };
+    EvidencePolicy {
+        allow_contested: base.allow_contested && required.allow_contested,
+        allow_hypothetical: base.allow_hypothetical && required.allow_hypothetical,
+    }
 }
 
 fn compile_method_sequence(
@@ -337,6 +390,8 @@ pub struct SearchResult {
     pub hit_search_limit: bool,
     pub preference_score: u64,
     pub satisfied_preference_ids: Vec<String>,
+    pub route_costs: BTreeMap<String, u64>,
+    pub minimum_evidence: Option<TruthStatus>,
     pub unknown_transition_ids: Vec<String>,
     pub execution_error_ids: Vec<String>,
 }
@@ -352,6 +407,7 @@ struct SearchNode {
     satisfied_preference_ids: BTreeSet<String>,
     preference_score: u64,
     route_condition_unknown: bool,
+    route_costs: BTreeMap<String, u64>,
 }
 
 struct QueueEntry {
@@ -401,6 +457,7 @@ struct SearchIdentity {
     preferred_sequence_progress: Vec<usize>,
     satisfied_preference_ids: Vec<String>,
     route_condition_unknown: bool,
+    route_costs: BTreeMap<String, u64>,
 }
 
 struct RouteSearchPolicy {
@@ -412,6 +469,9 @@ struct RouteSearchPolicy {
     banned_sequences: Vec<RouteActionSequence>,
     action_preferences: Vec<ActionPreference>,
     method_preferences: Vec<MethodPreference>,
+    cost_limits: BTreeMap<String, u64>,
+    minimum_evidence: Option<TruthStatus>,
+    evidence_policy: EvidencePolicy,
 }
 
 pub struct ForwardSolver<'a> {
@@ -480,8 +540,13 @@ impl<'a> ForwardSolver<'a> {
         )?;
         let route_policy = self
             .route_book
-            .map(|book| compile_route_policy(book, &start_evaluator))
+            .map(|book| compile_route_policy(book, &start_evaluator, self.options.evidence_policy))
             .transpose()?;
+        let search_evidence_policy = route_policy
+            .as_ref()
+            .map_or(self.options.evidence_policy, |policy| {
+                policy.evidence_policy
+            });
         let initial_node = SearchNode {
             state: start,
             steps: Vec::new(),
@@ -508,6 +573,7 @@ impl<'a> ForwardSolver<'a> {
             satisfied_preference_ids: BTreeSet::new(),
             preference_score: 0,
             route_condition_unknown: false,
+            route_costs: BTreeMap::new(),
         };
         let mut queue = BinaryHeap::from([QueueEntry {
             node: initial_node,
@@ -534,6 +600,7 @@ impl<'a> ForwardSolver<'a> {
                 preferred_sequence_progress: node.preferred_sequence_progress.clone(),
                 satisfied_preference_ids: node.satisfied_preference_ids.iter().cloned().collect(),
                 route_condition_unknown: node.route_condition_unknown,
+                route_costs: node.route_costs.clone(),
             };
             if !visited.insert(search_identity) {
                 continue;
@@ -548,7 +615,7 @@ impl<'a> ForwardSolver<'a> {
                 self.facts,
                 self.equivalence_sets,
                 &node.state.gate_states,
-                self.options.evidence_policy,
+                search_evidence_policy,
             )?;
             if let Some(policy) = &route_policy {
                 let mut forbidden = false;
@@ -604,6 +671,10 @@ impl<'a> ForwardSolver<'a> {
                             .satisfied_preference_ids
                             .into_iter()
                             .collect(),
+                        route_costs: node.route_costs,
+                        minimum_evidence: route_policy
+                            .as_ref()
+                            .and_then(|policy| policy.minimum_evidence),
                         unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
                         execution_error_ids: execution_error_ids.into_iter().collect(),
                     });
@@ -868,7 +939,7 @@ impl<'a> ForwardSolver<'a> {
                             self.facts,
                             self.equivalence_sets,
                             &next.gate_states,
-                            self.options.evidence_policy,
+                            search_evidence_policy,
                         )?
                         .assess_transition(
                             transition,
@@ -944,6 +1015,10 @@ impl<'a> ForwardSolver<'a> {
             hit_search_limit,
             preference_score: 0,
             satisfied_preference_ids: Vec::new(),
+            route_costs: BTreeMap::new(),
+            minimum_evidence: route_policy
+                .as_ref()
+                .and_then(|policy| policy.minimum_evidence),
             unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
             execution_error_ids: execution_error_ids.into_iter().collect(),
         })
@@ -970,7 +1045,37 @@ impl<'a> ForwardSolver<'a> {
         let mut preference_score = node.preference_score;
         let mut route_condition_unknown = node.route_condition_unknown;
         let mut saw_unknown_condition = false;
+        let mut route_costs = node.route_costs.clone();
+        for boundary in boundaries {
+            let RouteActionRef::Technique { technique_id } = &boundary.action else {
+                continue;
+            };
+            let technique = self
+                .mechanics
+                .techniques
+                .iter()
+                .find(|technique| technique.id == *technique_id)
+                .ok_or_else(|| {
+                    PlannerContractError::new(
+                        "solver.cost",
+                        format!("references unknown technique {technique_id}"),
+                    )
+                })?;
+            for (axis, increment) in &technique.cost.axes {
+                let total = route_costs.entry(axis.clone()).or_default();
+                *total = total.checked_add(*increment).ok_or_else(|| {
+                    PlannerContractError::new("solver.cost", format!("axis {axis} overflowed u64"))
+                })?;
+            }
+        }
         if let Some(policy) = route_policy {
+            if policy
+                .cost_limits
+                .iter()
+                .any(|(axis, maximum)| route_costs.get(axis).copied().unwrap_or(0) > *maximum)
+            {
+                return Ok(false);
+            }
             for boundary in boundaries {
                 if policy.required_actions.contains(&boundary.action) {
                     satisfied_required_actions.insert(boundary.action.clone());
@@ -990,7 +1095,11 @@ impl<'a> ForwardSolver<'a> {
                 {
                     if let Some(expected) = preference.sequence.steps.get(*progress)
                         && expected.action == boundary.action
-                        && self.evaluate_step_boundary(expected, boundary)? == EvaluatedTruth::True
+                        && self.evaluate_step_boundary(
+                            expected,
+                            boundary,
+                            policy.evidence_policy,
+                        )? == EvaluatedTruth::True
                     {
                         *progress += 1;
                         if *progress == preference.sequence.steps.len()
@@ -1006,11 +1115,13 @@ impl<'a> ForwardSolver<'a> {
                 &policy.required_sequences,
                 &mut required_sequence_progress,
                 boundaries,
+                policy.evidence_policy,
             )?;
             let banned_unknown = self.advance_sequence_progress(
                 &policy.banned_sequences,
                 &mut banned_sequence_progress,
                 boundaries,
+                policy.evidence_policy,
             )?;
             saw_unknown_condition |= banned_unknown;
             route_condition_unknown |= banned_unknown;
@@ -1034,6 +1145,7 @@ impl<'a> ForwardSolver<'a> {
             preferred_sequence_progress: preferred_sequence_progress.clone(),
             satisfied_preference_ids: satisfied_preference_ids.iter().cloned().collect(),
             route_condition_unknown,
+            route_costs: route_costs.clone(),
         };
         if visited.contains(&search_identity) {
             return Ok(saw_unknown_condition);
@@ -1053,6 +1165,7 @@ impl<'a> ForwardSolver<'a> {
                 satisfied_preference_ids,
                 preference_score,
                 route_condition_unknown,
+                route_costs,
             },
             insertion_order,
         });
@@ -1064,6 +1177,7 @@ impl<'a> ForwardSolver<'a> {
         sequences: &[RouteActionSequence],
         progress: &mut [usize],
         boundaries: &[AppliedActionBoundary],
+        evidence_policy: EvidencePolicy,
     ) -> Result<bool, PlannerContractError> {
         let mut saw_unknown = false;
         for boundary in boundaries {
@@ -1074,7 +1188,7 @@ impl<'a> ForwardSolver<'a> {
                 if expected.action != boundary.action {
                     continue;
                 }
-                match self.evaluate_step_boundary(expected, boundary)? {
+                match self.evaluate_step_boundary(expected, boundary, evidence_policy)? {
                     EvaluatedTruth::True => *progress += 1,
                     EvaluatedTruth::Unknown => saw_unknown = true,
                     EvaluatedTruth::False => {}
@@ -1088,20 +1202,21 @@ impl<'a> ForwardSolver<'a> {
         &self,
         step: &RouteSequenceStep,
         boundary: &AppliedActionBoundary,
+        evidence_policy: EvidencePolicy,
     ) -> Result<EvaluatedTruth, PlannerContractError> {
         let before = PredicateEvaluator::new(
             &boundary.before.snapshot,
             self.facts,
             self.equivalence_sets,
             &boundary.before.gate_states,
-            self.options.evidence_policy,
+            evidence_policy,
         )?;
         let after = PredicateEvaluator::new(
             &boundary.after.snapshot,
             self.facts,
             self.equivalence_sets,
             &boundary.after.gate_states,
-            self.options.evidence_policy,
+            evidence_policy,
         )?;
         Ok(and_truth(
             step.precondition
@@ -1154,7 +1269,7 @@ mod tests {
     };
     use crate::route_book::{
         CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_SCHEMA, ReferenceStep,
-        RouteBookManifest, RouteDirective, RouteDirectiveKind,
+        RouteBookManifest, RouteConstraint, RouteDirective, RouteDirectiveKind,
     };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use crate::state::{
@@ -1165,7 +1280,7 @@ mod tests {
     use crate::transition::{
         ActivationContract, CandidateTransition, FeasibilityObligation, Goal,
         MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind, Obstruction,
-        ObstructionResolver, ResolutionKind, StateOperation, TransitionKind,
+        ObstructionResolver, ResolutionKind, RouteCost, StateOperation, Technique, TransitionKind,
     };
     use std::collections::BTreeMap;
 
@@ -1744,6 +1859,150 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["transition.a-to-c", "transition.c-to-g"]
         );
+    }
+
+    #[test]
+    fn cost_limits_prune_over_budget_techniques_and_report_route_totals() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(Vec::new());
+        mechanics.techniques = vec![Technique {
+            id: "technique.to-c".into(),
+            label: "Reach C".into(),
+            scope: scope(&snapshot),
+            prerequisites: PredicateExpression::True,
+            operations: vec![StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: "STAGE_C".into(),
+                    room: 0,
+                    layer: 0,
+                    spawn: 0,
+                },
+            }],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::from([("difficulty".into(), 2)]),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.goals = vec![goal("goal.c", "STAGE_C")];
+        let facts = facts();
+        let mut book = route_book(&snapshot, Vec::new());
+        book.goal_ids = vec!["goal.c".into()];
+        book.constraints = vec![RouteConstraint {
+            id: "constraint.difficulty".into(),
+            scope: scope(&snapshot),
+            constraint: PathConstraint::CostAtMost {
+                axis: "difficulty".into(),
+                maximum: 1,
+            },
+        }];
+        let constrained = ForwardSolver::new_with_route_book(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions::default(),
+            &book,
+        )
+        .unwrap()
+        .solve(
+            PlannerExecutionState::new(snapshot.clone()).unwrap(),
+            &stage_is("STAGE_C"),
+        )
+        .unwrap();
+        assert_eq!(constrained.status, SearchStatus::UnreachableUnderModel);
+
+        let PathConstraint::CostAtMost { maximum, .. } = &mut book.constraints[0].constraint else {
+            unreachable!();
+        };
+        *maximum = 2;
+        let admitted = ForwardSolver::new_with_route_book(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions::default(),
+            &book,
+        )
+        .unwrap()
+        .solve(
+            PlannerExecutionState::new(snapshot).unwrap(),
+            &stage_is("STAGE_C"),
+        )
+        .unwrap();
+        assert_eq!(admitted.status, SearchStatus::Reached);
+        assert_eq!(
+            admitted.route_costs,
+            BTreeMap::from([("difficulty".into(), 2)])
+        );
+    }
+
+    #[test]
+    fn evidence_threshold_restricts_research_mode_without_relaxing_it() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(Vec::new());
+        mechanics.techniques = vec![Technique {
+            id: "technique.contested-to-c".into(),
+            label: "Contested route to C".into(),
+            scope: scope(&snapshot),
+            prerequisites: PredicateExpression::True,
+            operations: vec![StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: "STAGE_C".into(),
+                    room: 0,
+                    layer: 0,
+                    spawn: 0,
+                },
+            }],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::new(),
+            },
+            evidence: evidence(TruthStatus::Contested),
+        }];
+        mechanics.goals = vec![goal("goal.c", "STAGE_C")];
+        let facts = facts();
+        let options = SolverOptions {
+            evidence_policy: EvidencePolicy::RESEARCH,
+            ..SolverOptions::default()
+        };
+        let mut book = route_book(&snapshot, Vec::new());
+        book.goal_ids = vec!["goal.c".into()];
+        book.constraints = vec![RouteConstraint {
+            id: "constraint.evidence".into(),
+            scope: scope(&snapshot),
+            constraint: PathConstraint::EvidenceAtLeast {
+                minimum: "established".into(),
+            },
+        }];
+        let established_only =
+            ForwardSolver::new_with_route_book(&facts, &mechanics, &[], options, &book)
+                .unwrap()
+                .solve(
+                    PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                    &stage_is("STAGE_C"),
+                )
+                .unwrap();
+        assert_eq!(established_only.status, SearchStatus::UnreachableUnderModel);
+        assert_eq!(
+            established_only.minimum_evidence,
+            Some(TruthStatus::Established)
+        );
+
+        let PathConstraint::EvidenceAtLeast { minimum } = &mut book.constraints[0].constraint
+        else {
+            unreachable!();
+        };
+        *minimum = "contested".into();
+        let contested = ForwardSolver::new_with_route_book(&facts, &mechanics, &[], options, &book)
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_C"),
+            )
+            .unwrap();
+        assert_eq!(contested.status, SearchStatus::Reached);
+        assert_eq!(contested.minimum_evidence, Some(TruthStatus::Contested));
     }
 
     #[test]

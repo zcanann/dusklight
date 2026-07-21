@@ -545,8 +545,8 @@ The current code shows:
   and technique directives. Required actions are part of search identity, so a
   state reached without a pinned action does not erase a later compliant path.
   Planner CLI/service solve requests accept an optional route book and seal its
-  digest into solve-report schema v2. Unsupported cost/evidence thresholds and
-  writer/microtrace execution fail closed rather than being silently ignored.
+  digest into solve-report schema v2. Unsupported writer/microtrace execution
+  fails closed rather than being silently ignored.
 - Selected and pinned route-book methods now compile to ordered action
   subsequences; banned methods prune a path when their ordered subsequence is
   completed. Sequence progress participates in search identity, so revisiting
@@ -562,6 +562,16 @@ The current code shows:
   equal-depth routes. Each directive contributes at most once, preference and
   method progress participate in search identity, and the result reports both
   the score and satisfied directive IDs; loops therefore cannot farm weight.
+- `CostAtMost` constraints accumulate every executed technique's authored
+  `RouteCost` axes, retain the totals in search identity, prune paths exceeding
+  the strictest active per-axis maximum, and report the reached route's totals.
+  Transitions and resolvers currently have no cost field in mechanics schema v1,
+  so no unmodeled cost is invented for them.
+- `EvidenceAtLeast` accepts only `established`, `contested`, or `hypothetical`
+  and intersects that threshold with—never relaxes—the runtime evidence mode.
+  The effective policy is used for transitions, techniques, resolvers,
+  obstructions, facts, and conditioned route steps, and the result records the
+  active minimum.
 
 Primary source anchors:
 
@@ -1681,7 +1691,10 @@ Deliverable: researchers can extend the model without editing core code.
         transition action boundaries.
   - [x] Apply non-repeatable action/method preference weights as the secondary
         objective after route depth.
-  - [ ] Execute cost/evidence thresholds and portable multi-context route books.
+  - [x] Execute cumulative per-axis technique-cost thresholds and strict
+        route-level evidence thresholds.
+  - [ ] Validate portable multi-context route books independently in every
+        selected exact context.
 - [ ] Add multi-objective cost and K-alternative plan search.
 - [x] Return reachable, unreachable-under-model, or unknown.
   - [x] Expose canonical fact/mechanics/execution-state artifacts through a

@@ -33,6 +33,7 @@ The planner CLI currently owns nine operations:
   exact base or composed catalog without adding mechanics.
 - `solve` runs bounded causal reachability against planner-owned catalogs and
   can apply an optional route book's scoped constraints, action directives,
-  ordered conditioned methods, and deterministic soft preferences.
+  ordered conditioned methods, cost/evidence thresholds, and deterministic soft
+  preferences.
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
   lines for a future planner editor or other clients.
