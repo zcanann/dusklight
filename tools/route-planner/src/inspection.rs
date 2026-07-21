@@ -61,10 +61,21 @@ pub enum InspectionTruth {
 #[serde(deny_unknown_fields)]
 pub struct StateInspectionDiff {
     pub schema: String,
+    pub before_execution_state_sha256: Digest,
+    pub after_execution_state_sha256: Digest,
     pub fact_catalog_sha256: Digest,
     pub evidence_mode: RuntimeEvidenceMode,
     pub state_diff: StateDiff,
+    pub gate_state_deltas: Vec<GateStateDelta>,
     pub fact_deltas: Vec<InspectedFactDelta>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GateStateDelta {
+    pub gate_id: String,
+    pub before: Option<bool>,
+    pub after: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -238,11 +249,35 @@ pub fn inspect_state_diff(
     }
     Ok(StateInspectionDiff {
         schema: STATE_INSPECTION_DIFF_SCHEMA.into(),
+        before_execution_state_sha256: before.semantic_digest()?,
+        after_execution_state_sha256: after.semantic_digest()?,
         fact_catalog_sha256: facts.digest()?,
         evidence_mode,
         state_diff,
+        gate_state_deltas: diff_gate_states(&before.gate_states, &after.gate_states),
         fact_deltas,
     })
+}
+
+fn diff_gate_states(
+    before: &BTreeMap<String, bool>,
+    after: &BTreeMap<String, bool>,
+) -> Vec<GateStateDelta> {
+    before
+        .keys()
+        .chain(after.keys())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .filter_map(|gate_id| {
+            let before = before.get(gate_id).copied();
+            let after = after.get(gate_id).copied();
+            (before != after).then(|| GateStateDelta {
+                gate_id: gate_id.clone(),
+                before,
+                after,
+            })
+        })
+        .collect()
 }
 
 fn alias_delta_causes(
@@ -488,6 +523,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(diff.fact_deltas.len(), 1);
+        assert_ne!(
+            diff.before_execution_state_sha256,
+            diff.after_execution_state_sha256
+        );
+        assert!(diff.gate_state_deltas.is_empty());
         assert_eq!(diff.fact_deltas[0].before.evaluated, InspectionTruth::True);
         assert_eq!(
             diff.fact_deltas[0].after.evaluated,
@@ -507,6 +547,25 @@ mod tests {
             diff.state_diff.component_deltas[0]
                 .raw_byte_deltas
                 .is_empty()
+        );
+
+        assert_eq!(
+            diff_gate_states(
+                &BTreeMap::from([("gate.a".into(), false)]),
+                &BTreeMap::from([("gate.a".into(), true), ("gate.b".into(), true)]),
+            ),
+            vec![
+                GateStateDelta {
+                    gate_id: "gate.a".into(),
+                    before: Some(false),
+                    after: Some(true),
+                },
+                GateStateDelta {
+                    gate_id: "gate.b".into(),
+                    before: None,
+                    after: Some(true),
+                },
+            ]
         );
     }
 }
