@@ -468,6 +468,28 @@ probe, demonstration, curriculum, option, reward term or preferred action.
 - [ ] Turn discovered gaps into stable universal channels or explicitly typed
   optional extensions. A map- or boss-specific extension must remain masked
   elsewhere and must not reorder or invalidate the cross-map schema.
+- [ ] Use the Telma's Bar text-displacement case as a concrete
+  **learner-readiness audit**, not as a manually authored reproduction:
+  - construct a reproducible source-state fixture through ordinary boot
+    configuration, with the retail progression flags that naturally place
+    post-twilight Telma and Louise in the bar;
+  - verify that generic observations expose every potentially relevant actor,
+    interaction/attention volume, dialogue and event owner/phase, cutscene
+    transition, and the fixed shared text-progression state over time. Add
+    missing facts only as stable typed channels that remain meaningful outside
+    this room; do not expose a precomputed success hint;
+  - verify that the learner can express unrestricted frame-exact PAD and can
+    observe enough history to associate simultaneous or interrupted
+    interactions with later text state;
+  - define a read-only outcome predicate for displaced text progression (and
+    its later one-box-at-a-time observable behavior) without describing which
+    actor to approach first, where to stand, or when to press a button;
+  - after the information boundary passes audit, give a learner only the
+    source state, generic action surface, generic observations and outcome
+    predicate. The known Louise/Telma ordering is withheld from demonstrations,
+    tactics, shaping, curricula and search code. A successful exact PAD tape is
+    evidence that the learner discovered the interaction, not input supplied
+    to it.
 - [x] Produce a learner-readiness matrix linking mechanism requirements to
   captured channels, actions and proof oracles. Do not select a specific
   Skybook glitch as an optimization target until this audit is reviewed. The
