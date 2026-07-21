@@ -2,7 +2,7 @@
 
 use crate::{option, repeated_option, required_path, u32_option, u64_option, usize_option};
 use huntctl::stage_actor_coverage::StageActorCoverageReport;
-use huntctl::stage_boot_catalog::StageBootCatalog;
+use huntctl::stage_boot_catalog::{StageBootCandidate, StageBootCatalog};
 use huntctl::stage_observation_coverage::{
     ObservationCoverageCaseStatus, StageObservationCoverageReport, StageObservationCoverageSource,
 };
@@ -11,7 +11,7 @@ use huntctl::stage_survey::{
     StageSurveyProbeKind, execute_stage_survey_attempt, stage_survey_identity,
 };
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs::{self, File};
 use std::io::Write;
@@ -155,9 +155,9 @@ fn command_run(args: &[String]) -> Result<(), Box<dyn Error>> {
     let game = required_path(args, "--game")?;
     let dvd = required_path(args, "--dvd")?;
     let state_root = required_path(args, "--state-root")?;
-    let candidate_id = option(args, "--candidate");
-    if candidate_id.is_some() && option(args, "--limit").is_some() {
-        return Err("survey run accepts either --candidate or --limit, not both".into());
+    let candidate_ids = repeated_option(args, "--candidate");
+    if !candidate_ids.is_empty() && option(args, "--limit").is_some() {
+        return Err("survey run accepts repeated --candidate values or --limit, not both".into());
     }
     let limit = usize_option(args, "--limit", 1)?;
     let workers = usize_option(args, "--workers", 1)?;
@@ -170,6 +170,7 @@ fn command_run(args: &[String]) -> Result<(), Box<dyn Error>> {
     let game_args = repeated_option(args, "--game-arg");
     let catalog = load_catalog(&catalog_path)?;
     let mut ledger = load_ledger(&ledger_path, &catalog)?;
+    let candidates = select_run_candidates(&catalog, &ledger, &candidate_ids, limit)?;
     let observed_identity =
         stage_survey_identity(&catalog, &game, &dvd, &ledger.policy, &game_args)?;
     if observed_identity != ledger.identity {
@@ -178,27 +179,6 @@ fn command_run(args: &[String]) -> Result<(), Box<dyn Error>> {
         );
     }
     fs::create_dir_all(&state_root)?;
-    let candidates = if let Some(candidate_id) = candidate_id {
-        let candidate = catalog
-            .candidates
-            .iter()
-            .find(|candidate| candidate.id == candidate_id)
-            .ok_or_else(|| format!("unknown survey candidate: {candidate_id}"))?;
-        let pending = ledger
-            .next_candidates(&catalog, catalog.candidates.len())?
-            .into_iter()
-            .any(|pending| pending.id == candidate_id);
-        if !pending {
-            return Err(format!("survey candidate is already finalized: {candidate_id}").into());
-        }
-        vec![candidate.clone()]
-    } else {
-        ledger
-            .next_candidates(&catalog, limit)?
-            .into_iter()
-            .cloned()
-            .collect::<Vec<_>>()
-    };
     let execution = StageSurveyExecutionConfig {
         executable: game,
         game_data: dvd,
@@ -275,6 +255,52 @@ fn command_run(args: &[String]) -> Result<(), Box<dyn Error>> {
         }))?
     );
     Ok(())
+}
+
+fn select_run_candidates(
+    catalog: &StageBootCatalog,
+    ledger: &StageSurveyLedger,
+    candidate_ids: &[String],
+    limit: usize,
+) -> Result<Vec<StageBootCandidate>, Box<dyn Error>> {
+    if candidate_ids.is_empty() {
+        return Ok(ledger
+            .next_candidates(catalog, limit)?
+            .into_iter()
+            .cloned()
+            .collect());
+    }
+    let mut unique = BTreeSet::new();
+    for candidate_id in candidate_ids {
+        if !unique.insert(candidate_id.as_str()) {
+            return Err(format!("duplicate survey candidate: {candidate_id}").into());
+        }
+    }
+    let candidates = catalog
+        .candidates
+        .iter()
+        .map(|candidate| (candidate.id.as_str(), candidate))
+        .collect::<BTreeMap<_, _>>();
+    let pending = ledger
+        .next_candidates(catalog, catalog.candidates.len())?
+        .into_iter()
+        .map(|candidate| candidate.id.as_str())
+        .collect::<BTreeSet<_>>();
+    candidate_ids
+        .iter()
+        .map(|candidate_id| {
+            let candidate = candidates
+                .get(candidate_id.as_str())
+                .ok_or_else(|| format!("unknown survey candidate: {candidate_id}"))?;
+            if !pending.contains(candidate_id.as_str()) {
+                return Err(
+                    format!("survey candidate is already finalized: {candidate_id}").into(),
+                );
+            }
+            Ok((*candidate).clone())
+        })
+        .collect::<Result<Vec<_>, String>>()
+        .map_err(Into::into)
 }
 
 fn policy_from_args(args: &[String]) -> Result<StageSurveyPolicy, Box<dyn Error>> {

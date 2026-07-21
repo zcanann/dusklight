@@ -142,6 +142,47 @@ fn initializes_and_reopens_a_content_bound_survey_ledger() {
     assert!(!unknown.status.success());
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown survey candidate"));
 
+    let duplicate_candidate = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["survey", "run", "--catalog"])
+        .arg(&catalog_path)
+        .args(["--ledger"])
+        .arg(&ledger_path)
+        .args(["--game"])
+        .arg(&game_path)
+        .args(["--dvd"])
+        .arg(&dvd_path)
+        .args(["--state-root"])
+        .arg(root.join("state"))
+        .args(["--candidate", "F_SP103/room/0/point/0/layer/-1"])
+        .args(["--candidate", "F_SP103/room/0/point/0/layer/-1"])
+        .output()
+        .unwrap();
+    assert!(!duplicate_candidate.status.success());
+    assert!(
+        String::from_utf8_lossy(&duplicate_candidate.stderr).contains("duplicate survey candidate")
+    );
+
+    let mixed_selection = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["survey", "run", "--catalog"])
+        .arg(&catalog_path)
+        .args(["--ledger"])
+        .arg(&ledger_path)
+        .args(["--game"])
+        .arg(&game_path)
+        .args(["--dvd"])
+        .arg(&dvd_path)
+        .args(["--state-root"])
+        .arg(root.join("state"))
+        .args(["--candidate", "F_SP103/room/0/point/0/layer/-1"])
+        .args(["--limit", "1"])
+        .output()
+        .unwrap();
+    assert!(!mixed_selection.status.success());
+    assert!(
+        String::from_utf8_lossy(&mixed_selection.stderr)
+            .contains("repeated --candidate values or --limit")
+    );
+
     let invalid_workers = Command::new(env!("CARGO_BIN_EXE_huntctl"))
         .args(["survey", "run", "--catalog"])
         .arg(&catalog_path)
