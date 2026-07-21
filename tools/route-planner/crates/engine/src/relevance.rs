@@ -988,12 +988,10 @@ fn binding_references_may_match(
         | (R::Exact { binding }, R::ActiveRuntimeFile) => {
             matches!(binding, ComponentBinding::RuntimeFile { .. })
         }
-        (R::CurrentStage, R::Exact { binding })
-        | (R::Exact { binding }, R::CurrentStage) => {
+        (R::CurrentStage, R::Exact { binding }) | (R::Exact { binding }, R::CurrentStage) => {
             matches!(binding, ComponentBinding::Stage { .. })
         }
-        (R::CurrentRoom, R::Exact { binding })
-        | (R::Exact { binding }, R::CurrentRoom) => {
+        (R::CurrentRoom, R::Exact { binding }) | (R::Exact { binding }, R::CurrentRoom) => {
             matches!(binding, ComponentBinding::Room { .. })
         }
         _ => false,
@@ -1336,5 +1334,54 @@ mod tests {
                     })
             );
         }
+    }
+
+    #[test]
+    fn dynamic_binding_dependencies_overlap_only_compatible_exact_backings() {
+        let current_stage = StateDependency::BoundRawBits {
+            component_kind: ComponentKind::StageMemory,
+            binding: ComponentBindingReference::CurrentStage,
+            byte_offset: 8,
+            byte_width: 2,
+        };
+        let exact_stage = StateDependency::BoundRawBits {
+            component_kind: ComponentKind::StageMemory,
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Stage {
+                    stage: "F_SP115".into(),
+                },
+            },
+            byte_offset: 9,
+            byte_width: 1,
+        };
+        let exact_room = StateDependency::BoundRawBits {
+            component_kind: ComponentKind::StageMemory,
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Room {
+                    stage: "F_SP115".into(),
+                    room: 1,
+                },
+            },
+            byte_offset: 9,
+            byte_width: 1,
+        };
+        assert!(dependencies_overlap(&current_stage, &exact_stage));
+        assert!(!dependencies_overlap(&current_stage, &exact_room));
+
+        let active_runtime = StateDependency::BoundComponentField {
+            component_kind: ComponentKind::PersistentSave,
+            binding: ComponentBindingReference::ActiveRuntimeFile,
+            field: "return_place".into(),
+        };
+        let exact_runtime = StateDependency::BoundComponentField {
+            component_kind: ComponentKind::PersistentSave,
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+            },
+            field: "return_place".into(),
+        };
+        assert!(dependencies_overlap(&active_runtime, &exact_runtime));
     }
 }
