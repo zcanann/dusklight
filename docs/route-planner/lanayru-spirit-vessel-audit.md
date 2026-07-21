@@ -55,7 +55,7 @@ The same room archive contains this scaled layer-13 actor:
 SCOd[0]
 name       SwAreaC
 parameters 0xff0cff0c
-position   (19.151329, 208.822067, -1908.488037)
+position   (19.211876, 208.822067, -1908.488037)
 angle      (255, 0, 0)
 scale_raw  (0x46, 0x46, 0x46)
 raw        5377417265614300ff0cff0c4199b1ec4350d273c4ee8f9e00ff00000000ffff464646ff
@@ -129,6 +129,26 @@ Its `zel_08.bmg` maps flow label 21 to node 321. The relevant graph is:
 The branch result order follows the C++ query implementations: `query001`
 returns 1 when its event bit is clear, and `query022` returns 1 when its item is
 absent ([flow queries and events](../../src/d/d_msg_flow.cpp)).
+
+The planner's bundled
+`message-entry-contracts/gz2e01-en-lanayru.json` joins these independently
+extracted resources without conflating them:
+
+- F_SP115 `STG_00.arc` `stage.dzs` digest
+  `5e124d9cff8d3799f7ef68ac8bef3f33c07b833ef89adf3852701c35874ba34f`
+  selects group 8;
+- F_SP115 `R01_00.arc` `room.dzr` digest
+  `825fcfeec4e6cca7b182b63c4bd5de72e0bfef30b1424c4c620cdcb43d8d806b`
+  contains the exact layer-13 `ACTd[0]` record; and
+- US-English `zel_08.bmg` digest
+  `8b109737d47377a0efaf583b312123adafd11a7d9e8c9564114bf587da39f707`
+  contains flow 21 at node 321.
+
+Its generated entry transition hard-guards F_SP115 stage-memory byte `0x0a`,
+mask `0x10`, requires the exact live actor plus player control as an interaction
+obligation, and leaves the shared attention distance/facing/input/event-owner
+path explicitly unknown. The exact compile produced one transition and one
+obligation; it did not infer interaction feasibility from placement.
 
 `event008` does not grant the item. It only leaves event ID 1 and item ID `0xa3`
 in the live flow state. The spirit actor reads those values, creates the

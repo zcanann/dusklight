@@ -33,7 +33,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const MESSAGE_FLOW_PROGRAM_SCHEMA: &str = "dusklight.route-planner.message-flow-program/v2";
 pub const COMPILED_MESSAGE_FLOW_PROGRAM_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-program/v2";
+    "dusklight.route-planner.compiled-message-flow-program/v3";
 pub const MESSAGE_FLOW_IMPORT_PROFILE_SCHEMA: &str =
     "dusklight.route-planner.message-flow-import-profile/v2";
 pub const MESSAGE_FLOW_PROGRAM_SET_SCHEMA: &str =
@@ -580,16 +580,19 @@ impl MessageFlowProgram {
                     next_target_index,
                     parameter_0,
                     parameter_1,
+                    raw_parameter_u32,
                     ..
                 } => {
                     let contract = contracts.get(index).copied();
-                    let (mut operations, unknowns, fully_decoded) = self.compile_generic_event(
-                        *index,
-                        *event_index,
-                        *parameter_0,
-                        *parameter_1,
-                        &token,
-                    )?;
+                    let (mut operations, unknowns, fully_decoded, generic_continuation) = self
+                        .compile_generic_event(
+                            *index,
+                            *event_index,
+                            *parameter_0,
+                            *parameter_1,
+                            *raw_parameter_u32,
+                            &token,
+                        )?;
                     let evidence = if let Some(contract) = contract {
                         operations = contract.confirmed_operations.clone();
                         contract.evidence.clone()
@@ -608,9 +611,9 @@ impl MessageFlowProgram {
                             &self.evidence,
                         ));
                     }
-                    let contract_controls = contract.is_some_and(|value| {
-                        value.continuation == MessageEventContinuation::ContractControlled
-                    });
+                    let continuation = contract
+                        .map(|value| value.continuation)
+                        .unwrap_or(generic_continuation);
                     transitions.push(self.direct_transition_with_continuation(
                         &token,
                         *index,
@@ -621,7 +624,7 @@ impl MessageFlowProgram {
                         *next_target_index,
                         &terminal_node_id,
                         &evidence,
-                        !contract_controls,
+                        continuation == MessageEventContinuation::EncodedSuccessor,
                     )?);
                 }
                 MessageFlowNode::Branch {
@@ -824,10 +827,20 @@ impl MessageFlowProgram {
         event_index: u8,
         parameter_0: u16,
         parameter_1: u16,
+        raw_parameter_u32: u32,
         token: &str,
-    ) -> Result<(Vec<StateOperation>, Vec<UnknownRequirement>, bool), PlannerContractError> {
+    ) -> Result<
+        (
+            Vec<StateOperation>,
+            Vec<UnknownRequirement>,
+            bool,
+            MessageEventContinuation,
+        ),
+        PlannerContractError,
+    > {
         let mut operations = Vec::new();
         let mut unknowns = Vec::new();
+        let mut continuation = MessageEventContinuation::EncodedSuccessor;
         let fully_decoded = match event_index {
             0 | 1 => {
                 for access in self
@@ -936,6 +949,49 @@ impl MessageFlowProgram {
                 }
                 operations.len() + unknowns.len() == 1
             }
+            9 => {
+                continuation = MessageEventContinuation::ContractControlled;
+                let flow_id = raw_parameter_u32 as u16;
+                if flow_id == 0 {
+                    unknowns.push(unknown_requirement(
+                        token,
+                        node_index,
+                        "dynamic-group-jump",
+                        "Flow jump 0 selects a runtime Midna/current-room message group that is not encoded in this resource".into(),
+                        &self.evidence,
+                    ));
+                    true
+                } else if let Some(label) = self
+                    .extracted
+                    .labels
+                    .iter()
+                    .find(|label| label.flow_id == flow_id)
+                {
+                    operations.push((
+                        0,
+                        StateOperation::AdvanceFlow {
+                            flow_component_id: self.flow_component_id.clone(),
+                            node_id: node_id(token, label.node_index),
+                        },
+                    ));
+                    true
+                } else {
+                    unknowns.push(unknown_requirement(
+                        token,
+                        node_index,
+                        "missing-flow-label",
+                        format!(
+                            "Flow jump {flow_id} has no entry label in the exact selected message resource"
+                        ),
+                        &self.evidence,
+                    ));
+                    true
+                }
+            }
+            // These retail handlers return success without mutating modeled
+            // state. `event012` is only a named message signal here; no door
+            // state is changed by its handler.
+            12 | 19 | 42 => true,
             _ => false,
         };
         operations.sort_by_key(|entry| entry.0);
@@ -943,6 +999,7 @@ impl MessageFlowProgram {
             operations.into_iter().map(|entry| entry.1).collect(),
             unknowns,
             fully_decoded,
+            continuation,
         ))
     }
 
@@ -1697,7 +1754,7 @@ fn validate_event_contracts(
             ));
         }
         prior = Some(contract.node_index);
-        let Some(MessageFlowNode::Event { event_index, .. }) =
+        let Some(node @ MessageFlowNode::Event { .. }) =
             extracted.nodes.get(usize::from(contract.node_index))
         else {
             return Err(PlannerContractError::new(
@@ -1705,10 +1762,10 @@ fn validate_event_contracts(
                 "must reference an event node",
             ));
         };
-        if matches!(*event_index, 0 | 1 | 10 | 11 | 14 | 15) {
+        if generic_event_is_fully_decidable(node, extracted) {
             return Err(PlannerContractError::new(
                 "message_flow_program.event_contracts.node_index",
-                "must not replace a generic flag/switch handler decoded by the extractor",
+                "must not replace a generic handler decoded by the compiler",
             ));
         }
         if contract.confirmed_operations.is_empty() {
@@ -1762,6 +1819,32 @@ fn validate_event_contracts(
         }
     }
     Ok(())
+}
+
+fn generic_event_is_fully_decidable(
+    node: &MessageFlowNode,
+    extracted: &ExtractedMessageFlow,
+) -> bool {
+    match node {
+        MessageFlowNode::Event { event_index, .. }
+            if matches!(*event_index, 0 | 1 | 10 | 11 | 12 | 14 | 15 | 19 | 42) =>
+        {
+            true
+        }
+        MessageFlowNode::Event {
+            event_index: 9,
+            raw_parameter_u32,
+            ..
+        } => {
+            let flow_id = *raw_parameter_u32 as u16;
+            flow_id != 0
+                && extracted
+                    .labels
+                    .iter()
+                    .any(|label| label.flow_id == flow_id)
+        }
+        _ => false,
+    }
 }
 
 fn validate_cleanup_edges(
@@ -2384,6 +2467,116 @@ mod tests {
                 .any(|transition| transition.label.contains("node 5"))
         );
         assert_eq!(compiled.unresolved_nodes[0].node_index, 5);
+    }
+
+    #[test]
+    fn exact_flow_jumps_override_encoded_successors_and_dynamic_jumps_stay_unknown() {
+        let mut program = program();
+        program.extracted.node_count = 12;
+        program.extracted.labels.push(MessageFlowLabel {
+            flow_id: 99,
+            node_index: 7,
+        });
+        program.extracted.nodes.extend([
+            MessageFlowNode::Event {
+                index: 6,
+                event_index: 9,
+                next_target_index: u16::MAX,
+                parameter_0: 0,
+                parameter_1: 99,
+                raw_parameter_u32: 99,
+                raw_parameters: [0, 0, 0, 99],
+            },
+            MessageFlowNode::Message {
+                index: 7,
+                flags: 0,
+                message_index: 4,
+                next_node_index: u16::MAX,
+                unknown: 0,
+            },
+            MessageFlowNode::Event {
+                index: 8,
+                event_index: 12,
+                next_target_index: 9,
+                parameter_0: 0,
+                parameter_1: 0,
+                raw_parameter_u32: 0,
+                raw_parameters: [0; 4],
+            },
+            MessageFlowNode::Event {
+                index: 9,
+                event_index: 19,
+                next_target_index: 10,
+                parameter_0: 0,
+                parameter_1: 0,
+                raw_parameter_u32: 0,
+                raw_parameters: [0; 4],
+            },
+            MessageFlowNode::Event {
+                index: 10,
+                event_index: 42,
+                next_target_index: 11,
+                parameter_0: 0,
+                parameter_1: 0,
+                raw_parameter_u32: 0,
+                raw_parameters: [0; 4],
+            },
+            MessageFlowNode::Message {
+                index: 11,
+                flags: 0,
+                message_index: 5,
+                next_node_index: u16::MAX,
+                unknown: 0,
+            },
+        ]);
+
+        let compiled = program.compile().unwrap();
+        let jump = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("event 9 at node 6"))
+            .unwrap();
+        assert!(jump.activation.unknown_requirements.is_empty());
+        assert!(matches!(
+            jump.activation.effects.as_slice(),
+            [StateOperation::AdvanceFlow { node_id, .. }] if node_id.ends_with(".7")
+        ));
+        for event_index in [12_u8, 19, 42] {
+            let transition = compiled
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| transition.label.contains(&format!("event {event_index} ")))
+                .unwrap();
+            assert!(transition.activation.unknown_requirements.is_empty());
+            assert!(matches!(
+                transition.activation.effects.as_slice(),
+                [StateOperation::AdvanceFlow { .. }]
+            ));
+        }
+
+        let MessageFlowNode::Event {
+            raw_parameter_u32,
+            parameter_1,
+            raw_parameters,
+            ..
+        } = &mut program.extracted.nodes[6]
+        else {
+            unreachable!()
+        };
+        *raw_parameter_u32 = 0;
+        *parameter_1 = 0;
+        *raw_parameters = [0; 4];
+        let dynamic = program.compile().unwrap();
+        let jump = dynamic
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("event 9 at node 6"))
+            .unwrap();
+        assert_eq!(jump.activation.unknown_requirements.len(), 1);
+        assert!(jump.activation.effects.is_empty());
     }
 
     #[test]

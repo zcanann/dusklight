@@ -76,6 +76,15 @@ Generic flag handlers (`event000/001`, `event010/011`, and `event014/015`) are
 compiled directly from extracted typed accesses. A different handler is not
 decidable merely because its event number and parameters were decoded.
 
+`event009` is also compiled when its nonzero parameter names an exact FLI1 flow
+label in the selected resource. That transition advances directly to the label
+and suppresses the event node's encoded successor, matching the retail
+`eventNodeProc` override. Parameter zero performs a runtime Midna/current-room
+message-group selection and therefore remains an explicit unknown until that
+selection is modeled. The source-inert `event012`, `event019`, and `event042`
+handlers follow their encoded successor without inventing door, actor, or other
+state writes.
+
 `MessageEventContract` supplies the exact ordered operations for one such node.
 It can model an item grant, a pending-item handoff, a recent-item copy, or a
 source-audited flow jump using the same generic state operations as every other
@@ -232,7 +241,7 @@ but production fact-pack integration still needs to:
 
 1. publish audited import profiles and stage/actor entry-contract packs for
    additional exact builds and language mappings;
-2. audit additional generic item, pending-operation, jump, event-request, and
+2. audit additional generic item, pending-operation, event-request, and
    cut handoff handlers;
 3. emit central event and Ooccoo cleanup callers from their actual predicates;
 4. compare semantic flow differences across builds and languages.

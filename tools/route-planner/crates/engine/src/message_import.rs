@@ -23,13 +23,15 @@ use sha2::{Digest as _, Sha256};
 pub const MESSAGE_FLOW_RESOURCE_OVERLAY_SET_SCHEMA: &str =
     "dusklight.route-planner.message-flow-resource-overlay-set/v2";
 pub const COMPILED_MESSAGE_FLOW_SET_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-set/v2";
+    "dusklight.route-planner.compiled-message-flow-set/v3";
 pub const MESSAGE_FLOW_ENTRY_CONTRACT_SET_SCHEMA: &str =
-    "dusklight.route-planner.message-flow-entry-contract-set/v1";
+    "dusklight.route-planner.message-flow-entry-contract-set/v2";
 pub const COMPILED_MESSAGE_FLOW_ENTRY_SET_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-entry-set/v1";
+    "dusklight.route-planner.compiled-message-flow-entry-set/v2";
 const MAX_RESOURCE_OVERLAYS: usize = 256;
 const MAX_ENTRY_CONTRACTS: usize = 65_536;
+const BUNDLED_GZ2E01_ENGLISH_LANAYRU_ENTRY_CONTRACTS: &[u8] =
+    include_bytes!("../data/message-entry-contracts/gz2e01-en-lanayru.json");
 
 /// Node contracts are separate from the reusable content/language/backing
 /// profile. Every node index is pinned to one extracted resource digest so a
@@ -85,6 +87,7 @@ pub struct CompiledMessageFlowResource {
 pub struct MessageFlowEntryContractSet {
     pub schema: String,
     pub id: String,
+    pub compiled_message_flow_set_schema: String,
     pub compiled_message_flow_set_sha256: Digest,
     pub entries: Vec<MessageFlowEntryContract>,
 }
@@ -160,6 +163,11 @@ pub struct ResolvedMessageFlowEntry {
     pub node_index: u16,
 }
 
+pub fn bundled_gz2e01_english_lanayru_entry_contracts()
+-> Result<MessageFlowEntryContractSet, PlannerContractError> {
+    MessageFlowEntryContractSet::decode_canonical(BUNDLED_GZ2E01_ENGLISH_LANAYRU_ENTRY_CONTRACTS)
+}
+
 impl MessageFlowEntryContractSet {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != MESSAGE_FLOW_ENTRY_CONTRACT_SET_SCHEMA {
@@ -169,6 +177,12 @@ impl MessageFlowEntryContractSet {
             ));
         }
         validate_stable_id("message_flow_entry_contract_set.id", &self.id)?;
+        if self.compiled_message_flow_set_schema != COMPILED_MESSAGE_FLOW_SET_SCHEMA {
+            return Err(PlannerContractError::new(
+                "message_flow_entry_contract_set.compiled_message_flow_set_schema",
+                "does not name the currently supported compiled message-flow schema",
+            ));
+        }
         require_digest(
             "message_flow_entry_contract_set.compiled_message_flow_set_sha256",
             self.compiled_message_flow_set_sha256,
@@ -1778,6 +1792,49 @@ mod tests {
     }
 
     #[test]
+    fn bundled_lanayru_entry_pins_exact_stage_actor_switch_and_flow() {
+        let set = bundled_gz2e01_english_lanayru_entry_contracts().unwrap();
+        assert_eq!(set.id, "gz2e01-en-lanayru-message-entries");
+        assert_eq!(
+            set.compiled_message_flow_set_schema,
+            COMPILED_MESSAGE_FLOW_SET_SCHEMA
+        );
+        assert_eq!(
+            set.compiled_message_flow_set_sha256.to_string(),
+            "8f073cf312168fe65c8033d0ce2c58c6398315e15289b91f46b58a8466db9f31"
+        );
+        let entry = &set.entries[0];
+        assert_eq!(entry.message_group, 8);
+        assert_eq!(entry.flow_id, 21);
+        assert_eq!(entry.source_stage, "F_SP115");
+        assert_eq!(entry.source_room, Some(1));
+        assert_eq!(entry.source_layer, Some(13));
+        let placement = entry.speaker.placement.as_ref().unwrap();
+        assert_eq!(placement.archive_path, "files/res/Stage/F_SP115/R01_00.arc");
+        assert_eq!(placement.chunk_tag, "ACTd");
+        assert_eq!(placement.record_index, 0);
+        assert_eq!(placement.actor_name, "Seirei");
+        assert_eq!(entry.obligations.len(), 1);
+        assert_eq!(entry.unknown_requirements.len(), 1);
+        assert!(matches!(
+            &entry.additional_hard_guard,
+            PredicateExpression::Compare {
+                left: ValueReference::BoundRawBits {
+                    component_kind: crate::state::ComponentKind::DungeonMemory,
+                    binding: crate::state::ComponentBindingReference::CurrentStage,
+                    byte_offset: 10,
+                    byte_width: 1,
+                    mask: 16,
+                },
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(16),
+                },
+            }
+        ));
+    }
+
+    #[test]
     fn actor_entry_contract_joins_exact_stage_actor_and_message_label() {
         let bundle = entry_bundle();
         bundle.validate().unwrap();
@@ -1823,6 +1880,7 @@ mod tests {
         let set = MessageFlowEntryContractSet {
             schema: MESSAGE_FLOW_ENTRY_CONTRACT_SET_SCHEMA.into(),
             id: "fixture-entry-contracts".into(),
+            compiled_message_flow_set_schema: COMPILED_MESSAGE_FLOW_SET_SCHEMA.into(),
             compiled_message_flow_set_sha256: compiled.digest().unwrap(),
             entries: vec![entry],
         };

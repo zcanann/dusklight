@@ -1858,6 +1858,14 @@ Deliverable: replayable state evidence that can validate transition rules.
           dungeon-session, zone, and one-zone stores remain explicit unknowns
           pending distinct backing and speaker-zone modeling. See
           `docs/route-planner/gz2e01-message-import-profile.md`.
+    - [x] Publish and exact-compile the first concrete GZ2E01 stage/actor entry
+          pack: F_SP115 STAG group 8 plus the separate R01 layer-13 `Seirei`
+          placement into flow 21, with switch `0x0c`, actor/control obligation,
+          and unaudited shared-attention conditions kept distinct.
+    - [x] Compile nonzero `event009` flow jumps to exact selected-resource FLI1
+          labels without also applying their encoded successors. Keep dynamic
+          jump-zero group selection unknown, and treat source-inert handlers
+          12/19/42 as encoded-successor edges without invented state effects.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.
@@ -2335,6 +2343,9 @@ set, and the distinct 16-tear `KYTAG04` -> switch 13 -> point-20 twilight-clear
 sequence.
 
 - [ ] Locate the spirit actor/event flow and every build-specific placement.
+  - [x] Pin the exact GZ2E01 F_SP115 STAG, R01 layer-13 `Seirei`, US-English
+        group-8 resource, and flow-21 label in a compiled message-entry contract.
+        Other build/language placements remain unverified.
 - [x] Identify the raw event bits, temporary bits, room/layer, form, twilight,
       approach, and cutscene prerequisites for the spirit to appear.
 - [x] Separate appearance, interaction, cutscene start, Vessel grant, and post-grant

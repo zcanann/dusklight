@@ -7,8 +7,8 @@ separate, exact-content join.
 
 ## Source contract
 
-A `message-flow-entry-contract-set/v1` pins the digest of one
-`compiled-message-flow-set/v2`. Each entry then names:
+A `message-flow-entry-contract-set/v2` pins both the schema and digest of one
+`compiled-message-flow-set/v3`. Each entry then names:
 
 - the exact message group, message-resource digest, and flow ID;
 - the exact source stage, optional room and layer, and stage archive/resource
@@ -41,7 +41,7 @@ bundle and the selected compiled message-flow set. Compilation fails when:
 - an obligation is not scoped to the exact selected runtime context.
 
 The output is a canonical
-`compiled-message-flow-entry-set/v1`. It embeds the source contracts, resolved
+`compiled-message-flow-entry-set/v2`. It embeds the source contracts, resolved
 flow component/node/index records, and deterministically reproduced mechanics.
 It therefore remains verifiable after the user's `orig/` directory is removed.
 Tampering with the mechanics without changing the embedded source derivation is
@@ -79,3 +79,12 @@ advancing to the resolved node. A known speaker zone can then drive a projected
 zone-memory binding. If the zone was not audited, the transition invalidates
 that field; zone-relative handlers remain unknown and never fall back to the
 player's current room.
+
+## Bundled exact entry
+
+`gz2e01-en-lanayru.json` is the first concrete bundled contract set. It pins
+F_SP115's group-8 STAG resource, the separate R01 layer-13 `Seirei` placement,
+US-English flow 21, and the loaded-stage-memory switch `0x0c` guard. Its actor
+and player-control checks are an interaction obligation; the unaudited shared
+attention distance, facing, input, and competing-event path remains an explicit
+unknown requirement.
