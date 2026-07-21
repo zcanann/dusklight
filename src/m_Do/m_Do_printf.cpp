@@ -6,6 +6,7 @@
 #include "m_Do/m_Do_printf.h"
 #include <cstdio>
 #include <base/PPCArch.h>
+#include "dusk/logging.h"
 #include "m_Do/m_Do_ext.h"
 #if TARGET_PC
 #include <cstdarg>
@@ -54,7 +55,7 @@ asm void OSSwitchFiberEx(__REGISTER u32 param_0, __REGISTER u32 param_1, __REGIS
 #endif
 
 void my_PutString(const char* string) {
-    fputs(string, stdout);
+    fputs(string, dusk::IsStdoutReservedForAutomationProtocol() ? stderr : stdout);
 }
 
 void OSVAttention(const char* fmt, va_list args) {
@@ -132,7 +133,7 @@ void mDoPrintf_vprintf_Interrupt(char const* fmt, va_list args) {
     if (!data_80450BB5) {
         data_80450BB5 = true;
 #if TARGET_PC
-        vprintf(fmt, args);
+        vfprintf(dusk::IsStdoutReservedForAutomationProtocol() ? stderr : stdout, fmt, args);
 #else
         uintptr_t var_r29 = (uintptr_t)&mDoPrintf_FiberStack + sizeof(mDoPrintf_FiberStack);
         OSSwitchFiberEx((uintptr_t)fmt, (uintptr_t)args, 0, 0, (uintptr_t)vprintf,
@@ -156,9 +157,9 @@ void mDoPrintf_vprintf_Thread(char const* fmt, va_list args) {
     }
     #endif
 
-    vprintf(fmt, args);
+    vfprintf(dusk::IsStdoutReservedForAutomationProtocol() ? stderr : stdout, fmt, args);
     if (dusk::OSReportReallyForceEnable) {
-        fflush(stdout);
+        fflush(dusk::IsStdoutReservedForAutomationProtocol() ? stderr : stdout);
     }
 
     #if DEBUG

@@ -24,6 +24,14 @@ public:
     bool configure(SuffixBatchDefinition definition, std::filesystem::path resultPath,
         std::filesystem::path winnerTapePath, std::string gameDataSha256,
         std::string worldContextSha256, std::string& error);
+    /**
+     * Installs another batch against the already authenticated source image.
+     * The source frame/fingerprint and objective are immutable for a session;
+     * candidate inputs, horizon, and output paths may change.
+     */
+    bool configureNextBatch(SuffixBatchDefinition definition,
+        std::filesystem::path resultPath, std::filesystem::path winnerTapePath,
+        std::string& error);
 
     /** Stable boundary immediately before InputTapePlayer::tick(). */
     bool preInput(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
@@ -41,7 +49,12 @@ public:
     [[nodiscard]] bool executingCandidate() const { return mPhase == Phase::Candidate; }
     [[nodiscard]] bool completed() const { return mCompleted; }
     [[nodiscard]] bool failed() const { return mFailed; }
-    [[nodiscard]] bool writeArtifacts(std::string& error) const;
+    [[nodiscard]] bool writeArtifacts(std::string& error);
+    [[nodiscard]] bool artifactsWritten() const { return mArtifactsWritten; }
+    [[nodiscard]] const std::filesystem::path& resultPath() const { return mResultPath; }
+    [[nodiscard]] const std::filesystem::path& episodeShardPath() const {
+        return mEpisodeShardPath;
+    }
 
 private:
     enum class Phase { WaitingForSource, Candidate, RestoreNext, Complete, Failed };
@@ -95,6 +108,7 @@ private:
 
     bool captureSource(std::uint64_t simulationTick, std::uint64_t tapeFrame,
         std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& error);
+    bool beginEpisodeShard(std::string& error);
     bool restoreSource(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
         std::uint64_t& preparedInputFrame, bool& tapeFrameApplied, std::string& error);
     bool captureEpisodePreInput(std::uint64_t simulationTick, std::string& error);
@@ -108,6 +122,7 @@ private:
     bool mEnabled = false;
     bool mCompleted = false;
     bool mFailed = false;
+    bool mArtifactsWritten = false;
     bool mConsumedCaptureFailed = false;
     bool mAudioCallbackQuiesced = false;
     Phase mPhase = Phase::WaitingForSource;

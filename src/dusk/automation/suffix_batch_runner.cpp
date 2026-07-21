@@ -125,6 +125,53 @@ bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
     return true;
 }
 
+bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
+    std::filesystem::path resultPath, std::filesystem::path winnerTapePath,
+    std::string& error) {
+    error.clear();
+    if (!mEnabled || !mCompleted || mFailed || !mArtifactsWritten || mImage.entries.empty() ||
+        mEpisodeShard.active() || definition.candidates.empty() || definition.maximumTicks == 0 ||
+        definition.sourceFrame != mDefinition.sourceFrame ||
+        definition.sourceBoundaryFingerprint != mDefinition.sourceBoundaryFingerprint ||
+        resultPath.empty())
+    {
+        error = "next suffix batch is incompatible with the authenticated session source";
+        return false;
+    }
+
+    mDefinition = std::move(definition);
+    mResultPath = std::move(resultPath);
+    mWinnerTapePath = std::move(winnerTapePath);
+    mEpisodeShardPath = mResultPath;
+    mEpisodeShardPath += ".episodes.dseps";
+    mCandidateIndex = 0;
+    mCandidateTick = 0;
+    mConsumedPads.clear();
+    mConsumedPads.reserve(mDefinition.maximumTicks);
+    mCurrentEpisode.clear();
+    mCurrentEpisode.reserve(
+        std::min<std::size_t>(mDefinition.maximumTicks * 4096, 16 * 1024 * 1024));
+    mStateDigestMaterial.clear();
+    if (mDefinition.verifyStateHashes)
+        mStateDigestMaterial.reserve(mDefinition.maximumTicks * 32);
+    mResults.clear();
+    mResults.reserve(mDefinition.candidates.size());
+    mWinnerResultIndex.reset();
+    mRestoreMicros.clear();
+    mRestoreMicros.reserve(mDefinition.candidates.size());
+    mConsumedCaptureFailed = false;
+    mEpisodePreInputCaptured = false;
+    mError.clear();
+    mCompleted = false;
+    mArtifactsWritten = false;
+    mPhase = Phase::RestoreNext;
+    if (!beginEpisodeShard(error)) {
+        fail(error);
+        return false;
+    }
+    return true;
+}
+
 bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
     const std::uint64_t tapeFrame, const std::uint64_t preparedInputFrame,
     const bool tapeFrameApplied, std::string& error) {
@@ -141,7 +188,15 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
     if (sourceMilestone == nullptr || !sourceMilestone->predicate(sourceObservation)) {
         error = "suffix batch source does not satisfy gameplay-ready-f-sp103; expected " +
                 mDefinition.sourceBoundaryFingerprint + ", observed " +
-                mActualSourceBoundaryFingerprint;
+                mActualSourceBoundaryFingerprint + "; stage=" +
+                (sourceObservation.stageName == nullptr ? std::string{"<null>"} :
+                                                         sourceObservation.stageName) +
+                ", room=" + std::to_string(sourceObservation.room) +
+                ", point=" + std::to_string(sourceObservation.point) +
+                ", player_present=" + (sourceObservation.playerPresent ? "true" : "false") +
+                ", player_is_link=" + (sourceObservation.playerIsLink ? "true" : "false") +
+                ", event_running=" + (sourceObservation.eventRunning ? "true" : "false") +
+                ", event_id=" + std::to_string(sourceObservation.eventId);
         return false;
     }
     if (mActualSourceBoundaryFingerprint != mDefinition.sourceBoundaryFingerprint) {
@@ -206,6 +261,10 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
     }
     mGoalTracker.setBootOrigin(input_tape_player().tape().boot);
 
+    return beginEpisodeShard(error);
+}
+
+bool SuffixBatchRunner::beginEpisodeShard(std::string& error) {
     const BuildIdentity build = current_build_identity("native-read-only-checkpoint-batch");
     const std::string objective(*mGoalTracker.goalName());
     std::string objectiveIdentityMaterial;
@@ -240,9 +299,7 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
         .actorProfileCatalogIdentity = std::string(actor_profile_catalog_identity()),
         .worldContextSha256 = mWorldContextSha256,
     };
-    if (!mEpisodeShard.begin(mEpisodeShardPath, metadata, error))
-        return false;
-    return true;
+    return mEpisodeShard.begin(mEpisodeShardPath, metadata, error);
 }
 
 LearningGoalObservation summarize_learning_goal(const MilestoneTracker& tracker) {
@@ -616,8 +673,9 @@ void SuffixBatchRunner::fail(std::string message) {
     mError = std::move(message);
 }
 
-bool SuffixBatchRunner::writeArtifacts(std::string& error) const {
+bool SuffixBatchRunner::writeArtifacts(std::string& error) {
     if (!mEnabled) return true;
+    if (mArtifactsWritten) return true;
     nlohmann::json candidates = nlohmann::json::array();
     for (const CandidateResult& result : mResults) {
         nlohmann::json consumed = nullptr;
@@ -696,7 +754,10 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) const {
     };
     if (!write_atomic(mResultPath, result.dump(2) + '\n', error)) return false;
 
-    if (mWinnerTapePath.empty() || !mWinnerResultIndex.has_value()) return true;
+    if (mWinnerTapePath.empty() || !mWinnerResultIndex.has_value()) {
+        mArtifactsWritten = true;
+        return true;
+    }
     InputTape tape;
     tape.frames.reserve(mResults[*mWinnerResultIndex].successfulConsumedPads.size());
     for (const RawPadState& pad : mResults[*mWinnerResultIndex].successfulConsumedPads) {
@@ -715,8 +776,11 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) const {
         error = input_tape_error_message(tapeError);
         return false;
     }
-    return write_atomic(mWinnerTapePath,
-        std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), error);
+    if (!write_atomic(mWinnerTapePath,
+            std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()), error))
+        return false;
+    mArtifactsWritten = true;
+    return true;
 }
 
 SuffixBatchRunner& suffix_batch_runner() {

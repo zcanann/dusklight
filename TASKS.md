@@ -508,9 +508,17 @@ silent truncation or future leakage, and preserves deterministic cold playback.
 
 ## 2. Make experience collection fast enough to learn
 
-- [ ] Keep the game process, disc resources, and source checkpoint alive across
+- [x] Keep the game process, disc resources, and source checkpoint alive across
   many batches. Training must not relaunch or replay the boot prefix per
-  candidate.
+  candidate. The engine-resident worker now accepts successive authenticated
+  batch requests after boot, preserves the original source checkpoint, and
+  restores it before each new batch without reconstructing the process. A live
+  two-batch proof kept PID 7600 and the same 294,697,514-byte checkpoint alive,
+  completed both two-candidate batches, preserved restore identity
+  `92d46e10...20e98`, and emitted byte-identical 130,922-byte episode shards
+  (`45093a53...e48808`) before a clean protocol shutdown. The capability is
+  intentionally advertised as persistent batch control rather than full engine
+  reconstruction.
 - [ ] Support validated intermediate checkpoints along recorded trajectories so
   short-horizon experiments do not replay unrelated earlier decisions.
   The same-process substrate now preserves raw checkpoint bytes separately from
@@ -520,8 +528,9 @@ silent truncation or future leakage, and preserves deterministic cold playback.
   frame-500 probes matched 40-tick futures across 36 trusted restores. The
   latter stress lane exposed intermittent `dMeter_drawHIO_c` padding changes;
   PDB-resolved field boundaries now exclude exactly its eight top-level ABI
-  gaps without changing or weakening raw restore integrity. This proves the
-  restore primitive, not yet its integration into the persistent batch loop.
+  gaps without changing or weakening raw restore integrity. The primitive is
+  now integrated into the persistent batch loop above; validated checkpoints
+  along arbitrary recorded trajectories remain open.
 - [ ] Profile checkpoint restore, simulation, observation capture, policy
   inference, corpus encoding, GPU work and CPU draw traversal independently.
 - [ ] Implement a true no-present render sink: no visible window, presentation,

@@ -707,6 +707,7 @@ static bool checkpointProbeFailed;
 static bool checkpointProbeWriteFailed;
 static bool suffixBatchFailed;
 static bool suffixBatchWriteFailed;
+static std::uint64_t engineWorkerBatchRequestId;
 static std::filesystem::path nameEntryTracePath;
 static bool nameEntryTraceWriteFailed;
 static std::filesystem::path gameplayTracePath;
@@ -1723,11 +1724,96 @@ static bool finish_suffix_batch_tick() {
     if (batch.failed()) {
         suffixBatchFailed = true;
         DuskLog.error("Suffix batch failed: {}", error);
-    } else {
-        DuskLog.info("Suffix batch completed");
+        dusk::IsRunning = false;
+        return true;
     }
-    dusk::IsRunning = false;
-    return true;
+    DuskLog.info("Suffix batch completed");
+    if (!dusk::automation::engine_worker_enabled()) {
+        dusk::IsRunning = false;
+        return true;
+    }
+
+    if (!batch.writeArtifacts(error)) {
+        suffixBatchWriteFailed = true;
+        DuskLog.error("Failed to write persistent suffix batch artifacts: {}", error);
+        dusk::IsRunning = false;
+        return true;
+    }
+    dusk::automation::publish_engine_worker_batch_complete(engineWorkerBatchRequestId,
+        batch.resultPath(), batch.episodeShardPath());
+
+    for (;;) {
+        dusk::automation::EngineWorkerCommand command;
+        if (!dusk::automation::wait_for_engine_worker_command(command, error)) {
+            suffixBatchFailed = true;
+            DuskLog.error("Persistent suffix worker stopped: {}", error);
+            dusk::IsRunning = false;
+            return true;
+        }
+        if (command.kind == dusk::automation::EngineWorkerCommandKind::Shutdown) {
+            dusk::IsRunning = false;
+            return true;
+        }
+
+        std::error_code fileError;
+        const std::uintmax_t batchSize =
+            std::filesystem::file_size(command.batchPath, fileError);
+        if (fileError || batchSize == 0 ||
+            batchSize > dusk::automation::SuffixBatchMaximumBytes)
+        {
+            dusk::automation::reject_engine_worker_batch(command.requestId,
+                "batch input is missing, empty, or exceeds 64 MiB");
+            continue;
+        }
+        std::string batchBytes(static_cast<std::size_t>(batchSize), '\0');
+        std::ifstream batchStream(command.batchPath, std::ios::binary);
+        if (!batchStream || !batchStream.read(batchBytes.data(),
+                static_cast<std::streamsize>(batchBytes.size())))
+        {
+            dusk::automation::reject_engine_worker_batch(
+                command.requestId, "could not read batch input");
+            continue;
+        }
+        dusk::automation::SuffixBatchDefinition definition;
+        if (!dusk::automation::parse_suffix_batch(batchBytes, definition, error)) {
+            dusk::automation::reject_engine_worker_batch(command.requestId, error);
+            continue;
+        }
+        const std::size_t tapeFrames = dusk::automation::input_tape_player().tape().frames.size();
+        if (definition.sourceFrame > tapeFrames ||
+            definition.maximumTicks > tapeFrames - definition.sourceFrame)
+        {
+            dusk::automation::reject_engine_worker_batch(command.requestId,
+                "batch horizon exceeds the authenticated source tape");
+            continue;
+        }
+        std::filesystem::path episodePath = command.resultPath;
+        episodePath += ".episodes.dseps";
+        fileError.clear();
+        const bool outputExists = std::filesystem::exists(command.resultPath, fileError) ||
+            (!command.winnerTapePath.empty() &&
+                std::filesystem::exists(command.winnerTapePath, fileError)) ||
+            std::filesystem::exists(episodePath, fileError);
+        if (fileError || outputExists) {
+            dusk::automation::reject_engine_worker_batch(command.requestId,
+                fileError ? "cannot inspect batch output paths" : "batch output already exists");
+            continue;
+        }
+        if (!batch.configureNextBatch(std::move(definition), command.resultPath,
+                command.winnerTapePath, error))
+        {
+            dusk::automation::reject_engine_worker_batch(command.requestId, error);
+            suffixBatchFailed = batch.failed();
+            if (suffixBatchFailed) {
+                dusk::IsRunning = false;
+                return true;
+            }
+            continue;
+        }
+        engineWorkerBatchRequestId = command.requestId;
+        DuskLog.info("Persistent suffix worker accepted batch request {}", command.requestId);
+        return false;
+    }
 }
 
 static void write_checkpoint_probe_result_on_exit() {
@@ -1743,7 +1829,7 @@ static void write_checkpoint_probe_result_on_exit() {
 }
 
 static void write_suffix_batch_artifacts_on_exit() {
-    const auto& batch = dusk::automation::suffix_batch_runner();
+    auto& batch = dusk::automation::suffix_batch_runner();
     if (!batch.enabled()) return;
     std::string error;
     if (!batch.writeArtifacts(error)) {
@@ -2088,6 +2174,7 @@ int game_main(int argc, char* argv[]) {
             ("develop", "Enable the game's developer mode and OSReport for debugging", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("automation-hello", "Print the automation worker identity and capabilities as JSON, then exit")
             ("automation-worker", "Run the persistent automation control protocol over stdin/stdout")
+            ("automation-engine-worker", "Keep one authenticated suffix checkpoint alive across stdin/stdout batch requests")
             ("fixed-step", "Run exactly one deterministic 30 Hz logical tick per presented frame", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
             ("fixed-step-speed-percent", "Host pacing for fixed-step visual automation (0=uncapped, 1-400%, default 100)", cxxopts::value<std::uint16_t>()->default_value("100"))
             ("unpaced", "Run exactly one 30 Hz logical tick per outer loop without frame pacing", cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
@@ -3233,6 +3320,11 @@ int game_main(int argc, char* argv[]) {
     const bool hasSuffixBatchResult = parsed_arg_options.count("suffix-batch-result") != 0;
     const bool hasSuffixBatchWinner =
         parsed_arg_options.count("suffix-batch-winner-tape") != 0;
+    if (dusk::automation::engine_worker_enabled() && !hasSuffixBatch) {
+        fprintf(stderr,
+                "Engine Worker Error: the initial suffix batch and result paths are required\n");
+        return 1;
+    }
     const bool hasAutomationGameDataSha256 =
         parsed_arg_options.count("automation-game-data-sha256") != 0;
     const bool hasAutomationWorldContextSha256 =
@@ -3407,9 +3499,12 @@ int game_main(int argc, char* argv[]) {
         const std::filesystem::path resultPath = std::filesystem::u8path(resultArgument);
         const std::filesystem::path winnerPath = hasSuffixBatchWinner
             ? std::filesystem::u8path(winnerArgument) : std::filesystem::path{};
+        std::filesystem::path episodePath = resultPath;
+        episodePath += ".episodes.dseps";
         std::error_code outputError;
         if (std::filesystem::exists(resultPath, outputError) ||
-            (hasSuffixBatchWinner && std::filesystem::exists(winnerPath, outputError)))
+            (hasSuffixBatchWinner && std::filesystem::exists(winnerPath, outputError)) ||
+            std::filesystem::exists(episodePath, outputError))
         {
             fprintf(stderr, "Suffix Batch Error: output already exists\n");
             return 1;

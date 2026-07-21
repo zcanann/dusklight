@@ -11,6 +11,10 @@ void aurora_log_callback(AuroraLogLevel level, const char* module, const char* m
 namespace dusk {
     void InitializeFileLogging(const std::filesystem::path& configDir, AuroraLogLevel logLevel);
     void ShutdownFileLogging();
+    // Keep stdout machine-readable for long-lived automation protocols. Normal
+    // logs continue to the file sink; errors and fatals remain on stderr.
+    void ReserveStdoutForAutomationProtocol();
+    bool IsStdoutReservedForAutomationProtocol();
     const char* GetLogFilePath();
     int GetLogFileDescriptor();
     void SendToStubLog(AuroraLogLevel level, const char* module, const char* message);

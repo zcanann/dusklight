@@ -1,6 +1,6 @@
 use crate::transport::Transport;
 pub use dusklight_automation_contracts::engine_session::{
-    ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1, SessionReuseAudit, SessionReuseBlocker,
+    SessionReuseAudit, SessionReuseBlocker, ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -263,7 +263,15 @@ struct Envelope {
     build: Option<WorkerBuildIdentity>,
     capabilities: Option<WorkerCapabilities>,
     audit: Option<SessionReuseAudit>,
+    result: Option<String>,
+    episode_shard: Option<String>,
     error: Option<WorkerErrorBody>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchComplete {
+    pub result: String,
+    pub episode_shard: String,
 }
 
 #[derive(Debug)]
@@ -388,16 +396,74 @@ impl<T: Transport> WorkerClient<T> {
         self.command("shutdown", "shutdown").map(drop)
     }
 
+    /// Receives the batch supplied on the engine worker's launch command line.
+    pub fn await_initial_batch(&mut self) -> Result<BatchComplete, ClientError> {
+        self.require_batch_capability()?;
+        let response = self.receive_response(0, "batch_complete")?;
+        batch_complete(response)
+    }
+
+    /// Submits another batch to the same authenticated in-process checkpoint.
+    pub fn run_batch(
+        &mut self,
+        batch: &str,
+        result: &str,
+        winner_tape: Option<&str>,
+    ) -> Result<BatchComplete, ClientError> {
+        self.require_batch_capability()?;
+        if batch.is_empty() || result.is_empty() || winner_tape.is_some_and(str::is_empty) {
+            return Err(ClientError::MissingField("run_batch path"));
+        }
+        let response = self.command_value(
+            json!({
+                "command": "run_batch",
+                "batch": batch,
+                "result": result,
+                "winner_tape": winner_tape,
+            }),
+            "batch_complete",
+        )?;
+        batch_complete(response)
+    }
+
+    fn require_batch_capability(&self) -> Result<(), ClientError> {
+        if !self.hello.as_ref().is_some_and(|hello| {
+            hello.capabilities.persistent_control && hello.capabilities.batch_run
+        }) {
+            return Err(ClientError::UnexpectedResponse {
+                expected: "batch-capable hello",
+                received: "worker without persistent batch capability".into(),
+            });
+        }
+        Ok(())
+    }
+
     fn command(
         &mut self,
         command: &str,
         expected_type: &'static str,
     ) -> Result<Envelope, ClientError> {
+        self.command_value(json!({"command": command}), expected_type)
+    }
+
+    fn command_value(
+        &mut self,
+        mut request: serde_json::Value,
+        expected_type: &'static str,
+    ) -> Result<Envelope, ClientError> {
         let request_id = self.next_request_id;
         self.next_request_id = self.next_request_id.checked_add(1).unwrap_or(1);
-        self.transport.send_line(&serde_json::to_string(
-            &json!({"id": request_id, "command": command}),
-        )?)?;
+        request["id"] = request_id.into();
+        self.transport
+            .send_line(&serde_json::to_string(&request)?)?;
+        self.receive_response(request_id, expected_type)
+    }
+
+    fn receive_response(
+        &mut self,
+        request_id: u64,
+        expected_type: &'static str,
+    ) -> Result<Envelope, ClientError> {
         let line = self
             .transport
             .receive_line()?
@@ -435,9 +501,20 @@ impl<T: Transport> WorkerClient<T> {
     }
 }
 
+fn batch_complete(response: Envelope) -> Result<BatchComplete, ClientError> {
+    Ok(BatchComplete {
+        result: response.result.ok_or(ClientError::MissingField("result"))?,
+        episode_shard: response
+            .episode_shard
+            .ok_or(ClientError::MissingField("episode_shard"))?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transport::LineTransport;
+    use std::io::Cursor;
 
     fn valid_build_identity() -> WorkerBuildIdentity {
         WorkerBuildIdentity {
@@ -491,5 +568,59 @@ mod tests {
         let error = identity.validate().unwrap_err().to_string();
         assert!(error.contains("build.fidelity_profile"));
         assert!(error.contains("must not be empty"));
+    }
+
+    #[test]
+    fn batch_client_sends_typed_request_and_accepts_bound_outputs() {
+        let responses = concat!(
+            "{\"protocol\":{\"name\":\"dusklight-automation\",\"version\":2},",
+            "\"type\":\"hello\",\"ok\":true,\"id\":1,",
+            "\"build\":{\"version\":\"test\",\"describe\":\"test-build\",",
+            "\"revision\":\"1111111111111111111111111111111111111111\",",
+            "\"dirty_digest\":\"\",\"branch\":\"test\",\"source_date\":\"2026-07-18\",",
+            "\"aurora_revision\":\"2222222222222222222222222222222222222222\",",
+            "\"compiler\":\"test\",\"compiler_target\":\"test\",\"build_type\":\"Debug\",",
+            "\"feature_switches\":\"test=ON\",",
+            "\"feature_digest\":\"3333333333333333333333333333333333333333333333333333333333333333\",",
+            "\"fidelity_profile\":\"observe_only\",\"platform\":\"test\",",
+            "\"architecture\":\"x86_64\",\"pointer_bits\":64,\"dirty\":false},",
+            "\"capabilities\":{\"persistent_control\":true,\"engine_session\":false,",
+            "\"headless\":true,\"scenario_load\":false,\"input_tape\":true,",
+            "\"batch_run\":true,\"commands\":[\"hello\",\"run_batch\",\"shutdown\"]}}\n",
+            "{\"protocol\":{\"name\":\"dusklight-automation\",\"version\":2},",
+            "\"type\":\"batch_complete\",\"ok\":true,\"id\":0,",
+            "\"result\":\"first.json\",\"episode_shard\":\"first.json.episodes.dseps\"}\n",
+            "{\"protocol\":{\"name\":\"dusklight-automation\",\"version\":2},",
+            "\"type\":\"batch_complete\",\"ok\":true,\"id\":2,",
+            "\"result\":\"next.json\",\"episode_shard\":\"next.json.episodes.dseps\"}\n"
+        );
+        let reader = Cursor::new(responses.as_bytes().to_vec());
+        let writer = Cursor::new(Vec::<u8>::new());
+        let transport = LineTransport::new(std::io::BufReader::new(reader), writer);
+        let mut client = WorkerClient::new(transport);
+        client.handshake().unwrap();
+        assert_eq!(client.await_initial_batch().unwrap().result, "first.json");
+        assert_eq!(
+            client
+                .run_batch("next.batch.json", "next.json", None)
+                .unwrap()
+                .episode_shard,
+            "next.json.episodes.dseps"
+        );
+        let transport = client.into_transport();
+        let (_, writer) = transport.into_parts();
+        let written = String::from_utf8(writer.into_inner()).unwrap();
+        let requests = written.lines().collect::<Vec<_>>();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(requests[1]).unwrap(),
+            json!({
+                "id": 2,
+                "command": "run_batch",
+                "batch": "next.batch.json",
+                "result": "next.json",
+                "winner_tape": null,
+            })
+        );
     }
 }

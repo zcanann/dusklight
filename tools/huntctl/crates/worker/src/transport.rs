@@ -16,6 +16,10 @@ impl<R, W> LineTransport<R, W> {
     pub fn new(reader: R, writer: W) -> Self {
         Self { reader, writer }
     }
+
+    pub fn into_parts(self) -> (R, W) {
+        (self.reader, self.writer)
+    }
 }
 
 impl<R: BufRead, W: Write> Transport for LineTransport<R, W> {

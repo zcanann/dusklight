@@ -48,6 +48,7 @@ namespace {
 // We use this to check if the LogState is destroyed before attempting to acquire it.
 std::atomic g_logStateAlive(true);
 std::atomic<int> g_logFd(-1);
+std::atomic<bool> g_stdoutReservedForAutomationProtocol(false);
 constexpr size_t MaxRetainedLogCount = 10;
 constexpr size_t MaxRetainedOldLogCount = MaxRetainedLogCount - 1;
 constexpr uintmax_t MaxRetainedOldLogBytes = 100ull * 1024ull * 1024ull;
@@ -322,8 +323,12 @@ void aurora_log_callback(AuroraLogLevel level, const char* module, const char* m
     }
 
     const char* levelStr = LogLevelString(level);
-    FILE* out = LogStreamForLevel(level);
-    WriteLogLine(out, levelStr, module, message, len);
+    if (!g_stdoutReservedForAutomationProtocol.load(std::memory_order_acquire) ||
+        level >= LOG_ERROR)
+    {
+        FILE* out = LogStreamForLevel(level);
+        WriteLogLine(out, levelStr, module, message, len);
+    }
     WriteLogLineToFile(levelStr, module, message, len);
 
     if (level == LOG_FATAL) {
@@ -374,6 +379,14 @@ void dusk::ShutdownFileLogging() {
         return;
     }
     g_logState.CloseFile();
+}
+
+void dusk::ReserveStdoutForAutomationProtocol() {
+    g_stdoutReservedForAutomationProtocol.store(true, std::memory_order_release);
+}
+
+bool dusk::IsStdoutReservedForAutomationProtocol() {
+    return g_stdoutReservedForAutomationProtocol.load(std::memory_order_acquire);
 }
 
 const char* dusk::GetLogFilePath() {
