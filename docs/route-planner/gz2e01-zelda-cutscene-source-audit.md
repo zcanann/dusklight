@@ -119,8 +119,19 @@ The planner now seals that source-backed subset as
 `2c99cd9c90795dd71c94529bc99b7478a32701446245cfc83610c81ed1162905`.
 It proves the ordered demo/room/stage fallback, zero executed STB paragraphs,
 absence of an exact PLAY-cut EventFlag parameter, and the mode-zero PACKAGE
-completion guard. Its coverage keeps the actor-corruption producer, final outer
-event exit, and other return-place writers unresolved.
+completion guard.
+
+A separate `resolved-cutscene-outer-event/v1` artifact with SHA-256
+`a867ffa2abf2a7c4a07810d8b8109b96deb755b068973e1141fd8315cf7938c6`
+verifies the raw stage/event-list resources and proves that PACKAGE PLAY
+advances to zero-timer WAIT, whose flag 5 satisfies the event finish condition.
+It encodes PLAY and WAIT completion as distinct transitions, then preserves the
+outer branch table as three more exact-context transitions: flag2 bit 1
+suppresses scene change, while bit 2 selects the skip exit only when suppression
+is clear (and, as in this REVT record, skip-cut type is 1); otherwise the normal
+exit is selected. Its coverage keeps the
+actor-corruption producer, actual outer branch taken, and other return-place
+writers unresolved.
 
 The failure must therefore still be modeled as a resource/actor failure
 predicate with an unknown exceptional suffix, never as a direct warp to
@@ -176,6 +187,15 @@ route-planner resolve-cutscene-package \
   --topology r-sp301-demo07_02-wrapper.json \
   --semantics gz2e01-demo07_02-semantics.json \
   --output gz2e01-demo07_02-package.json
+
+route-planner resolve-cutscene-outer \
+  --content-identity gz2e01-content.json \
+  --runtime-configuration gz2e01-runtime-en.json \
+  --topology r-sp301-demo07_02-wrapper.json \
+  --package gz2e01-demo07_02-package.json \
+  --stage-resource-file room.dzr \
+  --event-list-resource-file event_list.dat \
+  --output gz2e01-demo07_02-outer.json
 ```
 
 The extraction commands reject malformed offsets, overlapping tables,

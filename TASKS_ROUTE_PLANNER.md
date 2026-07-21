@@ -2614,6 +2614,11 @@ sequence.
         demo-mode write, the exact PLAY cut has no EventFlag write, and mode zero
         completes PACKAGE. Keep the corruption producer, final outer exit, and
         other return-place writers unresolved.
+  - [x] Resolve the exact outer event-manager branch table without selecting a
+        branch for the corruption path: prove PACKAGE PLAY -> zero-timer WAIT ->
+        event finish flag 5, then emit exact-context candidate transitions where
+        clear suppression/skip selects Castle Town, active skip selects Zelda's
+        tower for this REVT type, and suppression prevents either scene change.
 - [ ] Model actor corruption as the producer of the failed-load/exceptional-flow
       predicate, not as a direct Castle Town warp.
 - [ ] Verify whether any writer other than the proven room-loader no-op can run

@@ -33,6 +33,19 @@ For the exact GZ2E01 executable:
   and
 - PACKAGE completes PLAY when demo mode is zero.
 
+Once all parallel staff paths finish, the outer event manager has three
+separate outcomes for this REVT record:
+
+- with scene-change suppression clear and skip inactive, it selects SCLS 1
+  (`F_SP116`, Castle Town);
+- with suppression clear and skip active, this record's skip-cut type 1 selects
+  SCLS 2 (`R_SP107`, Zelda's tower); and
+- with the suppression flag set, it selects no scene change regardless of the
+  skip-active flag.
+
+These are conditional outcomes, not a conclusion about the corruption path.
+That path's two runtime flag values are still unknown.
+
 Because parsing never begins on this path, zero of the nominal STB's semantic
 paragraphs execute. This is stronger than saying a downstream actor resource
 lookup failed after some prefix: it is specifically the all-STB-lookups-missing
@@ -60,12 +73,24 @@ Its nominal program contains 73 actor-animation ID writes over 53 distinct raw
 IDs and 50 actor-shape ID writes over 9 distinct raw IDs. Those counts describe
 the nominal program; the missing-STB branch executes none of them.
 
-The artifact marks archive failure behavior, lookup/parse behavior, and PACKAGE
-mode-zero completion as resolved. It explicitly leaves these unresolved:
+The separate `cutscene-outer-runtime-profile/v1` has SHA-256
+`350cd598eeea13768c8f901e7227fe60b21b125468230b911af497b9ccde9930`.
+It binds the exact package artifact, state-field names, and audited event-data,
+event-manager, and REVT source semantics. The resulting
+`resolved-cutscene-outer-event/v1` artifact has SHA-256
+`a867ffa2abf2a7c4a07810d8b8109b96deb755b068973e1141fd8315cf7938c6`.
+It verifies the raw stage and event-list resources, proves PACKAGE PLAY advances
+to a zero-timer WAIT whose flag 5 satisfies the event finish condition, and
+emits two ordered completion transitions followed by the three conditioned
+outer outcomes.
+
+Together the artifacts mark archive failure behavior, lookup/parse behavior,
+PACKAGE mode-zero completion, and the outer flag-conditioned dispatch table as
+resolved. They explicitly leave these unresolved:
 
 - whether the known actor-corruption setup produces this exact all-lookups-miss
   predicate;
-- which outer event exit ultimately runs; and
+- which outer event case the corruption path ultimately satisfies; and
 - whether any other return-place writer runs on the observed corruption path.
 
 Consequently the artifact cannot directly choose Castle Town or Zelda's tower,
@@ -77,6 +102,15 @@ route-planner resolve-cutscene-package \
   --topology r-sp301-demo07_02-wrapper.json \
   --semantics gz2e01-demo07_02-semantics.json \
   --output gz2e01-demo07_02-package.json
+
+route-planner resolve-cutscene-outer \
+  --content-identity gz2e01-content.json \
+  --runtime-configuration gz2e01-runtime-en.json \
+  --topology r-sp301-demo07_02-wrapper.json \
+  --package gz2e01-demo07_02-package.json \
+  --stage-resource-file room.dzr \
+  --event-list-resource-file event_list.dat \
+  --output gz2e01-demo07_02-outer.json
 ```
 
 An explicit `--profile` supports another audited build or a theorycraft profile,

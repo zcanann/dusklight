@@ -4,6 +4,10 @@ use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::cutscene_import::{
     CutsceneWrapperSourceIdentity, CutsceneWrapperTopology,
 };
+use dusklight_route_planner::cutscene_outer::{
+    CutsceneOuterRuntimeProfile, bundled_gz2e01_cutscene_outer_runtime_profile,
+    resolve_cutscene_outer_event,
+};
 use dusklight_route_planner::cutscene_runtime::{
     CutscenePackageRuntimeProfile, bundled_gz2e01_cutscene_runtime_profile,
     resolve_cutscene_package,
@@ -87,6 +91,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("extract-jstudio-stb") => extract_jstudio_stb(&args[1..]),
         Some("resolve-jstudio-stb") => resolve_jstudio_stb(&args[1..]),
         Some("resolve-cutscene-package") => resolve_cutscene_package_command(&args[1..]),
+        Some("resolve-cutscene-outer") => resolve_cutscene_outer_command(&args[1..]),
         Some("extract-cutscene-wrapper") => extract_cutscene_wrapper(&args[1..]),
         Some("extract-message-flow") => extract_message_flow(&args[1..]),
         Some("extract-orig") => extract_orig(&args[1..]),
@@ -851,6 +856,61 @@ fn resolve_cutscene_package_command(args: &[String]) -> Result<(), Box<dyn Error
             "demo_archive_name": package.demo_archive_name,
             "stb_file": package.stb_file,
             "coverage": package.coverage,
+        }))?
+    );
+    Ok(())
+}
+
+fn resolve_cutscene_outer_command(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let content_path = required_path(args, "--content-identity")?;
+    let runtime_path = required_path(args, "--runtime-configuration")?;
+    let topology_path = required_path(args, "--topology")?;
+    let package_path = required_path(args, "--package")?;
+    let stage_resource_path = required_path(args, "--stage-resource-file")?;
+    let event_list_resource_path = required_path(args, "--event-list-resource-file")?;
+    let output = required_path(args, "--output")?;
+    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let runtime = RuntimeConfiguration::decode_canonical(&fs::read(runtime_path)?)?;
+    let topology = CutsceneWrapperTopology::decode_canonical(&fs::read(topology_path)?)?;
+    let package =
+        dusklight_route_planner::cutscene_runtime::ResolvedCutscenePackage::decode_canonical(
+            &fs::read(package_path)?,
+        )?;
+    let stage_resource = fs::read(stage_resource_path)?;
+    let event_list_resource = fs::read(event_list_resource_path)?;
+    let stage = parse_stage_data(&stage_resource)?;
+    let event_list = parse_event_list(&event_list_resource)?;
+    let profile = match option(args, "--profile") {
+        Some(profile_path) => {
+            CutsceneOuterRuntimeProfile::decode_canonical(&fs::read(profile_path)?)?
+        }
+        None => bundled_gz2e01_cutscene_outer_runtime_profile()?,
+    };
+    let resolved = resolve_cutscene_outer_event(
+        &content,
+        &runtime,
+        &topology,
+        &package,
+        topology.source.stage_archive_sha256,
+        &stage_resource,
+        &event_list_resource,
+        &stage,
+        &event_list,
+        &profile,
+    )?;
+    write_file(&output, &resolved.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": resolved.schema,
+            "output": output,
+            "sha256": resolved.digest()?,
+            "event_name": resolved.event_name,
+            "event_finish_flags": resolved.event_finish_flags,
+            "skip_cut_enabled": resolved.skip_cut_enabled,
+            "skip_cut_type": resolved.skip_cut_type,
+            "transitions": resolved.transitions.len(),
+            "coverage": resolved.coverage,
         }))?
     );
     Ok(())
@@ -1725,6 +1785,7 @@ fn print_usage() {
             "  route-planner extract-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --output PROGRAM.json",
             "  route-planner resolve-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --content-identity CONTENT.json [--profile PROFILE.json] --output SEMANTICS.json",
             "  route-planner resolve-cutscene-package --content-identity CONTENT.json --topology WRAPPER.json --semantics SEMANTICS.json [--profile PROFILE.json] --output PACKAGE.json",
+            "  route-planner resolve-cutscene-outer --content-identity CONTENT.json --runtime-configuration RUNTIME.json --topology WRAPPER.json --package PACKAGE.json --stage-resource-file room.dzr --event-list-resource-file event_list.dat [--profile PROFILE.json] --output OUTER.json",
             "  route-planner extract-cutscene-wrapper --archive ARCHIVE.arc [--stage-resource room.dzr] [--event-list-resource event_list.dat] --event-name NAME --layer LAYER --output WRAPPER.json",
             "  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json",
             "  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json",
