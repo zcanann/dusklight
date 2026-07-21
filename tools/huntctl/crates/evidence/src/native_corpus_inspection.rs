@@ -18,7 +18,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V7: &str = "dusklight-native-corpus-inspection/v7";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V9: &str = "dusklight-native-corpus-inspection/v9";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -1075,6 +1075,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                             observation.player_collision_solver_status,
                         ),
                         ("message_session", observation.message_session_status),
+                        ("event_queue", observation.event_queue_status),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }
@@ -1261,7 +1262,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V7.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V9.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -1410,7 +1411,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V7);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V9);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -1437,7 +1438,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V7);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V9);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count
@@ -1474,6 +1475,18 @@ mod tests {
                 .widths
                 .minimum,
             12
+        );
+    }
+
+    #[test]
+    fn audits_v18_event_queue_coverage() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v18.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(
+            report.channel_coverage["event_queue"].present,
+            report.observation_count
         );
     }
 

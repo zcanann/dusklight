@@ -507,6 +507,97 @@ bool append_message_session_state(std::vector<std::uint8_t>& output,
     return append_actor_identity(output, message.talkActor, error);
 }
 
+bool append_event_queue_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    using EventQueue = MilestoneObservation::EventQueueState;
+    const auto& queue = observation.eventQueue;
+    const bool statusValid = queue.status == Status::Present || queue.status == Status::Unavailable;
+    const bool countValid = queue.pendingCount <= EventQueue::MaximumPendingOrders;
+    const auto joined = [&](const MilestoneObservation::ActorIdentity& identity) {
+        if (!identity.present)
+            return false;
+        const auto found = std::ranges::lower_bound(observation.actors, identity.runtimeGeneration,
+            {}, &MilestoneObservation::Actor::runtimeGeneration);
+        return found != observation.actors.end() &&
+               found->runtimeGeneration == identity.runtimeGeneration &&
+               found->actorName == identity.actorName && found->setId == identity.setId &&
+               found->homeRoom == identity.homeRoom && found->currentRoom == identity.currentRoom &&
+               identity.homePositionPresent && found->homePositionX == identity.homePositionX &&
+               found->homePositionY == identity.homePositionY &&
+               found->homePositionZ == identity.homePositionZ;
+    };
+    const auto referenceValid = [&](const EventQueue::ActorReference& reference,
+                                    const bool channelPresent) {
+        if (!channelPresent)
+            return reference.status == Status::NotSampled && !reference.identity.present;
+        if (reference.status == Status::Present)
+            return joined(reference.identity);
+        return (reference.status == Status::Absent || reference.status == Status::Unavailable) &&
+               !reference.identity.present;
+    };
+    const std::array<const EventQueue::ActorReference*, 7> participants{
+        &queue.activeRequestActor,
+        &queue.activeTargetActor,
+        &queue.activeTalkActor,
+        &queue.activeItemActor,
+        &queue.activeDoorActor,
+        &queue.changeActor,
+        &queue.skipActor,
+    };
+    const bool channelPresent = queue.status == Status::Present;
+    const bool participantsValid = std::ranges::all_of(participants,
+        [&](const auto* reference) { return referenceValid(*reference, channelPresent); });
+    bool pendingReferencesValid = true;
+    bool pendingOrderValid = true;
+    std::uint16_t previousPriority = 0;
+    for (std::size_t index = 0; index < queue.pendingCount; ++index) {
+        const auto& order = queue.pendingOrders[index];
+        pendingReferencesValid &= referenceValid(order.requestActor, channelPresent) &&
+                                  referenceValid(order.targetActor, channelPresent);
+        const bool knownType = order.type <= 7 || (order.type >= 10 && order.type <= 13);
+        pendingOrderValid &=
+            knownType && order.priority != 0 && (index == 0 || previousPriority <= order.priority);
+        previousPriority = order.priority;
+    }
+    const bool unavailablePayloadEmpty = queue.pendingCount == 0 && !queue.skipRegistered;
+    const bool skipConsistent = queue.skipRegistered || queue.skipActor.status != Status::Present;
+    if (!statusValid || !countValid || !participantsValid || !pendingReferencesValid ||
+        !pendingOrderValid || !skipConsistent || (!channelPresent && !unavailablePayloadEmpty))
+    {
+        error = "learning observation has inconsistent event-queue state";
+        return false;
+    }
+
+    append_integer(output, static_cast<std::uint8_t>(queue.status));
+    append_integer(output, queue.pendingCount);
+    append_integer(output, static_cast<std::uint8_t>(queue.skipRegistered));
+    append_integer<std::uint8_t>(output, 0);
+    const auto appendReference = [&](const EventQueue::ActorReference& reference) {
+        append_integer(output, static_cast<std::uint8_t>(reference.status));
+        append_integer<std::uint8_t>(output, 0);
+        append_integer<std::uint16_t>(output, 0);
+        return append_actor_identity(output, reference.identity, error);
+    };
+    for (std::size_t index = 0; index < queue.pendingCount; ++index) {
+        const auto& order = queue.pendingOrders[index];
+        append_integer(output, order.type);
+        append_integer(output, order.flags);
+        append_integer(output, order.hindFlags);
+        append_integer(output, order.eventId);
+        append_integer(output, order.priority);
+        append_integer(output, order.mapToolId);
+        append_integer<std::uint8_t>(output, 0);
+        if (!appendReference(order.requestActor) || !appendReference(order.targetActor))
+            return false;
+    }
+    for (const auto* participant : participants) {
+        if (!appendReference(*participant))
+            return false;
+    }
+    return true;
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -1106,9 +1197,10 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             !append_float(output, wall.realizedRadius, error))
             return false;
     }
-    if (!append_planner_runtime_state(output, observation, error))
+    if (!append_planner_runtime_state(output, observation, error) ||
+        !append_message_session_state(output, observation, error))
         return false;
-    return append_message_session_state(output, observation, error);
+    return append_event_queue_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

@@ -69,6 +69,10 @@ fn golden_v17() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v17.dseps")
 }
 
+fn golden_v18() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v18.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -126,6 +130,31 @@ fn mutate_first_v9_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
 
 fn mutate_first_v13_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden_v13(), mutator)
+}
+
+fn mutate_first_v18_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_first_episode_in(golden_v18(), mutator)
+}
+
+fn first_v18_event_queue_offset(expanded: &[u8]) -> usize {
+    const ACTOR_IDENTITY_SIZE: usize = 25;
+    const ACTOR_REFERENCE_SIZE: usize = 4 + ACTOR_IDENTITY_SIZE;
+    const ORDER_HEADER_SIZE: usize = 12;
+    const QUEUE_HEADER_SIZE: usize = 4;
+    const PARTICIPANT_COUNT: usize = 7;
+    let mut reader = Reader::new(expanded);
+    reader.bytes(PAYLOAD_HEADER_SIZE).unwrap();
+    let observation = decode_observation(&mut reader, OBSERVATION_VERSION_V18).unwrap();
+    let order_count = observation
+        .event_queue
+        .as_ref()
+        .unwrap()
+        .pending_orders
+        .len();
+    let encoded_size = QUEUE_HEADER_SIZE
+        + order_count * (ORDER_HEADER_SIZE + 2 * ACTOR_REFERENCE_SIZE)
+        + PARTICIPANT_COUNT * ACTOR_REFERENCE_SIZE;
+    reader.offset - encoded_size
 }
 
 fn mutate_first_episode_in(source: &[u8], mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
@@ -878,6 +907,84 @@ fn decodes_v17_typed_trigger_volume_component() {
             );
         }
     }
+}
+
+#[test]
+fn decodes_v18_semantic_event_queue_and_pointer_free_participants() {
+    let shard = NativeEpisodeShard::decode(golden_v18()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V18
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(observation.event_queue_status, NativeChannelStatus::Present);
+        let queue = observation.event_queue.as_ref().unwrap();
+        assert_eq!(queue.pending_orders.len(), 2);
+        assert_eq!(queue.pending_orders[0].event_type, 0);
+        assert_eq!(queue.pending_orders[0].priority, 2);
+        assert_eq!(queue.pending_orders[1].event_type, 2);
+        assert_eq!(queue.pending_orders[1].priority, 5);
+        assert_eq!(
+            queue.pending_orders[0]
+                .request_actor
+                .actor
+                .as_ref()
+                .unwrap()
+                .runtime_generation,
+            7
+        );
+        assert_eq!(
+            queue.pending_orders[0].target_actor.status,
+            NativeChannelStatus::Absent
+        );
+        assert_eq!(
+            queue.active_talk_actor.actor.as_ref().unwrap().actor_name,
+            0x123
+        );
+        assert!(!queue.skip_registered);
+        assert_eq!(queue.skip_actor.status, NativeChannelStatus::Absent);
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v17()).unwrap();
+    assert!(
+        legacy
+            .episodes
+            .iter()
+            .all(|episode| episode.steps.iter().all(|step| {
+                [&step.pre_input, &step.post_simulation]
+                    .into_iter()
+                    .all(|observation| {
+                        observation.event_queue_status == NativeChannelStatus::NotSampled
+                            && observation.event_queue.is_none()
+                    })
+            }))
+    );
+}
+
+#[test]
+fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
+    let unknown_type = mutate_first_v18_episode(|expanded| {
+        let queue = first_v18_event_queue_offset(expanded);
+        expanded[queue + 4..queue + 6].copy_from_slice(&9_u16.to_le_bytes());
+    });
+    let error = NativeEpisodeShard::decode(&unknown_type)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("unknown type or zero priority"), "{error}");
+
+    let reversed_priority = mutate_first_v18_episode(|expanded| {
+        let queue = first_v18_event_queue_offset(expanded);
+        expanded[queue + 12..queue + 14].copy_from_slice(&6_u16.to_le_bytes());
+    });
+    let error = NativeEpisodeShard::decode(&reversed_priority)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("semantic priority order"), "{error}");
 }
 
 #[test]

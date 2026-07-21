@@ -323,6 +323,44 @@ struct MilestoneObservation {
     };
     MessageSessionState messageSession;
 
+    // Pending event requests and the actors participating in the active event.
+    // The game stores native pointers in this subsystem; the observer resolves
+    // them immediately to the same stable actor identities used by the complete
+    // learner population. Queue order is semantic priority order, not the
+    // incidental backing-array order.
+    struct EventQueueState {
+        static constexpr std::size_t MaximumPendingOrders = 8;
+
+        struct ActorReference {
+            ChannelStatus status = ChannelStatus::NotSampled;
+            ActorIdentity identity;
+        };
+
+        struct PendingOrder {
+            std::uint16_t type = 0;
+            std::uint16_t flags = 0;
+            std::uint16_t hindFlags = 0;
+            std::int16_t eventId = -1;
+            std::uint16_t priority = 0;
+            std::uint8_t mapToolId = 0xff;
+            ActorReference requestActor;
+            ActorReference targetActor;
+        };
+
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint8_t pendingCount = 0;
+        std::array<PendingOrder, MaximumPendingOrders> pendingOrders{};
+        ActorReference activeRequestActor;
+        ActorReference activeTargetActor;
+        ActorReference activeTalkActor;
+        ActorReference activeItemActor;
+        ActorReference activeDoorActor;
+        ActorReference changeActor;
+        bool skipRegistered = false;
+        ActorReference skipActor;
+    };
+    EventQueueState eventQueue;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

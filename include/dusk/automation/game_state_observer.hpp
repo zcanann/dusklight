@@ -32,6 +32,10 @@ struct MilestoneObservationStorage {
     // controller's bounded actor view is a separate, explicitly lossy hot-path
     // contract and must never silently constrain the training corpus.
     std::vector<MilestoneObservation::Actor> actors;
+    // Transient native addresses used only to resolve pointer-bearing game
+    // relationships against the complete actor walk. They never leave this
+    // observation call or enter an episode artifact.
+    std::vector<const void*> actorPointers;
     std::uint32_t actorObservedCount = 0;
     std::vector<MilestoneObservation::DynamicCollider> dynamicColliders;
     std::array<std::uint8_t, kMilestoneEventFlagCount> eventFlags{};

@@ -3,8 +3,9 @@
 use crate::artifact::Digest;
 use crate::identity::RuntimeConfiguration;
 use crate::native_observation::{
-    NativeChannelStatus, NativeEventHandoffObservation, NativeLearningObservation,
-    NativeMessageSessionObservation, NativePlayerResourcesObservation,
+    NativeChannelStatus, NativeEventActorReferenceObservation, NativeEventHandoffObservation,
+    NativeEventQueueObservation, NativeLearningObservation, NativeMessageSessionObservation,
+    NativePlayerResourcesObservation,
 };
 use crate::snapshot::{
     SNAPSHOT_CHAIN_SCHEMA, STATE_SNAPSHOT_SCHEMA, SnapshotChain, SnapshotChainEntry, StateDiff,
@@ -305,6 +306,19 @@ pub fn snapshot_native_observation(
             .message_session
             .as_ref()
             .map(message_session_fields),
+        ComponentBinding::Session {
+            session_id: context.session_id.clone(),
+        },
+        SemanticLifetime::Action,
+        SerializationOwner::None,
+        &provenance,
+    );
+    push_statused_structured(
+        &mut components,
+        "event-queue",
+        ComponentKind::PendingOperation,
+        observation.event_queue_status,
+        observation.event_queue.as_ref().map(event_queue_fields),
         ComponentBinding::Session {
             session_id: context.session_id.clone(),
         },
@@ -733,6 +747,89 @@ fn message_session_fields(value: &NativeMessageSessionObservation) -> BTreeMap<S
     output
 }
 
+fn event_actor_reference_fields(
+    output: &mut BTreeMap<String, StateValue>,
+    prefix: &str,
+    reference: &NativeEventActorReferenceObservation,
+) {
+    output.insert(
+        format!("{prefix}.status"),
+        StateValue::Text(status_text(reference.status).into()),
+    );
+    if let Some(actor) = &reference.actor {
+        output.insert(
+            format!("{prefix}.runtime_generation"),
+            StateValue::Unsigned(actor.runtime_generation.into()),
+        );
+        output.insert(
+            format!("{prefix}.actor_name"),
+            StateValue::Signed(actor.actor_name.into()),
+        );
+    }
+}
+
+fn event_queue_fields(value: &NativeEventQueueObservation) -> BTreeMap<String, StateValue> {
+    let mut output = fields([
+        (
+            "pending_count",
+            StateValue::Unsigned(value.pending_orders.len() as u64),
+        ),
+        (
+            "skip_registered",
+            StateValue::Boolean(value.skip_registered),
+        ),
+    ]);
+    for (index, order) in value.pending_orders.iter().enumerate() {
+        let prefix = format!("pending.{index}");
+        output.insert(
+            format!("{prefix}.event_type"),
+            StateValue::Unsigned(order.event_type.into()),
+        );
+        output.insert(
+            format!("{prefix}.flags"),
+            StateValue::Unsigned(order.flags.into()),
+        );
+        output.insert(
+            format!("{prefix}.hind_flags"),
+            StateValue::Unsigned(order.hind_flags.into()),
+        );
+        output.insert(
+            format!("{prefix}.event_id"),
+            StateValue::Signed(order.event_id.into()),
+        );
+        output.insert(
+            format!("{prefix}.priority"),
+            StateValue::Unsigned(order.priority.into()),
+        );
+        output.insert(
+            format!("{prefix}.map_tool_id"),
+            StateValue::Unsigned(order.map_tool_id.into()),
+        );
+        event_actor_reference_fields(
+            &mut output,
+            &format!("{prefix}.request_actor"),
+            &order.request_actor,
+        );
+        event_actor_reference_fields(
+            &mut output,
+            &format!("{prefix}.target_actor"),
+            &order.target_actor,
+        );
+    }
+    for (name, reference) in [
+        ("active_request_actor", &value.active_request_actor),
+        ("active_target_actor", &value.active_target_actor),
+        ("active_talk_actor", &value.active_talk_actor),
+        ("active_item_actor", &value.active_item_actor),
+        ("active_door_actor", &value.active_door_actor),
+        ("change_actor", &value.change_actor),
+        ("skip_actor", &value.skip_actor),
+    ] {
+        event_actor_reference_fields(&mut output, name, reference);
+    }
+    output
+}
+
 fn player_resource_fields(
     value: &NativePlayerResourcesObservation,
 ) -> BTreeMap<String, StateValue> {
@@ -815,10 +912,11 @@ mod tests {
     use super::*;
     use crate::identity::RUNTIME_CONFIGURATION_SCHEMA;
     use crate::native_observation::{
-        NativeActorIdentity, NativeActorObservation, NativeMessageFlowObservation,
-        NativePhysicalSlotObservation, NativePlayerActionObservation,
-        NativePlayerRelationshipsObservation, NativeReturnPlaceWriterObservation,
-        NativeRuntimeFileObservation,
+        NativeActorIdentity, NativeActorObservation, NativeEventActorReferenceObservation,
+        NativeEventQueueObservation, NativeMessageFlowObservation,
+        NativePendingEventOrderObservation, NativePhysicalSlotObservation,
+        NativePlayerActionObservation, NativePlayerRelationshipsObservation,
+        NativeReturnPlaceWriterObservation, NativeRuntimeFileObservation,
     };
 
     fn context(sequence: u64) -> NativeSnapshotContext {
@@ -905,6 +1003,41 @@ mod tests {
                     present: true,
                     runtime_generation: 7,
                     actor_name: 0x123,
+                },
+                ..Default::default()
+            }),
+            event_queue_status: NativeChannelStatus::Present,
+            event_queue: Some(NativeEventQueueObservation {
+                pending_orders: vec![NativePendingEventOrderObservation {
+                    event_type: 0,
+                    event_id: 12,
+                    priority: 2,
+                    map_tool_id: 3,
+                    request_actor: NativeEventActorReferenceObservation {
+                        status: NativeChannelStatus::Present,
+                        actor: Some(NativeActorIdentity {
+                            present: true,
+                            runtime_generation: 42,
+                            actor_name: 0x123,
+                        }),
+                    },
+                    target_actor: NativeEventActorReferenceObservation {
+                        status: NativeChannelStatus::Absent,
+                        actor: None,
+                    },
+                    ..Default::default()
+                }],
+                active_request_actor: NativeEventActorReferenceObservation {
+                    status: NativeChannelStatus::Present,
+                    actor: Some(NativeActorIdentity {
+                        present: true,
+                        runtime_generation: 42,
+                        actor_name: 0x123,
+                    }),
+                },
+                skip_actor: NativeEventActorReferenceObservation {
+                    status: NativeChannelStatus::Absent,
+                    actor: None,
                 },
                 ..Default::default()
             }),
@@ -1016,6 +1149,33 @@ mod tests {
         assert_eq!(
             fields["talk_actor_runtime_generation"],
             StateValue::Unsigned(7)
+        );
+    }
+
+    #[test]
+    fn projects_event_requests_and_participants_without_native_pointers() {
+        let snapshot = snapshot_native_observation(&observation(), context(1)).unwrap();
+        let queue = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "event-queue")
+            .unwrap();
+        assert_eq!(queue.component_kind, ComponentKind::PendingOperation);
+        let ComponentPayload::Structured { fields } = &queue.payload else {
+            panic!("event queue must be structured");
+        };
+        assert_eq!(fields["capture_status"], StateValue::Text("present".into()));
+        assert_eq!(fields["pending_count"], StateValue::Unsigned(1));
+        assert_eq!(fields["pending.0.event_type"], StateValue::Unsigned(0));
+        assert_eq!(fields["pending.0.priority"], StateValue::Unsigned(2));
+        assert_eq!(
+            fields["pending.0.request_actor.runtime_generation"],
+            StateValue::Unsigned(42)
+        );
+        assert_eq!(
+            fields["pending.0.target_actor.status"],
+            StateValue::Text("absent".into())
         );
     }
 

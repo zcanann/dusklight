@@ -678,6 +678,23 @@ human-authored successful setup.
       derive relative geometry offline and mask absence for v2-v16 shards.
       This does not yet cover collision-backed exits, inactive placements or
       richer loading/event clocks, so the parent remains open.
+    - [x] Capture the bounded event-control request graph without turning an
+      observed interaction opportunity into a prescribed action. Learning
+      observation v18 retains the engine's priority-ordered pending requests,
+      typed event IDs/flags/map-tool IDs, request/target endpoints and active
+      request/target/talk/item/door/change/skip roles. Every actor endpoint has
+      explicit present/absent/unavailable status and, when present, a complete
+      pointer-free identity joined to the independently captured actor set;
+      raw or stale pointers are never dereferenced or serialized. The native
+      writer and Rust reader reject over-capacity or misordered queues, unknown
+      event types, zero priorities, status/payload disagreement and any
+      detached or partially mismatched actor identity. Corpus and temporal
+      reports expose the channel, and the planner projection retains every
+      request and role as generic pending-operation state. Cross-language v17
+      fixture `32155dd9...edac0d` plus legacy-missingness and tamper tests pass.
+      This supplies evidence from whatever requests ordinary gameplay creates;
+      it contains no selected actor, desired overlap, input timing, outcome,
+      route or reward. Door/warp/loading queues and clock domains remain open.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

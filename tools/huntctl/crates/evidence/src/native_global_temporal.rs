@@ -352,6 +352,15 @@ fn record_transition(
         before.message_session.as_ref(),
         after.message_session.as_ref()
     );
+    record!(
+        "event_queue.status",
+        before.event_queue_status != after.event_queue_status
+    );
+    record_optional!(
+        "event_queue.value",
+        before.event_queue.as_ref(),
+        after.event_queue.as_ref()
+    );
 }
 
 pub fn inspect_global_temporal_coverage(shards: &[NativeEpisodeShard]) -> GlobalTemporalCoverage {
@@ -435,5 +444,25 @@ mod tests {
         assert_eq!(report.stages[0].stage, source);
         assert_eq!(report.stages[0].context_change_count, 1);
         assert_eq!(report.stages[0].fields["stage"].changed_pairs, 1);
+    }
+
+    #[test]
+    fn reports_event_queue_changes_without_interpreting_an_interaction() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v18.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .event_queue
+            .as_mut()
+            .unwrap()
+            .pending_orders[0]
+            .priority += 1;
+
+        let report = inspect_global_temporal_coverage(&[shard]);
+        assert_eq!(report.fields["event_queue.value"].compared_pairs, 1);
+        assert_eq!(report.fields["event_queue.value"].changed_pairs, 1);
     }
 }
