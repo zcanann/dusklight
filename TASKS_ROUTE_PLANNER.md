@@ -1605,7 +1605,11 @@ evidenced overlays over the generated base rather than silent edits to it.
 - [x] Define the supported-input policy: pre-generated known fact packs for normal
       use, optional `orig/` extraction for verification/new inputs, and explicit
       unsupported behavior for unknown identities.
-- [ ] Inventory extracted world-data schemas and their missing fields.
+- [x] Inventory extracted world-data schemas and their missing fields.
+  - `docs/route-planner/world-data-schema-inventory.md` separates the native
+    orig bundle, compatible world inventory, imported planner facts, and diff/
+    cache artifacts; records exact GZ2E01 coverage; and lists missing fields by
+    identity, topology, geometry/live state, messages/events, and storage.
 - [ ] Catalogue all save/runtime components and reset boundaries.
 - [ ] Audit title, no-file, save-slot, load, void, death, and savewarp flows.
 - [ ] Audit SCLS and actor-driven transition consumers.
