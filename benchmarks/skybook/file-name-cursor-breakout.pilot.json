@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-skybook-pilot/v1",
-  "content_sha256": "4276a41fb5d49e4ef0317c1f0f63ba685d297a4fc508c170e90e87f7e52d6119",
+  "content_sha256": "0077e54689b9999d82b23dbde00e326d92a399281802f1dc3da1d6282458b8a7",
   "source_manifest_content_sha256": "bec0be7ef25f970c0ee59ff2105ec734b17a689ed41d3dc924c2037a311aedf6",
   "source_repository_url": "https://github.com/qwertyquerty/skybook",
   "source_git_revision": "e9104852ff6b87862b67100f58aaa729096b42dc",
@@ -53,17 +53,17 @@
     {
       "role": "aurora_command_processor",
       "path": "extern/aurora/lib/gx/command_processor.cpp",
-      "sha256": "60649e5bca5e72e193dbbcc09a386343afa71084764fd0a8050195767bb039c4"
+      "sha256": "d89d00ec0b0e8fb7e44783eb0e6527d1c5a05b0d9eebc4ea9642ce6e56e86341"
     },
     {
       "role": "aurora_gfx_interface",
       "path": "extern/aurora/include/aurora/gfx.h",
-      "sha256": "b8a2c1f9d5cf78cf8d144f19711218dcb3ecdde2bef2385df0afdd8b95c0382c"
+      "sha256": "2779bae7e230611c9802089ebfad80525825eccc2dc0a71e2faf55aa39910e99"
     },
     {
       "role": "aurora_renderer_diagnostic",
       "path": "extern/aurora/lib/aurora.cpp",
-      "sha256": "4399947da6fbc4e096541c9b637512ee3a80d1ec3be5fd65644d11660121cecd"
+      "sha256": "59c6b8669b41acf09714a4c0b78f62265d563e413b4ec2e67c0603fb03addf37"
     },
     {
       "role": "name_entry_observer_implementation",
@@ -88,17 +88,17 @@
     {
       "role": "native_automation_integration",
       "path": "src/m_Do/m_Do_main.cpp",
-      "sha256": "79ea6d96a8d4314c9ce3eeb776e9d0b1fc625b399306765176a9e52616b84247"
+      "sha256": "be23c681bd6f18c6d0235c74f9656402546db33d8d8f1fa6079cdefd4d7f015a"
     },
     {
       "role": "original_layout_shadow_implementation",
       "path": "src/d/d_name.cpp",
-      "sha256": "b31c7b37d3598bb234cccc1460587b054774b9da167db5a4025c982a8e42788e"
+      "sha256": "e6f8b7ecaff38b1c974ff242f3a1ccee0a905e4cddcdd459977a5c53a06dd963"
     },
     {
       "role": "original_name_layout_interface",
       "path": "include/d/d_name.h",
-      "sha256": "84ba778a40ecfd7e3fda355c1b905680b7d7d73d3ead34455615f201e3cfd2bd"
+      "sha256": "04cfb35ac4e6037f189d0dc9f09fd75bf0bd937781536a55f4db92bc9115bc33"
     },
     {
       "role": "semantic_oracle_implementation",
