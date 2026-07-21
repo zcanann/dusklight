@@ -905,8 +905,20 @@ human-authored successful setup.
       The cross-language fixture `3e599f74...b11f7f` produced four present
       boundaries, 256 rows and sealed view `fa708aa3...46a26d` / blob
       `c0908f65...c461`. Native, evidence, view, CLI, legacy-missingness and
-      resealed-tamper tests pass. Live temporal variation, door/warp queues and
-      RNG identity remain open, so the parent remains incomplete.
+      resealed-tamper tests pass. Live temporal variation and door/warp queues
+      remain open, so the parent remains incomplete.
+    - [x] Authenticate the already complete two-stream RNG observation instead
+      of treating its version fields as ordinary values. The native learning
+      writer and Rust shard reader now require snapshot version 1, the exact
+      primary/secondary stream order, zero reserved bytes and algorithm version
+      1 before any episode can enter learner code. Exact state words and call
+      counts remain available as learner signals; snapshot and algorithm
+      versions remain provenance only. Native tests reject changed writer-side
+      identity, and a recompressed mutation of the v24 cross-language fixture
+      proves that reader-side snapshot or algorithm drift fails closed. This
+      adds no RNG manipulation, objective, action preference or reward. Live
+      temporal variation and door/warp queues remain open, so the parent remains
+      incomplete.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

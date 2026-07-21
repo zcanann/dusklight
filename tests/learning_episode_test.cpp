@@ -1086,6 +1086,31 @@ void test_clock_domains_fail_closed() {
     REQUIRE(error.find("inconsistent clock-domain") != std::string::npos);
 }
 
+void test_rng_identity_fails_closed() {
+    ObservationFixture invalidSnapshot;
+    invalidSnapshot.observation.rng.version = kGameRngSnapshotVersion + 1;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, invalidSnapshot.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("unsupported RNG snapshot identity") != std::string::npos);
+
+    ObservationFixture invalidAlgorithm;
+    invalidAlgorithm.observation.rng.streams[1].algorithmVersion =
+        kGameRngAlgorithmVersion + 1;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, invalidAlgorithm.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("unsupported RNG stream identity") != std::string::npos);
+}
+
 void test_room_load_state_fails_closed() {
     ObservationFixture invalidPhase;
     invalidPhase.observation.roomLoad.rooms[0].scenePhase = 5;
@@ -1215,6 +1240,7 @@ int main(const int argc, char** argv) {
     test_attention_candidates_fail_closed();
     test_event_transition_fails_closed();
     test_clock_domains_fail_closed();
+    test_rng_identity_fails_closed();
     test_room_load_state_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();

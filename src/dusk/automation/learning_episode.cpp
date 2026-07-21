@@ -1241,6 +1241,23 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         return false;
     append_raw_pad(output, context.previousInput);
 
+    if (observation.rng.version != kGameRngSnapshotVersion ||
+        observation.rng.streamCount != kGameRngStreamCount)
+    {
+        error = "learning observation has unsupported RNG snapshot identity";
+        return false;
+    }
+    for (std::size_t index = 0; index < observation.rng.streams.size(); ++index) {
+        const auto& stream = observation.rng.streams[index];
+        if (stream.id != static_cast<GameRngStreamId>(index) ||
+            std::ranges::any_of(
+                stream.reserved, [](const std::uint8_t value) { return value != 0; }) ||
+            stream.algorithmVersion != kGameRngAlgorithmVersion)
+        {
+            error = "learning observation has unsupported RNG stream identity";
+            return false;
+        }
+    }
     append_integer(output, observation.rng.version);
     append_integer(output, observation.rng.streamCount);
     for (const GameRngStreamSnapshot& stream : observation.rng.streams) {

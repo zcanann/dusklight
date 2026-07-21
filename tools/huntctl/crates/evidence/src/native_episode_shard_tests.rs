@@ -1316,6 +1316,54 @@ fn rejects_noncanonical_v24_room_scene_phase() {
 }
 
 #[test]
+fn rejects_changed_rng_snapshot_and_algorithm_identity() {
+    let mut wire = Vec::new();
+    wire.extend_from_slice(&RNG_SNAPSHOT_VERSION.to_le_bytes());
+    wire.extend_from_slice(&2_u32.to_le_bytes());
+    for id in 0_u8..2 {
+        wire.push(id);
+        wire.extend_from_slice(&[0; 3]);
+        wire.extend_from_slice(&RNG_ALGORITHM_VERSION.to_le_bytes());
+        wire.extend_from_slice(&0_i32.to_le_bytes());
+        wire.extend_from_slice(&0_i32.to_le_bytes());
+        wire.extend_from_slice(&0_i32.to_le_bytes());
+        wire.extend_from_slice(&0_u64.to_le_bytes());
+    }
+
+    let changed_snapshot = mutate_first_v24_episode(|expanded| {
+        let offset = expanded
+            .windows(wire.len())
+            .position(|window| window == wire)
+            .expect("v24 RNG wire block");
+        expanded[offset..offset + 4].copy_from_slice(&(RNG_SNAPSHOT_VERSION + 1).to_le_bytes());
+    });
+    let error = NativeEpisodeShard::decode(&changed_snapshot)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("unsupported RNG snapshot identity"),
+        "{error}"
+    );
+
+    let changed_algorithm = mutate_first_v24_episode(|expanded| {
+        let offset = expanded
+            .windows(wire.len())
+            .position(|window| window == wire)
+            .expect("v24 RNG wire block");
+        let second_algorithm = offset + 8 + 28 + 4;
+        expanded[second_algorithm..second_algorithm + 4]
+            .copy_from_slice(&(RNG_ALGORITHM_VERSION + 1).to_le_bytes());
+    });
+    let error = NativeEpisodeShard::decode(&changed_algorithm)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("unsupported RNG algorithm identity"),
+        "{error}"
+    );
+}
+
+#[test]
 fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
     let unknown_type = mutate_first_v18_episode(|expanded| {
         let queue = first_v18_event_queue_offset(expanded);

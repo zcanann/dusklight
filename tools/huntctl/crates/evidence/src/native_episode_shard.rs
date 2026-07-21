@@ -45,6 +45,8 @@ const OBSERVATION_VERSION_V22: u16 = 22;
 const OBSERVATION_VERSION_V23: u16 = 23;
 const OBSERVATION_VERSION_V24: u16 = 24;
 const ACTION_VERSION: u16 = 2;
+const RNG_SNAPSHOT_VERSION: u32 = 1;
+const RNG_ALGORITHM_VERSION: u32 = 1;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
 const MAX_ACTORS: usize = u16::MAX as usize;
@@ -3175,8 +3177,10 @@ fn decode_observation(
     let previous_input = decode_pad(reader)?;
     let rng_version = reader.u32()?;
     let rng_count = reader.u32()?;
-    if rng_count != 2 {
-        return Err(NativeEpisodeShardError::new("unsupported RNG stream count"));
+    if rng_version != RNG_SNAPSHOT_VERSION || rng_count != 2 {
+        return Err(NativeEpisodeShardError::new(
+            "unsupported RNG snapshot identity",
+        ));
     }
     let mut rng_streams = Vec::with_capacity(2);
     for expected_id in 0..2 {
@@ -3184,9 +3188,15 @@ fn decode_observation(
         if id != expected_id || reader.bytes(3)?.iter().any(|byte| *byte != 0) {
             return Err(NativeEpisodeShardError::new("noncanonical RNG stream"));
         }
+        let algorithm_version = reader.u32()?;
+        if algorithm_version != RNG_ALGORITHM_VERSION {
+            return Err(NativeEpisodeShardError::new(
+                "unsupported RNG algorithm identity",
+            ));
+        }
         rng_streams.push(NativeRngStream {
             id,
-            algorithm_version: reader.u32()?,
+            algorithm_version,
             state: [reader.i32()?, reader.i32()?, reader.i32()?],
             call_count: reader.u64()?,
         });
