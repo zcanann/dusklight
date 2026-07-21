@@ -161,8 +161,20 @@ route-planner compile-message-flows \
   --runtime-configuration runtime.json \
   --profile message-import-profile.json \
   --overlays audited-resource-overlays.json \
-  --output compiled-message-programs.json
+  --output compiled-message-programs.json \
+  --manifest compiled-message-programs.manifest.json
 ```
+
+The compiled command uses the normal fact-pack manifest contract. It records
+the selected message archives, import profile, optional overlay set, extraction
+schema, exact content, coverage limits, and payload digest. The payload retains
+each source program beside its compiled artifact, so it can be recompiled and
+validated after the original `orig/` tree is removed.
+
+`compose --message-flow-set compiled-message-programs.json` merges the generated
+aliases/readers/transitions into cloned base catalogs before applying ordinary
+refinement layers. Any duplicate ID or broken cross-reference rejects the merge
+without mutating either base catalog.
 
 ## Remaining import work
 
@@ -175,5 +187,4 @@ but production fact-pack integration still needs to:
 3. audit additional generic item, pending-operation, jump, event-request, and
    cut handoff handlers;
 4. emit central event and Ooccoo cleanup callers from their actual predicates;
-5. connect compiled sets to the normal sealed fact-pack production command; and
-6. compare semantic flow differences across builds and languages.
+5. compare semantic flow differences across builds and languages.

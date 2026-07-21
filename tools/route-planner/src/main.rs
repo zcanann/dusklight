@@ -12,7 +12,7 @@ use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, Runtime
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::message_flow::{MessageFlowImportProfile, MessageFlowProgramSet};
 use dusklight_route_planner::message_import::{
-    CompiledMessageFlowSet, MessageFlowResourceOverlaySet,
+    COMPILED_MESSAGE_FLOW_SET_SCHEMA, CompiledMessageFlowSet, MessageFlowResourceOverlaySet,
 };
 use dusklight_route_planner::orig_diff::compare_orig_bundles;
 use dusklight_route_planner::orig_discovery::{
@@ -182,6 +182,7 @@ fn compile_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
     let runtime_path = required_path(args, "--runtime-configuration")?;
     let profile_path = required_path(args, "--profile")?;
     let output = required_path(args, "--output")?;
+    let manifest_output = required_path(args, "--manifest")?;
     let bundle = dusklight_route_planner::orig_discovery::ExtractedOrigBundle::decode_canonical(
         &fs::read(bundle_path)?,
     )?;
@@ -194,12 +195,81 @@ fn compile_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
         None => None,
     };
     let set = CompiledMessageFlowSet::build(&bundle, &runtime, &profile, overlays.as_ref())?;
-    write_file(&output, &set.canonical_bytes()?)?;
+    let bytes = set.canonical_bytes()?;
+    let mut sources = vec![FactPackSource {
+        kind: SourceArtifactKind::SourceAudit,
+        id: "message-flow/import-profile".into(),
+        sha256: profile.digest()?,
+    }];
+    if let Some(overlays) = &overlays {
+        sources.push(FactPackSource {
+            kind: SourceArtifactKind::SourceAudit,
+            id: "message-flow/resource-overlays".into(),
+            sha256: overlays.digest()?,
+        });
+    }
+    sources.extend(set.resources.iter().map(|resource| FactPackSource {
+        kind: SourceArtifactKind::MessageArchive,
+        id: format!(
+            "message-flow/{}/group-{:03}",
+            set.locale_bundle.to_ascii_lowercase(),
+            resource.message_group
+        ),
+        sha256: resource.archive_sha256,
+    }));
+    let manifest = FactPackManifest::build(
+        format!(
+            "message-flow.{}.{}",
+            set.locale_bundle.to_ascii_lowercase(),
+            &set.digest()?.to_string()[..24]
+        ),
+        bundle.content.clone(),
+        ExtractorIdentity {
+            name: "route-planner-message-flow".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            executable_sha256: Digest(Sha256::digest(fs::read(env::current_exe()?)?).into()),
+            schema_sha256: Digest(Sha256::digest(COMPILED_MESSAGE_FLOW_SET_SCHEMA).into()),
+        },
+        sources,
+        vec![
+            FactPackCoverage {
+                domain: CoverageDomain::MessageFlows,
+                scope: "message-flow".into(),
+                status: CoverageStatus::Partial,
+                detail: "Every selected FLW1/FLI1 node is retained; known generic handlers compile and unsupported handlers remain explicit unknown requirements.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::StorageBindings,
+                scope: "message-flow".into(),
+                status: CoverageStatus::Partial,
+                detail: "The exact import profile supplies known temporary, persistent, and switch layouts; additional handler-owned stores remain open.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::HardGuards,
+                scope: "message-flow".into(),
+                status: CoverageStatus::Partial,
+                detail: "Known branch predicates are executable; actor entry, interaction, and unsupported event guards remain separate.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::PhysicalFeasibility,
+                scope: "message-flow".into(),
+                status: CoverageStatus::Unavailable,
+                detail: "Message resources do not establish actor reachability, trigger geometry, interruption timing, or player control.".into(),
+            },
+        ],
+        COMPILED_MESSAGE_FLOW_SET_SCHEMA,
+        set.digest()?,
+    )?;
+    manifest.verify_payload(&bytes)?;
+    write_file(&output, &bytes)?;
+    write_file(&manifest_output, &manifest.canonical_bytes()?)?;
     println!(
         "{}",
         serde_json::to_string_pretty(&json!({
             "schema": set.schema,
             "output": output,
+            "manifest": manifest_output,
+            "manifest_sha256": manifest.digest()?,
             "sha256": set.digest()?,
             "program_set_sha256": set.program_set_sha256,
             "overlay_set_sha256": set.overlay_set_sha256,
@@ -893,8 +963,13 @@ fn compose(args: &[String]) -> Result<(), Box<dyn Error>> {
     let pack_paths = repeated_option(args, "--pack");
     let route_overlay_paths = repeated_option(args, "--route-overlay");
     let what_if_overlay_paths = repeated_option(args, "--what-if-overlay");
-    let facts = FactCatalog::decode_canonical(&fs::read(facts_path)?)?;
-    let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics_path)?)?;
+    let mut facts = FactCatalog::decode_canonical(&fs::read(facts_path)?)?;
+    let mut mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics_path)?)?;
+    let message_flow_set_paths = repeated_option(args, "--message-flow-set");
+    for path in &message_flow_set_paths {
+        let set = CompiledMessageFlowSet::decode_canonical(&fs::read(path)?)?;
+        set.merge_into(&mut facts, &mut mechanics)?;
+    }
     let load_packs = |paths: Vec<String>| {
         paths
             .into_iter()
@@ -922,6 +997,7 @@ fn compose(args: &[String]) -> Result<(), Box<dyn Error>> {
             "enabled_packs": layers.enabled_packs.len(),
             "route_local_overlays": layers.route_local_overlays.len(),
             "ephemeral_what_if_overlays": layers.ephemeral_what_if_overlays.len(),
+            "message_flow_sets": message_flow_set_paths.len(),
             "aliases": catalog.facts.aliases.len(),
             "derived_facts": catalog.facts.derived_facts.len(),
             "transitions": catalog.mechanics.transitions.len(),
@@ -1259,9 +1335,9 @@ fn print_usage() {
             "Independent TP route planner:",
             "  route-planner cache-fact-pack --cache CACHE --payload PAYLOAD.json --manifest MANIFEST.json --receipt RECEIPT.json",
             "  route-planner compile-cutscene --program PROGRAM.json --output TRANSITIONS.json",
-            "  route-planner compile-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json [--overlays OVERLAYS.json] --output COMPILED.json",
+            "  route-planner compile-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json [--overlays OVERLAYS.json] --output COMPILED.json --manifest MANIFEST.json",
             "  route-planner construct-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json --output PROGRAMS.json",
-            "  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json",
+            "  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--message-flow-set MESSAGE.json]... [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json",
             "  route-planner diff-orig --left LEFT.json --right RIGHT.json [--left-locale LOCALE --right-locale LOCALE] --output DIFF.json",
             "  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]",
             "  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json",

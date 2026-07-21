@@ -584,8 +584,10 @@ The current code shows:
   exactly; unknown node types have no invented successor, unsupported handlers
   retain unknown requirements, and separately evidenced event/cleanup contracts
   can express item handoffs, controlled jumps, and caller-specific cleanup.
-  Automatic construction/pack merge for every selected language resource and
-  further handler audits remain open. See
+  Exact-language program-set construction, digest-pinned overlays, sealed
+  compiled fact packs, and transactional base-catalog merge are implemented;
+  audited production profiles, actor entry contracts, and further handler
+  audits remain open. See
   `docs/route-planner/message-flow-programs.md`.
 - Planner service schema v21 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
@@ -1831,10 +1833,12 @@ Deliverable: replayable state evidence that can validate transition rules.
         event and cleanup contracts; duplicate IDs and invalid references fail
         transactionally instead of partially merging. The standalone
         `compile-message-flows` command emits the compiled set.
+  - [x] Seal each compiled set with the normal fact-pack manifest and source/
+        coverage records, and let `compose --message-flow-set` merge one or more
+        sets transactionally into ordinary base catalogs before refinements.
   - [ ] Publish audited exact-build import profiles, attach stage/actor entry
         contracts, import additional decidable item/event/jump handlers and real
-        cleanup caller predicates, and connect compiled sets to sealed fact-pack
-        production.
+        cleanup caller predicates.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.
