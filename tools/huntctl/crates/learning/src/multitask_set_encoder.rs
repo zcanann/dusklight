@@ -17,12 +17,12 @@ use crate::trainable_set_encoder::{
 use dusklight_evidence::native_episode_shard::{
     NativeActorObservation, NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V1: &str =
-    "dusklight-multitask-set-encoder-report/v1";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V2: &str =
+    "dusklight-multitask-set-encoder-report/v2";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -41,6 +41,7 @@ pub struct MultiTaskSetSample {
 #[derive(Clone, Debug)]
 pub struct NativeMultiTaskActorCorpus {
     pub actor_feature_schema_sha256: Digest,
+    pub feature_spec: NativeEncoderFeatureSpec,
     pub target_names: Vec<String>,
     pub training_dataset_sha256: Digest,
     pub validation_dataset_sha256: Digest,
@@ -48,6 +49,161 @@ pub struct NativeMultiTaskActorCorpus {
     pub training: Vec<MultiTaskSetSample>,
     pub validation: Vec<MultiTaskSetSample>,
     pub test: Vec<MultiTaskSetSample>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeEncoderChannelFamily {
+    CorePlayerMotion,
+    CoreActionPhase,
+    CoreEventContext,
+    CorePreviousInput,
+    CoreCameraCollisionWorld,
+    CoreRng,
+    CoreGoal,
+    ActorPopulation,
+    ActorIdentity,
+    ActorMotion,
+    ActorLifecyclePhysics,
+    ActorLinkRelative,
+    ActorParentRelative,
+    ActorAttention,
+    ActorEventParticipation,
+    ActorReturnWriter,
+    ActorEnemyBase,
+    ActorTriggerVolume,
+    ActorPlayerRelationships,
+}
+
+impl NativeEncoderChannelFamily {
+    pub const ALL: [Self; 19] = [
+        Self::CorePlayerMotion,
+        Self::CoreActionPhase,
+        Self::CoreEventContext,
+        Self::CorePreviousInput,
+        Self::CoreCameraCollisionWorld,
+        Self::CoreRng,
+        Self::CoreGoal,
+        Self::ActorPopulation,
+        Self::ActorIdentity,
+        Self::ActorMotion,
+        Self::ActorLifecyclePhysics,
+        Self::ActorLinkRelative,
+        Self::ActorParentRelative,
+        Self::ActorAttention,
+        Self::ActorEventParticipation,
+        Self::ActorReturnWriter,
+        Self::ActorEnemyBase,
+        Self::ActorTriggerVolume,
+        Self::ActorPlayerRelationships,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::CorePlayerMotion => "core_player_motion",
+            Self::CoreActionPhase => "core_action_phase",
+            Self::CoreEventContext => "core_event_context",
+            Self::CorePreviousInput => "core_previous_input",
+            Self::CoreCameraCollisionWorld => "core_camera_collision_world",
+            Self::CoreRng => "core_rng",
+            Self::CoreGoal => "core_goal",
+            Self::ActorPopulation => "actor_population",
+            Self::ActorIdentity => "actor_identity",
+            Self::ActorMotion => "actor_motion",
+            Self::ActorLifecyclePhysics => "actor_lifecycle_physics",
+            Self::ActorLinkRelative => "actor_link_relative",
+            Self::ActorParentRelative => "actor_parent_relative",
+            Self::ActorAttention => "actor_attention",
+            Self::ActorEventParticipation => "actor_event_participation",
+            Self::ActorReturnWriter => "actor_return_writer",
+            Self::ActorEnemyBase => "actor_enemy_base",
+            Self::ActorTriggerVolume => "actor_trigger_volume",
+            Self::ActorPlayerRelationships => "actor_player_relationships",
+        }
+    }
+
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|family| family.name() == name)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEncoderFeatureSpec {
+    pub families: Vec<NativeEncoderChannelFamily>,
+}
+
+impl NativeEncoderFeatureSpec {
+    pub fn all() -> Self {
+        Self {
+            families: NativeEncoderChannelFamily::ALL.into(),
+        }
+    }
+
+    pub fn excluding(
+        excluded: impl IntoIterator<Item = NativeEncoderChannelFamily>,
+    ) -> Result<Self, TrainableSetError> {
+        let excluded = excluded.into_iter().collect::<BTreeSet<_>>();
+        Self::new(
+            NativeEncoderChannelFamily::ALL
+                .into_iter()
+                .filter(|family| !excluded.contains(family)),
+        )
+    }
+
+    pub fn new(
+        families: impl IntoIterator<Item = NativeEncoderChannelFamily>,
+    ) -> Result<Self, TrainableSetError> {
+        let families = families.into_iter().collect::<BTreeSet<_>>();
+        let spec = Self {
+            families: families.into_iter().collect(),
+        };
+        spec.validate()?;
+        Ok(spec)
+    }
+
+    pub fn validate(&self) -> Result<(), TrainableSetError> {
+        if self.families.is_empty() || self.families.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return Err(TrainableSetError::new(
+                "native encoder feature spec must be nonempty, unique, and canonical",
+            ));
+        }
+        let has_actor_features = self
+            .families
+            .iter()
+            .any(|family| actor_column_family(*family));
+        if has_actor_features
+            && !self
+                .families
+                .contains(&NativeEncoderChannelFamily::ActorPopulation)
+        {
+            return Err(TrainableSetError::new(
+                "native encoder actor columns require the actor_population family",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn contains(&self, family: NativeEncoderChannelFamily) -> bool {
+        self.families.binary_search(&family).is_ok()
+    }
+}
+
+fn actor_column_family(family: NativeEncoderChannelFamily) -> bool {
+    matches!(
+        family,
+        NativeEncoderChannelFamily::ActorIdentity
+            | NativeEncoderChannelFamily::ActorMotion
+            | NativeEncoderChannelFamily::ActorLifecyclePhysics
+            | NativeEncoderChannelFamily::ActorLinkRelative
+            | NativeEncoderChannelFamily::ActorParentRelative
+            | NativeEncoderChannelFamily::ActorAttention
+            | NativeEncoderChannelFamily::ActorEventParticipation
+            | NativeEncoderChannelFamily::ActorReturnWriter
+            | NativeEncoderChannelFamily::ActorEnemyBase
+            | NativeEncoderChannelFamily::ActorTriggerVolume
+            | NativeEncoderChannelFamily::ActorPlayerRelationships
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -63,6 +219,15 @@ impl NativeMultiTaskActorCorpus {
         dataset: &NativeAuxiliaryDataset,
         shard: &NativeEpisodeShard,
     ) -> Result<Self, TrainableSetError> {
+        Self::build_with_spec(dataset, shard, NativeEncoderFeatureSpec::all())
+    }
+
+    pub fn build_with_spec(
+        dataset: &NativeAuxiliaryDataset,
+        shard: &NativeEpisodeShard,
+        feature_spec: NativeEncoderFeatureSpec,
+    ) -> Result<Self, TrainableSetError> {
+        feature_spec.validate()?;
         dataset
             .validate()
             .map_err(|error| TrainableSetError::new(error.to_string()))?;
@@ -77,7 +242,7 @@ impl NativeMultiTaskActorCorpus {
                 "native multitask sources are detached or span unsupported shards",
             ));
         }
-        let actor_feature_schema_sha256 = native_actor_feature_schema()?;
+        let actor_feature_schema_sha256 = native_actor_feature_schema(&feature_spec)?;
         let episodes = shard
             .episodes
             .iter()
@@ -107,15 +272,29 @@ impl NativeMultiTaskActorCorpus {
                     "native multitask actor observations must be complete",
                 ));
             }
-            let (base, base_present) = broad_base(&step.pre_input);
+            let (mut base, mut base_present) = broad_base(&step.pre_input);
+            retain_feature_families(
+                &mut base,
+                &mut base_present,
+                &native_base_feature_families(),
+                &feature_spec,
+            );
             let (targets, target_present) = native_targets(example);
+            let mut nodes = if feature_spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
+                native_actor_nodes(&step.pre_input)
+            } else {
+                Vec::new()
+            };
+            for node in &mut nodes {
+                retain_node_feature_families(node, &feature_spec);
+            }
             let sample = MultiTaskSetSample {
                 input: TypedSetSample {
                     sample_sha256: example.example_sha256,
                     actor_feature_schema_sha256,
                     base,
                     base_present,
-                    nodes: native_actor_nodes(&step.pre_input),
+                    nodes,
                     target: 0.0,
                 },
                 targets,
@@ -134,6 +313,7 @@ impl NativeMultiTaskActorCorpus {
         }
         Ok(Self {
             actor_feature_schema_sha256,
+            feature_spec,
             target_names,
             training_dataset_sha256: sample_manifest_digest(&training)?,
             validation_dataset_sha256: sample_manifest_digest(&validation)?,
@@ -255,6 +435,31 @@ pub struct MultiTaskSetEvaluation {
     pub training_mean_normalized_mse: f64,
     pub relative_improvement: f64,
     pub heads: Vec<AuxiliaryHeadEvaluation>,
+    pub rare_events: Vec<RareEventMetrics>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BinaryEventMetrics {
+    pub positives: usize,
+    pub negatives: usize,
+    pub true_positives: usize,
+    pub false_positives: usize,
+    pub true_negatives: usize,
+    pub false_negatives: usize,
+    pub precision: Option<f64>,
+    pub recall: Option<f64>,
+    pub specificity: Option<f64>,
+    pub balanced_accuracy: Option<f64>,
+    pub f1: Option<f64>,
+    pub brier_score: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RareEventMetrics {
+    pub name: String,
+    pub threshold: f64,
+    pub model: BinaryEventMetrics,
+    pub training_mean_baseline: BinaryEventMetrics,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -276,6 +481,7 @@ pub struct MultiTaskSetEncoderReport {
     pub held_out_training_mean_normalized_mse: f64,
     pub relative_held_out_improvement: f64,
     pub heads: Vec<AuxiliaryHeadMetrics>,
+    pub held_out_rare_events: Vec<RareEventMetrics>,
     pub decision: MultiTaskEncoderDecision,
     pub model_sha256: Digest,
     pub promotion_authority: bool,
@@ -367,8 +573,9 @@ impl CompleteSetMultiTaskEncoder {
         } else {
             MultiTaskEncoderDecision::RetainTrainingMeanBaseline
         };
+        let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V1,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V2,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
@@ -393,6 +600,7 @@ impl CompleteSetMultiTaskEncoder {
             held_out_training_mean_normalized_mse,
             relative_held_out_improvement,
             heads,
+            held_out_rare_events,
             decision,
             model_sha256,
             promotion_authority: false,
@@ -529,6 +737,7 @@ impl CompleteSetMultiTaskEncoder {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let rare_events = self.rare_event_metrics(samples)?;
         Ok(MultiTaskSetEvaluation {
             samples: samples.len(),
             normalized_mse,
@@ -538,7 +747,45 @@ impl CompleteSetMultiTaskEncoder {
                 normalized_mse,
             ),
             heads,
+            rare_events,
         })
+    }
+
+    fn rare_event_metrics(
+        &self,
+        samples: &[MultiTaskSetSample],
+    ) -> Result<Vec<RareEventMetrics>, TrainableSetError> {
+        let targets = self
+            .target_names
+            .iter()
+            .enumerate()
+            .filter(|(_, name)| rare_event_target(name))
+            .map(|(index, name)| (index, name.clone()))
+            .collect::<Vec<_>>();
+        let mut model = vec![BinaryEventAccumulator::default(); targets.len()];
+        let mut baseline = vec![BinaryEventAccumulator::default(); targets.len()];
+        for sample in samples {
+            let predictions = self.predict(&sample.input)?;
+            for (metric, (target, _)) in targets.iter().enumerate() {
+                if sample.target_present[*target] {
+                    let expected = sample.targets[*target] > 0.5;
+                    model[metric].observe(expected, f64::from(predictions[*target]));
+                    baseline[metric].observe(expected, self.target_mean[*target]);
+                }
+            }
+        }
+        targets
+            .into_iter()
+            .enumerate()
+            .map(|(metric, (_, name))| {
+                Ok(RareEventMetrics {
+                    name,
+                    threshold: 0.5,
+                    model: model[metric].finish()?,
+                    training_mean_baseline: baseline[metric].finish()?,
+                })
+            })
+            .collect()
     }
 
     fn validate_input(&self, sample: &TypedSetSample) -> Result<(), TrainableSetError> {
@@ -803,15 +1050,207 @@ impl CompleteSetMultiTaskEncoder {
     }
 }
 
-fn native_actor_feature_schema() -> Result<Digest, TrainableSetError> {
+#[derive(Clone, Default)]
+struct BinaryEventAccumulator {
+    positives: usize,
+    negatives: usize,
+    true_positives: usize,
+    false_positives: usize,
+    true_negatives: usize,
+    false_negatives: usize,
+    brier_sum: f64,
+}
+
+impl BinaryEventAccumulator {
+    fn observe(&mut self, expected: bool, score: f64) {
+        let probability = score.clamp(0.0, 1.0);
+        let predicted = probability >= 0.5;
+        self.brier_sum += (probability - f64::from(expected)).powi(2);
+        match (expected, predicted) {
+            (true, true) => self.true_positives += 1,
+            (true, false) => self.false_negatives += 1,
+            (false, true) => self.false_positives += 1,
+            (false, false) => self.true_negatives += 1,
+        }
+        if expected {
+            self.positives += 1;
+        } else {
+            self.negatives += 1;
+        }
+    }
+
+    fn finish(&self) -> Result<BinaryEventMetrics, TrainableSetError> {
+        let total = self.positives + self.negatives;
+        if total == 0 {
+            return Err(TrainableSetError::new(
+                "rare-event metric has no supported examples",
+            ));
+        }
+        let precision = ratio(
+            self.true_positives,
+            self.true_positives + self.false_positives,
+        );
+        let recall = ratio(self.true_positives, self.positives);
+        let specificity = ratio(self.true_negatives, self.negatives);
+        let balanced_accuracy = recall
+            .zip(specificity)
+            .map(|(recall, specificity)| (recall + specificity) / 2.0);
+        let f1 = precision.zip(recall).map(|(precision, recall)| {
+            if precision + recall > 0.0 {
+                2.0 * precision * recall / (precision + recall)
+            } else {
+                0.0
+            }
+        });
+        Ok(BinaryEventMetrics {
+            positives: self.positives,
+            negatives: self.negatives,
+            true_positives: self.true_positives,
+            false_positives: self.false_positives,
+            true_negatives: self.true_negatives,
+            false_negatives: self.false_negatives,
+            precision,
+            recall,
+            specificity,
+            balanced_accuracy,
+            f1,
+            brier_score: self.brier_sum / total as f64,
+        })
+    }
+}
+
+fn ratio(numerator: usize, denominator: usize) -> Option<f64> {
+    (denominator != 0).then_some(numerator as f64 / denominator as f64)
+}
+
+fn rare_event_target(name: &str) -> bool {
+    matches!(
+        name,
+        "contact_changed"
+            | "procedure_changed"
+            | "mode_flags_changed"
+            | "actor_disappearance_count"
+    )
+}
+
+fn native_actor_feature_schema(
+    spec: &NativeEncoderFeatureSpec,
+) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v1\0",
+        b"dusklight.native-direct-actor-features/v2\0",
         &(
-            native_actor_categorical_names(),
-            native_actor_continuous_names(),
-            native_actor_binary_names(),
+            spec,
+            selected_feature_names(
+                native_base_feature_names(),
+                &native_base_feature_families(),
+                spec,
+            ),
+            selected_feature_names(
+                native_actor_categorical_names(),
+                &native_actor_categorical_families(),
+                spec,
+            ),
+            selected_feature_names(
+                native_actor_continuous_names(),
+                &native_actor_continuous_families(),
+                spec,
+            ),
+            selected_feature_names(
+                native_actor_binary_names(),
+                &native_actor_binary_families(),
+                spec,
+            ),
         ),
     )
+}
+
+fn native_base_feature_names() -> Vec<String> {
+    let mut names = Vec::new();
+    for prefix in [
+        "player_position",
+        "player_velocity",
+        "player_current_angle_s16",
+        "player_shape_angle_s16",
+    ] {
+        extend_vec3_feature_names(&mut names, prefix);
+    }
+    names.insert(6, "player_forward_speed".into());
+    names.push("player_procedure".into());
+    names.extend((0..32).map(|bit| format!("player_mode_flag_{bit}")));
+    names.extend((0..8).map(|bit| format!("player_contact_bit_{bit}")));
+    names.extend(
+        [
+            "event_running",
+            "event_id",
+            "event_mode",
+            "event_status",
+            "event_map_tool_id",
+            "room",
+            "layer",
+            "point",
+            "previous_stick_x",
+            "previous_stick_y",
+            "previous_substick_x",
+            "previous_substick_y",
+            "previous_trigger_left",
+            "previous_trigger_right",
+            "previous_analog_a",
+            "previous_analog_b",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    names.extend((0..16).map(|bit| format!("previous_button_bit_{bit}")));
+    names.extend(
+        [
+            "camera_yaw_radians",
+            "camera_view_yaw_s16",
+            "camera_controlled_yaw_s16",
+            "camera_bank_s16",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    extend_vec3_feature_names(&mut names, "camera_eye");
+    extend_vec3_feature_names(&mut names, "camera_center");
+    names.extend(
+        [
+            "player_ground_height",
+            "player_roof_height",
+            "player_water_height",
+            "collision_correction_x",
+            "collision_correction_z",
+            "scene_exit_signed_distance",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    extend_vec3_feature_names(&mut names, "scene_exit_player_local_position");
+    extend_vec3_feature_names(&mut names, "scene_exit_volume_extent");
+    for stream in 0..2 {
+        names.push(format!("rng_{stream}_id"));
+        for state in 0..3 {
+            names.push(format!("rng_{stream}_state_{state}"));
+        }
+        names.push(format!("rng_{stream}_call_count"));
+    }
+    names.extend(["rng_stream_count".into(), "rng_stream_overflow".into()]);
+    names.extend(
+        [
+            "goal_requested_count",
+            "goal_hit_count",
+            "goal_stable_ticks",
+            "goal_consecutive_ticks",
+            "goal_sequence_steps",
+            "goal_sequence_next_step",
+            "goal_sequence_within_ticks",
+            "goal_sequence_elapsed_ticks",
+            "goal_reached",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    names
 }
 
 fn native_actor_categorical_names() -> Vec<String> {
@@ -861,6 +1300,9 @@ fn native_actor_categorical_names() -> Vec<String> {
         "return_required_switch_unset",
         "enemy_flags",
         "enemy_throw_mode",
+        "trigger_kind",
+        "trigger_shape",
+        "trigger_behavior",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -899,6 +1341,13 @@ fn native_actor_continuous_names() -> Vec<String> {
     extend_vec3_feature_names(&mut names, "attention_link_relative_position");
     extend_vec3_feature_names(&mut names, "enemy_absolute_down_position");
     extend_vec3_feature_names(&mut names, "enemy_absolute_head_lock_position");
+    extend_vec3_feature_names(&mut names, "trigger_absolute_center");
+    extend_vec3_feature_names(&mut names, "trigger_half_extent");
+    extend_vec3_feature_names(&mut names, "trigger_link_relative_center");
+    names.extend([
+        "trigger_yaw_relative_to_link_sin".into(),
+        "trigger_yaw_relative_to_link_cos".into(),
+    ]);
     names
 }
 
@@ -936,11 +1385,137 @@ fn native_actor_binary_names() -> Vec<String> {
             "player_attention_hint_actor",
             "player_attention_catch_actor",
             "player_attention_look_actor",
+            "trigger_volume_present",
+            "trigger_enabled",
+            "trigger_vertical_unbounded",
         ]
         .into_iter()
         .map(str::to_owned),
     );
     names
+}
+
+fn native_base_feature_families() -> Vec<NativeEncoderChannelFamily> {
+    use NativeEncoderChannelFamily as Family;
+    let mut families = Vec::new();
+    extend_family(&mut families, Family::CorePlayerMotion, 13);
+    extend_family(&mut families, Family::CoreActionPhase, 41);
+    extend_family(&mut families, Family::CoreEventContext, 8);
+    extend_family(&mut families, Family::CorePreviousInput, 24);
+    extend_family(&mut families, Family::CoreCameraCollisionWorld, 22);
+    extend_family(&mut families, Family::CoreRng, 12);
+    extend_family(&mut families, Family::CoreGoal, 9);
+    families
+}
+
+fn native_actor_categorical_families() -> Vec<NativeEncoderChannelFamily> {
+    use NativeEncoderChannelFamily as Family;
+    let mut families = Vec::new();
+    extend_family(&mut families, Family::ActorIdentity, 10);
+    extend_family(&mut families, Family::ActorLifecyclePhysics, 10);
+    extend_family(&mut families, Family::ActorAttention, 11);
+    extend_family(&mut families, Family::ActorEventParticipation, 5);
+    extend_family(&mut families, Family::ActorReturnWriter, 7);
+    extend_family(&mut families, Family::ActorEnemyBase, 2);
+    extend_family(&mut families, Family::ActorTriggerVolume, 3);
+    families
+}
+
+fn native_actor_continuous_families() -> Vec<NativeEncoderChannelFamily> {
+    use NativeEncoderChannelFamily as Family;
+    let mut families = Vec::new();
+    extend_family(&mut families, Family::ActorMotion, 6);
+    extend_family(&mut families, Family::ActorLifecyclePhysics, 3);
+    extend_family(&mut families, Family::ActorMotion, 4);
+    extend_family(&mut families, Family::ActorLifecyclePhysics, 14);
+    extend_family(&mut families, Family::ActorMotion, 6);
+    extend_family(&mut families, Family::ActorLinkRelative, 10);
+    extend_family(&mut families, Family::ActorParentRelative, 6);
+    extend_family(&mut families, Family::ActorAttention, 6);
+    extend_family(&mut families, Family::ActorEnemyBase, 6);
+    extend_family(&mut families, Family::ActorTriggerVolume, 11);
+    families
+}
+
+fn native_actor_binary_families() -> Vec<NativeEncoderChannelFamily> {
+    use NativeEncoderChannelFamily as Family;
+    let mut families = Vec::new();
+    extend_family(&mut families, Family::ActorLifecyclePhysics, 4);
+    extend_family(&mut families, Family::ActorIdentity, 32);
+    extend_family(&mut families, Family::ActorAttention, 1);
+    extend_family(&mut families, Family::ActorEventParticipation, 1);
+    extend_family(&mut families, Family::ActorReturnWriter, 1);
+    extend_family(&mut families, Family::ActorEnemyBase, 1);
+    extend_family(&mut families, Family::ActorReturnWriter, 6);
+    extend_family(&mut families, Family::ActorPlayerRelationships, 11);
+    extend_family(&mut families, Family::ActorTriggerVolume, 3);
+    families
+}
+
+fn extend_family(
+    families: &mut Vec<NativeEncoderChannelFamily>,
+    family: NativeEncoderChannelFamily,
+    count: usize,
+) {
+    families.extend(std::iter::repeat_n(family, count));
+}
+
+fn selected_feature_names(
+    names: Vec<String>,
+    families: &[NativeEncoderChannelFamily],
+    spec: &NativeEncoderFeatureSpec,
+) -> Vec<String> {
+    debug_assert_eq!(names.len(), families.len());
+    names
+        .into_iter()
+        .zip(families)
+        .filter_map(|(name, family)| spec.contains(*family).then_some(name))
+        .collect()
+}
+
+fn retain_feature_families<T>(
+    values: &mut Vec<T>,
+    present: &mut Vec<bool>,
+    families: &[NativeEncoderChannelFamily],
+    spec: &NativeEncoderFeatureSpec,
+) {
+    debug_assert_eq!(values.len(), present.len());
+    debug_assert_eq!(values.len(), families.len());
+    let retained = families
+        .iter()
+        .map(|family| spec.contains(*family))
+        .collect::<Vec<_>>();
+    *values = std::mem::take(values)
+        .into_iter()
+        .zip(&retained)
+        .filter_map(|(value, retained)| retained.then_some(value))
+        .collect();
+    *present = std::mem::take(present)
+        .into_iter()
+        .zip(retained)
+        .filter_map(|(value, retained)| retained.then_some(value))
+        .collect();
+}
+
+fn retain_node_feature_families(node: &mut TypedSetNode, spec: &NativeEncoderFeatureSpec) {
+    retain_feature_families(
+        &mut node.categorical,
+        &mut node.categorical_present,
+        &native_actor_categorical_families(),
+        spec,
+    );
+    retain_feature_families(
+        &mut node.continuous,
+        &mut node.continuous_present,
+        &native_actor_continuous_families(),
+        spec,
+    );
+    retain_feature_families(
+        &mut node.binary,
+        &mut node.binary_present,
+        &native_actor_binary_families(),
+        spec,
+    );
 }
 
 fn extend_vec3_feature_names(names: &mut Vec<String>, prefix: &str) {
@@ -1048,6 +1623,33 @@ fn native_actor_node(
     } else {
         category(0, false);
         category(0, false);
+    }
+    if let Some(trigger) = &actor.trigger_volume {
+        use dusklight_evidence::native_episode_shard::{
+            NativeTriggerVolumeKind as Kind, NativeTriggerVolumeShape as Shape,
+        };
+        category(
+            match trigger.kind {
+                Kind::SceneExit => 0,
+                Kind::SceneExitCylinder => 1,
+                Kind::EventArea => 2,
+                Kind::ScriptedEvent => 3,
+                Kind::MappedEvent => 4,
+            },
+            true,
+        );
+        category(
+            match trigger.shape {
+                Shape::Box => 0,
+                Shape::EllipticCylinder => 1,
+            },
+            true,
+        );
+        category(i64::from(trigger.behavior), true);
+    } else {
+        for _ in 0..3 {
+            category(0, false);
+        }
     }
 
     let mut continuous = Vec::new();
@@ -1195,6 +1797,47 @@ fn native_actor_node(
         &mut continuous,
         &mut continuous_present,
         actor
+            .trigger_volume
+            .as_ref()
+            .map_or([0.0; 3], |value| value.center),
+        actor.trigger_volume.is_some(),
+    );
+    push_continuous3(
+        &mut continuous,
+        &mut continuous_present,
+        actor
+            .trigger_volume
+            .as_ref()
+            .map_or([0.0; 3], |value| value.half_extent),
+        actor.trigger_volume.is_some(),
+    );
+    push_continuous3(
+        &mut continuous,
+        &mut continuous_present,
+        actor.trigger_volume.as_ref().map_or([0.0; 3], |value| {
+            direction_yaw3(
+                subtract3(value.center, observation.player_position),
+                observation.player_shape_angle[1],
+            )
+        }),
+        actor.trigger_volume.is_some() && player_available,
+    );
+    let trigger_yaw = actor
+        .trigger_volume
+        .as_ref()
+        .map(|value| angle_pair(value.yaw.wrapping_sub(observation.player_shape_angle[1])));
+    for component in trigger_yaw.unwrap_or([0.0; 2]) {
+        push_continuous(
+            &mut continuous,
+            &mut continuous_present,
+            component,
+            trigger_yaw.is_some() && player_available,
+        );
+    }
+    push_continuous3(
+        &mut continuous,
+        &mut continuous_present,
+        actor
             .enemy_base
             .as_ref()
             .map_or([0.0; 3], |value| value.head_lock_position),
@@ -1259,6 +1902,21 @@ fn native_actor_node(
     ] {
         boolean(related(value), relationships_available);
     }
+    boolean(actor.trigger_volume.is_some(), true);
+    boolean(
+        actor
+            .trigger_volume
+            .as_ref()
+            .is_some_and(|value| value.enabled),
+        actor.trigger_volume.is_some(),
+    );
+    boolean(
+        actor
+            .trigger_volume
+            .as_ref()
+            .is_some_and(|value| value.vertical_unbounded),
+        actor.trigger_volume.is_some(),
+    );
     debug_assert_eq!(categorical.len(), native_actor_categorical_names().len());
     debug_assert_eq!(continuous.len(), native_actor_continuous_names().len());
     debug_assert_eq!(binary.len(), native_actor_binary_names().len());
@@ -1299,6 +1957,21 @@ fn length3(value: [f32; 3]) -> f32 {
         .map(|component| component * component)
         .sum::<f32>()
         .sqrt()
+}
+
+fn direction_yaw3(direction: [f32; 3], yaw: i16) -> [f32; 3] {
+    let radians = f32::from(yaw) * std::f32::consts::PI / 32768.0;
+    let (sin, cos) = radians.sin_cos();
+    [
+        cos * direction[0] - sin * direction[2],
+        direction[1],
+        sin * direction[0] + cos * direction[2],
+    ]
+}
+
+fn angle_pair(angle: i16) -> [f32; 2] {
+    let radians = f32::from(angle) * std::f32::consts::PI / 32768.0;
+    [radians.sin(), radians.cos()]
 }
 
 fn native_target_names() -> Vec<String> {
@@ -1560,12 +2233,11 @@ fn validate_samples(
     let first_node = training
         .iter()
         .chain(held_out)
-        .find_map(|sample| sample.input.nodes.first())
-        .ok_or_else(|| TrainableSetError::new("multitask corpus has no actor nodes"))?;
+        .find_map(|sample| sample.input.nodes.first());
     let dimensions = Dimensions {
-        categorical: first_node.categorical.len(),
-        continuous: first_node.continuous.len(),
-        binary: first_node.binary.len(),
+        categorical: first_node.map_or(0, |node| node.categorical.len()),
+        continuous: first_node.map_or(0, |node| node.continuous.len()),
+        binary: first_node.map_or(0, |node| node.binary.len()),
         base: training[0].input.base.len(),
     };
     let mut identities = BTreeSet::new();
@@ -1655,7 +2327,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v1\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v2\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -1754,7 +2426,72 @@ mod tests {
         let (base, present) = broad_base(observation);
         assert_eq!(base.len(), 129);
         assert_eq!(present.len(), 129);
-        assert_ne!(native_actor_feature_schema().unwrap(), Digest::ZERO);
+        let all = NativeEncoderFeatureSpec::all();
+        assert_eq!(native_base_feature_names().len(), 129);
+        assert_eq!(native_base_feature_families().len(), 129);
+        assert_ne!(native_actor_feature_schema(&all).unwrap(), Digest::ZERO);
+        let reduced = NativeEncoderFeatureSpec::excluding([
+            NativeEncoderChannelFamily::ActorAttention,
+            NativeEncoderChannelFamily::ActorEventParticipation,
+            NativeEncoderChannelFamily::ActorEnemyBase,
+            NativeEncoderChannelFamily::ActorTriggerVolume,
+        ])
+        .unwrap();
+        let mut reduced_node = nodes[0].clone();
+        retain_node_feature_families(&mut reduced_node, &reduced);
+        assert!(reduced_node.categorical.len() < nodes[0].categorical.len());
+        assert!(reduced_node.continuous.len() < nodes[0].continuous.len());
+        assert!(reduced_node.binary.len() < nodes[0].binary.len());
+        assert_ne!(
+            native_actor_feature_schema(&reduced).unwrap(),
+            native_actor_feature_schema(&all).unwrap()
+        );
+    }
+
+    #[test]
+    fn rare_event_metrics_report_recall_and_probability_error() {
+        let mut accumulator = BinaryEventAccumulator::default();
+        for (expected, score) in [(true, 0.9), (true, 0.2), (false, 0.8), (false, 0.1)] {
+            accumulator.observe(expected, score);
+        }
+        let metrics = accumulator.finish().unwrap();
+        assert_eq!(metrics.positives, 2);
+        assert_eq!(metrics.negatives, 2);
+        assert_eq!(metrics.true_positives, 1);
+        assert_eq!(metrics.false_positives, 1);
+        assert_eq!(metrics.true_negatives, 1);
+        assert_eq!(metrics.false_negatives, 1);
+        assert_eq!(metrics.precision, Some(0.5));
+        assert_eq!(metrics.recall, Some(0.5));
+        assert_eq!(metrics.specificity, Some(0.5));
+        assert_eq!(metrics.balanced_accuracy, Some(0.5));
+        assert_eq!(metrics.f1, Some(0.5));
+        assert!((metrics.brier_score - 0.325).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn feature_family_names_round_trip_and_actor_columns_require_population() {
+        for family in NativeEncoderChannelFamily::ALL {
+            assert_eq!(
+                NativeEncoderChannelFamily::parse(family.name()),
+                Some(family)
+            );
+        }
+        assert!(NativeEncoderChannelFamily::parse("nearest_actor_magic").is_none());
+        assert!(NativeEncoderFeatureSpec::new([NativeEncoderChannelFamily::ActorMotion]).is_err());
+        assert!(
+            NativeEncoderFeatureSpec::new([NativeEncoderChannelFamily::CorePreviousInput]).is_ok()
+        );
+        assert!(
+            NativeEncoderFeatureSpec {
+                families: vec![
+                    NativeEncoderChannelFamily::CoreGoal,
+                    NativeEncoderChannelFamily::CorePlayerMotion,
+                ],
+            }
+            .validate()
+            .is_err()
+        );
     }
 
     #[test]
@@ -1788,6 +2525,34 @@ mod tests {
             control.report.decision,
             MultiTaskEncoderDecision::RetainTrainingMeanBaseline
         );
+    }
+
+    #[test]
+    fn actorless_control_does_not_leak_set_cardinality() {
+        let mut training = corpus(1, 32);
+        let mut held_out = corpus(80, 16);
+        for sample in training.iter_mut().chain(&mut held_out) {
+            sample.input.actor_feature_schema_sha256 = Digest([6; 32]);
+            sample.input.nodes.clear();
+        }
+        let (report, model) = CompleteSetMultiTaskEncoder::fit(
+            Digest([6; 32]),
+            Digest([8; 32]),
+            Digest([9; 32]),
+            vec!["sum".into(), "difference".into()],
+            &training,
+            &held_out,
+            TrainableSetConfig {
+                epochs: 2,
+                node_hidden_width: 8,
+                head_hidden_width: 8,
+                ..TrainableSetConfig::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(report.maximum_training_nodes, 0);
+        assert_eq!(report.maximum_held_out_nodes, 0);
+        assert_eq!(model.encode(&held_out[0].input).unwrap().len(), 8);
     }
 
     #[test]

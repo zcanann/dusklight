@@ -1074,6 +1074,31 @@ state/target relationship, receives a distinct target-bound dataset identity,
 and must lose the real model's held-out advantage. Neither auxiliary result is
 terminal-success authority or permission to promote a policy.
 
+The direct encoder input is declarative. Repeated `--exclude-family` options
+derive a smaller schema from the same authenticated observations without
+recollecting gameplay, for example:
+
+```powershell
+huntctl learn pretrain-native-encoder --dataset auxiliary-dataset.json `
+  --input episodes.dseps --output no-trigger-volume.json `
+  --exclude-family actor_trigger_volume
+```
+
+Families cover core player motion, action phase, event context, previous PAD,
+camera/collision/world context, RNG and goal state, plus actor population,
+identity, motion, lifecycle/physics, Link/parent relationships, attention,
+event participation, return-place writers, enemy state, trigger volumes and
+player relationships. Actor feature columns require `actor_population`; omit
+the population and every actor family for a control that cannot leak set
+cardinality. The artifact binds the exact retained family list and resulting
+feature schema.
+
+Report v2 includes rare-event classification diagnostics in addition to MSE.
+Contact, procedure, mode and actor-disappearance heads expose support and
+confusion counts, precision/recall, specificity, balanced accuracy, F1 and a
+clamped Brier score for both the learned model and training-mean baseline.
+Aggregate auxiliary improvement must not conceal zero recall on rare mechanics.
+
 Transition batches can be inspected and transformed without weakening their
 schema or content identities:
 
