@@ -5,10 +5,11 @@ use crate::tape::{InputFrame, InputTape};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const NATIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v2";
+pub const NATIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v3";
 const MAXIMUM_CANDIDATES: usize = 16_384;
 const MAXIMUM_TICKS: usize = 4_096;
 const MAXIMUM_EXPANDED_TICKS: usize = 8 * 1_024 * 1_024;
+const MAXIMUM_VALIDATION_TICKS: usize = 256;
 const BUTTON_A: u16 = 0x0100;
 const ORDON_EXIT_EDGE_X: f64 = -1708.04;
 const ORDON_EXIT_EDGE_Z: f64 = -4166.06;
@@ -52,9 +53,16 @@ pub struct NativeSuffixBatch {
     pub schema: String,
     pub source_frame: usize,
     pub source_boundary_fingerprint: String,
+    pub checkpoint_validation: NativeCheckpointValidation,
     pub maximum_ticks: usize,
     pub verify_state_hashes: bool,
     pub candidates: Vec<NativeSuffixCandidate>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct NativeCheckpointValidation {
+    pub kind: String,
+    pub ticks: usize,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -94,6 +102,10 @@ pub fn propose_suffix_batch(
         schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
         source_frame,
         source_boundary_fingerprint: source_boundary_fingerprint.into(),
+        checkpoint_validation: NativeCheckpointValidation {
+            kind: "recorded_replay_window".into(),
+            ticks: maximum_ticks.min(8),
+        },
         maximum_ticks,
         verify_state_hashes: false,
         candidates: Vec::with_capacity(candidate_budget),
@@ -737,6 +749,9 @@ pub fn propose_ranked_suffix_refinement(
 ) -> Result<NativeSuffixBatch, SearchError> {
     if parent.schema != NATIVE_SUFFIX_BATCH_SCHEMA
         || !valid_boundary_fingerprint(&parent.source_boundary_fingerprint)
+        || parent.checkpoint_validation.kind != "recorded_replay_window"
+        || parent.checkpoint_validation.ticks == 0
+        || parent.checkpoint_validation.ticks > MAXIMUM_VALIDATION_TICKS
         || candidate_budget == 0
         || candidate_budget > MAXIMUM_CANDIDATES
         || candidate_budget.saturating_mul(parent.maximum_ticks) > MAXIMUM_EXPANDED_TICKS
@@ -832,6 +847,7 @@ pub fn propose_ranked_suffix_refinement(
         schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: parent.source_frame,
         source_boundary_fingerprint: parent.source_boundary_fingerprint.clone(),
+        checkpoint_validation: parent.checkpoint_validation.clone(),
         maximum_ticks: parent.maximum_ticks,
         verify_state_hashes: false,
         candidates: Vec::with_capacity(candidate_budget),
@@ -1095,6 +1111,14 @@ mod tests {
             SuffixProposalMethod::Deletion,
         )
         .unwrap();
+        assert_eq!(batch.schema, NATIVE_SUFFIX_BATCH_SCHEMA);
+        assert_eq!(
+            batch.checkpoint_validation,
+            NativeCheckpointValidation {
+                kind: "recorded_replay_window".into(),
+                ticks: 4,
+            }
+        );
         assert_eq!(batch.candidates.len(), 1);
         let candidate = Candidate {
             schema: CANDIDATE_SCHEMA.into(),
@@ -1235,6 +1259,7 @@ mod tests {
             refined.source_boundary_fingerprint,
             parent.source_boundary_fingerprint
         );
+        assert_eq!(refined.checkpoint_validation, parent.checkpoint_validation);
         assert!(!refined.candidates.is_empty());
         assert!(refined.candidates.iter().all(|candidate| {
             Candidate {
@@ -1247,5 +1272,25 @@ mod tests {
             .compile()
             .is_ok_and(|tape| tape.frames.len() == 5)
         }));
+    }
+
+    #[test]
+    fn ranked_refinement_rejects_unvalidated_checkpoint_contracts() {
+        let mut parent = propose_suffix_batch(
+            &seed(),
+            440,
+            "ac7c32788fc3b5c59046386d95b9b5b4",
+            5,
+            8,
+            SuffixProposalMethod::Heading,
+        )
+        .unwrap();
+        parent.checkpoint_validation.ticks = 0;
+        let scores = parent
+            .candidates
+            .iter()
+            .map(|candidate| (candidate.id.clone(), 0.0, 0.0))
+            .collect::<Vec<_>>();
+        assert!(propose_ranked_suffix_refinement(&seed(), &parent, &scores, 6).is_err());
     }
 }

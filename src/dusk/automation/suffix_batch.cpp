@@ -119,6 +119,21 @@ bool valid_boundary_fingerprint(const json& value) {
     return true;
 }
 
+bool parse_checkpoint_validation(const json& value, SuffixBatchDefinition& output) {
+    constexpr std::array Keys{std::string_view{"kind"}, std::string_view{"ticks"}};
+    if (!has_exact_keys(value, Keys) || !value["kind"].is_string())
+        return false;
+    const auto& kind = value["kind"].get_ref<const std::string&>();
+    if (kind != "recorded_replay_window")
+        return false;
+    std::size_t ticks = 0;
+    if (!read_integer(value["ticks"], std::size_t{1}, SuffixBatchMaximumValidationTicks, ticks))
+        return false;
+    output.checkpointValidation = SuffixCheckpointValidation::RecordedReplayWindow;
+    output.validationTicks = ticks;
+    return true;
+}
+
 bool parse_candidate(const json& value, const std::size_t maximumTicks,
     SuffixBatchCandidate& output, std::string& error) {
     constexpr std::array ActionKeys{
@@ -209,7 +224,7 @@ bool parse_suffix_batch(
         return false;
     }
     const json root = json::parse(source, nullptr, false);
-    constexpr std::array RootKeys{
+    constexpr std::array LegacyRootKeys{
         std::string_view{"schema"},
         std::string_view{"source_frame"},
         std::string_view{"source_boundary_fingerprint"},
@@ -217,9 +232,25 @@ bool parse_suffix_batch(
         std::string_view{"verify_state_hashes"},
         std::string_view{"candidates"},
     };
-    if (root.is_discarded() || !has_exact_keys(root, RootKeys) ||
-        !root["schema"].is_string() ||
-        root["schema"].get_ref<const std::string&>() != SuffixBatchSchema ||
+    constexpr std::array RootKeys{
+        std::string_view{"schema"},
+        std::string_view{"source_frame"},
+        std::string_view{"source_boundary_fingerprint"},
+        std::string_view{"checkpoint_validation"},
+        std::string_view{"maximum_ticks"},
+        std::string_view{"verify_state_hashes"},
+        std::string_view{"candidates"},
+    };
+    if (root.is_discarded() || !root.is_object() || !root.contains("schema") ||
+        !root["schema"].is_string())
+    {
+        error = "suffix batch root or schema is invalid";
+        return false;
+    }
+    const auto& schema = root["schema"].get_ref<const std::string&>();
+    const bool legacy = schema == LegacySuffixBatchSchema;
+    if ((!legacy && schema != SuffixBatchSchema) ||
+        !(legacy ? has_exact_keys(root, LegacyRootKeys) : has_exact_keys(root, RootKeys)) ||
         !valid_boundary_fingerprint(root["source_boundary_fingerprint"]) ||
         !root["verify_state_hashes"].is_boolean() || !root["candidates"].is_array())
     {
@@ -228,12 +259,15 @@ bool parse_suffix_batch(
     }
 
     SuffixBatchDefinition parsed;
-    parsed.sourceBoundaryFingerprint =
-        root["source_boundary_fingerprint"].get<std::string>();
-    if (!read_integer(root["source_frame"], std::size_t{0},
-            std::numeric_limits<std::size_t>::max(), parsed.sourceFrame) ||
-        !read_integer(root["maximum_ticks"], std::size_t{1},
-            SuffixBatchMaximumTicks, parsed.maximumTicks))
+    if (!legacy && !parse_checkpoint_validation(root["checkpoint_validation"], parsed)) {
+        error = "suffix batch checkpoint validation is invalid";
+        return false;
+    }
+    parsed.sourceBoundaryFingerprint = root["source_boundary_fingerprint"].get<std::string>();
+    if (!read_integer(root["source_frame"], std::size_t{0}, std::numeric_limits<std::size_t>::max(),
+            parsed.sourceFrame) ||
+        !read_integer(
+            root["maximum_ticks"], std::size_t{1}, SuffixBatchMaximumTicks, parsed.maximumTicks))
     {
         error = "source_frame or maximum_ticks is out of range";
         return false;

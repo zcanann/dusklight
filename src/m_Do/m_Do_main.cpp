@@ -459,8 +459,9 @@ void main01(void) {
                     if (!finish_simulation_tick()) {
                         break;
                     }
-                    if (dusk::automation::suffix_batch_runner().executingCandidate()) {
-                        if (finish_suffix_batch_tick()) break;
+                    if (dusk::automation::suffix_batch_runner().ownsPostSimulation()) {
+                        if (finish_suffix_batch_tick())
+                            break;
                     } else {
                         if (finish_checkpoint_probe_tick()) break;
                         if (finish_automation_oracle_tick()) break;
@@ -501,7 +502,7 @@ void main01(void) {
                 dusk::audio::AdvanceDeterministicAutomationTick();
                 mDoAud_Execute();
                 if (finish_simulation_tick()) {
-                    if (dusk::automation::suffix_batch_runner().executingCandidate()) {
+                    if (dusk::automation::suffix_batch_runner().ownsPostSimulation()) {
                         finish_suffix_batch_tick();
                     } else if (!finish_checkpoint_probe_tick() &&
                                !finish_automation_oracle_tick()) {
@@ -1710,18 +1711,21 @@ static bool finish_suffix_batch_tick() {
     auto& batch = dusk::automation::suffix_batch_runner();
     if (!batch.enabled()) return false;
     std::string error;
-    const bool terminal = batch.postSimulation(automationSimulationTick, automationTapeFrame, error);
+    const bool candidateTick = batch.executingCandidate();
+    const bool terminal = batch.postSimulation(automationSimulationTick, automationTapeFrame,
+        automationPreparedInputFrame, inputTapeFrameApplied, error);
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
     // Suffix execution exclusively owns post-simulation handling while active;
     // retain each ordinary trace sample here exactly once, including the final
     // candidate witness. Batch finalization is read-only with respect to game
     // and controller state.
-    record_gameplay_trace_tick();
+    if (candidateTick)
+        record_gameplay_trace_tick();
 #endif
-    // Candidate ticks bypass finish_automation_oracle_tick(), which ordinarily
-    // advances this host-side logical counter. Keep checkpoint-restored episode
-    // boundaries aligned without evaluating the process-global milestone
-    // tracker a second time.
+    // Candidate and checkpoint-validation ticks bypass
+    // finish_automation_oracle_tick(), which ordinarily advances this host-side
+    // logical counter. Keep checkpoint-restored episode boundaries aligned
+    // without evaluating the process-global milestone tracker a second time.
     ++automationSimulationTick;
     if (!terminal) return false;
     if (batch.failed()) {
@@ -1783,8 +1787,14 @@ static bool finish_suffix_batch_tick() {
             continue;
         }
         const std::size_t tapeFrames = dusk::automation::input_tape_player().tape().frames.size();
+        const std::size_t validationTicks =
+            definition.checkpointValidation ==
+                    dusk::automation::SuffixCheckpointValidation::RecordedReplayWindow ?
+                definition.validationTicks :
+                0;
         if (definition.sourceFrame > tapeFrames ||
-            definition.maximumTicks > tapeFrames - definition.sourceFrame)
+            std::max(definition.maximumTicks, validationTicks) >
+                tapeFrames - definition.sourceFrame)
         {
             dusk::automation::reject_engine_worker_batch(command.requestId,
                 "batch horizon exceeds the authenticated source tape");
@@ -3521,12 +3531,20 @@ int game_main(int argc, char* argv[]) {
             fprintf(stderr, "Suffix Batch Error: %s\n", batchError.c_str());
             return 1;
         }
+        const std::size_t validationTicks =
+            definition.checkpointValidation ==
+                    dusk::automation::SuffixCheckpointValidation::RecordedReplayWindow ?
+                definition.validationTicks :
+                0;
         if (definition.sourceFrame > inputTapeFrameCount ||
-            definition.maximumTicks > inputTapeFrameCount - definition.sourceFrame)
+            std::max(definition.maximumTicks, validationTicks) >
+                inputTapeFrameCount - definition.sourceFrame)
         {
             fprintf(stderr,
-                    "Suffix Batch Error: source %zu plus %zu ticks exceeds the %zu-frame tape\n",
-                    definition.sourceFrame, definition.maximumTicks, inputTapeFrameCount);
+                "Suffix Batch Error: source %zu plus candidate/validation horizon %zu/%zu exceeds "
+                "the %zu-frame tape\n",
+                definition.sourceFrame, definition.maximumTicks, validationTicks,
+                inputTapeFrameCount);
             return 1;
         }
         const std::filesystem::path resultPath = std::filesystem::u8path(resultArgument);

@@ -20,9 +20,10 @@ void require(const bool condition, const char* expression, const int line) {
 
 std::string valid_batch() {
     return R"({
-        "schema":"dusklight-suffix-batch/v2",
+        "schema":"dusklight-suffix-batch/v3",
         "source_frame":440,
         "source_boundary_fingerprint":"ac7c32788fc3b5c59046386d95b9b5b4",
+        "checkpoint_validation":{"kind":"recorded_replay_window","ticks":2},
         "maximum_ticks":3,
         "verify_state_hashes":true,
         "candidates":[
@@ -45,6 +46,8 @@ void test_valid_batch_expands_before_the_hot_path() {
     REQUIRE(error.empty());
     REQUIRE(batch.sourceFrame == 440);
     REQUIRE(batch.sourceBoundaryFingerprint == "ac7c32788fc3b5c59046386d95b9b5b4");
+    REQUIRE(batch.checkpointValidation == SuffixCheckpointValidation::RecordedReplayWindow);
+    REQUIRE(batch.validationTicks == 2);
     REQUIRE(batch.maximumTicks == 3);
     REQUIRE(batch.verifyStateHashes);
     REQUIRE(batch.candidates.size() == 1);
@@ -57,8 +60,9 @@ void test_valid_batch_expands_before_the_hot_path() {
 
 void test_tape_passthrough_candidate() {
     const std::string source = R"({
-        "schema":"dusklight-suffix-batch/v2","source_frame":440,
+        "schema":"dusklight-suffix-batch/v3","source_frame":440,
         "source_boundary_fingerprint":"ac7c32788fc3b5c59046386d95b9b5b4","maximum_ticks":3,
+        "checkpoint_validation":{"kind":"recorded_replay_window","ticks":2},
         "verify_state_hashes":true,
         "candidates":[{"id":"raw-tape","source":"tape"}]
     })";
@@ -68,6 +72,21 @@ void test_tape_passthrough_candidate() {
     REQUIRE(batch.candidates.size() == 1);
     REQUIRE(batch.candidates[0].tapePassthrough);
     REQUIRE(batch.candidates[0].pads.empty());
+}
+
+void test_legacy_fixed_milestone_batch_remains_distinct() {
+    const std::string source = R"({
+        "schema":"dusklight-suffix-batch/v2","source_frame":440,
+        "source_boundary_fingerprint":"ac7c32788fc3b5c59046386d95b9b5b4",
+        "maximum_ticks":3,"verify_state_hashes":true,
+        "candidates":[{"id":"raw-tape","source":"tape"}]
+    })";
+
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(source, batch, error));
+    REQUIRE(batch.checkpointValidation == SuffixCheckpointValidation::GameplayReadyFSp103);
+    REQUIRE(batch.validationTicks == 0);
 }
 
 void test_invalid_batches_fail_closed() {
@@ -100,6 +119,31 @@ void test_invalid_batches_fail_closed() {
     REQUIRE(fingerprint != std::string::npos);
     wrongFingerprint.replace(fingerprint, 32, "AC7C32788FC3B5C59046386D95B9B5B4");
     REQUIRE(!parse_suffix_batch(wrongFingerprint, batch, error));
+
+    std::string zeroValidation = valid_batch();
+    const std::size_t ticks = zeroValidation.find("\"ticks\":2");
+    REQUIRE(ticks != std::string::npos);
+    zeroValidation.replace(ticks, std::string("\"ticks\":2").size(), "\"ticks\":0");
+    REQUIRE(!parse_suffix_batch(zeroValidation, batch, error));
+
+    std::string excessiveValidation = valid_batch();
+    const std::size_t excessiveTicks = excessiveValidation.find("\"ticks\":2");
+    REQUIRE(excessiveTicks != std::string::npos);
+    excessiveValidation.replace(excessiveTicks, std::string("\"ticks\":2").size(), "\"ticks\":257");
+    REQUIRE(!parse_suffix_batch(excessiveValidation, batch, error));
+
+    std::string unknownValidation = valid_batch();
+    const std::size_t kind = unknownValidation.find("recorded_replay_window");
+    REQUIRE(kind != std::string::npos);
+    unknownValidation.replace(kind, std::string("recorded_replay_window").size(), "milestone");
+    REQUIRE(!parse_suffix_batch(unknownValidation, batch, error));
+
+    std::string legacyWithValidation = valid_batch();
+    const std::size_t schema = legacyWithValidation.find("dusklight-suffix-batch/v3");
+    REQUIRE(schema != std::string::npos);
+    legacyWithValidation.replace(
+        schema, std::string("dusklight-suffix-batch/v3").size(), "dusklight-suffix-batch/v2");
+    REQUIRE(!parse_suffix_batch(legacyWithValidation, batch, error));
 }
 
 }  // namespace
@@ -107,6 +151,7 @@ void test_invalid_batches_fail_closed() {
 int main() {
     test_valid_batch_expands_before_the_hot_path();
     test_tape_passthrough_candidate();
+    test_legacy_fixed_milestone_batch_remains_distinct();
     test_invalid_batches_fail_closed();
     std::cout << "suffix batch tests passed\n";
     return 0;

@@ -51,11 +51,16 @@ public:
     void recordConsumedPads(std::span<const PADStatus, kInputPortCount> statuses);
     /** After game simulation and deterministic clock advancement. */
     bool postSimulation(std::uint64_t simulationTick, std::uint64_t tapeFrame,
-        std::string& error);
+        std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& error);
 
     [[nodiscard]] bool enabled() const { return mEnabled; }
     /** True only for a simulation tick belonging to a checkpoint-restored candidate. */
     [[nodiscard]] bool executingCandidate() const { return mPhase == Phase::Candidate; }
+    /** True when this runner exclusively owns the current post-simulation boundary. */
+    [[nodiscard]] bool ownsPostSimulation() const {
+        return mPhase == Phase::ValidateFresh || mPhase == Phase::ValidateRestored ||
+               mPhase == Phase::Candidate;
+    }
     [[nodiscard]] bool completed() const { return mCompleted; }
     [[nodiscard]] bool failed() const { return mFailed; }
     [[nodiscard]] bool writeArtifacts(std::string& error);
@@ -66,7 +71,16 @@ public:
     }
 
 private:
-    enum class Phase { WaitingForSource, Candidate, RestoreNext, Complete, Failed };
+    enum class Phase {
+        WaitingForSource,
+        ValidateFresh,
+        RestoreValidation,
+        ValidateRestored,
+        Candidate,
+        RestoreNext,
+        Complete,
+        Failed,
+    };
 
     struct HostSnapshot {
         InputTapePlayerState tapePlayer;
@@ -120,6 +134,9 @@ private:
     bool beginEpisodeShard(std::string& error);
     bool restoreSource(std::uint64_t& simulationTick, std::uint64_t& tapeFrame,
         std::uint64_t& preparedInputFrame, bool& tapeFrameApplied, std::string& error);
+    bool captureValidationTickDigest(std::uint64_t simulationTick, std::uint64_t tapeFrame,
+        std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& output,
+        std::string& error);
     bool captureEpisodePreInput(std::uint64_t simulationTick, std::string& error);
     bool appendEpisodePostSimulation(const MilestoneObservation& observation,
         const RawPadState& chosenPad, std::uint64_t simulationTick, bool terminal,
@@ -186,6 +203,7 @@ private:
     ControllerObservationStorage mEpisodeControllerStorage;
     std::size_t mCandidateIndex = 0;
     std::size_t mCandidateTick = 0;
+    std::size_t mValidationTick = 0;
     std::vector<RawPadState> mConsumedPads;
     std::vector<std::uint8_t> mCurrentEpisode;
     bool mEpisodePreInputCaptured = false;
@@ -195,6 +213,17 @@ private:
     std::optional<std::size_t> mWinnerResultIndex;
     std::uint64_t mCaptureMicros = 0;
     std::string mActualSourceBoundaryFingerprint;
+    std::string mSourceSemanticDigest;
+    std::vector<std::string> mValidationFreshDigests;
+    std::string mValidationRestoredDigestMaterial;
+    std::string mValidationFreshSequenceDigest;
+    std::string mValidationRestoredSequenceDigest;
+    std::optional<std::size_t> mValidationFirstDivergence;
+    std::string mValidationExpectedDigest;
+    std::string mValidationActualDigest;
+    std::uint64_t mValidationMicros = 0;
+    std::uint64_t mValidationSamples = 0;
+    bool mValidationVerified = false;
     std::vector<std::uint64_t> mRestoreMicros;
     BatchProfile mProfile;
     std::string mError;

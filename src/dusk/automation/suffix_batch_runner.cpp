@@ -136,8 +136,14 @@ bool write_atomic(const std::filesystem::path& path, const std::string_view byte
 bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
     std::filesystem::path resultPath, std::filesystem::path winnerTapePath,
     std::string gameDataSha256, std::string worldContextSha256, std::string& error) {
-    if (mEnabled || definition.candidates.empty() || definition.maximumTicks == 0 ||
-        resultPath.empty() || !is_lower_hex(gameDataSha256, 64) ||
+    const bool validValidation =
+        (definition.checkpointValidation == SuffixCheckpointValidation::GameplayReadyFSp103 &&
+            definition.validationTicks == 0) ||
+        (definition.checkpointValidation == SuffixCheckpointValidation::RecordedReplayWindow &&
+            definition.validationTicks != 0 &&
+            definition.validationTicks <= SuffixBatchMaximumValidationTicks);
+    if (mEnabled || !validValidation || definition.candidates.empty() ||
+        definition.maximumTicks == 0 || resultPath.empty() || !is_lower_hex(gameDataSha256, 64) ||
         !is_lower_hex(worldContextSha256, 64))
     {
         error = "suffix batch runner configuration is empty or already installed";
@@ -165,11 +171,12 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     std::filesystem::path resultPath, std::filesystem::path winnerTapePath,
     std::string& error) {
     error.clear();
-    if (!mEnabled || !mCompleted || mFailed || !mArtifactsWritten || mImage.entries.empty() ||
-        mEpisodeShard.active() || definition.candidates.empty() || definition.maximumTicks == 0 ||
-        definition.sourceFrame != mDefinition.sourceFrame ||
+    if (!mEnabled || !mCompleted || mFailed || !mArtifactsWritten || !mValidationVerified ||
+        mImage.entries.empty() || mEpisodeShard.active() || definition.candidates.empty() ||
+        definition.maximumTicks == 0 || definition.sourceFrame != mDefinition.sourceFrame ||
         definition.sourceBoundaryFingerprint != mDefinition.sourceBoundaryFingerprint ||
-        resultPath.empty())
+        definition.checkpointValidation != mDefinition.checkpointValidation ||
+        definition.validationTicks != mDefinition.validationTicks || resultPath.empty())
     {
         error = "next suffix batch is incompatible with the authenticated session source";
         return false;
@@ -219,22 +226,31 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
     resetBatchProfile(false);
     const MilestoneObservation sourceObservation =
         capture_milestone_observation(mSourceMilestoneStorage);
-    mActualSourceBoundaryFingerprint = compute_milestone_boundary_fingerprint(
-        sourceObservation, input_tape_player().tape().boot);
-    const MilestoneDefinition* sourceMilestone =
-        find_milestone(MilestoneId::GameplayReadyFSp103);
-    if (sourceMilestone == nullptr || !sourceMilestone->predicate(sourceObservation)) {
-        error = "suffix batch source does not satisfy gameplay-ready-f-sp103; expected " +
-                mDefinition.sourceBoundaryFingerprint + ", observed " +
-                mActualSourceBoundaryFingerprint + "; stage=" +
-                (sourceObservation.stageName == nullptr ? std::string{"<null>"} :
-                                                         sourceObservation.stageName) +
-                ", room=" + std::to_string(sourceObservation.room) +
-                ", point=" + std::to_string(sourceObservation.point) +
-                ", player_present=" + (sourceObservation.playerPresent ? "true" : "false") +
-                ", player_is_link=" + (sourceObservation.playerIsLink ? "true" : "false") +
-                ", event_running=" + (sourceObservation.eventRunning ? "true" : "false") +
-                ", event_id=" + std::to_string(sourceObservation.eventId);
+    mActualSourceBoundaryFingerprint =
+        compute_milestone_boundary_fingerprint(sourceObservation, input_tape_player().tape().boot);
+    if (mDefinition.checkpointValidation == SuffixCheckpointValidation::GameplayReadyFSp103) {
+        const MilestoneDefinition* sourceMilestone =
+            find_milestone(MilestoneId::GameplayReadyFSp103);
+        if (sourceMilestone == nullptr || !sourceMilestone->predicate(sourceObservation)) {
+            error = "suffix batch source does not satisfy gameplay-ready-f-sp103; expected " +
+                    mDefinition.sourceBoundaryFingerprint + ", observed " +
+                    mActualSourceBoundaryFingerprint + "; stage=" +
+                    (sourceObservation.stageName == nullptr ? std::string{"<null>"} :
+                                                              sourceObservation.stageName) +
+                    ", room=" + std::to_string(sourceObservation.room) +
+                    ", point=" + std::to_string(sourceObservation.point) +
+                    ", player_present=" + (sourceObservation.playerPresent ? "true" : "false") +
+                    ", player_is_link=" + (sourceObservation.playerIsLink ? "true" : "false") +
+                    ", event_running=" + (sourceObservation.eventRunning ? "true" : "false") +
+                    ", event_id=" + std::to_string(sourceObservation.eventId);
+            return false;
+        }
+    } else if (mDefinition.validationTicks == 0 ||
+               mDefinition.sourceFrame > input_tape_player().frameCount() ||
+               mDefinition.validationTicks >
+                   input_tape_player().frameCount() - mDefinition.sourceFrame)
+    {
+        error = "suffix batch replay validation window exceeds the source tape";
         return false;
     }
     if (mActualSourceBoundaryFingerprint != mDefinition.sourceBoundaryFingerprint) {
@@ -273,6 +289,11 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
         error = state_checkpoint_error_message(checkpointError);
         return false;
     }
+    checkpointError = mCheckpoint.currentSemanticDigest(mSourceSemanticDigest);
+    if (checkpointError != StateCheckpointError::None) {
+        error = state_checkpoint_error_message(checkpointError);
+        return false;
+    }
 
     const MilestoneTracker& configuredTracker = milestone_tracker();
     if (configuredTracker.goalConfigured()) {
@@ -299,7 +320,7 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
     }
     mGoalTracker.setBootOrigin(input_tape_player().tape().boot);
 
-    return beginEpisodeShard(error);
+    return true;
 }
 
 bool SuffixBatchRunner::beginEpisodeShard(std::string& error) {
@@ -396,12 +417,96 @@ bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
     tapeFrame = mSource.tapeFrame;
     preparedInputFrame = mSource.preparedInputFrame;
     tapeFrameApplied = mSource.tapeFrameApplied;
+    std::string restoredSemanticDigest;
+    const StateCheckpointError semanticError =
+        mCheckpoint.currentSemanticDigest(restoredSemanticDigest);
+    if (semanticError != StateCheckpointError::None) {
+        error = state_checkpoint_error_message(semanticError);
+        return false;
+    }
+    if (restoredSemanticDigest != mSourceSemanticDigest) {
+        error = "suffix checkpoint restore does not reproduce its source semantic identity; "
+                "expected " +
+                mSourceSemanticDigest + ", observed " + restoredSemanticDigest;
+        return false;
+    }
     mGoalTracker.reset();
     mCandidateTick = 0;
     mConsumedPads.clear();
     mStateDigestMaterial.clear();
     mConsumedCaptureFailed = false;
     mEpisodePreInputCaptured = false;
+    return true;
+}
+
+bool SuffixBatchRunner::captureValidationTickDigest(const std::uint64_t simulationTick,
+    const std::uint64_t tapeFrame, const std::uint64_t preparedInputFrame,
+    const bool tapeFrameApplied, std::string& output, std::string& error) {
+    const auto start = ProfileClock::now();
+    std::string machine;
+    const StateCheckpointError checkpointError = mCheckpoint.currentSemanticDigest(machine);
+    if (checkpointError != StateCheckpointError::None) {
+        error = state_checkpoint_error_message(checkpointError);
+        return false;
+    }
+    const InputTapePlayerState player = input_tape_player().captureState();
+    PADAutomationState pad{};
+    if (!PADCaptureAutomationState(&pad)) {
+        error = "could not capture suffix replay-validation PAD state";
+        return false;
+    }
+    const MilestoneObservation observation = capture_milestone_observation(mSourceMilestoneStorage);
+    const std::string replay =
+        compute_milestone_observation_fingerprint(observation, milestone_tracker().bootOrigin());
+    if (replay.empty()) {
+        error = "could not fingerprint suffix replay-validation gameplay state";
+        return false;
+    }
+    nlohmann::json padState = nlohmann::json::array();
+    for (std::uint32_t port = 0; port < PAD_CHANMAX; ++port) {
+        const PADStatus& status = pad.status[port];
+        padState.push_back({
+            {"active", pad.active[port] != FALSE},
+            {"button", status.button},
+            {"stick_x", status.stickX},
+            {"stick_y", status.stickY},
+            {"substick_x", status.substickX},
+            {"substick_y", status.substickY},
+            {"trigger_left", status.triggerLeft},
+            {"trigger_right", status.triggerRight},
+            {"analog_a", status.analogA},
+            {"analog_b", status.analogB},
+            {"error", status.err},
+#ifdef TARGET_PC
+            {"extended_button", status.extButton},
+#endif
+        });
+    }
+    const std::string material =
+        nlohmann::json{
+            {"machine", machine},
+            {"simulation_tick", simulationTick},
+            {"tape_frame", tapeFrame},
+            {"prepared_input_frame", preparedInputFrame},
+            {"tape_frame_applied", tapeFrameApplied},
+            {"player_next_frame", player.nextFrame},
+            {"player_owned_ports", player.ownedPorts},
+            {"player_end_behavior", static_cast<unsigned>(player.endBehavior)},
+            {"player_playing", player.playing},
+            {"player_release_pending", player.releasePending},
+            {"player_condition_wait", player.conditionWaitTicks},
+            {"player_condition_pulse_neutral", player.conditionPulseNeutral},
+            {"player_playback_error", static_cast<unsigned>(player.playbackError)},
+            {"player_failed_frame", player.failedFrame},
+            {"player_failed_condition", static_cast<unsigned>(player.failedCondition)},
+            {"pad", std::move(padState)},
+            {"replay", replay},
+            {"milestones", serialize_milestone_result(milestone_tracker())},
+        }
+            .dump();
+    output = xxh3_128_hex(material);
+    mValidationMicros += elapsed_micros(start);
+    ++mValidationSamples;
     return true;
 }
 
@@ -496,9 +601,35 @@ bool SuffixBatchRunner::preInput(std::uint64_t& simulationTick, std::uint64_t& t
             fail(error);
             return false;
         }
-        mPhase = Phase::Candidate;
+        if (mDefinition.checkpointValidation == SuffixCheckpointValidation::RecordedReplayWindow) {
+            mValidationFreshDigests.clear();
+            mValidationFreshDigests.reserve(mDefinition.validationTicks);
+            mValidationRestoredDigestMaterial.clear();
+            mValidationRestoredDigestMaterial.reserve(mDefinition.validationTicks * 32);
+            mValidationTick = 0;
+            mPhase = Phase::ValidateFresh;
+        } else {
+            mValidationVerified = true;
+            if (!beginEpisodeShard(error)) {
+                fail(error);
+                return false;
+            }
+            mPhase = Phase::Candidate;
+        }
+    } else if (mPhase == Phase::RestoreValidation) {
+        if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, error))
+        {
+            fail(error);
+            return false;
+        }
+        mValidationTick = 0;
+        mPhase = Phase::ValidateRestored;
     } else if (mPhase == Phase::RestoreNext) {
         if (!restoreSource(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, error)) {
+            fail(error);
+            return false;
+        }
+        if (!mEpisodeShard.active() && !beginEpisodeShard(error)) {
             fail(error);
             return false;
         }
@@ -741,8 +872,53 @@ bool SuffixBatchRunner::finishCandidate(
 }
 
 bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
-    const std::uint64_t tapeFrame, std::string& error) {
-    if (!mEnabled || mPhase != Phase::Candidate || mCompleted || mFailed) return false;
+    const std::uint64_t tapeFrame, const std::uint64_t preparedInputFrame,
+    const bool tapeFrameApplied, std::string& error) {
+    if (!mEnabled || !ownsPostSimulation() || mCompleted || mFailed)
+        return false;
+    if (mPhase == Phase::ValidateFresh || mPhase == Phase::ValidateRestored) {
+        std::string digest;
+        if (!captureValidationTickDigest(
+                simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied, digest, error))
+        {
+            fail(error);
+            return true;
+        }
+        if (mPhase == Phase::ValidateFresh) {
+            mValidationFreshDigests.push_back(digest);
+        } else if (mValidationTick >= mValidationFreshDigests.size() ||
+                   digest != mValidationFreshDigests[mValidationTick])
+        {
+            mValidationFirstDivergence = mValidationTick;
+            mValidationExpectedDigest = mValidationTick < mValidationFreshDigests.size() ?
+                                            mValidationFreshDigests[mValidationTick] :
+                                            "<missing>";
+            mValidationActualDigest = std::move(digest);
+            error = "suffix checkpoint replay validation diverged at tick " +
+                    std::to_string(mValidationTick) + "; expected " + mValidationExpectedDigest +
+                    ", observed " + mValidationActualDigest;
+            fail(error);
+            return true;
+        } else {
+            mValidationRestoredDigestMaterial += digest;
+        }
+        ++mValidationTick;
+        if (mValidationTick != mDefinition.validationTicks)
+            return false;
+        if (mPhase == Phase::ValidateFresh) {
+            std::string sequence;
+            sequence.reserve(mValidationFreshDigests.size() * 32);
+            for (const std::string& tickDigest : mValidationFreshDigests)
+                sequence += tickDigest;
+            mValidationFreshSequenceDigest = xxh3_128_hex(sequence);
+            mPhase = Phase::RestoreValidation;
+        } else {
+            mValidationRestoredSequenceDigest = xxh3_128_hex(mValidationRestoredDigestMaterial);
+            mValidationVerified = true;
+            mPhase = Phase::RestoreNext;
+        }
+        return false;
+    }
     finishSimulationProfile();
     const auto& candidate = mDefinition.candidates[mCandidateIndex];
     const RawPadState& expectedPad = candidate.tapePassthrough
@@ -864,18 +1040,23 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         std::uint64_t{0}, [](const std::uint64_t total, const CandidateResult& candidate) {
             return total + candidate.ticksExecuted;
         });
-    const std::size_t expectedRestores = mDefinition.candidates.size() - 1 +
-                                         (mProfile.sourceCheckpointReused ? 1 : 0);
-    const bool profileVerified = mProfile.complete &&
-                                 mProfile.policyApplicationSamples == candidateTicks &&
-                                 mProfile.simulationSamples == candidateTicks &&
-                                 mProfile.observationCaptureSamples == candidateTicks * 2 &&
-                                 mProfile.cpuDrawTraversalSamples == candidateTicks &&
-                                 mProfile.cpuRendererSubmissionSamples == candidateTicks &&
-                                 mRestoreMicros.size() == expectedRestores &&
-                                 mEpisodeShard.episodeCount() == mResults.size() &&
-                                 (!mDefinition.verifyStateHashes ||
-                                     mProfile.stateValidationSamples == candidateTicks);
+    const std::size_t expectedRestores =
+        mDefinition.candidates.size() - 1 + (mProfile.sourceCheckpointReused ? 1 : 0) +
+        (!mProfile.sourceCheckpointReused && mDefinition.checkpointValidation ==
+                                                 SuffixCheckpointValidation::RecordedReplayWindow ?
+                2 :
+                0);
+    const bool profileVerified =
+        mProfile.complete && mProfile.policyApplicationSamples == candidateTicks &&
+        mProfile.simulationSamples == candidateTicks &&
+        mProfile.observationCaptureSamples == candidateTicks * 2 &&
+        mProfile.cpuDrawTraversalSamples == candidateTicks &&
+        mProfile.cpuRendererSubmissionSamples == candidateTicks &&
+        mRestoreMicros.size() == expectedRestores &&
+        mEpisodeShard.episodeCount() == mResults.size() && mValidationVerified &&
+        (mDefinition.checkpointValidation != SuffixCheckpointValidation::RecordedReplayWindow ||
+            mValidationSamples == mDefinition.validationTicks * 2) &&
+        (!mDefinition.verifyStateHashes || mProfile.stateValidationSamples == candidateTicks);
     if (mCompleted && !profileVerified) {
         error = "completed suffix batch has incomplete phase-profile sample coverage";
         return false;
@@ -920,6 +1101,18 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                 {"micros", std::accumulate(mRestoreMicros.begin(), mRestoreMicros.end(),
                     std::uint64_t{0})},
                 {"samples", mRestoreMicros.size()},
+            }},
+            {"checkpoint_validation", {
+                {"status", mDefinition.checkpointValidation ==
+                        SuffixCheckpointValidation::GameplayReadyFSp103
+                    ? "fixed_predicate" :
+                      mProfile.sourceCheckpointReused ? "reused" : "measured"},
+                {"micros", mProfile.sourceCheckpointReused ||
+                        mDefinition.checkpointValidation ==
+                            SuffixCheckpointValidation::GameplayReadyFSp103
+                    ? nlohmann::json(nullptr) : nlohmann::json(mValidationMicros)},
+                {"session_micros", mValidationMicros},
+                {"samples", mValidationSamples},
             }},
             {"policy_inference", {{"status", "not_present"}, {"micros", nullptr}}},
             {"policy_application", {
@@ -966,19 +1159,56 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         }},
     };
     nlohmann::json result{
-        {"schema", "dusklight-suffix-batch-result/v3"},
-        {"status", mCompleted ? "passed" : mFailed ? "failed" : "incomplete"},
+        {"schema", "dusklight-suffix-batch-result/v4"},
+        {"status", mCompleted ? "passed" :
+                   mFailed    ? "failed" :
+                                "incomplete"},
         {"source_frame", mDefinition.sourceFrame},
-        {"source_boundary", {
-            {"milestone", milestone_name(MilestoneId::GameplayReadyFSp103)},
-            {"expected_fingerprint", mDefinition.sourceBoundaryFingerprint},
-            {"actual_fingerprint", mActualSourceBoundaryFingerprint.empty()
-                    ? nlohmann::json(nullptr) :
-                      nlohmann::json(mActualSourceBoundaryFingerprint)},
-            {"verified", !mActualSourceBoundaryFingerprint.empty() &&
-                    mActualSourceBoundaryFingerprint ==
-                        mDefinition.sourceBoundaryFingerprint},
-        }},
+        {"source_boundary",
+            {
+                {"milestone", mDefinition.checkpointValidation ==
+                                      SuffixCheckpointValidation::GameplayReadyFSp103 ?
+                                  nlohmann::json(milestone_name(MilestoneId::GameplayReadyFSp103)) :
+                                  nlohmann::json(nullptr)},
+                {"expected_fingerprint", mDefinition.sourceBoundaryFingerprint},
+                {"actual_fingerprint", mActualSourceBoundaryFingerprint.empty() ?
+                                           nlohmann::json(nullptr) :
+                                           nlohmann::json(mActualSourceBoundaryFingerprint)},
+                {"fingerprint_verified",
+                    !mActualSourceBoundaryFingerprint.empty() &&
+                        mActualSourceBoundaryFingerprint == mDefinition.sourceBoundaryFingerprint},
+                {"verified",
+                    !mActualSourceBoundaryFingerprint.empty() &&
+                        mActualSourceBoundaryFingerprint == mDefinition.sourceBoundaryFingerprint &&
+                        mValidationVerified},
+            }},
+        {"checkpoint_validation",
+            {
+                {"kind", mDefinition.checkpointValidation ==
+                                 SuffixCheckpointValidation::RecordedReplayWindow ?
+                             "recorded_replay_window" :
+                             "gameplay_ready_f_sp103"},
+                {"ticks", mDefinition.validationTicks},
+                {"verified", mValidationVerified},
+                {"source_semantic_digest", mSourceSemanticDigest.empty() ?
+                                               nlohmann::json(nullptr) :
+                                               nlohmann::json(mSourceSemanticDigest)},
+                {"fresh_sequence_digest", mValidationFreshSequenceDigest.empty() ?
+                                              nlohmann::json(nullptr) :
+                                              nlohmann::json(mValidationFreshSequenceDigest)},
+                {"restored_sequence_digest", mValidationRestoredSequenceDigest.empty() ?
+                                                 nlohmann::json(nullptr) :
+                                                 nlohmann::json(mValidationRestoredSequenceDigest)},
+                {"first_divergence_tick", mValidationFirstDivergence.has_value() ?
+                                              nlohmann::json(*mValidationFirstDivergence) :
+                                              nlohmann::json(nullptr)},
+                {"expected_tick_digest", mValidationExpectedDigest.empty() ?
+                                             nlohmann::json(nullptr) :
+                                             nlohmann::json(mValidationExpectedDigest)},
+                {"actual_tick_digest", mValidationActualDigest.empty() ?
+                                           nlohmann::json(nullptr) :
+                                           nlohmann::json(mValidationActualDigest)},
+            }},
         {"maximum_ticks", mDefinition.maximumTicks},
         {"candidate_count", mDefinition.candidates.size()},
         {"completed_candidates", mResults.size()},
