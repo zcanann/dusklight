@@ -8,14 +8,34 @@ use crate::execution::PlannerExecutionState;
 use crate::identity::EquivalenceSet;
 use crate::logic::{FactCatalog, PredicateExpression};
 use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
-use crate::transition::{MechanicsCatalog, PathConstraint, StateOperation};
+use crate::transition::{MechanicsCatalog, PathConstraint};
 use crate::{PlannerContractError, artifact::Digest};
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::cmp::Ordering;
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 
 #[derive(Clone)]
 struct RouteActionSequence {
-    actions: Vec<RouteActionRef>,
+    steps: Vec<RouteSequenceStep>,
+}
+
+#[derive(Clone)]
+struct RouteSequenceStep {
+    action: RouteActionRef,
+    precondition: Option<PredicateExpression>,
+    postcondition: Option<PredicateExpression>,
+}
+
+struct ActionPreference {
+    directive_id: String,
+    action: RouteActionRef,
+    weight: u32,
+}
+
+struct MethodPreference {
+    directive_id: String,
+    sequence: RouteActionSequence,
+    weight: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +64,8 @@ fn compile_route_policy(
         forbidden_predicates: Vec::new(),
         required_sequences: Vec::new(),
         banned_sequences: Vec::new(),
+        action_preferences: Vec::new(),
+        method_preferences: Vec::new(),
     };
     let mut required_methods = BTreeMap::<String, RouteActionSequence>::new();
     let mut banned_methods = BTreeMap::<String, RouteActionSequence>::new();
@@ -112,14 +134,23 @@ fn compile_route_policy(
                     banned_methods.insert(method_id.clone(), sequence);
                 }
             }
-            RouteDirectiveKind::PreferAction { .. } | RouteDirectiveKind::PreferMethod { .. } => {
-                return Err(PlannerContractError::new(
-                    "route_book.directives",
-                    format!(
-                        "directive {} is not yet executable by the bounded forward solver",
-                        directive.id
-                    ),
-                ));
+            RouteDirectiveKind::PreferAction { action, weight } => {
+                require_searchable_action(action, &directive.id)?;
+                policy.action_preferences.push(ActionPreference {
+                    directive_id: directive.id.clone(),
+                    action: action.clone(),
+                    weight: *weight,
+                });
+            }
+            RouteDirectiveKind::PreferMethod { method_id, weight } => {
+                if let Some(sequence) = compile_method_sequence(book, method_id, evaluator, false)?
+                {
+                    policy.method_preferences.push(MethodPreference {
+                        directive_id: directive.id.clone(),
+                        sequence,
+                        weight: *weight,
+                    });
+                }
             }
         }
     }
@@ -161,10 +192,10 @@ fn compile_route_policy(
     }
     if let Some((method_id, action)) = required_methods.iter().find_map(|(method_id, sequence)| {
         sequence
-            .actions
+            .steps
             .iter()
-            .find(|action| policy.banned_actions.contains(*action))
-            .map(|action| (method_id, action))
+            .find(|step| policy.banned_actions.contains(&step.action))
+            .map(|step| (method_id, &step.action))
     }) {
         return Err(PlannerContractError::new(
             "route_book",
@@ -201,7 +232,7 @@ fn compile_method_sequence(
         }
         return Ok(None);
     }
-    let mut actions = Vec::with_capacity(method.step_ids.len());
+    let mut steps = Vec::with_capacity(method.step_ids.len());
     for step_id in &method.step_ids {
         let step = book
             .steps
@@ -213,18 +244,14 @@ fn compile_method_sequence(
                     format!("references unknown step {step_id}"),
                 )
             })?;
-        if step.precondition.is_some() || step.postcondition.is_some() {
-            return Err(PlannerContractError::new(
-                "route_book.methods.step_ids",
-                format!(
-                    "method {method_id} uses conditioned step {step_id}; action-boundary predicate checks are not yet executable"
-                ),
-            ));
-        }
         require_searchable_action(&step.action, method_id)?;
-        actions.push(step.action.clone());
+        steps.push(RouteSequenceStep {
+            action: step.action.clone(),
+            precondition: step.precondition.clone(),
+            postcondition: step.postcondition.clone(),
+        });
     }
-    Ok(Some(RouteActionSequence { actions }))
+    Ok(Some(RouteActionSequence { steps }))
 }
 
 fn require_searchable_action(
@@ -308,6 +335,8 @@ pub struct SearchResult {
     pub steps: Vec<SearchStep>,
     pub explored_states: usize,
     pub hit_search_limit: bool,
+    pub preference_score: u64,
+    pub satisfied_preference_ids: Vec<String>,
     pub unknown_transition_ids: Vec<String>,
     pub execution_error_ids: Vec<String>,
 }
@@ -319,6 +348,48 @@ struct SearchNode {
     satisfied_required_actions: BTreeSet<RouteActionRef>,
     required_sequence_progress: Vec<usize>,
     banned_sequence_progress: Vec<usize>,
+    preferred_sequence_progress: Vec<usize>,
+    satisfied_preference_ids: BTreeSet<String>,
+    preference_score: u64,
+    route_condition_unknown: bool,
+}
+
+struct QueueEntry {
+    node: SearchNode,
+    insertion_order: u64,
+}
+
+struct AppliedActionBoundary {
+    action: RouteActionRef,
+    before: PlannerExecutionState,
+    after: PlannerExecutionState,
+}
+
+impl PartialEq for QueueEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.node.depth == other.node.depth
+            && self.node.preference_score == other.node.preference_score
+            && self.insertion_order == other.insertion_order
+    }
+}
+
+impl Eq for QueueEntry {}
+
+impl PartialOrd for QueueEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for QueueEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .node
+            .depth
+            .cmp(&self.node.depth)
+            .then_with(|| self.node.preference_score.cmp(&other.node.preference_score))
+            .then_with(|| other.insertion_order.cmp(&self.insertion_order))
+    }
 }
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
@@ -327,6 +398,9 @@ struct SearchIdentity {
     satisfied_required_actions: Vec<RouteActionRef>,
     required_sequence_progress: Vec<usize>,
     banned_sequence_progress: Vec<usize>,
+    preferred_sequence_progress: Vec<usize>,
+    satisfied_preference_ids: Vec<String>,
+    route_condition_unknown: bool,
 }
 
 struct RouteSearchPolicy {
@@ -336,6 +410,8 @@ struct RouteSearchPolicy {
     forbidden_predicates: Vec<PredicateExpression>,
     required_sequences: Vec<RouteActionSequence>,
     banned_sequences: Vec<RouteActionSequence>,
+    action_preferences: Vec<ActionPreference>,
+    method_preferences: Vec<MethodPreference>,
 }
 
 pub struct ForwardSolver<'a> {
@@ -406,7 +482,7 @@ impl<'a> ForwardSolver<'a> {
             .route_book
             .map(|book| compile_route_policy(book, &start_evaluator))
             .transpose()?;
-        let mut queue = VecDeque::from([SearchNode {
+        let initial_node = SearchNode {
             state: start,
             steps: Vec::new(),
             depth: 0,
@@ -423,6 +499,19 @@ impl<'a> ForwardSolver<'a> {
                     .as_ref()
                     .map_or(0, |policy| policy.banned_sequences.len())
             ],
+            preferred_sequence_progress: vec![
+                0;
+                route_policy.as_ref().map_or(0, |policy| policy
+                    .method_preferences
+                    .len())
+            ],
+            satisfied_preference_ids: BTreeSet::new(),
+            preference_score: 0,
+            route_condition_unknown: false,
+        };
+        let mut queue = BinaryHeap::from([QueueEntry {
+            node: initial_node,
+            insertion_order: 0,
         }]);
         let mut visited = BTreeSet::new();
         let mut unknown_transition_ids = BTreeSet::new();
@@ -431,7 +520,7 @@ impl<'a> ForwardSolver<'a> {
         let mut hit_search_limit = false;
         let mut generated_id = 0_u64;
 
-        while let Some(node) = queue.pop_front() {
+        while let Some(QueueEntry { node, .. }) = queue.pop() {
             let state_identity = node.state.semantic_digest()?;
             let search_identity = SearchIdentity {
                 state_sha256: state_identity,
@@ -442,6 +531,9 @@ impl<'a> ForwardSolver<'a> {
                     .collect::<Vec<_>>(),
                 required_sequence_progress: node.required_sequence_progress.clone(),
                 banned_sequence_progress: node.banned_sequence_progress.clone(),
+                preferred_sequence_progress: node.preferred_sequence_progress.clone(),
+                satisfied_preference_ids: node.satisfied_preference_ids.iter().cloned().collect(),
+                route_condition_unknown: node.route_condition_unknown,
             };
             if !visited.insert(search_identity) {
                 continue;
@@ -493,25 +585,33 @@ impl<'a> ForwardSolver<'a> {
                     .required_sequences
                     .iter()
                     .zip(&node.required_sequence_progress)
-                    .all(|(sequence, progress)| *progress == sequence.actions.len())
+                    .all(|(sequence, progress)| *progress == sequence.steps.len())
             });
             match evaluator.evaluate(goal) {
                 EvaluatedTruth::True
                     if required_predicates == EvaluatedTruth::True
                         && required_actions_satisfied
-                        && required_sequences_satisfied =>
+                        && required_sequences_satisfied
+                        && !node.route_condition_unknown =>
                 {
                     return Ok(SearchResult {
                         status: SearchStatus::Reached,
                         steps: node.steps,
                         explored_states: visited.len(),
                         hit_search_limit: false,
+                        preference_score: node.preference_score,
+                        satisfied_preference_ids: node
+                            .satisfied_preference_ids
+                            .into_iter()
+                            .collect(),
                         unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
                         execution_error_ids: execution_error_ids.into_iter().collect(),
                     });
                 }
                 EvaluatedTruth::True => {
-                    if required_predicates == EvaluatedTruth::Unknown {
+                    if required_predicates == EvaluatedTruth::Unknown
+                        || node.route_condition_unknown
+                    {
                         saw_unknown_goal = true;
                     }
                 }
@@ -558,13 +658,19 @@ impl<'a> ForwardSolver<'a> {
                     execution_error_ids.insert(technique.id.clone());
                     continue;
                 }
-                self.enqueue_if_new(
+                let boundary = AppliedActionBoundary {
+                    action,
+                    before: node.state.clone(),
+                    after: next.clone(),
+                };
+                saw_unknown_goal |= self.enqueue_if_new(
                     &mut queue,
                     &visited,
                     &node,
                     next,
-                    std::slice::from_ref(&action),
+                    std::slice::from_ref(&boundary),
                     route_policy.as_ref(),
+                    generated_id,
                     SearchStep {
                         action_kind: SearchActionKind::Technique,
                         action_id: technique.id.clone(),
@@ -678,31 +784,84 @@ impl<'a> ForwardSolver<'a> {
                             continue;
                         }
 
-                        let mut setup_operations = Vec::new();
-                        append_selected_resolver_operations(
-                            &mut setup_operations,
-                            &self.mechanics.resolvers,
-                            selected_resolvers,
-                        );
-                        append_selected_technique_operations(
-                            &mut setup_operations,
-                            &self.mechanics.techniques,
-                            selected_techniques,
-                        );
                         let mut next = node.state.clone();
-                        if !setup_operations.is_empty() {
+                        let mut action_boundaries = Vec::new();
+                        let mut setup_failed = false;
+                        for resolver_id in &resolution.applied_resolver_ids {
+                            let resolver = self
+                                .mechanics
+                                .resolvers
+                                .iter()
+                                .find(|resolver| resolver.id == *resolver_id)
+                                .ok_or_else(|| {
+                                    PlannerContractError::new(
+                                        "solver.resolver",
+                                        "feasibility selected an unknown resolver",
+                                    )
+                                })?;
+                            let before = next.clone();
                             generated_id = generated_id.saturating_add(1);
-                            if next
-                                .apply_operations(
-                                    &format!("setup.{}", transition.id),
-                                    &format!("search-setup-{generated_id}"),
-                                    &setup_operations,
-                                )
-                                .is_err()
+                            if !resolver.operations.is_empty()
+                                && next
+                                    .apply_operations(
+                                        &resolver.id,
+                                        &format!("search-setup-{generated_id}"),
+                                        &resolver.operations,
+                                    )
+                                    .is_err()
                             {
-                                execution_error_ids.insert(transition.id.clone());
-                                continue;
+                                execution_error_ids.insert(resolver.id.clone());
+                                setup_failed = true;
+                                break;
                             }
+                            action_boundaries.push(AppliedActionBoundary {
+                                action: RouteActionRef::Resolver {
+                                    resolver_id: resolver.id.clone(),
+                                },
+                                before,
+                                after: next.clone(),
+                            });
+                        }
+                        if setup_failed {
+                            continue;
+                        }
+                        for technique_id in &resolution.applicable_technique_ids {
+                            let technique = self
+                                .mechanics
+                                .techniques
+                                .iter()
+                                .find(|technique| technique.id == *technique_id)
+                                .ok_or_else(|| {
+                                    PlannerContractError::new(
+                                        "solver.technique",
+                                        "feasibility selected an unknown technique",
+                                    )
+                                })?;
+                            let before = next.clone();
+                            generated_id = generated_id.saturating_add(1);
+                            if !technique.operations.is_empty()
+                                && next
+                                    .apply_operations(
+                                        &technique.id,
+                                        &format!("search-setup-{generated_id}"),
+                                        &technique.operations,
+                                    )
+                                    .is_err()
+                            {
+                                execution_error_ids.insert(technique.id.clone());
+                                setup_failed = true;
+                                break;
+                            }
+                            action_boundaries.push(AppliedActionBoundary {
+                                action: RouteActionRef::Technique {
+                                    technique_id: technique.id.clone(),
+                                },
+                                before,
+                                after: next.clone(),
+                            });
+                        }
+                        if setup_failed {
+                            continue;
                         }
                         let assessment = PredicateEvaluator::new(
                             &next.snapshot,
@@ -728,6 +887,7 @@ impl<'a> ForwardSolver<'a> {
                         }
 
                         generated_id = generated_id.saturating_add(1);
+                        let transition_before = next.clone();
                         if next
                             .apply_operations(
                                 &transition.id,
@@ -739,32 +899,24 @@ impl<'a> ForwardSolver<'a> {
                             execution_error_ids.insert(transition.id.clone());
                             continue;
                         }
-                        self.enqueue_if_new(
+                        action_boundaries.push(AppliedActionBoundary {
+                            action: transition_action.clone(),
+                            before: transition_before,
+                            after: next.clone(),
+                        });
+                        saw_unknown_goal |= self.enqueue_if_new(
                             &mut queue,
                             &visited,
                             &node,
                             next,
-                            &selected_resolvers
-                                .iter()
-                                .map(|id| RouteActionRef::Resolver {
-                                    resolver_id: id.clone(),
-                                })
-                                .chain(selected_techniques.iter().map(|id| {
-                                    RouteActionRef::Technique {
-                                        technique_id: id.clone(),
-                                    }
-                                }))
-                                .chain(std::iter::once(transition_action.clone()))
-                                .collect::<Vec<_>>(),
+                            &action_boundaries,
                             route_policy.as_ref(),
+                            generated_id,
                             SearchStep {
                                 action_kind: SearchActionKind::Transition,
                                 action_id: transition.id.clone(),
-                                selected_resolver_ids: selected_resolvers.iter().cloned().collect(),
-                                selected_technique_ids: selected_techniques
-                                    .iter()
-                                    .cloned()
-                                    .collect(),
+                                selected_resolver_ids: resolution.applied_resolver_ids.clone(),
+                                selected_technique_ids: resolution.applicable_technique_ids.clone(),
                                 source_state_sha256: state_identity,
                                 result_state_sha256: Digest::ZERO,
                             },
@@ -790,6 +942,8 @@ impl<'a> ForwardSolver<'a> {
             steps: Vec::new(),
             explored_states: visited.len(),
             hit_search_limit,
+            preference_score: 0,
+            satisfied_preference_ids: Vec::new(),
             unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
             execution_error_ids: execution_error_ids.into_iter().collect(),
         })
@@ -798,41 +952,75 @@ impl<'a> ForwardSolver<'a> {
     #[allow(clippy::too_many_arguments)]
     fn enqueue_if_new(
         &self,
-        queue: &mut VecDeque<SearchNode>,
+        queue: &mut BinaryHeap<QueueEntry>,
         visited: &BTreeSet<SearchIdentity>,
         node: &SearchNode,
         next: PlannerExecutionState,
-        applied_actions: &[RouteActionRef],
+        boundaries: &[AppliedActionBoundary],
         route_policy: Option<&RouteSearchPolicy>,
+        insertion_order: u64,
         mut step: SearchStep,
-    ) -> Result<(), PlannerContractError> {
+    ) -> Result<bool, PlannerContractError> {
         let result = next.semantic_digest()?;
         let mut satisfied_required_actions = node.satisfied_required_actions.clone();
         let mut required_sequence_progress = node.required_sequence_progress.clone();
         let mut banned_sequence_progress = node.banned_sequence_progress.clone();
+        let mut preferred_sequence_progress = node.preferred_sequence_progress.clone();
+        let mut satisfied_preference_ids = node.satisfied_preference_ids.clone();
+        let mut preference_score = node.preference_score;
+        let mut route_condition_unknown = node.route_condition_unknown;
+        let mut saw_unknown_condition = false;
         if let Some(policy) = route_policy {
-            for action in applied_actions {
-                if policy.required_actions.contains(action) {
-                    satisfied_required_actions.insert(action.clone());
+            for boundary in boundaries {
+                if policy.required_actions.contains(&boundary.action) {
+                    satisfied_required_actions.insert(boundary.action.clone());
+                }
+                for preference in &policy.action_preferences {
+                    if preference.action == boundary.action
+                        && satisfied_preference_ids.insert(preference.directive_id.clone())
+                    {
+                        preference_score =
+                            preference_score.saturating_add(u64::from(preference.weight));
+                    }
+                }
+                for (preference, progress) in policy
+                    .method_preferences
+                    .iter()
+                    .zip(preferred_sequence_progress.iter_mut())
+                {
+                    if let Some(expected) = preference.sequence.steps.get(*progress)
+                        && expected.action == boundary.action
+                        && self.evaluate_step_boundary(expected, boundary)? == EvaluatedTruth::True
+                    {
+                        *progress += 1;
+                        if *progress == preference.sequence.steps.len()
+                            && satisfied_preference_ids.insert(preference.directive_id.clone())
+                        {
+                            preference_score =
+                                preference_score.saturating_add(u64::from(preference.weight));
+                        }
+                    }
                 }
             }
-            advance_sequence_progress(
+            saw_unknown_condition |= self.advance_sequence_progress(
                 &policy.required_sequences,
                 &mut required_sequence_progress,
-                applied_actions,
-            );
-            advance_sequence_progress(
+                boundaries,
+            )?;
+            let banned_unknown = self.advance_sequence_progress(
                 &policy.banned_sequences,
                 &mut banned_sequence_progress,
-                applied_actions,
-            );
+                boundaries,
+            )?;
+            saw_unknown_condition |= banned_unknown;
+            route_condition_unknown |= banned_unknown;
             if policy
                 .banned_sequences
                 .iter()
                 .zip(&banned_sequence_progress)
-                .any(|(sequence, progress)| *progress == sequence.actions.len())
+                .any(|(sequence, progress)| *progress == sequence.steps.len())
             {
-                return Ok(());
+                return Ok(saw_unknown_condition);
             }
         }
         let search_identity = SearchIdentity {
@@ -843,36 +1031,94 @@ impl<'a> ForwardSolver<'a> {
                 .collect::<Vec<_>>(),
             required_sequence_progress: required_sequence_progress.clone(),
             banned_sequence_progress: banned_sequence_progress.clone(),
+            preferred_sequence_progress: preferred_sequence_progress.clone(),
+            satisfied_preference_ids: satisfied_preference_ids.iter().cloned().collect(),
+            route_condition_unknown,
         };
         if visited.contains(&search_identity) {
-            return Ok(());
+            return Ok(saw_unknown_condition);
         }
         step.result_state_sha256 = result;
         let mut steps = node.steps.clone();
         steps.push(step);
-        queue.push_back(SearchNode {
-            state: next,
-            steps,
-            depth: node.depth + 1,
-            satisfied_required_actions,
-            required_sequence_progress,
-            banned_sequence_progress,
+        queue.push(QueueEntry {
+            node: SearchNode {
+                state: next,
+                steps,
+                depth: node.depth + 1,
+                satisfied_required_actions,
+                required_sequence_progress,
+                banned_sequence_progress,
+                preferred_sequence_progress,
+                satisfied_preference_ids,
+                preference_score,
+                route_condition_unknown,
+            },
+            insertion_order,
         });
-        Ok(())
+        Ok(saw_unknown_condition)
+    }
+
+    fn advance_sequence_progress(
+        &self,
+        sequences: &[RouteActionSequence],
+        progress: &mut [usize],
+        boundaries: &[AppliedActionBoundary],
+    ) -> Result<bool, PlannerContractError> {
+        let mut saw_unknown = false;
+        for boundary in boundaries {
+            for (sequence, progress) in sequences.iter().zip(progress.iter_mut()) {
+                let Some(expected) = sequence.steps.get(*progress) else {
+                    continue;
+                };
+                if expected.action != boundary.action {
+                    continue;
+                }
+                match self.evaluate_step_boundary(expected, boundary)? {
+                    EvaluatedTruth::True => *progress += 1,
+                    EvaluatedTruth::Unknown => saw_unknown = true,
+                    EvaluatedTruth::False => {}
+                }
+            }
+        }
+        Ok(saw_unknown)
+    }
+
+    fn evaluate_step_boundary(
+        &self,
+        step: &RouteSequenceStep,
+        boundary: &AppliedActionBoundary,
+    ) -> Result<EvaluatedTruth, PlannerContractError> {
+        let before = PredicateEvaluator::new(
+            &boundary.before.snapshot,
+            self.facts,
+            self.equivalence_sets,
+            &boundary.before.gate_states,
+            self.options.evidence_policy,
+        )?;
+        let after = PredicateEvaluator::new(
+            &boundary.after.snapshot,
+            self.facts,
+            self.equivalence_sets,
+            &boundary.after.gate_states,
+            self.options.evidence_policy,
+        )?;
+        Ok(and_truth(
+            step.precondition
+                .as_ref()
+                .map_or(EvaluatedTruth::True, |predicate| before.evaluate(predicate)),
+            step.postcondition
+                .as_ref()
+                .map_or(EvaluatedTruth::True, |predicate| after.evaluate(predicate)),
+        ))
     }
 }
 
-fn advance_sequence_progress(
-    sequences: &[RouteActionSequence],
-    progress: &mut [usize],
-    applied_actions: &[RouteActionRef],
-) {
-    for action in applied_actions {
-        for (sequence, progress) in sequences.iter().zip(progress.iter_mut()) {
-            if sequence.actions.get(*progress) == Some(action) {
-                *progress += 1;
-            }
-        }
+fn and_truth(left: EvaluatedTruth, right: EvaluatedTruth) -> EvaluatedTruth {
+    match (left, right) {
+        (EvaluatedTruth::False, _) | (_, EvaluatedTruth::False) => EvaluatedTruth::False,
+        (EvaluatedTruth::Unknown, _) | (_, EvaluatedTruth::Unknown) => EvaluatedTruth::Unknown,
+        (EvaluatedTruth::True, EvaluatedTruth::True) => EvaluatedTruth::True,
     }
 }
 
@@ -897,32 +1143,6 @@ fn bounded_subsets(ids: &[String], maximum: usize) -> Vec<BTreeSet<String>> {
     subsets
 }
 
-fn append_selected_resolver_operations(
-    operations: &mut Vec<StateOperation>,
-    resolvers: &[crate::transition::ObstructionResolver],
-    selected: &BTreeSet<String>,
-) {
-    for resolver in resolvers
-        .iter()
-        .filter(|resolver| selected.contains(&resolver.id))
-    {
-        operations.extend(resolver.operations.iter().cloned());
-    }
-}
-
-fn append_selected_technique_operations(
-    operations: &mut Vec<StateOperation>,
-    techniques: &[crate::transition::Technique],
-    selected: &BTreeSet<String>,
-) {
-    for technique in techniques
-        .iter()
-        .filter(|technique| selected.contains(&technique.id))
-    {
-        operations.extend(technique.operations.iter().cloned());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -945,7 +1165,7 @@ mod tests {
     use crate::transition::{
         ActivationContract, CandidateTransition, FeasibilityObligation, Goal,
         MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind, Obstruction,
-        ObstructionResolver, ResolutionKind, TransitionKind,
+        ObstructionResolver, ResolutionKind, StateOperation, TransitionKind,
     };
     use std::collections::BTreeMap;
 
@@ -1032,6 +1252,18 @@ mod tests {
         }
     }
 
+    fn gate_is(gate_id: &str, value: bool) -> PredicateExpression {
+        PredicateExpression::Compare {
+            left: ValueReference::GateState {
+                gate_id: gate_id.into(),
+            },
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Boolean(value),
+            },
+        }
+    }
+
     fn transition(
         snapshot: &StateSnapshot,
         id: &str,
@@ -1077,6 +1309,54 @@ mod tests {
             microtraces: Vec::new(),
             goals: Vec::new(),
         }
+    }
+
+    fn obstructed_transition_catalog(snapshot: &StateSnapshot) -> MechanicsCatalog {
+        let mut mechanics = catalog(vec![transition(
+            snapshot,
+            "transition.a-to-b",
+            "STAGE_A",
+            "STAGE_B",
+            vec!["obligation.blocker".into()],
+        )]);
+        mechanics.transitions[0].activation.hard_guards = PredicateExpression::All {
+            terms: vec![stage_is("STAGE_A"), gate_is("gate.entrance-open", true)],
+        };
+        mechanics.obligations = vec![FeasibilityObligation {
+            id: "obligation.blocker".into(),
+            label: "Reach the loading zone past the blocker".into(),
+            scope: scope(snapshot),
+            obligation_kind: ObligationKind::Geometry,
+            detail: ObligationDetail::Geometry {
+                approach_id: "approach.front".into(),
+                source_region_id: "region.a".into(),
+                destination_region_id: "region.exit".into(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.obstructions = vec![Obstruction {
+            id: "obstruction.npc".into(),
+            label: "NPC blocks the transition".into(),
+            scope: scope(snapshot),
+            blocked_action_id: "transition.a-to-b".into(),
+            approach_id: "approach.front".into(),
+            active_when: PredicateExpression::True,
+            obligation_ids: vec!["obligation.blocker".into()],
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.resolvers = vec![ObstructionResolver {
+            id: "resolver.text-state".into(),
+            label: "Use displaced text state".into(),
+            scope: scope(snapshot),
+            obstruction_id: "obstruction.npc".into(),
+            resolution_kind: ResolutionKind::Bypass,
+            applicable_when: PredicateExpression::True,
+            operations: vec![StateOperation::SetGate {
+                gate_id: "gate.entrance-open".into(),
+            }],
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics
     }
 
     fn facts() -> FactCatalog {
@@ -1334,6 +1614,139 @@ mod tests {
     }
 
     #[test]
+    fn preferences_choose_the_highest_scoring_equal_depth_route_once() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![
+            transition(
+                &snapshot,
+                "transition.a-to-b",
+                "STAGE_A",
+                "STAGE_B",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.a-to-c",
+                "STAGE_A",
+                "STAGE_C",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.b-to-g",
+                "STAGE_B",
+                "STAGE_G",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.c-to-g",
+                "STAGE_C",
+                "STAGE_G",
+                Vec::new(),
+            ),
+        ]);
+        mechanics.goals = vec![goal("goal.g", "STAGE_G")];
+        let facts = facts();
+        let mut book = route_book(
+            &snapshot,
+            vec![
+                RouteDirective {
+                    id: "directive.prefer-action".into(),
+                    scope: scope(&snapshot),
+                    directive: RouteDirectiveKind::PreferAction {
+                        action: RouteActionRef::Transition {
+                            transition_id: "transition.a-to-c".into(),
+                        },
+                        weight: 5,
+                    },
+                },
+                RouteDirective {
+                    id: "directive.prefer-method".into(),
+                    scope: scope(&snapshot),
+                    directive: RouteDirectiveKind::PreferMethod {
+                        method_id: "method.c-route".into(),
+                        weight: 10,
+                    },
+                },
+            ],
+        );
+        book.goal_ids = vec!["goal.g".into()];
+        book.steps = vec![
+            ReferenceStep {
+                id: "step.c-enter".into(),
+                label: "Enter C".into(),
+                scope: scope(&snapshot),
+                action: RouteActionRef::Transition {
+                    transition_id: "transition.a-to-c".into(),
+                },
+                precondition: None,
+                postcondition: None,
+                region_id: Some("region.c-route".into()),
+                annotation_ids: Vec::new(),
+            },
+            ReferenceStep {
+                id: "step.c-exit".into(),
+                label: "Exit C".into(),
+                scope: scope(&snapshot),
+                action: RouteActionRef::Transition {
+                    transition_id: "transition.c-to-g".into(),
+                },
+                precondition: None,
+                postcondition: None,
+                region_id: Some("region.c-route".into()),
+                annotation_ids: Vec::new(),
+            },
+        ];
+        book.methods = vec![PlanMethod {
+            id: "method.c-route".into(),
+            label: "C route".into(),
+            scope: scope(&snapshot),
+            region_id: "region.c-route".into(),
+            step_ids: vec!["step.c-enter".into(), "step.c-exit".into()],
+        }];
+        book.regions = vec![PlanRegion {
+            id: "region.c-route".into(),
+            label: "C route".into(),
+            scope: scope(&snapshot),
+            parent_region_id: None,
+            entry_predicate: Some(stage_is("STAGE_A")),
+            outcome_predicate: stage_is("STAGE_G"),
+            method_ids: vec!["method.c-route".into()],
+            selected_method_id: None,
+            collapse_policy: CollapsePolicy::Never,
+        }];
+        let solver = ForwardSolver::new_with_route_book(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions::default(),
+            &book,
+        )
+        .unwrap();
+        let result = solver
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_G"),
+            )
+            .unwrap();
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert_eq!(result.preference_score, 15);
+        assert_eq!(
+            result.satisfied_preference_ids,
+            vec!["directive.prefer-action", "directive.prefer-method"]
+        );
+        assert_eq!(
+            result
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["transition.a-to-c", "transition.c-to-g"]
+        );
+    }
+
+    #[test]
     fn missing_guard_state_returns_unknown_instead_of_unreachable() {
         let snapshot = snapshot();
         let mut candidate = transition(
@@ -1385,63 +1798,81 @@ mod tests {
     #[test]
     fn resolver_choice_is_applied_to_the_specific_obstructed_edge() {
         let snapshot = snapshot();
-        let mut mechanics = catalog(vec![transition(
-            &snapshot,
-            "transition.a-to-b",
-            "STAGE_A",
-            "STAGE_B",
-            vec!["obligation.blocker".into()],
-        )]);
-        mechanics.transitions[0].activation.hard_guards = PredicateExpression::All {
-            terms: vec![
-                stage_is("STAGE_A"),
-                PredicateExpression::Compare {
-                    left: ValueReference::GateState {
-                        gate_id: "gate.entrance-open".into(),
-                    },
-                    operator: ComparisonOperator::Equal,
-                    right: ValueReference::Literal {
-                        value: StateValue::Boolean(true),
-                    },
-                },
-            ],
-        };
-        mechanics.obligations = vec![FeasibilityObligation {
-            id: "obligation.blocker".into(),
-            label: "Reach the loading zone past the blocker".into(),
-            scope: scope(&snapshot),
-            obligation_kind: ObligationKind::Geometry,
-            detail: ObligationDetail::Geometry {
-                approach_id: "approach.front".into(),
-                source_region_id: "region.a".into(),
-                destination_region_id: "region.exit".into(),
-            },
-            evidence: evidence(TruthStatus::Established),
-        }];
-        mechanics.obstructions = vec![Obstruction {
-            id: "obstruction.npc".into(),
-            label: "NPC blocks the transition".into(),
-            scope: scope(&snapshot),
-            blocked_action_id: "transition.a-to-b".into(),
-            approach_id: "approach.front".into(),
-            active_when: PredicateExpression::True,
-            obligation_ids: vec!["obligation.blocker".into()],
-            evidence: evidence(TruthStatus::Established),
-        }];
-        mechanics.resolvers = vec![ObstructionResolver {
-            id: "resolver.text-state".into(),
-            label: "Use displaced text state".into(),
-            scope: scope(&snapshot),
-            obstruction_id: "obstruction.npc".into(),
-            resolution_kind: ResolutionKind::Bypass,
-            applicable_when: PredicateExpression::True,
-            operations: vec![StateOperation::SetGate {
-                gate_id: "gate.entrance-open".into(),
-            }],
-            evidence: evidence(TruthStatus::Established),
-        }];
+        let mechanics = obstructed_transition_catalog(&snapshot);
         let facts = facts();
         let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
+        let result = solver
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert_eq!(
+            result.steps[0].selected_resolver_ids,
+            vec!["resolver.text-state"]
+        );
+    }
+
+    #[test]
+    fn conditioned_method_steps_observe_each_setup_action_boundary() {
+        let snapshot = snapshot();
+        let mut mechanics = obstructed_transition_catalog(&snapshot);
+        mechanics.goals = vec![goal("goal.b", "STAGE_B")];
+        let facts = facts();
+        let mut book = route_book(&snapshot, Vec::new());
+        book.steps = vec![
+            ReferenceStep {
+                id: "step.resolve".into(),
+                label: "Resolve blocker".into(),
+                scope: scope(&snapshot),
+                action: RouteActionRef::Resolver {
+                    resolver_id: "resolver.text-state".into(),
+                },
+                precondition: Some(stage_is("STAGE_A")),
+                postcondition: Some(gate_is("gate.entrance-open", true)),
+                region_id: Some("region.conditioned".into()),
+                annotation_ids: Vec::new(),
+            },
+            ReferenceStep {
+                id: "step.travel".into(),
+                label: "Use opened entrance".into(),
+                scope: scope(&snapshot),
+                action: RouteActionRef::Transition {
+                    transition_id: "transition.a-to-b".into(),
+                },
+                precondition: Some(gate_is("gate.entrance-open", true)),
+                postcondition: Some(stage_is("STAGE_B")),
+                region_id: Some("region.conditioned".into()),
+                annotation_ids: Vec::new(),
+            },
+        ];
+        book.methods = vec![PlanMethod {
+            id: "method.conditioned".into(),
+            label: "Conditioned entrance".into(),
+            scope: scope(&snapshot),
+            region_id: "region.conditioned".into(),
+            step_ids: vec!["step.resolve".into(), "step.travel".into()],
+        }];
+        book.regions = vec![PlanRegion {
+            id: "region.conditioned".into(),
+            label: "Conditioned entrance".into(),
+            scope: scope(&snapshot),
+            parent_region_id: None,
+            entry_predicate: Some(stage_is("STAGE_A")),
+            outcome_predicate: stage_is("STAGE_B"),
+            method_ids: vec!["method.conditioned".into()],
+            selected_method_id: Some("method.conditioned".into()),
+            collapse_policy: CollapsePolicy::Never,
+        }];
+        let solver = ForwardSolver::new_with_route_book(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions::default(),
+            &book,
+        )
+        .unwrap();
         let result = solver
             .solve(
                 PlannerExecutionState::new(snapshot).unwrap(),
