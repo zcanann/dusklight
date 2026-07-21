@@ -382,6 +382,7 @@ pub struct SearchStep {
     pub discharged_obligation_ids: Vec<String>,
     pub outstanding_obligation_ids: Vec<String>,
     pub unknown_obligation_ids: Vec<String>,
+    pub supporting_microtrace_ids: Vec<String>,
     pub introduced_obligation_ids: Vec<String>,
     pub source_state_sha256: Digest,
     pub result_state_sha256: Digest,
@@ -401,6 +402,7 @@ pub struct BlockedTransitionWitness {
     pub discharged_obligation_ids: Vec<String>,
     pub outstanding_obligation_ids: Vec<String>,
     pub unknown_obligation_ids: Vec<String>,
+    pub supporting_microtrace_ids: Vec<String>,
     pub unknown_requirement_ids: Vec<String>,
 }
 
@@ -778,6 +780,7 @@ impl<'a> ForwardSolver<'a> {
                         discharged_obligation_ids: technique.discharged_obligation_ids.clone(),
                         outstanding_obligation_ids: Vec::new(),
                         unknown_obligation_ids: Vec::new(),
+                        supporting_microtrace_ids: Vec::new(),
                         introduced_obligation_ids: technique.introduced_obligation_ids.clone(),
                         source_state_sha256: state_identity,
                         result_state_sha256: Digest::ZERO,
@@ -867,6 +870,7 @@ impl<'a> ForwardSolver<'a> {
                                 resolver_ids: selected_resolvers,
                                 technique_ids: selected_techniques,
                                 already_discharged: &BTreeSet::new(),
+                                microtraces: &self.mechanics.microtraces,
                             },
                         );
                         let unresolved_active_obstruction = resolution
@@ -923,6 +927,11 @@ impl<'a> ForwardSolver<'a> {
                                     outstanding_obligation_ids: preliminary
                                         .outstanding_obligation_ids,
                                     unknown_obligation_ids: preliminary.unknown_obligation_ids,
+                                    supporting_microtrace_ids: resolution
+                                        .supporting_microtrace_ids
+                                        .iter()
+                                        .cloned()
+                                        .collect(),
                                     unknown_requirement_ids: preliminary.unknown_requirement_ids,
                                 },
                             );
@@ -1018,6 +1027,7 @@ impl<'a> ForwardSolver<'a> {
                         post_setup_evaluator.refresh_obligation_assessments(
                             transition,
                             &self.mechanics.obligations,
+                            &self.mechanics.microtraces,
                             &mut resolution,
                         );
                         let assessment = post_setup_evaluator.assess_transition(
@@ -1089,6 +1099,11 @@ impl<'a> ForwardSolver<'a> {
                                     .outstanding_obligation_ids
                                     .clone(),
                                 unknown_obligation_ids: assessment.unknown_obligation_ids.clone(),
+                                supporting_microtrace_ids: resolution
+                                    .supporting_microtrace_ids
+                                    .iter()
+                                    .cloned()
+                                    .collect(),
                                 introduced_obligation_ids: resolution
                                     .applicable_technique_ids
                                     .iter()
@@ -1368,6 +1383,11 @@ fn blocked_witness(
             .collect(),
         outstanding_obligation_ids: assessment.outstanding_obligation_ids.clone(),
         unknown_obligation_ids: assessment.unknown_obligation_ids.clone(),
+        supporting_microtrace_ids: resolution
+            .supporting_microtrace_ids
+            .iter()
+            .cloned()
+            .collect(),
         unknown_requirement_ids: assessment.unknown_requirement_ids.clone(),
     })
 }
@@ -1454,7 +1474,8 @@ mod tests {
     use crate::transition::{
         ActivationContract, CandidateTransition, FeasibilityObligation, Goal,
         MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind, Obstruction,
-        ObstructionResolver, ResolutionKind, RouteCost, StateOperation, Technique, TransitionKind,
+        ObstructionResolver, ResolutionKind, RouteCost, StateOperation, Technique,
+        TemporalRequirement, TemporalWindow, TransitionKind, WitnessedMicrotrace,
     };
     use std::collections::BTreeMap;
 
@@ -1497,6 +1518,8 @@ mod tests {
                 components: Vec::new(),
                 static_world_objects: Vec::new(),
                 spatial_volumes: Vec::new(),
+                spatial_connections: Vec::new(),
+                spatial_planes: Vec::new(),
                 persisted_object_controls: Vec::new(),
                 live_world_objects: Vec::new(),
             },
@@ -1781,6 +1804,153 @@ mod tests {
             vec!["obligation.gate-open"]
         );
         assert!(result.steps[1].selected_technique_ids.is_empty());
+    }
+
+    #[test]
+    fn witnessed_timing_discharges_only_its_exact_action_and_is_retained_in_proof() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![transition(
+            &snapshot,
+            "transition.a-to-b",
+            "STAGE_A",
+            "STAGE_B",
+            vec!["obligation.interrupt-window".into()],
+        )]);
+        let requirement = TemporalRequirement {
+            action_id: "dialogue.auru".into(),
+            window: TemporalWindow {
+                earliest_frame: 0,
+                latest_frame: 1,
+                required_input: Some("sidehop".into()),
+            },
+        };
+        mechanics.obligations = vec![FeasibilityObligation {
+            id: "obligation.interrupt-window".into(),
+            label: "Interrupt Auru's dialogue during the witnessed window".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Timing,
+            detail: ObligationDetail::Temporal {
+                requirement: requirement.clone(),
+                precondition: PredicateExpression::True,
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.microtraces = vec![WitnessedMicrotrace {
+            id: "microtrace.auru-sidehop".into(),
+            scope: scope(&snapshot),
+            precondition: PredicateExpression::True,
+            operations: vec![StateOperation::Interrupt {
+                action_id: requirement.action_id,
+                window: TemporalWindow {
+                    earliest_frame: 1,
+                    latest_frame: 1,
+                    required_input: Some("sidehop".into()),
+                },
+            }],
+            postcondition: PredicateExpression::True,
+            timing: TemporalWindow {
+                earliest_frame: 1,
+                latest_frame: 1,
+                required_input: Some("sidehop".into()),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+
+        let facts = facts();
+        let result = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert_eq!(result.steps.len(), 1);
+        assert_eq!(
+            result.steps[0].supporting_microtrace_ids,
+            vec!["microtrace.auru-sidehop"]
+        );
+        assert_eq!(
+            result.steps[0].discharged_obligation_ids,
+            vec!["obligation.interrupt-window"]
+        );
+    }
+
+    #[test]
+    fn witnessed_temporal_obligation_reaches_and_retains_microtrace_proof() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![transition(
+            &snapshot,
+            "transition.a-to-b",
+            "STAGE_A",
+            "STAGE_B",
+            vec!["obligation.interrupt-window".into()],
+        )]);
+        mechanics.obligations = vec![FeasibilityObligation {
+            id: "obligation.interrupt-window".into(),
+            label: "Interrupt the dialogue within its input window".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Timing,
+            detail: ObligationDetail::Temporal {
+                requirement: TemporalRequirement {
+                    action_id: "dialogue.test".into(),
+                    window: TemporalWindow {
+                        earliest_frame: 10,
+                        latest_frame: 12,
+                        required_input: Some("sidehop".into()),
+                    },
+                },
+                precondition: PredicateExpression::True,
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.microtraces = vec![WitnessedMicrotrace {
+            id: "microtrace.dialogue-sidehop".into(),
+            scope: scope(&snapshot),
+            precondition: PredicateExpression::True,
+            operations: vec![StateOperation::Interrupt {
+                action_id: "dialogue.test".into(),
+                window: TemporalWindow {
+                    earliest_frame: 11,
+                    latest_frame: 11,
+                    required_input: Some("sidehop".into()),
+                },
+            }],
+            postcondition: PredicateExpression::True,
+            timing: TemporalWindow {
+                earliest_frame: 11,
+                latest_frame: 11,
+                required_input: Some("sidehop".into()),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let facts = facts();
+        let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
+        let reached = solver
+            .solve(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(reached.status, SearchStatus::Reached);
+        assert_eq!(
+            reached.steps[0].supporting_microtrace_ids,
+            vec!["microtrace.dialogue-sidehop"]
+        );
+
+        mechanics.microtraces.clear();
+        let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
+        let unknown = solver
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(unknown.status, SearchStatus::Unknown);
+        assert_eq!(
+            unknown.blocked_transition_witnesses[0].unknown_obligation_ids,
+            vec!["obligation.interrupt-window"]
+        );
     }
 
     #[test]

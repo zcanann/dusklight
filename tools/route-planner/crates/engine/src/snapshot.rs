@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v3";
-pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v3";
-pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v3";
+pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v4";
+pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v4";
+pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v4";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -119,6 +119,8 @@ pub struct StateDiff {
     pub player_changed: bool,
     pub static_world_objects_changed: bool,
     pub spatial_volumes_changed: bool,
+    pub spatial_connections_changed: bool,
+    pub spatial_planes_changed: bool,
     pub persisted_object_controls_changed: bool,
     pub live_world_objects_changed: bool,
     pub slot_deltas: Vec<SlotDelta>,
@@ -229,6 +231,10 @@ impl StateDiff {
                 != after.environment.static_world_objects,
             spatial_volumes_changed: before.environment.spatial_volumes
                 != after.environment.spatial_volumes,
+            spatial_connections_changed: before.environment.spatial_connections
+                != after.environment.spatial_connections,
+            spatial_planes_changed: before.environment.spatial_planes
+                != after.environment.spatial_planes,
             persisted_object_controls_changed: before.environment.persisted_object_controls
                 != after.environment.persisted_object_controls,
             live_world_objects_changed: before.environment.live_world_objects
@@ -631,6 +637,8 @@ mod tests {
                 components: vec![component],
                 static_world_objects: Vec::new(),
                 spatial_volumes: Vec::new(),
+                spatial_connections: Vec::new(),
+                spatial_planes: Vec::new(),
                 persisted_object_controls: Vec::new(),
                 live_world_objects: Vec::new(),
             },

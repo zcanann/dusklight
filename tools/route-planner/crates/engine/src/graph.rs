@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v3";
+pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v4";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -419,7 +419,9 @@ impl GraphBuilder {
                         PlannerGraphRelation::Requires,
                     )?;
                 }
-                ObligationDetail::Geometry { .. } | ObligationDetail::Unresolved { .. } => {}
+                ObligationDetail::Geometry { .. }
+                | ObligationDetail::PlaneSide { .. }
+                | ObligationDetail::Unresolved { .. } => {}
             }
         }
         for record in &mechanics.transitions {
@@ -629,6 +631,32 @@ impl GraphBuilder {
                 &record.postcondition,
                 PlannerGraphRelation::Demonstrates,
             )?;
+        }
+        for obligation in &mechanics.obligations {
+            let requirement = match &obligation.detail {
+                ObligationDetail::Interaction {
+                    temporal_requirement: Some(requirement),
+                    ..
+                }
+                | ObligationDetail::Temporal { requirement, .. } => Some(requirement),
+                _ => None,
+            };
+            let Some(requirement) = requirement else {
+                continue;
+            };
+            for (index, trace) in mechanics
+                .microtraces
+                .iter()
+                .filter(|trace| trace.witnesses(requirement))
+                .enumerate()
+            {
+                self.add_edge(
+                    &format!("microtrace/{}", trace.id),
+                    &format!("obligation/{}", obligation.id),
+                    PlannerGraphRelation::Demonstrates,
+                    Some(index as u32),
+                )?;
+            }
         }
         for record in &mechanics.goals {
             let owner = format!("goal/{}", record.id);
@@ -1243,7 +1271,9 @@ mod tests {
         RouteBook, RouteBookManifest,
     };
     use crate::transition::{
-        Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, RouteCost, Technique,
+        FeasibilityObligation, Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail,
+        ObligationKind, RouteCost, StateOperation, Technique, TemporalRequirement, TemporalWindow,
+        WitnessedMicrotrace,
     };
 
     fn scope() -> ContextScope {
@@ -1429,6 +1459,57 @@ mod tests {
         );
         let bytes = graph.canonical_bytes().unwrap();
         assert_eq!(PlannerGraph::decode_canonical(&bytes).unwrap(), graph);
+    }
+
+    #[test]
+    fn temporal_witness_auto_binds_to_its_exact_obligation_in_the_graph() {
+        let (facts, mut mechanics) = catalogs();
+        let requirement = TemporalRequirement {
+            action_id: "dialogue.auru".into(),
+            window: TemporalWindow {
+                earliest_frame: 0,
+                latest_frame: 1,
+                required_input: Some("sidehop".into()),
+            },
+        };
+        mechanics.obligations = vec![FeasibilityObligation {
+            id: "obligation.auru-window".into(),
+            label: "Interrupt Auru during the item dialogue window".into(),
+            scope: scope(),
+            obligation_kind: ObligationKind::Timing,
+            detail: ObligationDetail::Temporal {
+                requirement: requirement.clone(),
+                precondition: PredicateExpression::True,
+            },
+            evidence: evidence(),
+        }];
+        mechanics.microtraces = vec![WitnessedMicrotrace {
+            id: "microtrace.auru-sidehop".into(),
+            scope: scope(),
+            precondition: PredicateExpression::True,
+            operations: vec![StateOperation::Interrupt {
+                action_id: requirement.action_id,
+                window: TemporalWindow {
+                    earliest_frame: 1,
+                    latest_frame: 1,
+                    required_input: Some("sidehop".into()),
+                },
+            }],
+            postcondition: PredicateExpression::True,
+            timing: TemporalWindow {
+                earliest_frame: 1,
+                latest_frame: 1,
+                required_input: Some("sidehop".into()),
+            },
+            evidence: evidence(),
+        }];
+
+        let graph = PlannerGraph::project(&facts, &mechanics).unwrap();
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source_node_id == "microtrace/microtrace.auru-sidehop"
+                && edge.target_node_id == "obligation/obligation.auru-window"
+                && edge.relation == PlannerGraphRelation::Demonstrates
+        }));
     }
 
     #[test]

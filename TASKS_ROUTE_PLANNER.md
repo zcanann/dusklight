@@ -588,7 +588,7 @@ The current code shows:
   and technique directives. Required actions are part of search identity, so a
   state reached without a pinned action does not erase a later compliant path.
   Planner CLI/service solve requests accept an optional route book and seal its
-  digest into solve-report schema v3. Unsupported writer/microtrace execution
+  digest into solve-report schema v4. Unsupported writer/microtrace execution
   fails closed rather than being silently ignored.
 - Selected and pinned route-book methods now compile to ordered action
   subsequences; banned methods prune a path when their ordered subsequence is
@@ -604,19 +604,25 @@ The current code shows:
   resolvers/techniques, discharged/outstanding/introduced obligations, and
   semantic state identities on successful steps. Failed searches keep the
   deterministic closest witnessed blocker state for each transition, including
-  guard truth and unknown requirements; portable solve-report schema v2 embeds
+  guard truth and unknown requirements; portable solve-report schema v3 embeds
   those per-context proofs.
 - Predicate-backed feasibility obligations derive satisfied, unsatisfied, or
   unknown status from the exact propagated snapshot and evidence policy. Search
   re-evaluates them after state-producing actions, so an ordinary state write can
   open a later transition without naming that obligation in a technique.
-  Interaction obligations also evaluate evidenced axis-aligned required/excluded
-  volumes against player position and combine them with player rotation, action,
-  control, form, mount, or other pose predicates. The addressed actor must be a
-  loaded live instance; a missing actor or referenced volume is unknown rather
-  than silently treated as present or outside. Region connectivity, void planes,
-  and witnessed temporal windows remain unmodeled until their evaluators exist.
-- Mechanics-catalog schema v2 adds explicit cutscene scene-change and resource-
+  Interaction obligations evaluate evidenced box, sphere, and vertical-cylinder
+  required/excluded volumes against player position and combine them with player
+  rotation, action, control, form, mount, or other pose predicates. The addressed
+  actor must be a loaded live instance. Directed region observations derive
+  geometry; plane equations derive exact sidedness/void results. Missing actors
+  or spatial observations remain unknown.
+- Temporal requirements name an action plus an allowed frame/input window.
+  Applicable evidenced microtraces must contain a matching interrupt operation
+  whose witnessed window is contained by the requirement. Missing or evidence-
+  disallowed witnesses remain unknown, and supporting microtrace IDs survive in
+  reached and blocked solver proofs. Matching microtraces also auto-bind to the
+  obligation as graph `demonstrates` dependencies.
+- Mechanics-catalog schema v4 adds explicit cutscene scene-change and resource-
   load-failure transition classes plus masked raw-knownness invalidation. This
   supports partial execution records that preserve confirmed prefix bytes while
   marking only unaudited suffix effects unknown; extracting concrete cutscene
@@ -629,7 +635,7 @@ The current code shows:
 - `CostAtMost` constraints accumulate every executed technique's authored
   `RouteCost` axes, retain the totals in search identity, prune paths exceeding
   the strictest active per-axis maximum, and report the reached route's totals.
-  Transitions and resolvers currently have no cost field in mechanics schema v1,
+  Transitions and resolvers currently have no cost field in mechanics schema v4,
   so no unmodeled cost is invented for them.
 - `EvidenceAtLeast` accepts only `established`, `contested`, or `hypothetical`
   and intersects that threshold with—never relaxes—the runtime evidence mode.
@@ -1730,13 +1736,16 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 - [ ] Define obligations for reaching/activating each candidate transition.
 - [ ] Define obligations for state-producing interactions and interruptions, not
       only final map transitions.
-- [ ] Support required talk/attention volumes, excluded cutscene-trigger volumes,
+- [x] Support required talk/attention volumes, excluded cutscene-trigger volumes,
       facing/control predicates, and temporal windows.
   - [x] Validate evidenced axis-aligned world volumes and derive required-inside,
         excluded-outside, player rotation/action/control pose results from the
         exact propagated snapshot; require the addressed live actor to be loaded,
         and keep missing actor/volume observations unknown.
-  - [ ] Derive non-axis-aligned shapes and witnessed temporal windows.
+  - [x] Derive sphere and vertical-cylinder membership plus witnessed temporal
+        windows with exact action/input/frame requirements and proof provenance.
+  - [ ] Add any actor-family-specific oriented or compound shapes found by the
+        interaction-volume audit rather than assuming one universal primitive.
 - [x] Import authored obstructions without mutating build facts.
   - [x] Evaluate obstruction activation and resolver applicability as separate
         scoped/evidenced rules; a resolver discharges named obligations but does
@@ -1751,8 +1760,10 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
         unmatched or ambiguous selectors, retain selector/provenance in the
         compiled binding, and add stale-binding regression tests across catalog
         digest changes.
-- [ ] Support direction, form, mount, twilight, actor, void, and layer scope.
-- [ ] Classify candidates as feasible, obstructed, or unknown.
+- [x] Support direction, form, mount, twilight, actor, void, and layer scope.
+      These resolve through typed player/location/actor values, semantic facts,
+      and plane-side observations rather than named route claims.
+- [x] Classify candidates as feasible, obstructed, or unknown.
   - [x] Implement the loss-aware per-snapshot classification primitive, including
         a distinct inapplicable scope and hard-guard-blocked result.
   - [x] Derive discharged obligations from applicable resolvers and techniques,
@@ -1763,21 +1774,23 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
     - [x] Derive predicate obligations from propagated state with distinct false,
           unknown, unsupported-scope, and disallowed-evidence outcomes; recompute
           after setup operations before transition assessment.
-    - [ ] Derive required/excluded volume, direction, geometry, witnessed timing,
+    - [x] Derive required/excluded volume, direction, geometry, witnessed timing,
           and void-plane obligations from their typed details and observations.
       - [x] Derive exact AABB membership plus authorable rotation/action/control
             predicates and loaded-actor state; fail closed when a referenced
             actor or volume is absent.
-      - [ ] Add region connectivity, non-AABB geometry, void-plane, and witnessed
-            timing evaluators.
+      - [x] Derive directed region connectivity, sphere/cylinder membership,
+            plane-sidedness/void state, and evidence-scoped witnessed timing.
     - [x] Derive predicate-only obligations (and interaction pose when it is the
           complete obligation) from tri-state snapshot evaluation; re-evaluate
           after propagated operations and retain unknown obligation IDs in proofs.
-    - [ ] Derive required/excluded volume, geometry/region, and witnessed temporal
+    - [x] Derive required/excluded volume, geometry/region, and witnessed temporal
           obligations from their typed evidence instead of explicit discharge
           claims.
       - [x] Required and excluded AABB observations derive discharge/obstruction
             directly; no named technique claim is required.
+      - [x] Directed region/plane observations and matching microtrace witnesses
+            derive discharge directly and retain source IDs in solver proof.
 - [ ] Expose upper-bound versus modeled-feasible graph diffs.
 
 Deliverable: flag-permitted nonsense is visible but no longer reported as a

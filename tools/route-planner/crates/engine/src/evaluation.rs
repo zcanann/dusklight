@@ -6,12 +6,12 @@ use crate::logic::{
     TruthStatus, ValueReference,
 };
 use crate::state::{
-    ActorLifecycle, ComponentPayload, PlayerForm, PlayerMount, SpatialVolumeShape, StateComponent,
-    StateValue,
+    ActorLifecycle, ComponentPayload, PlaneRelation, PlayerForm, PlayerMount,
+    SpatialConnectionStatus, SpatialVolumeShape, StateComponent, StateValue,
 };
 use crate::transition::{
     CandidateTransition, FeasibilityObligation, GateRule, ObligationDetail, ReaderRule,
-    VolumeReference, WriterRule,
+    TemporalRequirement, VolumeReference, WitnessedMicrotrace, WriterRule,
 };
 use crate::transition::{Obstruction, ObstructionResolver, Technique};
 use crate::{PlannerContractError, validate_stable_id};
@@ -103,11 +103,13 @@ pub enum ObligationClassification {
     Unmodeled,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ObligationAssessment {
     pub obligation_id: String,
     pub classification: ObligationClassification,
     pub predicate: Option<EvaluatedTruth>,
+    pub supporting_microtrace_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -187,6 +189,7 @@ pub struct FeasibilityResolution {
     pub claimed_obligation_ids: BTreeSet<String>,
     pub discharged_obligation_ids: BTreeSet<String>,
     pub unknown_obligation_ids: BTreeSet<String>,
+    pub supporting_microtrace_ids: BTreeSet<String>,
     pub active_obstruction_ids: Vec<String>,
     pub unknown_obstruction_ids: Vec<String>,
     pub applied_resolver_ids: Vec<String>,
@@ -198,6 +201,7 @@ pub struct FeasibilitySelection<'a> {
     pub resolver_ids: &'a BTreeSet<String>,
     pub technique_ids: &'a BTreeSet<String>,
     pub already_discharged: &'a BTreeSet<String>,
+    pub microtraces: &'a [WitnessedMicrotrace],
 }
 
 /// Evaluates facts and guards against one immutable snapshot. Missing values,
@@ -323,7 +327,12 @@ impl<'a> PredicateEvaluator<'a> {
         }
     }
 
-    pub fn assess_obligation(&self, obligation: &FeasibilityObligation) -> ObligationAssessment {
+    pub fn assess_obligation(
+        &self,
+        obligation: &FeasibilityObligation,
+        microtraces: &[WitnessedMicrotrace],
+    ) -> ObligationAssessment {
+        let mut supporting_microtrace_ids = Vec::new();
         let (classification, predicate) = if !self.scope_applies(&obligation.scope) {
             (ObligationClassification::Inapplicable, None)
         } else if !self.policy.permits(obligation.evidence.truth) {
@@ -346,7 +355,7 @@ impl<'a> PredicateEvaluator<'a> {
                     required_volumes,
                     excluded_volumes,
                     pose_predicate,
-                    temporal_window,
+                    temporal_requirement,
                     ..
                 } => {
                     let pose = self.evaluate(pose_predicate);
@@ -360,39 +369,99 @@ impl<'a> PredicateEvaluator<'a> {
                                 .map(|volume| self.player_inside_volume(volume).not()),
                         )
                         .fold(EvaluatedTruth::True, and_evaluated_truth);
-                    let combined = and_evaluated_truth(and_evaluated_truth(pose, actor), spatial);
-                    if combined == EvaluatedTruth::False {
-                        (ObligationClassification::Unsatisfied, Some(combined))
-                    } else if temporal_window.is_some() {
-                        (ObligationClassification::Unmodeled, Some(combined))
-                    } else {
-                        (
-                            if combined == EvaluatedTruth::True {
-                                ObligationClassification::Satisfied
-                            } else {
-                                ObligationClassification::EvaluationUnknown
-                            },
-                            Some(combined),
-                        )
-                    }
+                    let temporal = temporal_requirement
+                        .as_ref()
+                        .map_or((EvaluatedTruth::True, Vec::new()), |requirement| {
+                            self.assess_temporal(requirement, microtraces)
+                        });
+                    supporting_microtrace_ids = temporal.1;
+                    let combined = and_evaluated_truth(
+                        and_evaluated_truth(and_evaluated_truth(pose, actor), spatial),
+                        temporal.0,
+                    );
+                    (classify_obligation_truth(combined), Some(combined))
                 }
-                ObligationDetail::Temporal { precondition, .. } => {
+                ObligationDetail::Temporal {
+                    requirement,
+                    precondition,
+                } => {
                     let precondition = self.evaluate(precondition);
-                    if precondition == EvaluatedTruth::False {
-                        (ObligationClassification::Unsatisfied, Some(precondition))
-                    } else {
-                        (ObligationClassification::Unmodeled, Some(precondition))
-                    }
+                    let temporal = self.assess_temporal(requirement, microtraces);
+                    supporting_microtrace_ids = temporal.1;
+                    let combined = and_evaluated_truth(precondition, temporal.0);
+                    (classify_obligation_truth(combined), Some(combined))
                 }
-                ObligationDetail::Geometry { .. } | ObligationDetail::Unresolved { .. } => {
-                    (ObligationClassification::Unmodeled, None)
+                ObligationDetail::Geometry {
+                    approach_id,
+                    source_region_id,
+                    destination_region_id,
+                } => (
+                    match self.spatial_connection(
+                        approach_id,
+                        source_region_id,
+                        destination_region_id,
+                    ) {
+                        Some(SpatialConnectionStatus::Traversable) => {
+                            ObligationClassification::Satisfied
+                        }
+                        Some(SpatialConnectionStatus::Blocked) => {
+                            ObligationClassification::Unsatisfied
+                        }
+                        None => ObligationClassification::EvaluationUnknown,
+                    },
+                    None,
+                ),
+                ObligationDetail::PlaneSide { plane_id, relation } => {
+                    let result = self.player_on_plane_side(plane_id, *relation);
+                    (
+                        match result {
+                            EvaluatedTruth::True => ObligationClassification::Satisfied,
+                            EvaluatedTruth::False => ObligationClassification::Unsatisfied,
+                            EvaluatedTruth::Unknown => ObligationClassification::EvaluationUnknown,
+                        },
+                        Some(result),
+                    )
                 }
+                ObligationDetail::Unresolved { .. } => (ObligationClassification::Unmodeled, None),
             }
         };
         ObligationAssessment {
             obligation_id: obligation.id.clone(),
             classification,
             predicate,
+            supporting_microtrace_ids,
+        }
+    }
+
+    fn assess_temporal(
+        &self,
+        requirement: &TemporalRequirement,
+        microtraces: &[WitnessedMicrotrace],
+    ) -> (EvaluatedTruth, Vec<String>) {
+        let mut matched = false;
+        let mut uncertain = false;
+        let mut supporting = Vec::new();
+        for trace in microtraces
+            .iter()
+            .filter(|trace| self.scope_applies(&trace.scope) && trace.witnesses(requirement))
+        {
+            matched = true;
+            if !self.policy.permits(trace.evidence.truth) {
+                uncertain = true;
+                continue;
+            }
+            match self.evaluate(&trace.precondition) {
+                EvaluatedTruth::True => supporting.push(trace.id.clone()),
+                EvaluatedTruth::Unknown => uncertain = true,
+                EvaluatedTruth::False => {}
+            }
+        }
+        if !supporting.is_empty() {
+            (EvaluatedTruth::True, supporting)
+        } else if uncertain || !matched {
+            (EvaluatedTruth::Unknown, Vec::new())
+        } else {
+            (EvaluatedTruth::False, Vec::new())
         }
     }
 
@@ -421,6 +490,86 @@ impl<'a> PredicateEvaluator<'a> {
                     EvaluatedTruth::False
                 }
             }
+            SpatialVolumeShape::Sphere { center, radius } => {
+                let squared_distance = position
+                    .iter()
+                    .zip(center)
+                    .map(|(value, center)| {
+                        let delta = f64::from(*value) - f64::from(*center);
+                        delta * delta
+                    })
+                    .sum::<f64>();
+                if squared_distance <= f64::from(*radius).powi(2) {
+                    EvaluatedTruth::True
+                } else {
+                    EvaluatedTruth::False
+                }
+            }
+            SpatialVolumeShape::VerticalCylinder {
+                center_xz,
+                minimum_y,
+                maximum_y,
+                radius,
+            } => {
+                let delta_x = f64::from(position[0]) - f64::from(center_xz[0]);
+                let delta_z = f64::from(position[2]) - f64::from(center_xz[1]);
+                if position[1] >= *minimum_y
+                    && position[1] <= *maximum_y
+                    && delta_x * delta_x + delta_z * delta_z <= f64::from(*radius).powi(2)
+                {
+                    EvaluatedTruth::True
+                } else {
+                    EvaluatedTruth::False
+                }
+            }
+        }
+    }
+
+    fn spatial_connection(
+        &self,
+        approach_id: &str,
+        source_region_id: &str,
+        destination_region_id: &str,
+    ) -> Option<SpatialConnectionStatus> {
+        self.snapshot
+            .environment
+            .spatial_connections
+            .iter()
+            .find(|connection| {
+                connection.approach_id == approach_id
+                    && connection.source_region_id == source_region_id
+                    && connection.destination_region_id == destination_region_id
+            })
+            .map(|connection| connection.status)
+    }
+
+    fn player_on_plane_side(&self, plane_id: &str, relation: PlaneRelation) -> EvaluatedTruth {
+        let Some(plane) = self
+            .snapshot
+            .environment
+            .spatial_planes
+            .iter()
+            .find(|plane| plane.plane_id == plane_id)
+        else {
+            return EvaluatedTruth::Unknown;
+        };
+        let signed_distance = plane
+            .normal
+            .iter()
+            .zip(self.snapshot.environment.player.position)
+            .map(|(normal, coordinate)| f64::from(*normal) * f64::from(coordinate))
+            .sum::<f64>()
+            + f64::from(plane.offset);
+        let satisfied = match relation {
+            PlaneRelation::Positive => signed_distance > 0.0,
+            PlaneRelation::NonNegative => signed_distance >= 0.0,
+            PlaneRelation::Negative => signed_distance < 0.0,
+            PlaneRelation::NonPositive => signed_distance <= 0.0,
+        };
+        if satisfied {
+            EvaluatedTruth::True
+        } else {
+            EvaluatedTruth::False
         }
     }
 
@@ -589,6 +738,7 @@ impl<'a> PredicateEvaluator<'a> {
             claimed_obligation_ids: selection.already_discharged.clone(),
             discharged_obligation_ids: BTreeSet::new(),
             unknown_obligation_ids: BTreeSet::new(),
+            supporting_microtrace_ids: BTreeSet::new(),
             active_obstruction_ids: Vec::new(),
             unknown_obstruction_ids: Vec::new(),
             applied_resolver_ids: Vec::new(),
@@ -649,7 +799,12 @@ impl<'a> PredicateEvaluator<'a> {
                 RuleClassification::Inapplicable | RuleClassification::Inactive => {}
             }
         }
-        self.refresh_obligation_assessments(transition, obligations, &mut resolution);
+        self.refresh_obligation_assessments(
+            transition,
+            obligations,
+            selection.microtraces,
+            &mut resolution,
+        );
         resolution
     }
 
@@ -657,10 +812,12 @@ impl<'a> PredicateEvaluator<'a> {
         &self,
         transition: &CandidateTransition,
         obligations: &[FeasibilityObligation],
+        microtraces: &[WitnessedMicrotrace],
         resolution: &mut FeasibilityResolution,
     ) {
         resolution.discharged_obligation_ids = resolution.claimed_obligation_ids.clone();
         resolution.unknown_obligation_ids.clear();
+        resolution.supporting_microtrace_ids.clear();
         for obligation_id in &transition.activation.physical_obligation_ids {
             if resolution.claimed_obligation_ids.contains(obligation_id) {
                 continue;
@@ -674,7 +831,11 @@ impl<'a> PredicateEvaluator<'a> {
                     .insert(obligation_id.clone());
                 continue;
             };
-            match self.assess_obligation(obligation).classification {
+            let assessment = self.assess_obligation(obligation, microtraces);
+            resolution
+                .supporting_microtrace_ids
+                .extend(assessment.supporting_microtrace_ids);
+            match assessment.classification {
                 ObligationClassification::Satisfied => {
                     resolution
                         .discharged_obligation_ids
@@ -1019,6 +1180,14 @@ fn and_evaluated_truth(left: EvaluatedTruth, right: EvaluatedTruth) -> Evaluated
     }
 }
 
+fn classify_obligation_truth(truth: EvaluatedTruth) -> ObligationClassification {
+    match truth {
+        EvaluatedTruth::True => ObligationClassification::Satisfied,
+        EvaluatedTruth::False => ObligationClassification::Unsatisfied,
+        EvaluatedTruth::Unknown => ObligationClassification::EvaluationUnknown,
+    }
+}
+
 fn compare_values(
     left: &StateValue,
     operator: ComparisonOperator,
@@ -1122,12 +1291,14 @@ mod tests {
     use crate::state::{
         ActorLifecycle, BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload,
         ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, LiveWorldObject,
-        PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
-        RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, SpatialVolume,
-        SpatialVolumeShape, StateComponent,
+        PlaneRelation, PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile,
+        RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
+        SerializationOwner, SpatialConnection, SpatialConnectionStatus, SpatialPlane,
+        SpatialVolume, SpatialVolumeShape, StateComponent,
     };
     use crate::transition::{
-        ActivationContract, ObligationKind, TransitionKind, UnknownRequirement, VolumeReference,
+        ActivationContract, ObligationKind, StateOperation, TemporalWindow, TransitionKind,
+        UnknownRequirement, VolumeReference,
     };
 
     fn evidence(truth: TruthStatus) -> RuleEvidence {
@@ -1207,6 +1378,8 @@ mod tests {
                 components: vec![component(known_mask)],
                 static_world_objects: Vec::new(),
                 spatial_volumes: Vec::new(),
+                spatial_connections: Vec::new(),
+                spatial_planes: Vec::new(),
                 persisted_object_controls: Vec::new(),
                 live_world_objects: Vec::new(),
             },
@@ -1572,6 +1745,7 @@ mod tests {
                 resolver_ids: &BTreeSet::new(),
                 technique_ids: &BTreeSet::new(),
                 already_discharged: &BTreeSet::new(),
+                microtraces: &[],
             },
         );
         assert_eq!(
@@ -1594,6 +1768,7 @@ mod tests {
                 resolver_ids: &BTreeSet::from(["resolver.text-displacement".into()]),
                 technique_ids: &BTreeSet::new(),
                 already_discharged: &BTreeSet::new(),
+                microtraces: &[],
             },
         );
         assert_eq!(
@@ -1621,6 +1796,7 @@ mod tests {
                 resolver_ids: &BTreeSet::new(),
                 technique_ids: &BTreeSet::new(),
                 already_discharged: &BTreeSet::new(),
+                microtraces: &[],
             },
         );
         assert_eq!(
@@ -1658,6 +1834,7 @@ mod tests {
                 resolver_ids: &BTreeSet::new(),
                 technique_ids: &BTreeSet::from(["technique.epona-oob".into()]),
                 already_discharged: &BTreeSet::from(["obligation.precise-movement".into()]),
+                microtraces: &[],
             },
         );
         assert_eq!(
@@ -1703,6 +1880,7 @@ mod tests {
                 resolver_ids: &BTreeSet::new(),
                 technique_ids: &BTreeSet::new(),
                 already_discharged: &BTreeSet::new(),
+                microtraces: &[],
             },
         );
         assert!(
@@ -1725,6 +1903,7 @@ mod tests {
                 resolver_ids: &BTreeSet::new(),
                 technique_ids: &BTreeSet::new(),
                 already_discharged: &BTreeSet::new(),
+                microtraces: &[],
             },
         );
         assert!(unsatisfied.discharged_obligation_ids.is_empty());
@@ -1745,6 +1924,7 @@ mod tests {
                 resolver_ids: &BTreeSet::new(),
                 technique_ids: &BTreeSet::new(),
                 already_discharged: &BTreeSet::new(),
+                microtraces: &[],
             },
         );
         assert!(unknown.discharged_obligation_ids.is_empty());
@@ -1829,14 +2009,14 @@ mod tests {
                     volume_id: "cutscene-trigger".into(),
                 }],
                 pose_predicate: pose,
-                temporal_window: None,
+                temporal_requirement: None,
             },
             evidence: evidence(TruthStatus::Established),
         };
 
         assert_eq!(
             evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
-                .assess_obligation(&obligation)
+                .assess_obligation(&obligation, &[])
                 .classification,
             ObligationClassification::Satisfied
         );
@@ -1844,7 +2024,7 @@ mod tests {
         snapshot.environment.player.position = [1.0, 1.0, 1.0];
         assert_eq!(
             evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
-                .assess_obligation(&obligation)
+                .assess_obligation(&obligation, &[])
                 .classification,
             ObligationClassification::Unsatisfied
         );
@@ -1859,45 +2039,263 @@ mod tests {
         snapshot.environment.player.position = [0.0, 0.0, 0.0];
         assert_eq!(
             evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
-                .assess_obligation(&obligation)
+                .assess_obligation(&obligation, &[])
                 .classification,
             ObligationClassification::EvaluationUnknown
         );
 
         let ObligationDetail::Interaction {
             required_volumes,
-            temporal_window,
+            temporal_requirement,
             ..
         } = &mut obligation.detail
         else {
             unreachable!();
         };
         required_volumes[0].volume_id = "talk".into();
-        *temporal_window = Some(crate::transition::TemporalWindow {
-            earliest_frame: 0,
-            latest_frame: 1,
-            required_input: Some("sidehop".into()),
+        *temporal_requirement = Some(TemporalRequirement {
+            action_id: "dialogue.auru".into(),
+            window: TemporalWindow {
+                earliest_frame: 0,
+                latest_frame: 1,
+                required_input: Some("sidehop".into()),
+            },
         });
         assert_eq!(
             evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
-                .assess_obligation(&obligation)
+                .assess_obligation(&obligation, &[])
                 .classification,
-            ObligationClassification::Unmodeled
+            ObligationClassification::EvaluationUnknown
+        );
+
+        let mut microtrace = WitnessedMicrotrace {
+            id: "microtrace.auru-sidehop".into(),
+            scope: scope(&snapshot),
+            precondition: PredicateExpression::True,
+            operations: vec![StateOperation::Interrupt {
+                action_id: "dialogue.auru".into(),
+                window: TemporalWindow {
+                    earliest_frame: 1,
+                    latest_frame: 1,
+                    required_input: Some("sidehop".into()),
+                },
+            }],
+            postcondition: PredicateExpression::True,
+            timing: TemporalWindow {
+                earliest_frame: 1,
+                latest_frame: 1,
+                required_input: Some("sidehop".into()),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let timed = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+            .assess_obligation(&obligation, std::slice::from_ref(&microtrace));
+        assert_eq!(timed.classification, ObligationClassification::Satisfied);
+        assert_eq!(
+            timed.supporting_microtrace_ids,
+            vec!["microtrace.auru-sidehop"]
+        );
+
+        let StateOperation::Interrupt { action_id, .. } = &mut microtrace.operations[0] else {
+            unreachable!();
+        };
+        *action_id = "dialogue.unrelated".into();
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation, std::slice::from_ref(&microtrace))
+                .classification,
+            ObligationClassification::EvaluationUnknown
+        );
+        let StateOperation::Interrupt { action_id, .. } = &mut microtrace.operations[0] else {
+            unreachable!();
+        };
+        *action_id = "dialogue.auru".into();
+
+        microtrace.evidence = evidence(TruthStatus::Hypothetical);
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation, std::slice::from_ref(&microtrace))
+                .classification,
+            ObligationClassification::EvaluationUnknown
+        );
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::RESEARCH)
+                .assess_obligation(&obligation, std::slice::from_ref(&microtrace))
+                .classification,
+            ObligationClassification::Satisfied
         );
 
         let ObligationDetail::Interaction {
-            temporal_window, ..
+            temporal_requirement,
+            ..
         } = &mut obligation.detail
         else {
             unreachable!();
         };
-        *temporal_window = None;
+        *temporal_requirement = None;
         snapshot.environment.live_world_objects[0].lifecycle = ActorLifecycle::Destroyed;
         assert_eq!(
             evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
-                .assess_obligation(&obligation)
+                .assess_obligation(&obligation, &[])
                 .classification,
             ObligationClassification::Unsatisfied
+        );
+    }
+
+    #[test]
+    fn geometry_and_plane_obligations_derive_from_exact_spatial_observations() {
+        let mut snapshot = snapshot(0xff);
+        snapshot.environment.player.position = [0.0, 5.0, 0.0];
+        snapshot.environment.spatial_connections = vec![SpatialConnection {
+            approach_id: "approach.front".into(),
+            source_region_id: "region.before-wall".into(),
+            destination_region_id: "region.exit".into(),
+            status: SpatialConnectionStatus::Blocked,
+            source_sha256: Digest([7; 32]),
+        }];
+        snapshot.environment.spatial_planes = vec![SpatialPlane {
+            plane_id: "void.room-0".into(),
+            normal: [0.0, 1.0, 0.0],
+            offset: -2.0,
+            source_sha256: Digest([8; 32]),
+        }];
+        snapshot.environment.validate().unwrap();
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let mut geometry = FeasibilityObligation {
+            id: "obligation.wall".into(),
+            label: "Reach the exit region".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Geometry,
+            detail: ObligationDetail::Geometry {
+                approach_id: "approach.front".into(),
+                source_region_id: "region.before-wall".into(),
+                destination_region_id: "region.exit".into(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let void_side = FeasibilityObligation {
+            id: "obligation.above-void".into(),
+            label: "Remain on the non-void side".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::VoidPlane,
+            detail: ObligationDetail::PlaneSide {
+                plane_id: "void.room-0".into(),
+                relation: PlaneRelation::NonNegative,
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+
+        let initial_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            initial_evaluator
+                .assess_obligation(&geometry, &[])
+                .classification,
+            ObligationClassification::Unsatisfied
+        );
+        assert_eq!(
+            initial_evaluator
+                .assess_obligation(&void_side, &[])
+                .classification,
+            ObligationClassification::Satisfied
+        );
+
+        snapshot.environment.spatial_connections[0].status = SpatialConnectionStatus::Traversable;
+        snapshot.environment.player.position[1] = 1.0;
+        let moved_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            moved_evaluator
+                .assess_obligation(&geometry, &[])
+                .classification,
+            ObligationClassification::Satisfied
+        );
+        assert_eq!(
+            moved_evaluator
+                .assess_obligation(&void_side, &[])
+                .classification,
+            ObligationClassification::Unsatisfied
+        );
+
+        let ObligationDetail::Geometry {
+            destination_region_id,
+            ..
+        } = &mut geometry.detail
+        else {
+            unreachable!();
+        };
+        *destination_region_id = "region.unknown".into();
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&geometry, &[])
+                .classification,
+            ObligationClassification::EvaluationUnknown
+        );
+    }
+
+    #[test]
+    fn sphere_and_cylinder_volume_boundaries_are_inclusive() {
+        let mut snapshot = snapshot(0xff);
+        snapshot.environment.live_world_objects = vec![LiveWorldObject {
+            instance_id: "actor.test".into(),
+            static_object_id: None,
+            actor_type: "npc.test".into(),
+            lifecycle: ActorLifecycle::Loaded,
+            fields: BTreeMap::new(),
+        }];
+        snapshot.environment.spatial_volumes = vec![
+            SpatialVolume {
+                object_id: "actor.test".into(),
+                volume_id: "cylinder".into(),
+                shape: SpatialVolumeShape::VerticalCylinder {
+                    center_xz: [0.0, 0.0],
+                    minimum_y: -1.0,
+                    maximum_y: 1.0,
+                    radius: 2.0,
+                },
+                source_sha256: Digest([10; 32]),
+            },
+            SpatialVolume {
+                object_id: "actor.test".into(),
+                volume_id: "sphere".into(),
+                shape: SpatialVolumeShape::Sphere {
+                    center: [0.0, 0.0, 0.0],
+                    radius: 2.0,
+                },
+                source_sha256: Digest([11; 32]),
+            },
+        ];
+        snapshot.environment.player.position = [2.0, 0.0, 0.0];
+        snapshot.environment.validate().unwrap();
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let obligation = |volume_id: &str| FeasibilityObligation {
+            id: format!("obligation.{volume_id}"),
+            label: format!("Inside {volume_id}"),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Interaction,
+            detail: ObligationDetail::Interaction {
+                actor_instance_id: "actor.test".into(),
+                interaction_mode: "talk".into(),
+                required_volumes: vec![VolumeReference {
+                    object_id: "actor.test".into(),
+                    volume_id: volume_id.into(),
+                }],
+                excluded_volumes: Vec::new(),
+                pose_predicate: PredicateExpression::True,
+                temporal_requirement: None,
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            evaluator
+                .assess_obligation(&obligation("sphere"), &[])
+                .classification,
+            ObligationClassification::Satisfied
+        );
+        assert_eq!(
+            evaluator
+                .assess_obligation(&obligation("cylinder"), &[])
+                .classification,
+            ObligationClassification::Satisfied
         );
     }
 }

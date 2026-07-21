@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v3";
+pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v4";
 pub const BOUNDARY_POLICY_SCHEMA: &str = "dusklight.route-planner.boundary-policy/v1";
 pub const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
 pub const MAX_STATE_COLLECTION: usize = 65_536;
@@ -246,6 +246,16 @@ pub enum SpatialVolumeShape {
         minimum: [f32; 3],
         maximum: [f32; 3],
     },
+    Sphere {
+        center: [f32; 3],
+        radius: f32,
+    },
+    VerticalCylinder {
+        center_xz: [f32; 2],
+        minimum_y: f32,
+        maximum_y: f32,
+        radius: f32,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -255,6 +265,42 @@ pub struct SpatialVolume {
     pub volume_id: String,
     pub shape: SpatialVolumeShape,
     pub source_sha256: Digest,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpatialConnectionStatus {
+    Traversable,
+    Blocked,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpatialConnection {
+    pub approach_id: String,
+    pub source_region_id: String,
+    pub destination_region_id: String,
+    pub status: SpatialConnectionStatus,
+    pub source_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpatialPlane {
+    pub plane_id: String,
+    /// Plane equation: `normal dot world_position + offset`.
+    pub normal: [f32; 3],
+    pub offset: f32,
+    pub source_sha256: Digest,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaneRelation {
+    Positive,
+    NonNegative,
+    Negative,
+    NonPositive,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -296,6 +342,8 @@ pub struct ExecutionEnvironment {
     pub components: Vec<StateComponent>,
     pub static_world_objects: Vec<StaticWorldObject>,
     pub spatial_volumes: Vec<SpatialVolume>,
+    pub spatial_connections: Vec<SpatialConnection>,
+    pub spatial_planes: Vec<SpatialPlane>,
     pub persisted_object_controls: Vec<PersistedObjectControl>,
     pub live_world_objects: Vec<LiveWorldObject>,
 }
@@ -466,6 +514,24 @@ impl ExecutionEnvironment {
             &self.spatial_volumes,
             |volume| (volume.object_id.clone(), volume.volume_id.clone()),
             validate_spatial_volume,
+        )?;
+        validate_sorted_collection(
+            "spatial_connections",
+            &self.spatial_connections,
+            |connection| {
+                (
+                    connection.approach_id.clone(),
+                    connection.source_region_id.clone(),
+                    connection.destination_region_id.clone(),
+                )
+            },
+            validate_spatial_connection,
+        )?;
+        validate_sorted_collection(
+            "spatial_planes",
+            &self.spatial_planes,
+            |plane| plane.plane_id.clone(),
+            validate_spatial_plane,
         )?;
         validate_sorted_collection(
             "persisted_object_controls",
@@ -690,10 +756,7 @@ fn validate_spatial_volume(volume: &SpatialVolume) -> Result<(), PlannerContract
     require_digest("spatial_volumes.source_sha256", volume.source_sha256)?;
     match &volume.shape {
         SpatialVolumeShape::AxisAlignedBox { minimum, maximum } => {
-            if minimum
-                .iter()
-                .chain(maximum)
-                .any(|value| !value.is_finite() || value.to_bits() == (-0.0_f32).to_bits())
+            if !canonical_floats(minimum.iter().chain(maximum))
                 || minimum
                     .iter()
                     .zip(maximum)
@@ -706,7 +769,69 @@ fn validate_spatial_volume(volume: &SpatialVolume) -> Result<(), PlannerContract
             }
             Ok(())
         }
+        SpatialVolumeShape::Sphere { center, radius } => {
+            if !canonical_floats(center.iter().chain(std::iter::once(radius))) || *radius <= 0.0 {
+                return Err(PlannerContractError::new(
+                    "spatial_volumes.shape",
+                    "sphere must contain finite canonical coordinates and a positive radius",
+                ));
+            }
+            Ok(())
+        }
+        SpatialVolumeShape::VerticalCylinder {
+            center_xz,
+            minimum_y,
+            maximum_y,
+            radius,
+        } => {
+            if !canonical_floats(center_xz.iter().chain([minimum_y, maximum_y, radius]))
+                || minimum_y > maximum_y
+                || *radius <= 0.0
+            {
+                return Err(PlannerContractError::new(
+                    "spatial_volumes.shape",
+                    "cylinder must contain finite canonical ordered bounds and a positive radius",
+                ));
+            }
+            Ok(())
+        }
     }
+}
+
+fn validate_spatial_connection(connection: &SpatialConnection) -> Result<(), PlannerContractError> {
+    validate_stable_id("spatial_connections.approach_id", &connection.approach_id)?;
+    validate_stable_id(
+        "spatial_connections.source_region_id",
+        &connection.source_region_id,
+    )?;
+    validate_stable_id(
+        "spatial_connections.destination_region_id",
+        &connection.destination_region_id,
+    )?;
+    require_digest(
+        "spatial_connections.source_sha256",
+        connection.source_sha256,
+    )
+}
+
+fn validate_spatial_plane(plane: &SpatialPlane) -> Result<(), PlannerContractError> {
+    validate_stable_id("spatial_planes.plane_id", &plane.plane_id)?;
+    require_digest("spatial_planes.source_sha256", plane.source_sha256)?;
+    if !canonical_floats(plane.normal.iter().chain(std::iter::once(&plane.offset)))
+        || plane.normal.iter().all(|component| *component == 0.0)
+    {
+        return Err(PlannerContractError::new(
+            "spatial_planes",
+            "must contain a finite canonical equation with a nonzero normal",
+        ));
+    }
+    Ok(())
+}
+
+fn canonical_floats<'a>(values: impl IntoIterator<Item = &'a f32>) -> bool {
+    values
+        .into_iter()
+        .all(|value| value.is_finite() && value.to_bits() != (-0.0_f32).to_bits())
 }
 
 fn validate_persisted_control(
@@ -872,6 +997,8 @@ mod tests {
             ],
             static_world_objects: Vec::new(),
             spatial_volumes: Vec::new(),
+            spatial_connections: Vec::new(),
+            spatial_planes: Vec::new(),
             persisted_object_controls: Vec::new(),
             live_world_objects: Vec::new(),
         }
@@ -995,6 +1122,57 @@ mod tests {
         assert_eq!(
             invalid_digest.validate().unwrap_err().field(),
             "spatial_volumes.source_sha256"
+        );
+
+        let mut invalid_sphere = file_zero_environment();
+        invalid_sphere.spatial_volumes.push(SpatialVolume {
+            object_id: "actor.auru".into(),
+            volume_id: "talk".into(),
+            shape: SpatialVolumeShape::Sphere {
+                center: [0.0; 3],
+                radius: 0.0,
+            },
+            source_sha256: Digest([4; 32]),
+        });
+        assert_eq!(
+            invalid_sphere.validate().unwrap_err().field(),
+            "spatial_volumes.shape"
+        );
+    }
+
+    #[test]
+    fn spatial_connections_and_planes_are_directional_and_evidenced() {
+        let mut environment = file_zero_environment();
+        environment.spatial_connections.push(SpatialConnection {
+            approach_id: "approach.front".into(),
+            source_region_id: "region.a".into(),
+            destination_region_id: "region.b".into(),
+            status: SpatialConnectionStatus::Blocked,
+            source_sha256: Digest([5; 32]),
+        });
+        environment.spatial_planes.push(SpatialPlane {
+            plane_id: "void.room-0".into(),
+            normal: [0.0, 1.0, 0.0],
+            offset: 0.0,
+            source_sha256: Digest([6; 32]),
+        });
+        environment.validate().unwrap();
+
+        let mut reverse = environment.clone();
+        reverse.spatial_connections.push(SpatialConnection {
+            approach_id: "approach.front".into(),
+            source_region_id: "region.b".into(),
+            destination_region_id: "region.a".into(),
+            status: SpatialConnectionStatus::Traversable,
+            source_sha256: Digest([7; 32]),
+        });
+        reverse.validate().unwrap();
+
+        let mut invalid_plane = environment;
+        invalid_plane.spatial_planes[0].normal = [0.0; 3];
+        assert_eq!(
+            invalid_plane.validate().unwrap_err().field(),
+            "spatial_planes"
         );
     }
 

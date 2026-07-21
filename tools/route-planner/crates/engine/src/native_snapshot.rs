@@ -456,6 +456,8 @@ pub fn snapshot_native_observation(
             components,
             static_world_objects: Vec::new(),
             spatial_volumes: Vec::new(),
+            spatial_connections: Vec::new(),
+            spatial_planes: Vec::new(),
             persisted_object_controls: Vec::new(),
             live_world_objects,
         },

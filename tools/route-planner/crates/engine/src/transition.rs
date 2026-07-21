@@ -3,16 +3,16 @@
 use crate::artifact::Digest;
 use crate::logic::{ContextScope, PredicateExpression, RuleEvidence, ValueReference};
 use crate::state::{
-    ComponentBinding, ComponentSelector, SemanticLifetime, SerializationOwner, StateComponent,
-    StateValue, validate_binding as validate_component_binding, validate_component_kind,
-    validate_serialization_owner,
+    ComponentBinding, ComponentSelector, PlaneRelation, SemanticLifetime, SerializationOwner,
+    StateComponent, StateValue, validate_binding as validate_component_binding,
+    validate_component_kind, validate_serialization_owner,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v2";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v4";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -130,6 +130,13 @@ pub struct TemporalWindow {
     pub required_input: Option<String>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalRequirement {
+    pub action_id: String,
+    pub window: TemporalWindow,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TransitionKind {
@@ -217,16 +224,19 @@ pub enum ObligationDetail {
         required_volumes: Vec<VolumeReference>,
         excluded_volumes: Vec<VolumeReference>,
         pose_predicate: PredicateExpression,
-        temporal_window: Option<TemporalWindow>,
+        temporal_requirement: Option<TemporalRequirement>,
     },
     Geometry {
         approach_id: String,
         source_region_id: String,
         destination_region_id: String,
     },
+    PlaneSide {
+        plane_id: String,
+        relation: PlaneRelation,
+    },
     Temporal {
-        action_id: String,
-        window: TemporalWindow,
+        requirement: TemporalRequirement,
         precondition: PredicateExpression,
     },
     Unresolved {
@@ -366,7 +376,7 @@ pub struct WitnessedMicrotrace {
     pub operations: Vec<StateOperation>,
     pub postcondition: PredicateExpression,
     pub timing: TemporalWindow,
-    pub evidence_sha256: Digest,
+    pub evidence: RuleEvidence,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -570,6 +580,36 @@ impl TemporalWindow {
         }
         Ok(())
     }
+
+    pub fn satisfies(&self, requirement: &Self) -> bool {
+        self.earliest_frame >= requirement.earliest_frame
+            && self.latest_frame <= requirement.latest_frame
+            && requirement
+                .required_input
+                .as_ref()
+                .is_none_or(|required| self.required_input.as_ref() == Some(required))
+    }
+}
+
+impl TemporalRequirement {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        validate_stable_id("temporal_requirement.action_id", &self.action_id)?;
+        self.window.validate()
+    }
+}
+
+impl WitnessedMicrotrace {
+    pub fn witnesses(&self, requirement: &TemporalRequirement) -> bool {
+        self.timing.satisfies(&requirement.window)
+            && self.operations.iter().any(|operation| {
+                matches!(
+                    operation,
+                    StateOperation::Interrupt { action_id, window }
+                        if action_id == &requirement.action_id
+                            && window.satisfies(&requirement.window)
+                )
+            })
+    }
 }
 
 impl MechanicsCatalog {
@@ -726,15 +766,15 @@ fn validate_obligation(obligation: &FeasibilityObligation) -> Result<(), Planner
             required_volumes,
             excluded_volumes,
             pose_predicate,
-            temporal_window,
+            temporal_requirement,
         } => {
             validate_stable_id("obligation.actor_instance_id", actor_instance_id)?;
             validate_stable_id("obligation.interaction_mode", interaction_mode)?;
             validate_volumes(required_volumes)?;
             validate_volumes(excluded_volumes)?;
             pose_predicate.validate()?;
-            if let Some(window) = temporal_window {
-                window.validate()?;
+            if let Some(requirement) = temporal_requirement {
+                requirement.validate()?;
             }
         }
         ObligationDetail::Geometry {
@@ -746,13 +786,14 @@ fn validate_obligation(obligation: &FeasibilityObligation) -> Result<(), Planner
             validate_stable_id("obligation.source_region_id", source_region_id)?;
             validate_stable_id("obligation.destination_region_id", destination_region_id)?;
         }
+        ObligationDetail::PlaneSide { plane_id, .. } => {
+            validate_stable_id("obligation.plane_id", plane_id)?;
+        }
         ObligationDetail::Temporal {
-            action_id,
-            window,
+            requirement,
             precondition,
         } => {
-            validate_stable_id("obligation.action_id", action_id)?;
-            window.validate()?;
+            requirement.validate()?;
             precondition.validate()?;
         }
         ObligationDetail::Unresolved { research_question } => {
@@ -911,13 +952,7 @@ fn validate_microtrace(trace: &WitnessedMicrotrace) -> Result<(), PlannerContrac
     validate_operations(&trace.operations)?;
     trace.postcondition.validate()?;
     trace.timing.validate()?;
-    if trace.evidence_sha256 == Digest::ZERO {
-        return Err(PlannerContractError::new(
-            "microtraces.evidence_sha256",
-            "must be nonzero",
-        ));
-    }
-    Ok(())
+    trace.evidence.validate("microtraces.evidence")
 }
 
 fn validate_goal(goal: &Goal) -> Result<(), PlannerContractError> {
@@ -1240,7 +1275,7 @@ mod tests {
                 latest_frame: 0,
                 required_input: Some("sidehop".into()),
             },
-            evidence_sha256: Digest([4; 32]),
+            evidence: evidence(TruthStatus::Established),
         };
         validate_microtrace(&trace).unwrap();
     }
