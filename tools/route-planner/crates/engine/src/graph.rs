@@ -647,7 +647,14 @@ impl GraphBuilder {
             for (index, trace) in mechanics
                 .microtraces
                 .iter()
-                .filter(|trace| trace.witnesses(requirement))
+                .filter(|trace| {
+                    trace.witnesses(requirement)
+                        && obligation
+                            .scope
+                            .selectors
+                            .iter()
+                            .any(|selector| trace.scope.selectors.contains(selector))
+                })
                 .enumerate()
             {
                 self.add_edge(
@@ -1506,6 +1513,21 @@ mod tests {
 
         let graph = PlannerGraph::project(&facts, &mechanics).unwrap();
         assert!(graph.edges.iter().any(|edge| {
+            edge.source_node_id == "microtrace/microtrace.auru-sidehop"
+                && edge.target_node_id == "obligation/obligation.auru-window"
+                && edge.relation == PlannerGraphRelation::Demonstrates
+        }));
+
+        mechanics.microtraces[0].scope = ContextScope {
+            selectors: vec![ContextSelector::Exact {
+                context: ExactContext {
+                    content_sha256: Digest([9; 32]),
+                    runtime_configuration_sha256: Digest([8; 32]),
+                },
+            }],
+        };
+        let disjoint = PlannerGraph::project(&facts, &mechanics).unwrap();
+        assert!(!disjoint.edges.iter().any(|edge| {
             edge.source_node_id == "microtrace/microtrace.auru-sidehop"
                 && edge.target_node_id == "obligation/obligation.auru-window"
                 && edge.relation == PlannerGraphRelation::Demonstrates

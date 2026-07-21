@@ -600,7 +600,7 @@ The current code shows:
   transition, preserving intermediate states instead of treating setup as one
   opaque mutation. Unknown hard method conditions produce `unknown`, and an
   uncertain banned-method match cannot be reported as a known reachable route.
-- Solve-report schema v3 retains active/unknown obstructions, selected
+- Solve-report schema v4 retains active/unknown obstructions, selected
   resolvers/techniques, discharged/outstanding/introduced obligations, and
   semantic state identities on successful steps. Failed searches keep the
   deterministic closest witnessed blocker state for each transition, including

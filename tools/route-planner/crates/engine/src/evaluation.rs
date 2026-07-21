@@ -425,6 +425,9 @@ impl<'a> PredicateEvaluator<'a> {
                 ObligationDetail::Unresolved { .. } => (ObligationClassification::Unmodeled, None),
             }
         };
+        if classification != ObligationClassification::Satisfied {
+            supporting_microtrace_ids.clear();
+        }
         ObligationAssessment {
             obligation_id: obligation.id.clone(),
             classification,
@@ -2095,6 +2098,16 @@ mod tests {
             timed.supporting_microtrace_ids,
             vec!["microtrace.auru-sidehop"]
         );
+
+        snapshot.environment.player.position = [1.0, 1.0, 1.0];
+        let spatially_blocked = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+            .assess_obligation(&obligation, std::slice::from_ref(&microtrace));
+        assert_eq!(
+            spatially_blocked.classification,
+            ObligationClassification::Unsatisfied
+        );
+        assert!(spatially_blocked.supporting_microtrace_ids.is_empty());
+        snapshot.environment.player.position = [0.0, 0.0, 0.0];
 
         let StateOperation::Interrupt { action_id, .. } = &mut microtrace.operations[0] else {
             unreachable!();
