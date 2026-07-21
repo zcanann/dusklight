@@ -221,6 +221,9 @@ fn print_usage() {
     eprintln!(
         "  huntctl learn collision-history --input EPISODES.dseps --output VIEW.json [--history-depth N] [--artifact-store ROOT]"
     );
+    eprintln!(
+        "  huntctl learn episode-history --input EPISODES.dseps --output VIEW.json [--history-depth N] [--artifact-store ROOT]"
+    );
     eprintln!("  actor-view goal binding: add --milestones PROGRAM.dmsp --milestone-goal NAME");
     eprintln!(
         "  huntctl learn cql (--dataset DATASET.json | --input BATCH.dtcz [--input MORE.dtcz]) [--model-output MODEL.json] [--artifact-store ROOT] [--query-transition N] [--query-side state|next-state] [--epochs N] [--hidden-width N] [--learning-rate R] [--target-sync-steps N] [--conservative-weight A] [--temperature T] [--gradient-clip V] [--seed N] [--discount D]"

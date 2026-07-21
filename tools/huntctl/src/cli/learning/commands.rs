@@ -30,6 +30,7 @@ use huntctl::native_collision_history::{
     DEFAULT_COLLISION_HISTORY_DEPTH, NativeCollisionHistoryView,
 };
 use huntctl::native_corpus_inspection::inspect_native_episode_corpus;
+use huntctl::native_episode_history::{DEFAULT_EPISODE_HISTORY_DEPTH, NativeEpisodeHistoryView};
 use huntctl::native_episode_shard::NativeEpisodeShard;
 use huntctl::native_geometry_view::{
     GeometryObservationStatus, NativeEpisodeGeometryView, NativeGeometryViewConfiguration,
@@ -786,6 +787,64 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "background_present": background_present,
                     "solver_changes": solver_changes,
                     "background_changes": background_changes,
+                }))?
+            );
+            Ok(())
+        }
+        Some("episode-history") => {
+            let learn_args = &args[1..];
+            let input = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "episode history output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let history_depth =
+                usize_option(learn_args, "--history-depth", DEFAULT_EPISODE_HISTORY_DEPTH)?;
+            let shard = NativeEpisodeShard::read(&input)?;
+            let view = NativeEpisodeHistoryView::build(&shard, history_depth)?;
+            let bytes = view.canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeEpisodeHistory)?;
+            let populated_decisions = view
+                .decisions
+                .iter()
+                .filter(|decision| !decision.completed_transition_indices.is_empty())
+                .count();
+            let maximum_realized_depth = view
+                .decisions
+                .iter()
+                .map(|decision| decision.completed_transition_indices.len())
+                .max()
+                .unwrap_or(0);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": view.schema,
+                    "view_sha256": view.view_sha256,
+                    "native_shard_sha256": view.native_shard_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "history_depth": view.history_depth,
+                    "source_observations": view.source_observation_count,
+                    "decisions": view.decisions.len(),
+                    "transitions": view.transitions.len(),
+                    "decisions_with_history": populated_decisions,
+                    "maximum_realized_depth": maximum_realized_depth,
                 }))?
             );
             Ok(())

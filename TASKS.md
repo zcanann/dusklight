@@ -903,6 +903,22 @@ PAD and gameplay sequence as ordinary playback.
   incumbent's corner frames.
 - [ ] Support short observation history or recurrent state for action phases
   and hidden timers that a single frame cannot make Markov.
+  - [x] Publish a generic, authenticated, past-only episode-history index over
+    native shards. Every decision names its exact pre-input observation ordinal
+    and a bounded oldest-to-newest list of transitions completed strictly
+    earlier in the same episode; the current post-simulation state remains in
+    a separate target table. Canonical validation rejects current/future or
+    cross-episode history even after resealing, and history resets at every
+    episode boundary. `huntctl learn episode-history` stores the compact index
+    as a content-addressed artifact without copying complete actor, collision
+    or geometry states. A depth-eight view over a live two-episode, 250-step
+    native shard retained 500 source observation ordinals, 250 exact chosen and
+    consumed PAD transitions, 248 decisions with prior context and two verified
+    zero-history episode starts (`9703f20c...6c32f`; content
+    `4a31a883...bf7e`). This supplies temporal information only: it has no
+    desired outcome, reward, action preference or technique-specific sequence.
+    Typed-view materialization and held-out single-frame/stack/recurrent
+    comparison remain open before the parent item can close.
 
 **Gate 3:** the same model-facing contracts execute raw input, precise
 continuous adjustments and stateful tactics; every execution exports an

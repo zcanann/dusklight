@@ -42,6 +42,7 @@ pub mod native_actor_features;
 pub mod native_actor_view;
 pub mod native_collision_history;
 pub mod native_collision_view;
+pub mod native_episode_history;
 pub mod native_geometry_view;
 pub mod native_replay_corpus;
 pub mod offline_rl;
