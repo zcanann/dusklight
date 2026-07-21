@@ -1526,10 +1526,17 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 - [ ] Support required talk/attention volumes, excluded cutscene-trigger volumes,
       facing/control predicates, and temporal windows.
 - [ ] Import authored obstructions without mutating build facts.
+  - [x] Evaluate obstruction activation and resolver applicability as separate
+        scoped/evidenced rules; a resolver discharges named obligations but does
+        not delete or falsify the underlying obstruction.
+  - [ ] Load those records from refinement packs into composed runtime catalogs.
 - [ ] Support direction, form, mount, twilight, actor, void, and layer scope.
 - [ ] Classify candidates as feasible, obstructed, or unknown.
   - [x] Implement the loss-aware per-snapshot classification primitive, including
         a distinct inapplicable scope and hard-guard-blocked result.
+  - [x] Derive discharged obligations from applicable resolvers and techniques,
+        retain active/unknown obstruction IDs, and keep introduced obligations
+        outstanding.
   - [ ] Evaluate authored obstruction/resolver catalogs and obligation details to
         derive discharged-obligation sets rather than accepting them as input.
 - [ ] Expose upper-bound versus modeled-feasible graph diffs.

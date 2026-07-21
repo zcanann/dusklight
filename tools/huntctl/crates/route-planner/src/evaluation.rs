@@ -7,6 +7,7 @@ use crate::logic::{
 };
 use crate::state::{ComponentPayload, PlayerForm, PlayerMount, StateComponent, StateValue};
 use crate::transition::{CandidateTransition, GateRule, ReaderRule, WriterRule};
+use crate::transition::{Obstruction, ObstructionResolver, Technique};
 use crate::{PlannerContractError, validate_stable_id};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
@@ -117,6 +118,49 @@ pub struct ReaderAssessment {
     pub evidence_permitted: bool,
     pub source_value: Option<StateValue>,
     pub interpretation: Option<EvaluatedTruth>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuleClassification {
+    Inapplicable,
+    EvidenceUnknown,
+    Inactive,
+    ActivationUnknown,
+    Active,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObstructionAssessment {
+    pub obstruction_id: String,
+    pub classification: RuleClassification,
+    pub activation: EvaluatedTruth,
+    pub obligation_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolverAssessment {
+    pub resolver_id: String,
+    pub obstruction_id: String,
+    pub classification: RuleClassification,
+    pub applicability: EvaluatedTruth,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TechniqueAssessment {
+    pub technique_id: String,
+    pub classification: RuleClassification,
+    pub prerequisites: EvaluatedTruth,
+    pub discharged_obligation_ids: Vec<String>,
+    pub introduced_obligation_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FeasibilityResolution {
+    pub discharged_obligation_ids: BTreeSet<String>,
+    pub active_obstruction_ids: Vec<String>,
+    pub unknown_obstruction_ids: Vec<String>,
+    pub applied_resolver_ids: Vec<String>,
+    pub applicable_technique_ids: Vec<String>,
 }
 
 /// Evaluates facts and guards against one immutable snapshot. Missing values,
@@ -318,6 +362,143 @@ impl<'a> PredicateEvaluator<'a> {
             source_value,
             interpretation,
         }
+    }
+
+    pub fn assess_obstruction(&self, obstruction: &Obstruction) -> ObstructionAssessment {
+        let (classification, activation) = self.assess_rule(
+            &obstruction.scope,
+            obstruction.evidence.truth,
+            &obstruction.active_when,
+        );
+        ObstructionAssessment {
+            obstruction_id: obstruction.id.clone(),
+            classification,
+            activation,
+            obligation_ids: obstruction.obligation_ids.clone(),
+        }
+    }
+
+    pub fn assess_resolver(&self, resolver: &ObstructionResolver) -> ResolverAssessment {
+        let (classification, applicability) = self.assess_rule(
+            &resolver.scope,
+            resolver.evidence.truth,
+            &resolver.applicable_when,
+        );
+        ResolverAssessment {
+            resolver_id: resolver.id.clone(),
+            obstruction_id: resolver.obstruction_id.clone(),
+            classification,
+            applicability,
+        }
+    }
+
+    pub fn assess_technique(&self, technique: &Technique) -> TechniqueAssessment {
+        let (classification, prerequisites) = self.assess_rule(
+            &technique.scope,
+            technique.evidence.truth,
+            &technique.prerequisites,
+        );
+        TechniqueAssessment {
+            technique_id: technique.id.clone(),
+            classification,
+            prerequisites,
+            discharged_obligation_ids: technique.discharged_obligation_ids.clone(),
+            introduced_obligation_ids: technique.introduced_obligation_ids.clone(),
+        }
+    }
+
+    /// Resolves only records relevant to one transition and approach. A
+    /// resolver discharges the obligations named by its obstruction; a
+    /// technique discharges only its explicit list. Neither deletes the
+    /// obstruction or changes its underlying activation fact.
+    pub fn resolve_feasibility(
+        &self,
+        transition: &CandidateTransition,
+        obstructions: &[Obstruction],
+        resolvers: &[ObstructionResolver],
+        techniques: &[Technique],
+        already_discharged: &BTreeSet<String>,
+    ) -> FeasibilityResolution {
+        let mut resolution = FeasibilityResolution {
+            discharged_obligation_ids: already_discharged.clone(),
+            active_obstruction_ids: Vec::new(),
+            unknown_obstruction_ids: Vec::new(),
+            applied_resolver_ids: Vec::new(),
+            applicable_technique_ids: Vec::new(),
+        };
+
+        for technique in techniques {
+            let assessment = self.assess_technique(technique);
+            if assessment.classification == RuleClassification::Active {
+                resolution
+                    .discharged_obligation_ids
+                    .extend(assessment.discharged_obligation_ids);
+                for introduced in assessment.introduced_obligation_ids {
+                    resolution.discharged_obligation_ids.remove(&introduced);
+                }
+                resolution
+                    .applicable_technique_ids
+                    .push(technique.id.clone());
+            }
+        }
+
+        for obstruction in obstructions.iter().filter(|obstruction| {
+            obstruction.blocked_action_id == transition.id
+                && obstruction.approach_id == transition.approach_id
+        }) {
+            let assessment = self.assess_obstruction(obstruction);
+            match assessment.classification {
+                RuleClassification::Active => {
+                    resolution
+                        .active_obstruction_ids
+                        .push(obstruction.id.clone());
+                    let applicable = resolvers
+                        .iter()
+                        .filter(|resolver| resolver.obstruction_id == obstruction.id)
+                        .filter(|resolver| {
+                            self.assess_resolver(resolver).classification
+                                == RuleClassification::Active
+                        })
+                        .collect::<Vec<_>>();
+                    if !applicable.is_empty() {
+                        resolution
+                            .discharged_obligation_ids
+                            .extend(obstruction.obligation_ids.iter().cloned());
+                        resolution
+                            .applied_resolver_ids
+                            .extend(applicable.into_iter().map(|resolver| resolver.id.clone()));
+                    }
+                }
+                RuleClassification::EvidenceUnknown | RuleClassification::ActivationUnknown => {
+                    resolution
+                        .unknown_obstruction_ids
+                        .push(obstruction.id.clone())
+                }
+                RuleClassification::Inapplicable | RuleClassification::Inactive => {}
+            }
+        }
+        resolution
+    }
+
+    fn assess_rule(
+        &self,
+        scope: &ContextScope,
+        truth: TruthStatus,
+        expression: &PredicateExpression,
+    ) -> (RuleClassification, EvaluatedTruth) {
+        if !self.scope_applies(scope) {
+            return (RuleClassification::Inapplicable, EvaluatedTruth::Unknown);
+        }
+        if !self.policy.permits(truth) {
+            return (RuleClassification::EvidenceUnknown, EvaluatedTruth::Unknown);
+        }
+        let activation = self.evaluate(expression);
+        let classification = match activation {
+            EvaluatedTruth::True => RuleClassification::Active,
+            EvaluatedTruth::False => RuleClassification::Inactive,
+            EvaluatedTruth::Unknown => RuleClassification::ActivationUnknown,
+        };
+        (classification, activation)
     }
 
     fn evaluate_inner(
@@ -1101,5 +1282,121 @@ mod tests {
             Some(StateValue::Text("F_SP103".into()))
         );
         assert_eq!(assessment.interpretation, Some(EvaluatedTruth::True));
+    }
+
+    #[test]
+    fn resolvers_discharge_obligations_without_deleting_active_obstructions() {
+        let snapshot = snapshot(0xff);
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        let candidate = transition(&snapshot, PredicateExpression::True);
+        let mut obstruction = Obstruction {
+            id: "obstruction.npc-blocker".into(),
+            label: "NPCs block the entrance".into(),
+            scope: scope(&snapshot),
+            blocked_action_id: candidate.id.clone(),
+            approach_id: candidate.approach_id.clone(),
+            active_when: PredicateExpression::True,
+            obligation_ids: vec!["obligation.wall".into()],
+            evidence: evidence(TruthStatus::Established),
+        };
+        let resolver = ObstructionResolver {
+            id: "resolver.text-displacement".into(),
+            label: "Displace the blocking text state".into(),
+            scope: scope(&snapshot),
+            obstruction_id: obstruction.id.clone(),
+            resolution_kind: crate::transition::ResolutionKind::Bypass,
+            applicable_when: fact("story.faron.twilight"),
+            operations: Vec::new(),
+            evidence: evidence(TruthStatus::Established),
+        };
+
+        let unresolved = evaluator.resolve_feasibility(
+            &candidate,
+            &[obstruction.clone()],
+            &[],
+            &[],
+            &BTreeSet::new(),
+        );
+        assert_eq!(
+            unresolved.active_obstruction_ids,
+            vec!["obstruction.npc-blocker"]
+        );
+        assert!(
+            !unresolved
+                .discharged_obligation_ids
+                .contains("obligation.wall")
+        );
+
+        let resolved = evaluator.resolve_feasibility(
+            &candidate,
+            &[obstruction.clone()],
+            &[resolver],
+            &[],
+            &BTreeSet::new(),
+        );
+        assert_eq!(
+            resolved.active_obstruction_ids,
+            vec!["obstruction.npc-blocker"]
+        );
+        assert_eq!(
+            resolved.applied_resolver_ids,
+            vec!["resolver.text-displacement"]
+        );
+        assert!(
+            resolved
+                .discharged_obligation_ids
+                .contains("obligation.wall")
+        );
+
+        obstruction.active_when = fact("missing.obstruction-state");
+        let uncertain =
+            evaluator.resolve_feasibility(&candidate, &[obstruction], &[], &[], &BTreeSet::new());
+        assert_eq!(
+            uncertain.unknown_obstruction_ids,
+            vec!["obstruction.npc-blocker"]
+        );
+    }
+
+    #[test]
+    fn techniques_discharge_and_introduce_only_named_obligations() {
+        let snapshot = snapshot(0xff);
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        let candidate = transition(&snapshot, PredicateExpression::True);
+        let technique = Technique {
+            id: "technique.epona-oob".into(),
+            label: "Epona out of bounds".into(),
+            scope: scope(&snapshot),
+            prerequisites: fact("story.faron.twilight"),
+            operations: Vec::new(),
+            discharged_obligation_ids: vec!["obligation.wall".into()],
+            introduced_obligation_ids: vec!["obligation.precise-movement".into()],
+            cost: crate::transition::RouteCost {
+                axes: BTreeMap::from([("difficulty".into(), 5)]),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let resolution = evaluator.resolve_feasibility(
+            &candidate,
+            &[],
+            &[],
+            &[technique],
+            &BTreeSet::from(["obligation.precise-movement".into()]),
+        );
+        assert_eq!(
+            resolution.applicable_technique_ids,
+            vec!["technique.epona-oob"]
+        );
+        assert!(
+            resolution
+                .discharged_obligation_ids
+                .contains("obligation.wall")
+        );
+        assert!(
+            !resolution
+                .discharged_obligation_ids
+                .contains("obligation.precise-movement")
+        );
     }
 }
