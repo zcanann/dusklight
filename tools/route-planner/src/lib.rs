@@ -756,6 +756,7 @@ mod tests {
             },
             lifetime: SemanticLifetime::StageLoad,
             serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
                 stage: "ForestTemple".into(),
             },
             provenance: vec![ComponentProvenance {

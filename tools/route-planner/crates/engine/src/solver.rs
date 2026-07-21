@@ -3166,6 +3166,7 @@ mod tests {
             },
             lifetime: SemanticLifetime::StageLoad,
             serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
                 stage: "D_MN05".into(),
             },
             provenance: vec![ComponentProvenance {
@@ -4880,6 +4881,7 @@ mod tests {
                 },
                 lifetime: SemanticLifetime::StageLoad,
                 serialization_owner: SerializationOwner::StageBank {
+                    runtime_file_id: "file-0".into(),
                     stage: "F_SP115".into(),
                 },
                 provenance: vec![ComponentProvenance {
@@ -5684,6 +5686,7 @@ mod tests {
                     },
                     lifetime: SemanticLifetime::StageLoad,
                     serialization_owner: SerializationOwner::StageBank {
+                        runtime_file_id: "file-0".into(),
                         stage: if bound_dungeon == "forest-temple" {
                             "D_MN05".into()
                         } else {
@@ -6141,6 +6144,7 @@ mod tests {
                 },
                 lifetime: SemanticLifetime::StageLoad,
                 serialization_owner: SerializationOwner::StageBank {
+                    runtime_file_id: "file-0".into(),
                     stage: "D_MN05".into(),
                 },
                 provenance: vec![ComponentProvenance {
@@ -7952,6 +7956,7 @@ mod tests {
                 },
                 SemanticLifetime::StageLoad,
                 SerializationOwner::StageBank {
+                    runtime_file_id: "file-0".into(),
                     stage: "R_SP110".into(),
                 },
             ),

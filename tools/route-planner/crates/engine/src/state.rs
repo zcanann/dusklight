@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v4";
-pub const BOUNDARY_POLICY_SCHEMA: &str = "dusklight.route-planner.boundary-policy/v1";
+pub const EXECUTION_ENVIRONMENT_SCHEMA: &str = "dusklight.route-planner.execution-environment/v5";
+pub const BOUNDARY_POLICY_SCHEMA: &str = "dusklight.route-planner.boundary-policy/v2";
 pub const MAX_COMPONENT_BYTES: usize = 1024 * 1024;
 pub const MAX_STATE_COLLECTION: usize = 65_536;
 
@@ -166,10 +166,19 @@ pub enum SemanticLifetime {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SerializationOwner {
     None,
-    RuntimeFile { runtime_file_id: String },
-    PhysicalSlot { slot: PhysicalSlotId },
-    StageBank { stage: String },
-    Custom { id: String },
+    RuntimeFile {
+        runtime_file_id: String,
+    },
+    PhysicalSlot {
+        slot: PhysicalSlotId,
+    },
+    StageBank {
+        runtime_file_id: String,
+        stage: String,
+    },
+    Custom {
+        id: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -682,7 +691,11 @@ pub(crate) fn validate_serialization_owner(
             validate_stable_id("serialization_owner.runtime_file_id", runtime_file_id)
         }
         SerializationOwner::PhysicalSlot { slot } => slot.validate("serialization_owner.slot"),
-        SerializationOwner::StageBank { stage } => {
+        SerializationOwner::StageBank {
+            runtime_file_id,
+            stage,
+        } => {
+            validate_stable_id("serialization_owner.runtime_file_id", runtime_file_id)?;
             validate_game_name("serialization_owner.stage", stage)
         }
         SerializationOwner::Custom { id } => validate_stable_id("serialization_owner.id", id),

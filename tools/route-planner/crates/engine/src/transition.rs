@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v9";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v10";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -93,6 +93,17 @@ pub enum StateOperation {
     Restore {
         owner: SerializationOwner,
         destination_component_id: String,
+    },
+    /// Commits the currently bound stage-local payload to its runtime-file-owned
+    /// backing entry, then restores the destination stage's entry into the same
+    /// live component. The execution engine checks all identities atomically.
+    CommitLoadStageBank {
+        component_id: String,
+        runtime_file_id: String,
+        source_stage: String,
+        destination_stage: String,
+        source_binding: ComponentBinding,
+        destination_binding: ComponentBinding,
     },
     Bind {
         selector: ComponentSelector,
@@ -572,6 +583,34 @@ impl StateOperation {
                     "operation.destination_component_id",
                     destination_component_id,
                 )
+            }
+            Self::CommitLoadStageBank {
+                component_id,
+                runtime_file_id,
+                source_stage,
+                destination_stage,
+                source_binding,
+                destination_binding,
+            } => {
+                validate_stable_id("operation.component_id", component_id)?;
+                validate_stable_id("operation.runtime_file_id", runtime_file_id)?;
+                validate_binding(&ComponentBinding::Stage {
+                    stage: source_stage.clone(),
+                })?;
+                validate_binding(&ComponentBinding::Stage {
+                    stage: destination_stage.clone(),
+                })?;
+                validate_binding(source_binding)?;
+                validate_binding(destination_binding)?;
+                if matches!(source_binding, ComponentBinding::Unbound)
+                    || matches!(destination_binding, ComponentBinding::Unbound)
+                {
+                    return Err(PlannerContractError::new(
+                        "operation.commit_load_stage_bank.binding",
+                        "source and destination bindings must be explicit",
+                    ));
+                }
+                Ok(())
             }
             Self::Bind { selector, binding } | Self::Rebind { selector, binding } => {
                 validate_component_selector(selector)?;

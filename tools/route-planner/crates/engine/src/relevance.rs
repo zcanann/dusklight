@@ -607,6 +607,12 @@ impl RelevanceBuilder {
                         .map(|component_id| StateDependency::Component { component_id }),
                 );
             }
+            StateOperation::CommitLoadStageBank { component_id, .. } => {
+                self.dependencies.insert(StateDependency::Component {
+                    component_id: component_id.clone(),
+                });
+                self.dependencies.insert(StateDependency::LocationStage);
+            }
             StateOperation::Write { .. }
             | StateOperation::WriteRaw { .. }
             | StateOperation::InvalidateRaw { .. }
@@ -713,6 +719,12 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         } => vec![StateDependency::Component {
             component_id: destination_component_id.clone(),
         }],
+        StateOperation::CommitLoadStageBank { component_id, .. } => vec![
+            StateDependency::Component {
+                component_id: component_id.clone(),
+            },
+            StateDependency::AnyState,
+        ],
         StateOperation::SetLocation { .. } => vec![
             StateDependency::LocationStage,
             StateDependency::LocationRoom,

@@ -219,6 +219,7 @@ pub fn snapshot_native_observation(
         },
         SemanticLifetime::StageLoad,
         SerializationOwner::StageBank {
+            runtime_file_id: context.runtime_file_id.clone(),
             stage: observation.stage.clone(),
         },
         &provenance,

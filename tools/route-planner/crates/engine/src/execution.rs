@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v5";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v6";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -190,6 +190,20 @@ impl PlannerExecutionState {
             let mut previous = None;
             for component in components {
                 component.validate()?;
+                if &component.serialization_owner != owner {
+                    return Err(PlannerContractError::new(
+                        "serialized_components.owner",
+                        "store key and component serialization owner disagree",
+                    ));
+                }
+                if matches!(owner, SerializationOwner::StageBank { .. })
+                    && component.lifetime != crate::state::SemanticLifetime::StageLoad
+                {
+                    return Err(PlannerContractError::new(
+                        "serialized_components.stage_bank",
+                        "can contain only stage-load-lifetime components",
+                    ));
+                }
                 if previous.is_some_and(|id: &str| id >= component.id.as_str()) {
                     return Err(PlannerContractError::new(
                         "serialized_components",
@@ -559,7 +573,10 @@ impl PlannerExecutionState {
             | StateOperation::ClearField { target }
             | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
             StateOperation::WriteRaw { component_id, .. }
-            | StateOperation::InvalidateRaw { component_id, .. } => vec![component_id.clone()],
+            | StateOperation::InvalidateRaw { component_id, .. }
+            | StateOperation::CommitLoadStageBank { component_id, .. } => {
+                vec![component_id.clone()]
+            }
             StateOperation::ClearComponent { selector }
             | StateOperation::Preserve { selector }
             | StateOperation::Serialize { selector, .. }
@@ -911,6 +928,9 @@ impl PlannerExecutionState {
                 mark_transition(&mut restored, application_id);
                 self.snapshot.environment.components.push(restored);
             }
+            operation @ StateOperation::CommitLoadStageBank { .. } => {
+                self.commit_load_stage_bank(application_id, operation)?
+            }
             StateOperation::Bind { selector, binding } => {
                 let ids = self.matching_ids(selector);
                 if ids.is_empty() {
@@ -1057,6 +1077,86 @@ impl PlannerExecutionState {
                     "references an absent component",
                 )
             })
+    }
+
+    fn commit_load_stage_bank(
+        &mut self,
+        application_id: &str,
+        operation: &StateOperation,
+    ) -> Result<(), PlannerContractError> {
+        let StateOperation::CommitLoadStageBank {
+            component_id,
+            runtime_file_id,
+            source_stage,
+            destination_stage,
+            source_binding,
+            destination_binding,
+        } = operation
+        else {
+            unreachable!("commit/load helper is called only for its operation variant")
+        };
+        if self.snapshot.environment.active_runtime_file.id != runtime_file_id.as_str() {
+            return Err(PlannerContractError::new(
+                "operation.commit_load_stage_bank.runtime_file_id",
+                "does not name the active runtime file",
+            ));
+        }
+        if self.snapshot.environment.location.stage != source_stage.as_str() {
+            return Err(PlannerContractError::new(
+                "operation.commit_load_stage_bank.source_stage",
+                "does not match the current scene stage",
+            ));
+        }
+        let source_owner = SerializationOwner::StageBank {
+            runtime_file_id: runtime_file_id.into(),
+            stage: source_stage.into(),
+        };
+        let destination_owner = SerializationOwner::StageBank {
+            runtime_file_id: runtime_file_id.into(),
+            stage: destination_stage.into(),
+        };
+        let component_index = self.component_index(component_id)?;
+        let current = self.snapshot.environment.components[component_index].clone();
+        if current.binding != *source_binding
+            || current.serialization_owner != source_owner
+            || current.lifetime != crate::state::SemanticLifetime::StageLoad
+        {
+            return Err(PlannerContractError::new(
+                "operation.commit_load_stage_bank.source",
+                "live component must be stage-load state bound to the exact source backing",
+            ));
+        }
+
+        let mut committed = current.clone();
+        mark_transition(&mut committed, application_id);
+        insert_serialized(&mut self.serialized_components, &source_owner, committed);
+
+        let mut restored = select_serialized(
+            &self.serialized_components,
+            &destination_owner,
+            component_id,
+        )
+        .map_err(|error| {
+            PlannerContractError::new(
+                "operation.commit_load_stage_bank.destination",
+                error.detail(),
+            )
+        })?
+        .clone();
+        if restored.id != component_id.as_str()
+            || restored.component_kind != current.component_kind
+            || restored.binding != *destination_binding
+            || restored.serialization_owner != destination_owner
+            || restored.lifetime != crate::state::SemanticLifetime::StageLoad
+        {
+            return Err(PlannerContractError::new(
+                "operation.commit_load_stage_bank.destination",
+                "stored component does not match the exact destination backing contract",
+            ));
+        }
+        mark_transition(&mut restored, application_id);
+        self.snapshot.environment.components[component_index] = restored;
+        Ok(())
     }
 
     fn structured_value(
@@ -1306,6 +1406,10 @@ fn history_event_writes_field(
                 flow_component_id, ..
             } => flow_component_id == component_id && matches!(field, "node_id" | "last_edge_id"),
             StateOperation::Initialize { component } => component.id == component_id,
+            StateOperation::CommitLoadStageBank {
+                component_id: changed,
+                ..
+            } => changed == component_id,
             StateOperation::Copy {
                 destination_component_id,
                 ..
@@ -2470,6 +2574,204 @@ mod tests {
     }
 
     #[test]
+    fn serialized_store_keys_and_stage_bank_lifetimes_are_enforced() {
+        let mut mismatched_owner = PlannerExecutionState::new(snapshot()).unwrap();
+        mismatched_owner.serialized_components.insert(
+            SerializationOwner::PhysicalSlot {
+                slot: PhysicalSlotId(1),
+            },
+            vec![structured_component(
+                "stored.save",
+                ComponentKind::PersistentSave,
+                ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+            )],
+        );
+        assert_eq!(
+            mismatched_owner.validate().unwrap_err().field(),
+            "serialized_components.owner"
+        );
+
+        let mut wrong_lifetime = PlannerExecutionState::new(snapshot()).unwrap();
+        let owner = SerializationOwner::StageBank {
+            runtime_file_id: "file-0".into(),
+            stage: "F_SP103".into(),
+        };
+        let mut component = structured_component(
+            "stage.stored",
+            ComponentKind::StageMemory,
+            ComponentBinding::Stage {
+                stage: "F_SP103".into(),
+            },
+        );
+        component.serialization_owner = owner.clone();
+        wrong_lifetime
+            .serialized_components
+            .insert(owner, vec![component]);
+        assert_eq!(
+            wrong_lifetime.validate().unwrap_err().field(),
+            "serialized_components.stage_bank"
+        );
+    }
+
+    #[test]
+    fn normal_stage_bank_commit_load_is_runtime_scoped_and_atomic() {
+        let stage_component = |stage: &str, marker: u64| {
+            let mut component = structured_component(
+                "stage.live",
+                ComponentKind::StageMemory,
+                ComponentBinding::Stage {
+                    stage: stage.into(),
+                },
+            );
+            component.lifetime = SemanticLifetime::StageLoad;
+            component.serialization_owner = SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
+                stage: stage.into(),
+            };
+            let ComponentPayload::Structured { fields } = &mut component.payload else {
+                unreachable!()
+            };
+            fields.insert("marker".into(), StateValue::Unsigned(marker));
+            component
+        };
+        let mut source = snapshot();
+        source
+            .environment
+            .components
+            .push(stage_component("F_SP103", 11));
+        source
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let mut state = PlannerExecutionState::new(source).unwrap();
+        let destination_owner = SerializationOwner::StageBank {
+            runtime_file_id: "file-0".into(),
+            stage: "D_MN05".into(),
+        };
+        state.serialized_components.insert(
+            destination_owner.clone(),
+            vec![stage_component("D_MN05", 22)],
+        );
+        let other_file_owner = SerializationOwner::StageBank {
+            runtime_file_id: "file-1".into(),
+            stage: "D_MN05".into(),
+        };
+        let mut other_file = stage_component("D_MN05", 99);
+        other_file.serialization_owner = other_file_owner.clone();
+        state
+            .serialized_components
+            .insert(other_file_owner, vec![other_file]);
+        state.validate().unwrap();
+
+        state
+            .apply_operations(
+                "boundary.faron-to-forest",
+                "snapshot.forest-bank-loaded",
+                &[
+                    StateOperation::CommitLoadStageBank {
+                        component_id: "stage.live".into(),
+                        runtime_file_id: "file-0".into(),
+                        source_stage: "F_SP103".into(),
+                        destination_stage: "D_MN05".into(),
+                        source_binding: ComponentBinding::Stage {
+                            stage: "F_SP103".into(),
+                        },
+                        destination_binding: ComponentBinding::Stage {
+                            stage: "D_MN05".into(),
+                        },
+                    },
+                    StateOperation::SetLocation {
+                        location: SceneLocation {
+                            stage: "D_MN05".into(),
+                            room: 0,
+                            layer: 0,
+                            spawn: 0,
+                        },
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(
+            field(&state, "stage.live", "marker"),
+            &StateValue::Unsigned(22)
+        );
+        let source_owner = SerializationOwner::StageBank {
+            runtime_file_id: "file-0".into(),
+            stage: "F_SP103".into(),
+        };
+        let ComponentPayload::Structured { fields } =
+            &state.serialized_components[&source_owner][0].payload
+        else {
+            unreachable!()
+        };
+        assert_eq!(fields["marker"], StateValue::Unsigned(11));
+        assert_eq!(state.snapshot.environment.location.stage, "D_MN05");
+        assert_eq!(
+            state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == "stage.live")
+                .unwrap()
+                .serialization_owner,
+            destination_owner
+        );
+
+        let before = state.clone();
+        let error = state
+            .apply_operations(
+                "boundary.wrong-file",
+                "snapshot.not-produced",
+                &[StateOperation::CommitLoadStageBank {
+                    component_id: "stage.live".into(),
+                    runtime_file_id: "file-1".into(),
+                    source_stage: "D_MN05".into(),
+                    destination_stage: "F_SP103".into(),
+                    source_binding: ComponentBinding::Stage {
+                        stage: "D_MN05".into(),
+                    },
+                    destination_binding: ComponentBinding::Stage {
+                        stage: "F_SP103".into(),
+                    },
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.field(),
+            "operation.commit_load_stage_bank.runtime_file_id"
+        );
+        assert_eq!(state, before);
+
+        let before = state.clone();
+        let error = state
+            .apply_operations(
+                "boundary.missing-destination",
+                "snapshot.not-produced",
+                &[StateOperation::CommitLoadStageBank {
+                    component_id: "stage.live".into(),
+                    runtime_file_id: "file-0".into(),
+                    source_stage: "D_MN05".into(),
+                    destination_stage: "D_MN06".into(),
+                    source_binding: ComponentBinding::Stage {
+                        stage: "D_MN05".into(),
+                    },
+                    destination_binding: ComponentBinding::Stage {
+                        stage: "D_MN06".into(),
+                    },
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.field(),
+            "operation.commit_load_stage_bank.destination"
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
     fn copy_move_rebind_and_projection_transform_only_named_components() {
         let mut state = PlannerExecutionState::new(snapshot()).unwrap();
         state
@@ -2496,6 +2798,7 @@ mod tests {
                             stage: "D_MN05".into(),
                         },
                         serialization_owner: SerializationOwner::StageBank {
+                            runtime_file_id: "file-0".into(),
                             stage: "D_MN05".into(),
                         },
                     },

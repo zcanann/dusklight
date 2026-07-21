@@ -1510,6 +1510,7 @@ mod tests {
             },
             lifetime: SemanticLifetime::StageLoad,
             serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
                 stage: "D_MN05".into(),
             },
             provenance: vec![ComponentProvenance {

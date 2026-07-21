@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v4";
-pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v4";
-pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v4";
+pub const STATE_SNAPSHOT_SCHEMA: &str = "dusklight.route-planner.state-snapshot/v5";
+pub const STATE_DIFF_SCHEMA: &str = "dusklight.route-planner.state-diff/v5";
+pub const SNAPSHOT_CHAIN_SCHEMA: &str = "dusklight.route-planner.snapshot-chain/v5";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -587,6 +587,7 @@ mod tests {
             binding,
             lifetime: SemanticLifetime::StageLoad,
             serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
                 stage: "F_SP103".into(),
             },
             provenance: vec![ComponentProvenance {

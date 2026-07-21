@@ -121,3 +121,11 @@ The three low-level extraction commands are read-only with respect to `orig/`.
 They write only the explicitly named output and record SHA-256 identities for
 both the source archive and extracted resource. They do not call or link
 Huntctl/TAS tooling.
+
+Stage-local backing is also planner-owned. A `StageBank` address contains both
+the runtime-file ID and stage name; it is never a process-global “Forest Temple
+bank.” Mechanics can use `commit_load_stage_bank` to atomically verify and
+commit the live source payload, restore the exact destination payload, and apply
+explicit source/destination semantic bindings. Scene movement stays a separate
+effect, preventing a bank swap from silently inventing a map transition. See
+`docs/route-planner/backing-store-boundaries.md`.
