@@ -1103,7 +1103,7 @@ motion. These compact channels do not retain another complete actor set per
 sample and never expose the current transition's post-simulation state to a
 forward head.
 
-Report v4 includes rare-event classification diagnostics in addition to MSE.
+Report v6 includes rare-event classification diagnostics in addition to MSE.
 Contact, procedure, mode and actor-disappearance heads expose support and
 confusion counts, precision/recall, specificity, balanced accuracy, F1 and a
 clamped Brier score for both the learned model and training-mean baseline.
@@ -1118,11 +1118,27 @@ the answer into inverse dynamics. The standalone `encode(pre_state)` API stays
 state-only for policy use; action and post-state are training/evaluation head
 context, not live policy observation.
 
-Report v4 lists `pre_state_and_action` or `pre_and_post_state` for every target.
+Report v6 lists `pre_state_and_action` or `pre_and_post_state` for every target.
 Executable invariants require forward predictions to remain identical when
 only post-state changes and inverse predictions to remain identical when only
 the supplied action changes. A model that violates either separation is an
 invalid auxiliary experiment regardless of held-out loss.
+
+The default actor pool remains `mean-max`. A controlled learned-attention
+treatment can retain those baseline pools and append four trainable softmax
+queries over the same complete actor embeddings:
+
+```powershell
+huntctl learn pretrain-native-encoder --dataset auxiliary-dataset.json `
+  --input episodes.dseps --output attended-encoder.json `
+  --pooling mean-max-learned-attention
+```
+
+The selected pooling mode is part of both the report and model identity, and
+the shuffled-target control uses the same mode. Attention reports expose each
+query's norm, held-out normalized entropy, and mean maximum actor weight. These
+are concentration diagnostics, not success authority; comparing attention
+stability requires independent seeds and held-out outcomes.
 
 Transition batches can be inspected and transformed without weakening their
 schema or content identities:

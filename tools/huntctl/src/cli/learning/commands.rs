@@ -19,8 +19,9 @@ use huntctl::fqi::{
 };
 use huntctl::learning::batch::load_fqi_batch;
 use huntctl::learning::multitask_set_encoder::{
-    CompleteSetMultiTaskEncoder, NativeEncoderChannelFamily, NativeEncoderFeatureSpec,
-    NativeMultiTaskActorCorpus, fit_shuffled_auxiliary_control,
+    CompleteSetMultiTaskEncoder, MultiTaskSetPooling, NativeEncoderChannelFamily,
+    NativeEncoderFeatureSpec, NativeMultiTaskActorCorpus,
+    fit_shuffled_auxiliary_control_with_pooling,
 };
 use huntctl::learning::native_auxiliary_dataset::{
     AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V2, NativeAuxiliaryDataset,
@@ -874,6 +875,13 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let feature_spec = NativeEncoderFeatureSpec::excluding(excluded)?;
+            let pooling = option(learn_args, "--pooling")
+                .map(|name| {
+                    MultiTaskSetPooling::parse(&name)
+                        .ok_or_else(|| format!("unknown native encoder pooling mode: {name}"))
+                })
+                .transpose()?
+                .unwrap_or(MultiTaskSetPooling::MeanMax);
             let corpus =
                 NativeMultiTaskActorCorpus::build_with_spec(&dataset, &shard, feature_spec)?;
             drop(shard);
@@ -909,7 +917,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 seed: u64_option(learn_args, "--seed", defaults.seed)?,
                 fixed_slot_count: defaults.fixed_slot_count,
             };
-            let (report, model) = CompleteSetMultiTaskEncoder::fit(
+            let (report, model) = CompleteSetMultiTaskEncoder::fit_with_pooling(
                 corpus.actor_feature_schema_sha256,
                 corpus.training_dataset_sha256,
                 corpus.validation_dataset_sha256,
@@ -917,9 +925,10 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 &corpus.training,
                 &corpus.validation,
                 config,
+                pooling,
             )?;
             let test_evaluation = model.evaluate(&corpus.test)?;
-            let shuffled_target_control = fit_shuffled_auxiliary_control(
+            let shuffled_target_control = fit_shuffled_auxiliary_control_with_pooling(
                 corpus.actor_feature_schema_sha256,
                 corpus.target_names.clone(),
                 corpus.training,
@@ -927,9 +936,10 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 &corpus.validation,
                 &corpus.test,
                 config,
+                pooling,
             )?;
             let artifact = json!({
-                "schema": "dusklight-native-multitask-encoder-artifact/v4",
+                "schema": "dusklight-native-multitask-encoder-artifact/v5",
                 "source_auxiliary_dataset_sha256": dataset.dataset_sha256,
                 "source_native_shard_sha256": source_native_shard_sha256,
                 "actor_feature_schema_sha256": corpus.actor_feature_schema_sha256,

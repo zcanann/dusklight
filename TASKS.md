@@ -1262,7 +1262,7 @@ and geometry set sizes without schema changes.
   encoder that loses to the smaller view under equal data and simulator budget,
   while preserving the canonical raw evidence for a different encoder.
   - [x] Make the direct native input a declarative, schema-bound projection
-    over 23 named core/set channel families, including actor population as a
+    over 24 named core/set channel families, including actor population as a
     separate structural family so an action-only control cannot leak actor
     count, plus separately ablatable core and actor temporal deltas. Omitted
     families remove columns rather than zeroing them, and the broad view now
@@ -1283,6 +1283,17 @@ and geometry set sizes without schema changes.
     action, while nominal inverse-action heads lack the post-state, so the next
     encoder revision must distinguish action-conditioned dynamics from
     behavior cloning before feature promotion.
+  - [x] Add a selectable learned actor-attention pool without discarding the
+    complete set or silently replacing the mean/max baseline. Four seeded
+    softmax queries attend over shared per-actor embeddings; gradients update
+    both queries and actor transforms, while mean/max features remain available
+    to the same state head. Report/model v6 binds the pooling mode and reports
+    each query's norm, held-out normalized entropy and maximum weight. Tests
+    prove seeded model identity, query updates, permutation invariance and
+    bounded diagnostics. The CLI exposes `mean-max` and
+    `mean-max-learned-attention`, and the shuffled control is forced through the
+    same selected pooler. A real equal-budget Ordon comparison and cross-seed
+    attention stability measurement remain open before the parent can close.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
