@@ -606,8 +606,11 @@ bool append_process_lifecycle_state(std::vector<std::uint8_t>& output,
     const bool unavailable = lifecycle.status == Status::Unavailable;
     if ((!present && !unavailable) ||
         (present && lifecycle.activeActorCount != observation.actors.size()) ||
+        (present && (lifecycle.pendingCreateCount != lifecycle.pendingCreates.size() ||
+                        lifecycle.pendingDeleteCount != lifecycle.pendingDeletes.size())) ||
         (!present && (lifecycle.activeActorCount != 0 || lifecycle.pendingCreateCount != 0 ||
-                         lifecycle.pendingDeleteCount != 0)))
+                         lifecycle.pendingDeleteCount != 0 || !lifecycle.pendingCreates.empty() ||
+                         !lifecycle.pendingDeletes.empty())))
     {
         error = "learning observation has inconsistent process-lifecycle state";
         return false;
@@ -619,6 +622,59 @@ bool append_process_lifecycle_state(std::vector<std::uint8_t>& output,
     append_integer(output, lifecycle.activeActorCount);
     append_integer(output, lifecycle.pendingCreateCount);
     append_integer(output, lifecycle.pendingDeleteCount);
+    return true;
+}
+
+bool append_process_lifecycle_records(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    const auto& lifecycle = observation.processLifecycle;
+    const bool present = lifecycle.status == Status::Present;
+    if ((present && (lifecycle.pendingCreateCount != lifecycle.pendingCreates.size() ||
+                        lifecycle.pendingDeleteCount != lifecycle.pendingDeletes.size())) ||
+        (!present && (!lifecycle.pendingCreates.empty() || !lifecycle.pendingDeletes.empty()))) {
+        error = "learning observation has inconsistent process-lifecycle records";
+        return false;
+    }
+    using ProcessState = MilestoneObservation::ProcessLifecycleState::ProcessState;
+    const auto processEmpty = [](const ProcessState& process) {
+        return process.runtimeGeneration == 0 && process.processName == -1 &&
+               process.profileName == -1 && process.processType == 0 &&
+               process.processSubtype == 0 && process.parameters == 0 && process.initState == 0 &&
+               process.createPhase == 0;
+    };
+    const auto appendProcess = [&](const ProcessState& process) {
+        append_integer(output, process.runtimeGeneration);
+        append_integer(output, process.processName);
+        append_integer(output, process.profileName);
+        append_integer(output, process.processType);
+        append_integer(output, process.processSubtype);
+        append_integer(output, process.parameters);
+        append_integer(output, process.initState);
+        append_integer(output, process.createPhase);
+        append_integer<std::uint16_t>(output, 0);
+    };
+    for (const auto& pending : lifecycle.pendingCreates) {
+        const bool processPresent = pending.processStatus == Status::Present;
+        const bool processAbsent = pending.processStatus == Status::Absent;
+        if ((!processPresent && !processAbsent) ||
+            (processPresent && pending.process.runtimeGeneration != pending.runtimeGeneration) ||
+            (processAbsent && !processEmpty(pending.process))) {
+            error = "learning observation has inconsistent pending-create process state";
+            return false;
+        }
+        append_integer(output, pending.runtimeGeneration);
+        append_integer(output,
+            static_cast<std::uint8_t>((pending.doing ? 1 : 0) | (pending.cancelled ? 2 : 0)));
+        append_integer(output, static_cast<std::uint8_t>(pending.processStatus));
+        append_integer<std::uint16_t>(output, 0);
+        appendProcess(pending.process);
+    }
+    for (const auto& pending : lifecycle.pendingDeletes) {
+        appendProcess(pending.process);
+        append_integer(output, pending.timer);
+        append_integer<std::uint16_t>(output, 0);
+    }
     return true;
 }
 
@@ -1328,7 +1384,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         !append_event_queue_state(output, observation, error) ||
         !append_process_lifecycle_state(output, observation, error))
         return false;
-    return append_attention_candidate_state(output, observation, error);
+    if (!append_attention_candidate_state(output, observation, error))
+        return false;
+    return append_process_lifecycle_records(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

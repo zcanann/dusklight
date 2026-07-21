@@ -1,15 +1,26 @@
-# Active task: build a learning system, then prove it on Ordon
+# Active task: build the information boundary a serious learner needs
 
-The immediate objective is not another procedural route search:
+The work is ordered deliberately:
 
-> Build an integrated learning loop that retains complete experience, learns
-> which state and actions predict future success, and uses that knowledge to
-> discover and optimize input sequences. Prove it first on the Link-control to
-> Ordon Springs segment.
+1. collect broad, structured, read-only game state without choosing a desired
+   behavior;
+2. prove that collection is complete where promised, temporally useful across
+   neutral world samples, deterministic, and phase-correct;
+3. build an integrated learning loop that retains complete experience and
+   learns which state and actions predict future success;
+4. only then evaluate discovery and optimization on Ordon and withheld
+   narrow-basin outcomes.
 
-The 125-tick tape is a demonstration and baseline, not the route definition.
-The framework must support both learning from that demonstration and attempting
-the same goal without demonstration-relative features.
+Skybook and other glitch catalogs inform which generic information or action
+authority may be missing. They are not attempts for a human, scripted probe, or
+hard-coded controller to perform. During the information audit, no named glitch
+is an active target and no published setup is executed. Triggering an outcome is
+learner work after the boundary exists.
+
+The 125-tick Ordon tape is a later demonstration and baseline, not the route
+definition or the current collection target. The eventual framework must
+support both learning from that demonstration and attempting the same goal
+without demonstration-relative features.
 
 ## Invariants
 
@@ -113,6 +124,20 @@ the same goal without demonstration-relative features.
   temporal availability/change counts. The checked cross-language fixture
   carries 257 actors and nonzero synthetic queue depths, and both sides reject
   detached counts. Live cross-map variation remains unclaimed.
+- Learning-observation v21 extends those opaque queue depths with complete,
+  ordered semantic pending-process records. Create requests retain their
+  reserved runtime generation, doing/cancelled state and explicitly
+  absent/present materialized process; create and delete records retain only
+  process name/profile/type/subtype, parameters and create state, plus the
+  delete timer. Queue nodes, pointers, layers, allocator state and guessed
+  capacities remain outside the observer. Upstream observation v20 attention
+  candidates remain byte-for-byte before this append-only payload. The
+  native-writer/Rust-reader
+  fixture proves ordered two-create/three-delete decoding, historical v19/v20
+  remain explicitly count-only, tampered presence fails closed, and corpus
+  inspection reports detailed versus count-only coverage and semantic temporal
+  changes. Full native and 87-test Rust validation pass; live variation remains
+  unclaimed.
 - Native actor-view v5 now preserves those roles as typed edges to the complete
   actor set, and actor-feature view v2 exposes an independently selectable
   player-relationship family as per-actor role flags. Present-but-empty is
@@ -161,6 +186,13 @@ checkpoint, reward corridor, or frame sequence. Researchers stop at specifying
 what information and authority a learner would need; discovering how to use
 them is learner work. A published procedure must never be translated into a
 probe, demonstration, curriculum, option, reward term or preferred action.
+
+**Section 0 execution rule:** work here must produce either a reusable,
+subsystem-level observation/action capability or corpus-level coverage evidence.
+It must not launch a named-case attempt. Neutral probes vary ordinary controller
+dimensions only to establish whether authentic fields are present and change;
+they are not allowed to encode a destination, intermediate setup, preferred
+relationship, coordinate corridor, or success sequence.
 
 ### 0A. Survey every bootable world entry
 
@@ -448,14 +480,18 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     available native shard crossed a context boundary, so real loading and
     cross-map evidence remain open; synthetic tests only prove attribution.
   - [x] Capture process lifecycle pressure without exposing process-manager
-    internals. Observation v19 copies only complete active-actor count and the
-    pending create/delete queue depths through the automation-gated observer,
-    at the same pre/post phases as the rest of the episode. Native and
-    Rust validation bind the active count to the complete actor set, require
-    zero payload for unavailable state and preserve legacy missingness. Corpus
-    inspection and global temporal coverage report status and changes without
-    retaining desired values or assigning reward. Actor-slot capacity,
-    resource-load outcomes, allocation failure and live variation remain open.
+    internals. Observation v19 copies complete active-actor count and pending
+    create/delete depths; observation v21 additionally retains every queue
+    entry in scheduler order as typed process semantics. A create request
+    distinguishes reserved identity from an absent/present materialized
+    process, and delete records retain the process semantics plus delete timer.
+    Native and Rust bind counts to complete vectors, reject noncanonical
+    absence and preserve v19/v20 as explicitly count-only. Corpus inspection
+    v12 reports queue-size distributions, materialization status and
+    process-kind coverage without desired values or actions. No pointer, node,
+    address, allocator detail or inferred capacity crosses the boundary.
+    Actor-slot capacity, resource-load outcomes, allocation failure and live
+    variation remain open.
 - [ ] Run short generic observation probes where safe—idle, movement, camera,
   targeting, contact, basic actions, actor activation and loading—and use them
   only to expose changing fields. They are not route or glitch attempts.
@@ -662,8 +698,9 @@ human-authored successful setup.
     variable-length set with raw semantic identity fields, transform, velocity
     and type/profile metadata;
   - [x] read-only process lifecycle pressure as a typed optional global
-    component: active actor population plus pending create/delete queue depths,
-    with exact phase, legacy missingness and no pointer or capacity inference;
+    component: active actor population plus complete ordered semantic
+    pending-create/delete records, with exact phase, count-only legacy
+    missingness and no pointer or capacity inference;
   - [x] derive Link-, camera-, and structural parent-relative actor features
     without changing the canonical raw actor set. `learn actor-view` binds the
     exact native shard and pointer-free profile catalog, retains complete actor

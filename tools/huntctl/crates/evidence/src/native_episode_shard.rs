@@ -40,10 +40,12 @@ const OBSERVATION_VERSION_V17: u16 = 17;
 const OBSERVATION_VERSION_V18: u16 = 18;
 const OBSERVATION_VERSION_V19: u16 = 19;
 const OBSERVATION_VERSION_V20: u16 = 20;
+const OBSERVATION_VERSION_V21: u16 = 21;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
 const MAX_ACTORS: usize = u16::MAX as usize;
+const MAX_PENDING_PROCESS_RECORDS: usize = 1_000_000;
 const MAX_EXPANDED_BYTES: usize = 16 * 1024 * 1024 * 1024;
 
 #[path = "native_episode_relationships.rs"]
@@ -87,6 +89,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V17: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V18: &str = "dusklight-learning-observation/v18";
 pub const LEARNING_OBSERVATION_SCHEMA_V19: &str = "dusklight-learning-observation/v19";
 pub const LEARNING_OBSERVATION_SCHEMA_V20: &str = "dusklight-learning-observation/v20";
+pub const LEARNING_OBSERVATION_SCHEMA_V21: &str = "dusklight-learning-observation/v21";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -597,10 +600,39 @@ pub struct NativeRngStream {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativePendingProcessState {
+    pub runtime_generation: u32,
+    pub process_name: i16,
+    pub profile_name: i16,
+    pub process_type: i32,
+    pub process_subtype: i32,
+    pub parameters: u32,
+    pub init_state: i8,
+    pub create_phase: u8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativePendingCreateObservation {
+    pub runtime_generation: u32,
+    pub doing: bool,
+    pub cancelled: bool,
+    pub process_status: NativeChannelStatus,
+    pub process: Option<NativePendingProcessState>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativePendingDeleteObservation {
+    pub process: NativePendingProcessState,
+    pub timer: i16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeProcessLifecycleObservation {
     pub active_actor_count: u32,
     pub pending_create_count: u32,
     pub pending_delete_count: u32,
+    pub pending_creates: Vec<NativePendingCreateObservation>,
+    pub pending_deletes: Vec<NativePendingDeleteObservation>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -773,6 +805,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V18
                 | OBSERVATION_VERSION_V19
                 | OBSERVATION_VERSION_V20
+                | OBSERVATION_VERSION_V21
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -907,6 +940,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V18 => LEARNING_OBSERVATION_SCHEMA_V18,
         OBSERVATION_VERSION_V19 => LEARNING_OBSERVATION_SCHEMA_V19,
         OBSERVATION_VERSION_V20 => LEARNING_OBSERVATION_SCHEMA_V20,
+        OBSERVATION_VERSION_V21 => LEARNING_OBSERVATION_SCHEMA_V21,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2459,6 +2493,104 @@ fn collision_channels_agree(
     })
 }
 
+fn decode_pending_process_state(
+    reader: &mut Reader<'_>,
+) -> Result<NativePendingProcessState, NativeEpisodeShardError> {
+    let state = NativePendingProcessState {
+        runtime_generation: reader.u32()?,
+        process_name: reader.i16()?,
+        profile_name: reader.i16()?,
+        process_type: reader.i32()?,
+        process_subtype: reader.i32()?,
+        parameters: reader.u32()?,
+        init_state: reader.i8()?,
+        create_phase: reader.u8()?,
+    };
+    if reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero pending-process reserved bytes",
+        ));
+    }
+    Ok(state)
+}
+
+fn pending_process_state_is_empty(state: &NativePendingProcessState) -> bool {
+    state
+        == &(NativePendingProcessState {
+            runtime_generation: 0,
+            process_name: -1,
+            profile_name: -1,
+            process_type: 0,
+            process_subtype: 0,
+            parameters: 0,
+            init_state: 0,
+            create_phase: 0,
+        })
+}
+
+fn decode_pending_process_records(
+    reader: &mut Reader<'_>,
+    lifecycle: &mut NativeProcessLifecycleObservation,
+) -> Result<(), NativeEpisodeShardError> {
+    let create_count = usize::try_from(lifecycle.pending_create_count)
+        .map_err(|_| NativeEpisodeShardError::new("pending-create count overflow"))?;
+    let delete_count = usize::try_from(lifecycle.pending_delete_count)
+        .map_err(|_| NativeEpisodeShardError::new("pending-delete count overflow"))?;
+    if create_count > MAX_PENDING_PROCESS_RECORDS || delete_count > MAX_PENDING_PROCESS_RECORDS {
+        return Err(NativeEpisodeShardError::new(
+            "pending-process record count exceeds decoder bound",
+        ));
+    }
+    lifecycle.pending_creates.reserve(create_count);
+    for _ in 0..create_count {
+        let runtime_generation = reader.u32()?;
+        let flags = reader.u8()?;
+        let process_status = decode_channel_status(reader)?;
+        if flags & !0x3 != 0 || reader.u16()? != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "invalid pending-create header",
+            ));
+        }
+        let process_state = decode_pending_process_state(reader)?;
+        let process = match process_status {
+            NativeChannelStatus::Present
+                if process_state.runtime_generation == runtime_generation =>
+            {
+                Some(process_state)
+            }
+            NativeChannelStatus::Absent if pending_process_state_is_empty(&process_state) => None,
+            _ => {
+                return Err(NativeEpisodeShardError::new(
+                    "pending-create process state is inconsistent",
+                ));
+            }
+        };
+        lifecycle
+            .pending_creates
+            .push(NativePendingCreateObservation {
+                runtime_generation,
+                doing: flags & 1 != 0,
+                cancelled: flags & 2 != 0,
+                process_status,
+                process,
+            });
+    }
+    lifecycle.pending_deletes.reserve(delete_count);
+    for _ in 0..delete_count {
+        let process = decode_pending_process_state(reader)?;
+        let timer = reader.i16()?;
+        if reader.u16()? != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "nonzero pending-delete reserved bytes",
+            ));
+        }
+        lifecycle
+            .pending_deletes
+            .push(NativePendingDeleteObservation { process, timer });
+    }
+    Ok(())
+}
+
 fn decode_observation(
     reader: &mut Reader<'_>,
     observation_version: u16,
@@ -2605,7 +2737,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V17
         | OBSERVATION_VERSION_V18
         | OBSERVATION_VERSION_V19
-        | OBSERVATION_VERSION_V20 => {
+        | OBSERVATION_VERSION_V20
+        | OBSERVATION_VERSION_V21 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3352,7 +3485,7 @@ fn decode_observation(
             "event-queue actor is outside the complete actor population",
         ));
     }
-    let (process_lifecycle_status, process_lifecycle) =
+    let (process_lifecycle_status, mut process_lifecycle) =
         if observation_version >= OBSERVATION_VERSION_V19 {
             let status = decode_channel_status(reader)?;
             if reader.bytes(3)?.iter().any(|byte| *byte != 0) {
@@ -3364,6 +3497,8 @@ fn decode_observation(
                 active_actor_count: reader.u32()?,
                 pending_create_count: reader.u32()?,
                 pending_delete_count: reader.u32()?,
+                pending_creates: Vec::new(),
+                pending_deletes: Vec::new(),
             };
             if status == NativeChannelStatus::Present {
                 if usize::try_from(lifecycle.active_actor_count).ok() != Some(actors.len()) {
@@ -3373,12 +3508,9 @@ fn decode_observation(
                 }
                 (status, Some(lifecycle))
             } else if status == NativeChannelStatus::Unavailable
-                && lifecycle
-                    == (NativeProcessLifecycleObservation {
-                        active_actor_count: 0,
-                        pending_create_count: 0,
-                        pending_delete_count: 0,
-                    })
+                && lifecycle.active_actor_count == 0
+                && lifecycle.pending_create_count == 0
+                && lifecycle.pending_delete_count == 0
             {
                 (status, None)
             } else {
@@ -3421,6 +3553,11 @@ fn decode_observation(
         return Err(NativeEpisodeShardError::new(
             "attention-candidate actor or player availability is inconsistent",
         ));
+    }
+    if observation_version >= OBSERVATION_VERSION_V21 {
+        if let Some(lifecycle) = process_lifecycle.as_mut() {
+            decode_pending_process_records(reader, lifecycle)?;
+        }
     }
     Ok(NativeLearningObservation {
         phase,

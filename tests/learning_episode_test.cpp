@@ -373,6 +373,44 @@ struct ObservationFixture {
         observation.processLifecycle.activeActorCount = 1;
         observation.processLifecycle.pendingCreateCount = 2;
         observation.processLifecycle.pendingDeleteCount = 3;
+        observation.processLifecycle.pendingCreates = {
+            {
+                .runtimeGeneration = 100,
+                .doing = false,
+                .cancelled = false,
+                .processStatus = MilestoneObservation::ChannelStatus::Absent,
+            },
+            {
+                .runtimeGeneration = 101,
+                .doing = true,
+                .cancelled = false,
+                .processStatus = MilestoneObservation::ChannelStatus::Present,
+                .process = {
+                    .runtimeGeneration = 101,
+                    .processName = 0x124,
+                    .profileName = 0x125,
+                    .processType = 2,
+                    .processSubtype = 3,
+                    .parameters = 0x10203040,
+                    .initState = 4,
+                    .createPhase = 5,
+                },
+            },
+        };
+        observation.processLifecycle.pendingDeletes = {
+            {.process = {.runtimeGeneration = 200, .processName = 0x201,
+                 .profileName = 0x202, .processType = 6, .processSubtype = 7,
+                 .parameters = 0x50607080, .initState = 8, .createPhase = 9},
+                .timer = 10},
+            {.process = {.runtimeGeneration = 201, .processName = 0x203,
+                 .profileName = 0x204, .processType = 11, .processSubtype = 12,
+                 .parameters = 0x90a0b0c0, .initState = 13, .createPhase = 14},
+                .timer = 15},
+            {.process = {.runtimeGeneration = 202, .processName = 0x205,
+                 .profileName = 0x206, .processType = 16, .processSubtype = 17,
+                 .parameters = 0xd0e0f000, .initState = 18, .createPhase = 19},
+                .timer = 20},
+        };
         observation.attentionCandidates.status = MilestoneObservation::ChannelStatus::Present;
         observation.attentionCandidates.playerAttentionFlags = 0x1234;
         observation.attentionCandidates.attentionStatus = 2;
@@ -881,6 +919,27 @@ void test_process_lifecycle_fails_closed() {
         },
         error));
     REQUIRE(error.find("inconsistent process-lifecycle state") != std::string::npos);
+
+    ObservationFixture shortened;
+    shortened.observation.processLifecycle.pendingCreates.pop_back();
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, shortened.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent process-lifecycle state") != std::string::npos);
+
+    ObservationFixture falsePresence;
+    falsePresence.observation.processLifecycle.pendingCreates[0].processStatus =
+        MilestoneObservation::ChannelStatus::Present;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, falsePresence.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent pending-create process state") != std::string::npos);
 }
 
 void test_attention_candidates_fail_closed() {

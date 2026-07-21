@@ -534,4 +534,26 @@ mod tests {
         );
         assert_eq!(report.fields["attention_candidates.value"].changed_pairs, 1);
     }
+
+    #[test]
+    fn reports_pending_process_semantic_changes_without_interpreting_them() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v21.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .process_lifecycle
+            .as_mut()
+            .unwrap()
+            .pending_creates[1]
+            .process
+            .as_mut()
+            .unwrap()
+            .create_phase += 1;
+        let report = inspect_global_temporal_coverage(&[shard]);
+        assert_eq!(report.fields["process_lifecycle.value"].compared_pairs, 1);
+        assert_eq!(report.fields["process_lifecycle.value"].changed_pairs, 1);
+    }
 }
