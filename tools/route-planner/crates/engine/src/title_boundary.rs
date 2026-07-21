@@ -26,6 +26,7 @@ const RESTART_COMPONENT: &str = "restart";
 const OPENING_PROCESS_CONTROL_COMPONENT: &str = "opening-process-control";
 const TITLE_CONTROL_COMPONENT: &str = "title-control";
 const NAME_SCENE_CONTROL_COMPONENT: &str = "name-scene-control";
+const FILE_SELECT_CONTROL_COMPONENT: &str = "file-select-control";
 const RUNTIME_FILE_HEADER_COMPONENT: &str = "runtime-file.header";
 const PERSISTENT_EVENT_COMPONENT: &str = "flags.persistent-event-registers";
 const OBSERVED_EVENT_COMPONENT: &str = "flags.event";
@@ -504,7 +505,410 @@ pub fn gz2e01_reset_to_opening_mechanics(
         },
         evidence: file_select_evidence,
     };
-    let catalog = MechanicsCatalog {
+    let file_select_branch_evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![
+            EvidenceRecord {
+                id: "source.gz2e01.file-select-data-branches".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "aee1cb134ec92953fd04dc321f4dae5f5c98ed1d2e766d1306a70d932294eb0d",
+                )),
+                note: "GZ2E01 source audit separates blank-slot name entry, existing-slot Start/card_to_memory, and the no-save prompt path; selected indices are zero-based while physical slots are one-based.".into(),
+            },
+            EvidenceRecord {
+                id: "source.gz2e01.card-to-memory-normalization".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "7e6f09aa36af30932e8ce64423284f885ed0b4e632b22f18d6f0a6b4d104b453",
+                )),
+                note: "dSv_info_c::card_to_memory copies only dSv_save_c and then performs life, dungeon-6 key, hookshot-layout, lineup, vibration, and displayed-stage normalization.".into(),
+            },
+        ],
+    };
+    let file_select_field = |field: &str| ValueReference::ComponentField {
+        component_id: FILE_SELECT_CONTROL_COMPONENT.into(),
+        field: field.into(),
+    };
+    let file_select_common_guards = || {
+        vec![
+            pending_compare(
+                ValueReference::ActiveRuntimeFileOrigin,
+                StateValue::Text("title_file_0".into()),
+            ),
+            pending_compare(
+                ValueReference::ExecutionProcess,
+                StateValue::Text("PROC_NAME_SCENE".into()),
+            ),
+            pending_compare(
+                ValueReference::ComponentField {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    field: "phase".into(),
+                },
+                StateValue::Text("file_select_open".into()),
+            ),
+        ]
+    };
+    let mut file_select_branch_transitions = Vec::new();
+    for (selected_index, slot_number) in [(0_u64, 1_u8), (1, 2), (2, 3)] {
+        let mut blank_guards = file_select_common_guards();
+        blank_guards.extend([
+            pending_compare(
+                file_select_field("phase"),
+                StateValue::Text("data_select".into()),
+            ),
+            pending_compare(
+                file_select_field("selected_index"),
+                StateValue::Unsigned(selected_index),
+            ),
+            pending_compare(
+                file_select_field("selected_is_no_data"),
+                StateValue::Boolean(false),
+            ),
+            pending_compare(
+                file_select_field("selected_is_data_new"),
+                StateValue::Boolean(true),
+            ),
+        ]);
+        file_select_branch_transitions.push(CandidateTransition {
+            id: format!("transition.gz2e01.file-select-blank-slot-{slot_number}"),
+            label: format!("Choose blank file slot {slot_number}"),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: format!("file-select.blank.slot-{slot_number}"),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: blank_guards,
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![
+                    StateOperation::WriteFields {
+                        component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+                        fields: BTreeMap::from([
+                            ("data_num_raw".into(), StateValue::Unsigned(selected_index)),
+                            ("new_file_raw".into(), StateValue::Unsigned(128)),
+                        ]),
+                    },
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: FILE_SELECT_CONTROL_COMPONENT.into(),
+                            field: "phase".into(),
+                        },
+                        value: StateValue::Text("name_entry".into()),
+                    },
+                ],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: file_select_branch_evidence.clone(),
+        });
+
+        let mut existing_guards = file_select_common_guards();
+        existing_guards.extend([
+            pending_compare(
+                file_select_field("phase"),
+                StateValue::Text("data_select".into()),
+            ),
+            pending_compare(
+                file_select_field("selected_index"),
+                StateValue::Unsigned(selected_index),
+            ),
+            pending_compare(
+                file_select_field("selected_is_no_data"),
+                StateValue::Boolean(false),
+            ),
+            pending_compare(
+                file_select_field("selected_is_data_new"),
+                StateValue::Boolean(false),
+            ),
+        ]);
+        file_select_branch_transitions.push(CandidateTransition {
+            id: format!("transition.gz2e01.file-select-existing-slot-{slot_number}-menu"),
+            label: format!("Open existing file slot {slot_number}'s command menu"),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: format!("file-select.existing.slot-{slot_number}.menu"),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: existing_guards,
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+                            field: "new_file_raw".into(),
+                        },
+                        value: StateValue::Unsigned(0),
+                    },
+                    StateOperation::WriteFields {
+                        component_id: FILE_SELECT_CONTROL_COMPONENT.into(),
+                        fields: BTreeMap::from([
+                            ("menu_command".into(), StateValue::Unsigned(1)),
+                            ("phase".into(), StateValue::Text("command_menu".into())),
+                        ]),
+                    },
+                ],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: file_select_branch_evidence.clone(),
+        });
+
+        let mut start_guards = file_select_common_guards();
+        start_guards.extend([
+            pending_compare(
+                file_select_field("phase"),
+                StateValue::Text("command_menu".into()),
+            ),
+            pending_compare(
+                file_select_field("selected_index"),
+                StateValue::Unsigned(selected_index),
+            ),
+            pending_compare(file_select_field("menu_command"), StateValue::Unsigned(1)),
+            pending_compare(
+                ValueReference::PhysicalSlotImageAvailable {
+                    slot: PhysicalSlotId(slot_number),
+                },
+                StateValue::Boolean(true),
+            ),
+        ]);
+        file_select_branch_transitions.push(CandidateTransition {
+            id: format!("transition.gz2e01.file-select-existing-slot-{slot_number}-start"),
+            label: format!("Load existing file slot {slot_number}"),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::SaveLoad,
+            approach_id: format!("file-select.existing.slot-{slot_number}.start"),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: start_guards,
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![
+                    StateOperation::LoadRuntimeFromSlotImage {
+                        source_slot: PhysicalSlotId(slot_number),
+                        destination_runtime_id_suffix: format!(
+                            "file-select-slot-{slot_number}"
+                        ),
+                        carried_runtime_component_ids: vec![
+                            RUNTIME_FILE_HEADER_COMPONENT.into(),
+                        ],
+                    },
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+                            field: "data_num_raw".into(),
+                        },
+                        value: StateValue::Unsigned(selected_index),
+                    },
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: FILE_SELECT_CONTROL_COMPONENT.into(),
+                            field: "phase".into(),
+                        },
+                        value: StateValue::Text("selection_end".into()),
+                    },
+                ],
+                unknown_requirements: vec![crate::transition::UnknownRequirement {
+                    id: "unknown.gz2e01.card-load-normalization".into(),
+                    description: "The sealed image load is exact, but the subsequent life-floor, dungeon-6 key clear, hookshot layout, and lineup normalization are not yet executable operations.".into(),
+                    evidence: RuleEvidence {
+                        truth: TruthStatus::Unknown,
+                        records: Vec::new(),
+                    },
+                }],
+            },
+            evidence: file_select_branch_evidence.clone(),
+        });
+    }
+
+    let mut no_card_effects = initialized_save_copy_effects();
+    no_card_effects.extend([
+        StateOperation::WriteFields {
+            component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+            fields: BTreeMap::from([
+                ("data_num_raw".into(), StateValue::Unsigned(0)),
+                ("no_file_raw".into(), StateValue::Unsigned(1)),
+            ]),
+        },
+        StateOperation::WriteFields {
+            component_id: FILE_SELECT_CONTROL_COMPONENT.into(),
+            fields: BTreeMap::from([
+                (
+                    "phase".into(),
+                    StateValue::Text("name_entry_no_card".into()),
+                ),
+                ("selected_index".into(), StateValue::Unsigned(0)),
+                ("selected_is_data_new".into(), StateValue::Boolean(true)),
+            ]),
+        },
+    ]);
+    let mut no_card_guards = file_select_common_guards();
+    no_card_guards.extend([
+        pending_compare(
+            file_select_field("phase"),
+            StateValue::Text("no_save_prompt".into()),
+        ),
+        pending_compare(
+            file_select_field("affirmative_triggered"),
+            StateValue::Boolean(true),
+        ),
+    ]);
+    file_select_branch_transitions.push(CandidateTransition {
+        id: "transition.gz2e01.file-select-no-card-initialize".into(),
+        label: "Proceed without a usable save file".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::Other,
+        approach_id: "file-select.no-save-prompt.accept".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: no_card_guards,
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: no_card_effects,
+            unknown_requirements: Vec::new(),
+        },
+        evidence: file_select_branch_evidence.clone(),
+    });
+    let play_scene_request_evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![
+            EvidenceRecord {
+                id: "source.gz2e01.name-scene-change-game-scene".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "f095894aabc198c068ee0ac9872f6c277c0e035b36c4d29d1f896e7c2eb0fe4b",
+                )),
+                note: "dScnName_c::changeGameScene calls dComIfGs_gameStart, overrides a new file's next stage with F_SP108/room 1/spawn 21/layer 13, and requests PROC_PLAY_SCENE without proving process or world activation.".into(),
+            },
+            EvidenceRecord {
+                id: "source.gz2e01.game-start-return-place".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(parse_digest(
+                    "b9b37aed0b76eef2d27b35a2ece6ee077086a970f98d18936a83649303f15761",
+                )),
+                note: "dComIfGs_gameStart requests the structured player return place with layer -1 before the new-file branch optionally overrides it.".into(),
+            },
+        ],
+    };
+    let play_scene_common_guards = || {
+        vec![
+            pending_compare(
+                ValueReference::ExecutionProcess,
+                StateValue::Text("PROC_NAME_SCENE".into()),
+            ),
+            pending_compare(
+                ValueReference::ComponentField {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    field: "phase".into(),
+                },
+                StateValue::Text("file_select_open".into()),
+            ),
+            pending_compare(
+                file_select_field("phase"),
+                StateValue::Text("selection_end".into()),
+            ),
+        ]
+    };
+    let mut new_file_play_guards = play_scene_common_guards();
+    new_file_play_guards.extend([
+        pending_compare(
+            ValueReference::ActiveRuntimeFileOrigin,
+            StateValue::Text("title_file_0".into()),
+        ),
+        pending_compare(
+            file_select_field("selected_is_data_new"),
+            StateValue::Boolean(true),
+        ),
+    ]);
+    file_select_branch_transitions.push(CandidateTransition {
+        id: "transition.gz2e01.file-select-new-file-request-play-scene".into(),
+        label: "Request the new-file Faron Woods play scene".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::ActorDriven,
+        approach_id: "name-scene.change-game-scene.new-file".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: new_file_play_guards,
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: vec![
+                StateOperation::SetExecutionContext {
+                    context: ExecutionContext::Process {
+                        process_name: "PROC_NAME_SCENE".into(),
+                        pending_world_load: Some(SceneLocation {
+                            stage: "F_SP108".into(),
+                            room: 1,
+                            layer: 13,
+                            spawn: 21,
+                        }),
+                    },
+                },
+                StateOperation::WriteFields {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    fields: BTreeMap::from([
+                        (
+                            "phase".into(),
+                            StateValue::Text("play_scene_requested".into()),
+                        ),
+                        (
+                            "requested_process".into(),
+                            StateValue::Text("PROC_PLAY_SCENE".into()),
+                        ),
+                    ]),
+                },
+            ],
+            unknown_requirements: Vec::new(),
+        },
+        evidence: play_scene_request_evidence.clone(),
+    });
+    let mut existing_file_play_guards = play_scene_common_guards();
+    existing_file_play_guards.extend([
+        pending_compare(
+            ValueReference::ActiveRuntimeFileOrigin,
+            StateValue::Text("loaded_slot".into()),
+        ),
+        pending_compare(
+            file_select_field("selected_is_data_new"),
+            StateValue::Boolean(false),
+        ),
+    ]);
+    file_select_branch_transitions.push(CandidateTransition {
+        id: "transition.gz2e01.file-select-existing-file-request-play-scene".into(),
+        label: "Request the loaded file's return-place play scene".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::ActorDriven,
+        approach_id: "name-scene.change-game-scene.existing-file".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: existing_file_play_guards,
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: vec![
+                StateOperation::SetPendingWorldLoadFromFields {
+                    component_id: RETURN_PLACE_COMPONENT.into(),
+                    stage_field: "stage".into(),
+                    room_field: "room".into(),
+                    spawn_field: "player_status".into(),
+                    layer: -1,
+                },
+                StateOperation::WriteFields {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    fields: BTreeMap::from([
+                        (
+                            "phase".into(),
+                            StateValue::Text("play_scene_requested".into()),
+                        ),
+                        (
+                            "requested_process".into(),
+                            StateValue::Text("PROC_PLAY_SCENE".into()),
+                        ),
+                    ]),
+                },
+            ],
+            unknown_requirements: Vec::new(),
+        },
+        evidence: play_scene_request_evidence,
+    });
+    let mut catalog = MechanicsCatalog {
         schema: MECHANICS_CATALOG_SCHEMA.into(),
         transitions: vec![
             name_scene_file_select_transition,
@@ -525,6 +929,10 @@ pub fn gz2e01_reset_to_opening_mechanics(
         microtraces: Vec::new(),
         goals: Vec::new(),
     };
+    catalog.transitions.extend(file_select_branch_transitions);
+    catalog
+        .transitions
+        .sort_by(|left, right| left.id.cmp(&right.id));
     catalog.validate()?;
     Ok(catalog)
 }
@@ -624,6 +1032,53 @@ fn dcomifgs_init_effects() -> Vec<StateOperation> {
     ]
 }
 
+/// Route-relevant projection of copying a newly initialized `dSv_save_c` into
+/// the live save domain. Unlike `dComIfGs_init`, `card_to_memory` does not reset
+/// the current live stage, dungeon/zone temporary banks, or restart members.
+fn initialized_save_copy_effects() -> Vec<StateOperation> {
+    vec![
+        StateOperation::InvalidateActiveRuntimeSerializedPayloads {
+            selector: ComponentSelector::Kind {
+                component_kind: ComponentKind::DungeonMemory,
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: PERSISTENT_EVENT_COMPONENT.into(),
+            payload: ComponentPayload::Raw {
+                bytes: vec![0; 256],
+                known_mask: vec![0xff; 256],
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: OBSERVED_EVENT_COMPONENT.into(),
+            payload: ComponentPayload::Unknown {
+                expected_bytes: None,
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: LIGHT_DROP_COMPONENT.into(),
+            payload: ComponentPayload::Raw {
+                bytes: vec![0; 5],
+                known_mask: vec![0xff; 5],
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: RETURN_PLACE_COMPONENT.into(),
+            payload: ComponentPayload::Structured {
+                fields: BTreeMap::from([
+                    ("player_status".into(), StateValue::Unsigned(0)),
+                    ("room".into(), StateValue::Signed(1)),
+                    ("stage".into(), StateValue::Text("F_SP108".into())),
+                ]),
+            },
+        },
+        StateOperation::ReplacePayload {
+            component_id: INVENTORY_COMPONENT.into(),
+            payload: base_inventory_payload(),
+        },
+    ]
+}
+
 fn base_inventory_payload() -> ComponentPayload {
     ComponentPayload::Structured {
         fields: BTreeMap::from([
@@ -664,10 +1119,11 @@ mod tests {
     use crate::logic::{FACT_CATALOG_SCHEMA, FactCatalog};
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateDiff, StateSnapshot};
     use crate::state::{
-        ActorLifecycle, BackingAttachment, ComponentBinding, ComponentBindingReference,
-        ComponentKind, ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA,
-        ExecutionEnvironment, LiveWorldObject, PlayerForm, PlayerState, ProvenanceSourceKind,
-        RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SemanticLifetime, SerializationOwner,
+        ActorLifecycle, BackingAttachment, CaptureStatus, ComponentBinding,
+        ComponentBindingReference, ComponentKind, ComponentPayload, ComponentProvenance,
+        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, LiveWorldObject,
+        PhysicalSlotObservation, PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile,
+        RuntimeFileLifecycle, RuntimeFileOrigin, SemanticLifetime, SerializationOwner,
         StateComponent,
     };
     use std::collections::{BTreeMap, BTreeSet};
@@ -829,6 +1285,18 @@ mod tests {
             ComponentKind::Title,
             [("phase", StateValue::Text("create_file_select".into()))],
         );
+        component.binding = ComponentBinding::Session {
+            session_id: "process".into(),
+        };
+        component.lifetime = SemanticLifetime::Session;
+        component.serialization_owner = SerializationOwner::None;
+        component
+    }
+
+    fn file_select_control(
+        fields: impl IntoIterator<Item = (&'static str, StateValue)>,
+    ) -> StateComponent {
+        let mut component = component(FILE_SELECT_CONTROL_COMPONENT, ComponentKind::Title, fields);
         component.binding = ComponentBinding::Session {
             session_id: "process".into(),
         };
@@ -1673,6 +2141,501 @@ mod tests {
                 )
                 .classification,
             TransitionClassification::GuardBlocked
+        );
+    }
+
+    #[test]
+    fn file_select_branches_preserve_their_distinct_storage_semantics() {
+        let (content, runtime) = context();
+        let catalog = gz2e01_reset_to_opening_mechanics(&content, &runtime).unwrap();
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let transition = |id: &str| {
+            catalog
+                .transitions
+                .iter()
+                .find(|transition| transition.id == id)
+                .unwrap()
+        };
+        let mut state = PlannerExecutionState::new(snapshot(runtime)).unwrap();
+        state
+            .apply_operations(
+                "transition.gz2e01.reset-to-opening",
+                "snapshot.branches.reset",
+                &transition("transition.gz2e01.reset-to-opening")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        state
+            .snapshot
+            .environment
+            .components
+            .push(opening_process_control());
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        state
+            .apply_operations(
+                "transition.gz2e01.opening-file0-initialize",
+                "snapshot.branches.opening",
+                &transition("transition.gz2e01.opening-file0-initialize")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        state.snapshot.environment.components.push(title_control());
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        for (id, snapshot_id) in [
+            (
+                "transition.gz2e01.title-key-accept",
+                "snapshot.branches.title-key",
+            ),
+            (
+                "transition.gz2e01.title-request-name-scene",
+                "snapshot.branches.name-request",
+            ),
+        ] {
+            state
+                .apply_operations(id, snapshot_id, &transition(id).activation.effects)
+                .unwrap();
+        }
+        state.snapshot.environment.execution_context = ExecutionContext::Process {
+            process_name: "PROC_NAME_SCENE".into(),
+            pending_world_load: None,
+        };
+        state
+            .snapshot
+            .environment
+            .components
+            .push(name_scene_control());
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        state
+            .apply_operations(
+                "transition.gz2e01.name-scene-file-select-initialize",
+                "snapshot.branches.file-select-open",
+                &transition("transition.gz2e01.name-scene-file-select-initialize")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        let file_select_open = state;
+
+        let mut blank = file_select_open.clone();
+        blank
+            .snapshot
+            .environment
+            .components
+            .push(file_select_control([
+                ("phase", StateValue::Text("data_select".into())),
+                ("selected_index", StateValue::Unsigned(1)),
+                ("selected_is_no_data", StateValue::Boolean(false)),
+                ("selected_is_data_new", StateValue::Boolean(true)),
+            ]));
+        blank
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        blank.validate().unwrap();
+        let evaluator = PredicateEvaluator::new(
+            &blank.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    transition("transition.gz2e01.file-select-blank-slot-2"),
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::Executable
+        );
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    transition("transition.gz2e01.file-select-existing-slot-2-menu"),
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::GuardBlocked
+        );
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-blank-slot-2",
+                "snapshot.branches.blank-slot-2",
+                &transition("transition.gz2e01.file-select-blank-slot-2")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            fields_for(&blank, RUNTIME_FILE_HEADER_COMPONENT)["data_num_raw"],
+            StateValue::Unsigned(1)
+        );
+        assert_eq!(
+            fields_for(&blank, RUNTIME_FILE_HEADER_COMPONENT)["new_file_raw"],
+            StateValue::Unsigned(128)
+        );
+        assert!(blank.snapshot.environment.physical_slots.is_empty());
+        assert_eq!(
+            blank.snapshot.environment.active_runtime_file.origin,
+            RuntimeFileOrigin::TitleFile0
+        );
+        blank
+            .apply_operations(
+                "test.complete-blank-name-entry",
+                "snapshot.branches.blank-selection-ended",
+                &[StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: FILE_SELECT_CONTROL_COMPONENT.into(),
+                        field: "phase".into(),
+                    },
+                    value: StateValue::Text("selection_end".into()),
+                }],
+            )
+            .unwrap();
+        let previous_world_location = blank.snapshot.environment.location.clone();
+        blank
+            .apply_operations(
+                "transition.gz2e01.file-select-new-file-request-play-scene",
+                "snapshot.branches.blank-play-requested",
+                &transition("transition.gz2e01.file-select-new-file-request-play-scene")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(blank.snapshot.environment.location, previous_world_location);
+        assert_eq!(
+            blank.snapshot.environment.execution_context,
+            ExecutionContext::Process {
+                process_name: "PROC_NAME_SCENE".into(),
+                pending_world_load: Some(SceneLocation {
+                    stage: "F_SP108".into(),
+                    room: 1,
+                    layer: 13,
+                    spawn: 21,
+                }),
+            },
+            "requesting play must not make the destination world traversable"
+        );
+        assert_eq!(
+            fields_for(&blank, NAME_SCENE_CONTROL_COMPONENT)["requested_process"],
+            StateValue::Text("PROC_PLAY_SCENE".into())
+        );
+
+        let mut no_card = file_select_open.clone();
+        no_card
+            .snapshot
+            .environment
+            .components
+            .push(file_select_control([
+                ("phase", StateValue::Text("no_save_prompt".into())),
+                ("affirmative_triggered", StateValue::Boolean(true)),
+            ]));
+        no_card
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        no_card
+            .apply_operations(
+                "test.mutate-pre-no-card",
+                "snapshot.branches.pre-no-card-mutated",
+                &[
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: INVENTORY_COMPONENT.into(),
+                            field: "rupees".into(),
+                        },
+                        value: StateValue::Unsigned(77),
+                    },
+                    StateOperation::WriteRaw {
+                        component_id: TEMPORARY_EVENT_COMPONENT.into(),
+                        byte_offset: 0,
+                        mask: vec![0xff],
+                        value: vec![0x5a],
+                    },
+                ],
+            )
+            .unwrap();
+        let live_stage_before = component_for(&no_card, LOADED_STAGE_MEMORY_COMPONENT)
+            .payload
+            .clone();
+        let temporary_before = component_for(&no_card, TEMPORARY_EVENT_COMPONENT)
+            .payload
+            .clone();
+        let restart_before = fields_for(&no_card, RESTART_COMPONENT).clone();
+        let stage_owner = SerializationOwner::StageBank {
+            runtime_file_id: "file-0".into(),
+            stage: "D_MN05".into(),
+        };
+        let mut stored_stage = loaded_stage_component();
+        stored_stage.serialization_owner = stage_owner.clone();
+        no_card
+            .serialized_components
+            .insert(stage_owner.clone(), vec![stored_stage]);
+        no_card.validate().unwrap();
+        no_card
+            .apply_operations(
+                "transition.gz2e01.file-select-no-card-initialize",
+                "snapshot.branches.no-card",
+                &transition("transition.gz2e01.file-select-no-card-initialize")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            fields_for(&no_card, RUNTIME_FILE_HEADER_COMPONENT)["no_file_raw"],
+            StateValue::Unsigned(1)
+        );
+        assert_eq!(
+            fields_for(&no_card, FILE_SELECT_CONTROL_COMPONENT)["selected_is_data_new"],
+            StateValue::Boolean(true)
+        );
+        assert_eq!(
+            fields_for(&no_card, INVENTORY_COMPONENT)["rupees"],
+            StateValue::Unsigned(0)
+        );
+        assert_eq!(
+            component_for(&no_card, LOADED_STAGE_MEMORY_COMPONENT).payload,
+            live_stage_before
+        );
+        assert_eq!(
+            component_for(&no_card, TEMPORARY_EVENT_COMPONENT).payload,
+            temporary_before
+        );
+        assert_eq!(fields_for(&no_card, RESTART_COMPONENT), &restart_before);
+        assert_eq!(
+            no_card.serialized_components[&stage_owner][0].payload,
+            ComponentPayload::Unknown {
+                expected_bytes: Some(0x20)
+            }
+        );
+
+        let mut existing = file_select_open;
+        let slot_one_available = ValueReference::PhysicalSlotImageAvailable {
+            slot: PhysicalSlotId(1),
+        };
+        let evaluator = PredicateEvaluator::new(
+            &existing.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(evaluator.resolve_value(&slot_one_available), None);
+        let mut explicitly_absent = existing.snapshot.clone();
+        explicitly_absent
+            .environment
+            .physical_slot_observations
+            .push(PhysicalSlotObservation {
+                slot: PhysicalSlotId(1),
+                content_status: CaptureStatus::Absent,
+                attached_to_active_runtime: false,
+            });
+        let evaluator = PredicateEvaluator::new(
+            &explicitly_absent,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator.resolve_value(&slot_one_available),
+            Some(StateValue::Boolean(false))
+        );
+        let runtime_component_ids = existing
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .filter(|component| {
+                matches!(
+                    &component.serialization_owner,
+                    SerializationOwner::RuntimeFile { runtime_file_id }
+                        if runtime_file_id == "file-0"
+                ) && component.lifetime == SemanticLifetime::RuntimeFile
+                    && component.id != RUNTIME_FILE_HEADER_COMPONENT
+            })
+            .map(|component| component.id.clone())
+            .collect::<Vec<_>>();
+        existing
+            .apply_operations(
+                "test.seed-existing-slot-1",
+                "snapshot.branches.existing-image",
+                &[StateOperation::SaveRuntimeToSlot {
+                    source_runtime_file_id: "file-0".into(),
+                    destination_slot: PhysicalSlotId(1),
+                    destination_persistent_file_id: "persistent-existing-slot-1".into(),
+                    runtime_component_ids,
+                    stage_bank_stages: Vec::new(),
+                }],
+            )
+            .unwrap();
+        let evaluator = PredicateEvaluator::new(
+            &existing.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator.resolve_value(&slot_one_available),
+            Some(StateValue::Boolean(true))
+        );
+        existing
+            .snapshot
+            .environment
+            .components
+            .push(file_select_control([
+                ("phase", StateValue::Text("data_select".into())),
+                ("selected_index", StateValue::Unsigned(0)),
+                ("selected_is_no_data", StateValue::Boolean(false)),
+                ("selected_is_data_new", StateValue::Boolean(false)),
+            ]));
+        existing
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        existing
+            .apply_operations(
+                "transition.gz2e01.file-select-existing-slot-1-menu",
+                "snapshot.branches.existing-menu",
+                &transition("transition.gz2e01.file-select-existing-slot-1-menu")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        existing
+            .apply_operations(
+                "test.diverge-from-existing-image",
+                "snapshot.branches.existing-diverged",
+                &[StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: INVENTORY_COMPONENT.into(),
+                        field: "rupees".into(),
+                    },
+                    value: StateValue::Unsigned(77),
+                }],
+            )
+            .unwrap();
+        let evaluator = PredicateEvaluator::new(
+            &existing.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    transition("transition.gz2e01.file-select-existing-slot-1-start"),
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::FeasibilityUnknown,
+            "the sealed load is guarded, but exact load-time normalization remains explicit unknownness"
+        );
+        existing
+            .apply_operations(
+                "transition.gz2e01.file-select-existing-slot-1-start",
+                "snapshot.branches.existing-loaded-upper-bound",
+                &transition("transition.gz2e01.file-select-existing-slot-1-start")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            existing.snapshot.environment.active_runtime_file.origin,
+            RuntimeFileOrigin::LoadedSlot {
+                slot: PhysicalSlotId(1)
+            }
+        );
+        assert_eq!(
+            fields_for(&existing, INVENTORY_COMPONENT)["rupees"],
+            StateValue::Unsigned(0)
+        );
+        assert_eq!(
+            fields_for(&existing, RUNTIME_FILE_HEADER_COMPONENT)["data_num_raw"],
+            StateValue::Unsigned(0)
+        );
+        assert_eq!(
+            fields_for(&existing, FILE_SELECT_CONTROL_COMPONENT)["phase"],
+            StateValue::Text("selection_end".into())
+        );
+        let previous_world_location = existing.snapshot.environment.location.clone();
+        let evaluator = PredicateEvaluator::new(
+            &existing.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    transition("transition.gz2e01.file-select-existing-file-request-play-scene",),
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::Executable
+        );
+        existing
+            .apply_operations(
+                "transition.gz2e01.file-select-existing-file-request-play-scene",
+                "snapshot.branches.existing-play-requested",
+                &transition("transition.gz2e01.file-select-existing-file-request-play-scene")
+                    .activation
+                    .effects,
+            )
+            .unwrap();
+        assert_eq!(
+            existing.snapshot.environment.location,
+            previous_world_location
+        );
+        assert_eq!(
+            existing.snapshot.environment.execution_context,
+            ExecutionContext::Process {
+                process_name: "PROC_NAME_SCENE".into(),
+                pending_world_load: Some(SceneLocation {
+                    stage: "F_SP108".into(),
+                    room: 1,
+                    layer: -1,
+                    spawn: 0,
+                }),
+            }
         );
     }
 

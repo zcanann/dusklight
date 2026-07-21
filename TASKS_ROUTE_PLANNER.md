@@ -592,7 +592,7 @@ The current code shows:
   audited production profiles, actor entry contracts, and further handler
   audits remain open. See
   `docs/route-planner/message-flow-programs.md`.
-- Planner service schema v26 provides a typed JSON-lines transport owned by the
+- Planner service schema v27 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -1684,12 +1684,15 @@ evidenced overlays over the generated base rather than silent edits to it.
         `mNewFile = 0` and `mNoFile = 0` only after the name process/create phase
         is independently observed. See
         `docs/route-planner/gz2e01-title-boundary-audit.md`.
-  - [x] Source-audit the next GZ2E01 file-select decisions without promoting
-        them to executable rules: blank-slot selection, existing-slot
-        `card_to_memory`, no-save/no-card initialization, header writers,
-        load-time normalization, and the pending play-scene request are separated
-        in `docs/route-planner/gz2e01-file-select-branches.md`. Exact transition
-        implementation and retail-DOL evidence remain open.
+  - [x] Source-audit the next GZ2E01 file-select decisions before promoting only
+        the evidenced portions to executable rules: blank-slot selection,
+        existing-slot `card_to_memory`, no-save/no-card initialization, header
+        writers, load-time normalization, and the pending play-scene request are separated
+        in `docs/route-planner/gz2e01-file-select-branches.md`. The mutually
+        exclusive branches, digest-verified dynamic slot load/lifetime cut,
+        serialized-only no-card copy, and pending new/existing play-scene
+        requests are now executable. Existing-file load-time normalization stays
+        an explicit unknown, and retail-DOL evidence remains open.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
       bits, normal/abnormal cleanup, and item/event handoffs.
@@ -2001,6 +2004,16 @@ Deliverable: replayable state evidence that can validate transition rules.
           `fopScnM_ChangeReq` as completed process activation. The create step
           requires independent `PROC_NAME_SCENE`/phase observation, repeats the
           audited save-domain reset, and writes `mNewFile = 0` and `mNoFile = 0`.
+    - [x] Model mutually exclusive GZ2E01 blank-slot, existing-slot, and no-card
+          branches. Physical-slot availability is derived from an actually
+          captured sealed image; existing loads resolve that image dynamically,
+          end file 0, and carry only explicit live runtime metadata. Keep exact
+          `card_to_memory` normalization unknown until it has executable backing
+          operations.
+    - [x] Model new-file and existing-file play-scene requests as pending world
+          loads attached to the still-active `PROC_NAME_SCENE`. The retained last
+          world remains non-traversable until independent scheduler/load progress
+          is observed.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from

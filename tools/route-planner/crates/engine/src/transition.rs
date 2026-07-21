@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v20";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v22";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -50,6 +50,13 @@ pub enum StateOperation {
     InvalidatePayloads {
         selector: ComponentSelector,
         include_active_runtime_serialized_stores: bool,
+    },
+    /// Invalidates matching serialized payloads owned by the active runtime
+    /// without touching the corresponding live component. This models backing
+    /// projections replaced by a file copy while live stage/temporary banks are
+    /// outside that copy.
+    InvalidateActiveRuntimeSerializedPayloads {
+        selector: ComponentSelector,
     },
     CopyValue {
         source: ComponentFieldTarget,
@@ -179,6 +186,16 @@ pub enum StateOperation {
         stage_bank_stages: Vec<String>,
         carried_runtime_component_ids: Vec<String>,
     },
+    /// Resolves the persistent identity and exact component/stage manifest from
+    /// one populated physical slot at execution time, then performs the same
+    /// checked runtime cut as `LoadRuntimeFromSlot`. This is suitable for a
+    /// file-select action whose sealed image identity is user-state data rather
+    /// than a catalog constant.
+    LoadRuntimeFromSlotImage {
+        source_slot: PhysicalSlotId,
+        destination_runtime_id_suffix: String,
+        carried_runtime_component_ids: Vec<String>,
+    },
     /// Ends the active runtime-file lifetime, derives a fresh runtime ID from
     /// its old ID plus `destination_id_suffix`, and rekeys every live and
     /// serialized component owned by that lifetime. Physical file images and
@@ -213,6 +230,16 @@ pub enum StateOperation {
     /// Reads one structured backing record and changes map location only when
     /// its stage, room, and spawn fields are all known and well typed.
     SetLocationFromFields {
+        component_id: String,
+        stage_field: String,
+        room_field: String,
+        spawn_field: String,
+        layer: i8,
+    },
+    /// Reads a structured return/next-stage record and attaches it to the
+    /// currently active non-world process as a pending world load. This records
+    /// a request without making the destination traversable.
+    SetPendingWorldLoadFromFields {
         component_id: String,
         stage_field: String,
         room_field: String,
@@ -603,6 +630,9 @@ impl StateOperation {
                 payload.validate()
             }
             Self::InvalidatePayloads { selector, .. } => validate_component_selector(selector),
+            Self::InvalidateActiveRuntimeSerializedPayloads { selector } => {
+                validate_component_selector(selector)
+            }
             Self::CopyValue { source, target } | Self::SetBitFromValue { source, target } => {
                 validate_field_target(source)?;
                 validate_field_target(target)?;
@@ -882,6 +912,22 @@ impl StateOperation {
                 }
                 Ok(())
             }
+            Self::LoadRuntimeFromSlotImage {
+                source_slot,
+                destination_runtime_id_suffix,
+                carried_runtime_component_ids,
+            } => {
+                source_slot.validate("operation.source_slot")?;
+                validate_stable_id(
+                    "operation.destination_runtime_id_suffix",
+                    destination_runtime_id_suffix,
+                )?;
+                validate_id_list(
+                    "operation.carried_runtime_component_ids",
+                    carried_runtime_component_ids,
+                    true,
+                )
+            }
             Self::BeginRuntimeFileLifetime {
                 destination_id_suffix,
                 origin,
@@ -916,6 +962,13 @@ impl StateOperation {
             Self::CompletePendingWorldLoad => Ok(()),
             Self::SetLocation { location } => location.validate(),
             Self::SetLocationFromFields {
+                component_id,
+                stage_field,
+                room_field,
+                spawn_field,
+                ..
+            }
+            | Self::SetPendingWorldLoadFromFields {
                 component_id,
                 stage_field,
                 room_field,

@@ -142,7 +142,7 @@ activating world state, just as the earlier title-to-name-scene request does.
 
 ## Required executable-model checks
 
-The implementation should prove all of the following:
+The executable model now proves all of the following:
 
 - blank, existing, and no-card guards cannot all execute from one observed
   control state;
@@ -157,6 +157,13 @@ The implementation should prove all of the following:
 - `mNewFile`, `mNoFile`, and `mDataNum` follow their actual independent writers;
   and
 - play-scene requests remain pending until process/world activation is observed.
+
+The existing-slot transition is intentionally classified feasibility-unknown:
+its digest-verified sealed image copy and lifetime cut are executable as an
+upper bound, but life-floor, dungeon-6 key clearing, hookshot layout, lineup,
+vibration, and displayed-stage normalization remain one explicit unresolved
+requirement. Blank/no-card selection and both pending play-scene request shapes
+are executable without crossing that unknown boundary.
 
 The save-time `memory_to_card` normalization path, successful physical write,
 void/death restart selection, and build/platform variants remain separate audit

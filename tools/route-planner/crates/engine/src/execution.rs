@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v13";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v14";
 pub const PERSISTENT_FILE_IMAGE_SCHEMA: &str = "dusklight.route-planner.persistent-file-image/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -677,118 +677,132 @@ impl PlannerExecutionState {
     }
 
     fn affected_component_ids(&self, operation: &StateOperation) -> Vec<String> {
-        let mut ids =
-            match operation {
-                StateOperation::Write { target, .. }
-                | StateOperation::CopyValue { target, .. }
-                | StateOperation::SetBitFromValue { target, .. }
-                | StateOperation::Adjust { target, .. }
-                | StateOperation::ClearField { target }
-                | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
-                StateOperation::WriteFields { component_id, .. }
-                | StateOperation::ReplacePayload { component_id, .. } => {
-                    vec![component_id.clone()]
-                }
-                StateOperation::InvalidatePayloads {
+        let mut ids = match operation {
+            StateOperation::Write { target, .. }
+            | StateOperation::CopyValue { target, .. }
+            | StateOperation::SetBitFromValue { target, .. }
+            | StateOperation::Adjust { target, .. }
+            | StateOperation::ClearField { target }
+            | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
+            StateOperation::WriteFields { component_id, .. }
+            | StateOperation::ReplacePayload { component_id, .. } => {
+                vec![component_id.clone()]
+            }
+            StateOperation::InvalidatePayloads {
+                selector,
+                include_active_runtime_serialized_stores,
+            } => self
+                .matching_ids_including_serialized(
                     selector,
-                    include_active_runtime_serialized_stores,
-                } => self
-                    .matching_ids_including_serialized(
-                        selector,
-                        *include_active_runtime_serialized_stores,
-                    )
-                    .into_iter()
-                    .collect(),
-                StateOperation::WriteRaw { component_id, .. }
-                | StateOperation::InvalidateRaw { component_id, .. }
-                | StateOperation::CommitLoadStageBank { component_id, .. }
-                | StateOperation::ActivateStageBank { component_id, .. } => {
-                    vec![component_id.clone()]
-                }
-                StateOperation::WriteBoundRaw {
-                    component_kind,
-                    binding,
-                    ..
-                }
-                | StateOperation::InvalidateBoundRaw {
-                    component_kind,
-                    binding,
-                    ..
-                }
-                | StateOperation::AdjustBoundRawUnsigned {
-                    component_kind,
-                    binding,
-                    ..
-                } => {
-                    let resolved_binding = binding.resolve(&self.snapshot.environment);
+                    *include_active_runtime_serialized_stores,
+                )
+                .into_iter()
+                .collect(),
+            StateOperation::InvalidateActiveRuntimeSerializedPayloads { selector } => {
+                let active_runtime_file_id = &self.snapshot.environment.active_runtime_file.id;
+                self.serialized_components
+                    .iter()
+                    .filter(|(owner, _)| owner_belongs_to_runtime(owner, active_runtime_file_id))
+                    .flat_map(|(_, components)| {
+                        components
+                            .iter()
+                            .filter(|component| selector_matches(selector, component))
+                            .map(|component| component.id.clone())
+                    })
+                    .collect()
+            }
+            StateOperation::WriteRaw { component_id, .. }
+            | StateOperation::InvalidateRaw { component_id, .. }
+            | StateOperation::CommitLoadStageBank { component_id, .. }
+            | StateOperation::ActivateStageBank { component_id, .. } => {
+                vec![component_id.clone()]
+            }
+            StateOperation::WriteBoundRaw {
+                component_kind,
+                binding,
+                ..
+            }
+            | StateOperation::InvalidateBoundRaw {
+                component_kind,
+                binding,
+                ..
+            }
+            | StateOperation::AdjustBoundRawUnsigned {
+                component_kind,
+                binding,
+                ..
+            } => {
+                let resolved_binding = binding.resolve(&self.snapshot.environment);
+                self.snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .filter(|component| {
+                        component.component_kind == *component_kind
+                            && resolved_binding
+                                .as_ref()
+                                .is_some_and(|binding| component.binding == *binding)
+                            && matches!(component.payload, ComponentPayload::Raw { .. })
+                    })
+                    .map(|component| component.id.clone())
+                    .collect()
+            }
+            StateOperation::ClearComponent { selector }
+            | StateOperation::Preserve { selector }
+            | StateOperation::Serialize { selector, .. }
+            | StateOperation::Bind { selector, .. }
+            | StateOperation::Rebind { selector, .. } => {
+                self.matching_ids(selector).into_iter().collect()
+            }
+            StateOperation::Initialize { component } => vec![component.id.clone()],
+            StateOperation::Copy {
+                destination_component_id,
+                ..
+            }
+            | StateOperation::Restore {
+                destination_component_id,
+                ..
+            } => vec![destination_component_id.clone()],
+            StateOperation::Move {
+                source,
+                destination_component_id,
+                ..
+            } => {
+                let mut ids = self.matching_ids(source).into_iter().collect::<Vec<_>>();
+                ids.push(destination_component_id.clone());
+                ids
+            }
+            StateOperation::Project { component_ids, .. } => component_ids.clone(),
+            StateOperation::SaveRuntimeToSlot {
+                source_runtime_file_id,
+                runtime_component_ids,
+                stage_bank_stages,
+                ..
+            } => {
+                let selected_stages = stage_bank_stages
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<BTreeSet<_>>();
+                let mut ids = runtime_component_ids.clone();
+                ids.extend(
                     self.snapshot
                         .environment
                         .components
                         .iter()
                         .filter(|component| {
-                            component.component_kind == *component_kind
-                                && resolved_binding
-                                    .as_ref()
-                                    .is_some_and(|binding| component.binding == *binding)
-                                && matches!(component.payload, ComponentPayload::Raw { .. })
+                            matches!(
+                                &component.serialization_owner,
+                                SerializationOwner::StageBank { runtime_file_id, stage }
+                                    if runtime_file_id == source_runtime_file_id
+                                        && selected_stages.contains(stage.as_str())
+                            )
                         })
-                        .map(|component| component.id.clone())
-                        .collect()
-                }
-                StateOperation::ClearComponent { selector }
-                | StateOperation::Preserve { selector }
-                | StateOperation::Serialize { selector, .. }
-                | StateOperation::Bind { selector, .. }
-                | StateOperation::Rebind { selector, .. } => {
-                    self.matching_ids(selector).into_iter().collect()
-                }
-                StateOperation::Initialize { component } => vec![component.id.clone()],
-                StateOperation::Copy {
-                    destination_component_id,
-                    ..
-                }
-                | StateOperation::Restore {
-                    destination_component_id,
-                    ..
-                } => vec![destination_component_id.clone()],
-                StateOperation::Move {
-                    source,
-                    destination_component_id,
-                    ..
-                } => {
-                    let mut ids = self.matching_ids(source).into_iter().collect::<Vec<_>>();
-                    ids.push(destination_component_id.clone());
-                    ids
-                }
-                StateOperation::Project { component_ids, .. } => component_ids.clone(),
-                StateOperation::SaveRuntimeToSlot {
-                    source_runtime_file_id,
-                    runtime_component_ids,
-                    stage_bank_stages,
-                    ..
-                } => {
-                    let selected_stages = stage_bank_stages
+                        .map(|component| component.id.clone()),
+                );
+                ids.extend(
+                    self.serialized_components
                         .iter()
-                        .map(String::as_str)
-                        .collect::<BTreeSet<_>>();
-                    let mut ids = runtime_component_ids.clone();
-                    ids.extend(
-                        self.snapshot
-                            .environment
-                            .components
-                            .iter()
-                            .filter(|component| {
-                                matches!(
-                                    &component.serialization_owner,
-                                    SerializationOwner::StageBank { runtime_file_id, stage }
-                                        if runtime_file_id == source_runtime_file_id
-                                            && selected_stages.contains(stage.as_str())
-                                )
-                            })
-                            .map(|component| component.id.clone()),
-                    );
-                    ids.extend(self.serialized_components.iter().flat_map(
-                        |(owner, components)| {
+                        .flat_map(|(owner, components)| {
                             let selected = matches!(
                                 owner,
                                 SerializationOwner::StageBank { runtime_file_id, stage }
@@ -799,86 +813,132 @@ impl PlannerExecutionState {
                                 .iter()
                                 .filter(move |_| selected)
                                 .map(|component| component.id.clone())
-                        },
-                    ));
-                    ids
-                }
-                StateOperation::LoadRuntimeFromSlot {
-                    source_runtime_file_id,
-                    runtime_component_ids,
-                    ..
-                } => {
-                    let mut ids = runtime_component_ids.clone();
-                    ids.extend(
-                        self.snapshot
-                            .environment
-                            .components
-                            .iter()
-                            .filter(|component| {
-                                component_belongs_to_runtime(component, source_runtime_file_id)
-                            })
-                            .map(|component| component.id.clone()),
-                    );
-                    ids.extend(
-                        self.serialized_components
-                            .iter()
-                            .filter(|(owner, _)| {
-                                owner_belongs_to_runtime(owner, source_runtime_file_id)
-                            })
-                            .flat_map(|(_, components)| {
-                                components.iter().map(|component| component.id.clone())
-                            }),
-                    );
-                    ids
-                }
-                StateOperation::BeginRuntimeFileLifetime { .. } => {
-                    let source_runtime_file_id = &self.snapshot.environment.active_runtime_file.id;
-                    let mut ids = self
-                        .snapshot
+                        }),
+                );
+                ids
+            }
+            StateOperation::LoadRuntimeFromSlot {
+                source_runtime_file_id,
+                runtime_component_ids,
+                ..
+            } => {
+                let mut ids = runtime_component_ids.clone();
+                ids.extend(
+                    self.snapshot
                         .environment
                         .components
                         .iter()
                         .filter(|component| {
                             component_belongs_to_runtime(component, source_runtime_file_id)
                         })
-                        .map(|component| component.id.clone())
-                        .collect::<Vec<_>>();
+                        .map(|component| component.id.clone()),
+                );
+                ids.extend(
+                    self.serialized_components
+                        .iter()
+                        .filter(|(owner, _)| {
+                            owner_belongs_to_runtime(owner, source_runtime_file_id)
+                        })
+                        .flat_map(|(_, components)| {
+                            components.iter().map(|component| component.id.clone())
+                        }),
+                );
+                ids
+            }
+            StateOperation::LoadRuntimeFromSlotImage { source_slot, .. } => {
+                let source_runtime_file_id = &self.snapshot.environment.active_runtime_file.id;
+                let mut ids = self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .filter(|component| {
+                        component_belongs_to_runtime(component, source_runtime_file_id)
+                    })
+                    .map(|component| component.id.clone())
+                    .collect::<Vec<_>>();
+                ids.extend(
+                    self.serialized_components
+                        .iter()
+                        .filter(|(owner, _)| {
+                            owner_belongs_to_runtime(owner, source_runtime_file_id)
+                        })
+                        .flat_map(|(_, components)| {
+                            components.iter().map(|component| component.id.clone())
+                        }),
+                );
+                if let Some(slot) = self
+                    .snapshot
+                    .environment
+                    .physical_slots
+                    .iter()
+                    .find(|slot| slot.slot == *source_slot)
+                    && let Some(image) = self.persistent_file_images.get(&slot.persistent_file_id)
+                {
                     ids.extend(
-                        self.serialized_components
+                        image
+                            .runtime_components
                             .iter()
-                            .filter(|(owner, _)| {
-                                owner_belongs_to_runtime(owner, source_runtime_file_id)
-                            })
-                            .flat_map(|(_, components)| {
-                                components.iter().map(|component| component.id.clone())
-                            }),
+                            .map(|component| component.id.clone()),
                     );
-                    ids
+                    ids.extend(image.stage_banks.iter().flat_map(|store| {
+                        store
+                            .components
+                            .iter()
+                            .map(|component| component.id.clone())
+                    }));
                 }
-                StateOperation::Consume {
-                    pending_operation_id,
-                } => vec![pending_operation_id.clone()],
-                StateOperation::AdvanceFlow {
-                    flow_component_id, ..
-                }
-                | StateOperation::BranchFlow {
-                    flow_component_id, ..
-                } => vec![flow_component_id.clone()],
-                StateOperation::SetActiveRuntimeFile { .. }
-                | StateOperation::SetExecutionContext { .. }
-                | StateOperation::CompletePendingWorldLoad
-                | StateOperation::SetLocation { .. }
-                | StateOperation::SetLocationFromFields { .. }
-                | StateOperation::SetPlayerForm { .. }
-                | StateOperation::SetPlayerMount { .. }
-                | StateOperation::SetPlayerControl { .. }
-                | StateOperation::SetPlayerAction { .. }
-                | StateOperation::SetGate { .. }
-                | StateOperation::ClearGate { .. }
-                | StateOperation::ScheduleCleanup { .. }
-                | StateOperation::CancelCleanup { .. }
-                | StateOperation::Interrupt { .. } => Vec::new(),
-            };
+                ids
+            }
+            StateOperation::BeginRuntimeFileLifetime { .. } => {
+                let source_runtime_file_id = &self.snapshot.environment.active_runtime_file.id;
+                let mut ids = self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .filter(|component| {
+                        component_belongs_to_runtime(component, source_runtime_file_id)
+                    })
+                    .map(|component| component.id.clone())
+                    .collect::<Vec<_>>();
+                ids.extend(
+                    self.serialized_components
+                        .iter()
+                        .filter(|(owner, _)| {
+                            owner_belongs_to_runtime(owner, source_runtime_file_id)
+                        })
+                        .flat_map(|(_, components)| {
+                            components.iter().map(|component| component.id.clone())
+                        }),
+                );
+                ids
+            }
+            StateOperation::Consume {
+                pending_operation_id,
+            } => vec![pending_operation_id.clone()],
+            StateOperation::AdvanceFlow {
+                flow_component_id, ..
+            }
+            | StateOperation::BranchFlow {
+                flow_component_id, ..
+            } => vec![flow_component_id.clone()],
+            StateOperation::SetActiveRuntimeFile { .. }
+            | StateOperation::SetExecutionContext { .. }
+            | StateOperation::CompletePendingWorldLoad
+            | StateOperation::SetLocation { .. }
+            | StateOperation::SetLocationFromFields { .. }
+            | StateOperation::SetPendingWorldLoadFromFields { .. }
+            | StateOperation::SetPlayerForm { .. }
+            | StateOperation::SetPlayerMount { .. }
+            | StateOperation::SetPlayerControl { .. }
+            | StateOperation::SetPlayerAction { .. }
+            | StateOperation::SetGate { .. }
+            | StateOperation::ClearGate { .. }
+            | StateOperation::ScheduleCleanup { .. }
+            | StateOperation::CancelCleanup { .. }
+            | StateOperation::Interrupt { .. } => Vec::new(),
+        };
         ids.sort();
         ids.dedup();
         ids
@@ -958,6 +1018,22 @@ impl PlannerExecutionState {
                         "operation.invalidate_payloads",
                         "selector matches no live or selected serialized component",
                     ));
+                }
+            }
+            StateOperation::InvalidateActiveRuntimeSerializedPayloads { selector } => {
+                let active_runtime_file_id =
+                    self.snapshot.environment.active_runtime_file.id.clone();
+                for (owner, components) in &mut self.serialized_components {
+                    if !owner_belongs_to_runtime(owner, &active_runtime_file_id) {
+                        continue;
+                    }
+                    for component in components
+                        .iter_mut()
+                        .filter(|component| selector_matches(selector, component))
+                    {
+                        invalidate_payload(component);
+                        mark_transition(component, application_id);
+                    }
                 }
             }
             StateOperation::CopyValue { source, target } => {
@@ -1402,6 +1478,9 @@ impl PlannerExecutionState {
             operation @ StateOperation::LoadRuntimeFromSlot { .. } => {
                 self.load_runtime_from_slot(application_id, operation)?
             }
+            operation @ StateOperation::LoadRuntimeFromSlotImage { .. } => {
+                self.load_runtime_from_slot_image(application_id, operation)?
+            }
             operation @ StateOperation::BeginRuntimeFileLifetime { .. } => {
                 self.begin_runtime_file_lifetime(application_id, operation)?
             }
@@ -1532,6 +1611,90 @@ impl PlannerExecutionState {
                     room,
                     layer: *layer,
                     spawn,
+                };
+            }
+            StateOperation::SetPendingWorldLoadFromFields {
+                component_id,
+                stage_field,
+                room_field,
+                spawn_field,
+                layer,
+            } => {
+                let component = self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .find(|component| component.id == *component_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "operation.set_pending_world_load_from_fields",
+                            "references an absent source component",
+                        )
+                    })?;
+                let ComponentPayload::Structured { fields } = &component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.set_pending_world_load_from_fields",
+                        "requires a structured source component",
+                    ));
+                };
+                let stage = match fields.get(stage_field) {
+                    Some(StateValue::Text(stage)) => stage.clone(),
+                    _ => {
+                        return Err(PlannerContractError::new(
+                            "operation.set_pending_world_load_from_fields.stage",
+                            "requires a known text field",
+                        ));
+                    }
+                };
+                let room = match fields.get(room_field) {
+                    Some(StateValue::Signed(room)) => i8::try_from(*room),
+                    Some(StateValue::Unsigned(room)) => i8::try_from(*room),
+                    _ => {
+                        return Err(PlannerContractError::new(
+                            "operation.set_pending_world_load_from_fields.room",
+                            "requires a known integer field",
+                        ));
+                    }
+                }
+                .map_err(|_| {
+                    PlannerContractError::new(
+                        "operation.set_pending_world_load_from_fields.room",
+                        "does not fit an i8 room number",
+                    )
+                })?;
+                let spawn = match fields.get(spawn_field) {
+                    Some(StateValue::Signed(spawn)) => i16::try_from(*spawn),
+                    Some(StateValue::Unsigned(spawn)) => i16::try_from(*spawn),
+                    _ => {
+                        return Err(PlannerContractError::new(
+                            "operation.set_pending_world_load_from_fields.spawn",
+                            "requires a known integer field",
+                        ));
+                    }
+                }
+                .map_err(|_| {
+                    PlannerContractError::new(
+                        "operation.set_pending_world_load_from_fields.spawn",
+                        "does not fit an i16 spawn number",
+                    )
+                })?;
+                let ExecutionContext::Process { process_name, .. } =
+                    &self.snapshot.environment.execution_context
+                else {
+                    return Err(PlannerContractError::new(
+                        "operation.set_pending_world_load_from_fields",
+                        "requires an active non-world process",
+                    ));
+                };
+                self.snapshot.environment.execution_context = ExecutionContext::Process {
+                    process_name: process_name.clone(),
+                    pending_world_load: Some(SceneLocation {
+                        stage,
+                        room,
+                        layer: *layer,
+                        spawn,
+                    }),
                 };
             }
             StateOperation::SetPlayerForm { form } => {
@@ -2213,6 +2376,71 @@ impl PlannerExecutionState {
         Ok(())
     }
 
+    fn load_runtime_from_slot_image(
+        &mut self,
+        application_id: &str,
+        operation: &StateOperation,
+    ) -> Result<(), PlannerContractError> {
+        let StateOperation::LoadRuntimeFromSlotImage {
+            source_slot,
+            destination_runtime_id_suffix,
+            carried_runtime_component_ids,
+        } = operation
+        else {
+            unreachable!("dynamic load helper is called only for its operation variant")
+        };
+        let source_runtime_file_id = self.snapshot.environment.active_runtime_file.id.clone();
+        let slot = self
+            .snapshot
+            .environment
+            .physical_slots
+            .iter()
+            .find(|slot| slot.slot == *source_slot)
+            .ok_or_else(|| {
+                PlannerContractError::new(
+                    "operation.load_runtime_from_slot_image.source_slot",
+                    "is not populated",
+                )
+            })?;
+        let source_persistent_file_id = slot.persistent_file_id.clone();
+        let image = self
+            .persistent_file_images
+            .get(&source_persistent_file_id)
+            .ok_or_else(|| {
+                PlannerContractError::new(
+                    "operation.load_runtime_from_slot_image.source_slot",
+                    "references an unavailable persistent file image",
+                )
+            })?;
+        let runtime_component_ids = image
+            .runtime_components
+            .iter()
+            .map(|component| component.id.clone())
+            .collect();
+        let stage_bank_stages = image
+            .stage_banks
+            .iter()
+            .map(|store| match &store.owner {
+                SerializationOwner::StageBank { stage, .. } => stage.clone(),
+                _ => unreachable!("validated persistent image contains only stage banks"),
+            })
+            .collect();
+        let generated = StateOperation::LoadRuntimeFromSlot {
+            source_runtime_file_id: source_runtime_file_id.clone(),
+            source_slot: *source_slot,
+            source_persistent_file_id,
+            destination_runtime_file_id: format!(
+                "{source_runtime_file_id}.{destination_runtime_id_suffix}"
+            ),
+            destination_allowed_serialization_targets: vec![*source_slot],
+            runtime_component_ids,
+            stage_bank_stages,
+            carried_runtime_component_ids: carried_runtime_component_ids.clone(),
+        };
+        generated.validate()?;
+        self.load_runtime_from_slot(application_id, &generated)
+    }
+
     fn begin_runtime_file_lifetime(
         &mut self,
         application_id: &str,
@@ -2678,12 +2906,15 @@ fn history_event_writes_field(
                 destination_component_id,
                 ..
             } => destination_component_id == component_id,
-            StateOperation::ClearComponent { .. } | StateOperation::InvalidatePayloads { .. } => {
+            StateOperation::ClearComponent { .. }
+            | StateOperation::InvalidatePayloads { .. }
+            | StateOperation::InvalidateActiveRuntimeSerializedPayloads { .. } => {
                 affected_component_ids
                     .binary_search_by(|id| id.as_str().cmp(component_id))
                     .is_ok()
             }
-            StateOperation::LoadRuntimeFromSlot { .. } => affected_component_ids
+            StateOperation::LoadRuntimeFromSlot { .. }
+            | StateOperation::LoadRuntimeFromSlotImage { .. } => affected_component_ids
                 .binary_search_by(|id| id.as_str().cmp(component_id))
                 .is_ok(),
             StateOperation::WriteRaw { .. }
@@ -2702,6 +2933,7 @@ fn history_event_writes_field(
             | StateOperation::CompletePendingWorldLoad
             | StateOperation::SetLocation { .. }
             | StateOperation::SetLocationFromFields { .. }
+            | StateOperation::SetPendingWorldLoadFromFields { .. }
             | StateOperation::SetPlayerForm { .. }
             | StateOperation::SetPlayerMount { .. }
             | StateOperation::SetPlayerControl { .. }
@@ -5180,6 +5412,50 @@ mod tests {
             "operation.load_runtime_from_slot.carried_runtime_component_ids"
         );
         assert_eq!(state, before_failed_carry);
+
+        let mut dynamic_load = state.clone();
+        let sealed_image_before = dynamic_load.persistent_file_images["persistent-slot-1"].clone();
+        dynamic_load
+            .apply_operations(
+                "boundary.dynamic-load-slot-1",
+                "snapshot.dynamic-slot-1-loaded",
+                &[StateOperation::LoadRuntimeFromSlotImage {
+                    source_slot: PhysicalSlotId(1),
+                    destination_runtime_id_suffix: "file-select-slot-1".into(),
+                    carried_runtime_component_ids: vec!["runtime.bite-equipment".into()],
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            dynamic_load.snapshot.environment.active_runtime_file.id,
+            "file-0.file-select-slot-1"
+        );
+        assert_eq!(
+            dynamic_load.snapshot.environment.active_runtime_file.origin,
+            RuntimeFileOrigin::LoadedSlot {
+                slot: PhysicalSlotId(1)
+            }
+        );
+        assert_eq!(
+            field(&dynamic_load, "save.main", "rupees"),
+            &StateValue::Unsigned(99)
+        );
+        assert_eq!(
+            field(&dynamic_load, "runtime.bite-equipment", "equipped_item"),
+            &StateValue::Unsigned(0x28)
+        );
+        assert!(
+            dynamic_load
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .all(|component| component.id != "runtime.unselected-metadata")
+        );
+        assert_eq!(
+            dynamic_load.persistent_file_images["persistent-slot-1"],
+            sealed_image_before
+        );
 
         state
             .apply_operations(

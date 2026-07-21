@@ -103,8 +103,10 @@ stage-bank, or otherwise invalid carry entry fails the whole load atomically.
 This is the generic splice required for BiTE-like preservation; which concrete
 components a retail BiTE setup carries remains an evidence-matrix task.
 The source-audited GZ2E01 file-select use of the generic mechanism is separated
-in `gz2e01-file-select-branches.md`; its concrete branch transitions remain an
-implementation task.
+in `gz2e01-file-select-branches.md`. Its concrete branch transitions resolve a
+selected physical-slot image at execution time, retain exact slot availability
+as a three-valued fact, and keep the card load's unaudited normalization as an
+explicit unknown rather than silently accepting the upper-bound copy.
 
 `activate_stage_bank` is the initial `getSave(stage)` half: it restores one
 loaded stage entry into an absent live component without committing a previous
@@ -160,3 +162,12 @@ classifies every source-owned live component and serialized store by its actual
 destination payload/ownership fate, then separately reports unchanged/changed
 outside-lifetime live components and sealed physical-file images. It does not
 encode a game-specific list of alleged BiT losses.
+
+The file-select branch milestone advances execution state to v14, fact catalog
+to v9, mechanics catalog to v22, and planner service to v27. A dynamic
+`load_runtime_from_slot_image` resolves the sealed manifest and persistent-file
+identity from an actually populated physical slot, while a serialized-only
+invalidation operation models `card_to_memory` replacing stored dungeon banks
+without erasing the current live stage/temporary state. A structured
+return-place reader can attach a pending world load to the still-active process;
+it does not activate the retained destination map.

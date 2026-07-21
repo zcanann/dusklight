@@ -333,6 +333,7 @@ impl RelevanceBuilder {
             | ValueReference::PendingWorldLoadRoom
             | ValueReference::PendingWorldLoadLayer
             | ValueReference::PendingWorldLoadSpawn => StateDependency::ExecutionContext,
+            ValueReference::PhysicalSlotImageAvailable { .. } => StateDependency::AnyState,
             ValueReference::RuntimeSetting { key } => {
                 StateDependency::RuntimeSetting { key: key.clone() }
             }
@@ -668,6 +669,7 @@ impl RelevanceBuilder {
                 self.dependencies.insert(StateDependency::AnyState);
             }
             StateOperation::LoadRuntimeFromSlot { .. }
+            | StateOperation::LoadRuntimeFromSlotImage { .. }
             | StateOperation::BeginRuntimeFileLifetime { .. } => {
                 self.dependencies.insert(StateDependency::AnyState);
             }
@@ -675,6 +677,13 @@ impl RelevanceBuilder {
                 self.dependencies.insert(StateDependency::ExecutionContext);
             }
             StateOperation::SetLocationFromFields {
+                component_id,
+                stage_field,
+                room_field,
+                spawn_field,
+                ..
+            }
+            | StateOperation::SetPendingWorldLoadFromFields {
                 component_id,
                 stage_field,
                 room_field,
@@ -690,11 +699,18 @@ impl RelevanceBuilder {
                                 field: field.clone(),
                             }),
                     );
+                if matches!(
+                    operation,
+                    StateOperation::SetPendingWorldLoadFromFields { .. }
+                ) {
+                    self.dependencies.insert(StateDependency::ExecutionContext);
+                }
             }
             StateOperation::Write { .. }
             | StateOperation::WriteFields { .. }
             | StateOperation::ReplacePayload { .. }
             | StateOperation::InvalidatePayloads { .. }
+            | StateOperation::InvalidateActiveRuntimeSerializedPayloads { .. }
             | StateOperation::WriteRaw { .. }
             | StateOperation::WriteBoundRaw { .. }
             | StateOperation::InvalidateRaw { .. }
@@ -785,6 +801,9 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
                 vec![StateDependency::AnyState]
             }
         }
+        StateOperation::InvalidateActiveRuntimeSerializedPayloads { .. } => {
+            vec![StateDependency::AnyState]
+        }
         StateOperation::WriteRaw {
             component_id,
             byte_offset,
@@ -871,6 +890,7 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         ],
         StateOperation::SaveRuntimeToSlot { .. }
         | StateOperation::LoadRuntimeFromSlot { .. }
+        | StateOperation::LoadRuntimeFromSlotImage { .. }
         | StateOperation::BeginRuntimeFileLifetime { .. } => vec![StateDependency::AnyState],
         StateOperation::SetLocation { .. } => vec![
             StateDependency::ExecutionContext,
@@ -886,6 +906,9 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             StateDependency::LocationLayer,
             StateDependency::LocationSpawn,
         ],
+        StateOperation::SetPendingWorldLoadFromFields { .. } => {
+            vec![StateDependency::ExecutionContext]
+        }
         StateOperation::SetPlayerForm { .. } => vec![StateDependency::PlayerForm],
         StateOperation::SetPlayerMount { .. } => vec![StateDependency::PlayerMount],
         StateOperation::SetPlayerControl { .. } => vec![StateDependency::PlayerControl],
