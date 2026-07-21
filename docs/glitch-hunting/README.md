@@ -71,6 +71,9 @@ unavoidable mutation audit; they never count as TAS playback or proof.
   current fidelity/validation limits.
 - [Testing and visual TAS playback](testing.md) documents the VS Code selector,
   command-line runner, and visible replay workflow.
+- [Stage-survey visual audit](stage-survey-visual-audit.md) reconciles a
+  rendered dungeon, enemy-heavy interior, outdoor population and real loading
+  transition with their authenticated native observations.
 - [Architecture](architecture.md) describes the Rust/C++ boundary, worker
   model, headless execution, and headful promotion.
 - [Milestone-backed route search](search.md) documents typed controller

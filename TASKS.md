@@ -585,8 +585,22 @@ relationship, coordinate corridor, or success sequence.
       208 stage/profile cells with zero rejected ready snapshots
       (`84206ee5...6919d`, ledger `112e3aca...ba5af`). The fixed profile has no
       objective, actor selector, desired transition or preferred outcome.
-- [ ] Visually inspect a stratified sample and reconcile visible actors,
-  collision, triggers and state transitions against captured data.
+- [x] Visually inspect a stratified sample and reconcile visible actors,
+  collision, triggers and state transitions against captured data. Four real-
+  renderer terminal frames cover Lakebed Temple, Cave of Ordeals, Ordon Village
+  and an Ordon Village-to-ranch loading sweep. The three neutral reruns
+  reproduced their ledger-bound all-channel traces and complete actor catalogs
+  byte for byte. The loading rerun reproduced all 720 headless trace records
+  byte for byte across the `F_SP103` to `F_SP00` transition; its terminal actor
+  catalog is also identical after excluding only the older survey executable's
+  embedded build identity. Visual poses and scene geometry agree with typed
+  actor positions, complete populations, water/ground/roof identities, dynamic
+  colliders and trigger volumes. The trace explicitly records exit resolution,
+  next-stage enablement, teardown missingness, stage change and restored player
+  and ground channels. Retail-image PNGs remain ignored, with their full
+  digests and the bounded interpretation recorded in
+  `docs/glitch-hunting/stage-survey-visual-audit.md`; this sample does not close
+  the separate all-entry coverage items.
 - [ ] Publish a machine-readable coverage matrix by stage and actor profile:
   present, varying, absent, ambiguous, truncated, or requiring a typed
   extension. The survey must distinguish "not in this scene" from "not seen by
