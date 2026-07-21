@@ -201,6 +201,16 @@ to survive. Savewarp does not infer Castle Town from the cutscene or current
 map. The remaining runtime question is why the tower `Savmem` writer does not
 replace that incoming value on the witnessed failure path.
 
+`compile-return-place-mechanics` emits this conditional model as a standalone
+exact-context mechanics catalog. Its canonical SHA-256 is
+`d42c4455f8861e07fc99657727b14bb7a5de0c07075b9b424a3843ab805e166a`.
+The writer atomically replaces all three return-place fields, reads M_012 and
+M_014 from byte 5 of the active runtime file's persistent event-register store,
+and is blocked by `NO_TELOP` at temporary byte `0x13`, mask `0x01`. It also
+requires `actor.r_sp107.r03.savmem.1.execution.executing == true`; absent actor
+lifecycle evidence therefore yields unknown activation. The savewarp
+transition reads the stored record and derives its destination dynamically.
+
 The failure must therefore still be modeled as a resource/actor failure
 predicate with an unknown exceptional suffix, never as a direct warp to
 `R_SP107` or `F_SP116`. The no-op proof narrows the unknown suffix: this specific
@@ -294,6 +304,11 @@ route-planner compile-cutscene-corruption-hypothesis \
   --outer-event gz2e01-demo07_01-outer.json \
   --outer-profile data/cutscene-outer-runtime-profiles/gz2e01-demo07_01.json \
   --output gz2e01-demo07_01-corruption-hypothesis.json
+
+route-planner compile-return-place-mechanics \
+  --content-identity gz2e01-content.json \
+  --runtime-configuration gz2e01-runtime-en.json \
+  --output gz2e01-tower-return-place-mechanics.json
 ```
 
 The extraction commands reject malformed offsets, overlapping tables,

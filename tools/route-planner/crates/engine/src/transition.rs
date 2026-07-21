@@ -30,6 +30,13 @@ pub enum StateOperation {
         target: ComponentFieldTarget,
         value: StateValue,
     },
+    /// Atomically replaces several known fields on one structured component.
+    /// This models one game writer whose record spans multiple scalar fields,
+    /// such as a `Savmem` return-place update.
+    WriteFields {
+        component_id: String,
+        fields: BTreeMap<String, StateValue>,
+    },
     CopyValue {
         source: ComponentFieldTarget,
         target: ComponentFieldTarget,
@@ -169,6 +176,15 @@ pub enum StateOperation {
     },
     SetLocation {
         location: crate::state::SceneLocation,
+    },
+    /// Reads one structured backing record and changes map location only when
+    /// its stage, room, and spawn fields are all known and well typed.
+    SetLocationFromFields {
+        component_id: String,
+        stage_field: String,
+        room_field: String,
+        spawn_field: String,
+        layer: i8,
     },
     SetPlayerForm {
         form: PlayerForm,
@@ -529,6 +545,23 @@ impl StateOperation {
                 validate_field_target(target)?;
                 validate_state_value(value)
             }
+            Self::WriteFields {
+                component_id,
+                fields,
+            } => {
+                validate_stable_id("operation.component_id", component_id)?;
+                if fields.is_empty() || fields.len() > 256 {
+                    return Err(PlannerContractError::new(
+                        "operation.write_fields",
+                        "must contain between 1 and 256 fields",
+                    ));
+                }
+                for (field, value) in fields {
+                    validate_stable_id("operation.write_fields.field", field)?;
+                    validate_state_value(value)?;
+                }
+                Ok(())
+            }
             Self::CopyValue { source, target } | Self::SetBitFromValue { source, target } => {
                 validate_field_target(source)?;
                 validate_field_target(target)?;
@@ -807,6 +840,28 @@ impl StateOperation {
                 Ok(())
             }
             Self::SetLocation { location } => location.validate(),
+            Self::SetLocationFromFields {
+                component_id,
+                stage_field,
+                room_field,
+                spawn_field,
+                ..
+            } => {
+                validate_stable_id("operation.component_id", component_id)?;
+                for field in [stage_field, room_field, spawn_field] {
+                    validate_stable_id("operation.location_field", field)?;
+                }
+                if stage_field == room_field
+                    || stage_field == spawn_field
+                    || room_field == spawn_field
+                {
+                    return Err(PlannerContractError::new(
+                        "operation.set_location_from_fields",
+                        "must reference three distinct fields",
+                    ));
+                }
+                Ok(())
+            }
             Self::SetPlayerForm {
                 form: PlayerForm::Other { id },
             } => validate_stable_id("operation.set_player_form.id", id),

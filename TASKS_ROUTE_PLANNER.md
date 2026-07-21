@@ -1958,6 +1958,10 @@ Deliverable: replayable state evidence that can validate transition rules.
         semantic search dominance; failed atomic batches cannot leak events.
   - [x] Execute standalone writer rules as gated solver actions and retain
         writer/gate evidence plus blocked-writer witnesses in solve reports.
+  - [x] Add atomic multi-field structured writes and a backing-driven dynamic
+        location load. One `Savmem` action can now replace stage, room, and
+        player-status/spawn together, and ordinary savewarp can read those
+        fields without enumerating destination-specific transitions.
   - [x] Execute ordered writer/gate/read programs from imported mechanics.
     Writer records are searchable `writer` actions rather than techniques. Search
     reevaluates their activation and every blocking gate at each state, applies
@@ -2666,6 +2670,11 @@ sequence.
   - [x] Source-audit the ordinary savewarp reader: `dComIfGs_gameStart` reads the
         persistent player return-place stage, room, and player-status/spawn into
         `setNextStage`; it does not synthesize Castle Town from the current map.
+  - [x] Compile those facts into a standalone exact-context mechanics catalog:
+        one atomic tower `Savmem` writer, raw M_012/M_014 backing guards, a raw
+        `NO_TELOP` gate, three reader records, and one dynamic savewarp
+        transition. Keep actor execution as an explicit live component field,
+        so corruption cannot silently count as either execution or suppression.
 - [ ] Vary the incoming return place across a witnessed actor-corruption trace;
       the GZ2E01 room-loader call is already proven to preserve it generically,
       but the complete failure suffix is not yet bounded.

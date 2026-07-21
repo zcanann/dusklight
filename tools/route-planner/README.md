@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns thirty-four operations:
+The planner CLI currently owns thirty-five operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -26,6 +26,10 @@ The planner CLI currently owns thirty-four operations:
   normal, skip, interruption, scene-change, or resource-failure branch into an
   ordinary causal transition. Confirmed prefixes remain ordered and unaudited
   suffix targets become explicit unknownness.
+- `compile-return-place-mechanics` emits the exact GZ2E01/English tower
+  `Savmem` writer, its raw event-bit activation and `NO_TELOP` gate, and the
+  ordinary dynamic savewarp reader as a standalone mechanics catalog. Actor
+  execution remains a live-state dependency rather than an assumed success.
 - `construct-message-flows` selects every message group for one exact
   content/runtime/language profile and emits canonical source programs without
   guessing unaudited backing stores.

@@ -31,6 +31,7 @@ pub mod orig_discovery;
 pub mod orig_extraction;
 pub mod refinement;
 pub mod relevance;
+pub mod return_place;
 pub mod route_book;
 pub mod snapshot;
 pub mod solver;

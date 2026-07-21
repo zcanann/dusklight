@@ -6,7 +6,7 @@ use crate::state::{
     BackingAttachment, BoundaryDisposition, BoundaryPolicy, ComponentBinding,
     ComponentBindingReference, ComponentKind, ComponentPayload, ComponentProvenance,
     ComponentSelector, PhysicalSlot, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
-    RuntimeFileOrigin, SerializationOwner, StateComponent, StateValue,
+    RuntimeFileOrigin, SceneLocation, SerializationOwner, StateComponent, StateValue,
     validate_serialization_owner,
 };
 use crate::transition::{StateOperation, TemporalWindow};
@@ -685,6 +685,7 @@ impl PlannerExecutionState {
                 | StateOperation::Adjust { target, .. }
                 | StateOperation::ClearField { target }
                 | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
+                StateOperation::WriteFields { component_id, .. } => vec![component_id.clone()],
                 StateOperation::WriteRaw { component_id, .. }
                 | StateOperation::InvalidateRaw { component_id, .. }
                 | StateOperation::CommitLoadStageBank { component_id, .. }
@@ -828,6 +829,7 @@ impl PlannerExecutionState {
                 } => vec![flow_component_id.clone()],
                 StateOperation::SetActiveRuntimeFile { .. }
                 | StateOperation::SetLocation { .. }
+                | StateOperation::SetLocationFromFields { .. }
                 | StateOperation::SetPlayerForm { .. }
                 | StateOperation::SetPlayerMount { .. }
                 | StateOperation::SetPlayerControl { .. }
@@ -858,6 +860,22 @@ impl PlannerExecutionState {
                     ));
                 };
                 fields.insert(target.field.clone(), value.clone());
+                mark_transition(component, application_id);
+            }
+            StateOperation::WriteFields {
+                component_id,
+                fields: replacements,
+            } => {
+                let component = self.component_mut(component_id)?;
+                let ComponentPayload::Structured { fields } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.write_fields",
+                        "requires a structured destination component",
+                    ));
+                };
+                for (field, value) in replacements {
+                    fields.insert(field.clone(), value.clone());
+                }
                 mark_transition(component, application_id);
             }
             StateOperation::CopyValue { source, target } => {
@@ -1335,6 +1353,79 @@ impl PlannerExecutionState {
             }
             StateOperation::SetLocation { location } => {
                 self.snapshot.environment.location = location.clone();
+            }
+            StateOperation::SetLocationFromFields {
+                component_id,
+                stage_field,
+                room_field,
+                spawn_field,
+                layer,
+            } => {
+                let component = self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .find(|component| component.id == *component_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "operation.set_location_from_fields",
+                            "references an absent source component",
+                        )
+                    })?;
+                let ComponentPayload::Structured { fields } = &component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.set_location_from_fields",
+                        "requires a structured source component",
+                    ));
+                };
+                let stage = match fields.get(stage_field) {
+                    Some(StateValue::Text(stage)) => stage.clone(),
+                    _ => {
+                        return Err(PlannerContractError::new(
+                            "operation.set_location_from_fields.stage",
+                            "requires a known text field",
+                        ));
+                    }
+                };
+                let room = match fields.get(room_field) {
+                    Some(StateValue::Signed(room)) => i8::try_from(*room),
+                    Some(StateValue::Unsigned(room)) => i8::try_from(*room),
+                    _ => {
+                        return Err(PlannerContractError::new(
+                            "operation.set_location_from_fields.room",
+                            "requires a known integer field",
+                        ));
+                    }
+                }
+                .map_err(|_| {
+                    PlannerContractError::new(
+                        "operation.set_location_from_fields.room",
+                        "does not fit an i8 room number",
+                    )
+                })?;
+                let spawn = match fields.get(spawn_field) {
+                    Some(StateValue::Signed(spawn)) => i16::try_from(*spawn),
+                    Some(StateValue::Unsigned(spawn)) => i16::try_from(*spawn),
+                    _ => {
+                        return Err(PlannerContractError::new(
+                            "operation.set_location_from_fields.spawn",
+                            "requires a known integer field",
+                        ));
+                    }
+                }
+                .map_err(|_| {
+                    PlannerContractError::new(
+                        "operation.set_location_from_fields.spawn",
+                        "does not fit an i16 spawn number",
+                    )
+                })?;
+                self.snapshot.environment.location = SceneLocation {
+                    stage,
+                    room,
+                    layer: *layer,
+                    spawn,
+                };
             }
             StateOperation::SetPlayerForm { form } => {
                 self.snapshot.environment.player.form = form.clone();
@@ -2268,6 +2359,10 @@ fn history_event_writes_field(
             | StateOperation::InvalidateField { target } => {
                 target.component_id == component_id && target.field == field
             }
+            StateOperation::WriteFields {
+                component_id: changed,
+                fields,
+            } => changed == component_id && fields.contains_key(field),
             StateOperation::AdvanceFlow {
                 flow_component_id, ..
             } => flow_component_id == component_id && field == "node_id",
@@ -2313,6 +2408,7 @@ fn history_event_writes_field(
             | StateOperation::Rebind { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
             | StateOperation::SetLocation { .. }
+            | StateOperation::SetLocationFromFields { .. }
             | StateOperation::SetPlayerForm { .. }
             | StateOperation::SetPlayerMount { .. }
             | StateOperation::SetPlayerControl { .. }
@@ -2747,6 +2843,65 @@ mod tests {
                 .as_deref(),
             Some("transition.enter-forest")
         );
+    }
+
+    #[test]
+    fn multi_field_write_updates_one_record_atomically_and_tracks_each_field() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state
+            .apply_operations(
+                "writer.savmem-tower",
+                "snapshot.after-savmem-tower",
+                &[StateOperation::WriteFields {
+                    component_id: "save.main".into(),
+                    fields: BTreeMap::from([
+                        ("return_stage".into(), StateValue::Text("R_SP107".into())),
+                        ("return_room".into(), StateValue::Signed(3)),
+                        ("return_spawn".into(), StateValue::Unsigned(1)),
+                    ]),
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(
+            field(&state, "save.main", "return_stage"),
+            &StateValue::Text("R_SP107".into())
+        );
+        assert_eq!(
+            field(&state, "save.main", "return_room"),
+            &StateValue::Signed(3)
+        );
+        assert_eq!(
+            field(&state, "save.main", "return_spawn"),
+            &StateValue::Unsigned(1)
+        );
+        for name in ["return_stage", "return_room", "return_spawn"] {
+            assert_eq!(
+                state
+                    .last_field_writer("save.main", name)
+                    .unwrap()
+                    .application_id,
+                "writer.savmem-tower"
+            );
+        }
+
+        state
+            .apply_operations(
+                "transition.savewarp",
+                "snapshot.after-savewarp",
+                &[StateOperation::SetLocationFromFields {
+                    component_id: "save.main".into(),
+                    stage_field: "return_stage".into(),
+                    room_field: "return_room".into(),
+                    spawn_field: "return_spawn".into(),
+                    layer: -1,
+                }],
+            )
+            .unwrap();
+        assert_eq!(state.snapshot.environment.location.stage, "R_SP107");
+        assert_eq!(state.snapshot.environment.location.room, 3);
+        assert_eq!(state.snapshot.environment.location.spawn, 1);
+        assert_eq!(state.snapshot.environment.location.layer, -1);
     }
 
     #[test]

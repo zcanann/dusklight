@@ -662,7 +662,24 @@ impl RelevanceBuilder {
             StateOperation::LoadRuntimeFromSlot { .. } => {
                 self.dependencies.insert(StateDependency::AnyState);
             }
+            StateOperation::SetLocationFromFields {
+                component_id,
+                stage_field,
+                room_field,
+                spawn_field,
+                ..
+            } => {
+                self.dependencies.extend(
+                    [stage_field, room_field, spawn_field]
+                        .into_iter()
+                        .map(|field| StateDependency::ComponentField {
+                            component_id: component_id.clone(),
+                            field: field.clone(),
+                        }),
+                );
+            }
             StateOperation::Write { .. }
+            | StateOperation::WriteFields { .. }
             | StateOperation::WriteRaw { .. }
             | StateOperation::WriteBoundRaw { .. }
             | StateOperation::InvalidateRaw { .. }
@@ -728,6 +745,16 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
                 field: target.field.clone(),
             }]
         }
+        StateOperation::WriteFields {
+            component_id,
+            fields,
+        } => fields
+            .keys()
+            .map(|field| StateDependency::ComponentField {
+                component_id: component_id.clone(),
+                field: field.clone(),
+            })
+            .collect(),
         StateOperation::WriteRaw {
             component_id,
             byte_offset,
@@ -816,6 +843,12 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             vec![StateDependency::AnyState]
         }
         StateOperation::SetLocation { .. } => vec![
+            StateDependency::LocationStage,
+            StateDependency::LocationRoom,
+            StateDependency::LocationLayer,
+            StateDependency::LocationSpawn,
+        ],
+        StateOperation::SetLocationFromFields { .. } => vec![
             StateDependency::LocationStage,
             StateDependency::LocationRoom,
             StateDependency::LocationLayer,
