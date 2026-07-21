@@ -7,10 +7,12 @@
 //! acquire an invented successor.
 
 use crate::artifact::Digest;
+use crate::identity::{ContextSelector, RuntimeConfiguration};
 use crate::logic::{
-    ComparisonOperator, ContextScope, FactCatalog, FriendlyAlias, PredicateExpression,
-    RawFactBinding, RuleEvidence, TruthStatus, ValueReference,
+    ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, FactCatalog, FriendlyAlias,
+    PredicateExpression, RawFactBinding, RuleEvidence, TruthStatus, ValueReference,
 };
+use crate::orig_discovery::{ExtractedOrigBundle, ExtractedOrigMessageArchive};
 use crate::orig_extraction::{
     ExtractedMessageFlow, MessageFlowNode, MessageFlowPersistentFlagAccess,
     MessageFlowPersistentFlagOperation, MessageFlowSwitchAccess, MessageFlowSwitchOperation,
@@ -32,6 +34,10 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const MESSAGE_FLOW_PROGRAM_SCHEMA: &str = "dusklight.route-planner.message-flow-program/v1";
 pub const COMPILED_MESSAGE_FLOW_PROGRAM_SCHEMA: &str =
     "dusklight.route-planner.compiled-message-flow-program/v1";
+pub const MESSAGE_FLOW_IMPORT_PROFILE_SCHEMA: &str =
+    "dusklight.route-planner.message-flow-import-profile/v1";
+pub const MESSAGE_FLOW_PROGRAM_SET_SCHEMA: &str =
+    "dusklight.route-planner.message-flow-program-set/v1";
 const MAX_MESSAGE_FLOW_NODES: usize = 65_535;
 const MAX_EVENT_CONTRACTS: usize = 16_384;
 const MAX_CLEANUP_EDGES: usize = 256;
@@ -132,6 +138,32 @@ pub struct CompiledMessageFlowProgram {
     pub mechanics: MechanicsCatalog,
 }
 
+/// Exact-content policy needed to bind immutable BMG graphs to mutable planner
+/// stores. Locale selection and backing layout are kept out of the extractor:
+/// neither can be inferred from a resource filename alone.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageFlowImportProfile {
+    pub schema: String,
+    pub id: String,
+    pub content_sha256: Digest,
+    pub language_bundles: BTreeMap<String, String>,
+    pub flow_component_id: String,
+    pub bindings: MessageFlowBindings,
+    pub evidence: RuleEvidence,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageFlowProgramSet {
+    pub schema: String,
+    pub profile_sha256: Digest,
+    pub bundle_sha256: Digest,
+    pub exact_context: crate::identity::ExactContext,
+    pub locale_bundle: String,
+    pub programs: Vec<MessageFlowProgram>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CompiledMessageFlowEntry {
@@ -144,6 +176,298 @@ pub struct CompiledMessageFlowEntry {
 pub struct UnresolvedMessageFlowNode {
     pub node_index: u16,
     pub reason: String,
+}
+
+impl MessageFlowImportProfile {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != MESSAGE_FLOW_IMPORT_PROFILE_SCHEMA {
+            return Err(PlannerContractError::new(
+                "message_flow_import_profile.schema",
+                "is unsupported",
+            ));
+        }
+        validate_stable_id("message_flow_import_profile.id", &self.id)?;
+        if self.content_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "message_flow_import_profile.content_sha256",
+                "must be nonzero",
+            ));
+        }
+        if self.language_bundles.is_empty() || self.language_bundles.len() > 64 {
+            return Err(PlannerContractError::new(
+                "message_flow_import_profile.language_bundles",
+                "must contain between 1 and 64 language selections",
+            ));
+        }
+        let mut selected_bundles = BTreeSet::new();
+        for (language, locale_bundle) in &self.language_bundles {
+            validate_language_token(
+                "message_flow_import_profile.language_bundles.language",
+                language,
+                true,
+            )?;
+            validate_language_token(
+                "message_flow_import_profile.language_bundles.locale_bundle",
+                locale_bundle,
+                false,
+            )?;
+            selected_bundles.insert(locale_bundle.as_str());
+        }
+        if selected_bundles.is_empty() {
+            return Err(PlannerContractError::new(
+                "message_flow_import_profile.language_bundles",
+                "does not select a locale bundle",
+            ));
+        }
+        validate_stable_id(
+            "message_flow_import_profile.flow_component_id",
+            &self.flow_component_id,
+        )?;
+        self.evidence
+            .validate("message_flow_import_profile.evidence")?;
+        self.bindings.validate()?;
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let profile: Self = serde_json::from_slice(bytes)?;
+        profile.validate()?;
+        if profile.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "message_flow_import_profile",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(profile)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
+impl MessageFlowProgramSet {
+    pub fn build(
+        bundle: &ExtractedOrigBundle,
+        runtime_configuration: &RuntimeConfiguration,
+        profile: &MessageFlowImportProfile,
+    ) -> Result<Self, PlannerContractError> {
+        let programs = construct_message_flow_programs(bundle, runtime_configuration, profile)?;
+        let locale_bundle = profile
+            .language_bundles
+            .get(&runtime_configuration.language)
+            .expect("construction validated the language selection")
+            .clone();
+        let set = Self {
+            schema: MESSAGE_FLOW_PROGRAM_SET_SCHEMA.into(),
+            profile_sha256: profile.digest()?,
+            bundle_sha256: bundle.digest()?,
+            exact_context: runtime_configuration.exact_context()?,
+            locale_bundle,
+            programs,
+        };
+        set.validate()?;
+        Ok(set)
+    }
+
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != MESSAGE_FLOW_PROGRAM_SET_SCHEMA {
+            return Err(PlannerContractError::new(
+                "message_flow_program_set.schema",
+                "is unsupported",
+            ));
+        }
+        if self.profile_sha256 == Digest::ZERO || self.bundle_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "message_flow_program_set",
+                "profile and bundle digests must be nonzero",
+            ));
+        }
+        validate_language_token(
+            "message_flow_program_set.locale_bundle",
+            &self.locale_bundle,
+            false,
+        )?;
+        if self.programs.is_empty() {
+            return Err(PlannerContractError::new(
+                "message_flow_program_set.programs",
+                "must contain at least one selected program",
+            ));
+        }
+        let expected_scope = ContextScope {
+            selectors: vec![ContextSelector::Exact {
+                context: self.exact_context.clone(),
+            }],
+        };
+        let mut prior = None;
+        for program in &self.programs {
+            program.validate()?;
+            if program.scope != expected_scope {
+                return Err(PlannerContractError::new(
+                    "message_flow_program_set.programs.scope",
+                    "must name the set's exact context",
+                ));
+            }
+            if prior.is_some_and(|group| group >= program.message_group) {
+                return Err(PlannerContractError::new(
+                    "message_flow_program_set.programs",
+                    "must contain one program per group in ascending order",
+                ));
+            }
+            prior = Some(program.message_group);
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let set: Self = serde_json::from_slice(bytes)?;
+        set.validate()?;
+        if set.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "message_flow_program_set",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(set)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
+/// Construct one program for every message resource in the locale bundle
+/// selected by the live runtime configuration. This intentionally supplies no
+/// actor entry, event-handler, or cleanup contracts: those need their own
+/// source-audited records and can be layered onto the generated programs.
+pub fn construct_message_flow_programs(
+    bundle: &ExtractedOrigBundle,
+    runtime_configuration: &RuntimeConfiguration,
+    profile: &MessageFlowImportProfile,
+) -> Result<Vec<MessageFlowProgram>, PlannerContractError> {
+    bundle.validate()?;
+    runtime_configuration.validate()?;
+    profile.validate()?;
+    let content_sha256 = bundle.content.digest()?;
+    if profile.content_sha256 != content_sha256
+        || runtime_configuration.content_sha256 != content_sha256
+    {
+        return Err(PlannerContractError::new(
+            "message_flow_import_profile.content_sha256",
+            "does not match the extracted bundle and runtime configuration",
+        ));
+    }
+    let locale_bundle = profile
+        .language_bundles
+        .get(&runtime_configuration.language)
+        .ok_or_else(|| {
+            PlannerContractError::new(
+                "message_flow_import_profile.language_bundles",
+                "does not select a bundle for the runtime language",
+            )
+        })?;
+    let records = bundle
+        .message_flows
+        .iter()
+        .filter(|record| &record.locale_bundle == locale_bundle)
+        .collect::<Vec<_>>();
+    construct_selected_message_flow_programs(
+        content_sha256,
+        runtime_configuration,
+        profile,
+        locale_bundle,
+        &records,
+    )
+}
+
+fn construct_selected_message_flow_programs(
+    content_sha256: Digest,
+    runtime_configuration: &RuntimeConfiguration,
+    profile: &MessageFlowImportProfile,
+    locale_bundle: &str,
+    records: &[&ExtractedOrigMessageArchive],
+) -> Result<Vec<MessageFlowProgram>, PlannerContractError> {
+    runtime_configuration.validate()?;
+    profile.validate()?;
+    if records.is_empty() {
+        return Err(PlannerContractError::new(
+            "message_flow_import_profile.language_bundles",
+            "selects no extracted message resources",
+        ));
+    }
+    let exact_context = runtime_configuration.exact_context()?;
+    if exact_context.content_sha256 != content_sha256 {
+        return Err(PlannerContractError::new(
+            "runtime_configuration.content_sha256",
+            "does not match the selected content",
+        ));
+    }
+    let scope = ContextScope {
+        selectors: vec![ContextSelector::Exact {
+            context: exact_context,
+        }],
+    };
+    let mut programs = Vec::with_capacity(records.len());
+    let mut groups = BTreeSet::new();
+    for record in records {
+        if record.locale_bundle != locale_bundle || !groups.insert(record.message_group) {
+            return Err(PlannerContractError::new(
+                "message_flow_import_profile.selected_resources",
+                "must contain exactly one selected resource per message group",
+            ));
+        }
+        let token = short_token(record.resource_sha256);
+        let mut evidence = profile.evidence.clone();
+        evidence.records.push(EvidenceRecord {
+            id: format!("evidence.message-resource.{token}"),
+            kind: EvidenceKind::Extracted,
+            source_sha256: Some(record.resource_sha256),
+            note: format!(
+                "Extracted message group {} from selected locale bundle {}.",
+                record.message_group, locale_bundle
+            ),
+        });
+        let program = MessageFlowProgram {
+            schema: MESSAGE_FLOW_PROGRAM_SCHEMA.into(),
+            id: format!(
+                "message-program.{}.{}.group-{}.{token}",
+                profile.id, locale_bundle, record.message_group
+            ),
+            label: format!("Message group {} ({})", record.message_group, locale_bundle),
+            scope: scope.clone(),
+            message_group: record.message_group.try_into().map_err(|_| {
+                PlannerContractError::new(
+                    "message_flow_import_profile.message_group",
+                    "exceeds the runtime message-group width",
+                )
+            })?,
+            resource_sha256: record.resource_sha256,
+            flow_component_id: profile.flow_component_id.clone(),
+            extracted: record.flow.clone(),
+            bindings: profile.bindings.clone(),
+            event_contracts: Vec::new(),
+            cleanup_edges: Vec::new(),
+            evidence,
+        };
+        program.validate()?;
+        programs.push(program);
+    }
+    programs.sort_by(|left, right| {
+        left.message_group
+            .cmp(&right.message_group)
+            .then_with(|| left.resource_sha256.cmp(&right.resource_sha256))
+    });
+    Ok(programs)
 }
 
 impl MessageFlowProgram {
@@ -180,7 +504,7 @@ impl MessageFlowProgram {
             ));
         }
         validate_extracted(&self.extracted)?;
-        self.bindings.validate(&self.extracted)?;
+        self.bindings.validate_for(&self.extracted)?;
         validate_event_contracts(
             &self.event_contracts,
             &self.extracted,
@@ -771,24 +1095,12 @@ impl MessageFlowProgram {
 }
 
 impl MessageFlowBindings {
-    fn validate(&self, extracted: &ExtractedMessageFlow) -> Result<(), PlannerContractError> {
+    pub(crate) fn validate(&self) -> Result<(), PlannerContractError> {
         if let Some(binding) = &self.temporary_flags {
             binding.validate("message_flow_program.bindings.temporary_flags")?;
         }
         if let Some(binding) = &self.persistent_flags {
             binding.validate("message_flow_program.bindings.persistent_flags")?;
-        }
-        if !extracted.temporary_flag_accesses.is_empty() && self.temporary_flags.is_none() {
-            return Err(PlannerContractError::new(
-                "message_flow_program.bindings.temporary_flags",
-                "is required by extracted temporary-flag accesses",
-            ));
-        }
-        if !extracted.persistent_flag_accesses.is_empty() && self.persistent_flags.is_none() {
-            return Err(PlannerContractError::new(
-                "message_flow_program.bindings.persistent_flags",
-                "is required by extracted persistent-flag accesses",
-            ));
         }
         let mut stores = BTreeSet::new();
         for binding in &self.switch_stores {
@@ -810,6 +1122,23 @@ impl MessageFlowBindings {
                 ));
             }
             prior = Some(key);
+        }
+        Ok(())
+    }
+
+    fn validate_for(&self, extracted: &ExtractedMessageFlow) -> Result<(), PlannerContractError> {
+        self.validate()?;
+        if !extracted.temporary_flag_accesses.is_empty() && self.temporary_flags.is_none() {
+            return Err(PlannerContractError::new(
+                "message_flow_program.bindings.temporary_flags",
+                "is required by extracted temporary-flag accesses",
+            ));
+        }
+        if !extracted.persistent_flag_accesses.is_empty() && self.persistent_flags.is_none() {
+            return Err(PlannerContractError::new(
+                "message_flow_program.bindings.persistent_flags",
+                "is required by extracted persistent-flag accesses",
+            ));
         }
         for access in &extracted.switch_accesses {
             let binding = self.switch_store(access.store).ok_or_else(|| {
@@ -1596,6 +1925,25 @@ fn target_node_id(token: &str, target: u16, terminal_node_id: &str) -> String {
     }
 }
 
+fn validate_language_token(
+    field: &str,
+    value: &str,
+    allow_separator: bool,
+) -> Result<(), PlannerContractError> {
+    let valid = !value.is_empty()
+        && value.len() <= 32
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || (allow_separator && byte == b'-')
+        });
+    if !valid {
+        return Err(PlannerContractError::new(
+            field,
+            "must be a lowercase ASCII language or locale token",
+        ));
+    }
+    Ok(())
+}
+
 fn short_token(digest: Digest) -> String {
     digest.as_bytes()[..12]
         .iter()
@@ -1650,7 +1998,7 @@ fn unknown_flag_coordinate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::{ContextSelector, ExactContext};
+    use crate::identity::{ContextSelector, ExactContext, RUNTIME_CONFIGURATION_SCHEMA};
     use crate::logic::{EvidenceKind, EvidenceRecord};
     use crate::orig_extraction::{MessageFlowLabel, MessageFlowSwitchStore};
     use crate::state::ComponentBinding;
@@ -1838,6 +2186,40 @@ mod tests {
         }
     }
 
+    fn import_profile() -> MessageFlowImportProfile {
+        let template = program();
+        MessageFlowImportProfile {
+            schema: MESSAGE_FLOW_IMPORT_PROFILE_SCHEMA.into(),
+            id: "gcn-us-fixture".into(),
+            content_sha256: Digest([1; 32]),
+            language_bundles: BTreeMap::from([("en".into(), "us".into())]),
+            flow_component_id: template.flow_component_id,
+            bindings: template.bindings,
+            evidence: evidence(Digest([9; 32])),
+        }
+    }
+
+    fn runtime_configuration() -> RuntimeConfiguration {
+        RuntimeConfiguration {
+            schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
+            content_sha256: Digest([1; 32]),
+            language: "en".into(),
+            settings: BTreeMap::new(),
+        }
+    }
+
+    fn extracted_archive(group: u16, source: u8) -> ExtractedOrigMessageArchive {
+        ExtractedOrigMessageArchive {
+            relative_path: format!("files/res/Msgus/bmgres{group}.arc"),
+            archive_sha256: Digest([source.wrapping_add(1); 32]),
+            locale_bundle: "us".into(),
+            message_group: group,
+            resource_name: format!("zel_{group:02}.bmg"),
+            resource_sha256: Digest([source; 32]),
+            flow: program().extracted,
+        }
+    }
+
     #[test]
     fn compiles_known_handlers_branches_cleanup_and_event_handoffs() {
         let program = program();
@@ -1966,6 +2348,96 @@ mod tests {
                 .any(|transition| transition.label.contains("node 5"))
         );
         assert_eq!(compiled.unresolved_nodes[0].node_index, 5);
+    }
+
+    #[test]
+    fn constructs_every_selected_resource_with_exact_scope_and_profile_bindings() {
+        let profile = import_profile();
+        let runtime = runtime_configuration();
+        let group_three = extracted_archive(3, 3);
+        let group_zero = extracted_archive(0, 4);
+        let programs = construct_selected_message_flow_programs(
+            profile.content_sha256,
+            &runtime,
+            &profile,
+            "us",
+            &[&group_three, &group_zero],
+        )
+        .unwrap();
+
+        assert_eq!(
+            programs
+                .iter()
+                .map(|program| program.message_group)
+                .collect::<Vec<_>>(),
+            vec![0, 3]
+        );
+        assert!(programs.iter().all(|program| {
+            program.bindings == profile.bindings
+                && program.event_contracts.is_empty()
+                && program.cleanup_edges.is_empty()
+                && program.scope.selectors
+                    == vec![ContextSelector::Exact {
+                        context: runtime.exact_context().unwrap(),
+                    }]
+                && program.evidence.records.iter().any(|record| {
+                    record.kind == EvidenceKind::Extracted
+                        && record.source_sha256 == Some(program.resource_sha256)
+                })
+        }));
+        assert!(programs.iter().all(|program| program.compile().is_ok()));
+        let set = MessageFlowProgramSet {
+            schema: MESSAGE_FLOW_PROGRAM_SET_SCHEMA.into(),
+            profile_sha256: profile.digest().unwrap(),
+            bundle_sha256: Digest([8; 32]),
+            exact_context: runtime.exact_context().unwrap(),
+            locale_bundle: "us".into(),
+            programs,
+        };
+        assert_eq!(
+            MessageFlowProgramSet::decode_canonical(&set.canonical_bytes().unwrap()).unwrap(),
+            set
+        );
+        assert_eq!(
+            MessageFlowImportProfile::decode_canonical(&profile.canonical_bytes().unwrap())
+                .unwrap(),
+            profile
+        );
+    }
+
+    #[test]
+    fn selected_resource_construction_rejects_ambiguity_and_unmapped_layouts() {
+        let profile = import_profile();
+        let runtime = runtime_configuration();
+        let first = extracted_archive(3, 3);
+        let duplicate = extracted_archive(3, 4);
+        assert_eq!(
+            construct_selected_message_flow_programs(
+                profile.content_sha256,
+                &runtime,
+                &profile,
+                "us",
+                &[&first, &duplicate],
+            )
+            .unwrap_err()
+            .field(),
+            "message_flow_import_profile.selected_resources"
+        );
+
+        let mut missing_store = profile;
+        missing_store.bindings.switch_stores.clear();
+        assert_eq!(
+            construct_selected_message_flow_programs(
+                missing_store.content_sha256,
+                &runtime,
+                &missing_store,
+                "us",
+                &[&first],
+            )
+            .unwrap_err()
+            .field(),
+            "message_flow_program.bindings.switch_stores"
+        );
     }
 
     #[test]

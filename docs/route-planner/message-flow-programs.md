@@ -1,8 +1,8 @@
 # Message-flow programs
 
-Status: planner-owned v1 schema and compiler implemented; automatic construction
-from every selected `orig/` language resource and additional event-handler
-audits remain open.
+Status: planner-owned v1 schema, compiler, and exact-resource program-set
+construction implemented; stage/actor entry attachment and additional
+event-handler audits remain open.
 
 ## Boundary
 
@@ -118,12 +118,41 @@ Known friendly names compile into raw aliases over the same dynamic backing
 references. Unknown coordinates remain explicit unknown requirements; they are
 not assigned guessed offsets.
 
+## Exact resource-set construction
+
+`MessageFlowImportProfile` is the versioned seam between immutable extraction
+and mutable state. It names one exact content digest, maps runtime language tags
+to extracted locale bundles, supplies the active flow component and backing
+layouts, and carries evidence for those mappings. The extractor does not infer
+a locale from a product ID or invent a backing from a handler name.
+
+`construct-message-flows` accepts a canonical extracted-orig bundle, runtime
+configuration, and import profile. It selects the runtime language's locale
+bundle and emits a canonical `message-flow-program-set/v1` with one exact-scope
+program per message group. Construction fails closed when the language is not
+mapped, the selected bundle is absent, a group is ambiguous, a group exceeds
+the runtime width, or an extracted access lacks a profile-supplied store.
+
+Generated programs intentionally have no event contracts or cleanup edges.
+Those operations depend on source-audited handlers and callers, not on the BMG
+graph alone. Adding them later does not alter the extracted graph or the
+profile's storage semantics.
+
+```text
+route-planner construct-message-flows \
+  --bundle extracted-orig.json \
+  --runtime-configuration runtime.json \
+  --profile message-import-profile.json \
+  --output message-programs.json
+```
+
 ## Remaining import work
 
-The v1 compiler establishes the state/control representation, but production
-fact-pack generation still needs to:
+The v1 compiler and constructor establish the state/control representation,
+but production fact-pack integration still needs to:
 
-1. construct programs automatically from the exact selected language resource;
+1. publish audited import profiles for supported exact builds and language
+   mappings;
 2. attach stage message-group selection and actor flow-label entry contracts;
 3. audit additional generic item, pending-operation, jump, event-request, and
    cut handoff handlers;
@@ -131,4 +160,3 @@ fact-pack generation still needs to:
 5. merge compiled aliases/mechanics into resolved fact packs with collision
    diagnostics; and
 6. compare semantic flow differences across builds and languages.
-

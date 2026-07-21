@@ -1820,10 +1820,16 @@ Deliverable: replayable state evidence that can validate transition rules.
         cleanup edges and exact node-level event handoff contracts without a
         special-case glitch capability. See
         `docs/route-planner/message-flow-programs.md`.
-  - [ ] Construct these programs automatically from every exact selected
-        language resource, attach stage/actor entry contracts, import additional
-        decidable item/event/jump handlers and real cleanup caller predicates,
-        and merge the results into resolved fact packs with conflict diagnostics.
+  - [x] Construct one canonical program per message group from every resource in
+        an exact runtime-language selection. Versioned import profiles own the
+        language-to-bundle mapping and backing layouts; missing mappings,
+        ambiguous groups, and unbound stores fail closed. The standalone
+        `construct-message-flows` command emits a canonical program set. See
+        `docs/route-planner/message-flow-programs.md`.
+  - [ ] Publish audited exact-build import profiles, attach stage/actor entry
+        contracts, import additional decidable item/event/jump handlers and real
+        cleanup caller predicates, and merge the results into resolved fact
+        packs with conflict diagnostics.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.
