@@ -1441,6 +1441,7 @@ set(DUSK_FILES
         src/dusk/automation/state_checkpoint.cpp
         include/dusk/automation/vi_state.hpp
         include/dusk/automation/input_tape.hpp
+        include/dusk/automation/factorized_pad_policy.hpp
         src/dusk/automation/input_pad.cpp
         src/dusk/automation/input_tape.cpp
         include/dusk/automation/scenario_fixture.hpp

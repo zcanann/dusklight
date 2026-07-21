@@ -490,4 +490,67 @@ mod tests {
             Err(FactorizedPadActionError::InvalidPolicyOutput)
         );
     }
+
+    #[test]
+    fn matches_the_shared_native_policy_golden_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../../tests/fixtures/automation/factorized_pad_policy_v1.json"
+        ))
+        .unwrap();
+        assert_eq!(
+            fixture["schema"],
+            "dusklight-factorized-pad-policy-golden/v1"
+        );
+        for case in fixture["cases"].as_array().unwrap() {
+            let output = case["output"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_f64().unwrap() as f32)
+                .collect::<Vec<_>>();
+            let head = FactorizedPadPolicyHead {
+                maximum_duration_ticks: case["maximum_duration_ticks"].as_u64().unwrap() as u32,
+                button_logit_threshold: case["button_logit_threshold"].as_f64().unwrap() as f32,
+            };
+            let action = head.decode(&output).unwrap();
+            let expected = &case["expected"];
+            assert_eq!(action.buttons, expected["buttons"].as_u64().unwrap() as u16);
+            assert_eq!(
+                action.main_stick.x,
+                expected["stick_x"].as_i64().unwrap() as i8
+            );
+            assert_eq!(
+                action.main_stick.y,
+                expected["stick_y"].as_i64().unwrap() as i8
+            );
+            assert_eq!(
+                action.camera_stick.x,
+                expected["substick_x"].as_i64().unwrap() as i8
+            );
+            assert_eq!(
+                action.camera_stick.y,
+                expected["substick_y"].as_i64().unwrap() as i8
+            );
+            assert_eq!(
+                action.trigger_left,
+                expected["trigger_left"].as_u64().unwrap() as u8
+            );
+            assert_eq!(
+                action.trigger_right,
+                expected["trigger_right"].as_u64().unwrap() as u8
+            );
+            assert_eq!(
+                action.analog_a,
+                expected["analog_a"].as_u64().unwrap() as u8
+            );
+            assert_eq!(
+                action.analog_b,
+                expected["analog_b"].as_u64().unwrap() as u8
+            );
+            assert_eq!(
+                action.duration_ticks,
+                expected["duration_ticks"].as_u64().unwrap() as u32
+            );
+        }
+    }
 }

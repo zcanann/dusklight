@@ -596,6 +596,16 @@ target_include_directories(dusk_suffix_batch_test PRIVATE ${CMAKE_SOURCE_DIR}/in
 target_link_libraries(dusk_suffix_batch_test PRIVATE nlohmann_json::nlohmann_json)
 set_target_properties(dusk_suffix_batch_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_factorized_pad_policy_test EXCLUDE_FROM_ALL
+    tests/factorized_pad_policy_test.cpp
+)
+target_include_directories(dusk_factorized_pad_policy_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(dusk_factorized_pad_policy_test PRIVATE nlohmann_json::nlohmann_json)
+target_compile_definitions(dusk_factorized_pad_policy_test PRIVATE
+    DUSK_FACTORIZED_PAD_POLICY_GOLDEN_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/automation/factorized_pad_policy_v1.json"
+)
+set_target_properties(dusk_factorized_pad_policy_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_learning_episode_test EXCLUDE_FROM_ALL
     tests/learning_episode_test.cpp
     src/dusk/automation/input_pad.cpp
