@@ -1640,6 +1640,11 @@ evidenced overlays over the generated base rather than silent edits to it.
         and source-audit the GameCube PAL `Msguk`/`Msgde`/`Msgfr`/`Msgsp`/`Msgit`
         selection table and mount boundaries. See
         `docs/route-planner/runtime-language-selection-audit.md`.
+  - [x] Add canonical bounded DOL range evidence for constants outside named
+        functions. The extractor resolves virtual addresses through exactly one
+        loadable text/data section and rejects zero, oversized, cross-section,
+        overlapping-section, or truncated ranges; the two GZ2E01 `Msgus` path
+        artifacts are now replayable examples.
   - [ ] Reproduce exact PAL, Wii, and HD executable/resource identities and bind
         every supported runtime language to its actual base and numbered message
         archives; source-family branches alone must not enable planner facts.

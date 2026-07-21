@@ -669,14 +669,15 @@ impl RelevanceBuilder {
                 spawn_field,
                 ..
             } => {
-                self.dependencies.extend(
-                    [stage_field, room_field, spawn_field]
-                        .into_iter()
-                        .map(|field| StateDependency::ComponentField {
-                            component_id: component_id.clone(),
-                            field: field.clone(),
-                        }),
-                );
+                self.dependencies
+                    .extend(
+                        [stage_field, room_field, spawn_field]
+                            .into_iter()
+                            .map(|field| StateDependency::ComponentField {
+                                component_id: component_id.clone(),
+                                field: field.clone(),
+                            }),
+                    );
             }
             StateOperation::Write { .. }
             | StateOperation::WriteFields { .. }

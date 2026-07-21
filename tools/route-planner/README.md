@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns thirty-five operations:
+The planner CLI currently owns thirty-six operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -94,6 +94,10 @@ The planner CLI currently owns thirty-five operations:
   selected bytes, and classifies only the mechanically decidable one-instruction
   `blr` shape as an immediate return. Gameplay meaning remains a separate
   audited binding.
+- `extract-binary-range-evidence` resolves a bounded virtual-address range
+  through exactly one loadable DOL text or data section and seals the selected
+  bytes without assigning them semantic meaning. Zero, oversized,
+  cross-section, overlapping-section, and truncated ranges fail closed.
 - `extract-jstudio-stb` performs a bounded structural decode of one JStudio STB
   from a supplied archive. It indexes embedded FVB functions and decodes object
   IDs, sequence commands, waits/suspends/jumps, and paragraph boundaries while

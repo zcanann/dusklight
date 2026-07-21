@@ -1,5 +1,7 @@
 use dusklight_route_planner::artifact::Digest;
-use dusklight_route_planner::binary_evidence::extract_dol_function_evidence;
+use dusklight_route_planner::binary_evidence::{
+    extract_dol_function_evidence, extract_dol_range_evidence,
+};
 use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::cutscene_corruption::compile_actor_corruption_hypothesis;
 use dusklight_route_planner::cutscene_import::{
@@ -92,6 +94,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("construct-message-flows") => construct_message_flows(&args[1..]),
         Some("compose") => compose(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
+        Some("extract-binary-range-evidence") => extract_binary_range_evidence(&args[1..]),
         Some("extract-event-list") => extract_event_list(&args[1..]),
         Some("extract-function-evidence") => extract_function_evidence(&args[1..]),
         Some("extract-jstudio-stb") => extract_jstudio_stb(&args[1..]),
@@ -780,6 +783,30 @@ fn extract_function_evidence(args: &[String]) -> Result<(), Box<dyn Error>> {
             "file_offset": evidence.file_offset,
             "code_sha256": evidence.code_sha256,
             "shape": evidence.shape,
+        }))?
+    );
+    Ok(())
+}
+
+fn extract_binary_range_evidence(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let dol_path = required_path(args, "--dol")?;
+    let virtual_address = required_u32(args, "--virtual-address")?;
+    let byte_size = required_u32(args, "--size")?;
+    let output = required_path(args, "--output")?;
+    let evidence = extract_dol_range_evidence(&fs::read(&dol_path)?, virtual_address, byte_size)?;
+    write_file(&output, &evidence.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": evidence.schema,
+            "output": output,
+            "sha256": evidence.digest()?,
+            "virtual_address": evidence.virtual_address,
+            "byte_size": evidence.byte_size,
+            "section_kind": evidence.section_kind,
+            "section_index": evidence.section_index,
+            "file_offset": evidence.file_offset,
+            "bytes_sha256": evidence.bytes_sha256,
         }))?
     );
     Ok(())
@@ -1802,6 +1829,16 @@ fn required_path(args: &[String], name: &str) -> Result<PathBuf, Box<dyn Error>>
         .ok_or_else(|| format!("missing required {name} <path>").into())
 }
 
+fn required_u32(args: &[String], name: &str) -> Result<u32, Box<dyn Error>> {
+    let value = option(args, name).ok_or_else(|| format!("missing required {name} <integer>"))?;
+    let parsed = if let Some(hex) = value.strip_prefix("0x") {
+        u32::from_str_radix(hex, 16)
+    } else {
+        value.parse()
+    };
+    parsed.map_err(|_| format!("invalid {name} integer: {value}").into())
+}
+
 fn usize_option(args: &[String], name: &str, default: usize) -> Result<usize, Box<dyn Error>> {
     Ok(option(args, name)
         .map(|value| value.parse())
@@ -1844,6 +1881,7 @@ fn print_usage() {
             "  route-planner diff-orig --left LEFT.json --right RIGHT.json [--left-locale LOCALE --right-locale LOCALE] --output DIFF.json",
             "  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]",
             "  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json",
+            "  route-planner extract-binary-range-evidence --dol main.dol --virtual-address ADDRESS --size BYTES --output EVIDENCE.json",
             "  route-planner extract-event-list --archive ARCHIVE.arc [--resource event_list.dat] --output EVENTS.json",
             "  route-planner extract-function-evidence --dol main.dol --symbols symbols.txt --symbol EXACT_NAME --output EVIDENCE.json",
             "  route-planner extract-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --output PROGRAM.json",

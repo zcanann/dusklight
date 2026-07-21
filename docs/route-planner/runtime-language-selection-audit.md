@@ -41,11 +41,16 @@ and
 `8b8c98b86b6270543709adbbd489ca4a5cd4fa5c30fd4a410420702fd37a085a`.
 
 That function references the NUL-terminated bytes
-`/res/Msgus/bmgres%d.arc` at DOL file offset `0x3966cf`; those 24 bytes have
-SHA-256
+`/res/Msgus/bmgres%d.arc` at virtual address `0x803996cf` (DOL file offset
+`0x3966cf`). Its canonical `binary-range-evidence/v1` artifact has SHA-256
+`6f728f7bc8dd1a509f76dd90ac4a043ffab02bf672df9fd3cebbeacf7f8ebae2`;
+the 24 selected bytes have SHA-256
 `6676d909599d7580a719729cc10f28e34b5b5e4002512b5e5ecc2a951c6888d1`.
 The base archive is likewise compiled as the 22 NUL-terminated bytes
-`/res/Msgus/bmgres.arc` at DOL file offset `0x39712c`, with SHA-256
+`/res/Msgus/bmgres.arc` at virtual address `0x8039a12c` (DOL file offset
+`0x39712c`). Its range artifact has SHA-256
+`6c0031d1d6ce9a38ef2ad3eccc5d45e769f54b4d39374c3cc4b017d4fade44cb`;
+the selected bytes have SHA-256
 `b08e43df99c3e892d20330d1953ebacf9ba459060bb80fd80087c5d216af687b`.
 `dSv_player_config_c::getPalLanguage()` falls through to `0` on this build.
 
@@ -145,4 +150,16 @@ route-planner extract-function-evidence \
   --symbols config/GZ2E01/symbols.txt \
   --symbol readMessageGroupLocal__12dMsgObject_cFPP25mDoDvdThd_mountXArchive_c \
   --output gz2e01-read-message-group.json
+
+route-planner extract-binary-range-evidence \
+  --dol orig/GZ2E01/sys/main.dol \
+  --virtual-address 0x803996cf \
+  --size 24 \
+  --output gz2e01-msgus-group-path.json
+
+route-planner extract-binary-range-evidence \
+  --dol orig/GZ2E01/sys/main.dol \
+  --virtual-address 0x8039a12c \
+  --size 22 \
+  --output gz2e01-msgus-base-path.json
 ```
