@@ -36,7 +36,8 @@ The planner CLI currently owns ten operations:
 - `solve` runs bounded causal reachability against planner-owned catalogs and
   can apply an optional route book's scoped constraints, action directives,
   ordered conditioned methods, cost/evidence thresholds, and deterministic soft
-  preferences.
+  preferences. Reached steps retain obstruction/resolver/obligation choices;
+  failed searches retain a deterministic closest blocker witness per transition.
 - `solve-portable` expands a route book's exact/equivalent context scope,
   requires one explicit start state per exact context, solves each context
   independently, and reports whether the route reaches its goal everywhere.

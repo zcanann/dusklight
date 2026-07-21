@@ -550,7 +550,7 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Planner service schema v2 provides a typed JSON-lines transport owned by the
+- Planner service schema v3 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -588,7 +588,7 @@ The current code shows:
   and technique directives. Required actions are part of search identity, so a
   state reached without a pinned action does not erase a later compliant path.
   Planner CLI/service solve requests accept an optional route book and seal its
-  digest into solve-report schema v2. Unsupported writer/microtrace execution
+  digest into solve-report schema v3. Unsupported writer/microtrace execution
   fails closed rather than being silently ignored.
 - Selected and pinned route-book methods now compile to ordered action
   subsequences; banned methods prune a path when their ordered subsequence is
@@ -600,6 +600,12 @@ The current code shows:
   transition, preserving intermediate states instead of treating setup as one
   opaque mutation. Unknown hard method conditions produce `unknown`, and an
   uncertain banned-method match cannot be reported as a known reachable route.
+- Solve-report schema v3 retains active/unknown obstructions, selected
+  resolvers/techniques, discharged/outstanding/introduced obligations, and
+  semantic state identities on successful steps. Failed searches keep the
+  deterministic closest witnessed blocker state for each transition, including
+  guard truth and unknown requirements; portable solve-report schema v2 embeds
+  those per-context proofs.
 - Soft action and method preferences use deterministic lexicographic search:
   minimize action depth first, then maximize total preference weight among
   equal-depth routes. Each directive contributes at most once, preference and
@@ -1791,6 +1797,10 @@ Deliverable: researchers can extend the model without editing core code.
         standalone planner runtime boundary, isolated from huntctl's TAS CLI and
         workbench implementation.
 - [ ] Report minimal missing obligations/assumptions where practical.
+  - [x] Retain a deterministic closest blocker witness per transition with guard
+        truth, active/unknown obstructions, selected setup, discharged and
+        outstanding obligations, unknown requirements, and source-state digest.
+  - [ ] Compute minimal failed-producer cuts across multiple upstream actions.
 - [ ] Add bounded suspicious-state queries and retain complete proof objects for
       model-bug versus research-lead triage.
 
@@ -1804,7 +1814,8 @@ Deliverable: a headless query API and deterministic fixture suite.
   - [ ] Retain full guard, obligation, operation, and evidence derivations for
         reached and failed alternatives.
 - [ ] Explain derived lockouts as failed producer cuts.
-- [ ] Explain obstructions and the resolver chosen for each approach.
+- [x] Explain active/unknown obstructions and the resolver/technique chosen for
+      each reached approach; retain the closest unresolved witness on failure.
 - [ ] Show component transformation and provenance histories.
 - [ ] Show last-writer and gate history for latched values.
 - [ ] Label all hypothetical and low-confidence dependencies.

@@ -9,10 +9,12 @@ use crate::state::{ComponentPayload, PlayerForm, PlayerMount, StateComponent, St
 use crate::transition::{CandidateTransition, GateRule, ReaderRule, WriterRule};
 use crate::transition::{Obstruction, ObstructionResolver, Technique};
 use crate::{PlannerContractError, validate_stable_id};
+use serde::Serialize;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EvaluatedTruth {
     True,
     False,
@@ -62,7 +64,8 @@ pub enum FeasibilityMode {
     Modeled,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum TransitionClassification {
     Inapplicable,
     GuardBlocked,

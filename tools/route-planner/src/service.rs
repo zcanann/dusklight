@@ -15,7 +15,7 @@ use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v2";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v3";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

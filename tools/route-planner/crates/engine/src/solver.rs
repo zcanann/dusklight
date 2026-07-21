@@ -1,14 +1,14 @@
 //! Bounded forward state search with explicit feasibility choices and proofs.
 
 use crate::evaluation::{
-    EvaluatedTruth, EvidencePolicy, FeasibilityMode, FeasibilitySelection, PredicateEvaluator,
-    RuleClassification, TransitionClassification,
+    EvaluatedTruth, EvidencePolicy, FeasibilityMode, FeasibilityResolution, FeasibilitySelection,
+    PredicateEvaluator, RuleClassification, TransitionAssessment, TransitionClassification,
 };
 use crate::execution::PlannerExecutionState;
 use crate::identity::EquivalenceSet;
 use crate::logic::{FactCatalog, PredicateExpression, TruthStatus};
 use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
-use crate::transition::{MechanicsCatalog, PathConstraint};
+use crate::transition::{CandidateTransition, MechanicsCatalog, PathConstraint};
 use crate::{PlannerContractError, artifact::Digest};
 use serde::Serialize;
 use std::cmp::Ordering;
@@ -377,8 +377,29 @@ pub struct SearchStep {
     pub action_id: String,
     pub selected_resolver_ids: Vec<String>,
     pub selected_technique_ids: Vec<String>,
+    pub active_obstruction_ids: Vec<String>,
+    pub unknown_obstruction_ids: Vec<String>,
+    pub discharged_obligation_ids: Vec<String>,
+    pub outstanding_obligation_ids: Vec<String>,
+    pub introduced_obligation_ids: Vec<String>,
     pub source_state_sha256: Digest,
     pub result_state_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockedTransitionWitness {
+    pub transition_id: String,
+    pub source_state_sha256: Digest,
+    pub classification: TransitionClassification,
+    pub hard_guard: EvaluatedTruth,
+    pub selected_resolver_ids: Vec<String>,
+    pub selected_technique_ids: Vec<String>,
+    pub active_obstruction_ids: Vec<String>,
+    pub unknown_obstruction_ids: Vec<String>,
+    pub discharged_obligation_ids: Vec<String>,
+    pub outstanding_obligation_ids: Vec<String>,
+    pub unknown_requirement_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -394,6 +415,7 @@ pub struct SearchResult {
     pub minimum_evidence: Option<TruthStatus>,
     pub unknown_transition_ids: Vec<String>,
     pub execution_error_ids: Vec<String>,
+    pub blocked_transition_witnesses: Vec<BlockedTransitionWitness>,
 }
 
 struct SearchNode {
@@ -582,6 +604,7 @@ impl<'a> ForwardSolver<'a> {
         let mut visited = BTreeSet::new();
         let mut unknown_transition_ids = BTreeSet::new();
         let mut execution_error_ids = BTreeSet::new();
+        let mut blocked_transition_witnesses = BTreeMap::new();
         let mut saw_unknown_goal = false;
         let mut hit_search_limit = false;
         let mut generated_id = 0_u64;
@@ -677,6 +700,7 @@ impl<'a> ForwardSolver<'a> {
                             .and_then(|policy| policy.minimum_evidence),
                         unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
                         execution_error_ids: execution_error_ids.into_iter().collect(),
+                        blocked_transition_witnesses: Vec::new(),
                     });
                 }
                 EvaluatedTruth::True => {
@@ -747,6 +771,11 @@ impl<'a> ForwardSolver<'a> {
                         action_id: technique.id.clone(),
                         selected_resolver_ids: Vec::new(),
                         selected_technique_ids: vec![technique.id.clone()],
+                        active_obstruction_ids: Vec::new(),
+                        unknown_obstruction_ids: Vec::new(),
+                        discharged_obligation_ids: technique.discharged_obligation_ids.clone(),
+                        outstanding_obligation_ids: Vec::new(),
+                        introduced_obligation_ids: technique.introduced_obligation_ids.clone(),
                         source_state_sha256: state_identity,
                         result_state_sha256: Digest::ZERO,
                     },
@@ -852,6 +881,45 @@ impl<'a> ForwardSolver<'a> {
                             if !resolution.unknown_obstruction_ids.is_empty() {
                                 unknown_transition_ids.insert(transition.id.clone());
                             }
+                            let preliminary = evaluator.assess_transition(
+                                transition,
+                                &resolution.discharged_obligation_ids,
+                                self.options.feasibility_mode,
+                            );
+                            record_blocked_transition_witness(
+                                &mut blocked_transition_witnesses,
+                                BlockedTransitionWitness {
+                                    transition_id: transition.id.clone(),
+                                    source_state_sha256: state_identity,
+                                    classification: if !resolution
+                                        .unknown_obstruction_ids
+                                        .is_empty()
+                                    {
+                                        TransitionClassification::FeasibilityUnknown
+                                    } else {
+                                        TransitionClassification::Obstructed
+                                    },
+                                    hard_guard: preliminary.hard_guard,
+                                    selected_resolver_ids: resolution.applied_resolver_ids.clone(),
+                                    selected_technique_ids: resolution
+                                        .applicable_technique_ids
+                                        .clone(),
+                                    active_obstruction_ids: resolution
+                                        .active_obstruction_ids
+                                        .clone(),
+                                    unknown_obstruction_ids: resolution
+                                        .unknown_obstruction_ids
+                                        .clone(),
+                                    discharged_obligation_ids: resolution
+                                        .discharged_obligation_ids
+                                        .iter()
+                                        .cloned()
+                                        .collect(),
+                                    outstanding_obligation_ids: preliminary
+                                        .outstanding_obligation_ids,
+                                    unknown_requirement_ids: preliminary.unknown_requirement_ids,
+                                },
+                            );
                             continue;
                         }
 
@@ -950,11 +1018,21 @@ impl<'a> ForwardSolver<'a> {
                             TransitionClassification::Executable => {}
                             TransitionClassification::FeasibilityUnknown => {
                                 unknown_transition_ids.insert(transition.id.clone());
+                                record_blocked_transition_witness(
+                                    &mut blocked_transition_witnesses,
+                                    blocked_witness(transition, &next, &resolution, &assessment)?,
+                                );
                                 continue;
                             }
                             TransitionClassification::Inapplicable
                             | TransitionClassification::GuardBlocked
-                            | TransitionClassification::Obstructed => continue,
+                            | TransitionClassification::Obstructed => {
+                                record_blocked_transition_witness(
+                                    &mut blocked_transition_witnesses,
+                                    blocked_witness(transition, &next, &resolution, &assessment)?,
+                                );
+                                continue;
+                            }
                         }
 
                         generated_id = generated_id.saturating_add(1);
@@ -988,6 +1066,31 @@ impl<'a> ForwardSolver<'a> {
                                 action_id: transition.id.clone(),
                                 selected_resolver_ids: resolution.applied_resolver_ids.clone(),
                                 selected_technique_ids: resolution.applicable_technique_ids.clone(),
+                                active_obstruction_ids: resolution.active_obstruction_ids.clone(),
+                                unknown_obstruction_ids: resolution.unknown_obstruction_ids.clone(),
+                                discharged_obligation_ids: resolution
+                                    .discharged_obligation_ids
+                                    .iter()
+                                    .cloned()
+                                    .collect(),
+                                outstanding_obligation_ids: assessment
+                                    .outstanding_obligation_ids
+                                    .clone(),
+                                introduced_obligation_ids: resolution
+                                    .applicable_technique_ids
+                                    .iter()
+                                    .filter_map(|technique_id| {
+                                        self.mechanics
+                                            .techniques
+                                            .iter()
+                                            .find(|technique| technique.id == *technique_id)
+                                    })
+                                    .flat_map(|technique| {
+                                        technique.introduced_obligation_ids.iter().cloned()
+                                    })
+                                    .collect::<BTreeSet<_>>()
+                                    .into_iter()
+                                    .collect(),
                                 source_state_sha256: state_identity,
                                 result_state_sha256: Digest::ZERO,
                             },
@@ -1021,6 +1124,7 @@ impl<'a> ForwardSolver<'a> {
                 .and_then(|policy| policy.minimum_evidence),
             unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
             execution_error_ids: execution_error_ids.into_iter().collect(),
+            blocked_transition_witnesses: blocked_transition_witnesses.into_values().collect(),
         })
     }
 
@@ -1227,6 +1331,61 @@ impl<'a> ForwardSolver<'a> {
                 .map_or(EvaluatedTruth::True, |predicate| after.evaluate(predicate)),
         ))
     }
+}
+
+fn blocked_witness(
+    transition: &CandidateTransition,
+    source: &PlannerExecutionState,
+    resolution: &FeasibilityResolution,
+    assessment: &TransitionAssessment,
+) -> Result<BlockedTransitionWitness, PlannerContractError> {
+    Ok(BlockedTransitionWitness {
+        transition_id: transition.id.clone(),
+        source_state_sha256: source.semantic_digest()?,
+        classification: assessment.classification,
+        hard_guard: assessment.hard_guard,
+        selected_resolver_ids: resolution.applied_resolver_ids.clone(),
+        selected_technique_ids: resolution.applicable_technique_ids.clone(),
+        active_obstruction_ids: resolution.active_obstruction_ids.clone(),
+        unknown_obstruction_ids: resolution.unknown_obstruction_ids.clone(),
+        discharged_obligation_ids: resolution
+            .discharged_obligation_ids
+            .iter()
+            .cloned()
+            .collect(),
+        outstanding_obligation_ids: assessment.outstanding_obligation_ids.clone(),
+        unknown_requirement_ids: assessment.unknown_requirement_ids.clone(),
+    })
+}
+
+fn record_blocked_transition_witness(
+    witnesses: &mut BTreeMap<String, BlockedTransitionWitness>,
+    candidate: BlockedTransitionWitness,
+) {
+    let replace = witnesses
+        .get(&candidate.transition_id)
+        .is_none_or(|current| blocker_rank(&candidate) < blocker_rank(current));
+    if replace {
+        witnesses.insert(candidate.transition_id.clone(), candidate);
+    }
+}
+
+fn blocker_rank(witness: &BlockedTransitionWitness) -> (usize, u8, Digest) {
+    let unresolved = witness
+        .active_obstruction_ids
+        .len()
+        .saturating_add(witness.unknown_obstruction_ids.len())
+        .saturating_add(witness.outstanding_obligation_ids.len())
+        .saturating_add(witness.unknown_requirement_ids.len())
+        .saturating_add(usize::from(witness.hard_guard != EvaluatedTruth::True));
+    let classification = match witness.classification {
+        TransitionClassification::Executable => 0,
+        TransitionClassification::Obstructed => 1,
+        TransitionClassification::GuardBlocked => 2,
+        TransitionClassification::FeasibilityUnknown => 3,
+        TransitionClassification::Inapplicable => 4,
+    };
+    (unresolved, classification, witness.source_state_sha256)
 }
 
 fn and_truth(left: EvaluatedTruth, right: EvaluatedTruth) -> EvaluatedTruth {
@@ -2036,6 +2195,15 @@ mod tests {
             .unwrap();
         assert_eq!(result.status, SearchStatus::Unknown);
         assert_eq!(result.unknown_transition_ids, vec!["transition.unknown"]);
+        assert_eq!(result.blocked_transition_witnesses.len(), 1);
+        assert_eq!(
+            result.blocked_transition_witnesses[0].classification,
+            TransitionClassification::FeasibilityUnknown
+        );
+        assert_eq!(
+            result.blocked_transition_witnesses[0].hard_guard,
+            EvaluatedTruth::Unknown
+        );
     }
 
     #[test]
@@ -2071,6 +2239,42 @@ mod tests {
             result.steps[0].selected_resolver_ids,
             vec!["resolver.text-state"]
         );
+        assert_eq!(
+            result.steps[0].active_obstruction_ids,
+            vec!["obstruction.npc"]
+        );
+        assert_eq!(
+            result.steps[0].discharged_obligation_ids,
+            vec!["obligation.blocker"]
+        );
+        assert!(result.steps[0].outstanding_obligation_ids.is_empty());
+        assert!(result.blocked_transition_witnesses.is_empty());
+    }
+
+    #[test]
+    fn unresolved_obstruction_returns_a_minimal_failure_witness() {
+        let snapshot = snapshot();
+        let mut mechanics = obstructed_transition_catalog(&snapshot);
+        mechanics.resolvers.clear();
+        let facts = facts();
+        let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
+        let result = solver
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(result.status, SearchStatus::UnreachableUnderModel);
+        assert_eq!(result.blocked_transition_witnesses.len(), 1);
+        let witness = &result.blocked_transition_witnesses[0];
+        assert_eq!(witness.transition_id, "transition.a-to-b");
+        assert_eq!(witness.classification, TransitionClassification::Obstructed);
+        assert_eq!(witness.active_obstruction_ids, vec!["obstruction.npc"]);
+        assert_eq!(
+            witness.outstanding_obligation_ids,
+            vec!["obligation.blocker"]
+        );
+        assert!(witness.selected_resolver_ids.is_empty());
     }
 
     #[test]
