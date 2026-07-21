@@ -233,6 +233,18 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     58 profiles and 64-145 actors per entry with zero rejected cases in sealed
     report `95b05ccb...4ee6`. Procedure, animation and concrete collision-body
     state still require typed extensions, so the parent audit remains open.
+  - [x] Establish the boundary for those procedure/animation extensions instead
+    of inventing a universal action field. The console-layout `fopAc_ac_c`
+    base ends at `0x568` and contains transform, speed, event, attention,
+    model/joint-collision and status state, but no common procedure or animation
+    controller. A header census found action/mode-shaped members in 224 of 769
+    actor headers and animation-shaped members in 518, with incompatible types
+    (`u8`, `s16`, `int`, member-function pointers), offsets and semantics;
+    `fopEn_enemy_c` only adds shared enemy flags and one animation frame. The
+    learner contract must therefore use versioned, profile-bound typed
+    components with explicit absence and validation. Host addresses, member
+    pointers, guessed offsets and opaque object bytes are forbidden as features.
+    This architecture result does not claim those typed components are built.
   - [x] Capture Link-rooted relationships as named, optional, pointer-free actor
     identities: targeted, ride, held, grabbed, thrown-boomerang, copy-rod,
     hookshot-roof-wait, chain-grab, and attention hint/catch/look actors.
