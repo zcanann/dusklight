@@ -1016,9 +1016,20 @@ silent truncation or future leakage, and preserves deterministic cold playback.
   iteration. The same-PID profile proof completed two 250-tick batches with
   identical candidate evidence and episode bytes; host pacing changed neither
   consumed inputs nor realized gameplay.
-- [ ] Scale persistent workers only after measuring the single-worker loop.
+- [x] Scale persistent workers only after measuring the single-worker loop.
   Choose process count with checkpoint memory bandwidth and crash isolation in
-  mind rather than an arbitrary client limit.
+  mind rather than an arbitrary client limit. A same-host 1/2/4/8/12-worker
+  weak-scaling sweep ran one persistent frame-440 checkpoint and 111 125-tick
+  candidates per isolated process. All 27 workers and 2,997 episodes passed the
+  strict source boundary with zero GPU code or queue operations. Eight workers
+  sustained 1,027.23 transitions/s and 8.22 episodes/s at 91.9% efficiency
+  with a 2.20 GiB checkpoint footprint; twelve reached 1,348.97 transitions/s
+  but fell to 80.4% efficiency and raised observation latency from 40.86 to
+  63.04 microseconds. Use eight by default on this 14-logical-CPU host, leaving
+  six CPUs for orchestration and crash isolation; twelve is the measured
+  dedicated-host ceiling. The sealed comparison is
+  `docs/glitch-hunting/benchmarks/macos-worker-scaling-20260721.json`
+  (`b0014858...251e5e`).
 - [ ] Publish useful transitions/second, episode throughput, restore cost,
   observation cost, inference cost, corpus bytes/transition and CPU/GPU share.
   - [x] Publish a normal-fidelity 128-candidate single-worker suffix profile
@@ -1028,8 +1039,14 @@ silent truncation or future leakage, and preserves deterministic cold playback.
     inclusive simulation, 0.354 seconds capturing observations and 1.165
     seconds encoding the corpus. Its 9,212,650 compressed bytes are 575.79 bytes
     per transition. GPU code and queue work remained absent. Real policy
-    inference, CPU-utilization attribution and a scaled-worker comparison remain
-    open before the parent item can close.
+    inference remained open after this single-worker run.
+  - [x] Publish a same-host persistent-worker scaling comparison after the
+    single-worker profile. The 1/2/4/8/12-worker sweep reports batch and outer
+    throughput, episode rate, scaling efficiency, checkpoint footprint, mean
+    restore and observation cost, corpus density, CPU-core equivalents and the
+    authenticated absence of GPU work. CPU utilization and the scaled-worker
+    comparison are now present; real policy inference remains the only named
+    omission before the parent item can close.
 
 **Gate 2:** the trajectory-producing learner loop is materially faster than
 cold prefix replay, and every approved fast mode produces the same realized

@@ -278,3 +278,38 @@ the result SHA-256 was
 `bf517ee05b8349de78dc6d87a86790d659203984f405401fd4099865bd492e46`;
 and the native episode-shard SHA-256 was
 `e3f4e1c4870419f7f558e7d2d45a249684522d1909010e7ad44ce8e8b08e9aae`.
+
+## Persistent-worker scaling
+
+A same-host weak-scaling sweep on 2026-07-21 measured one isolated process and
+one persistent frame-440 source checkpoint per worker. Every worker evaluated
+the same 111 candidates for 125 ticks each with state-hash verification
+disabled. All 27 workers and 2,997 episodes passed the strict
+`gameplay-ready-f-sp103` source boundary; every result reported zero shader or
+pipeline creation and zero GPU queue operations. The current Debug executable
+was used throughout, so these absolute rates are not directly comparable to
+the Windows single-worker profile above.
+
+| Workers | Transitions | Batch seconds | Transitions/s | Episodes/s | Efficiency | Checkpoints | Restore mean | Observation mean |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 13,875 | 99.286 | 139.75 | 1.12 | 100.0% | 0.27 GiB | 4.92 ms | 28.54 us |
+| 2 | 27,750 | 106.005 | 261.78 | 2.09 | 93.7% | 0.55 GiB | 5.24 ms | 32.95 us |
+| 4 | 55,500 | 102.576 | 541.06 | 4.33 | 96.8% | 1.10 GiB | 6.10 ms | 32.87 us |
+| 8 | 111,000 | 108.057 | 1,027.23 | 8.22 | 91.9% | 2.20 GiB | 6.13 ms | 40.86 us |
+| 12 | 166,500 | 123.428 | 1,348.97 | 10.79 | 80.4% | 3.29 GiB | 6.92 ms | 63.04 us |
+
+The eight-worker run consumed 841.56 process CPU-seconds in 113.75 outer
+seconds, or 7.40 CPU-core equivalents, and retained six logical CPUs of host
+headroom. Twelve workers consumed 11.20 core equivalents and added 31.3%
+throughput for 50% more processes while observation latency and restore cost
+rose. Eight workers are therefore the default on this 14-logical-CPU host;
+twelve is a tested dedicated-host ceiling, not the interactive default. Each
+worker has its own card, state and cache roots, so a process crash is isolated
+to that worker's 111-episode shard. Checkpoint memory is 294,694,644 bytes per
+worker and is not the limiting resource on this 48 GiB host.
+
+Corpus density was identical in every trial at 598.97 compressed bytes per
+transition. Policy inference remained `not_present`; this comparison does not
+misreport it as zero. The sealed aggregate report is
+[`benchmarks/macos-worker-scaling-20260721.json`](benchmarks/macos-worker-scaling-20260721.json),
+SHA-256 `b00148589ff5e7cabe256d6852dd0e38cecc64474ab033cd37ba92e11d251e5e`.
