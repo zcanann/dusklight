@@ -21,6 +21,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const NATIVE_GEOMETRY_VIEW_SCHEMA_V3: &str = "dusklight-native-geometry-view/v3";
+pub const NATIVE_GEOMETRY_VIEW_SCHEMA_V4: &str = "dusklight-native-geometry-view/v4";
 pub const MAX_GEOMETRY_QUERY_DISTANCE: f32 = 65_536.0;
 pub const MAX_STATIC_PLACEMENTS_PER_WORLD: usize = 1_000_000;
 
@@ -121,6 +122,30 @@ pub struct NativeStaticPlacement {
     pub scale: Option<[f32; 3]>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthoredPlacementJoinStatus {
+    /// The source observation predates the universal actor base-state fields
+    /// required for a semantic join.
+    NotSampled,
+    /// No authored record has the exact captured loader semantics.
+    Unmatched,
+    /// Exactly one authored record has the exact captured loader semantics.
+    Unique,
+    /// Multiple authored records are indistinguishable by the captured
+    /// semantics; no identity is guessed.
+    Ambiguous,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorPlacementJoin {
+    pub runtime_generation: u64,
+    pub status: AuthoredPlacementJoinStatus,
+    pub candidate_count: u32,
+    pub placement_stable_id: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeGeometryObservation {
@@ -137,6 +162,10 @@ pub struct NativeGeometryObservation {
     pub player_yaw: i16,
     pub status: GeometryObservationStatus,
     pub probes: Vec<LocalGeometryProbe>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub actor_observed_count: u32,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub actor_placement_joins: Vec<NativeActorPlacementJoin>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -241,6 +270,7 @@ impl NativeEpisodeGeometryView {
                     step_index,
                     &step.pre_input,
                     &ordered,
+                    &worlds,
                     &indexes,
                     configuration,
                 )?);
@@ -249,13 +279,14 @@ impl NativeEpisodeGeometryView {
                     step_index,
                     &step.post_simulation,
                     &ordered,
+                    &worlds,
                     &indexes,
                     configuration,
                 )?);
             }
         }
         let mut view = Self {
-            schema: NATIVE_GEOMETRY_VIEW_SCHEMA_V3.into(),
+            schema: NATIVE_GEOMETRY_VIEW_SCHEMA_V4.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             world_context_sha256,
@@ -265,7 +296,7 @@ impl NativeEpisodeGeometryView {
             view_sha256: Digest::ZERO,
         };
         view.view_sha256 = view.compute_identity()?;
-        view.validate()?;
+        view.verify_source_shard(shard)?;
         Ok(view)
     }
 
@@ -291,8 +322,10 @@ impl NativeEpisodeGeometryView {
 
     pub fn validate(&self) -> Result<(), NativeGeometryViewError> {
         self.configuration.validate()?;
-        if self.schema != NATIVE_GEOMETRY_VIEW_SCHEMA_V3
-            || self.native_shard_sha256 == Digest::ZERO
+        if !matches!(
+            self.schema.as_str(),
+            NATIVE_GEOMETRY_VIEW_SCHEMA_V3 | NATIVE_GEOMETRY_VIEW_SCHEMA_V4
+        ) || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || self.world_context_sha256 == Some(Digest::ZERO)
             || self.worlds.is_empty()
@@ -369,6 +402,67 @@ impl NativeEpisodeGeometryView {
                     "native geometry observation status is inconsistent",
                 ));
             }
+            let world = self
+                .worlds
+                .binary_search_by(|world| world.stage.as_str().cmp(&observation.stage))
+                .ok()
+                .map(|index| &self.worlds[index])
+                .ok_or_else(|| {
+                    NativeGeometryViewError::new(
+                        "native geometry observation has no placement world",
+                    )
+                })?;
+            if self.schema == NATIVE_GEOMETRY_VIEW_SCHEMA_V3 {
+                if observation.actor_observed_count != 0
+                    || !observation.actor_placement_joins.is_empty()
+                {
+                    return Err(NativeGeometryViewError::new(
+                        "legacy native geometry view contains actor-placement joins",
+                    ));
+                }
+            } else {
+                if usize::try_from(observation.actor_observed_count).ok()
+                    != Some(observation.actor_placement_joins.len())
+                {
+                    return Err(NativeGeometryViewError::new(
+                        "native geometry actor-placement join set is incomplete",
+                    ));
+                }
+                let mut previous_generation = None;
+                for join in &observation.actor_placement_joins {
+                    let canonical = match join.status {
+                        AuthoredPlacementJoinStatus::NotSampled => {
+                            join.candidate_count == 0 && join.placement_stable_id.is_none()
+                        }
+                        AuthoredPlacementJoinStatus::Unmatched => {
+                            join.candidate_count == 0 && join.placement_stable_id.is_none()
+                        }
+                        AuthoredPlacementJoinStatus::Unique => {
+                            join.candidate_count == 1
+                                && join.placement_stable_id.as_ref().is_some_and(|stable_id| {
+                                    world
+                                        .placements
+                                        .binary_search_by(|placement| {
+                                            placement.stable_id.as_str().cmp(stable_id)
+                                        })
+                                        .is_ok()
+                                })
+                        }
+                        AuthoredPlacementJoinStatus::Ambiguous => {
+                            join.candidate_count > 1 && join.placement_stable_id.is_none()
+                        }
+                    };
+                    if !canonical
+                        || previous_generation
+                            .is_some_and(|previous| previous >= join.runtime_generation)
+                    {
+                        return Err(NativeGeometryViewError::new(
+                            "native geometry actor-placement join is noncanonical",
+                        ));
+                    }
+                    previous_generation = Some(join.runtime_generation);
+                }
+            }
             for probe in &observation.probes {
                 probe
                     .validate()
@@ -383,13 +477,96 @@ impl NativeEpisodeGeometryView {
         Ok(())
     }
 
+    pub fn verify_source_shard(
+        &self,
+        shard: &NativeEpisodeShard,
+    ) -> Result<(), NativeGeometryViewError> {
+        self.validate()?;
+        let expected_observations = shard
+            .episodes
+            .iter()
+            .try_fold(0_usize, |total, episode| {
+                total.checked_add(episode.steps.len().checked_mul(2)?)
+            })
+            .ok_or_else(|| {
+                NativeGeometryViewError::new("native geometry source size overflowed")
+            })?;
+        if self.native_shard_sha256 != shard.content_sha256
+            || self.observation_schema != shard.metadata.observation_schema
+            || self.observations.len() != expected_observations
+        {
+            return Err(NativeGeometryViewError::new(
+                "native geometry view is detached from its source shard",
+            ));
+        }
+        let mut observation_index = 0;
+        for episode in &shard.episodes {
+            for (step_index, step) in episode.steps.iter().enumerate() {
+                for (phase, source) in [
+                    (GeometryObservationPhase::PreInput, &step.pre_input),
+                    (
+                        GeometryObservationPhase::PostSimulation,
+                        &step.post_simulation,
+                    ),
+                ] {
+                    let retained = &self.observations[observation_index];
+                    observation_index += 1;
+                    if retained.episode_id != episode.id
+                        || retained.step_index != u32::try_from(step_index).unwrap_or(u32::MAX)
+                        || retained.phase != phase
+                        || retained.boundary_index != source.boundary_index
+                        || retained.state_identity_xxh3_128 != hex(&source.state_identity)
+                        || retained.stage != source.stage
+                        || retained.room != source.room
+                        || retained.layer != source.layer
+                    {
+                        return Err(NativeGeometryViewError::new(
+                            "native geometry observation is detached from its source boundary",
+                        ));
+                    }
+                    if self.schema == NATIVE_GEOMETRY_VIEW_SCHEMA_V4 {
+                        let world_index = self
+                            .worlds
+                            .binary_search_by(|world| world.stage.as_str().cmp(&source.stage))
+                            .map_err(|_| {
+                                NativeGeometryViewError::new(
+                                    "native geometry source stage has no placement world",
+                                )
+                            })?;
+                        let expected = materialize_actor_placement_joins(
+                            source,
+                            &self.worlds[world_index].placements,
+                        )?;
+                        if retained.actor_observed_count
+                            != u32::try_from(source.actors.len()).unwrap_or(u32::MAX)
+                            || retained.actor_placement_joins != expected
+                        {
+                            return Err(NativeGeometryViewError::new(
+                                "native actor-placement joins disagree with the source shard",
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn compute_identity(&self) -> Result<Digest, NativeGeometryViewError> {
         let mut canonical = self.clone();
         canonical.view_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeGeometryViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-geometry-view/v3\0");
+        hasher.update(match self.schema.as_str() {
+            NATIVE_GEOMETRY_VIEW_SCHEMA_V3 => b"dusklight.native-geometry-view/v3\0".as_slice(),
+            NATIVE_GEOMETRY_VIEW_SCHEMA_V4 => b"dusklight.native-geometry-view/v4\0".as_slice(),
+            _ => {
+                return Err(NativeGeometryViewError::new(
+                    "native geometry view schema cannot be sealed",
+                ));
+            }
+        });
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -492,11 +669,81 @@ fn validate_static_placement(
     Ok(())
 }
 
+fn materialize_actor_placement_joins(
+    observation: &NativeLearningObservation,
+    placements: &[NativeStaticPlacement],
+) -> Result<Vec<NativeActorPlacementJoin>, NativeGeometryViewError> {
+    let mut joins = Vec::with_capacity(observation.actors.len());
+    for actor in &observation.actors {
+        if !actor.base_state_available {
+            joins.push(NativeActorPlacementJoin {
+                runtime_generation: actor.runtime_generation,
+                status: AuthoredPlacementJoinStatus::NotSampled,
+                candidate_count: 0,
+                placement_stable_id: None,
+            });
+            continue;
+        }
+        let candidates = placements
+            .iter()
+            .filter(|placement| placement_matches_actor(placement, actor, observation.layer))
+            .collect::<Vec<_>>();
+        let candidate_count = u32::try_from(candidates.len()).map_err(|_| {
+            NativeGeometryViewError::new("authored actor-placement candidate count overflowed")
+        })?;
+        let (status, placement_stable_id) = match candidates.as_slice() {
+            [] => (AuthoredPlacementJoinStatus::Unmatched, None),
+            [placement] => (
+                AuthoredPlacementJoinStatus::Unique,
+                Some(placement.stable_id.clone()),
+            ),
+            _ => (AuthoredPlacementJoinStatus::Ambiguous, None),
+        };
+        joins.push(NativeActorPlacementJoin {
+            runtime_generation: actor.runtime_generation,
+            status,
+            candidate_count,
+            placement_stable_id,
+        });
+    }
+    Ok(joins)
+}
+
+fn placement_matches_actor(
+    placement: &NativeStaticPlacement,
+    actor: &dusklight_evidence::native_episode_shard::NativeActorObservation,
+    observation_layer: i8,
+) -> bool {
+    if placement.kind == NativeStaticPlacementKind::PlayerSpawn
+        || match placement.scope {
+            NativeStaticPlacementScope::Stage => false,
+            NativeStaticPlacementScope::Room => placement.room != Some(actor.home_room),
+        }
+        || placement
+            .layer
+            .is_some_and(|layer| u8::try_from(observation_layer).ok() != Some(layer))
+        || placement.set_id != actor.set_id
+        || placement.parameters != actor.parameters
+        || placement.angle != actor.home_angle
+    {
+        return false;
+    }
+    same_float_bits(placement.absolute_position, actor.home_position)
+        && same_float_bits(placement.scale.unwrap_or([1.0; 3]), actor.scale)
+}
+
+fn same_float_bits<const N: usize>(left: [f32; N], right: [f32; N]) -> bool {
+    left.into_iter()
+        .zip(right)
+        .all(|(left, right)| left.to_bits() == right.to_bits())
+}
+
 fn materialize_observation(
     episode_id: &str,
     step_index: u32,
     observation: &NativeLearningObservation,
     inventories: &[&WorldInventory],
+    worlds: &[GeometryWorldReference],
     indexes: &[WorldSpatialIndex<'_>],
     configuration: NativeGeometryViewConfiguration,
 ) -> Result<NativeGeometryObservation, NativeGeometryViewError> {
@@ -527,6 +774,13 @@ fn materialize_observation(
         player_yaw: observation.player_shape_angle[1],
         status: GeometryObservationStatus::PlayerAbsent,
         probes: Vec::new(),
+        actor_observed_count: u32::try_from(observation.actors.len()).map_err(|_| {
+            NativeGeometryViewError::new("native actor-placement population overflowed")
+        })?,
+        actor_placement_joins: materialize_actor_placement_joins(
+            observation,
+            &worlds[world_index].placements,
+        )?,
     };
     if !observation.player_present {
         return Ok(result);
@@ -581,6 +835,10 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeGeometryViewError(String);
 
@@ -621,11 +879,13 @@ mod tests {
 
     fn shard() -> NativeEpisodeShard {
         let mut shard = NativeEpisodeShard::decode(include_bytes!(
-            "../../../../../tests/fixtures/automation/native_episode_v4.dseps"
+            "../../../../../tests/fixtures/automation/native_episode_v19.dseps"
         ))
         .unwrap();
         shard.episodes.truncate(1);
         shard.episodes[0].steps.truncate(1);
+        shard.metadata.game_data_sha256 = None;
+        shard.metadata.world_context_sha256 = None;
         shard
     }
 
@@ -633,6 +893,15 @@ mod tests {
         let kcl = digest(b"geometry-view-kcl");
         let plc = digest(b"geometry-view-plc");
         let [x, y, z] = observation.player_position;
+        let matched_actor = observation
+            .actors
+            .iter()
+            .find(|actor| {
+                actor.base_state_available
+                    && actor.home_room == observation.room
+                    && same_float_bits(actor.scale, [1.0; 3])
+            })
+            .unwrap_or(&observation.actors[0]);
         let surface_y = y - 10.0;
         WorldInventory {
             schema: WORLD_INVENTORY_SCHEMA.into(),
@@ -668,29 +937,54 @@ mod tests {
                 },
             ],
             chunks: Vec::new(),
-            placements: vec![PlacementRecord {
-                stable_id: "room-placement/0".into(),
-                source_sha256: digest(b"geometry-view-room-data"),
-                scope: SourceScope {
-                    kind: SourceKind::Room,
-                    room: Some(observation.room),
+            placements: vec![
+                PlacementRecord {
+                    stable_id: "room-placement/0".into(),
+                    source_sha256: digest(b"geometry-view-room-data"),
+                    scope: SourceScope {
+                        kind: SourceKind::Room,
+                        room: Some(observation.room),
+                    },
+                    chunk_tag: "ACTR".into(),
+                    record_index: 0,
+                    layer: None,
+                    kind: PlacementKind::Actor,
+                    name: "Scex".into(),
+                    parameters: 0x1234_5678,
+                    position: Vec3 {
+                        x: x + 10.0,
+                        y,
+                        z: z - 20.0,
+                    },
+                    angle: [1, 2, 3],
+                    set_id: 7,
+                    scale_raw: None,
+                    raw_hex: "00".repeat(32),
                 },
-                chunk_tag: "ACTR".into(),
-                record_index: 0,
-                layer: None,
-                kind: PlacementKind::Actor,
-                name: "Scex".into(),
-                parameters: 0x1234_5678,
-                position: Vec3 {
-                    x: x + 10.0,
-                    y,
-                    z: z - 20.0,
+                PlacementRecord {
+                    stable_id: "room-placement/1-matched".into(),
+                    source_sha256: digest(b"geometry-view-room-data"),
+                    scope: SourceScope {
+                        kind: SourceKind::Room,
+                        room: Some(observation.room),
+                    },
+                    chunk_tag: "ACTR".into(),
+                    record_index: 1,
+                    layer: None,
+                    kind: PlacementKind::ScaledActor,
+                    name: "Matched".into(),
+                    parameters: matched_actor.parameters,
+                    position: Vec3 {
+                        x: matched_actor.home_position[0],
+                        y: matched_actor.home_position[1],
+                        z: matched_actor.home_position[2],
+                    },
+                    angle: matched_actor.home_angle,
+                    set_id: matched_actor.set_id,
+                    scale_raw: Some([10, 20, 30]),
+                    raw_hex: "00".repeat(36),
                 },
-                angle: [1, 2, 3],
-                set_id: 7,
-                scale_raw: None,
-                raw_hex: "00".repeat(32),
-            }],
+            ],
             player_spawns: vec![PlacementRecord {
                 stable_id: "stage-spawn/0".into(),
                 source_sha256: digest(b"geometry-view-stage-data"),
@@ -830,7 +1124,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(view.worlds.len(), 1);
-        assert_eq!(view.worlds[0].placements.len(), 2);
+        assert_eq!(view.schema, NATIVE_GEOMETRY_VIEW_SCHEMA_V4);
+        assert_eq!(view.worlds[0].placements.len(), 3);
         let placement = &view.worlds[0].placements[0];
         assert_eq!(placement.stable_id, "room-placement/0");
         assert_eq!(placement.scope, NativeStaticPlacementScope::Room);
@@ -840,15 +1135,27 @@ mod tests {
         assert_eq!(placement.parameters, 0x1234_5678);
         assert_eq!(placement.set_id, 7);
         assert_eq!(
-            view.worlds[0].placements[1].kind,
+            view.worlds[0].placements[2].kind,
             NativeStaticPlacementKind::PlayerSpawn
         );
         assert_eq!(view.observations.len(), 2);
+        assert!(
+            view.observations
+                .iter()
+                .flat_map(|observation| &observation.actor_placement_joins)
+                .any(|join| {
+                    join.status == AuthoredPlacementJoinStatus::Unique
+                        && join.candidate_count == 1
+                        && join.placement_stable_id.as_deref() == Some("room-placement/1-matched")
+                })
+        );
         assert!(view.observations.iter().all(|observation| {
             observation.status == GeometryObservationStatus::Present
                 && observation.probes.len() == 1
                 && (observation.probes[0].distance - 10.0).abs() < 0.001
                 && observation.layer == shard.episodes[0].steps[0].pre_input.layer
+                && usize::try_from(observation.actor_observed_count).unwrap()
+                    == observation.actor_placement_joins.len()
         }));
         let bytes = view.canonical_bytes().unwrap();
         assert_eq!(
@@ -859,6 +1166,81 @@ mod tests {
         let mut tampered = view;
         tampered.observations[0].probes[0].distance = 65.0;
         assert!(tampered.validate().is_err());
+    }
+
+    #[test]
+    fn actor_placement_joins_preserve_ambiguity_unmatched_and_legacy_missingness() {
+        let shard = shard();
+        let mut ambiguous_inventory = inventory_for(&shard.episodes[0].steps[0].pre_input);
+        let mut duplicate = ambiguous_inventory.placements[1].clone();
+        duplicate.stable_id = "room-placement/2-duplicate".into();
+        duplicate.record_index = 2;
+        ambiguous_inventory.placements.push(duplicate);
+        ambiguous_inventory.validate().unwrap();
+        let ambiguous = NativeEpisodeGeometryView::build(
+            &shard,
+            &[ambiguous_inventory],
+            NativeGeometryViewConfiguration::default(),
+        )
+        .unwrap();
+        assert!(ambiguous.observations.iter().any(|observation| {
+            observation.actor_placement_joins.iter().any(|join| {
+                join.status == AuthoredPlacementJoinStatus::Ambiguous
+                    && join.candidate_count == 2
+                    && join.placement_stable_id.is_none()
+            })
+        }));
+
+        let mut unmatched_inventory = inventory_for(&shard.episodes[0].steps[0].pre_input);
+        unmatched_inventory.placements[1].parameters ^= 1;
+        unmatched_inventory.validate().unwrap();
+        let unmatched = NativeEpisodeGeometryView::build(
+            &shard,
+            &[unmatched_inventory],
+            NativeGeometryViewConfiguration::default(),
+        )
+        .unwrap();
+        assert!(unmatched.observations.iter().all(|observation| {
+            observation.actor_placement_joins.iter().any(|join| {
+                join.status == AuthoredPlacementJoinStatus::Unmatched
+                    && join.candidate_count == 0
+                    && join.placement_stable_id.is_none()
+            })
+        }));
+
+        let mut legacy_shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v4.dseps"
+        ))
+        .unwrap();
+        legacy_shard.episodes.truncate(1);
+        legacy_shard.episodes[0].steps.truncate(1);
+        let legacy_inventory = inventory_for(&legacy_shard.episodes[0].steps[0].pre_input);
+        let mut legacy = NativeEpisodeGeometryView::build(
+            &legacy_shard,
+            &[legacy_inventory],
+            NativeGeometryViewConfiguration::default(),
+        )
+        .unwrap();
+        assert!(legacy.observations.iter().all(|observation| {
+            observation.actor_placement_joins.iter().all(|join| {
+                join.status == AuthoredPlacementJoinStatus::NotSampled
+                    && join.candidate_count == 0
+                    && join.placement_stable_id.is_none()
+            })
+        }));
+
+        legacy.schema = NATIVE_GEOMETRY_VIEW_SCHEMA_V3.into();
+        for observation in &mut legacy.observations {
+            observation.actor_observed_count = 0;
+            observation.actor_placement_joins.clear();
+        }
+        legacy.view_sha256 = legacy.compute_identity().unwrap();
+        let bytes = legacy.canonical_bytes().unwrap();
+        assert_eq!(
+            NativeEpisodeGeometryView::decode_canonical(&bytes).unwrap(),
+            legacy
+        );
+        legacy.verify_source_shard(&legacy_shard).unwrap();
     }
 
     #[test]
@@ -886,6 +1268,33 @@ mod tests {
         noncanonical_order.worlds[0].placements.swap(0, 1);
         noncanonical_order.view_sha256 = noncanonical_order.compute_identity().unwrap();
         assert!(noncanonical_order.validate().is_err());
+
+        let mut detached_join = NativeEpisodeGeometryView::build(
+            &shard,
+            &[inventory_for(&shard.episodes[0].steps[0].pre_input)],
+            NativeGeometryViewConfiguration::default(),
+        )
+        .unwrap();
+        let join = detached_join.observations[0]
+            .actor_placement_joins
+            .iter_mut()
+            .find(|join| join.status == AuthoredPlacementJoinStatus::Unique)
+            .unwrap();
+        join.placement_stable_id = Some("missing-placement".into());
+        detached_join.view_sha256 = detached_join.compute_identity().unwrap();
+        assert!(detached_join.validate().is_err());
+
+        let mut incomplete_join = NativeEpisodeGeometryView::build(
+            &shard,
+            &[inventory_for(&shard.episodes[0].steps[0].pre_input)],
+            NativeGeometryViewConfiguration::default(),
+        )
+        .unwrap();
+        incomplete_join.observations[0].actor_placement_joins.pop();
+        incomplete_join.observations[0].actor_observed_count -= 1;
+        incomplete_join.view_sha256 = incomplete_join.compute_identity().unwrap();
+        incomplete_join.validate().unwrap();
+        assert!(incomplete_join.verify_source_shard(&shard).is_err());
     }
 
     #[test]
