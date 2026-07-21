@@ -19,7 +19,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const STAGE_ACTOR_COVERAGE_SCHEMA_V4: &str = "dusklight-stage-actor-coverage/v4";
+pub const STAGE_ACTOR_COVERAGE_SCHEMA_V5: &str = "dusklight-stage-actor-coverage/v5";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,6 +80,8 @@ pub struct StageActorProfileStageCoverage {
 pub enum StageActorFieldCoverageStatus {
     Present,
     Varying,
+    Absent,
+    Ambiguous,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -87,9 +89,12 @@ pub enum StageActorFieldCoverageStatus {
 pub struct StageActorProfileFieldCoverage {
     pub path: String,
     pub status: StageActorFieldCoverageStatus,
+    pub sampled_actors: u64,
+    pub missing_actors: u64,
     pub value_samples: u64,
+    pub null_samples: u64,
     pub true_samples: u64,
-    pub distinct_values: u64,
+    pub distinct_nonnull_values: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -181,6 +186,7 @@ struct LearningActorPopulation {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct LearningActor {
     runtime_generation: u64,
     parent_runtime_generation: u32,
@@ -210,12 +216,56 @@ struct LearningActor {
     home_position: [f32; 3],
     old_position: [f32; 3],
     current_position: [f32; 3],
+    velocity: [f32; 3],
+    forward_speed: f32,
     scale: [f32; 3],
     gravity: f32,
     max_fall_speed: f32,
     eye_position: [f32; 3],
     home_angle: [i16; 3],
     old_angle: [i16; 3],
+    current_angle: [i16; 3],
+    shape_angle: [i16; 3],
+    attention: Option<LearningActorAttention>,
+    event_participation: Option<LearningActorEventParticipation>,
+    return_place_writer: Option<LearningActorReturnPlaceWriter>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LearningActorAttention {
+    flags: u32,
+    position: [f32; 3],
+    distance_indices: [u8; 9],
+    auxiliary: i16,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LearningActorEventParticipation {
+    command: u16,
+    condition: u16,
+    event_id: i16,
+    map_tool_id: u8,
+    index: u8,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LearningActorReturnPlaceWriter {
+    save_room: i8,
+    save_point: u8,
+    switch_room: i8,
+    required_event_set: u16,
+    required_event_unset: u16,
+    required_switch_set: u8,
+    required_switch_unset: u8,
+    no_telop_clear: bool,
+    event_set_satisfied: bool,
+    event_unset_satisfied: bool,
+    switch_set_satisfied: bool,
+    switch_unset_satisfied: bool,
+    eligible: bool,
 }
 
 #[derive(Default)]
@@ -239,9 +289,11 @@ struct StageProfileAccumulator {
 
 #[derive(Default)]
 struct ProfileFieldAccumulator {
+    sampled_actors: BTreeSet<u64>,
     value_samples: u64,
+    null_samples: u64,
     true_samples: u64,
-    distinct_values: BTreeSet<[u8; 32]>,
+    distinct_nonnull_values: BTreeSet<[u8; 32]>,
 }
 
 #[derive(Default)]
@@ -361,12 +413,22 @@ impl StageActorCoverageReport {
                     profile.groups.insert(actor.group);
                     profile.enemy_values.insert(actor.is_enemy);
                     profile.cases.insert(candidate.id.clone());
+                    let profile_sample = profile.actor_instance_count;
+                    accumulate_learning_actor_fields(
+                        &mut profile.fields,
+                        learning_actor,
+                        profile_sample,
+                    )?;
                     profile.actor_instance_count += 1;
-                    accumulate_learning_actor_fields(&mut profile.fields, learning_actor)?;
                     let stage_profile = profile.stages.entry(stage.clone()).or_default();
                     stage_profile.cases.insert(candidate.id.clone());
+                    let stage_sample = stage_profile.actor_instance_count;
+                    accumulate_learning_actor_fields(
+                        &mut stage_profile.fields,
+                        learning_actor,
+                        stage_sample,
+                    )?;
                     stage_profile.actor_instance_count += 1;
-                    accumulate_learning_actor_fields(&mut stage_profile.fields, learning_actor)?;
                 }
                 stage_accumulator
                     .profiles
@@ -401,14 +463,17 @@ impl StageActorCoverageReport {
                         stage,
                         verified_case_count: value.cases.len() as u32,
                         actor_instance_count: value.actor_instance_count,
-                        fields: finish_profile_fields(value.fields),
+                        fields: finish_profile_fields(value.fields, value.actor_instance_count),
                     })
                     .collect::<Vec<_>>();
                 StageActorProfileCoverage {
                     profile_name,
-                    identity_ambiguous: value.actor_names.len() != 1
-                        || value.groups.len() != 1
-                        || value.enemy_values.len() != 1,
+                    identity_ambiguous: profile_identity_ambiguous(
+                        value.actor_names.len(),
+                        value.symbolic_names.len(),
+                        value.groups.len(),
+                        value.enemy_values.len(),
+                    ),
                     actor_names: value.actor_names.into_iter().collect(),
                     symbolic_names: value.symbolic_names.into_iter().collect(),
                     groups: value.groups.into_iter().collect(),
@@ -416,7 +481,7 @@ impl StageActorCoverageReport {
                     verified_case_count: value.cases.len() as u32,
                     stage_count: stages.len() as u32,
                     actor_instance_count: value.actor_instance_count,
-                    fields: finish_profile_fields(value.fields),
+                    fields: finish_profile_fields(value.fields, value.actor_instance_count),
                     stages,
                 }
             })
@@ -436,7 +501,7 @@ impl StageActorCoverageReport {
             .filter(|case| case.status == StageActorEvidenceStatus::VerifiedCompleteSnapshot)
             .count() as u32;
         let mut report = Self {
-            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V4.into(),
+            schema: STAGE_ACTOR_COVERAGE_SCHEMA_V5.into(),
             catalog_sha256,
             ledger_sha256,
             ready_case_count: cases.len() as u32,
@@ -453,7 +518,7 @@ impl StageActorCoverageReport {
     }
 
     pub fn validate(&self) -> Result<(), StageActorCoverageError> {
-        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V4
+        if self.schema != STAGE_ACTOR_COVERAGE_SCHEMA_V5
             || self.catalog_sha256 == Digest::ZERO
             || self.ledger_sha256 == Digest::ZERO
             || self.report_sha256 == Digest::ZERO
@@ -477,8 +542,28 @@ impl StageActorCoverageReport {
                 "stage actor coverage report is invalid",
             ));
         }
+        let stages = self
+            .stages
+            .iter()
+            .map(|stage| (stage.stage.as_str(), stage))
+            .collect::<BTreeMap<_, _>>();
         for profile in &self.profiles {
             if profile.actor_instance_count == 0
+                || profile.verified_case_count == 0
+                || profile.actor_names.is_empty()
+                || profile.groups.is_empty()
+                || profile.enemy_values.is_empty()
+                || !strictly_ordered(&profile.actor_names)
+                || !strictly_ordered(&profile.symbolic_names)
+                || !strictly_ordered(&profile.groups)
+                || !strictly_ordered(&profile.enemy_values)
+                || profile.identity_ambiguous
+                    != profile_identity_ambiguous(
+                        profile.actor_names.len(),
+                        profile.symbolic_names.len(),
+                        profile.groups.len(),
+                        profile.enemy_values.len(),
+                    )
                 || profile.stage_count as usize != profile.stages.len()
                 || profile.stages.is_empty()
                 || profile
@@ -493,9 +578,16 @@ impl StageActorCoverageReport {
                     != profile.actor_instance_count
                 || !valid_profile_fields(&profile.fields, profile.actor_instance_count)
                 || profile.stages.iter().any(|stage| {
+                    let Some(stage_summary) = stages.get(stage.stage.as_str()) else {
+                        return true;
+                    };
                     stage.stage.is_empty()
                         || stage.verified_case_count == 0
+                        || stage.verified_case_count > profile.verified_case_count
+                        || stage.verified_case_count > stage_summary.verified_case_count
                         || stage.actor_instance_count == 0
+                        || stage.actor_instance_count > stage_summary.actor_instance_count
+                        || !stage_summary.profile_names.contains(&profile.profile_name)
                         || !valid_profile_fields(&stage.fields, stage.actor_instance_count)
                 })
             {
@@ -521,10 +613,23 @@ impl StageActorCoverageReport {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| StageActorCoverageError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.stage-actor-coverage.identity/v2\0");
+        hasher.update(b"dusklight.stage-actor-coverage.identity/v3\0");
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
     }
+}
+
+fn strictly_ordered<T: Ord>(values: &[T]) -> bool {
+    !values.windows(2).any(|pair| pair[0] >= pair[1])
+}
+
+fn profile_identity_ambiguous(
+    actor_name_count: usize,
+    symbolic_name_count: usize,
+    group_count: usize,
+    enemy_value_count: usize,
+) -> bool {
+    actor_name_count != 1 || symbolic_name_count > 1 || group_count != 1 || enemy_value_count != 1
 }
 
 fn valid_profile_fields(fields: &[StageActorProfileFieldCoverage], samples: u64) -> bool {
@@ -532,22 +637,38 @@ fn valid_profile_fields(fields: &[StageActorProfileFieldCoverage], samples: u64)
         && !fields.windows(2).any(|pair| pair[0].path >= pair[1].path)
         && fields.iter().all(|field| {
             !field.path.is_empty()
-                && field.value_samples == samples
-                && field.true_samples <= field.value_samples
-                && field.distinct_values > 0
-                && field.distinct_values <= field.value_samples
-                && field.status
-                    == if field.distinct_values > 1 {
-                        StageActorFieldCoverageStatus::Varying
-                    } else {
-                        StageActorFieldCoverageStatus::Present
-                    }
+                && field.sampled_actors > 0
+                && field.sampled_actors <= samples
+                && field.missing_actors == samples - field.sampled_actors
+                && field.value_samples == field.sampled_actors
+                && field.null_samples <= field.value_samples
+                && field.true_samples <= field.value_samples - field.null_samples
+                && field.distinct_nonnull_values <= field.value_samples - field.null_samples
+                && field.status == profile_field_status(field, samples)
         })
+}
+
+fn profile_field_status(
+    field: &StageActorProfileFieldCoverage,
+    samples: u64,
+) -> StageActorFieldCoverageStatus {
+    if field.sampled_actors < samples
+        || (field.null_samples > 0 && field.distinct_nonnull_values > 0)
+    {
+        StageActorFieldCoverageStatus::Ambiguous
+    } else if field.null_samples == field.value_samples {
+        StageActorFieldCoverageStatus::Absent
+    } else if field.distinct_nonnull_values > 1 {
+        StageActorFieldCoverageStatus::Varying
+    } else {
+        StageActorFieldCoverageStatus::Present
+    }
 }
 
 fn accumulate_learning_actor_fields(
     fields: &mut BTreeMap<String, ProfileFieldAccumulator>,
     actor: &LearningActor,
+    actor_sample: u64,
 ) -> Result<(), StageActorCoverageError> {
     let value = serde_json::to_value(actor)
         .map_err(|error| StageActorCoverageError::new(error.to_string()))?;
@@ -555,7 +676,7 @@ fn accumulate_learning_actor_fields(
         StageActorCoverageError::new("learning actor did not serialize as an object")
     })?;
     for (name, value) in object {
-        accumulate_profile_field(name, value, fields)?;
+        accumulate_profile_field(name, value, actor_sample, fields)?;
     }
     Ok(())
 }
@@ -563,23 +684,30 @@ fn accumulate_learning_actor_fields(
 fn accumulate_profile_field(
     path: &str,
     value: &Value,
+    actor_sample: u64,
     fields: &mut BTreeMap<String, ProfileFieldAccumulator>,
 ) -> Result<(), StageActorCoverageError> {
     let field = fields.entry(path.to_string()).or_default();
+    field.sampled_actors.insert(actor_sample);
     field.value_samples += 1;
+    field.null_samples += u64::from(value.is_null());
     field.true_samples += u64::from(value.as_bool() == Some(true));
-    let bytes = serde_json::to_vec(value)
-        .map_err(|error| StageActorCoverageError::new(error.to_string()))?;
-    field.distinct_values.insert(Sha256::digest(bytes).into());
+    if !value.is_null() {
+        let bytes = serde_json::to_vec(value)
+            .map_err(|error| StageActorCoverageError::new(error.to_string()))?;
+        field
+            .distinct_nonnull_values
+            .insert(Sha256::digest(bytes).into());
+    }
     match value {
         Value::Object(object) => {
             for (name, child) in object {
-                accumulate_profile_field(&format!("{path}.{name}"), child, fields)?;
+                accumulate_profile_field(&format!("{path}.{name}"), child, actor_sample, fields)?;
             }
         }
         Value::Array(array) => {
             for (index, child) in array.iter().enumerate() {
-                accumulate_profile_field(&format!("{path}[{index}]"), child, fields)?;
+                accumulate_profile_field(&format!("{path}[{index}]"), child, actor_sample, fields)?;
             }
         }
         _ => {}
@@ -589,19 +717,24 @@ fn accumulate_profile_field(
 
 fn finish_profile_fields(
     fields: BTreeMap<String, ProfileFieldAccumulator>,
+    actor_samples: u64,
 ) -> Vec<StageActorProfileFieldCoverage> {
     fields
         .into_iter()
-        .map(|(path, value)| StageActorProfileFieldCoverage {
-            path,
-            status: if value.distinct_values.len() > 1 {
-                StageActorFieldCoverageStatus::Varying
-            } else {
-                StageActorFieldCoverageStatus::Present
-            },
-            value_samples: value.value_samples,
-            true_samples: value.true_samples,
-            distinct_values: value.distinct_values.len() as u64,
+        .map(|(path, value)| {
+            let sampled_actors = value.sampled_actors.len() as u64;
+            let mut field = StageActorProfileFieldCoverage {
+                path,
+                status: StageActorFieldCoverageStatus::Present,
+                sampled_actors,
+                missing_actors: actor_samples - sampled_actors,
+                value_samples: value.value_samples,
+                null_samples: value.null_samples,
+                true_samples: value.true_samples,
+                distinct_nonnull_values: value.distinct_nonnull_values.len() as u64,
+            };
+            field.status = profile_field_status(&field, actor_samples);
+            field
         })
         .collect()
 }
@@ -899,9 +1032,12 @@ mod tests {
                 "carry_type": 5, "heap_present": true, "model_present": true,
                 "joint_collision_present": false, "home_position": [1.0, 2.0, 3.0],
                 "old_position": [3.0, 4.0, 5.0], "current_position": [4.0, 5.0, 6.0],
+                "velocity": [0.5, 0.0, 1.0], "forward_speed": 1.25,
                 "scale": [1.0, 1.0, 1.0], "gravity": -1.0, "max_fall_speed": -20.0,
                 "eye_position": [4.0, 7.0, 6.0], "home_angle": [1, 2, 3],
-                "old_angle": [4, 5, 6]}),
+                "old_angle": [4, 5, 6], "current_angle": [5, 6, 7],
+                "shape_angle": [6, 7, 8], "attention": null,
+                "event_participation": null, "return_place_writer": null}),
             json!({"runtime_generation": 8, "parent_runtime_generation": 4,
                 "actor_type": 6, "process_subtype": 7, "parameters": 3, "status": 4,
                 "condition": 5, "actor_name": 291, "profile_name": 291, "set_id": 1,
@@ -911,9 +1047,16 @@ mod tests {
                 "carry_type": 6, "heap_present": false, "model_present": true,
                 "joint_collision_present": true, "home_position": [7.0, 8.0, 9.0],
                 "old_position": [9.0, 10.0, 11.0], "current_position": [10.0, 11.0, 12.0],
+                "velocity": [1.5, 2.0, 3.0], "forward_speed": 4.25,
                 "scale": [2.0, 2.0, 2.0], "gravity": -2.0, "max_fall_speed": -30.0,
                 "eye_position": [10.0, 13.0, 12.0], "home_angle": [7, 8, 9],
-                "old_angle": [10, 11, 12]}),
+                "old_angle": [10, 11, 12], "current_angle": [11, 12, 13],
+                "shape_angle": [12, 13, 14],
+                "attention": {"flags": 3, "position": [10.0, 13.0, 12.0],
+                    "distance_indices": [0,1,2,3,4,5,6,7,8], "auxiliary": 2},
+                "event_participation": {"command": 1, "condition": 2,
+                    "event_id": 3, "map_tool_id": 4, "index": 5},
+                "return_place_writer": null}),
         ];
         let actor_bytes = serde_json::to_vec_pretty(&json!({
             "schema": "dusklight.actor-catalog.v7", "simulation_tick": 29,
@@ -998,9 +1141,12 @@ mod tests {
             &StageActorProfileFieldCoverage {
                 path: "current_position[0]".into(),
                 status: StageActorFieldCoverageStatus::Present,
+                sampled_actors: 1,
+                missing_actors: 0,
                 value_samples: 1,
+                null_samples: 0,
                 true_samples: 0,
-                distinct_values: 1,
+                distinct_nonnull_values: 1,
             }
         );
         assert_eq!(link.stages.len(), 1);
@@ -1056,22 +1202,41 @@ mod tests {
     #[test]
     fn profile_field_coverage_counts_variation_without_retaining_raw_values() {
         let mut fields = BTreeMap::new();
-        accumulate_profile_field("health", &json!(3), &mut fields).unwrap();
-        accumulate_profile_field("health", &json!(4), &mut fields).unwrap();
-        accumulate_profile_field("model_present", &json!(true), &mut fields).unwrap();
-        accumulate_profile_field("model_present", &json!(false), &mut fields).unwrap();
-        let fields = finish_profile_fields(fields);
+        accumulate_profile_field("health", &json!(3), 0, &mut fields).unwrap();
+        accumulate_profile_field("health", &json!(4), 1, &mut fields).unwrap();
+        accumulate_profile_field("model_present", &json!(true), 0, &mut fields).unwrap();
+        accumulate_profile_field("model_present", &json!(false), 1, &mut fields).unwrap();
+        accumulate_profile_field("attention", &Value::Null, 0, &mut fields).unwrap();
+        accumulate_profile_field("attention", &json!({"flags": 3}), 1, &mut fields).unwrap();
+        let fields = finish_profile_fields(fields, 2);
 
         let health = fields.iter().find(|field| field.path == "health").unwrap();
         assert_eq!(health.status, StageActorFieldCoverageStatus::Varying);
         assert_eq!(health.value_samples, 2);
-        assert_eq!(health.distinct_values, 2);
+        assert_eq!(health.distinct_nonnull_values, 2);
         let model = fields
             .iter()
             .find(|field| field.path == "model_present")
             .unwrap();
         assert_eq!(model.status, StageActorFieldCoverageStatus::Varying);
         assert_eq!(model.true_samples, 1);
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field.path == "attention")
+                .unwrap()
+                .status,
+            StageActorFieldCoverageStatus::Ambiguous
+        );
+        let flags = fields
+            .iter()
+            .find(|field| field.path == "attention.flags")
+            .unwrap();
+        assert_eq!(flags.sampled_actors, 1);
+        assert_eq!(flags.missing_actors, 1);
+        assert_eq!(flags.status, StageActorFieldCoverageStatus::Ambiguous);
+        assert!(profile_identity_ambiguous(1, 2, 1, 1));
+        assert!(!profile_identity_ambiguous(1, 0, 1, 1));
     }
 
     #[test]
@@ -1081,6 +1246,34 @@ mod tests {
         report.profiles[0].stages[0].actor_instance_count += 1;
         report.report_sha256 = report.compute_digest().unwrap();
         assert!(report.validate().is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rejects_unaccounted_learner_actor_extension_fields() {
+        let (catalog, mut ledger, root) = fixture();
+        let actor_path = root
+            .join("cases")
+            .join(stage_survey_case_storage_id(&catalog.candidates[0].id).to_string())
+            .join("attempt-001-run-00000")
+            .join("actors.json");
+        let mut document: Value = serde_json::from_slice(&fs::read(&actor_path).unwrap()).unwrap();
+        document["learning_actor_population"]["actors"][0]["unaccounted_field"] = json!(7);
+        let actor_bytes = serde_json::to_vec_pretty(&document).unwrap();
+        fs::write(&actor_path, &actor_bytes).unwrap();
+        ledger.cases[0].attempts[0].actor_catalog_sha256 =
+            Some(Digest(Sha256::digest(&actor_bytes).into()));
+
+        let report = StageActorCoverageReport::build(&catalog, &ledger, &root).unwrap();
+        assert_eq!(report.verified_case_count, 0);
+        assert_eq!(
+            report.cases[0].status,
+            StageActorEvidenceStatus::ArtifactRejected
+        );
+        assert_eq!(
+            report.cases[0].diagnostic.as_deref(),
+            Some("actor_catalog_decode_failed")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

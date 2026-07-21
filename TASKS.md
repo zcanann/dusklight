@@ -199,14 +199,17 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     capture path on the surveyed slice; the parent item remains open until all
     successful catalog entries have equivalent evidence.
   - [x] Report learner-facing field coverage per actor profile from that same
-    independently parity-checked population. Stage actor coverage v4 hashes
-    each typed field value, records fixed-vector components separately, and
-    publishes per-profile sample, truth and distinct-value counts without raw
-    values or any desired state. A current v14 observer sample verified 313
-    complete actors across three stages and 59 profiles; all 59 aggregate
-    profiles and all 83 stage/profile cells exposed the same 55 typed paths,
-    while 43 aggregate profiles showed variation in at least one field. The
-    sealed report is `b7cec857...644f2` (ledger `0b468521...3bf0d`). A fourth
+    independently parity-checked population. Stage actor coverage v5 denies
+    unknown learner fields, hashes each typed value, records fixed-vector
+    components separately, and distinguishes absent/mixed optional components
+    without retaining raw values or any desired state. This supersedes v4,
+    whose permissive decoder silently omitted v14 velocity, angle, attention,
+    event-participation and return-place-writer fields. A current v14 observer
+    sample verified 313 complete actors across three stages, 59 aggregate
+    profiles and 83 stage/profile cells. Forty-three profiles varied in at
+    least one field; attention was non-absent for 14 profiles, event
+    participation for five and guarded return-place-writer state for one. The
+    sealed report is `8725e1e3...5227a` (ledger `0b468521...3bf0d`). A fourth
     `F_SP103` case was excluded fail-closed as `actor_catalog_incomplete` while
     crossing a load boundary. This is terminal-boundary coverage over a small
     sample, not proof of temporal variation or all-stage completeness, so the
