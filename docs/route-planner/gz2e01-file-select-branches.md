@@ -142,7 +142,7 @@ activating world state, just as the earlier title-to-name-scene request does.
 
 ## Required executable-model checks
 
-Mechanics catalog v24 and execution state v15 now prove the backing-store and
+Mechanics catalog v25 and execution state v15 now prove the backing-store and
 branching subset below:
 
 - blank, existing, and no-card guards cannot all execute from one observed
@@ -170,21 +170,22 @@ identities. Existing-slot Start now executes the conditional 12-life minimum
 through a generic typed unsigned clamp: lower values rise to 12 and higher
 values retain their value and last-writer provenance.
 
-The transition deliberately retains an explicit unknown requirement for the
-dungeon-6 key clear, hookshot slot rewrites, lineup rebuild, vibration, and
-displayed save-stage update. Those effects, name-entry completion, and
-successful-save work remain open; the backing-store load alone does not claim
-them. Once `selection_end` is independently observed, separate
-new-file and existing-file transitions record the requested `PROC_PLAY_SCENE`
-and pending destination while keeping `PROC_NAME_SCENE` active and the retained
-last world non-traversable.
+The same exact-context transition now clears dungeon-6 key count, applies both
+hookshot slot rewrites, rebuilds the 24-byte lineup in the audited 23-slot
+priority order, copies saved vibration into live session state, and derives the
+displayed save-stage from the restored return place. The item operation is
+generic and parameterized by slot/item values and lineup order; it does not
+embed GZ2E01 constants in the executor. Name-entry completion and
+successful-save work remain open. Once `selection_end` is independently
+observed, separate new-file and existing-file transitions record the requested
+`PROC_PLAY_SCENE` and pending destination while keeping `PROC_NAME_SCENE` active
+and the retained last world non-traversable.
 
-The existing-slot transition is intentionally classified feasibility-unknown:
-its digest-verified sealed image copy, lifetime cut, and life floor are
-executable as an upper bound, but dungeon-6 key clearing, hookshot layout,
-lineup, vibration, and displayed-stage normalization remain one explicit
-unresolved requirement. Blank/no-card selection and both pending play-scene
-request shapes are executable without crossing that unknown boundary.
+The existing-slot transition is executable for this audited post-copy prefix:
+its digest-verified sealed image copy, lifetime cut, and all route-relevant
+`card_to_memory` normalization effects are modeled in order. Blank/no-card
+selection and both pending play-scene request shapes remain independently
+executable.
 
 The save-time `memory_to_card` normalization path, successful physical write,
 void/death restart selection, and build/platform variants remain separate audit

@@ -656,6 +656,23 @@ impl RelevanceBuilder {
                     field: target.field.clone(),
                 });
             }
+            StateOperation::NormalizeItemSlotsAndLineup {
+                component_id,
+                inventory_field,
+                lineup_field,
+                ..
+            } => {
+                self.dependencies.extend([
+                    StateDependency::ComponentField {
+                        component_id: component_id.clone(),
+                        field: inventory_field.clone(),
+                    },
+                    StateDependency::ComponentField {
+                        component_id: component_id.clone(),
+                        field: lineup_field.clone(),
+                    },
+                ]);
+            }
             StateOperation::ActivateStageBank { component_id, .. } => {
                 self.dependencies.insert(StateDependency::Component {
                     component_id: component_id.clone(),
@@ -788,6 +805,21 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
                 field: target.field.clone(),
             }]
         }
+        StateOperation::NormalizeItemSlotsAndLineup {
+            component_id,
+            inventory_field,
+            lineup_field,
+            ..
+        } => vec![
+            StateDependency::ComponentField {
+                component_id: component_id.clone(),
+                field: inventory_field.clone(),
+            },
+            StateDependency::ComponentField {
+                component_id: component_id.clone(),
+                field: lineup_field.clone(),
+            },
+        ],
         StateOperation::WriteFields {
             component_id,
             fields,
@@ -1441,6 +1473,37 @@ mod tests {
         assert_eq!(relevance.reader_ids, vec!["reader.goal-recent-item"]);
         assert!(!relevance.contains_transition("transition.noise"));
         assert!(relevance.frontier_dependencies.is_empty());
+    }
+
+    #[test]
+    fn item_slot_normalization_declares_both_inputs_and_outputs() {
+        let operation = StateOperation::NormalizeItemSlotsAndLineup {
+            component_id: "save.items".into(),
+            inventory_field: "inventory".into(),
+            lineup_field: "item_lineup".into(),
+            primary_slot: 9,
+            secondary_slot: 10,
+            single_item: 0x44,
+            combined_item: 0x47,
+            empty_item: 0xff,
+            lineup_order: vec![10, 9],
+        };
+        let inventory = StateDependency::ComponentField {
+            component_id: "save.items".into(),
+            field: "inventory".into(),
+        };
+        let lineup = StateDependency::ComponentField {
+            component_id: "save.items".into(),
+            field: "item_lineup".into(),
+        };
+
+        let mut builder = RelevanceBuilder::default();
+        builder.add_operation_inputs(&operation);
+        assert_eq!(
+            builder.dependencies,
+            BTreeSet::from([inventory.clone(), lineup.clone()])
+        );
+        assert_eq!(operation_outputs(&operation), vec![inventory, lineup]);
     }
 
     #[test]

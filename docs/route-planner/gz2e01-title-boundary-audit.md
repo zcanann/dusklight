@@ -211,11 +211,10 @@ Existing-slot Start derives the persistent-file identity and complete manifest
 from the selected populated physical slot, retires the active file-0 lifetime,
 and restores a fresh card-backed runtime. Header, restart, and temporary-event
 metadata are explicit non-card carries; omitted runtime metadata dies. Exact
-GZ2E01 DOL artifacts now seal `card_to_memory` and `setLineUpItem`, and the
-conditional 12-life minimum executes as a typed clamp. Post-copy dungeon-6 key,
-hookshot/lineup, vibration, and display normalization remains an unknown
-requirement, so this edge cannot silently become established merely because the
-backing projection is executable. See
+GZ2E01 DOL artifacts now seal `card_to_memory` and `setLineUpItem`. The
+conditional 12-life minimum, dungeon-6 key reset, both hookshot layout repairs,
+exact lineup rebuild, saved-vibration application, and return-place-derived
+display stage now execute as typed operations after the backing projection. See
 `gz2e01-file-select-branches.md`.
 
 After independently observed `selection_end`, the next source-audited actions
@@ -232,8 +231,7 @@ all.”
 
 Still open:
 
-- finish the remaining existing-slot post-copy normalization, name confirmation, and
-  successful-save branches;
+- finish name confirmation and successful-save branches;
 - audit void and death restart selection, including their special-stage and
   boss-room branches; and
 - produce traces that distinguish pending scene requests from completed world

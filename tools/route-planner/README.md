@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns thirty-eight operations:
+The planner CLI currently owns thirty-nine operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -43,9 +43,11 @@ The planner CLI currently owns thirty-eight operations:
   custom session buffers and copies buffer 1 into live state without creating a
   card image. Existing-slot Start derives the selected sealed manifest and a
   fresh runtime identity at execution time. Exact GZ2E01 DOL evidence now seals
-  `card_to_memory` and `setLineUpItem`, and a typed unsigned-floor operation
-  executes the conditional 12-life minimum. The remaining key/item-layout,
-  lineup, vibration, and display normalization stays explicit unknown. Once
+  `card_to_memory` and `setLineUpItem`; typed unsigned-floor and item-layout
+  operations execute the conditional 12-life minimum, dungeon-6 key reset,
+  hookshot migration, and exact lineup rebuild. Saved vibration and return-place
+  stage are copied into their session consumers, closing the existing-slot
+  post-copy normalization edge. Once
   selection completion is independently observed, new/existing play-scene
   actions retain `PROC_NAME_SCENE` and record only the fixed or return-place-
   derived pending world load and requested `PROC_PLAY_SCENE`.

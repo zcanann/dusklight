@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v24";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v25";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -102,6 +102,20 @@ pub enum StateOperation {
     ClampUnsignedMinimum {
         target: ComponentFieldTarget,
         minimum: u64,
+    },
+    /// Applies a two-slot item migration and rebuilds the deterministic lineup
+    /// of occupied inventory-slot indices. Values are supplied by the exact
+    /// content rule rather than embedded in the executor.
+    NormalizeItemSlotsAndLineup {
+        component_id: String,
+        inventory_field: String,
+        lineup_field: String,
+        primary_slot: u8,
+        secondary_slot: u8,
+        single_item: u8,
+        combined_item: u8,
+        empty_item: u8,
+        lineup_order: Vec<u8>,
     },
     AdjustBoundRawUnsigned {
         component_kind: ComponentKind,
@@ -742,6 +756,56 @@ impl StateOperation {
                     return Err(PlannerContractError::new(
                         "operation.clamp_unsigned_minimum.minimum",
                         "must be nonzero",
+                    ));
+                }
+                Ok(())
+            }
+            Self::NormalizeItemSlotsAndLineup {
+                component_id,
+                inventory_field,
+                lineup_field,
+                primary_slot,
+                secondary_slot,
+                single_item,
+                combined_item,
+                empty_item,
+                lineup_order,
+            } => {
+                validate_stable_id("operation.component_id", component_id)?;
+                validate_stable_id("operation.inventory_field", inventory_field)?;
+                validate_stable_id("operation.lineup_field", lineup_field)?;
+                if inventory_field == lineup_field {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup.lineup_field",
+                        "must differ from the inventory field",
+                    ));
+                }
+                if primary_slot == secondary_slot {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup.secondary_slot",
+                        "must differ from the primary slot",
+                    ));
+                }
+                if single_item == combined_item
+                    || single_item == empty_item
+                    || combined_item == empty_item
+                {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup.items",
+                        "single, combined, and empty item values must be distinct",
+                    ));
+                }
+                if lineup_order.is_empty() {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup.lineup_order",
+                        "must not be empty",
+                    ));
+                }
+                let unique = lineup_order.iter().copied().collect::<BTreeSet<_>>();
+                if unique.len() != lineup_order.len() {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup.lineup_order",
+                        "must contain unique slot indices",
                     ));
                 }
                 Ok(())
@@ -2065,6 +2129,41 @@ mod tests {
         assert_eq!(
             operation.validate().unwrap_err().field(),
             "operation.clamp_unsigned_minimum.minimum"
+        );
+    }
+
+    #[test]
+    fn item_slot_normalization_rejects_ambiguous_layout_contracts() {
+        let operation = StateOperation::NormalizeItemSlotsAndLineup {
+            component_id: "save.main".into(),
+            inventory_field: "inventory".into(),
+            lineup_field: "item_lineup".into(),
+            primary_slot: 9,
+            secondary_slot: 10,
+            single_item: 0x44,
+            combined_item: 0x47,
+            empty_item: 0xff,
+            lineup_order: vec![10, 9, 10],
+        };
+        assert_eq!(
+            operation.validate().unwrap_err().field(),
+            "operation.normalize_item_slots_and_lineup.lineup_order"
+        );
+
+        let same_field = StateOperation::NormalizeItemSlotsAndLineup {
+            component_id: "save.main".into(),
+            inventory_field: "inventory".into(),
+            lineup_field: "inventory".into(),
+            primary_slot: 9,
+            secondary_slot: 10,
+            single_item: 0x44,
+            combined_item: 0x47,
+            empty_item: 0xff,
+            lineup_order: vec![10, 9],
+        };
+        assert_eq!(
+            same_field.validate().unwrap_err().field(),
+            "operation.normalize_item_slots_and_lineup.lineup_field"
         );
     }
 }

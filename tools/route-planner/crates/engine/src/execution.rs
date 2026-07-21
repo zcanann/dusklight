@@ -701,6 +701,9 @@ impl PlannerExecutionState {
                     _ => None,
                 })
                 .unwrap_or_default(),
+            StateOperation::NormalizeItemSlotsAndLineup { component_id, .. } => {
+                vec![component_id.clone()]
+            }
             StateOperation::WriteFields { component_id, .. }
             | StateOperation::ReplacePayload { component_id, .. } => {
                 vec![component_id.clone()]
@@ -1288,6 +1291,88 @@ impl PlannerExecutionState {
                     *current = *minimum;
                     mark_transition(component, application_id);
                 }
+            }
+            StateOperation::NormalizeItemSlotsAndLineup {
+                component_id,
+                inventory_field,
+                lineup_field,
+                primary_slot,
+                secondary_slot,
+                single_item,
+                combined_item,
+                empty_item,
+                lineup_order,
+            } => {
+                let component = self.component_mut(component_id)?;
+                let ComponentPayload::Structured { fields } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup",
+                        "requires a structured destination component",
+                    ));
+                };
+                let StateValue::Bytes(mut inventory) =
+                    fields.get(inventory_field).cloned().ok_or_else(|| {
+                        PlannerContractError::new(
+                            "operation.normalize_item_slots_and_lineup.inventory_field",
+                            "references an absent inventory field",
+                        )
+                    })?
+                else {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup.inventory_field",
+                        "requires a byte-array inventory field",
+                    ));
+                };
+                let StateValue::Bytes(existing_lineup) =
+                    fields.get(lineup_field).cloned().ok_or_else(|| {
+                        PlannerContractError::new(
+                            "operation.normalize_item_slots_and_lineup.lineup_field",
+                            "references an absent lineup field",
+                        )
+                    })?
+                else {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup.lineup_field",
+                        "requires a byte-array lineup field",
+                    ));
+                };
+                if inventory.len() != existing_lineup.len() {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup.lineup_field",
+                        "must have the same length as the inventory field",
+                    ));
+                }
+                let primary = usize::from(*primary_slot);
+                let secondary = usize::from(*secondary_slot);
+                if primary >= inventory.len()
+                    || secondary >= inventory.len()
+                    || lineup_order
+                        .iter()
+                        .any(|slot| usize::from(*slot) >= inventory.len())
+                {
+                    return Err(PlannerContractError::new(
+                        "operation.normalize_item_slots_and_lineup",
+                        "slot index exceeds the inventory field",
+                    ));
+                }
+                if inventory[primary] == *combined_item {
+                    inventory[secondary] = *combined_item;
+                    inventory[primary] = *empty_item;
+                }
+                if inventory[primary] == *single_item && inventory[secondary] == *combined_item {
+                    inventory[primary] = *empty_item;
+                }
+                let mut lineup = vec![*empty_item; inventory.len()];
+                let mut cursor = 0;
+                for slot in lineup_order {
+                    if inventory[usize::from(*slot)] != *empty_item {
+                        lineup[cursor] = *slot;
+                        cursor += 1;
+                    }
+                }
+                fields.insert(inventory_field.clone(), StateValue::Bytes(inventory));
+                fields.insert(lineup_field.clone(), StateValue::Bytes(lineup));
+                mark_transition(component, application_id);
             }
             StateOperation::AdjustBoundRawUnsigned {
                 component_kind,
@@ -2994,6 +3079,12 @@ fn history_event_writes_field(
                         .binary_search_by(|id| id.as_str().cmp(component_id))
                         .is_ok()
             }
+            StateOperation::NormalizeItemSlotsAndLineup {
+                component_id: changed,
+                inventory_field,
+                lineup_field,
+                ..
+            } => changed == component_id && (field == inventory_field || field == lineup_field),
             StateOperation::WriteFields {
                 component_id: changed,
                 fields,
@@ -4212,16 +4303,15 @@ mod tests {
             }],
         )
         .unwrap();
-        high
-            .apply_operations(
-                "normalizer.life-floor",
-                "snapshot.life-preserved",
-                &[StateOperation::ClampUnsignedMinimum {
-                    target,
-                    minimum: 12,
-                }],
-            )
-            .unwrap();
+        high.apply_operations(
+            "normalizer.life-floor",
+            "snapshot.life-preserved",
+            &[StateOperation::ClampUnsignedMinimum {
+                target,
+                minimum: 12,
+            }],
+        )
+        .unwrap();
         assert_eq!(field(&high, "save.main", "life"), &StateValue::Unsigned(20));
         assert_eq!(
             high.last_field_writer("save.main", "life")
@@ -4229,6 +4319,94 @@ mod tests {
                 .application_id,
             "fixture.high-life"
         );
+    }
+
+    #[test]
+    fn item_slot_normalization_migrates_items_and_rebuilds_the_lineup() {
+        let operation = StateOperation::NormalizeItemSlotsAndLineup {
+            component_id: "save.main".into(),
+            inventory_field: "inventory".into(),
+            lineup_field: "item_lineup".into(),
+            primary_slot: 9,
+            secondary_slot: 10,
+            single_item: 0x44,
+            combined_item: 0x47,
+            empty_item: 0xff,
+            lineup_order: vec![10, 4, 9],
+        };
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        let mut inventory = vec![0xff; 24];
+        inventory[4] = 0x22;
+        inventory[9] = 0x47;
+        state
+            .apply_operations(
+                "fixture.legacy-item-layout",
+                "snapshot.legacy-item-layout",
+                &[StateOperation::WriteFields {
+                    component_id: "save.main".into(),
+                    fields: BTreeMap::from([
+                        ("inventory".into(), StateValue::Bytes(inventory)),
+                        ("item_lineup".into(), StateValue::Bytes(vec![23; 24])),
+                    ]),
+                }],
+            )
+            .unwrap();
+        state
+            .apply_operations(
+                "normalizer.item-layout",
+                "snapshot.normalized-item-layout",
+                std::slice::from_ref(&operation),
+            )
+            .unwrap();
+
+        let StateValue::Bytes(inventory) = field(&state, "save.main", "inventory") else {
+            unreachable!()
+        };
+        assert_eq!(inventory[9], 0xff);
+        assert_eq!(inventory[10], 0x47);
+        let StateValue::Bytes(lineup) = field(&state, "save.main", "item_lineup") else {
+            unreachable!()
+        };
+        assert_eq!(&lineup[..3], &[10, 4, 0xff]);
+        assert!(lineup[3..].iter().all(|item| *item == 0xff));
+        for field_name in ["inventory", "item_lineup"] {
+            assert_eq!(
+                state
+                    .last_field_writer("save.main", field_name)
+                    .unwrap()
+                    .application_id,
+                "normalizer.item-layout"
+            );
+        }
+
+        let mut redundant_single = vec![0xff; 24];
+        redundant_single[9] = 0x44;
+        redundant_single[10] = 0x47;
+        state
+            .apply_operations(
+                "fixture.redundant-single",
+                "snapshot.redundant-single",
+                &[StateOperation::WriteFields {
+                    component_id: "save.main".into(),
+                    fields: BTreeMap::from([
+                        ("inventory".into(), StateValue::Bytes(redundant_single)),
+                        ("item_lineup".into(), StateValue::Bytes(vec![0xff; 24])),
+                    ]),
+                }],
+            )
+            .unwrap();
+        state
+            .apply_operations(
+                "normalizer.redundant-single",
+                "snapshot.redundant-single-removed",
+                &[operation],
+            )
+            .unwrap();
+        let StateValue::Bytes(inventory) = field(&state, "save.main", "inventory") else {
+            unreachable!()
+        };
+        assert_eq!(inventory[9], 0xff);
+        assert_eq!(inventory[10], 0x47);
     }
 
     #[test]

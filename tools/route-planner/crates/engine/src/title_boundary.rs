@@ -18,7 +18,7 @@ use crate::state::{
 };
 use crate::transition::{
     ActivationContract, CandidateTransition, ComponentFieldTarget, MECHANICS_CATALOG_SCHEMA,
-    MechanicsCatalog, StateOperation, TransitionKind, UnknownRequirement,
+    MechanicsCatalog, StateOperation, TransitionKind,
 };
 use std::collections::BTreeMap;
 
@@ -35,10 +35,20 @@ const OBSERVED_TEMPORARY_COMPONENT: &str = "flags.temporary";
 const TEMPORARY_EVENT_COMPONENT: &str = "flags.temporary-event-registers";
 const DUNGEON_SESSION_LABEL_COMPONENT: &str = "flags.dungeon-session-labels";
 const LOADED_STAGE_MEMORY_COMPONENT: &str = "flags.loaded-stage-memory";
+const DUNGEON_SIX_SAVE_COMPONENT: &str = "save.dungeon-memory.index-6";
 const ROOM_SWITCH_LABEL_COMPONENT: &str = "flags.room-switch-labels";
 const INVENTORY_COMPONENT: &str = "inventory-and-resources";
 const RETURN_PLACE_COMPONENT: &str = "return-place";
+const ACTIVE_VIBRATION_COMPONENT: &str = "session.active-vibration";
+const SAVE_STAGE_DISPLAY_COMPONENT: &str = "session.save-stage-display";
 const FILE_SELECT_BUFFER_OWNER_PREFIX: &str = "file-select-buffer.slot";
+
+const ITEM_NONE: u8 = 0xff;
+const ITEM_HOOKSHOT: u8 = 0x44;
+const ITEM_DOUBLE_CLAWSHOT: u8 = 0x47;
+const ITEM_LINEUP_ORDER: [u8; 23] = [
+    10, 8, 6, 2, 9, 4, 3, 0, 1, 23, 20, 5, 15, 16, 17, 11, 12, 13, 14, 19, 18, 22, 21,
+];
 
 /// Compiles the exact successful prefix of `dComIfG_resetToOpening` for
 /// GZ2E01. It records the scheduled opening process/load and the restart-room
@@ -662,6 +672,33 @@ pub fn gz2e01_reset_to_opening_mechanics(
     ];
     for index in 0_u64..3 {
         let slot = index + 1;
+        let mut effects = vec![StateOperation::LoadActiveRuntimeFromSlot {
+            source_slot: PhysicalSlotId(slot as u8),
+            destination_id_suffix: format!("file-select-slot-{slot}"),
+            destination_allowed_serialization_targets: vec![
+                PhysicalSlotId(1),
+                PhysicalSlotId(2),
+                PhysicalSlotId(3),
+            ],
+            carried_runtime_component_ids: carried_runtime_component_ids.clone(),
+        }];
+        effects.extend(file_select_post_copy_normalization());
+        effects.extend([
+            StateOperation::Write {
+                target: ComponentFieldTarget {
+                    component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
+                    field: "data_num_raw".into(),
+                },
+                value: StateValue::Unsigned(index),
+            },
+            StateOperation::Write {
+                target: ComponentFieldTarget {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    field: "phase".into(),
+                },
+                value: StateValue::Text("selection_end".into()),
+            },
+        ]);
         file_select_branch_transitions.push(CandidateTransition {
             id: format!("transition.gz2e01.file-select-start-existing-slot-{slot}"),
             label: format!("Load and start existing save slot {slot}"),
@@ -681,10 +718,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
                             StateValue::Text("existing".into()),
                         ),
                         selected_index_guard(index),
-                        pending_compare(
-                            name_field("menu_command_raw"),
-                            StateValue::Unsigned(1),
-                        ),
+                        pending_compare(name_field("menu_command_raw"), StateValue::Unsigned(1)),
                         pending_compare(
                             ValueReference::PhysicalSlotImageAvailable {
                                 slot: PhysicalSlotId(slot as u8),
@@ -694,47 +728,8 @@ pub fn gz2e01_reset_to_opening_mechanics(
                     ],
                 },
                 physical_obligation_ids: Vec::new(),
-                effects: vec![
-                    StateOperation::LoadActiveRuntimeFromSlot {
-                        source_slot: PhysicalSlotId(slot as u8),
-                        destination_id_suffix: format!("file-select-slot-{slot}"),
-                        destination_allowed_serialization_targets: vec![
-                            PhysicalSlotId(1),
-                            PhysicalSlotId(2),
-                            PhysicalSlotId(3),
-                        ],
-                        carried_runtime_component_ids: carried_runtime_component_ids.clone(),
-                    },
-                    StateOperation::ClampUnsignedMinimum {
-                        target: ComponentFieldTarget {
-                            component_id: INVENTORY_COMPONENT.into(),
-                            field: "life".into(),
-                        },
-                        minimum: 12,
-                    },
-                    StateOperation::Write {
-                        target: ComponentFieldTarget {
-                            component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
-                            field: "data_num_raw".into(),
-                        },
-                        value: StateValue::Unsigned(index),
-                    },
-                    StateOperation::Write {
-                        target: ComponentFieldTarget {
-                            component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
-                            field: "phase".into(),
-                        },
-                        value: StateValue::Text("selection_end".into()),
-                    },
-                ],
-                unknown_requirements: vec![UnknownRequirement {
-                    id: "unknown.file-select-card-to-memory-normalization".into(),
-                    description: "Project the dungeon-6 key clear, hookshot slot rewrites, lineup rebuild, vibration, and save-stage display writes performed after the selected dSv_save_c copy. The life floor is modeled separately.".into(),
-                    evidence: RuleEvidence {
-                        truth: TruthStatus::Unknown,
-                        records: file_select_branch_evidence.records.clone(),
-                    },
-                }],
+                effects,
+                unknown_requirements: Vec::new(),
             },
             evidence: file_select_branch_evidence.clone(),
         });
@@ -743,6 +738,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
         PERSISTENT_EVENT_COMPONENT.into(),
         INVENTORY_COMPONENT.into(),
         RETURN_PLACE_COMPONENT.into(),
+        DUNGEON_SIX_SAVE_COMPONENT.into(),
         LIGHT_DROP_COMPONENT.into(),
     ];
     let mut no_card_effects = (1_u8..=3)
@@ -751,11 +747,12 @@ pub fn gz2e01_reset_to_opening_mechanics(
             components: initialized_file_select_buffer(slot),
         })
         .collect::<Vec<_>>();
+    no_card_effects.push(StateOperation::RestorePayloadsFromCustomStore {
+        owner: file_select_buffer_owner(1),
+        component_ids: initialized_buffer_component_ids,
+    });
+    no_card_effects.extend(file_select_post_copy_normalization());
     no_card_effects.extend([
-        StateOperation::RestorePayloadsFromCustomStore {
-            owner: file_select_buffer_owner(1),
-            component_ids: initialized_buffer_component_ids,
-        },
         StateOperation::WriteFields {
             component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
             fields: BTreeMap::from([
@@ -1004,6 +1001,12 @@ fn dcomifgs_init_effects() -> Vec<StateOperation> {
             },
         },
         StateOperation::ReplacePayload {
+            component_id: DUNGEON_SIX_SAVE_COMPONENT.into(),
+            payload: ComponentPayload::Structured {
+                fields: BTreeMap::from([("key_count".into(), StateValue::Unsigned(0))]),
+            },
+        },
+        StateOperation::ReplacePayload {
             component_id: PERSISTENT_EVENT_COMPONENT.into(),
             payload: ComponentPayload::Raw {
                 bytes: vec![0; 256],
@@ -1072,8 +1075,10 @@ fn base_inventory_payload() -> ComponentPayload {
             ("life".into(), StateValue::Unsigned(12)),
             ("rupees".into(), StateValue::Unsigned(0)),
             ("inventory".into(), StateValue::Bytes(vec![0xff; 24])),
+            ("item_lineup".into(), StateValue::Bytes(vec![0xff; 24])),
             ("selected_items".into(), StateValue::Bytes(vec![0xff; 4])),
             ("mixed_items".into(), StateValue::Bytes(vec![0xff; 4])),
+            ("vibration".into(), StateValue::Unsigned(1)),
             (
                 "equipment".into(),
                 StateValue::Bytes(vec![0x2e, 0xff, 0xff, 0xff, 0xff, 0]),
@@ -1088,6 +1093,56 @@ fn base_inventory_payload() -> ComponentPayload {
             ("collect_item_bits".into(), StateValue::Bytes(vec![0; 8])),
         ]),
     }
+}
+
+fn file_select_post_copy_normalization() -> Vec<StateOperation> {
+    vec![
+        StateOperation::ClampUnsignedMinimum {
+            target: ComponentFieldTarget {
+                component_id: INVENTORY_COMPONENT.into(),
+                field: "life".into(),
+            },
+            minimum: 12,
+        },
+        StateOperation::Write {
+            target: ComponentFieldTarget {
+                component_id: DUNGEON_SIX_SAVE_COMPONENT.into(),
+                field: "key_count".into(),
+            },
+            value: StateValue::Unsigned(0),
+        },
+        StateOperation::NormalizeItemSlotsAndLineup {
+            component_id: INVENTORY_COMPONENT.into(),
+            inventory_field: "inventory".into(),
+            lineup_field: "item_lineup".into(),
+            primary_slot: 9,
+            secondary_slot: 10,
+            single_item: ITEM_HOOKSHOT,
+            combined_item: ITEM_DOUBLE_CLAWSHOT,
+            empty_item: ITEM_NONE,
+            lineup_order: ITEM_LINEUP_ORDER.to_vec(),
+        },
+        StateOperation::CopyValue {
+            source: ComponentFieldTarget {
+                component_id: INVENTORY_COMPONENT.into(),
+                field: "vibration".into(),
+            },
+            target: ComponentFieldTarget {
+                component_id: ACTIVE_VIBRATION_COMPONENT.into(),
+                field: "enabled_raw".into(),
+            },
+        },
+        StateOperation::CopyValue {
+            source: ComponentFieldTarget {
+                component_id: RETURN_PLACE_COMPONENT.into(),
+                field: "stage".into(),
+            },
+            target: ComponentFieldTarget {
+                component_id: SAVE_STAGE_DISPLAY_COMPONENT.into(),
+                field: "stage".into(),
+            },
+        },
+    ]
 }
 
 fn file_select_buffer_owner(slot: u8) -> SerializationOwner {
@@ -1147,6 +1202,13 @@ fn initialized_file_select_buffer(slot: u8) -> Vec<StateComponent> {
                     ("room".into(), StateValue::Signed(1)),
                     ("stage".into(), StateValue::Text("F_SP108".into())),
                 ]),
+            },
+        ),
+        component(
+            DUNGEON_SIX_SAVE_COMPONENT,
+            ComponentKind::DungeonMemory,
+            ComponentPayload::Structured {
+                fields: BTreeMap::from([("key_count".into(), StateValue::Unsigned(0))]),
             },
         ),
         component(
@@ -1300,6 +1362,42 @@ mod tests {
             room: 3,
         };
         component.lifetime = SemanticLifetime::RoomLoad;
+        component
+    }
+
+    fn saved_dungeon_six_component() -> StateComponent {
+        let mut component = component(
+            DUNGEON_SIX_SAVE_COMPONENT,
+            ComponentKind::DungeonMemory,
+            [("key_count", StateValue::Unsigned(7))],
+        );
+        component.binding = ComponentBinding::Custom {
+            kind_id: "saved-dungeon-memory".into(),
+            context_id: "index-6".into(),
+        };
+        component
+    }
+
+    fn inventory_component() -> StateComponent {
+        let mut component = component(INVENTORY_COMPONENT, ComponentKind::Inventory, []);
+        component.payload = base_inventory_payload();
+        let ComponentPayload::Structured { fields } = &mut component.payload else {
+            unreachable!()
+        };
+        fields.insert("life".into(), StateValue::Unsigned(80));
+        component
+    }
+
+    fn session_value_component(
+        id: &str,
+        fields: impl IntoIterator<Item = (&'static str, StateValue)>,
+    ) -> StateComponent {
+        let mut component = component(id, ComponentKind::Session, fields);
+        component.binding = ComponentBinding::Session {
+            session_id: "process".into(),
+        };
+        component.lifetime = SemanticLifetime::Session;
+        component.serialization_owner = SerializationOwner::None;
         component
     }
 
@@ -1511,11 +1609,7 @@ mod tests {
                         ComponentKind::TemporaryFlags,
                         256,
                     ),
-                    component(
-                        INVENTORY_COMPONENT,
-                        ComponentKind::Inventory,
-                        [("life", StateValue::Unsigned(80))],
-                    ),
+                    inventory_component(),
                     reset_control_component(),
                     component(
                         RESTART_COMPONENT,
@@ -1540,12 +1634,21 @@ mod tests {
                             ("no_file_raw", StateValue::Unsigned(7)),
                         ],
                     ),
+                    saved_dungeon_six_component(),
                     raw_component(
                         LIGHT_DROP_COMPONENT,
                         ComponentKind::Custom {
                             id: "player-light-drop".into(),
                         },
                         5,
+                    ),
+                    session_value_component(
+                        ACTIVE_VIBRATION_COMPONENT,
+                        [("enabled_raw", StateValue::Unsigned(0))],
+                    ),
+                    session_value_component(
+                        SAVE_STAGE_DISPLAY_COMPONENT,
+                        [("stage", StateValue::Text("stale".into()))],
                     ),
                 ],
                 static_world_objects: Vec::new(),
@@ -2247,6 +2350,21 @@ mod tests {
                     unreachable!()
                 };
                 fields.insert("life".into(), StateValue::Unsigned(4));
+                let mut items = vec![ITEM_NONE; 24];
+                items[9] = ITEM_DOUBLE_CLAWSHOT;
+                fields.insert("inventory".into(), StateValue::Bytes(items));
+                fields.insert("item_lineup".into(), StateValue::Bytes(vec![23; 24]));
+                fields.insert("vibration".into(), StateValue::Unsigned(1));
+                let dungeon_six = before
+                    .environment
+                    .components
+                    .iter_mut()
+                    .find(|component| component.id == DUNGEON_SIX_SAVE_COMPONENT)
+                    .unwrap();
+                let ComponentPayload::Structured { fields } = &mut dungeon_six.payload else {
+                    unreachable!()
+                };
+                fields.insert("key_count".into(), StateValue::Unsigned(5));
             }
             let mut state = PlannerExecutionState::new(before).unwrap();
             if with_existing_slot {
@@ -2262,6 +2380,7 @@ mod tests {
                                 PERSISTENT_EVENT_COMPONENT.into(),
                                 INVENTORY_COMPONENT.into(),
                                 RETURN_PLACE_COMPONENT.into(),
+                                DUNGEON_SIX_SAVE_COMPONENT.into(),
                                 LIGHT_DROP_COMPONENT.into(),
                             ],
                             stage_bank_stages: Vec::new(),
@@ -2452,6 +2571,23 @@ mod tests {
             StateValue::Unsigned(0)
         );
         assert_eq!(
+            fields_for(&no_card, DUNGEON_SIX_SAVE_COMPONENT)["key_count"],
+            StateValue::Unsigned(0)
+        );
+        let StateValue::Bytes(lineup) = &fields_for(&no_card, INVENTORY_COMPONENT)["item_lineup"]
+        else {
+            unreachable!()
+        };
+        assert!(lineup.iter().all(|item| *item == ITEM_NONE));
+        assert_eq!(
+            fields_for(&no_card, ACTIVE_VIBRATION_COMPONENT)["enabled_raw"],
+            StateValue::Unsigned(1)
+        );
+        assert_eq!(
+            fields_for(&no_card, SAVE_STAGE_DISPLAY_COMPONENT)["stage"],
+            StateValue::Text("F_SP108".into())
+        );
+        assert_eq!(
             no_card
                 .serialized_components
                 .keys()
@@ -2543,8 +2679,8 @@ mod tests {
                 &existing,
                 "transition.gz2e01.file-select-start-existing-slot-1"
             ),
-            TransitionClassification::FeasibilityUnknown,
-            "the backing-store load is modeled, but exact post-copy normalization remains explicit"
+            TransitionClassification::Executable,
+            "the exact post-copy normalization closes the existing-slot Start edge"
         );
         let sealed_digest = existing.snapshot.environment.physical_slots[0].serialized_state_sha256;
         existing
@@ -2574,6 +2710,30 @@ mod tests {
             fields_for(&existing, INVENTORY_COMPONENT)["life"],
             StateValue::Unsigned(12),
             "the selected sealed image replaces the title initializer payload before the exact post-copy life floor"
+        );
+        let StateValue::Bytes(items) = &fields_for(&existing, INVENTORY_COMPONENT)["inventory"]
+        else {
+            unreachable!()
+        };
+        assert_eq!(items[9], ITEM_NONE);
+        assert_eq!(items[10], ITEM_DOUBLE_CLAWSHOT);
+        let StateValue::Bytes(lineup) = &fields_for(&existing, INVENTORY_COMPONENT)["item_lineup"]
+        else {
+            unreachable!()
+        };
+        assert_eq!(lineup[0], 10);
+        assert!(lineup[1..].iter().all(|item| *item == ITEM_NONE));
+        assert_eq!(
+            fields_for(&existing, DUNGEON_SIX_SAVE_COMPONENT)["key_count"],
+            StateValue::Unsigned(0)
+        );
+        assert_eq!(
+            fields_for(&existing, ACTIVE_VIBRATION_COMPONENT)["enabled_raw"],
+            StateValue::Unsigned(1)
+        );
+        assert_eq!(
+            fields_for(&existing, SAVE_STAGE_DISPLAY_COMPONENT)["stage"],
+            StateValue::Text("R_SP107".into())
         );
         assert_eq!(
             fields_for(&existing, RUNTIME_FILE_HEADER_COMPONENT)["data_num_raw"],
