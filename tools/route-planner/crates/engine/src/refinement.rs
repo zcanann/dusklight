@@ -2,22 +2,24 @@
 
 use crate::artifact::Digest;
 use crate::logic::{
-    ContextScope, DerivedFact, FactCatalog, FriendlyAlias, PredicateExpression, RuleEvidence,
+    ComparisonOperator, ContextScope, DerivedFact, FactCatalog, FriendlyAlias, PredicateExpression,
+    RuleEvidence, ValueReference,
 };
 use crate::state::SemanticLifetime;
+use crate::state::{SceneLocation, StateValue};
 use crate::transition::{
     ActorReconstructionRule, CandidateTransition, FeasibilityObligation, GateRule, Goal,
     MechanicsCatalog, Obstruction, ObstructionResolver, ReaderRule, ResolutionKind, RouteCost,
-    StateOperation, Technique, WitnessedMicrotrace, WriterRule,
+    StateOperation, Technique, TransitionKind, WitnessedMicrotrace, WriterRule,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v2";
+pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v3";
 pub const REFINEMENT_STACK_SCHEMA: &str = "dusklight.route-planner.refinement-stack/v1";
-pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v2";
+pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v3";
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -47,6 +49,61 @@ pub enum ReplacementKind {
     Disable,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MatchCardinality {
+    ExactlyOne,
+    OneOrMore,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SceneLocationSelector {
+    pub stage: Option<String>,
+    pub room: Option<i8>,
+    pub layer: Option<i8>,
+    pub spawn: Option<i16>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ObstructionActionSelector {
+    ActionId {
+        action_id: String,
+    },
+    Transition {
+        transition_kind: Option<TransitionKind>,
+        approach_id: Option<String>,
+        source: Option<SceneLocationSelector>,
+        destination: Option<SceneLocationSelector>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredObstruction {
+    pub id: String,
+    pub label: String,
+    pub scope: ContextScope,
+    pub action_selector: ObstructionActionSelector,
+    pub match_cardinality: MatchCardinality,
+    pub active_when: PredicateExpression,
+    pub obligation_ids: Vec<String>,
+    pub evidence: RuleEvidence,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompiledObstructionBinding {
+    pub authored_obstruction_id: String,
+    pub compiled_obstruction_id: String,
+    pub action_id: String,
+    pub action_selector: ObstructionActionSelector,
+    pub match_cardinality: MatchCardinality,
+    pub source_pack_id: String,
+    pub source_rule_id: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RefinementOperation {
@@ -58,6 +115,9 @@ pub enum RefinementOperation {
     },
     AddObstruction {
         obstruction: Obstruction,
+    },
+    BindObstruction {
+        obstruction: AuthoredObstruction,
     },
     AddTechnique {
         technique: Technique,
@@ -149,6 +209,7 @@ pub struct ComposedPlannerCatalog {
     pub facts: FactCatalog,
     pub mechanics: MechanicsCatalog,
     pub refinement_stack: RefinementStack,
+    pub obstruction_bindings: Vec<CompiledObstructionBinding>,
 }
 
 impl RefinementPackManifest {
@@ -198,6 +259,9 @@ impl RefinementRule {
                 obstruction.scope.validate("rules.obstruction.scope")?;
                 obstruction.active_when.validate()?;
                 obstruction.evidence.validate("rules.obstruction.evidence")
+            }
+            RefinementOperation::BindObstruction { obstruction } => {
+                validate_authored_obstruction(obstruction)
             }
             RefinementOperation::AddTechnique { technique } => {
                 validate_stable_id("rules.technique.id", &technique.id)?;
@@ -491,6 +555,8 @@ impl ComposedPlannerCatalog {
                 apply_addition(pack, rule, &mut facts, &mut mechanics)?;
             }
         }
+        let obstruction_bindings =
+            compile_obstruction_bindings(&refinement_stack, &by_id, &mut mechanics)?;
         sort_catalogs(&mut facts, &mut mechanics);
         let composed = Self {
             schema: COMPOSED_CATALOG_SCHEMA.into(),
@@ -499,6 +565,7 @@ impl ComposedPlannerCatalog {
             facts,
             mechanics,
             refinement_stack,
+            obstruction_bindings,
         };
         composed.validate()?;
         Ok(composed)
@@ -522,7 +589,8 @@ impl ComposedPlannerCatalog {
         }
         self.facts.validate()?;
         self.mechanics.validate()?;
-        self.refinement_stack.validate()
+        self.refinement_stack.validate()?;
+        validate_compiled_obstruction_bindings(self)
     }
 
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
@@ -624,6 +692,7 @@ fn apply_addition(
         RefinementOperation::AddObstruction { obstruction } => {
             mechanics.obstructions.push(obstruction.clone())
         }
+        RefinementOperation::BindObstruction { .. } => {}
         RefinementOperation::AddTechnique { technique } => {
             mechanics.techniques.push(technique.clone())
         }
@@ -684,6 +753,417 @@ fn apply_addition(
         RefinementOperation::ReplaceRecord { .. } => {}
     }
     Ok(())
+}
+
+fn validate_authored_obstruction(
+    obstruction: &AuthoredObstruction,
+) -> Result<(), PlannerContractError> {
+    validate_stable_id("rules.obstruction.id", &obstruction.id)?;
+    validate_label("rules.obstruction.label", &obstruction.label)?;
+    obstruction.scope.validate("rules.obstruction.scope")?;
+    obstruction.active_when.validate()?;
+    validate_ids(
+        "rules.obstruction.obligation_ids",
+        &obstruction.obligation_ids,
+        false,
+    )?;
+    obstruction
+        .evidence
+        .validate("rules.obstruction.evidence")?;
+    validate_obstruction_action_selector(&obstruction.action_selector)
+}
+
+fn validate_obstruction_action_selector(
+    selector: &ObstructionActionSelector,
+) -> Result<(), PlannerContractError> {
+    match selector {
+        ObstructionActionSelector::ActionId { action_id } => {
+            validate_stable_id("rules.obstruction.action_selector.action_id", action_id)
+        }
+        ObstructionActionSelector::Transition {
+            transition_kind,
+            approach_id,
+            source,
+            destination,
+        } => {
+            if transition_kind.is_none()
+                && approach_id.is_none()
+                && source.is_none()
+                && destination.is_none()
+            {
+                return Err(PlannerContractError::new(
+                    "rules.obstruction.action_selector",
+                    "must contain at least one structural transition criterion",
+                ));
+            }
+            if let Some(approach_id) = approach_id {
+                validate_stable_id("rules.obstruction.action_selector.approach_id", approach_id)?;
+            }
+            if let Some(source) = source {
+                validate_location_selector("rules.obstruction.action_selector.source", source)?;
+            }
+            if let Some(destination) = destination {
+                validate_location_selector(
+                    "rules.obstruction.action_selector.destination",
+                    destination,
+                )?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_location_selector(
+    field: &str,
+    selector: &SceneLocationSelector,
+) -> Result<(), PlannerContractError> {
+    if selector.stage.is_none()
+        && selector.room.is_none()
+        && selector.layer.is_none()
+        && selector.spawn.is_none()
+    {
+        return Err(PlannerContractError::new(
+            field,
+            "must constrain at least one location field",
+        ));
+    }
+    if let Some(stage) = &selector.stage {
+        validate_label(field, stage)?;
+    }
+    Ok(())
+}
+
+fn compile_obstruction_bindings(
+    stack: &RefinementStack,
+    packs: &BTreeMap<&str, &RefinementPack>,
+    mechanics: &mut MechanicsCatalog,
+) -> Result<Vec<CompiledObstructionBinding>, PlannerContractError> {
+    let mut compiled_by_template = BTreeMap::<String, Vec<(String, String)>>::new();
+    let mut binding_records = Vec::new();
+    for entry in &stack.entries {
+        let pack = packs[entry.pack_id.as_str()];
+        for rule in &pack.rules {
+            let RefinementOperation::BindObstruction { obstruction } = &rule.operation else {
+                continue;
+            };
+            if compiled_by_template.contains_key(&obstruction.id) {
+                return Err(PlannerContractError::new(
+                    "rules.obstruction.id",
+                    format!("duplicate authored obstruction template {}", obstruction.id),
+                ));
+            }
+            let matches = mechanics
+                .transitions
+                .iter()
+                .filter(|transition| transition_matches(&obstruction.action_selector, transition))
+                .collect::<Vec<_>>();
+            if matches.is_empty() {
+                return Err(PlannerContractError::new(
+                    "rules.obstruction.action_selector",
+                    format!("matched no candidate actions for {}", obstruction.id),
+                ));
+            }
+            if obstruction.match_cardinality == MatchCardinality::ExactlyOne && matches.len() != 1 {
+                return Err(PlannerContractError::new(
+                    "rules.obstruction.action_selector",
+                    format!(
+                        "expected exactly one candidate action for {}, matched {}",
+                        obstruction.id,
+                        matches.len()
+                    ),
+                ));
+            }
+
+            let plural = matches.len() > 1;
+            let mut compiled = Vec::with_capacity(matches.len());
+            for transition in matches {
+                let id = if plural {
+                    generated_binding_id("obstruction", &obstruction.id, &transition.id)
+                } else {
+                    obstruction.id.clone()
+                };
+                mechanics.obstructions.push(Obstruction {
+                    id: id.clone(),
+                    label: obstruction.label.clone(),
+                    scope: obstruction.scope.clone(),
+                    blocked_action_id: transition.id.clone(),
+                    approach_id: transition.approach_id.clone(),
+                    active_when: obstruction.active_when.clone(),
+                    obligation_ids: obstruction.obligation_ids.clone(),
+                    evidence: obstruction.evidence.clone(),
+                });
+                binding_records.push(CompiledObstructionBinding {
+                    authored_obstruction_id: obstruction.id.clone(),
+                    compiled_obstruction_id: id.clone(),
+                    action_id: transition.id.clone(),
+                    action_selector: obstruction.action_selector.clone(),
+                    match_cardinality: obstruction.match_cardinality,
+                    source_pack_id: pack.manifest.id.clone(),
+                    source_rule_id: rule.id.clone(),
+                });
+                compiled.push((id, transition.id.clone()));
+            }
+            compiled_by_template.insert(obstruction.id.clone(), compiled);
+        }
+    }
+
+    if compiled_by_template.is_empty() {
+        return Ok(Vec::new());
+    }
+    let resolvers = std::mem::take(&mut mechanics.resolvers);
+    for resolver in resolvers {
+        let Some(bindings) = compiled_by_template.get(&resolver.obstruction_id) else {
+            mechanics.resolvers.push(resolver);
+            continue;
+        };
+        for (index, (obstruction_id, action_id)) in bindings.iter().enumerate() {
+            let mut bound = resolver.clone();
+            if bindings.len() > 1 {
+                bound.id = generated_binding_id("resolver", &resolver.id, action_id);
+            } else if index != 0 {
+                unreachable!("a singular binding contains only one resolver target");
+            }
+            bound.obstruction_id = obstruction_id.clone();
+            mechanics.resolvers.push(bound);
+        }
+    }
+    binding_records.sort();
+    Ok(binding_records)
+}
+
+fn validate_compiled_obstruction_bindings(
+    catalog: &ComposedPlannerCatalog,
+) -> Result<(), PlannerContractError> {
+    let transition_by_id = catalog
+        .mechanics
+        .transitions
+        .iter()
+        .map(|transition| (transition.id.as_str(), transition))
+        .collect::<BTreeMap<_, _>>();
+    let obstruction_by_id = catalog
+        .mechanics
+        .obstructions
+        .iter()
+        .map(|obstruction| (obstruction.id.as_str(), obstruction))
+        .collect::<BTreeMap<_, _>>();
+    let pack_ids = catalog
+        .refinement_stack
+        .entries
+        .iter()
+        .map(|entry| entry.pack_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut previous = None;
+    let mut pairs = BTreeSet::new();
+    let mut groups = BTreeMap::<&str, Vec<&CompiledObstructionBinding>>::new();
+    for binding in &catalog.obstruction_bindings {
+        validate_obstruction_action_selector(&binding.action_selector)?;
+        for (field, id) in [
+            (
+                "obstruction_bindings.authored_obstruction_id",
+                &binding.authored_obstruction_id,
+            ),
+            (
+                "obstruction_bindings.compiled_obstruction_id",
+                &binding.compiled_obstruction_id,
+            ),
+            ("obstruction_bindings.action_id", &binding.action_id),
+            (
+                "obstruction_bindings.source_pack_id",
+                &binding.source_pack_id,
+            ),
+            (
+                "obstruction_bindings.source_rule_id",
+                &binding.source_rule_id,
+            ),
+        ] {
+            validate_stable_id(field, id)?;
+        }
+        if previous.is_some_and(|prior: &CompiledObstructionBinding| prior >= binding) {
+            return Err(PlannerContractError::new(
+                "obstruction_bindings",
+                "must be unique and sorted",
+            ));
+        }
+        if !pairs.insert((
+            binding.authored_obstruction_id.as_str(),
+            binding.action_id.as_str(),
+        )) {
+            return Err(PlannerContractError::new(
+                "obstruction_bindings",
+                "contains a duplicate authored-obstruction/action pair",
+            ));
+        }
+        let transition = transition_by_id
+            .get(binding.action_id.as_str())
+            .ok_or_else(|| {
+                PlannerContractError::new(
+                    "obstruction_bindings.action_id",
+                    "references an unknown transition",
+                )
+            })?;
+        let obstruction = obstruction_by_id
+            .get(binding.compiled_obstruction_id.as_str())
+            .ok_or_else(|| {
+                PlannerContractError::new(
+                    "obstruction_bindings.compiled_obstruction_id",
+                    "references an unknown obstruction",
+                )
+            })?;
+        if obstruction.blocked_action_id != binding.action_id
+            || obstruction.approach_id != transition.approach_id
+            || !transition_matches(&binding.action_selector, transition)
+        {
+            return Err(PlannerContractError::new(
+                "obstruction_bindings",
+                "does not agree with its compiled obstruction and transition",
+            ));
+        }
+        if !pack_ids.contains(binding.source_pack_id.as_str()) {
+            return Err(PlannerContractError::new(
+                "obstruction_bindings.source_pack_id",
+                "references a pack absent from the refinement stack",
+            ));
+        }
+        groups
+            .entry(binding.authored_obstruction_id.as_str())
+            .or_default()
+            .push(binding);
+        previous = Some(binding);
+    }
+    for bindings in groups.values() {
+        let first = bindings[0];
+        if bindings.iter().any(|binding| {
+            binding.action_selector != first.action_selector
+                || binding.match_cardinality != first.match_cardinality
+                || binding.source_pack_id != first.source_pack_id
+                || binding.source_rule_id != first.source_rule_id
+        }) {
+            return Err(PlannerContractError::new(
+                "obstruction_bindings",
+                "one authored obstruction has inconsistent selector provenance",
+            ));
+        }
+        if first.match_cardinality == MatchCardinality::ExactlyOne && bindings.len() != 1 {
+            return Err(PlannerContractError::new(
+                "obstruction_bindings",
+                "an exactly-one selector must have exactly one compiled binding",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn transition_matches(
+    selector: &ObstructionActionSelector,
+    transition: &CandidateTransition,
+) -> bool {
+    match selector {
+        ObstructionActionSelector::ActionId { action_id } => transition.id == *action_id,
+        ObstructionActionSelector::Transition {
+            transition_kind,
+            approach_id,
+            source,
+            destination,
+        } => {
+            transition_kind.is_none_or(|kind| transition.transition_kind == kind)
+                && approach_id
+                    .as_ref()
+                    .is_none_or(|approach| transition.approach_id == *approach)
+                && source.as_ref().is_none_or(|source| {
+                    source_matches_guard(source, &transition.activation.hard_guards)
+                })
+                && destination.as_ref().is_none_or(|destination| {
+                    transition
+                        .activation
+                        .effects
+                        .iter()
+                        .rev()
+                        .find_map(|operation| match operation {
+                            StateOperation::SetLocation { location } => Some(location),
+                            _ => None,
+                        })
+                        .is_some_and(|location| location_matches(destination, location))
+                })
+        }
+    }
+}
+
+fn source_matches_guard(selector: &SceneLocationSelector, guard: &PredicateExpression) -> bool {
+    selector.stage.as_ref().is_none_or(|stage| {
+        guard_contains_location_equality(
+            guard,
+            &ValueReference::LocationStage,
+            &StateValue::Text(stage.clone()),
+        )
+    }) && selector.room.is_none_or(|room| {
+        guard_contains_location_equality(
+            guard,
+            &ValueReference::LocationRoom,
+            &StateValue::Signed(room.into()),
+        )
+    }) && selector.layer.is_none_or(|layer| {
+        guard_contains_location_equality(
+            guard,
+            &ValueReference::LocationLayer,
+            &StateValue::Signed(layer.into()),
+        )
+    }) && selector.spawn.is_none_or(|spawn| {
+        guard_contains_location_equality(
+            guard,
+            &ValueReference::LocationSpawn,
+            &StateValue::Signed(spawn.into()),
+        )
+    })
+}
+
+fn guard_contains_location_equality(
+    expression: &PredicateExpression,
+    reference: &ValueReference,
+    value: &StateValue,
+) -> bool {
+    match expression {
+        PredicateExpression::Compare {
+            left,
+            operator: ComparisonOperator::Equal,
+            right,
+        } => {
+            (left == reference
+                && right
+                    == &ValueReference::Literal {
+                        value: value.clone(),
+                    })
+                || (right == reference
+                    && left
+                        == &ValueReference::Literal {
+                            value: value.clone(),
+                        })
+        }
+        PredicateExpression::All { terms } => terms
+            .iter()
+            .any(|term| guard_contains_location_equality(term, reference, value)),
+        PredicateExpression::True
+        | PredicateExpression::False
+        | PredicateExpression::Fact { .. }
+        | PredicateExpression::Any { .. }
+        | PredicateExpression::Not { .. }
+        | PredicateExpression::Compare { .. } => false,
+    }
+}
+
+fn location_matches(selector: &SceneLocationSelector, location: &SceneLocation) -> bool {
+    selector
+        .stage
+        .as_ref()
+        .is_none_or(|stage| location.stage == *stage)
+        && selector.room.is_none_or(|room| location.room == room)
+        && selector.layer.is_none_or(|layer| location.layer == layer)
+        && selector.spawn.is_none_or(|spawn| location.spawn == spawn)
+}
+
+fn generated_binding_id(kind: &str, template_id: &str, action_id: &str) -> String {
+    let digest =
+        Digest(Sha256::digest(format!("{kind}\0{template_id}\0{action_id}").as_bytes()).into());
+    format!("binding.{kind}.{digest}")
 }
 
 fn remove_record(facts: &mut FactCatalog, mechanics: &mut MechanicsCatalog, id: &str) -> usize {
@@ -871,6 +1351,7 @@ fn reject_dependency_cycles(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::{PlannerGraph, PlannerGraphRelation};
     use crate::identity::{ContextSelector, ExactContext};
     use crate::logic::{EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, TruthStatus};
     use crate::transition::{MECHANICS_CATALOG_SCHEMA, ObligationDetail, ObligationKind};
@@ -950,6 +1431,87 @@ mod tests {
             label: format!("Rule {id}"),
             operation,
             evidence: evidence(TruthStatus::Hypothetical),
+        }
+    }
+
+    fn map_transition(
+        id: &str,
+        source_stage: &str,
+        destination_stage: &str,
+    ) -> CandidateTransition {
+        CandidateTransition {
+            id: id.into(),
+            label: format!("{source_stage} to {destination_stage}"),
+            scope: scope(),
+            transition_kind: TransitionKind::EncodedMapExit,
+            approach_id: format!("approach.{id}"),
+            activation: crate::transition::ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        PredicateExpression::Compare {
+                            left: ValueReference::LocationStage,
+                            operator: ComparisonOperator::Equal,
+                            right: ValueReference::Literal {
+                                value: StateValue::Text(source_stage.into()),
+                            },
+                        },
+                        PredicateExpression::Compare {
+                            left: ValueReference::LocationRoom,
+                            operator: ComparisonOperator::Equal,
+                            right: ValueReference::Literal {
+                                value: StateValue::Signed(0),
+                            },
+                        },
+                    ],
+                },
+                physical_obligation_ids: vec!["obligation.reach-exit".into()],
+                effects: vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: destination_stage.into(),
+                        room: 1,
+                        layer: 0,
+                        spawn: 2,
+                    },
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }
+    }
+
+    fn exit_obligation() -> FeasibilityObligation {
+        FeasibilityObligation {
+            id: "obligation.reach-exit".into(),
+            label: "Reach the exit".into(),
+            scope: scope(),
+            obligation_kind: ObligationKind::Geometry,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Can the exit be reached?".into(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        }
+    }
+
+    fn bound_obstruction(cardinality: MatchCardinality) -> AuthoredObstruction {
+        AuthoredObstruction {
+            id: "obstruction.bound-wall".into(),
+            label: "Bound wall".into(),
+            scope: scope(),
+            action_selector: ObstructionActionSelector::Transition {
+                transition_kind: Some(TransitionKind::EncodedMapExit),
+                approach_id: None,
+                source: None,
+                destination: Some(SceneLocationSelector {
+                    stage: Some("DEST".into()),
+                    room: Some(1),
+                    layer: None,
+                    spawn: None,
+                }),
+            },
+            match_cardinality: cardinality,
+            active_when: PredicateExpression::True,
+            obligation_ids: vec!["obligation.reach-exit".into()],
+            evidence: evidence(TruthStatus::Established),
         }
     }
 
@@ -1145,6 +1707,167 @@ mod tests {
             ComposedPlannerCatalog::decode_canonical(&bytes).unwrap(),
             composed
         );
+    }
+
+    #[test]
+    fn authored_obstruction_selector_binds_and_projects_the_block_dependency() {
+        let (facts, mut mechanics) = empty_catalogs();
+        mechanics.obligations.push(exit_obligation());
+        mechanics
+            .transitions
+            .push(map_transition("transition.a", "SOURCE_A", "DEST"));
+        let mut obstruction = bound_obstruction(MatchCardinality::ExactlyOne);
+        obstruction.action_selector = ObstructionActionSelector::Transition {
+            transition_kind: Some(TransitionKind::EncodedMapExit),
+            approach_id: None,
+            source: Some(SceneLocationSelector {
+                stage: Some("SOURCE_A".into()),
+                room: Some(0),
+                layer: None,
+                spawn: None,
+            }),
+            destination: Some(SceneLocationSelector {
+                stage: Some("DEST".into()),
+                room: Some(1),
+                layer: None,
+                spawn: None,
+            }),
+        };
+        let pack = RefinementPack {
+            schema: REFINEMENT_PACK_SCHEMA.into(),
+            manifest: RefinementPackManifest {
+                id: "binding.wall".into(),
+                version: "1.0.0".into(),
+                author: "Route research".into(),
+                source: "Local theorycraft".into(),
+                scope: scope(),
+                precedence: 1,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+            },
+            rules: vec![
+                rule(
+                    "a.bind",
+                    RefinementOperation::BindObstruction { obstruction },
+                ),
+                rule(
+                    "b.resolve",
+                    RefinementOperation::AssumeObstructionAbsent {
+                        obstruction_id: "obstruction.bound-wall".into(),
+                        when: PredicateExpression::True,
+                    },
+                ),
+            ],
+        };
+
+        let composed =
+            ComposedPlannerCatalog::compose(&facts, &mechanics, std::slice::from_ref(&pack))
+                .unwrap();
+        assert_eq!(composed.mechanics.obstructions.len(), 1);
+        assert_eq!(
+            composed.mechanics.obstructions[0].blocked_action_id,
+            "transition.a"
+        );
+        assert_eq!(
+            composed.mechanics.obstructions[0].approach_id,
+            "approach.transition.a"
+        );
+        assert_eq!(
+            composed.mechanics.resolvers[0].obstruction_id,
+            "obstruction.bound-wall"
+        );
+        assert_eq!(composed.obstruction_bindings.len(), 1);
+        assert_eq!(
+            composed.obstruction_bindings[0].source_pack_id,
+            "binding.wall"
+        );
+        assert_eq!(composed.obstruction_bindings[0].source_rule_id, "a.bind");
+        let graph = PlannerGraph::project_composed(&composed).unwrap();
+        assert!(graph.edges.iter().any(|edge| {
+            edge.source_node_id == "obstruction/obstruction.bound-wall"
+                && edge.target_node_id == "transition/transition.a"
+                && edge.relation == PlannerGraphRelation::Blocks
+        }));
+
+        mechanics.transitions.clear();
+        let error = ComposedPlannerCatalog::compose(&facts, &mechanics, &[pack]).unwrap_err();
+        assert_eq!(error.field(), "rules.obstruction.action_selector");
+        assert!(error.detail().contains("matched no candidate actions"));
+    }
+
+    #[test]
+    fn plural_obstruction_selector_expands_bindings_and_resolvers_deterministically() {
+        let (facts, mut mechanics) = empty_catalogs();
+        mechanics.obligations.push(exit_obligation());
+        mechanics
+            .transitions
+            .push(map_transition("transition.a", "SOURCE_A", "DEST"));
+        mechanics
+            .transitions
+            .push(map_transition("transition.b", "SOURCE_B", "DEST"));
+        let plural_pack = RefinementPack {
+            schema: REFINEMENT_PACK_SCHEMA.into(),
+            manifest: RefinementPackManifest {
+                id: "binding.plural-wall".into(),
+                version: "1.0.0".into(),
+                author: "Route research".into(),
+                source: "Local theorycraft".into(),
+                scope: scope(),
+                precedence: 1,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+            },
+            rules: vec![
+                rule(
+                    "a.bind",
+                    RefinementOperation::BindObstruction {
+                        obstruction: bound_obstruction(MatchCardinality::OneOrMore),
+                    },
+                ),
+                rule(
+                    "b.resolve",
+                    RefinementOperation::AssumeObstructionAbsent {
+                        obstruction_id: "obstruction.bound-wall".into(),
+                        when: PredicateExpression::True,
+                    },
+                ),
+            ],
+        };
+
+        let first =
+            ComposedPlannerCatalog::compose(&facts, &mechanics, std::slice::from_ref(&plural_pack))
+                .unwrap();
+        let second =
+            ComposedPlannerCatalog::compose(&facts, &mechanics, std::slice::from_ref(&plural_pack))
+                .unwrap();
+        assert_eq!(first, second);
+        assert_eq!(first.mechanics.obstructions.len(), 2);
+        assert_eq!(first.mechanics.resolvers.len(), 2);
+        assert_eq!(first.obstruction_bindings.len(), 2);
+        assert!(
+            first
+                .mechanics
+                .obstructions
+                .iter()
+                .all(|record| record.id.starts_with("binding.obstruction."))
+        );
+        for obstruction in &first.mechanics.obstructions {
+            assert!(first.mechanics.resolvers.iter().any(|resolver| {
+                resolver.obstruction_id == obstruction.id
+                    && resolver.id.starts_with("binding.resolver.")
+            }));
+        }
+
+        let singular_pack = pack(
+            "binding.ambiguous-wall",
+            1,
+            RefinementOperation::BindObstruction {
+                obstruction: bound_obstruction(MatchCardinality::ExactlyOne),
+            },
+        );
+        let error =
+            ComposedPlannerCatalog::compose(&facts, &mechanics, &[singular_pack]).unwrap_err();
+        assert!(error.detail().contains("expected exactly one"));
     }
 
     #[test]

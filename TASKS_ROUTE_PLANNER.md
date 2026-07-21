@@ -304,8 +304,9 @@ erase the underlying world fact for every route.
 
 Authored obstructions bind declaratively to candidate actions. An author may
 name a stable action ID, or select an action structurally by action kind,
-source-state predicate/region, destination scene, approach, and exact-context
-scope. Catalog composition resolves that selector to concrete candidate-action
+source location, destination scene, approach, and exact-context scope. Its
+`active_when` predicate narrows the obstruction to the relevant runtime states.
+Catalog composition resolves that selector to concrete candidate-action
 IDs and emits ordinary `blocks` dependencies automatically. The solver never
 depends on a route author remembering to wire the same obstruction into a route
 book.
@@ -377,7 +378,25 @@ interrupted flow are alternative ordered transitions with different resulting
 stores. A verified microtrace may summarize frame-level behavior, but it must
 declare its exact pre-state, timing obligation, preserved state, and post-state.
 
-### 3.15 Universality must be demonstrated
+### 3.15 Exceptional cutscene flow preserves only executed writes
+
+A cutscene-driven scene change is an ordered control-flow program, not one
+atomic milestone effect. Resource or actor-archive load failure, actor
+corruption, skip logic, interruption, and fallback branches may execute a prefix
+of its writes and omit a suffix. The resulting state must preserve every write
+known to have executed, retain prior values where a known writer was skipped,
+and mark unaudited branch effects unknown rather than choosing “all normal
+effects” or “no effects.”
+
+This also prevents misleading shortcut edges. If actor corruption skips the
+post-Zelda tower sequence and the normal return-place overwrite does not run,
+Castle Town remains in the return-place backing component. The later Zelda's
+Tower-to-Castle-Town movement is then an ordinary save-warp reader consuming
+that retained value—not a special authored warp. The exceptional cutscene edge
+only explains the resource-load outcome, flow phase, scene change, flags that
+did execute, and writers/cleanup that were bypassed.
+
+### 3.16 Universality must be demonstrated
 
 Raw offsets, actor parameters, map records, message node IDs, and flow graphs are
 facts about exact content, not universal truths. Stable semantic names may bind
@@ -509,7 +528,7 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
-- Refinement-pack schema v2 and composed-catalog schema v2 now live entirely in
+- Refinement-pack schema v3 and composed-catalog schema v3 now live entirely in
   the planner workspace. `route-planner compose` validates canonical packs,
   dependency digests, conflicts, deterministic precedence, explicit
   replacement/disable operations, and all resulting cross-references before it
@@ -1130,6 +1149,35 @@ message-progress bits survive and are consumed by another flow. Friendly labels
 may summarize a useful bit pattern, but raw flags and their producer/consumer
 proofs remain authoritative.
 
+#### 5.10.4 Cutscene scene changes and load-failure branches
+
+Represent cutscene transitions as phase-level actions when any intermediate
+state can affect a later route:
+
+```text
+CutsceneFlowInstance
+  event / cut / phase identity
+  requested actor and resource archives
+  resource-load result: success / failure / unknown
+  ordered pre-load and post-load writes
+  scene-change request and destination
+  return/restart-place writers
+  scheduled cleanup and fallback branch
+```
+
+Normal completion, intentional skip, interruption, and archive-load failure are
+separate candidate edges from the phase where they occur. An actor-corruption
+technique may establish a failed-load predicate or corrupted actor/resource
+identity; it does not directly grant the downstream map or return place. Source
+or witnessed microtrace evidence records the last confirmed operation before
+the branch. When that boundary is unknown, affected flags and cleanup state stay
+unknown while unrelated backing components keep their previous values.
+
+Because the event may start from a pending cutscene or actor-load request, this
+edge can become enabled at an unusual point in a route. Search identity therefore
+includes the flow phase, pending resource requests, and scheduled cleanup—not
+only the current room and progression flags.
+
 ### 5.11 Obstructions and feasibility obligations
 
 An obstruction definition contains:
@@ -1591,6 +1639,12 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
       predicates, normal cleanup, and item/event handoffs from the selected
       language resources where decidable.
+- [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
+      writers, actor/resource archive requests, load-failure/fallback branches,
+      and ordered cleanup where decidable.
+- [ ] Represent partial cutscene execution conservatively: preserve confirmed
+      prefix writes, retain values whose writers are confirmed skipped, and mark
+      effects beyond an unknown failure/interruption boundary unknown.
 - [ ] Produce semantic/raw build and language diffs, with explicit unknown or
       uncovered fields rather than assumed equivalence.
 - [ ] Reconstruct live actor behavior from placement, layer, persisted state, and
@@ -1652,17 +1706,17 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
       only final map transitions.
 - [ ] Support required talk/attention volumes, excluded cutscene-trigger volumes,
       facing/control predicates, and temporal windows.
-- [ ] Import authored obstructions without mutating build facts.
+- [x] Import authored obstructions without mutating build facts.
   - [x] Evaluate obstruction activation and resolver applicability as separate
         scoped/evidenced rules; a resolver discharges named obligations but does
         not delete or falsify the underlying obstruction.
   - [x] Load those records from canonical refinement packs into deterministic,
         base-digest-bound composed runtime catalogs.
-  - [ ] Add authored obstruction selectors and a deterministic composition pass
+  - [x] Add authored obstruction selectors and a deterministic composition pass
         that binds them to candidate actions by stable ID or structural
         source/destination/approach/context matching, emitting graph `blocks`
         dependencies without route-book wiring.
-  - [ ] Require explicit exact-one versus plural cardinality, fail closed on
+  - [x] Require explicit exact-one versus plural cardinality, fail closed on
         unmatched or ambiguous selectors, retain selector/provenance in the
         compiled binding, and add stale-binding regression tests across catalog
         digest changes.
@@ -2021,6 +2075,24 @@ Deliverable: route confidence is mechanically explainable.
       fixtures; each mismatch must invalidate or migrate explicitly rather than
       reuse stale facts.
 
+#### 11O. Zelda tower cutscene failure and retained return place
+
+- [ ] Trace the post-Zelda cutscene as ordered phases, including its Castle Town
+      scene change, actor/archive loads, event writes, return/restart-place
+      writers, and cleanup.
+- [ ] Capture normal completion and actor-corruption/archive-load-failure paths;
+      identify the last confirmed operation and every flag or writer that becomes
+      skipped versus unknown.
+- [ ] Model actor corruption as the producer of the failed-load/exceptional-flow
+      predicate, not as a direct Castle Town warp.
+- [ ] Verify a preexisting Castle Town return place survives only when its
+      overwriting writer is skipped, and that ordinary savewarp subsequently
+      reads it from Zelda's tower.
+- [ ] Vary the incoming return place and prove the cutscene failure preserves
+      that value generically rather than hard-coding Castle Town.
+- [ ] Keep the route unknown in established mode until the relevant partial
+      effects and scene-change branch have source or trace evidence.
+
 ---
 
 ## 7. Regression and acceptance matrix
@@ -2072,6 +2144,7 @@ facts.
 | Exact context scope | Unsupported techniques and language-specific facts never appear through group leakage. |
 | Verified fact-pack identity | User labels cannot override input digests; unknown or stale packs do not silently load. |
 | PAL language split | French-only message-flow behavior does not leak into English or proven-portable queries. |
+| Zelda cutscene archive failure | Partial cutscene writes are preserved/unknown at the witnessed boundary; retained return place drives the later ordinary savewarp. |
 | Derived-pack replay | Exact queries reproduce without `orig/` once the matching generated pack exists. |
 | Cross-context semantic binding | Friendly facts compare across contexts while retaining exact raw bindings and provenance. |
 | Planner/workbench schema boundary | Cycles, AND requirements, and hypothetical edges survive projection without masquerading as TAS timeline segments. |
