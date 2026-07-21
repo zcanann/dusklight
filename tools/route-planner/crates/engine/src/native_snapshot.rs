@@ -107,6 +107,16 @@ pub fn snapshot_native_observation(
             "must contain the exact 256-byte dSv_event_c payload",
         ));
     }
+    if observation
+        .player_light_drop_bytes
+        .as_ref()
+        .is_some_and(|bytes| bytes.len() != 5)
+    {
+        return Err(PlannerContractError::new(
+            "native_observation.player_light_drop_bytes",
+            "must contain the exact five-byte mLightDrop payload",
+        ));
+    }
     if observation.stage.is_empty() {
         return Err(PlannerContractError::new(
             "native_observation.stage",
@@ -206,6 +216,19 @@ pub fn snapshot_native_observation(
         },
         observation.event_flags.as_deref(),
         None,
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+        &provenance,
+    );
+    push_raw_component(
+        &mut components,
+        "save.player-light-drop",
+        ComponentKind::Custom {
+            id: "player-light-drop".into(),
+        },
+        observation.player_light_drop_bytes.as_deref(),
+        Some(5),
         runtime_binding.clone(),
         SemanticLifetime::RuntimeFile,
         runtime_owner.clone(),
@@ -1116,6 +1139,7 @@ mod tests {
                 ],
             }),
             persistent_event_bytes: Some(vec![0; 256]),
+            player_light_drop_bytes: Some(vec![0; 5]),
             event_flags: Some(vec![0; 822]),
             temporary_flags: Some(vec![0; 185]),
             temporary_event_bytes: Some(vec![0; 256]),
@@ -1476,6 +1500,23 @@ mod tests {
             persistent_registers.payload,
             ComponentPayload::Raw { ref bytes, .. } if bytes.len() == 256
         ));
+        let light_drop = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "save.player-light-drop")
+            .unwrap();
+        assert_eq!(
+            light_drop.component_kind,
+            ComponentKind::Custom {
+                id: "player-light-drop".into()
+            }
+        );
+        assert_eq!(light_drop.binding, persistent_registers.binding);
+        assert!(matches!(
+            light_drop.payload,
+            ComponentPayload::Raw { ref bytes, .. } if bytes.len() == 5
+        ));
         let event_labels = snapshot
             .environment
             .components
@@ -1573,13 +1614,22 @@ mod tests {
 
     #[test]
     fn rejects_partial_persistent_event_register_captures() {
-        let mut observation = observation();
-        observation.persistent_event_bytes = Some(vec![0; 255]);
+        let mut partial_event = observation();
+        partial_event.persistent_event_bytes = Some(vec![0; 255]);
         assert_eq!(
-            snapshot_native_observation(&observation, context(1))
+            snapshot_native_observation(&partial_event, context(1))
                 .unwrap_err()
                 .field(),
             "native_observation.persistent_event_bytes"
+        );
+
+        let mut partial_light_drop = observation();
+        partial_light_drop.player_light_drop_bytes = Some(vec![0; 4]);
+        assert_eq!(
+            snapshot_native_observation(&partial_light_drop, context(1))
+                .unwrap_err()
+                .field(),
+            "native_observation.player_light_drop_bytes"
         );
     }
 

@@ -31,13 +31,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MESSAGE_FLOW_PROGRAM_SCHEMA: &str = "dusklight.route-planner.message-flow-program/v2";
+pub const MESSAGE_FLOW_PROGRAM_SCHEMA: &str = "dusklight.route-planner.message-flow-program/v3";
 pub const COMPILED_MESSAGE_FLOW_PROGRAM_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-program/v4";
+    "dusklight.route-planner.compiled-message-flow-program/v5";
 pub const MESSAGE_FLOW_IMPORT_PROFILE_SCHEMA: &str =
-    "dusklight.route-planner.message-flow-import-profile/v2";
+    "dusklight.route-planner.message-flow-import-profile/v3";
 pub const MESSAGE_FLOW_PROGRAM_SET_SCHEMA: &str =
-    "dusklight.route-planner.message-flow-program-set/v2";
+    "dusklight.route-planner.message-flow-program-set/v3";
 const MAX_MESSAGE_FLOW_NODES: usize = 65_535;
 const MAX_EVENT_CONTRACTS: usize = 16_384;
 const MAX_CLEANUP_EDGES: usize = 256;
@@ -66,6 +66,7 @@ pub struct MessageFlowProgram {
 pub struct MessageFlowBindings {
     pub temporary_flags: Option<MessageRawStoreBinding>,
     pub persistent_flags: Option<MessageRawStoreBinding>,
+    pub item_ownership: Vec<MessageItemOwnershipBinding>,
     pub switch_stores: Vec<MessageSwitchStoreBinding>,
 }
 
@@ -74,6 +75,20 @@ pub struct MessageFlowBindings {
 pub struct MessageRawStoreBinding {
     pub component_kind: ComponentKind,
     pub binding: ComponentBindingReference,
+}
+
+/// Exact raw ownership semantics for one item ID. Item ownership is not a
+/// universal inventory bitset in TP; special items such as the Vessels of
+/// Light live in dedicated save structures.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageItemOwnershipBinding {
+    pub item_id: u16,
+    pub label: String,
+    pub component_kind: ComponentKind,
+    pub binding: ComponentBindingReference,
+    pub byte_offset: u32,
+    pub mask: u8,
 }
 
 /// Maps a logical switch index into a byte-backed component. Retail switch
@@ -951,6 +966,23 @@ impl MessageFlowProgram {
                 }
                 operations.len() + unknowns.len() == 1
             }
+            17 if parameter_1 <= 1 => {
+                if let Some(item) = self.bindings.item(parameter_0) {
+                    operations.push((
+                        0,
+                        StateOperation::WriteBoundRaw {
+                            component_kind: item.component_kind.clone(),
+                            binding: item.binding.clone(),
+                            byte_offset: item.byte_offset,
+                            mask: vec![item.mask],
+                            value: vec![item.mask],
+                        },
+                    ));
+                    true
+                } else {
+                    false
+                }
+            }
             8 => {
                 operations.extend([
                     (
@@ -1159,6 +1191,28 @@ impl MessageFlowProgram {
                 alias_id: None,
             }));
         }
+        if let Some(MessageFlowNode::Branch {
+            query_handler_index: Some(22),
+            parameter,
+            ..
+        }) = self.extracted.nodes.get(usize::from(node_index))
+            && let Some(item) = self.bindings.item(*parameter & 0x00ff)
+        {
+            return Ok(Some(CompiledBranchAccess {
+                reference: ValueReference::BoundRawBits {
+                    component_kind: item.component_kind.clone(),
+                    binding: item.binding.clone(),
+                    byte_offset: item.byte_offset,
+                    byte_width: 1,
+                    mask: u64::from(item.mask),
+                },
+                mask: item.mask,
+                alias_id: Some(format!(
+                    "fact.message-flow.{token}.item-ownership-{}",
+                    item.item_id
+                )),
+            }));
+        }
         Ok(None)
     }
 
@@ -1212,6 +1266,44 @@ impl MessageFlowProgram {
                 }
             }
         }
+        for item in &self.bindings.item_ownership {
+            if !self.extracted.nodes.iter().any(|node| match node {
+                MessageFlowNode::Branch {
+                    query_handler_index: Some(22),
+                    parameter,
+                    ..
+                } => (*parameter & 0x00ff) == item.item_id,
+                MessageFlowNode::Event {
+                    event_index: 17,
+                    parameter_0,
+                    parameter_1,
+                    ..
+                } => *parameter_0 == item.item_id && *parameter_1 <= 1,
+                _ => false,
+            }) {
+                continue;
+            }
+            let id = format!("fact.message-flow.{token}.item-ownership-{}", item.item_id);
+            let alias = FriendlyAlias {
+                id: id.clone(),
+                label: item.label.clone(),
+                scope: self.scope.clone(),
+                raw: RawFactBinding {
+                    component_kind: item.component_kind.clone(),
+                    binding: item.binding.clone(),
+                    byte_offset: item.byte_offset,
+                    mask: vec![item.mask],
+                    expected: vec![item.mask],
+                },
+                evidence: self.evidence.clone(),
+            };
+            if aliases.insert(id, alias).is_some() {
+                return Err(PlannerContractError::new(
+                    "message_flow_program.aliases",
+                    "item ownership alias is duplicated",
+                ));
+            }
+        }
         Ok(aliases.into_values().collect())
     }
 
@@ -1227,6 +1319,17 @@ impl MessageFlowBindings {
         }
         if let Some(binding) = &self.persistent_flags {
             binding.validate("message_flow_program.bindings.persistent_flags")?;
+        }
+        let mut prior_item = None;
+        for item in &self.item_ownership {
+            item.validate()?;
+            if prior_item.is_some_and(|item_id| item_id >= item.item_id) {
+                return Err(PlannerContractError::new(
+                    "message_flow_program.bindings.item_ownership",
+                    "must be unique and sorted by item ID",
+                ));
+            }
+            prior_item = Some(item.item_id);
         }
         let mut stores = BTreeSet::new();
         for binding in &self.switch_stores {
@@ -1267,6 +1370,13 @@ impl MessageFlowBindings {
             .iter()
             .find(|binding| binding.store == store)
     }
+
+    fn item(&self, item_id: u16) -> Option<&MessageItemOwnershipBinding> {
+        self.item_ownership
+            .binary_search_by_key(&item_id, |binding| binding.item_id)
+            .ok()
+            .map(|index| &self.item_ownership[index])
+    }
 }
 
 fn unknown_flag_backing(
@@ -1301,6 +1411,33 @@ impl MessageRawStoreBinding {
         }
         .validate()
         .map_err(|error| PlannerContractError::new(field, error.detail()))
+    }
+}
+
+impl MessageItemOwnershipBinding {
+    fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.item_id > u16::from(u8::MAX) {
+            return Err(PlannerContractError::new(
+                "message_flow_program.bindings.item_ownership.item_id",
+                "must fit the retail item ID width",
+            ));
+        }
+        validate_label(
+            "message_flow_program.bindings.item_ownership.label",
+            &self.label,
+        )?;
+        MessageRawStoreBinding {
+            component_kind: self.component_kind.clone(),
+            binding: self.binding.clone(),
+        }
+        .validate("message_flow_program.bindings.item_ownership")?;
+        if !self.mask.is_power_of_two() {
+            return Err(PlannerContractError::new(
+                "message_flow_program.bindings.item_ownership.mask",
+                "must select exactly one ownership bit",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -2309,6 +2446,7 @@ mod tests {
                     component_kind: ComponentKind::PersistentSave,
                     binding: ComponentBindingReference::ActiveRuntimeFile,
                 }),
+                item_ownership: Vec::new(),
                 switch_stores: vec![MessageSwitchStoreBinding {
                     store: MessageFlowSwitchStore::LoadedStageMemory,
                     component_kind: ComponentKind::StageMemory,
@@ -2702,6 +2840,90 @@ mod tests {
     }
 
     #[test]
+    fn item_query_and_event_share_the_same_bound_ownership_bit() {
+        let mut program = program();
+        program.event_contracts.clear();
+        program.bindings.item_ownership = vec![MessageItemOwnershipBinding {
+            item_id: 0xa3,
+            label: "Lanayru Vessel owned".into(),
+            component_kind: ComponentKind::Custom {
+                id: "player-light-drop".into(),
+            },
+            binding: ComponentBindingReference::ActiveRuntimeFile,
+            byte_offset: 4,
+            mask: 0x04,
+        }];
+        let MessageFlowNode::Event {
+            parameter_0,
+            raw_parameter_u32,
+            raw_parameters,
+            ..
+        } = &mut program.extracted.nodes[4]
+        else {
+            unreachable!()
+        };
+        *parameter_0 = 0xa3;
+        *raw_parameter_u32 = 0xa3 << 16;
+        *raw_parameters = [0, 0xa3, 0, 0];
+        program.extracted.nodes[5] = MessageFlowNode::Branch {
+            index: 5,
+            flags: 0,
+            raw_query_index: 21,
+            query_handler_index: Some(22),
+            parameter: 0xa3,
+            next_target_index: 4,
+        };
+
+        let compiled = program.compile().unwrap();
+        let item_set = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("event 17 at node 4"))
+            .unwrap();
+        assert!(item_set.activation.unknown_requirements.is_empty());
+        assert!(matches!(
+            item_set.activation.effects.first(),
+            Some(StateOperation::WriteBoundRaw {
+                component_kind: ComponentKind::Custom { id },
+                binding: ComponentBindingReference::ActiveRuntimeFile,
+                byte_offset: 4,
+                mask,
+                value,
+            }) if id == "player-light-drop" && mask == &[0x04] && value == &[0x04]
+        ));
+
+        let branches = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .filter(|transition| {
+                transition.label.contains("branch") && transition.label.contains("node 5")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(branches.len(), 2);
+        assert!(
+            branches
+                .iter()
+                .all(|transition| transition.activation.unknown_requirements.is_empty())
+        );
+        assert_eq!(
+            compiled
+                .mechanics
+                .readers
+                .iter()
+                .filter(|reader| reader.consuming_transition_id.contains("node-5"))
+                .count(),
+            2
+        );
+        assert!(compiled.aliases.iter().any(|alias| {
+            alias.label == "Lanayru Vessel owned"
+                && alias.raw.byte_offset == 4
+                && alias.raw.mask == [0x04]
+        }));
+    }
+
+    #[test]
     fn constructs_every_selected_resource_with_exact_scope_and_profile_bindings() {
         let profile = import_profile();
         let runtime = runtime_configuration();
@@ -2788,6 +3010,10 @@ mod tests {
                 binding: ComponentBindingReference::ActiveRuntimeFile,
             })
         );
+        assert_eq!(profile.bindings.item_ownership.len(), 1);
+        assert_eq!(profile.bindings.item_ownership[0].item_id, 0xa3);
+        assert_eq!(profile.bindings.item_ownership[0].byte_offset, 4);
+        assert_eq!(profile.bindings.item_ownership[0].mask, 0x04);
         assert_eq!(profile.bindings.switch_stores.len(), 1);
         assert_eq!(
             profile.bindings.switch_stores[0].store,

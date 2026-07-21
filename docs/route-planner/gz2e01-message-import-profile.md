@@ -16,12 +16,14 @@ stand in for it.
 | --- | --- | --- |
 | `dComIfGs_{on,off,is}TmpBit` | `TemporaryFlags` on `active_runtime_file` | `d_msg_flow.cpp`, `d_save.h`, and the exact temporary-label table |
 | `dComIfGs_{on,off,is}EventBit` | custom `persistent-event-registers` raw store on `active_runtime_file` | `d_msg_flow.cpp`, `d_save.h`, and audited `saveBitLabels` coordinates |
+| query 22 / event 17 for item `0xa3` | custom `player-light-drop` raw store on `active_runtime_file`, byte `0x04`, mask `0x04` | `d_msg_flow.cpp`, `d_item.cpp`, and `dSv_player_info_c::mLightDrop` |
 | `dComIfGs_{on,off,is}SaveSwitch` | `DungeonMemory` on `current_stage`, byte base `0x08`, four-byte big-endian words, 128 switches | `d_msg_flow.cpp` and `dSv_memBit_c::mSwitch` |
 
 The source identities carried by the profile are:
 
 | Source | SHA-256 |
 | --- | --- |
+| `src/d/d_item.cpp` | `524ce52fb8bb9f6ebbe90dfba67a1eb1e6d7327da5d0c447081818ff902fd1a6` |
 | `src/d/d_msg_flow.cpp` | `b50cdeea6508cb997172570fb31531c18def39e84b47e535563c40c93e45f2c1` |
 | `include/d/d_save.h` | `74a211e5d2ee2c0fe4ce259905fe1f479f373d5b2459d654871cbbd2f61e8756` |
 | `src/d/d_save.cpp` | `7e6f09aa36af30932e8ce64423284f885ed0b4e632b22f18d6f0a6b4d104b453` |

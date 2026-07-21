@@ -168,6 +168,11 @@ and message-flow `event017` write that bit
 ([generic item writer](../../src/d/d_item.cpp),
 [flow item writer](../../src/d/d_msg_flow.cpp),
 [save backing](../../src/d/d_save.cpp)). Item checks read the same bit.
+The v5 exact message compile now represents that identity directly: node 314's
+owned/not-owned outcomes are complementary predicates over runtime-file
+`player-light-drop` byte `0x04`, mask `0x04`, and event-17 node 323 writes the
+same bound bit. It also publishes the friendly `Lanayru Vessel owned` alias;
+there is no duplicated abstract inventory Boolean.
 
 `F_0615` is a different persistent event bit with raw label `0x4b04`. Flow 21's
 item-present branch writes it through `event000`; neither generic item grant nor

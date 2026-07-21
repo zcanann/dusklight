@@ -266,6 +266,10 @@ pub struct NativeLearningObservation {
     /// file. `event_flags` is the separate label-indexed diagnostic view.
     #[serde(default)]
     pub persistent_event_bytes: Option<Vec<u8>>,
+    /// Exact `dSv_player_info_c::mLightDrop` payload: four tear-count bytes
+    /// followed by the Vessel ownership bitfield.
+    #[serde(default)]
+    pub player_light_drop_bytes: Option<Vec<u8>>,
     pub event_flags: Option<Vec<u8>>,
     pub temporary_flags: Option<Vec<u8>>,
     pub temporary_event_bytes: Option<Vec<u8>>,
@@ -306,9 +310,14 @@ mod tests {
         value
             .as_object_mut()
             .unwrap()
+            .remove("player_light_drop_bytes");
+        value
+            .as_object_mut()
+            .unwrap()
             .remove("loaded_stage_memory_bytes");
         let decoded: NativeLearningObservation = serde_json::from_value(value).unwrap();
         assert_eq!(decoded.persistent_event_bytes, None);
+        assert_eq!(decoded.player_light_drop_bytes, None);
         assert_eq!(decoded.loaded_stage_memory_bytes, None);
     }
 }

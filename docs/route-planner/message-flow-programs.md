@@ -67,6 +67,13 @@ as its own runtime-file component. Label-indexed event observations remain a
 separate diagnostic store. Audited `saveBitLabels` entries therefore compile to
 bound raw predicates and writes, while an unmapped label remains unknown.
 
+Item ownership is also binding-driven rather than assumed to be one inventory
+array. An audited item entry names its ID, friendly label, component kind,
+runtime binding, byte offset, and one-bit ownership mask. Generic query 22 and
+event 17 then read and write that same backing. The GZ2E01 profile currently
+maps item `0xa3` to the Lanayru Vessel bit in `player-light-drop`; other item IDs
+remain unsupported until their distinct ownership semantics are audited.
+
 Packed flag coordinates contain the byte offset in the high byte and a
 single-bit mask in the low byte. Switch bindings describe:
 
@@ -152,7 +159,7 @@ a locale from a product ID or invent a backing from a handler name.
 
 `construct-message-flows` accepts a canonical extracted-orig bundle, runtime
 configuration, and import profile. It selects the runtime language's locale
-bundle and emits a canonical `message-flow-program-set/v2` with one exact-scope
+bundle and emits a canonical `message-flow-program-set/v3` with one exact-scope
 program per message group. Construction fails closed when the language is not
 mapped, the selected bundle is absent, a group is ambiguous, or a group exceeds
 the runtime width. An extracted temporary, persistent, or switch access whose
@@ -251,7 +258,7 @@ obligations or unknown requirements. See `message-entry-contracts.md`.
 
 ## Remaining import work
 
-The v2 compiler and constructor establish the state/control representation,
+The current compiler and constructor establish the state/control representation,
 but production fact-pack integration still needs to:
 
 1. publish audited import profiles and stage/actor entry-contract packs for

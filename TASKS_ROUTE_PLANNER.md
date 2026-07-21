@@ -1876,6 +1876,9 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Project the exact 256-byte persistent event-register backing separately
           from label diagnostics, bind it to the active runtime file, and compile
           audited `F_0615` reads/writes without confusing nearby `M_033`.
+    - [x] Model item ownership as per-item raw backing metadata, project the exact
+          five-byte light-drop payload, and compile Lanayru query 22/event 17 to
+          the same runtime-file Vessel bit without an abstract inventory flag.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.

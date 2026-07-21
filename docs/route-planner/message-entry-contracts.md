@@ -8,7 +8,7 @@ separate, exact-content join.
 ## Source contract
 
 A `message-flow-entry-contract-set/v2` pins both the schema and digest of one
-`compiled-message-flow-set/v4`. Each entry then names:
+`compiled-message-flow-set/v5`. Each entry then names:
 
 - the exact message group, message-resource digest, and flow ID;
 - the exact source stage, optional room and layer, and stage archive/resource

@@ -23,7 +23,7 @@ use sha2::{Digest as _, Sha256};
 pub const MESSAGE_FLOW_RESOURCE_OVERLAY_SET_SCHEMA: &str =
     "dusklight.route-planner.message-flow-resource-overlay-set/v2";
 pub const COMPILED_MESSAGE_FLOW_SET_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-set/v4";
+    "dusklight.route-planner.compiled-message-flow-set/v5";
 pub const MESSAGE_FLOW_ENTRY_CONTRACT_SET_SCHEMA: &str =
     "dusklight.route-planner.message-flow-entry-contract-set/v2";
 pub const COMPILED_MESSAGE_FLOW_ENTRY_SET_SCHEMA: &str =
@@ -1506,6 +1506,7 @@ mod tests {
             bindings: MessageFlowBindings {
                 temporary_flags: None,
                 persistent_flags: None,
+                item_ownership: Vec::new(),
                 switch_stores: Vec::new(),
             },
             event_contracts: Vec::new(),
@@ -1805,7 +1806,7 @@ mod tests {
         );
         assert_eq!(
             set.compiled_message_flow_set_sha256.to_string(),
-            "83a0230c6df6d181510cb93183dc7a396579ecf82b2a1c0d014926dd896741f0"
+            "82bb787e1383dee2dc88937581252a10428f3f714a18d49c2d71f182702ef867"
         );
         let entry = &set.entries[0];
         assert_eq!(entry.message_group, 8);
