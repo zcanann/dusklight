@@ -27,7 +27,6 @@ pub use dusklight_orchestration::stage_actor_coverage;
 pub use dusklight_orchestration::stage_observation_coverage;
 pub use dusklight_orchestration::stage_survey;
 pub use dusklight_proposals::behavior_archive;
-pub use dusklight_route_planner as route_planner;
 pub use dusklight_route_workbench as route_workbench;
 pub use dusklight_routes::{route_store, timeline};
 pub use dusklight_search::{

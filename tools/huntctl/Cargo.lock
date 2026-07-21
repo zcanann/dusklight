@@ -356,7 +356,6 @@ dependencies = [
  "dusklight-oracles",
  "dusklight-orchestration",
  "dusklight-proposals",
- "dusklight-route-planner",
  "dusklight-route-workbench",
  "dusklight-routes",
  "dusklight-search",
@@ -466,18 +465,6 @@ dependencies = [
  "dusklight-harness-contracts",
  "dusklight-learning",
  "dusklight-search",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "dusklight-route-planner"
-version = "0.1.0"
-dependencies = [
- "dusklight-automation-contracts",
- "dusklight-evidence",
- "dusklight-world",
  "serde",
  "serde_json",
  "sha2",

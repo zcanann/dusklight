@@ -27,8 +27,6 @@ pub enum ContentKind {
     WorldContext,
     WorldInventory,
     WorldSpatialIndex,
-    RoutePlannerFacts,
-    RoutePlannerFactManifest,
     StageBootCatalog,
     NativeActorView,
     NativeGeometryView,
@@ -51,10 +49,6 @@ impl ContentKind {
             Self::WorldContext => "application/vnd.dusklight.world-context+json",
             Self::WorldInventory => "application/vnd.dusklight.world-inventory+json",
             Self::WorldSpatialIndex => "application/vnd.dusklight.world-spatial-index+json",
-            Self::RoutePlannerFacts => "application/vnd.dusklight.route-planner-facts+json",
-            Self::RoutePlannerFactManifest => {
-                "application/vnd.dusklight.route-planner-fact-manifest+json"
-            }
             Self::StageBootCatalog => "application/vnd.dusklight.stage-boot-catalog+json",
             Self::NativeActorView => "application/vnd.dusklight.native-actor-view+json",
             Self::NativeGeometryView => "application/vnd.dusklight.native-geometry-view+json",
@@ -519,8 +513,6 @@ mod tests {
             ContentKind::WorldContext,
             ContentKind::WorldInventory,
             ContentKind::WorldSpatialIndex,
-            ContentKind::RoutePlannerFacts,
-            ContentKind::RoutePlannerFactManifest,
             ContentKind::StageBootCatalog,
             ContentKind::NativeActorView,
             ContentKind::NativeGeometryView,

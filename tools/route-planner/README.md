@@ -4,10 +4,10 @@ This is the independent application boundary for the causal route planner. It
 does not register commands with Huntctl and does not use the TAS timeline
 workbench's graph or playback schemas.
 
-The Rust planner engine currently lives in
-`../huntctl/crates/route-planner` while the underlying evidence/world contracts
-are being stabilized. That is a build-time dependency only: this tool owns its
-CLI, reports, and future server/editor protocol.
+The Rust planner engine lives in `crates/engine`. This tool owns its schemas,
+CLI, reports, and future server/editor protocol. Low-level read-only world and
+evidence contracts are consumed as inputs; Huntctl does not depend on or expose
+planner behavior.
 
 ```text
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help

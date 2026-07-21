@@ -70,8 +70,6 @@ dusklight-huntctl (CLI and domain orchestration)
 │   ├── dusklight-harness-contracts ───┤
 │   ├── dusklight-learning ─────────────┤
 │   └── dusklight-search ──────────────┤
-├── dusklight-route-planner ──────────┤
-│   └── dusklight-automation-contracts ┤
 ├── dusklight-routes ─────────────────┤
 │   ├── dusklight-control ─────────────┤
 │   ├── dusklight-objectives ──────────┤
@@ -255,16 +253,6 @@ contracts and control formats. It cannot execute native runs, inspect evidence,
 train models, mutate route/workbench state, or parse CLI commands. The
 orchestration crate feeds it authenticated outcomes and enforces simulator
 budgets.
-
-## `dusklight-route-planner`
-
-Owns exact game-content and runtime-configuration identity, deterministic derived
-fact packs, causal state/transition contracts, reachability solving, proofs, and
-the planner-specific graph projection as those layers are implemented. It may
-depend on portable automation contracts and, when extraction is integrated,
-read-only world facts. It cannot depend on TAS timelines, playback/workbench
-state, native execution, learning, or CLI parsing. Visual similarity to the TAS
-Route Workbench does not relax this domain boundary.
 
 ## `dusklight-routes`
 

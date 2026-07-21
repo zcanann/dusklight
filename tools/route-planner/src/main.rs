@@ -1,11 +1,21 @@
+use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
+use dusklight_route_planner::fact_pack::{
+    CoverageDomain, CoverageStatus, ExtractorIdentity, FactPackCoverage, FactPackManifest,
+    FactPackSource, SourceArtifactKind,
+};
+use dusklight_route_planner::identity::{ContentIdentity, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::transition::MechanicsCatalog;
+use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
 use dusklight_route_planner_runtime::{
     RuntimeEvidenceMode, RuntimeFeasibilityMode, RuntimeSolveOptions, solve_catalog_goal,
 };
+use dusklight_world::world_context::WorldContext;
+use dusklight_world::world_inventory::WorldInventory;
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -21,6 +31,7 @@ fn main() {
 fn run() -> Result<(), Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
+        Some("extract-world") => extract_world(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
         Some("solve") => solve(&args[1..]),
         Some("help" | "--help" | "-h") | None => {
@@ -32,6 +43,100 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn extract_world(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let content_path = required_path(args, "--content-identity")?;
+    let runtime_path = required_path(args, "--runtime-configuration")?;
+    let context_path = required_path(args, "--world-context")?;
+    let output = required_path(args, "--output")?;
+    let manifest_output = required_path(args, "--manifest")?;
+    let inventory_paths = repeated_option(args, "--inventory");
+    if inventory_paths.is_empty() {
+        return Err("extract-world requires at least one --inventory FILE".into());
+    }
+    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let runtime = RuntimeConfiguration::decode_canonical(&fs::read(runtime_path)?)?;
+    let context = WorldContext::decode_canonical(&fs::read(context_path)?)?;
+    let inventories = inventory_paths
+        .iter()
+        .map(|path| WorldInventory::read_canonical(Path::new(path)))
+        .collect::<Result<Vec<_>, _>>()?;
+    let facts = ExtractedWorldFacts::build(&content, &runtime, &context, &inventories)?;
+    let bytes = facts.canonical_bytes()?;
+    let mut sources = vec![FactPackSource {
+        kind: SourceArtifactKind::WorldContext,
+        id: "world-context".into(),
+        sha256: facts.world_context_sha256,
+    }];
+    sources.extend(facts.inventories.iter().map(|inventory| FactPackSource {
+        kind: SourceArtifactKind::WorldInventory,
+        id: format!("world-inventory/{}", inventory.stage.to_ascii_lowercase()),
+        sha256: inventory.inventory_sha256,
+    }));
+    let executable_sha256 = Digest(Sha256::digest(fs::read(env::current_exe()?)?).into());
+    let manifest = FactPackManifest::build(
+        format!("{}.world", content.id),
+        content,
+        ExtractorIdentity {
+            name: "route-planner-world-facts".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            executable_sha256,
+            schema_sha256: Digest(Sha256::digest(EXTRACTED_WORLD_FACTS_SCHEMA).into()),
+        },
+        sources,
+        vec![
+            FactPackCoverage {
+                domain: CoverageDomain::Topology,
+                scope: "world".into(),
+                status: CoverageStatus::Partial,
+                detail: "SCLS records and collision/SCLS joins are imported; actor-driven transitions remain unaudited.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::ActorPlacements,
+                scope: "world".into(),
+                status: CoverageStatus::Partial,
+                detail: "Recognized DZS/DZR placement chunks are imported with raw records; actor reconstruction remains unaudited.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::Collision,
+                scope: "world".into(),
+                status: CoverageStatus::Partial,
+                detail: "Addressable room collision and exit-code joins are indexed; reachability is not inferred.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::PhysicalFeasibility,
+                scope: "world".into(),
+                status: CoverageStatus::Unavailable,
+                detail: "Every imported collision exit retains an unresolved physical approach obligation.".into(),
+            },
+        ],
+        EXTRACTED_WORLD_FACTS_SCHEMA,
+        facts.digest()?,
+    )?;
+    let manifest_bytes = manifest.canonical_bytes()?;
+    write_file(&output, &bytes)?;
+    write_file(&manifest_output, &manifest_bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": facts.schema,
+            "exact_context": facts.exact_context,
+            "world_context_sha256": facts.world_context_sha256,
+            "output": output,
+            "manifest": manifest_output,
+            "manifest_sha256": manifest.digest()?,
+            "sha256": facts.digest()?,
+            "bytes": bytes.len(),
+            "stages": facts.inventories.len(),
+            "static_world_objects": facts.static_world_objects.len(),
+            "spawns": facts.spawns.len(),
+            "encoded_exits": facts.encoded_exits.len(),
+            "candidate_transitions": facts.mechanics.transitions.len(),
+            "physical_obligations": facts.mechanics.obligations.len(),
+        }))?
+    );
+    Ok(())
 }
 
 fn state_from_snapshot(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -102,6 +207,13 @@ fn option(args: &[String], name: &str) -> Option<String> {
         .map(|pair| pair[1].clone())
 }
 
+fn repeated_option(args: &[String], name: &str) -> Vec<String> {
+    args.windows(2)
+        .filter(|pair| pair[0] == name)
+        .map(|pair| pair[1].clone())
+        .collect()
+}
+
 fn flag(args: &[String], name: &str) -> bool {
     args.iter().any(|argument| argument == name)
 }
@@ -132,6 +244,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json --facts FACTS.json --mechanics MECHANICS.json --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]"
+        "Independent TP route planner:\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json --facts FACTS.json --mechanics MECHANICS.json --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]"
     );
 }

@@ -21,7 +21,6 @@ dusklight-objectives = { path = "crates/objectives" }
 dusklight-oracles = { path = "crates/oracles" }
 dusklight-orchestration = { path = "crates/orchestration" }
 dusklight-proposals = { path = "crates/proposals" }
-dusklight-route-planner = { path = "crates/route-planner" }
 dusklight-routes = { path = "crates/routes" }
 dusklight-route-workbench = { path = "crates/workbench" }
 dusklight-search = { path = "crates/search" }
@@ -70,7 +69,6 @@ members = [
     "crates/orchestration",
     "crates/proposals",
     "crates/proposer-tournament",
-    "crates/route-planner",
     "crates/routes",
     "crates/workbench",
     "crates/search",
@@ -99,7 +97,6 @@ default-members = [
     "crates/orchestration",
     "crates/proposals",
     "crates/proposer-tournament",
-    "crates/route-planner",
     "crates/routes",
     "crates/workbench",
     "crates/search",

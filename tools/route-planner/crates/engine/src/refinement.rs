@@ -1,17 +1,23 @@
 //! Versioned refinement packs and deterministic theorycraft overlays.
 
 use crate::artifact::Digest;
-use crate::logic::{ContextScope, DerivedFact, FriendlyAlias, PredicateExpression, RuleEvidence};
+use crate::logic::{
+    ContextScope, DerivedFact, FactCatalog, FriendlyAlias, PredicateExpression, RuleEvidence,
+};
+use crate::state::SemanticLifetime;
 use crate::transition::{
-    CandidateTransition, ObstructionResolver, StateOperation, Technique, WriterRule,
+    ActorReconstructionRule, CandidateTransition, FeasibilityObligation, GateRule, Goal,
+    MechanicsCatalog, Obstruction, ObstructionResolver, ReaderRule, ResolutionKind, RouteCost,
+    StateOperation, Technique, WriterRule, WitnessedMicrotrace,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v1";
+pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v2";
 pub const REFINEMENT_STACK_SCHEMA: &str = "dusklight.route-planner.refinement-stack/v1";
+pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -47,6 +53,12 @@ pub enum RefinementOperation {
     AddTransition {
         transition: CandidateTransition,
     },
+    AddObligation {
+        obligation: FeasibilityObligation,
+    },
+    AddObstruction {
+        obstruction: Obstruction,
+    },
     AddTechnique {
         technique: Technique,
     },
@@ -55,6 +67,21 @@ pub enum RefinementOperation {
     },
     AddWriter {
         writer: WriterRule,
+    },
+    AddGate {
+        gate: GateRule,
+    },
+    AddReader {
+        reader: ReaderRule,
+    },
+    AddReconstructionRule {
+        reconstruction_rule: ActorReconstructionRule,
+    },
+    AddMicrotrace {
+        microtrace: WitnessedMicrotrace,
+    },
+    AddGoal {
+        goal: Goal,
     },
     AddAlias {
         alias: FriendlyAlias,
@@ -113,6 +140,15 @@ pub struct RefinementStack {
     pub entries: Vec<RefinementStackEntry>,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ComposedPlannerCatalog {
+    pub schema: String,
+    pub facts: FactCatalog,
+    pub mechanics: MechanicsCatalog,
+    pub refinement_stack: RefinementStack,
+}
+
 impl RefinementPackManifest {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         validate_stable_id("manifest.id", &self.id)?;
@@ -146,6 +182,21 @@ impl RefinementRule {
                 transition.scope.validate("rules.transition.scope")?;
                 transition.activation.hard_guards.validate()
             }
+            RefinementOperation::AddObligation { obligation } => {
+                validate_stable_id("rules.obligation.id", &obligation.id)?;
+                obligation.scope.validate("rules.obligation.scope")?;
+                obligation.evidence.validate("rules.obligation.evidence")
+            }
+            RefinementOperation::AddObstruction { obstruction } => {
+                validate_stable_id("rules.obstruction.id", &obstruction.id)?;
+                validate_stable_id(
+                    "rules.obstruction.blocked_action_id",
+                    &obstruction.blocked_action_id,
+                )?;
+                obstruction.scope.validate("rules.obstruction.scope")?;
+                obstruction.active_when.validate()?;
+                obstruction.evidence.validate("rules.obstruction.evidence")
+            }
             RefinementOperation::AddTechnique { technique } => {
                 validate_stable_id("rules.technique.id", &technique.id)?;
                 technique.scope.validate("rules.technique.scope")?;
@@ -164,6 +215,44 @@ impl RefinementRule {
                 writer.scope.validate("rules.writer.scope")?;
                 writer.activation.validate()?;
                 writer.operation.validate()
+            }
+            RefinementOperation::AddGate { gate } => {
+                validate_stable_id("rules.gate.id", &gate.id)?;
+                gate.scope.validate("rules.gate.scope")?;
+                gate.active_when.validate()?;
+                gate.evidence.validate("rules.gate.evidence")
+            }
+            RefinementOperation::AddReader { reader } => {
+                validate_stable_id("rules.reader.id", &reader.id)?;
+                reader.scope.validate("rules.reader.scope")?;
+                reader.evidence.validate("rules.reader.evidence")
+            }
+            RefinementOperation::AddReconstructionRule {
+                reconstruction_rule,
+            } => {
+                validate_stable_id(
+                    "rules.reconstruction_rule.id",
+                    &reconstruction_rule.id,
+                )?;
+                reconstruction_rule
+                    .scope
+                    .validate("rules.reconstruction_rule.scope")?;
+                reconstruction_rule.instantiate_when.validate()?;
+                validate_operations(&reconstruction_rule.initialization_operations)?;
+                reconstruction_rule
+                    .evidence
+                    .validate("rules.reconstruction_rule.evidence")
+            }
+            RefinementOperation::AddMicrotrace { microtrace } => {
+                validate_stable_id("rules.microtrace.id", &microtrace.id)?;
+                microtrace.scope.validate("rules.microtrace.scope")?;
+                microtrace.precondition.validate()?;
+                validate_operations(&microtrace.operations)?;
+                microtrace.postcondition.validate()
+            }
+            RefinementOperation::AddGoal { goal } => {
+                validate_stable_id("rules.goal.id", &goal.id)?;
+                goal.predicate.validate()
             }
             RefinementOperation::AddAlias { alias } => {
                 validate_stable_id("rules.alias.id", &alias.id)?;
@@ -357,6 +446,285 @@ impl RefinementStack {
         }
         Ok(())
     }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let stack: Self = serde_json::from_slice(bytes)?;
+        stack.validate()?;
+        if stack.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "refinement_stack",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(stack)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
+impl ComposedPlannerCatalog {
+    pub fn compose(
+        base_facts: &FactCatalog,
+        base_mechanics: &MechanicsCatalog,
+        packs: &[RefinementPack],
+    ) -> Result<Self, PlannerContractError> {
+        base_facts.validate()?;
+        base_mechanics.validate()?;
+        let refinement_stack = RefinementStack::build(packs)?;
+        let by_id = packs
+            .iter()
+            .map(|pack| (pack.manifest.id.as_str(), pack))
+            .collect::<BTreeMap<_, _>>();
+        let mut facts = base_facts.clone();
+        let mut mechanics = base_mechanics.clone();
+
+        for entry in &refinement_stack.entries {
+            let pack = by_id[entry.pack_id.as_str()];
+            apply_replacements(pack, &mut facts, &mut mechanics)?;
+            for rule in &pack.rules {
+                apply_addition(pack, rule, &mut facts, &mut mechanics)?;
+            }
+        }
+        sort_catalogs(&mut facts, &mut mechanics);
+        let composed = Self {
+            schema: COMPOSED_CATALOG_SCHEMA.into(),
+            facts,
+            mechanics,
+            refinement_stack,
+        };
+        composed.validate()?;
+        Ok(composed)
+    }
+
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != COMPOSED_CATALOG_SCHEMA {
+            return Err(PlannerContractError::new("schema", "is unsupported"));
+        }
+        self.facts.validate()?;
+        self.mechanics.validate()?;
+        self.refinement_stack.validate()
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let catalog: Self = serde_json::from_slice(bytes)?;
+        catalog.validate()?;
+        if catalog.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "composed_catalog",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(catalog)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
+fn apply_replacements(
+    pack: &RefinementPack,
+    facts: &mut FactCatalog,
+    mechanics: &mut MechanicsCatalog,
+) -> Result<(), PlannerContractError> {
+    for rule in &pack.rules {
+        let RefinementOperation::ReplaceRecord {
+            target_id,
+            replacement_kind,
+            replacement_rule_id,
+        } = &rule.operation
+        else {
+            continue;
+        };
+        let removed = remove_record(facts, mechanics, target_id);
+        if removed == 0 {
+            return Err(PlannerContractError::new(
+                "rules.target_id",
+                format!("references absent record {target_id}"),
+            ));
+        }
+        if removed > 1 {
+            return Err(PlannerContractError::new(
+                "rules.target_id",
+                format!("record ID {target_id} is ambiguous across catalogs"),
+            ));
+        }
+        if matches!(replacement_kind, ReplacementKind::Replace | ReplacementKind::Supersede) {
+            let replacement_id = replacement_rule_id.as_ref().expect("validated replacement ID");
+            let replacement = pack
+                .rules
+                .iter()
+                .find(|candidate| candidate.id == *replacement_id)
+                .ok_or_else(|| {
+                    PlannerContractError::new(
+                        "rules.replacement_rule_id",
+                        "must reference a rule in the same pack",
+                    )
+                })?;
+            if matches!(replacement.operation, RefinementOperation::ReplaceRecord { .. }) {
+                return Err(PlannerContractError::new(
+                    "rules.replacement_rule_id",
+                    "cannot reference another replacement operation",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_addition(
+    pack: &RefinementPack,
+    rule: &RefinementRule,
+    facts: &mut FactCatalog,
+    mechanics: &mut MechanicsCatalog,
+) -> Result<(), PlannerContractError> {
+    match &rule.operation {
+        RefinementOperation::AddTransition { transition } => {
+            mechanics.transitions.push(transition.clone())
+        }
+        RefinementOperation::AddObligation { obligation } => {
+            mechanics.obligations.push(obligation.clone())
+        }
+        RefinementOperation::AddObstruction { obstruction } => {
+            mechanics.obstructions.push(obstruction.clone())
+        }
+        RefinementOperation::AddTechnique { technique } => {
+            mechanics.techniques.push(technique.clone())
+        }
+        RefinementOperation::AddResolver { resolver } => {
+            mechanics.resolvers.push(resolver.clone())
+        }
+        RefinementOperation::AddWriter { writer } => mechanics.writers.push(writer.clone()),
+        RefinementOperation::AddGate { gate } => mechanics.gates.push(gate.clone()),
+        RefinementOperation::AddReader { reader } => mechanics.readers.push(reader.clone()),
+        RefinementOperation::AddReconstructionRule {
+            reconstruction_rule,
+        } => mechanics
+            .reconstruction_rules
+            .push(reconstruction_rule.clone()),
+        RefinementOperation::AddMicrotrace { microtrace } => {
+            mechanics.microtraces.push(microtrace.clone())
+        }
+        RefinementOperation::AddGoal { goal } => mechanics.goals.push(goal.clone()),
+        RefinementOperation::AddAlias { alias } => facts.aliases.push(alias.clone()),
+        RefinementOperation::AddDerivedFact { fact } => facts.derived_facts.push(fact.clone()),
+        RefinementOperation::ComponentTransform {
+            prerequisite,
+            operations,
+        } => mechanics.techniques.push(Technique {
+            id: rule.id.clone(),
+            label: rule.label.clone(),
+            scope: pack.manifest.scope.clone(),
+            prerequisites: prerequisite.clone(),
+            operations: operations.clone(),
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::new(),
+            },
+            evidence: rule.evidence.clone(),
+        }),
+        RefinementOperation::SuppressWriter { writer_id, when } => {
+            mechanics.gates.push(GateRule {
+                id: rule.id.clone(),
+                scope: pack.manifest.scope.clone(),
+                active_when: when.clone(),
+                blocked_writer_ids: vec![writer_id.clone()],
+                lifetime: SemanticLifetime::Unknown,
+                evidence: rule.evidence.clone(),
+            });
+        }
+        RefinementOperation::AssumeObstructionAbsent {
+            obstruction_id,
+            when,
+        } => mechanics.resolvers.push(ObstructionResolver {
+            id: rule.id.clone(),
+            label: rule.label.clone(),
+            scope: pack.manifest.scope.clone(),
+            obstruction_id: obstruction_id.clone(),
+            resolution_kind: ResolutionKind::AssumeAbsent,
+            applicable_when: when.clone(),
+            operations: Vec::new(),
+            evidence: rule.evidence.clone(),
+        }),
+        RefinementOperation::ReplaceRecord { .. } => {}
+    }
+    Ok(())
+}
+
+fn remove_record(facts: &mut FactCatalog, mechanics: &mut MechanicsCatalog, id: &str) -> usize {
+    let mut removed = 0;
+    removed += remove_where(&mut facts.aliases, id, |record| &record.id);
+    removed += remove_where(&mut facts.derived_facts, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.transitions, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.obligations, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.writers, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.gates, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.readers, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.reconstruction_rules, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.obstructions, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.resolvers, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.techniques, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.microtraces, id, |record| &record.id);
+    removed += remove_where(&mut mechanics.goals, id, |record| &record.id);
+    removed
+}
+
+fn remove_where<T, F>(records: &mut Vec<T>, id: &str, get_id: F) -> usize
+where
+    F: Fn(&T) -> &String,
+{
+    let before = records.len();
+    records.retain(|record| get_id(record) != id);
+    before - records.len()
+}
+
+fn sort_catalogs(facts: &mut FactCatalog, mechanics: &mut MechanicsCatalog) {
+    facts.aliases.sort_by(|left, right| left.id.cmp(&right.id));
+    facts
+        .derived_facts
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .transitions
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .obligations
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .writers
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics.gates.sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .readers
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .reconstruction_rules
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .obstructions
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .resolvers
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .techniques
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .microtraces
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics.goals.sort_by(|left, right| left.id.cmp(&right.id));
 }
 
 fn validate_operations(operations: &[StateOperation]) -> Result<(), PlannerContractError> {

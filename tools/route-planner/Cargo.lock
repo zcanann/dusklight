@@ -109,8 +109,10 @@ name = "dusklight-route-planner-runtime"
 version = "0.1.0"
 dependencies = [
  "dusklight-route-planner",
+ "dusklight-world",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

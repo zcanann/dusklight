@@ -475,8 +475,10 @@ The current code shows:
 - Extracted world-facts schema v1 now compiles an exact content identity,
   runtime configuration, authenticated `WorldContext`, and its complete set of
   canonical world inventories into a content-addressed planner payload. The
-  `huntctl world planner-facts` command emits both that payload and a sealed
-  fact-pack manifest, and stores both as typed immutable artifacts.
+  planner-owned `route-planner extract-world` command emits both that payload
+  and a sealed fact-pack manifest. Huntctl does not register or expose planner
+  commands; the planner consumes its generic canonical world artifacts as
+  read-only inputs.
 - The compiler imports recognized static placements and player spawns with raw
   records and source bindings. Every SCLS destination remains an encoded-exit
   fact. An SCLS record with no collision activation join does not become a
@@ -503,7 +505,10 @@ Primary source anchors:
   presentation actor, and get-item handoff.
 - `include/global.h`, `include/dusk/version.hpp`, and `src/dusk/version.cpp`:
   compile-time build catalogue and current runtime disc detection.
-- `tools/huntctl/src/cli/world.rs`: content-addressed world-context construction.
+- `tools/route-planner/src/main.rs`: planner-owned world-fact extraction and
+  manifest construction.
+- `tools/huntctl/src/cli/world.rs`: generic content-addressed world-context
+  construction consumed as an input, with no planner dependency.
 - `src/d/d_file_sel_info.cpp`: an example of PAL behavior depending on selected
   language in addition to region.
 
