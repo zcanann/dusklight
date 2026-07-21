@@ -540,6 +540,14 @@ The current code shows:
   policy, and annotations. Rust applies edits to a clone, sorts canonical sets,
   revalidates all graph references and per-step/per-method context scopes, and
   emits a new canonical revision only if the entire batch succeeds.
+- The bounded forward solver now consumes active, exact-context route-book
+  require/forbid predicates and techniques plus pin/ban transition, resolver,
+  and technique directives. Required actions are part of search identity, so a
+  state reached without a pinned action does not erase a later compliant path.
+  Planner CLI/service solve requests accept an optional route book and seal its
+  digest into solve-report schema v2. Unsupported costs, preferences,
+  writer/microtrace execution, and ordered method selections fail closed rather
+  than being silently ignored.
 
 Primary source anchors:
 
@@ -1650,6 +1658,11 @@ Deliverable: researchers can extend the model without editing core code.
 - [ ] Support exact content/language, evidence, technique, runtime-file, and path
       constraints; validate portable plans independently over every selected
       context using only appropriately scoped/equivalent rules.
+  - [x] Apply scoped require/forbid predicates and techniques plus pin/ban
+        executable-action directives during forward search, with route-book
+        identity retained in standalone reports.
+  - [ ] Execute cost/evidence thresholds, soft preferences, ordered methods,
+        and portable multi-context route books.
 - [ ] Add multi-objective cost and K-alternative plan search.
 - [x] Return reachable, unreachable-under-model, or unknown.
   - [x] Expose canonical fact/mechanics/execution-state artifacts through a

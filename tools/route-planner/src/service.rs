@@ -1,7 +1,9 @@
 //! Typed request/response boundary for planner-owned editor and automation clients.
 
 use crate::inspection::{StateInspection, inspect_state};
-use crate::{RuntimeSolveOptions, SolveReport, solve_composed_catalog_goal};
+use crate::{
+    RuntimeSolveOptions, SolveReport, solve_composed_catalog_goal, solve_composed_route_book_goal,
+};
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::execution::PlannerExecutionStateDocument;
 use dusklight_route_planner::graph::PlannerGraph;
@@ -64,6 +66,8 @@ pub enum PlannerServiceRequest {
         equivalence_sets: Vec<EquivalenceSet>,
         goal_id: String,
         options: RuntimeSolveOptions,
+        #[serde(default)]
+        route_book: Option<Box<RouteBook>>,
     },
 }
 
@@ -215,13 +219,29 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
             equivalence_sets,
             goal_id,
             options,
+            route_book,
             ..
         } => (*state).into_state().and_then(|state| {
-            solve_composed_catalog_goal(state, &catalog, &equivalence_sets, &goal_id, options).map(
-                |report| PlannerServicePayload::SolveReport {
-                    report: Box::new(report),
-                },
-            )
+            let report = match route_book {
+                Some(book) => solve_composed_route_book_goal(
+                    state,
+                    &catalog,
+                    &equivalence_sets,
+                    &book,
+                    &goal_id,
+                    options,
+                ),
+                None => solve_composed_catalog_goal(
+                    state,
+                    &catalog,
+                    &equivalence_sets,
+                    &goal_id,
+                    options,
+                ),
+            }?;
+            Ok(PlannerServicePayload::SolveReport {
+                report: Box::new(report),
+            })
         }),
     };
     match result {

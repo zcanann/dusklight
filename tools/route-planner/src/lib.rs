@@ -14,11 +14,12 @@ use dusklight_route_planner::execution::PlannerExecutionState;
 use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::ComposedPlannerCatalog;
+use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::solver::{ForwardSolver, SearchResult, SolverOptions};
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 
-pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v1";
+pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +67,7 @@ pub struct SolveReport {
     pub fact_catalog_sha256: Digest,
     pub mechanics_catalog_sha256: Digest,
     pub refinement_stack_sha256: Option<Digest>,
+    pub route_book_sha256: Option<Digest>,
     pub refinement_pack_ids: Vec<String>,
     pub equivalence_set_count: usize,
     pub feasibility_mode: RuntimeFeasibilityMode,
@@ -81,6 +83,46 @@ pub fn solve_catalog_goal(
     goal_id: &str,
     options: RuntimeSolveOptions,
 ) -> Result<SolveReport, PlannerContractError> {
+    solve_catalog_goal_inner(
+        state,
+        facts,
+        mechanics,
+        equivalence_sets,
+        goal_id,
+        options,
+        None,
+    )
+}
+
+pub fn solve_catalog_route_book_goal(
+    state: PlannerExecutionState,
+    facts: &FactCatalog,
+    mechanics: &MechanicsCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: &RouteBook,
+    goal_id: &str,
+    options: RuntimeSolveOptions,
+) -> Result<SolveReport, PlannerContractError> {
+    solve_catalog_goal_inner(
+        state,
+        facts,
+        mechanics,
+        equivalence_sets,
+        goal_id,
+        options,
+        Some(route_book),
+    )
+}
+
+fn solve_catalog_goal_inner(
+    state: PlannerExecutionState,
+    facts: &FactCatalog,
+    mechanics: &MechanicsCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    goal_id: &str,
+    options: RuntimeSolveOptions,
+    route_book: Option<&RouteBook>,
+) -> Result<SolveReport, PlannerContractError> {
     state.validate()?;
     facts.validate()?;
     mechanics.validate()?;
@@ -89,6 +131,15 @@ pub fn solve_catalog_goal(
         .iter()
         .find(|goal| goal.id == goal_id)
         .ok_or_else(|| PlannerContractError::new("goal_id", "is absent from the catalog"))?;
+    if let Some(book) = route_book {
+        book.validate_against(facts, mechanics)?;
+        if !book.goal_ids.iter().any(|id| id == goal_id) {
+            return Err(PlannerContractError::new(
+                "goal_id",
+                "is not selected by the route book",
+            ));
+        }
+    }
     let solver_options = SolverOptions {
         max_depth: options.max_depth,
         max_states: options.max_states,
@@ -103,8 +154,18 @@ pub fn solve_catalog_goal(
         },
     };
     let execution_state_sha256 = state.digest()?;
-    let result = ForwardSolver::new(facts, mechanics, equivalence_sets, solver_options)?
-        .solve(state, &goal.predicate)?;
+    let result = match route_book {
+        Some(book) => ForwardSolver::new_with_route_book(
+            facts,
+            mechanics,
+            equivalence_sets,
+            solver_options,
+            book,
+        )?
+        .solve(state, &goal.predicate)?,
+        None => ForwardSolver::new(facts, mechanics, equivalence_sets, solver_options)?
+            .solve(state, &goal.predicate)?,
+    };
     Ok(SolveReport {
         schema: SOLVE_REPORT_SCHEMA.into(),
         goal_id: goal.id.clone(),
@@ -112,6 +173,7 @@ pub fn solve_catalog_goal(
         fact_catalog_sha256: facts.digest()?,
         mechanics_catalog_sha256: mechanics.digest()?,
         refinement_stack_sha256: None,
+        route_book_sha256: route_book.map(RouteBook::digest).transpose()?,
         refinement_pack_ids: Vec::new(),
         equivalence_set_count: equivalence_sets.len(),
         feasibility_mode: options.feasibility_mode,
@@ -146,13 +208,44 @@ pub fn solve_composed_catalog_goal(
     Ok(report)
 }
 
+pub fn solve_composed_route_book_goal(
+    state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: &RouteBook,
+    goal_id: &str,
+    options: RuntimeSolveOptions,
+) -> Result<SolveReport, PlannerContractError> {
+    catalog.validate()?;
+    route_book.validate_against_composed(catalog)?;
+    let mut report = solve_catalog_route_book_goal(
+        state,
+        &catalog.facts,
+        &catalog.mechanics,
+        equivalence_sets,
+        route_book,
+        goal_id,
+        options,
+    )?;
+    report.refinement_stack_sha256 = Some(catalog.refinement_stack.digest()?);
+    report.refinement_pack_ids = catalog
+        .refinement_stack
+        .entries
+        .iter()
+        .map(|entry| entry.pack_id.clone())
+        .collect();
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dusklight_route_planner::identity::ContextSelector;
     use dusklight_route_planner::identity::{RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
     use dusklight_route_planner::logic::{
-        ComparisonOperator, FACT_CATALOG_SCHEMA, PredicateExpression, ValueReference,
+        ComparisonOperator, ContextScope, FACT_CATALOG_SCHEMA, PredicateExpression, ValueReference,
     };
+    use dusklight_route_planner::route_book::{ROUTE_BOOK_SCHEMA, RouteBookManifest};
     use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use dusklight_route_planner::solver::SearchStatus;
     use dusklight_route_planner::state::{
@@ -270,5 +363,48 @@ mod tests {
             Some(composed.refinement_stack.digest().unwrap())
         );
         assert!(composed_report.refinement_pack_ids.is_empty());
+
+        let route_state = state();
+        let route_book = RouteBook {
+            schema: ROUTE_BOOK_SCHEMA.into(),
+            manifest: RouteBookManifest {
+                id: "route.runtime-test".into(),
+                version: "1.0.0".into(),
+                label: "Runtime route test".into(),
+                author: "route planner tests".into(),
+                source: "in-memory fixture".into(),
+                scope: ContextScope {
+                    selectors: vec![ContextSelector::Exact {
+                        context: route_state
+                            .snapshot
+                            .environment
+                            .runtime_configuration
+                            .exact_context()
+                            .unwrap(),
+                    }],
+                },
+                refinement_stack_sha256: Some(composed.refinement_stack.digest().unwrap()),
+            },
+            goal_ids: vec!["goal.ordon-spring".into()],
+            constraints: Vec::new(),
+            directives: Vec::new(),
+            steps: Vec::new(),
+            methods: Vec::new(),
+            regions: Vec::new(),
+            annotations: Vec::new(),
+        };
+        let route_report = solve_composed_route_book_goal(
+            route_state,
+            &composed,
+            &[],
+            &route_book,
+            "goal.ordon-spring",
+            RuntimeSolveOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            route_report.route_book_sha256,
+            Some(route_book.digest().unwrap())
+        );
     }
 }

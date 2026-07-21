@@ -1,9 +1,7 @@
 //! Deterministic planner-native graph projections for browser and tooling clients.
 
 use crate::artifact::Digest;
-use crate::logic::{
-    ComparisonOperator, FactCatalog, PredicateExpression, ValueReference,
-};
+use crate::logic::{ComparisonOperator, FactCatalog, PredicateExpression, ValueReference};
 use crate::refinement::ComposedPlannerCatalog;
 use crate::route_book::{CollapsePolicy, RouteActionRef, RouteBook};
 use crate::transition::{MechanicsCatalog, ObligationDetail, ResolutionKind};
@@ -39,31 +37,65 @@ pub struct PlannerGraphNode {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum PlannerNodePayload {
-    Alias { fact_id: String },
-    DerivedFact { fact_id: String },
-    Goal { goal_id: String },
-    Transition { transition_id: String },
-    Obligation { obligation_id: String },
-    Obstruction { obstruction_id: String },
+    Alias {
+        fact_id: String,
+    },
+    DerivedFact {
+        fact_id: String,
+    },
+    Goal {
+        goal_id: String,
+    },
+    Transition {
+        transition_id: String,
+    },
+    Obligation {
+        obligation_id: String,
+    },
+    Obstruction {
+        obstruction_id: String,
+    },
     Resolver {
         resolver_id: String,
         resolution_kind: ResolutionKind,
     },
-    Technique { technique_id: String },
-    Writer { writer_id: String },
-    Gate { gate_id: String },
-    Reader { reader_id: String },
-    Reconstruction { reconstruction_rule_id: String },
-    Microtrace { microtrace_id: String },
+    Technique {
+        technique_id: String,
+    },
+    Writer {
+        writer_id: String,
+    },
+    Gate {
+        gate_id: String,
+    },
+    Reader {
+        reader_id: String,
+    },
+    Reconstruction {
+        reconstruction_rule_id: String,
+    },
+    Microtrace {
+        microtrace_id: String,
+    },
     PlanRegion {
         plan_region_id: String,
         collapse_policy: CollapsePolicy,
     },
-    PlanMethod { method_id: String },
-    ReferenceStep { step_id: String },
-    ExternalAction { action_id: String },
-    ExternalFact { fact_id: String },
-    Predicate { operator: PredicateOperator },
+    PlanMethod {
+        method_id: String,
+    },
+    ReferenceStep {
+        step_id: String,
+    },
+    ExternalAction {
+        action_id: String,
+    },
+    ExternalFact {
+        fact_id: String,
+    },
+    Predicate {
+        operator: PredicateOperator,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -74,7 +106,9 @@ pub enum PredicateOperator {
     All,
     Any,
     Not,
-    Fact { fact_id: String },
+    Fact {
+        fact_id: String,
+    },
     Compare {
         left: ValueReference,
         operator: ComparisonOperator,
@@ -194,7 +228,9 @@ impl PlannerGraph {
         }
         builder.nodes.sort_by(|left, right| left.id.cmp(&right.id));
         builder.edges.sort_by(|left, right| left.id.cmp(&right.id));
-        builder.regions.sort_by(|left, right| left.id.cmp(&right.id));
+        builder
+            .regions
+            .sort_by(|left, right| left.id.cmp(&right.id));
         let graph = Self {
             schema: PLANNER_GRAPH_SCHEMA.into(),
             fact_catalog_sha256: facts.digest()?,
@@ -334,7 +370,12 @@ impl GraphBuilder {
         }
         for fact in &facts.derived_facts {
             let owner = fact_node_id(&fact.id);
-            self.project_predicate(&owner, "derived", &fact.rule, PlannerGraphRelation::Requires)?;
+            self.project_predicate(
+                &owner,
+                "derived",
+                &fact.rule,
+                PlannerGraphRelation::Requires,
+            )?;
         }
         Ok(())
     }
@@ -350,12 +391,19 @@ impl GraphBuilder {
             .collect::<BTreeSet<_>>();
         for record in &mechanics.obligations {
             let owner = format!("obligation/{}", record.id);
-            self.add_record_node(&owner, &record.label, PlannerNodePayload::Obligation {
-                obligation_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.label,
+                PlannerNodePayload::Obligation {
+                    obligation_id: record.id.clone(),
+                },
+            )?;
             match &record.detail {
                 ObligationDetail::Predicate { predicate }
-                | ObligationDetail::Temporal { precondition: predicate, .. } => {
+                | ObligationDetail::Temporal {
+                    precondition: predicate,
+                    ..
+                } => {
                     self.project_predicate(
                         &owner,
                         "requirement",
@@ -376,20 +424,20 @@ impl GraphBuilder {
         }
         for record in &mechanics.transitions {
             let owner = format!("transition/{}", record.id);
-            self.add_record_node(&owner, &record.label, PlannerNodePayload::Transition {
-                transition_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.label,
+                PlannerNodePayload::Transition {
+                    transition_id: record.id.clone(),
+                },
+            )?;
             self.project_predicate(
                 &owner,
                 "guard",
                 &record.activation.hard_guards,
                 PlannerGraphRelation::Requires,
             )?;
-            for (index, obligation) in record
-                .activation
-                .physical_obligation_ids
-                .iter()
-                .enumerate()
+            for (index, obligation) in record.activation.physical_obligation_ids.iter().enumerate()
             {
                 self.add_edge(
                     &owner,
@@ -401,9 +449,13 @@ impl GraphBuilder {
         }
         for record in &mechanics.writers {
             let owner = format!("writer/{}", record.id);
-            self.add_record_node(&owner, &record.id, PlannerNodePayload::Writer {
-                writer_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.id,
+                PlannerNodePayload::Writer {
+                    writer_id: record.id.clone(),
+                },
+            )?;
             self.project_predicate(
                 &owner,
                 "activation",
@@ -413,9 +465,13 @@ impl GraphBuilder {
         }
         for record in &mechanics.gates {
             let owner = format!("gate/{}", record.id);
-            self.add_record_node(&owner, &record.id, PlannerNodePayload::Gate {
-                gate_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.id,
+                PlannerNodePayload::Gate {
+                    gate_id: record.id.clone(),
+                },
+            )?;
             self.project_predicate(
                 &owner,
                 "active",
@@ -433,9 +489,13 @@ impl GraphBuilder {
         }
         for record in &mechanics.readers {
             let owner = format!("reader/{}", record.id);
-            self.add_record_node(&owner, &record.id, PlannerNodePayload::Reader {
-                reader_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.id,
+                PlannerNodePayload::Reader {
+                    reader_id: record.id.clone(),
+                },
+            )?;
             self.add_edge(
                 &owner,
                 &format!("transition/{}", record.consuming_transition_id),
@@ -465,9 +525,13 @@ impl GraphBuilder {
         }
         for record in &mechanics.obstructions {
             let owner = format!("obstruction/{}", record.id);
-            self.add_record_node(&owner, &record.label, PlannerNodePayload::Obstruction {
-                obstruction_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.label,
+                PlannerNodePayload::Obstruction {
+                    obstruction_id: record.id.clone(),
+                },
+            )?;
             self.project_predicate(
                 &owner,
                 "active",
@@ -514,9 +578,13 @@ impl GraphBuilder {
         }
         for record in &mechanics.techniques {
             let owner = format!("technique/{}", record.id);
-            self.add_record_node(&owner, &record.label, PlannerNodePayload::Technique {
-                technique_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.label,
+                PlannerNodePayload::Technique {
+                    technique_id: record.id.clone(),
+                },
+            )?;
             self.project_predicate(
                 &owner,
                 "prerequisite",
@@ -542,9 +610,13 @@ impl GraphBuilder {
         }
         for record in &mechanics.microtraces {
             let owner = format!("microtrace/{}", record.id);
-            self.add_record_node(&owner, &record.id, PlannerNodePayload::Microtrace {
-                microtrace_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.id,
+                PlannerNodePayload::Microtrace {
+                    microtrace_id: record.id.clone(),
+                },
+            )?;
             self.project_predicate(
                 &owner,
                 "precondition",
@@ -560,9 +632,13 @@ impl GraphBuilder {
         }
         for record in &mechanics.goals {
             let owner = format!("goal/{}", record.id);
-            self.add_record_node(&owner, &record.label, PlannerNodePayload::Goal {
-                goal_id: record.id.clone(),
-            })?;
+            self.add_record_node(
+                &owner,
+                &record.label,
+                PlannerNodePayload::Goal {
+                    goal_id: record.id.clone(),
+                },
+            )?;
             self.project_predicate(
                 &owner,
                 "predicate",
@@ -830,13 +906,8 @@ impl GraphBuilder {
             self.add_edge(&id, &target, PlannerGraphRelation::References, None)?;
         }
         for (index, child) in children.iter().enumerate() {
-            let child_id = self.add_predicate_node(
-                owner,
-                role,
-                &format!("{path}.{index}"),
-                child,
-                region_id,
-            )?;
+            let child_id =
+                self.add_predicate_node(owner, role, &format!("{path}.{index}"), child, region_id)?;
             self.add_edge(
                 &id,
                 &child_id,
@@ -1107,13 +1178,9 @@ fn validate_node_payload(payload: &PlannerNodePayload) -> Result<(), PlannerCont
         PlannerNodePayload::Technique { technique_id } => {
             Some(("nodes.payload.technique_id", technique_id))
         }
-        PlannerNodePayload::Writer { writer_id } => {
-            Some(("nodes.payload.writer_id", writer_id))
-        }
+        PlannerNodePayload::Writer { writer_id } => Some(("nodes.payload.writer_id", writer_id)),
         PlannerNodePayload::Gate { gate_id } => Some(("nodes.payload.gate_id", gate_id)),
-        PlannerNodePayload::Reader { reader_id } => {
-            Some(("nodes.payload.reader_id", reader_id))
-        }
+        PlannerNodePayload::Reader { reader_id } => Some(("nodes.payload.reader_id", reader_id)),
         PlannerNodePayload::Reconstruction {
             reconstruction_rule_id,
         } => Some((
@@ -1129,9 +1196,7 @@ fn validate_node_payload(payload: &PlannerNodePayload) -> Result<(), PlannerCont
         PlannerNodePayload::PlanMethod { method_id } => {
             Some(("nodes.payload.method_id", method_id))
         }
-        PlannerNodePayload::ReferenceStep { step_id } => {
-            Some(("nodes.payload.step_id", step_id))
-        }
+        PlannerNodePayload::ReferenceStep { step_id } => Some(("nodes.payload.step_id", step_id)),
         PlannerNodePayload::ExternalAction { action_id } => {
             Some(("nodes.payload.action_id", action_id))
         }
@@ -1170,12 +1235,12 @@ mod tests {
     use super::*;
     use crate::identity::{ContextSelector, ExactContext};
     use crate::logic::{
-        ContextScope, DerivedFact, EvidenceKind, EvidenceRecord, RuleEvidence, TruthStatus,
-        FACT_CATALOG_SCHEMA,
+        ContextScope, DerivedFact, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, RuleEvidence,
+        TruthStatus,
     };
     use crate::route_book::{
-        CollapsePolicy, PlanMethod, PlanRegion, ReferenceStep, RouteActionRef, RouteBook,
-        RouteBookManifest, ROUTE_BOOK_SCHEMA,
+        CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_SCHEMA, ReferenceStep, RouteActionRef,
+        RouteBook, RouteBookManifest,
     };
     use crate::transition::{
         Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, RouteCost, Technique,
@@ -1349,13 +1414,19 @@ mod tests {
                 .count(),
             4
         );
-        assert!(graph.regions.iter().filter(|region| {
-            region.region_kind == PlannerRegionKind::Predicate
-        }).all(|region| region.collapsed_by_default));
-        assert!(!graph.nodes.iter().any(|node| matches!(
-            node.payload,
-            PlannerNodePayload::ExternalFact { .. }
-        )));
+        assert!(
+            graph
+                .regions
+                .iter()
+                .filter(|region| { region.region_kind == PlannerRegionKind::Predicate })
+                .all(|region| region.collapsed_by_default)
+        );
+        assert!(
+            !graph
+                .nodes
+                .iter()
+                .any(|node| matches!(node.payload, PlannerNodePayload::ExternalFact { .. }))
+        );
         let bytes = graph.canonical_bytes().unwrap();
         assert_eq!(PlannerGraph::decode_canonical(&bytes).unwrap(), graph);
     }
@@ -1376,14 +1447,18 @@ mod tests {
         let book = route_book();
         let graph = PlannerGraph::project_with_route_book(&facts, &mechanics, &book).unwrap();
         assert_eq!(graph.route_book_sha256, Some(book.digest().unwrap()));
-        assert!(graph.nodes.iter().any(|node| matches!(
-            node.payload,
-            PlannerNodePayload::PlanRegion { .. }
-        )));
-        assert!(graph.nodes.iter().any(|node| matches!(
-            node.payload,
-            PlannerNodePayload::PlanMethod { .. }
-        )));
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| matches!(node.payload, PlannerNodePayload::PlanRegion { .. }))
+        );
+        assert!(
+            graph
+                .nodes
+                .iter()
+                .any(|node| matches!(node.payload, PlannerNodePayload::PlanMethod { .. }))
+        );
         assert!(graph.edges.iter().any(|edge| {
             edge.relation == PlannerGraphRelation::SelectsAction
                 && edge.target_node_id == "technique/technique.ordon-return"
@@ -1392,9 +1467,14 @@ mod tests {
             edge.relation == PlannerGraphRelation::Selected
                 && edge.target_node_id == "plan-method/method.return"
         }));
-        assert!(graph.regions.iter().filter(|region| {
-            region.region_kind == PlannerRegionKind::Plan
-                && region.id != "region.plans"
-        }).all(|region| !region.collapsed_by_default));
+        assert!(
+            graph
+                .regions
+                .iter()
+                .filter(|region| {
+                    region.region_kind == PlannerRegionKind::Plan && region.id != "region.plans"
+                })
+                .all(|region| !region.collapsed_by_default)
+        );
     }
 }

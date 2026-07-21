@@ -234,32 +234,6 @@ pub struct WorldInventory {
 }
 
 impl WorldContext {
-    pub fn build(
-        game_data_sha256: Digest,
-        inventories: &[WorldInventory],
-    ) -> Result<Self, PlannerContractError> {
-        let mut stages = inventories
-            .iter()
-            .map(|inventory| {
-                Ok(WorldContextStage {
-                    stage: inventory.stage.clone(),
-                    inventory_sha256: inventory.digest()?,
-                    // Spatial data is not interpreted by the planner, but its
-                    // identity remains mandatory in imported contexts.
-                    spatial_index_sha256: inventory.digest()?,
-                })
-            })
-            .collect::<Result<Vec<_>, PlannerContractError>>()?;
-        stages.sort_by(|left, right| left.stage.cmp(&right.stage));
-        let context = Self {
-            schema: WORLD_CONTEXT_SCHEMA.into(),
-            game_data_sha256,
-            stages,
-        };
-        context.validate()?;
-        Ok(context)
-    }
-
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != WORLD_CONTEXT_SCHEMA || self.game_data_sha256 == Digest::ZERO {
             return Err(PlannerContractError::new(

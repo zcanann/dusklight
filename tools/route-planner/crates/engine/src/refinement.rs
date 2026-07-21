@@ -8,7 +8,7 @@ use crate::state::SemanticLifetime;
 use crate::transition::{
     ActorReconstructionRule, CandidateTransition, FeasibilityObligation, GateRule, Goal,
     MechanicsCatalog, Obstruction, ObstructionResolver, ReaderRule, ResolutionKind, RouteCost,
-    StateOperation, Technique, WriterRule, WitnessedMicrotrace,
+    StateOperation, Technique, WitnessedMicrotrace, WriterRule,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
@@ -232,10 +232,7 @@ impl RefinementRule {
             RefinementOperation::AddReconstructionRule {
                 reconstruction_rule,
             } => {
-                validate_stable_id(
-                    "rules.reconstruction_rule.id",
-                    &reconstruction_rule.id,
-                )?;
+                validate_stable_id("rules.reconstruction_rule.id", &reconstruction_rule.id)?;
                 reconstruction_rule
                     .scope
                     .validate("rules.reconstruction_rule.scope")?;
@@ -577,7 +574,10 @@ fn apply_replacements(
                 format!("record ID {target_id} is ambiguous across catalogs"),
             ));
         }
-        if matches!(replacement_kind, ReplacementKind::Replace | ReplacementKind::Supersede) {
+        if matches!(
+            replacement_kind,
+            ReplacementKind::Replace | ReplacementKind::Supersede
+        ) {
             let replacement_id = replacement_rule_id.as_ref().ok_or_else(|| {
                 PlannerContractError::new(
                     "rules.replacement_rule_id",
@@ -594,7 +594,10 @@ fn apply_replacements(
                         "must reference a rule in the same pack",
                     )
                 })?;
-            if matches!(replacement.operation, RefinementOperation::ReplaceRecord { .. }) {
+            if matches!(
+                replacement.operation,
+                RefinementOperation::ReplaceRecord { .. }
+            ) {
                 return Err(PlannerContractError::new(
                     "rules.replacement_rule_id",
                     "cannot reference another replacement operation",
@@ -624,9 +627,7 @@ fn apply_addition(
         RefinementOperation::AddTechnique { technique } => {
             mechanics.techniques.push(technique.clone())
         }
-        RefinementOperation::AddResolver { resolver } => {
-            mechanics.resolvers.push(resolver.clone())
-        }
+        RefinementOperation::AddResolver { resolver } => mechanics.resolvers.push(resolver.clone()),
         RefinementOperation::AddWriter { writer } => mechanics.writers.push(writer.clone()),
         RefinementOperation::AddGate { gate } => mechanics.gates.push(gate.clone()),
         RefinementOperation::AddReader { reader } => mechanics.readers.push(reader.clone()),
@@ -726,7 +727,9 @@ fn sort_catalogs(facts: &mut FactCatalog, mechanics: &mut MechanicsCatalog) {
     mechanics
         .writers
         .sort_by(|left, right| left.id.cmp(&right.id));
-    mechanics.gates.sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .gates
+        .sort_by(|left, right| left.id.cmp(&right.id));
     mechanics
         .readers
         .sort_by(|left, right| left.id.cmp(&right.id));
@@ -745,7 +748,9 @@ fn sort_catalogs(facts: &mut FactCatalog, mechanics: &mut MechanicsCatalog) {
     mechanics
         .microtraces
         .sort_by(|left, right| left.id.cmp(&right.id));
-    mechanics.goals.sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics
+        .goals
+        .sort_by(|left, right| left.id.cmp(&right.id));
 }
 
 fn validate_operations(operations: &[StateOperation]) -> Result<(), PlannerContractError> {
@@ -867,12 +872,8 @@ fn reject_dependency_cycles(
 mod tests {
     use super::*;
     use crate::identity::{ContextSelector, ExactContext};
-    use crate::logic::{
-        EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, TruthStatus,
-    };
-    use crate::transition::{
-        MECHANICS_CATALOG_SCHEMA, ObligationDetail, ObligationKind,
-    };
+    use crate::logic::{EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, TruthStatus};
+    use crate::transition::{MECHANICS_CATALOG_SCHEMA, ObligationDetail, ObligationKind};
 
     fn scope() -> ContextScope {
         ContextScope {

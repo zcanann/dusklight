@@ -928,14 +928,27 @@ mod tests {
         }
     }
 
+    fn world_context(game_data_sha256: Digest, inventory: &WorldInventory) -> WorldContext {
+        let context = WorldContext {
+            schema: crate::world_data::WORLD_CONTEXT_SCHEMA.into(),
+            game_data_sha256,
+            stages: vec![crate::world_data::WorldContextStage {
+                stage: inventory.stage.clone(),
+                inventory_sha256: inventory.digest().unwrap(),
+                spatial_index_sha256: Digest([99; 32]),
+            }],
+        };
+        context.validate().unwrap();
+        context
+    }
+
     #[test]
     fn imports_joined_exit_as_obstructed_candidate_without_claiming_feasibility() {
         let content = content();
         let runtime = runtime(&content);
         let inventory = inventory(true);
         inventory.validate().unwrap();
-        let context =
-            WorldContext::build(Digest([2; 32]), std::slice::from_ref(&inventory)).unwrap();
+        let context = world_context(Digest([2; 32]), &inventory);
         let facts = ExtractedWorldFacts::build(
             &content,
             &runtime,
@@ -971,8 +984,7 @@ mod tests {
         let runtime = runtime(&content);
         let inventory = inventory(false);
         inventory.validate().unwrap();
-        let context =
-            WorldContext::build(Digest([2; 32]), std::slice::from_ref(&inventory)).unwrap();
+        let context = world_context(Digest([2; 32]), &inventory);
         let facts = ExtractedWorldFacts::build(
             &content,
             &runtime,
@@ -990,8 +1002,7 @@ mod tests {
         let content = content();
         let runtime = runtime(&content);
         let inventory = inventory(false);
-        let context =
-            WorldContext::build(Digest([9; 32]), std::slice::from_ref(&inventory)).unwrap();
+        let context = world_context(Digest([9; 32]), &inventory);
         assert_eq!(
             ExtractedWorldFacts::build(
                 &content,

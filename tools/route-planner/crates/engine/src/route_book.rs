@@ -13,8 +13,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const ROUTE_BOOK_SCHEMA: &str = "dusklight.route-planner.route-book/v1";
-pub const ROUTE_BOOK_EDIT_BATCH_SCHEMA: &str =
-    "dusklight.route-planner.route-book-edit-batch/v1";
+pub const ROUTE_BOOK_EDIT_BATCH_SCHEMA: &str = "dusklight.route-planner.route-book-edit-batch/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -154,17 +153,39 @@ pub struct RouteBookEditBatch {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RouteBookEdit {
-    SetGoalIds { goal_ids: Vec<String> },
-    UpsertConstraint { constraint: RouteConstraint },
-    RemoveConstraint { constraint_id: String },
-    UpsertDirective { directive: RouteDirective },
-    RemoveDirective { directive_id: String },
-    UpsertStep { step: ReferenceStep },
-    RemoveStep { step_id: String },
-    UpsertMethod { method: PlanMethod },
-    RemoveMethod { method_id: String },
-    UpsertRegion { region: PlanRegion },
-    RemoveRegion { region_id: String },
+    SetGoalIds {
+        goal_ids: Vec<String>,
+    },
+    UpsertConstraint {
+        constraint: RouteConstraint,
+    },
+    RemoveConstraint {
+        constraint_id: String,
+    },
+    UpsertDirective {
+        directive: RouteDirective,
+    },
+    RemoveDirective {
+        directive_id: String,
+    },
+    UpsertStep {
+        step: ReferenceStep,
+    },
+    RemoveStep {
+        step_id: String,
+    },
+    UpsertMethod {
+        method: PlanMethod,
+    },
+    RemoveMethod {
+        method_id: String,
+    },
+    UpsertRegion {
+        region: PlanRegion,
+    },
+    RemoveRegion {
+        region_id: String,
+    },
     SetSelectedMethod {
         region_id: String,
         method_id: Option<String>,
@@ -173,8 +194,12 @@ pub enum RouteBookEdit {
         region_id: String,
         collapse_policy: CollapsePolicy,
     },
-    UpsertAnnotation { annotation: RouteAnnotation },
-    RemoveAnnotation { annotation_id: String },
+    UpsertAnnotation {
+        annotation: RouteAnnotation,
+    },
+    RemoveAnnotation {
+        annotation_id: String,
+    },
 }
 
 impl RouteBookManifest {
@@ -202,32 +227,47 @@ impl RouteBook {
         }
         self.manifest.validate()?;
         validate_sorted_ids("goal_ids", &self.goal_ids, false)?;
-        validate_sorted_records("constraints", &self.constraints, |record| &record.id, |record| {
-            record.scope.validate("constraints.scope")?;
-            require_scope_subset("constraints.scope", &record.scope, &self.manifest.scope)?;
-            validate_constraint(&record.constraint)
-        })?;
-        validate_sorted_records("directives", &self.directives, |record| &record.id, |record| {
-            record.scope.validate("directives.scope")?;
-            require_scope_subset("directives.scope", &record.scope, &self.manifest.scope)?;
-            validate_directive(&record.directive)
-        })?;
-        let step_ids = validate_sorted_records("steps", &self.steps, |record| &record.id, |step| {
-            validate_label("steps.label", &step.label)?;
-            step.scope.validate("steps.scope")?;
-            require_scope_subset("steps.scope", &step.scope, &self.manifest.scope)?;
-            validate_action(&step.action)?;
-            if let Some(predicate) = &step.precondition {
-                predicate.validate()?;
-            }
-            if let Some(predicate) = &step.postcondition {
-                predicate.validate()?;
-            }
-            if let Some(region_id) = &step.region_id {
-                validate_stable_id("steps.region_id", region_id)?;
-            }
-            validate_sorted_ids("steps.annotation_ids", &step.annotation_ids, true)
-        })?;
+        validate_sorted_records(
+            "constraints",
+            &self.constraints,
+            |record| &record.id,
+            |record| {
+                record.scope.validate("constraints.scope")?;
+                require_scope_subset("constraints.scope", &record.scope, &self.manifest.scope)?;
+                validate_constraint(&record.constraint)
+            },
+        )?;
+        validate_sorted_records(
+            "directives",
+            &self.directives,
+            |record| &record.id,
+            |record| {
+                record.scope.validate("directives.scope")?;
+                require_scope_subset("directives.scope", &record.scope, &self.manifest.scope)?;
+                validate_directive(&record.directive)
+            },
+        )?;
+        let step_ids = validate_sorted_records(
+            "steps",
+            &self.steps,
+            |record| &record.id,
+            |step| {
+                validate_label("steps.label", &step.label)?;
+                step.scope.validate("steps.scope")?;
+                require_scope_subset("steps.scope", &step.scope, &self.manifest.scope)?;
+                validate_action(&step.action)?;
+                if let Some(predicate) = &step.precondition {
+                    predicate.validate()?;
+                }
+                if let Some(predicate) = &step.postcondition {
+                    predicate.validate()?;
+                }
+                if let Some(region_id) = &step.region_id {
+                    validate_stable_id("steps.region_id", region_id)?;
+                }
+                validate_sorted_ids("steps.annotation_ids", &step.annotation_ids, true)
+            },
+        )?;
         let method_ids = validate_sorted_records(
             "methods",
             &self.methods,
@@ -492,9 +532,7 @@ impl RouteBook {
                 AnnotationTarget::Fact { fact_id } => {
                     require_known("annotations.fact_id", fact_id, &known_facts)?
                 }
-                AnnotationTarget::Action { action } => {
-                    validate_action_against(action, mechanics)?
-                }
+                AnnotationTarget::Action { action } => validate_action_against(action, mechanics)?,
                 AnnotationTarget::Step { .. }
                 | AnnotationTarget::Method { .. }
                 | AnnotationTarget::Region { .. } => {}
@@ -699,7 +737,9 @@ fn apply_edit(book: &mut RouteBook, edit: &RouteBookEdit) -> Result<(), PlannerC
     match edit {
         RouteBookEdit::SetGoalIds { goal_ids } => book.goal_ids.clone_from(goal_ids),
         RouteBookEdit::UpsertConstraint { constraint } => {
-            upsert(&mut book.constraints, constraint.clone(), |record| &record.id)
+            upsert(&mut book.constraints, constraint.clone(), |record| {
+                &record.id
+            })
         }
         RouteBookEdit::RemoveConstraint { constraint_id } => {
             remove(&mut book.constraints, constraint_id, |record| &record.id)?
@@ -751,7 +791,9 @@ fn apply_edit(book: &mut RouteBook, edit: &RouteBookEdit) -> Result<(), PlannerC
             region.collapse_policy = *collapse_policy;
         }
         RouteBookEdit::UpsertAnnotation { annotation } => {
-            upsert(&mut book.annotations, annotation.clone(), |record| &record.id)
+            upsert(&mut book.annotations, annotation.clone(), |record| {
+                &record.id
+            })
         }
         RouteBookEdit::RemoveAnnotation { annotation_id } => {
             remove(&mut book.annotations, annotation_id, |record| &record.id)?
@@ -772,11 +814,7 @@ where
     }
 }
 
-fn remove<T, F>(
-    records: &mut Vec<T>,
-    id: &str,
-    get_id: F,
-) -> Result<(), PlannerContractError>
+fn remove<T, F>(records: &mut Vec<T>, id: &str, get_id: F) -> Result<(), PlannerContractError>
 where
     F: Fn(&T) -> &String,
 {
@@ -794,12 +832,15 @@ where
 
 fn sort_route_book(book: &mut RouteBook) {
     book.goal_ids.sort();
-    book.constraints.sort_by(|left, right| left.id.cmp(&right.id));
-    book.directives.sort_by(|left, right| left.id.cmp(&right.id));
+    book.constraints
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    book.directives
+        .sort_by(|left, right| left.id.cmp(&right.id));
     book.steps.sort_by(|left, right| left.id.cmp(&right.id));
     book.methods.sort_by(|left, right| left.id.cmp(&right.id));
     book.regions.sort_by(|left, right| left.id.cmp(&right.id));
-    book.annotations.sort_by(|left, right| left.id.cmp(&right.id));
+    book.annotations
+        .sort_by(|left, right| left.id.cmp(&right.id));
 }
 
 fn validate_constraint(constraint: &PathConstraint) -> Result<(), PlannerContractError> {
@@ -844,15 +885,11 @@ fn validate_directive(directive: &RouteDirectiveKind) -> Result<(), PlannerContr
 
 fn validate_action(action: &RouteActionRef) -> Result<(), PlannerContractError> {
     let (field, id) = match action {
-        RouteActionRef::Transition { transition_id } => {
-            ("action.transition_id", transition_id)
-        }
+        RouteActionRef::Transition { transition_id } => ("action.transition_id", transition_id),
         RouteActionRef::Technique { technique_id } => ("action.technique_id", technique_id),
         RouteActionRef::Resolver { resolver_id } => ("action.resolver_id", resolver_id),
         RouteActionRef::Writer { writer_id } => ("action.writer_id", writer_id),
-        RouteActionRef::Microtrace { microtrace_id } => {
-            ("action.microtrace_id", microtrace_id)
-        }
+        RouteActionRef::Microtrace { microtrace_id } => ("action.microtrace_id", microtrace_id),
     };
     validate_stable_id(field, id)
 }
@@ -1126,7 +1163,10 @@ fn validate_ordered_references(
     for id in ids {
         validate_stable_id(field, id)?;
         if !seen.insert(id.as_str()) {
-            return Err(PlannerContractError::new(field, "contains a duplicate step"));
+            return Err(PlannerContractError::new(
+                field,
+                "contains a duplicate step",
+            ));
         }
         require_known(field, id, known)?;
     }
@@ -1209,12 +1249,9 @@ mod tests {
     use super::*;
     use crate::identity::{ContextSelector, ExactContext};
     use crate::logic::{
-        DerivedFact, EvidenceKind, EvidenceRecord, RuleEvidence, TruthStatus,
-        FACT_CATALOG_SCHEMA,
+        DerivedFact, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, RuleEvidence, TruthStatus,
     };
-    use crate::transition::{
-        Goal, MECHANICS_CATALOG_SCHEMA, RouteCost, Technique,
-    };
+    use crate::transition::{Goal, MECHANICS_CATALOG_SCHEMA, RouteCost, Technique};
 
     fn scope() -> ContextScope {
         ContextScope {
@@ -1421,7 +1458,10 @@ mod tests {
     fn region_cycles_and_zero_weight_preferences_fail_closed() {
         let mut book = route_book_fixture();
         book.regions[0].parent_region_id = Some("region.obtain-rod".into());
-        assert_eq!(book.validate().unwrap_err().field(), "regions.parent_region_id");
+        assert_eq!(
+            book.validate().unwrap_err().field(),
+            "regions.parent_region_id"
+        );
 
         let mut book = route_book_fixture();
         book.directives.push(RouteDirective {

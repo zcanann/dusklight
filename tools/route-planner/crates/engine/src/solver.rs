@@ -7,7 +7,8 @@ use crate::evaluation::{
 use crate::execution::PlannerExecutionState;
 use crate::identity::EquivalenceSet;
 use crate::logic::{FactCatalog, PredicateExpression};
-use crate::transition::{MechanicsCatalog, StateOperation};
+use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
+use crate::transition::{MechanicsCatalog, PathConstraint, StateOperation};
 use crate::{PlannerContractError, artifact::Digest};
 use serde::Serialize;
 use std::collections::{BTreeSet, VecDeque};
@@ -19,6 +20,146 @@ pub struct SolverOptions {
     pub max_resolution_combinations: usize,
     pub feasibility_mode: FeasibilityMode,
     pub evidence_policy: EvidencePolicy,
+}
+
+fn compile_route_policy(
+    book: &RouteBook,
+    evaluator: &PredicateEvaluator<'_>,
+) -> Result<RouteSearchPolicy, PlannerContractError> {
+    if !evaluator.scope_applies(&book.manifest.scope) {
+        return Err(PlannerContractError::new(
+            "route_book.manifest.scope",
+            "does not apply to the starting execution context",
+        ));
+    }
+    let mut policy = RouteSearchPolicy {
+        required_actions: BTreeSet::new(),
+        banned_actions: BTreeSet::new(),
+        required_predicates: Vec::new(),
+        forbidden_predicates: Vec::new(),
+    };
+
+    for constraint in book
+        .constraints
+        .iter()
+        .filter(|constraint| evaluator.scope_applies(&constraint.scope))
+    {
+        match &constraint.constraint {
+            PathConstraint::RequirePredicate { predicate } => {
+                policy.required_predicates.push(predicate.clone());
+            }
+            PathConstraint::ForbidPredicate { predicate } => {
+                policy.forbidden_predicates.push(predicate.clone());
+            }
+            PathConstraint::RequireTechnique { technique_id } => {
+                policy.required_actions.insert(RouteActionRef::Technique {
+                    technique_id: technique_id.clone(),
+                });
+            }
+            PathConstraint::ForbidTechnique { technique_id } => {
+                policy.banned_actions.insert(RouteActionRef::Technique {
+                    technique_id: technique_id.clone(),
+                });
+            }
+            PathConstraint::EvidenceAtLeast { .. } | PathConstraint::CostAtMost { .. } => {
+                return Err(PlannerContractError::new(
+                    "route_book.constraints",
+                    format!(
+                        "constraint {} is not yet executable by the bounded forward solver",
+                        constraint.id
+                    ),
+                ));
+            }
+        }
+    }
+
+    for directive in book
+        .directives
+        .iter()
+        .filter(|directive| evaluator.scope_applies(&directive.scope))
+    {
+        match &directive.directive {
+            RouteDirectiveKind::PinAction { action } => {
+                require_searchable_action(action, &directive.id)?;
+                policy.required_actions.insert(action.clone());
+            }
+            RouteDirectiveKind::BanAction { action } => {
+                require_searchable_action(action, &directive.id)?;
+                policy.banned_actions.insert(action.clone());
+            }
+            RouteDirectiveKind::PreferAction { .. }
+            | RouteDirectiveKind::PinMethod { .. }
+            | RouteDirectiveKind::BanMethod { .. }
+            | RouteDirectiveKind::PreferMethod { .. } => {
+                return Err(PlannerContractError::new(
+                    "route_book.directives",
+                    format!(
+                        "directive {} is not yet executable by the bounded forward solver",
+                        directive.id
+                    ),
+                ));
+            }
+        }
+    }
+
+    if let Some(region) = book.regions.iter().find(|region| {
+        evaluator.scope_applies(&region.scope) && region.selected_method_id.is_some()
+    }) {
+        return Err(PlannerContractError::new(
+            "route_book.regions.selected_method_id",
+            format!(
+                "region {} selects a method, but ordered method execution is not yet supported",
+                region.id
+            ),
+        ));
+    }
+    if let Some(action) = policy
+        .required_actions
+        .intersection(&policy.banned_actions)
+        .next()
+    {
+        return Err(PlannerContractError::new(
+            "route_book",
+            format!("action {action:?} is both required and banned"),
+        ));
+    }
+    Ok(policy)
+}
+
+fn require_searchable_action(
+    action: &RouteActionRef,
+    directive_id: &str,
+) -> Result<(), PlannerContractError> {
+    if matches!(
+        action,
+        RouteActionRef::Transition { .. }
+            | RouteActionRef::Technique { .. }
+            | RouteActionRef::Resolver { .. }
+    ) {
+        Ok(())
+    } else {
+        Err(PlannerContractError::new(
+            "route_book.directives",
+            format!(
+                "directive {directive_id} references an action kind the bounded forward solver cannot execute"
+            ),
+        ))
+    }
+}
+
+fn evaluate_all(
+    evaluator: &PredicateEvaluator<'_>,
+    predicates: &[PredicateExpression],
+) -> EvaluatedTruth {
+    let mut result = EvaluatedTruth::True;
+    for predicate in predicates {
+        match evaluator.evaluate(predicate) {
+            EvaluatedTruth::False => return EvaluatedTruth::False,
+            EvaluatedTruth::Unknown => result = EvaluatedTruth::Unknown,
+            EvaluatedTruth::True => {}
+        }
+    }
+    result
 }
 
 impl Default for SolverOptions {
@@ -74,6 +215,14 @@ struct SearchNode {
     state: PlannerExecutionState,
     steps: Vec<SearchStep>,
     depth: usize,
+    satisfied_required_actions: BTreeSet<RouteActionRef>,
+}
+
+struct RouteSearchPolicy {
+    required_actions: BTreeSet<RouteActionRef>,
+    banned_actions: BTreeSet<RouteActionRef>,
+    required_predicates: Vec<PredicateExpression>,
+    forbidden_predicates: Vec<PredicateExpression>,
 }
 
 pub struct ForwardSolver<'a> {
@@ -81,6 +230,7 @@ pub struct ForwardSolver<'a> {
     mechanics: &'a MechanicsCatalog,
     equivalence_sets: &'a [EquivalenceSet],
     options: SolverOptions,
+    route_book: Option<&'a RouteBook>,
 }
 
 impl<'a> ForwardSolver<'a> {
@@ -109,7 +259,21 @@ impl<'a> ForwardSolver<'a> {
             mechanics,
             equivalence_sets,
             options,
+            route_book: None,
         })
+    }
+
+    pub fn new_with_route_book(
+        facts: &'a FactCatalog,
+        mechanics: &'a MechanicsCatalog,
+        equivalence_sets: &'a [EquivalenceSet],
+        options: SolverOptions,
+        route_book: &'a RouteBook,
+    ) -> Result<Self, PlannerContractError> {
+        route_book.validate_against(facts, mechanics)?;
+        let mut solver = Self::new(facts, mechanics, equivalence_sets, options)?;
+        solver.route_book = Some(route_book);
+        Ok(solver)
     }
 
     pub fn solve(
@@ -118,10 +282,22 @@ impl<'a> ForwardSolver<'a> {
         goal: &PredicateExpression,
     ) -> Result<SearchResult, PlannerContractError> {
         start.validate()?;
+        let start_evaluator = PredicateEvaluator::new(
+            &start.snapshot,
+            self.facts,
+            self.equivalence_sets,
+            &start.gate_states,
+            self.options.evidence_policy,
+        )?;
+        let route_policy = self
+            .route_book
+            .map(|book| compile_route_policy(book, &start_evaluator))
+            .transpose()?;
         let mut queue = VecDeque::from([SearchNode {
             state: start,
             steps: Vec::new(),
             depth: 0,
+            satisfied_required_actions: BTreeSet::new(),
         }]);
         let mut visited = BTreeSet::new();
         let mut unknown_transition_ids = BTreeSet::new();
@@ -132,7 +308,14 @@ impl<'a> ForwardSolver<'a> {
 
         while let Some(node) = queue.pop_front() {
             let state_identity = node.state.semantic_digest()?;
-            if !visited.insert(state_identity) {
+            let search_identity = (
+                state_identity,
+                node.satisfied_required_actions
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
+            if !visited.insert(search_identity) {
                 continue;
             }
             if visited.len() > self.options.max_states {
@@ -147,8 +330,41 @@ impl<'a> ForwardSolver<'a> {
                 &node.state.gate_states,
                 self.options.evidence_policy,
             )?;
+            if let Some(policy) = &route_policy {
+                let mut forbidden = false;
+                for predicate in &policy.forbidden_predicates {
+                    match evaluator.evaluate(predicate) {
+                        EvaluatedTruth::True => {
+                            forbidden = true;
+                            break;
+                        }
+                        EvaluatedTruth::Unknown => {
+                            saw_unknown_goal = true;
+                            forbidden = true;
+                            break;
+                        }
+                        EvaluatedTruth::False => {}
+                    }
+                }
+                if forbidden {
+                    continue;
+                }
+            }
+            let required_predicates = route_policy
+                .as_ref()
+                .map_or(EvaluatedTruth::True, |policy| {
+                    evaluate_all(&evaluator, &policy.required_predicates)
+                });
+            let required_actions_satisfied = route_policy.as_ref().is_none_or(|policy| {
+                policy
+                    .required_actions
+                    .is_subset(&node.satisfied_required_actions)
+            });
             match evaluator.evaluate(goal) {
-                EvaluatedTruth::True => {
+                EvaluatedTruth::True
+                    if required_predicates == EvaluatedTruth::True
+                        && required_actions_satisfied =>
+                {
                     return Ok(SearchResult {
                         status: SearchStatus::Reached,
                         steps: node.steps,
@@ -157,6 +373,11 @@ impl<'a> ForwardSolver<'a> {
                         unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
                         execution_error_ids: execution_error_ids.into_iter().collect(),
                     });
+                }
+                EvaluatedTruth::True => {
+                    if required_predicates == EvaluatedTruth::Unknown {
+                        saw_unknown_goal = true;
+                    }
                 }
                 EvaluatedTruth::Unknown => saw_unknown_goal = true,
                 EvaluatedTruth::False => {}
@@ -173,6 +394,15 @@ impl<'a> ForwardSolver<'a> {
             // considered separately when combining a technique with a target
             // transition below.
             for technique in &self.mechanics.techniques {
+                let action = RouteActionRef::Technique {
+                    technique_id: technique.id.clone(),
+                };
+                if route_policy
+                    .as_ref()
+                    .is_some_and(|policy| policy.banned_actions.contains(&action))
+                {
+                    continue;
+                }
                 if evaluator.assess_technique(technique).classification
                     != RuleClassification::Active
                     || technique.operations.is_empty()
@@ -197,6 +427,8 @@ impl<'a> ForwardSolver<'a> {
                     &visited,
                     &node,
                     next,
+                    std::slice::from_ref(&action),
+                    route_policy.as_ref().map(|policy| &policy.required_actions),
                     SearchStep {
                         action_kind: SearchActionKind::Technique,
                         action_id: technique.id.clone(),
@@ -209,6 +441,15 @@ impl<'a> ForwardSolver<'a> {
             }
 
             for transition in &self.mechanics.transitions {
+                let transition_action = RouteActionRef::Transition {
+                    transition_id: transition.id.clone(),
+                };
+                if route_policy
+                    .as_ref()
+                    .is_some_and(|policy| policy.banned_actions.contains(&transition_action))
+                {
+                    continue;
+                }
                 let applicable_resolver_ids = self
                     .mechanics
                     .resolvers
@@ -216,6 +457,13 @@ impl<'a> ForwardSolver<'a> {
                     .filter(|resolver| {
                         evaluator.assess_resolver(resolver).classification
                             == RuleClassification::Active
+                    })
+                    .filter(|resolver| {
+                        !route_policy.as_ref().is_some_and(|policy| {
+                            policy.banned_actions.contains(&RouteActionRef::Resolver {
+                                resolver_id: resolver.id.clone(),
+                            })
+                        })
                     })
                     .filter(|resolver| {
                         self.mechanics.obstructions.iter().any(|obstruction| {
@@ -233,6 +481,13 @@ impl<'a> ForwardSolver<'a> {
                         .filter(|technique| {
                             evaluator.assess_technique(technique).classification
                                 == RuleClassification::Active
+                        })
+                        .filter(|technique| {
+                            !route_policy.as_ref().is_some_and(|policy| {
+                                policy.banned_actions.contains(&RouteActionRef::Technique {
+                                    technique_id: technique.id.clone(),
+                                })
+                            })
                         })
                         .filter(|technique| {
                             technique.discharged_obligation_ids.iter().any(|id| {
@@ -353,6 +608,19 @@ impl<'a> ForwardSolver<'a> {
                             &visited,
                             &node,
                             next,
+                            &selected_resolvers
+                                .iter()
+                                .map(|id| RouteActionRef::Resolver {
+                                    resolver_id: id.clone(),
+                                })
+                                .chain(selected_techniques.iter().map(|id| {
+                                    RouteActionRef::Technique {
+                                        technique_id: id.clone(),
+                                    }
+                                }))
+                                .chain(std::iter::once(transition_action.clone()))
+                                .collect::<Vec<_>>(),
+                            route_policy.as_ref().map(|policy| &policy.required_actions),
                             SearchStep {
                                 action_kind: SearchActionKind::Transition,
                                 action_id: transition.id.clone(),
@@ -391,16 +659,34 @@ impl<'a> ForwardSolver<'a> {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn enqueue_if_new(
         &self,
         queue: &mut VecDeque<SearchNode>,
-        visited: &BTreeSet<Digest>,
+        visited: &BTreeSet<(Digest, Vec<RouteActionRef>)>,
         node: &SearchNode,
         next: PlannerExecutionState,
+        applied_actions: &[RouteActionRef],
+        required_actions: Option<&BTreeSet<RouteActionRef>>,
         mut step: SearchStep,
     ) -> Result<(), PlannerContractError> {
         let result = next.semantic_digest()?;
-        if visited.contains(&result) {
+        let mut satisfied_required_actions = node.satisfied_required_actions.clone();
+        if let Some(required_actions) = required_actions {
+            for action in applied_actions {
+                if required_actions.contains(action) {
+                    satisfied_required_actions.insert(action.clone());
+                }
+            }
+        }
+        let search_identity = (
+            result,
+            satisfied_required_actions
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+        );
+        if visited.contains(&search_identity) {
             return Ok(());
         }
         step.result_state_sha256 = result;
@@ -410,6 +696,7 @@ impl<'a> ForwardSolver<'a> {
             state: next,
             steps,
             depth: node.depth + 1,
+            satisfied_required_actions,
         });
         Ok(())
     }
@@ -471,6 +758,9 @@ mod tests {
         ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA,
         RuleEvidence, TruthStatus, ValueReference,
     };
+    use crate::route_book::{
+        ROUTE_BOOK_SCHEMA, RouteBookManifest, RouteDirective, RouteDirectiveKind,
+    };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use crate::state::{
         BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm,
@@ -478,9 +768,9 @@ mod tests {
         StateValue,
     };
     use crate::transition::{
-        ActivationContract, CandidateTransition, FeasibilityObligation, MECHANICS_CATALOG_SCHEMA,
-        MechanicsCatalog, ObligationDetail, ObligationKind, Obstruction, ObstructionResolver,
-        ResolutionKind, TransitionKind,
+        ActivationContract, CandidateTransition, FeasibilityObligation, Goal,
+        MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind, Obstruction,
+        ObstructionResolver, ResolutionKind, TransitionKind,
     };
     use std::collections::BTreeMap;
 
@@ -622,6 +912,36 @@ mod tests {
         }
     }
 
+    fn route_book(snapshot: &StateSnapshot, directives: Vec<RouteDirective>) -> RouteBook {
+        RouteBook {
+            schema: ROUTE_BOOK_SCHEMA.into(),
+            manifest: RouteBookManifest {
+                id: "route.solver-test".into(),
+                version: "1.0.0".into(),
+                label: "Solver test route".into(),
+                author: "route planner tests".into(),
+                source: "in-memory fixture".into(),
+                scope: scope(snapshot),
+                refinement_stack_sha256: None,
+            },
+            goal_ids: vec!["goal.b".into()],
+            constraints: Vec::new(),
+            directives,
+            steps: Vec::new(),
+            methods: Vec::new(),
+            regions: Vec::new(),
+            annotations: Vec::new(),
+        }
+    }
+
+    fn goal(id: &str, stage: &str) -> Goal {
+        Goal {
+            id: id.into(),
+            label: format!("Reach {stage}"),
+            predicate: stage_is(stage),
+        }
+    }
+
     #[test]
     fn forward_search_reaches_a_goal_and_retains_the_transition_proof() {
         let snapshot = snapshot();
@@ -661,6 +981,82 @@ mod tests {
         assert_ne!(
             result.steps[0].source_state_sha256,
             result.steps[0].result_state_sha256
+        );
+    }
+
+    #[test]
+    fn route_book_pin_and_ban_actions_change_the_reached_path() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![
+            transition(
+                &snapshot,
+                "transition.a-to-b",
+                "STAGE_A",
+                "STAGE_B",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.a-to-d",
+                "STAGE_A",
+                "STAGE_D",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.d-to-b",
+                "STAGE_D",
+                "STAGE_B",
+                Vec::new(),
+            ),
+        ]);
+        mechanics.goals = vec![goal("goal.b", "STAGE_B")];
+        let facts = facts();
+        let book = route_book(
+            &snapshot,
+            vec![
+                RouteDirective {
+                    id: "directive.ban-direct".into(),
+                    scope: scope(&snapshot),
+                    directive: RouteDirectiveKind::BanAction {
+                        action: RouteActionRef::Transition {
+                            transition_id: "transition.a-to-b".into(),
+                        },
+                    },
+                },
+                RouteDirective {
+                    id: "directive.pin-detour".into(),
+                    scope: scope(&snapshot),
+                    directive: RouteDirectiveKind::PinAction {
+                        action: RouteActionRef::Transition {
+                            transition_id: "transition.a-to-d".into(),
+                        },
+                    },
+                },
+            ],
+        );
+        let solver = ForwardSolver::new_with_route_book(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions::default(),
+            &book,
+        )
+        .unwrap();
+        let result = solver
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_B"),
+            )
+            .unwrap();
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert_eq!(
+            result
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["transition.a-to-d", "transition.d-to-b"]
         );
     }
 

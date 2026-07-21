@@ -31,6 +31,7 @@ The planner CLI currently owns nine operations:
 - `validate-route-book` checks a route book's goals, predicates, action
   references, nested regions, methods, directives, and annotations against an
   exact base or composed catalog without adding mechanics.
-- `solve` runs bounded causal reachability against planner-owned catalogs.
+- `solve` runs bounded causal reachability against planner-owned catalogs and
+  can apply an optional route book's supported scoped constraints/directives.
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
   lines for a future planner editor or other clients.

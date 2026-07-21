@@ -19,7 +19,7 @@ use dusklight_route_planner_runtime::service::{
 };
 use dusklight_route_planner_runtime::{
     RuntimeEvidenceMode, RuntimeFeasibilityMode, RuntimeSolveOptions, solve_catalog_goal,
-    solve_composed_catalog_goal,
+    solve_catalog_route_book_goal, solve_composed_catalog_goal, solve_composed_route_book_goal,
 };
 use serde_json::json;
 use sha2::{Digest as _, Sha256};
@@ -421,6 +421,11 @@ fn solve(args: &[String]) -> Result<(), Box<dyn Error>> {
     let goal_id = option(args, "--goal").ok_or("missing required --goal ID")?;
     let state =
         PlannerExecutionStateDocument::decode_canonical(&fs::read(state_path)?)?.into_state()?;
+    let route_book = option(args, "--route-book")
+        .map(|path| fs::read(path).map_err(Box::<dyn Error>::from))
+        .transpose()?
+        .map(|bytes| RouteBook::decode_canonical(&bytes))
+        .transpose()?;
     let catalog_path = option(args, "--catalog");
     let facts_path = option(args, "--facts");
     let mechanics_path = option(args, "--mechanics");
@@ -461,12 +466,24 @@ fn solve(args: &[String]) -> Result<(), Box<dyn Error>> {
         },
     };
     let report = match &input {
-        CatalogInput::Composed(catalog) => {
-            solve_composed_catalog_goal(state, catalog, &[], &goal_id, options)?
-        }
-        CatalogInput::Base(facts, mechanics) => {
-            solve_catalog_goal(state, facts, mechanics, &[], &goal_id, options)?
-        }
+        CatalogInput::Composed(catalog) => match &route_book {
+            Some(book) => {
+                solve_composed_route_book_goal(state, catalog, &[], book, &goal_id, options)?
+            }
+            None => solve_composed_catalog_goal(state, catalog, &[], &goal_id, options)?,
+        },
+        CatalogInput::Base(facts, mechanics) => match &route_book {
+            Some(book) => solve_catalog_route_book_goal(
+                state,
+                facts,
+                mechanics,
+                &[],
+                book,
+                &goal_id,
+                options,
+            )?,
+            None => solve_catalog_goal(state, facts, mechanics, &[], &goal_id, options)?,
+        },
     };
     let bytes = serde_json::to_vec_pretty(&report)?;
     write_file(&output, &bytes)?;
@@ -517,6 +534,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
     );
 }
