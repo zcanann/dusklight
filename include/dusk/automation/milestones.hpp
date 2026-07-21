@@ -372,6 +372,39 @@ struct MilestoneObservation {
     };
     EventQueueState eventQueue;
 
+    // Bounded candidate lists produced by the ordinary attention pass. These
+    // are observations of currently eligible actors, not selected targets or
+    // instructions to press an interaction button.
+    struct AttentionCandidateState {
+        static constexpr std::size_t MaximumLockCandidates = 8;
+        static constexpr std::size_t MaximumActionCandidates = 4;
+        static constexpr std::size_t MaximumCheckCandidates = 4;
+        static constexpr std::uint32_t AttentionTypeCount = 13;
+
+        struct Candidate {
+            EventQueueState::ActorReference actor;
+            float weight = 0.0F;
+            float distance = 0.0F;
+            std::int16_t angle = 0;
+            std::uint32_t type = 0;
+        };
+
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint32_t playerAttentionFlags = 0;
+        std::uint8_t attentionStatus = 0;
+        std::int32_t attentionBlockTimer = 0;
+        std::uint8_t lockCount = 0;
+        std::uint8_t lockOffset = 0;
+        std::uint8_t actionCount = 0;
+        std::uint8_t actionOffset = 0;
+        std::uint8_t checkCount = 0;
+        std::uint8_t checkOffset = 0;
+        std::array<Candidate, MaximumLockCandidates> lockCandidates{};
+        std::array<Candidate, MaximumActionCandidates> actionCandidates{};
+        std::array<Candidate, MaximumCheckCandidates> checkCandidates{};
+    };
+    AttentionCandidateState attentionCandidates;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

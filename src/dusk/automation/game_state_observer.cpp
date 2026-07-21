@@ -932,6 +932,59 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         }
     }
 
+    auto& attentionCandidates = observation.attentionCandidates;
+    if (player == nullptr) {
+        attentionCandidates.status = MilestoneObservation::ChannelStatus::Absent;
+    } else {
+        using Attention = MilestoneObservation::AttentionCandidateState;
+        dAttention_c* attention = dComIfGp_getAttention();
+        Attention captured;
+        captured.status = MilestoneObservation::ChannelStatus::Present;
+        captured.playerAttentionFlags = attention->mPlayerAttentionFlags;
+        captured.attentionStatus = attention->mAttnStatus;
+        captured.attentionBlockTimer = attention->mAttnBlockTimer;
+        const auto countAndOffsetValid = [](const int count, const int offset, const int capacity) {
+            return count >= 0 && count <= capacity && offset >= 0 &&
+                   ((count == 0 && offset == 0) || (count != 0 && offset < count));
+        };
+        bool valid =
+            countAndOffsetValid(attention->mLockonCount, attention->mLockOnOffset,
+                static_cast<int>(Attention::MaximumLockCandidates)) &&
+            countAndOffsetValid(attention->mActionCount, attention->mActionOffset,
+                static_cast<int>(Attention::MaximumActionCandidates)) &&
+            countAndOffsetValid(attention->mCheckObjectCount, attention->mCheckObjectOffset,
+                static_cast<int>(Attention::MaximumCheckCandidates));
+        const auto captureList = [&](auto& destination, dAttList_c* source, const int count) {
+            for (int index = 0; valid && index < count; ++index) {
+                dAttList_c& candidate = source[index];
+                auto& output = destination[static_cast<std::size_t>(index)];
+                output.actor = eventReferenceFromProcessId(candidate.getPid());
+                output.weight = candidate.mWeight;
+                output.distance = candidate.mDistance;
+                output.angle = candidate.mAngle.Val();
+                output.type = candidate.mType;
+                valid = output.actor.status == MilestoneObservation::ChannelStatus::Present &&
+                        std::isfinite(output.weight) && std::isfinite(output.distance) &&
+                        output.distance >= 0.0F && output.type < fopAc_attn_MAX_e;
+            }
+        };
+        if (valid) {
+            captured.lockCount = static_cast<std::uint8_t>(attention->mLockonCount);
+            captured.lockOffset = static_cast<std::uint8_t>(attention->mLockOnOffset);
+            captured.actionCount = static_cast<std::uint8_t>(attention->mActionCount);
+            captured.actionOffset = static_cast<std::uint8_t>(attention->mActionOffset);
+            captured.checkCount = static_cast<std::uint8_t>(attention->mCheckObjectCount);
+            captured.checkOffset = static_cast<std::uint8_t>(attention->mCheckObjectOffset);
+            captureList(captured.lockCandidates, attention->mLockOnList, attention->mLockonCount);
+            captureList(captured.actionCandidates, attention->mActionList, attention->mActionCount);
+            captureList(captured.checkCandidates, attention->mCheckObjectList,
+                attention->mCheckObjectCount);
+        }
+        attentionCandidates = valid ? captured : Attention{};
+        if (!valid)
+            attentionCandidates.status = MilestoneObservation::ChannelStatus::Unavailable;
+    }
+
     handoff.messageCutStatus = MilestoneObservation::ChannelStatus::Unavailable;
     if (talkPartnerActor == nullptr) {
         handoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Absent;

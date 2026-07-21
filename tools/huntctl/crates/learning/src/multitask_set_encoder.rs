@@ -15,7 +15,8 @@ use crate::trainable_set_encoder::{
     validate_sample_dimensions,
 };
 use dusklight_evidence::native_episode_shard::{
-    NativeActorObservation, NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation,
+    NativeActorObservation, NativeAttentionCandidateObservation, NativeChannelStatus,
+    NativeEpisodeShard, NativeLearningObservation,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -71,6 +72,7 @@ pub enum NativeEncoderChannelFamily {
     CoreCameraCollisionWorld,
     CoreRng,
     CoreGoal,
+    CoreAttentionCandidates,
     ActorPopulation,
     ActorIdentity,
     ActorMotion,
@@ -78,6 +80,7 @@ pub enum NativeEncoderChannelFamily {
     ActorLinkRelative,
     ActorParentRelative,
     ActorAttention,
+    ActorAttentionCandidates,
     ActorEventParticipation,
     ActorReturnWriter,
     ActorEnemyBase,
@@ -86,7 +89,7 @@ pub enum NativeEncoderChannelFamily {
 }
 
 impl NativeEncoderChannelFamily {
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 21] = [
         Self::CorePlayerMotion,
         Self::CoreActionPhase,
         Self::CoreEventContext,
@@ -94,6 +97,7 @@ impl NativeEncoderChannelFamily {
         Self::CoreCameraCollisionWorld,
         Self::CoreRng,
         Self::CoreGoal,
+        Self::CoreAttentionCandidates,
         Self::ActorPopulation,
         Self::ActorIdentity,
         Self::ActorMotion,
@@ -101,6 +105,7 @@ impl NativeEncoderChannelFamily {
         Self::ActorLinkRelative,
         Self::ActorParentRelative,
         Self::ActorAttention,
+        Self::ActorAttentionCandidates,
         Self::ActorEventParticipation,
         Self::ActorReturnWriter,
         Self::ActorEnemyBase,
@@ -117,6 +122,7 @@ impl NativeEncoderChannelFamily {
             Self::CoreCameraCollisionWorld => "core_camera_collision_world",
             Self::CoreRng => "core_rng",
             Self::CoreGoal => "core_goal",
+            Self::CoreAttentionCandidates => "core_attention_candidates",
             Self::ActorPopulation => "actor_population",
             Self::ActorIdentity => "actor_identity",
             Self::ActorMotion => "actor_motion",
@@ -124,6 +130,7 @@ impl NativeEncoderChannelFamily {
             Self::ActorLinkRelative => "actor_link_relative",
             Self::ActorParentRelative => "actor_parent_relative",
             Self::ActorAttention => "actor_attention",
+            Self::ActorAttentionCandidates => "actor_attention_candidates",
             Self::ActorEventParticipation => "actor_event_participation",
             Self::ActorReturnWriter => "actor_return_writer",
             Self::ActorEnemyBase => "actor_enemy_base",
@@ -1325,7 +1332,7 @@ fn native_actor_feature_schema(
     spec: &NativeEncoderFeatureSpec,
 ) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v2\0",
+        b"dusklight.native-direct-actor-features/v3\0",
         &(
             spec,
             selected_feature_names(
@@ -1438,6 +1445,21 @@ fn native_base_feature_names() -> Vec<String> {
         .into_iter()
         .map(str::to_owned),
     );
+    names.extend((0..32).map(|bit| format!("attention_player_flag_{bit}")));
+    names.extend(
+        [
+            "attention_status",
+            "attention_block_timer",
+            "attention_lock_count",
+            "attention_lock_offset",
+            "attention_action_count",
+            "attention_action_offset",
+            "attention_check_count",
+            "attention_check_offset",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
     names
 }
 
@@ -1491,6 +1513,12 @@ fn native_actor_categorical_names() -> Vec<String> {
         "trigger_kind",
         "trigger_shape",
         "trigger_behavior",
+        "attention_lock_type",
+        "attention_lock_rank",
+        "attention_action_type",
+        "attention_action_rank",
+        "attention_check_type",
+        "attention_check_rank",
     ]
     .into_iter()
     .map(str::to_owned)
@@ -1536,6 +1564,13 @@ fn native_actor_continuous_names() -> Vec<String> {
         "trigger_yaw_relative_to_link_sin".into(),
         "trigger_yaw_relative_to_link_cos".into(),
     ]);
+    for prefix in ["attention_lock", "attention_action", "attention_check"] {
+        names.extend([
+            format!("{prefix}_weight"),
+            format!("{prefix}_distance"),
+            format!("{prefix}_angle_s16"),
+        ]);
+    }
     names
 }
 
@@ -1576,6 +1611,9 @@ fn native_actor_binary_names() -> Vec<String> {
             "trigger_volume_present",
             "trigger_enabled",
             "trigger_vertical_unbounded",
+            "attention_lock_candidate",
+            "attention_action_candidate",
+            "attention_check_candidate",
         ]
         .into_iter()
         .map(str::to_owned),
@@ -1593,6 +1631,7 @@ fn native_base_feature_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::CoreCameraCollisionWorld, 22);
     extend_family(&mut families, Family::CoreRng, 12);
     extend_family(&mut families, Family::CoreGoal, 9);
+    extend_family(&mut families, Family::CoreAttentionCandidates, 40);
     families
 }
 
@@ -1606,6 +1645,7 @@ fn native_actor_categorical_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::ActorReturnWriter, 7);
     extend_family(&mut families, Family::ActorEnemyBase, 2);
     extend_family(&mut families, Family::ActorTriggerVolume, 3);
+    extend_family(&mut families, Family::ActorAttentionCandidates, 6);
     families
 }
 
@@ -1622,6 +1662,7 @@ fn native_actor_continuous_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::ActorAttention, 6);
     extend_family(&mut families, Family::ActorEnemyBase, 6);
     extend_family(&mut families, Family::ActorTriggerVolume, 11);
+    extend_family(&mut families, Family::ActorAttentionCandidates, 9);
     families
 }
 
@@ -1637,6 +1678,7 @@ fn native_actor_binary_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::ActorReturnWriter, 6);
     extend_family(&mut families, Family::ActorPlayerRelationships, 11);
     extend_family(&mut families, Family::ActorTriggerVolume, 3);
+    extend_family(&mut families, Family::ActorAttentionCandidates, 3);
     families
 }
 
@@ -1742,11 +1784,35 @@ fn native_actor_nodes(observation: &NativeLearningObservation) -> Vec<TypedSetNo
         .collect()
 }
 
+fn attention_candidate_for(
+    candidates: &[NativeAttentionCandidateObservation],
+    runtime_generation: u64,
+) -> Option<(usize, &NativeAttentionCandidateObservation)> {
+    candidates.iter().enumerate().find(|(_, candidate)| {
+        candidate.actor.actor.as_ref().is_some_and(|identity| {
+            identity.present && u64::from(identity.runtime_generation) == runtime_generation
+        })
+    })
+}
+
 fn native_actor_node(
     observation: &NativeLearningObservation,
     actor: &NativeActorObservation,
     actors_by_generation: &BTreeMap<u64, &NativeActorObservation>,
 ) -> TypedSetNode {
+    let attention_available =
+        observation.attention_candidates_status == NativeChannelStatus::Present;
+    let attention = observation.attention_candidates.as_ref();
+    let lock_candidate = attention.and_then(|value| {
+        attention_candidate_for(&value.lock_candidates, actor.runtime_generation)
+    });
+    let action_candidate = attention.and_then(|value| {
+        attention_candidate_for(&value.action_candidates, actor.runtime_generation)
+    });
+    let check_candidate = attention.and_then(|value| {
+        attention_candidate_for(&value.check_candidates, actor.runtime_generation)
+    });
+
     let mut categorical = Vec::new();
     let mut categorical_present = Vec::new();
     let mut category = |value: i64, available: bool| {
@@ -1857,6 +1923,16 @@ fn native_actor_node(
         for _ in 0..3 {
             category(0, false);
         }
+    }
+    for candidate in [lock_candidate, action_candidate, check_candidate] {
+        category(
+            candidate.map_or(0, |(_, value)| i64::from(value.attention_type)),
+            candidate.is_some(),
+        );
+        category(
+            candidate.map_or(0, |(rank, _)| rank as i64),
+            candidate.is_some(),
+        );
     }
 
     let mut continuous = Vec::new();
@@ -2004,6 +2080,15 @@ fn native_actor_node(
         &mut continuous,
         &mut continuous_present,
         actor
+            .enemy_base
+            .as_ref()
+            .map_or([0.0; 3], |value| value.head_lock_position),
+        actor.enemy_base.is_some(),
+    );
+    push_continuous3(
+        &mut continuous,
+        &mut continuous_present,
+        actor
             .trigger_volume
             .as_ref()
             .map_or([0.0; 3], |value| value.center),
@@ -2041,15 +2126,26 @@ fn native_actor_node(
             trigger_yaw.is_some() && player_available,
         );
     }
-    push_continuous3(
-        &mut continuous,
-        &mut continuous_present,
-        actor
-            .enemy_base
-            .as_ref()
-            .map_or([0.0; 3], |value| value.head_lock_position),
-        actor.enemy_base.is_some(),
-    );
+    for candidate in [lock_candidate, action_candidate, check_candidate] {
+        push_continuous(
+            &mut continuous,
+            &mut continuous_present,
+            candidate.map_or(0.0, |(_, value)| value.weight),
+            candidate.is_some(),
+        );
+        push_continuous(
+            &mut continuous,
+            &mut continuous_present,
+            candidate.map_or(0.0, |(_, value)| value.distance),
+            candidate.is_some(),
+        );
+        push_continuous(
+            &mut continuous,
+            &mut continuous_present,
+            candidate.map_or(0.0, |(_, value)| f32::from(value.angle)),
+            candidate.is_some(),
+        );
+    }
 
     let mut binary = Vec::new();
     let mut binary_present = Vec::new();
@@ -2124,6 +2220,9 @@ fn native_actor_node(
             .is_some_and(|value| value.vertical_unbounded),
         actor.trigger_volume.is_some(),
     );
+    for candidate in [lock_candidate, action_candidate, check_candidate] {
+        boolean(candidate.is_some(), attention_available);
+    }
     debug_assert_eq!(categorical.len(), native_actor_categorical_names().len());
     debug_assert_eq!(continuous.len(), native_actor_continuous_names().len());
     debug_assert_eq!(binary.len(), native_actor_binary_names().len());
@@ -2416,6 +2515,29 @@ fn broad_base(observation: &NativeLearningObservation) -> (Vec<f32>, Vec<bool>) 
         f32::from(observation.goal.reached),
         observation.goal.configured,
     );
+    let attention_available =
+        observation.attention_candidates_status == NativeChannelStatus::Present;
+    let attention = observation.attention_candidates.as_ref();
+    for bit in 0..32 {
+        push(
+            attention.map_or(0.0, |value| {
+                f32::from(value.player_attention_flags & (1_u32 << bit) != 0)
+            }),
+            attention_available,
+        );
+    }
+    for value in [
+        attention.map_or(0.0, |value| f32::from(value.attention_status)),
+        attention.map_or(0.0, |value| value.attention_block_timer as f32),
+        attention.map_or(0.0, |value| value.lock_candidates.len() as f32),
+        attention.map_or(0.0, |value| f32::from(value.lock_offset)),
+        attention.map_or(0.0, |value| value.action_candidates.len() as f32),
+        attention.map_or(0.0, |value| f32::from(value.action_offset)),
+        attention.map_or(0.0, |value| value.check_candidates.len() as f32),
+        attention.map_or(0.0, |value| f32::from(value.check_offset)),
+    ] {
+        push(value, attention_available);
+    }
     (values, present)
 }
 
@@ -2701,12 +2823,23 @@ mod tests {
                 && node.binary.len() == native_actor_binary_names().len()
                 && node.binary.len() == node.binary_present.len()
         }));
+        let lock_membership = native_actor_binary_names()
+            .iter()
+            .position(|name| name == "attention_lock_candidate")
+            .unwrap();
+        assert!(
+            nodes
+                .iter()
+                .all(|node| !node.binary[lock_membership] && !node.binary_present[lock_membership])
+        );
         let (base, present) = broad_base(observation);
-        assert_eq!(base.len(), 129);
-        assert_eq!(present.len(), 129);
+        assert_eq!(base.len(), 169);
+        assert_eq!(present.len(), 169);
+        assert!(base[129..].iter().all(|value| *value == 0.0));
+        assert!(present[129..].iter().all(|value| !*value));
         let all = NativeEncoderFeatureSpec::all();
-        assert_eq!(native_base_feature_names().len(), 129);
-        assert_eq!(native_base_feature_families().len(), 129);
+        assert_eq!(native_base_feature_names().len(), 169);
+        assert_eq!(native_base_feature_families().len(), 169);
         let mut post_base = base.clone();
         let mut post_present = present.clone();
         suppress_base_family(
@@ -2725,7 +2858,9 @@ mod tests {
         }
         assert_ne!(native_actor_feature_schema(&all).unwrap(), Digest::ZERO);
         let reduced = NativeEncoderFeatureSpec::excluding([
+            NativeEncoderChannelFamily::CoreAttentionCandidates,
             NativeEncoderChannelFamily::ActorAttention,
+            NativeEncoderChannelFamily::ActorAttentionCandidates,
             NativeEncoderChannelFamily::ActorEventParticipation,
             NativeEncoderChannelFamily::ActorEnemyBase,
             NativeEncoderChannelFamily::ActorTriggerVolume,
@@ -2786,6 +2921,66 @@ mod tests {
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn direct_native_adapter_joins_attention_candidates_without_selecting_one() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v20.dseps"
+        ))
+        .unwrap();
+        let observation = &shard.episodes[0].steps[0].pre_input;
+        let node = native_actor_nodes(observation)
+            .into_iter()
+            .find(|node| node.stable_id == 7)
+            .unwrap();
+        let categorical_names = native_actor_categorical_names();
+        let continuous_names = native_actor_continuous_names();
+        let binary_names = native_actor_binary_names();
+        let categorical = |name: &str| {
+            let index = categorical_names
+                .iter()
+                .position(|value| value == name)
+                .unwrap();
+            (node.categorical[index], node.categorical_present[index])
+        };
+        let continuous = |name: &str| {
+            let index = continuous_names
+                .iter()
+                .position(|value| value == name)
+                .unwrap();
+            (node.continuous[index], node.continuous_present[index])
+        };
+        let binary = |name: &str| {
+            let index = binary_names.iter().position(|value| value == name).unwrap();
+            (node.binary[index], node.binary_present[index])
+        };
+
+        assert_eq!(categorical("attention_lock_type"), (1, true));
+        assert_eq!(categorical("attention_lock_rank"), (0, true));
+        assert_eq!(categorical("attention_action_type"), (6, true));
+        assert_eq!(categorical("attention_action_rank"), (0, true));
+        assert_eq!(categorical("attention_check_type"), (0, false));
+        assert_eq!(continuous("attention_lock_weight"), (0.25, true));
+        assert_eq!(continuous("attention_lock_distance"), (80.0, true));
+        assert_eq!(continuous("attention_lock_angle_s16"), (-256.0, true));
+        assert_eq!(continuous("attention_action_weight"), (0.5, true));
+        assert_eq!(continuous("attention_action_distance"), (90.0, true));
+        assert_eq!(continuous("attention_action_angle_s16"), (512.0, true));
+        assert_eq!(continuous("attention_check_weight"), (0.0, false));
+        assert_eq!(binary("attention_lock_candidate"), (true, true));
+        assert_eq!(binary("attention_action_candidate"), (true, true));
+        assert_eq!(binary("attention_check_candidate"), (false, true));
+        let (base, base_present) = broad_base(observation);
+        assert_eq!(base.len(), 169);
+        assert!(base_present[129..].iter().all(|value| *value));
+        assert_eq!(base[129 + 2], 1.0);
+        assert_eq!(base[129 + 4], 1.0);
+        assert_eq!(base[161], 2.0);
+        assert_eq!(base[162], 3.0);
+        assert_eq!(base[163], 1.0);
+        assert_eq!(base[165], 1.0);
+        assert_eq!(base[167], 0.0);
     }
 
     #[test]
