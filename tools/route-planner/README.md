@@ -33,9 +33,10 @@ The planner CLI currently owns fifteen operations:
 - `extract-resource` performs bounded Yaz0/RARC extraction of one uniquely
   named resource from user-supplied retail data.
 - `extract-message-flow` emits the BMG flow labels, nodes, branch-target table,
-  correctly resolved query-handler numbers, and source-derived temporary-bit
-  accesses. Raw query-table indices remain present so the two coordinate
-  systems cannot be conflated.
+  correctly resolved query-handler numbers, raw 32-bit event parameters, and
+  source-derived temporary-bit, persistent-event-bit, and switch accesses. Raw
+  query-table indices remain present so the two coordinate systems cannot be
+  conflated.
 - `extract-stage-data` emits planner-owned DZS/DZR chunk records and authored
   actor placements, including layer, parameters, position, rotations, and raw
   bytes. Unknown chunk formats remain listed but uninterpreted.

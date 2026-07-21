@@ -7848,4 +7848,880 @@ mod tests {
                     == vec!["obligation.td-coro-one-frame-ooccoo-pull"]
         }));
     }
+
+    #[test]
+    fn goron_text_displacement_composes_raw_consumer_and_independent_entrance_blockers() {
+        const FLOW_A: u8 = 0x04;
+        const FLOW_B: u8 = 0x02;
+        const FLOW_C: u8 = 0x01;
+        const M029: u8 = 0x04;
+        const M031: u8 = 0x01;
+        const SWITCH_6F: u8 = 0x80;
+        const EXIT_ID: &str = "transition.r-sp110-scls0-goron-mines";
+        const CONSUMER_ID: &str = "transition.gor-coron-flow6-displaced-win";
+        const PRODUCER_IDS: [&str; 4] = [
+            "transition.td-producer-auru",
+            "transition.td-producer-coro",
+            "transition.td-producer-ooccoo",
+            "transition.td-producer-yeta",
+        ];
+
+        let mut start = snapshot();
+        start.environment.location.stage = "TEXT_SETUP".into();
+        start.environment.player.action = "roll".into();
+        let component = |id: &str,
+                         kind: ComponentKind,
+                         payload: ComponentPayload,
+                         binding: ComponentBinding,
+                         lifetime: SemanticLifetime,
+                         owner: SerializationOwner| StateComponent {
+            id: id.into(),
+            component_kind: kind,
+            payload,
+            binding,
+            lifetime,
+            serialization_owner: owner,
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::ExtractedFact,
+                source_id: format!("gz2e01.{id}"),
+                source_sha256: Some(Digest([0x81; 32])),
+                transition_id: None,
+            }],
+        };
+        let actor = |id: &str, fields: BTreeMap<String, StateValue>| {
+            component(
+                id,
+                ComponentKind::ActorInstance,
+                ComponentPayload::Structured { fields },
+                ComponentBinding::Actor {
+                    instance_id: id.into(),
+                },
+                SemanticLifetime::RoomLoad,
+                SerializationOwner::None,
+            )
+        };
+        start.environment.components = vec![
+            actor(
+                "actor.dm-elevator",
+                BTreeMap::from([("authorized".into(), StateValue::Boolean(false))]),
+            ),
+            actor(
+                "actor.goron-blocker",
+                BTreeMap::from([
+                    ("collision_active".into(), StateValue::Boolean(true)),
+                    ("room_generation".into(), StateValue::Unsigned(0)),
+                ]),
+            ),
+            actor(
+                "actor.gra-wall",
+                BTreeMap::from([("collision_active".into(), StateValue::Boolean(true))]),
+            ),
+            component(
+                "persistent.event-flags",
+                ComponentKind::PersistentSave,
+                ComponentPayload::Raw {
+                    bytes: vec![0; 32],
+                    known_mask: vec![0xff; 32],
+                },
+                ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                SemanticLifetime::RuntimeFile,
+                SerializationOwner::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+            ),
+            component(
+                "stage.r-sp110-switches",
+                ComponentKind::StageMemory,
+                ComponentPayload::Raw {
+                    bytes: vec![0; 16],
+                    known_mask: vec![0xff; 16],
+                },
+                ComponentBinding::Stage {
+                    stage: "R_SP110".into(),
+                },
+                SemanticLifetime::StageLoad,
+                SerializationOwner::StageBank {
+                    stage: "R_SP110".into(),
+                },
+            ),
+            component(
+                "temporary.event-flags",
+                ComponentKind::TemporaryFlags,
+                ComponentPayload::Raw {
+                    bytes: vec![0; 8],
+                    known_mask: vec![0xff; 8],
+                },
+                ComponentBinding::Session {
+                    session_id: "process".into(),
+                },
+                SemanticLifetime::Session,
+                SerializationOwner::None,
+            ),
+        ];
+        start
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let exact_scope = scope(&start);
+        let alias = |id: &str,
+                     label: &str,
+                     component_kind: ComponentKind,
+                     binding: ComponentBinding,
+                     byte_offset: u32,
+                     mask: u8| FriendlyAlias {
+            id: id.into(),
+            label: label.into(),
+            scope: exact_scope.clone(),
+            raw: RawFactBinding {
+                component_kind,
+                binding,
+                byte_offset,
+                mask: vec![mask],
+                expected: vec![mask],
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: vec![
+                alias(
+                    "event.gor-coron-won",
+                    "M029: won Gor Coron match",
+                    ComponentKind::PersistentSave,
+                    ComponentBinding::RuntimeFile {
+                        runtime_file_id: "file-0".into(),
+                    },
+                    7,
+                    M029,
+                ),
+                alias(
+                    "event.goron-mines-clear",
+                    "M031: Goron Mines clear",
+                    ComponentKind::PersistentSave,
+                    ComponentBinding::RuntimeFile {
+                        runtime_file_id: "file-0".into(),
+                    },
+                    7,
+                    M031,
+                ),
+                alias(
+                    "message.flow-a",
+                    "Shared message flow-control A",
+                    ComponentKind::TemporaryFlags,
+                    ComponentBinding::Session {
+                        session_id: "process".into(),
+                    },
+                    0,
+                    FLOW_A,
+                ),
+                alias(
+                    "message.flow-b",
+                    "Shared message flow-control B",
+                    ComponentKind::TemporaryFlags,
+                    ComponentBinding::Session {
+                        session_id: "process".into(),
+                    },
+                    0,
+                    FLOW_B,
+                ),
+                alias(
+                    "message.flow-c",
+                    "Shared message flow-control C",
+                    ComponentKind::TemporaryFlags,
+                    ComponentBinding::Session {
+                        session_id: "process".into(),
+                    },
+                    0,
+                    FLOW_C,
+                ),
+                alias(
+                    "switch.r-sp110-6f",
+                    "R_SP110 one-zone switch 0x6f",
+                    ComponentKind::StageMemory,
+                    ComponentBinding::Stage {
+                        stage: "R_SP110".into(),
+                    },
+                    13,
+                    SWITCH_6F,
+                ),
+            ],
+            derived_facts: vec![DerivedFact {
+                id: "message.gor-coron-displaced-win-armed".into(),
+                label: "Gor Coron displaced win branch is armed".into(),
+                scope: exact_scope.clone(),
+                rule: PredicateExpression::All {
+                    terms: vec![
+                        PredicateExpression::Fact {
+                            fact_id: "message.flow-a".into(),
+                        },
+                        PredicateExpression::Any {
+                            terms: vec![
+                                PredicateExpression::Fact {
+                                    fact_id: "message.flow-b".into(),
+                                },
+                                PredicateExpression::Fact {
+                                    fact_id: "message.flow-c".into(),
+                                },
+                            ],
+                        },
+                    ],
+                },
+                evidence: evidence(TruthStatus::Established),
+            }],
+        };
+        let field_is =
+            |component_id: &str, field: &str, value: StateValue| PredicateExpression::Compare {
+                left: ValueReference::ComponentField {
+                    component_id: component_id.into(),
+                    field: field.into(),
+                },
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal { value },
+            };
+        let room_is = |room: i8| PredicateExpression::Compare {
+            left: ValueReference::LocationRoom,
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Signed(i64::from(room)),
+            },
+        };
+        let layer_is = |layer: i8| PredicateExpression::Compare {
+            left: ValueReference::LocationLayer,
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Signed(i64::from(layer)),
+            },
+        };
+        let write_field =
+            |component_id: &str, field: &str, value: StateValue| StateOperation::Write {
+                target: crate::transition::ComponentFieldTarget {
+                    component_id: component_id.into(),
+                    field: field.into(),
+                },
+                value,
+            };
+        let write_raw =
+            |component_id: &str, byte_offset: u32, mask: u8, value: u8| StateOperation::WriteRaw {
+                component_id: component_id.into(),
+                byte_offset,
+                mask: vec![mask],
+                value: vec![value],
+            };
+        let candidate = |id: &str,
+                         label: &str,
+                         kind: TransitionKind,
+                         approach_id: &str,
+                         guards: PredicateExpression,
+                         obligations: Vec<&str>,
+                         effects: Vec<StateOperation>,
+                         truth: TruthStatus| CandidateTransition {
+            id: id.into(),
+            label: label.into(),
+            scope: exact_scope.clone(),
+            transition_kind: kind,
+            approach_id: approach_id.into(),
+            activation: ActivationContract {
+                hard_guards: guards,
+                physical_obligation_ids: obligations.into_iter().map(str::to_owned).collect(),
+                effects,
+                unknown_requirements: Vec::new(),
+            },
+            evidence: evidence(truth),
+        };
+        let producer = |id: &str, mask: u8| {
+            candidate(
+                id,
+                &format!("Retain displaced message bit through {id}"),
+                TransitionKind::MessageAction,
+                &format!("approach.{id}"),
+                stage_is("TEXT_SETUP"),
+                Vec::new(),
+                vec![write_raw("temporary.event-flags", 0, mask, mask)],
+                TruthStatus::Established,
+            )
+        };
+        let mut mechanics = catalog(vec![
+            candidate(
+                CONSUMER_ID,
+                "Execute Gor Coron flow 6 displaced win branch",
+                TransitionKind::MessageAction,
+                "approach.gor-coron-talk",
+                PredicateExpression::All {
+                    terms: vec![
+                        stage_is("R_SP110"),
+                        room_is(0),
+                        layer_is(1),
+                        PredicateExpression::Not {
+                            term: Box::new(PredicateExpression::Fact {
+                                fact_id: "event.goron-mines-clear".into(),
+                            }),
+                        },
+                        PredicateExpression::Fact {
+                            fact_id: "message.gor-coron-displaced-win-armed".into(),
+                        },
+                    ],
+                },
+                Vec::new(),
+                vec![
+                    write_raw("persistent.event-flags", 7, M029, M029),
+                    write_raw("temporary.event-flags", 0, FLOW_A | FLOW_B | FLOW_C, 0),
+                ],
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.gor-coron-flow9-prime-a",
+                "Prime flow-control A through Gor Coron flow 9",
+                TransitionKind::MessageAction,
+                "approach.gor-coron-talk",
+                PredicateExpression::All {
+                    terms: vec![
+                        stage_is("R_SP110"),
+                        PredicateExpression::Not {
+                            term: Box::new(PredicateExpression::Fact {
+                                fact_id: "message.flow-a".into(),
+                            }),
+                        },
+                        PredicateExpression::Any {
+                            terms: vec![
+                                PredicateExpression::Fact {
+                                    fact_id: "message.flow-b".into(),
+                                },
+                                PredicateExpression::Fact {
+                                    fact_id: "message.flow-c".into(),
+                                },
+                            ],
+                        },
+                    ],
+                },
+                Vec::new(),
+                vec![write_raw("temporary.event-flags", 0, FLOW_A, FLOW_A)],
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.enter-r-sp110-with-displaced-bit",
+                "Enter the Goron Elder hall with displaced state",
+                TransitionKind::EncodedMapExit,
+                "approach.r-sp110",
+                PredicateExpression::All {
+                    terms: vec![
+                        stage_is("TEXT_SETUP"),
+                        PredicateExpression::Any {
+                            terms: vec![
+                                PredicateExpression::Fact {
+                                    fact_id: "message.flow-b".into(),
+                                },
+                                PredicateExpression::Fact {
+                                    fact_id: "message.flow-c".into(),
+                                },
+                            ],
+                        },
+                    ],
+                },
+                Vec::new(),
+                vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: "R_SP110".into(),
+                        room: 0,
+                        layer: 1,
+                        spawn: 0,
+                    },
+                }],
+                TruthStatus::Established,
+            ),
+            candidate(
+                EXIT_ID,
+                "Use R_SP110 SCLS exit 0 to enter Goron Mines",
+                TransitionKind::EncodedMapExit,
+                "approach.r-sp110-scls0",
+                PredicateExpression::All {
+                    terms: vec![stage_is("R_SP110"), room_is(0)],
+                },
+                vec![
+                    "obligation.r-sp110-elevator-access",
+                    "obligation.r-sp110-live-goron-clear",
+                    "obligation.r-sp110-wall-clear",
+                ],
+                vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: "D_MN04".into(),
+                        room: 1,
+                        layer: 0,
+                        spawn: 1,
+                    },
+                }],
+                TruthStatus::Established,
+            ),
+            producer("transition.td-producer-auru", FLOW_B),
+            producer("transition.td-producer-coro", FLOW_B),
+            producer("transition.td-producer-ooccoo", FLOW_B),
+            producer("transition.td-producer-yeta", FLOW_C),
+        ]);
+        mechanics
+            .transitions
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let obligation =
+            |id: &str, label: &str, predicate: PredicateExpression| FeasibilityObligation {
+                id: id.into(),
+                label: label.into(),
+                scope: exact_scope.clone(),
+                obligation_kind: ObligationKind::ActorState,
+                detail: ObligationDetail::Predicate { predicate },
+                evidence: evidence(TruthStatus::Established),
+            };
+        mechanics.obligations = vec![
+            obligation(
+                "obligation.r-sp110-elevator-access",
+                "Goron elevator access is authorized",
+                field_is("actor.dm-elevator", "authorized", StateValue::Boolean(true)),
+            ),
+            obligation(
+                "obligation.r-sp110-live-goron-clear",
+                "Live blocking Goron no longer occupies the approach",
+                field_is(
+                    "actor.goron-blocker",
+                    "collision_active",
+                    StateValue::Boolean(false),
+                ),
+            ),
+            obligation(
+                "obligation.r-sp110-wall-clear",
+                "GRA_WALL collision is absent",
+                field_is(
+                    "actor.gra-wall",
+                    "collision_active",
+                    StateValue::Boolean(false),
+                ),
+            ),
+        ];
+        let obstruction = |id: &str,
+                           label: &str,
+                           active_when: PredicateExpression,
+                           obligation_id: &str| Obstruction {
+            id: id.into(),
+            label: label.into(),
+            scope: exact_scope.clone(),
+            blocked_action_id: EXIT_ID.into(),
+            approach_id: "approach.r-sp110-scls0".into(),
+            active_when,
+            obligation_ids: vec![obligation_id.into()],
+            evidence: evidence(TruthStatus::Established),
+        };
+        mechanics.obstructions = vec![
+            obstruction(
+                "obstruction.r-sp110-elevator",
+                "Elevator approach is not authorized",
+                field_is(
+                    "actor.dm-elevator",
+                    "authorized",
+                    StateValue::Boolean(false),
+                ),
+                "obligation.r-sp110-elevator-access",
+            ),
+            obstruction(
+                "obstruction.r-sp110-live-goron",
+                "A live Goron still occupies the approach",
+                field_is(
+                    "actor.goron-blocker",
+                    "collision_active",
+                    StateValue::Boolean(true),
+                ),
+                "obligation.r-sp110-live-goron-clear",
+            ),
+            obstruction(
+                "obstruction.r-sp110-wall",
+                "GRA_WALL collision blocks the exit approach",
+                field_is(
+                    "actor.gra-wall",
+                    "collision_active",
+                    StateValue::Boolean(true),
+                ),
+                "obligation.r-sp110-wall-clear",
+            ),
+        ];
+        let resolver =
+            |id: &str,
+             label: &str,
+             obstruction_id: &str,
+             kind: ResolutionKind,
+             extra: PredicateExpression,
+             operations: Vec<StateOperation>| ObstructionResolver {
+                id: id.into(),
+                label: label.into(),
+                scope: exact_scope.clone(),
+                obstruction_id: obstruction_id.into(),
+                resolution_kind: kind,
+                applicable_when: PredicateExpression::All {
+                    terms: vec![
+                        PredicateExpression::Fact {
+                            fact_id: "event.gor-coron-won".into(),
+                        },
+                        extra,
+                    ],
+                },
+                operations,
+                evidence: evidence(TruthStatus::Established),
+            };
+        mechanics.resolvers = vec![
+            resolver(
+                "resolver.r-sp110-elevator-teach-event",
+                "Run the teach-elevator event and set switch 0x6f",
+                "obstruction.r-sp110-elevator",
+                ResolutionKind::Satisfy,
+                PredicateExpression::True,
+                vec![
+                    write_raw("stage.r-sp110-switches", 13, SWITCH_6F, SWITCH_6F),
+                    write_field("actor.dm-elevator", "authorized", StateValue::Boolean(true)),
+                ],
+            ),
+            resolver(
+                "resolver.r-sp110-npc-room-reload",
+                "Reload the room so the blocking Goron reconstructs from M029",
+                "obstruction.r-sp110-live-goron",
+                ResolutionKind::Satisfy,
+                PredicateExpression::True,
+                vec![
+                    write_field(
+                        "actor.goron-blocker",
+                        "collision_active",
+                        StateValue::Boolean(false),
+                    ),
+                    write_field(
+                        "actor.goron-blocker",
+                        "room_generation",
+                        StateValue::Unsigned(1),
+                    ),
+                ],
+            ),
+            resolver(
+                "resolver.r-sp110-npc-roll-past",
+                "Roll past the still-live blocking Goron",
+                "obstruction.r-sp110-live-goron",
+                ResolutionKind::Bypass,
+                PredicateExpression::Compare {
+                    left: ValueReference::PlayerAction,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("roll".into()),
+                    },
+                },
+                Vec::new(),
+            ),
+            resolver(
+                "resolver.r-sp110-wall-execute-delete",
+                "Let GRA_WALL Execute delete collision after M029",
+                "obstruction.r-sp110-wall",
+                ResolutionKind::Satisfy,
+                PredicateExpression::True,
+                vec![write_field(
+                    "actor.gra-wall",
+                    "collision_active",
+                    StateValue::Boolean(false),
+                )],
+            ),
+        ];
+        mechanics
+            .resolvers
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        mechanics.reconstruction_rules = vec![
+            ActorReconstructionRule {
+                id: "reconstruct.r-sp110-goron-after-m029".into(),
+                label: "Reconstruct the blocking Goron from M029".into(),
+                scope: exact_scope.clone(),
+                actor_type: "gra".into(),
+                instantiate_when: PredicateExpression::Fact {
+                    fact_id: "event.gor-coron-won".into(),
+                },
+                initialization_operations: vec![
+                    write_field(
+                        "actor.goron-blocker",
+                        "collision_active",
+                        StateValue::Boolean(false),
+                    ),
+                    write_field(
+                        "actor.goron-blocker",
+                        "room_generation",
+                        StateValue::Unsigned(1),
+                    ),
+                ],
+                evidence: evidence(TruthStatus::Established),
+            },
+            ActorReconstructionRule {
+                id: "reconstruct.r-sp110-wall-after-m029".into(),
+                label: "Omit GRA_WALL collision after M029".into(),
+                scope: exact_scope.clone(),
+                actor_type: "gra_wall".into(),
+                instantiate_when: PredicateExpression::Fact {
+                    fact_id: "event.gor-coron-won".into(),
+                },
+                initialization_operations: vec![write_field(
+                    "actor.gra-wall",
+                    "collision_active",
+                    StateValue::Boolean(false),
+                )],
+                evidence: evidence(TruthStatus::Established),
+            },
+        ];
+        let raw_source = |component_id: &str, byte_offset: u32, mask: u8| ValueReference::RawBits {
+            component_id: component_id.into(),
+            byte_offset,
+            byte_width: 1,
+            mask: u64::from(mask),
+        };
+        mechanics.readers = vec![
+            ReaderRule {
+                id: "reader.gor-coron-flow6-m031".into(),
+                scope: exact_scope.clone(),
+                source: raw_source("persistent.event-flags", 7, M031),
+                consuming_transition_id: CONSUMER_ID.into(),
+                interpretation_fact_id: Some("event.goron-mines-clear".into()),
+                evidence: evidence(TruthStatus::Established),
+            },
+            ReaderRule {
+                id: "reader.gor-coron-flow9-a".into(),
+                scope: exact_scope.clone(),
+                source: raw_source("temporary.event-flags", 0, FLOW_A),
+                consuming_transition_id: CONSUMER_ID.into(),
+                interpretation_fact_id: Some("message.flow-a".into()),
+                evidence: evidence(TruthStatus::Established),
+            },
+            ReaderRule {
+                id: "reader.gor-coron-flow9-bc".into(),
+                scope: exact_scope.clone(),
+                source: raw_source("temporary.event-flags", 0, FLOW_B | FLOW_C),
+                consuming_transition_id: CONSUMER_ID.into(),
+                interpretation_fact_id: Some("message.gor-coron-displaced-win-armed".into()),
+                evidence: evidence(TruthStatus::Established),
+            },
+            ReaderRule {
+                id: "reader.r-sp110-scls0-m029".into(),
+                scope: exact_scope.clone(),
+                source: raw_source("persistent.event-flags", 7, M029),
+                consuming_transition_id: EXIT_ID.into(),
+                interpretation_fact_id: Some("event.gor-coron-won".into()),
+                evidence: evidence(TruthStatus::Established),
+            },
+        ];
+        mechanics.validate().unwrap();
+        let goal = stage_is("D_MN04");
+        let solve =
+            |snapshot: StateSnapshot, mechanics: &MechanicsCatalog, options: SolverOptions| {
+                ForwardSolver::new(&facts, mechanics, &[], options)
+                    .unwrap()
+                    .solve(PlannerExecutionState::new(snapshot).unwrap(), &goal)
+                    .unwrap()
+            };
+
+        let mut encoded_but_blocked = start.clone();
+        encoded_but_blocked.environment.location = SceneLocation {
+            stage: "R_SP110".into(),
+            room: 0,
+            layer: 1,
+            spawn: 0,
+        };
+        let blocked = solve(encoded_but_blocked, &mechanics, SolverOptions::default());
+        assert_eq!(blocked.status, SearchStatus::UnreachableUnderModel);
+        let exit_witness = blocked
+            .blocked_transition_witnesses
+            .iter()
+            .find(|witness| witness.transition_id == EXIT_ID)
+            .unwrap();
+        assert_eq!(
+            exit_witness.active_obstruction_ids,
+            vec![
+                "obstruction.r-sp110-elevator",
+                "obstruction.r-sp110-live-goron",
+                "obstruction.r-sp110-wall",
+            ]
+        );
+
+        let known_nonproducers = |transition: &CandidateTransition| {
+            !transition.id.starts_with("transition.td-producer-")
+        };
+        for producer_id in PRODUCER_IDS {
+            let mut isolated = mechanics.clone();
+            isolated.transitions.retain(|transition| {
+                known_nonproducers(transition) || transition.id == producer_id
+            });
+            let result = solve(start.clone(), &isolated, SolverOptions::default());
+            assert_eq!(result.status, SearchStatus::Reached, "{producer_id}");
+            let ids = result
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<BTreeSet<_>>();
+            assert!(ids.contains(producer_id));
+            assert!(ids.contains(CONSUMER_ID));
+            assert!(ids.contains(EXIT_ID));
+
+            isolated
+                .transitions
+                .retain(|transition| transition.id != producer_id);
+            let removed = solve(start.clone(), &isolated, SolverOptions::default());
+            assert_eq!(
+                removed.status,
+                SearchStatus::UnreachableUnderModel,
+                "removing {producer_id}"
+            );
+        }
+
+        let full = solve(start.clone(), &mechanics, SolverOptions::default());
+        assert_eq!(full.status, SearchStatus::Reached);
+        for producer_id in PRODUCER_IDS {
+            assert!(full.backward_relevance.contains_transition(producer_id));
+        }
+        assert!(full.backward_relevance.contains_transition(CONSUMER_ID));
+        assert!(full.backward_relevance.contains_transition(EXIT_ID));
+
+        let mut without_known_producers = mechanics.clone();
+        without_known_producers
+            .transitions
+            .retain(known_nonproducers);
+        let no_producer = solve(
+            start.clone(),
+            &without_known_producers,
+            SolverOptions::default(),
+        );
+        assert_eq!(no_producer.status, SearchStatus::UnreachableUnderModel);
+        let consumer_before = without_known_producers
+            .transitions
+            .iter()
+            .find(|transition| transition.id == CONSUMER_ID)
+            .unwrap()
+            .clone();
+        let exit_before = without_known_producers
+            .transitions
+            .iter()
+            .find(|transition| transition.id == EXIT_ID)
+            .unwrap()
+            .clone();
+        without_known_producers.transitions.push(producer(
+            "transition.td-producer-hypothetical-new-interrupt",
+            FLOW_C,
+        ));
+        let hypothetical = without_known_producers.transitions.last_mut().unwrap();
+        hypothetical.evidence = evidence(TruthStatus::Hypothetical);
+        without_known_producers
+            .transitions
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let established_only = solve(
+            start.clone(),
+            &without_known_producers,
+            SolverOptions::default(),
+        );
+        assert_ne!(established_only.status, SearchStatus::Reached);
+        let research = solve(
+            start.clone(),
+            &without_known_producers,
+            SolverOptions {
+                evidence_policy: EvidencePolicy::RESEARCH,
+                ..SolverOptions::default()
+            },
+        );
+        assert_eq!(research.status, SearchStatus::Reached);
+        assert!(
+            research.steps.iter().any(|step| {
+                step.action_id == "transition.td-producer-hypothetical-new-interrupt"
+            })
+        );
+        assert_eq!(
+            without_known_producers
+                .transitions
+                .iter()
+                .find(|transition| transition.id == CONSUMER_ID)
+                .unwrap(),
+            &consumer_before
+        );
+        assert_eq!(
+            without_known_producers
+                .transitions
+                .iter()
+                .find(|transition| transition.id == EXIT_ID)
+                .unwrap(),
+            &exit_before
+        );
+
+        let mut roll_only = mechanics.clone();
+        roll_only
+            .resolvers
+            .retain(|resolver| resolver.id != "resolver.r-sp110-npc-room-reload");
+        let rolled = solve(start.clone(), &roll_only, SolverOptions::default());
+        assert_eq!(rolled.status, SearchStatus::Reached);
+        let rolled_exit = rolled
+            .steps
+            .iter()
+            .find(|step| step.action_id == EXIT_ID)
+            .unwrap();
+        assert!(
+            rolled_exit
+                .selected_resolver_ids
+                .contains(&"resolver.r-sp110-npc-roll-past".into())
+        );
+
+        let mut reload_only = mechanics.clone();
+        reload_only
+            .resolvers
+            .retain(|resolver| resolver.id != "resolver.r-sp110-npc-roll-past");
+        let reloaded = solve(start.clone(), &reload_only, SolverOptions::default());
+        assert_eq!(reloaded.status, SearchStatus::Reached);
+        let reloaded_exit = reloaded
+            .steps
+            .iter()
+            .find(|step| step.action_id == EXIT_ID)
+            .unwrap();
+        assert!(
+            reloaded_exit
+                .selected_resolver_ids
+                .contains(&"resolver.r-sp110-npc-room-reload".into())
+        );
+
+        let mut reconstructed = start;
+        let ComponentPayload::Raw { bytes, .. } = &mut reconstructed
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "persistent.event-flags")
+            .unwrap()
+            .payload
+        else {
+            unreachable!()
+        };
+        bytes[7] |= M029;
+        let mut reconstructed = PlannerExecutionState::new(reconstructed).unwrap();
+        for rule in &mechanics.reconstruction_rules {
+            reconstructed
+                .apply_operations(
+                    &rule.id,
+                    &format!("snapshot.after-{}", rule.id),
+                    &rule.initialization_operations,
+                )
+                .unwrap();
+        }
+        let actor_field = |state: &PlannerExecutionState, id: &str, field: &str| {
+            let component = state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == id)
+                .unwrap();
+            let ComponentPayload::Structured { fields } = &component.payload else {
+                unreachable!()
+            };
+            fields[field].clone()
+        };
+        assert_eq!(
+            actor_field(&reconstructed, "actor.gra-wall", "collision_active"),
+            StateValue::Boolean(false)
+        );
+        assert_eq!(
+            actor_field(&reconstructed, "actor.goron-blocker", "collision_active"),
+            StateValue::Boolean(false)
+        );
+        assert_eq!(
+            actor_field(&reconstructed, "actor.goron-blocker", "room_generation"),
+            StateValue::Unsigned(1)
+        );
+    }
 }

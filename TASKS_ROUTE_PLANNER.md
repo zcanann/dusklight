@@ -2254,16 +2254,31 @@ sequence.
     pull followed by a second advancement. Removing the Coro witness blocks only
     that producer; overlapping Auru's trigger fails the spatial obligation. See
     `docs/route-planner/text-displacement-producer-model.md`.
-- [ ] Identify Gor Coron's exact displaced-branch predicate and downstream
+- [x] Identify Gor Coron's exact displaced-branch predicate and downstream
       persistent event/switch writes.
-- [ ] Model invisible wall, elevator authorization, live NPC blockers, and room
+  - GZ2E01 group 3 flow 6/9 requires M031 clear, A set, and B or C set; node 190
+    writes persistent label 62/M029 before nodes 189 and 208 clear A/B/C. The
+    extractor now emits persistent-bit and switch accesses as typed records.
+- [x] Model invisible wall, elevator authorization, live NPC blockers, and room
       reload reconstruction independently.
-- [ ] Start with the Goron Mines encoded transition visible but non-executable;
+  - Separate auto-bound obstructions and resolvers cover live GRA_WALL deletion,
+    the switch-0x6f teach-elevator path, room-reloaded Goron state, and the
+    witnessed roll-past alternative; persisted-state actor reconstruction is
+    replayed independently.
+- [x] Start with the Goron Mines encoded transition visible but non-executable;
       discharge each authorization and physical obligation causally.
-- [ ] Verify the solver can work backward from the entrance to all enabled
+  - The R_SP110 SCLS 0 edge remains a first-class encoded transition while a
+    blocked witness names the wall, elevator, and live-Goron obstructions.
+- [x] Verify the solver can work backward from the entrance to all enabled
       producers of the required text-bit pattern.
-- [ ] Verify removing one producer or adding a hypothetical new interrupt changes
+  - Backward relevance from D_MN04 includes all four Coro/Auru/Yeta/Ooccoo raw-bit
+    producers and the unchanged Gor Coron consumer.
+- [x] Verify removing one producer or adding a hypothetical new interrupt changes
       reachability without changing the Goron consumer or entrance rules.
+  - Isolating then removing each enabled producer blocks the route. A new
+    hypothetical C-bit writer restores it only under research evidence policy,
+    with byte-for-byte-equal consumer and entrance records. See
+    `docs/route-planner/text-displacement-message-state-audit.md`.
 
 #### 11K. Glitchless story route
 

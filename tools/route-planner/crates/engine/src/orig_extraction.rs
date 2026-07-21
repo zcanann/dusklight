@@ -56,6 +56,8 @@ pub struct ExtractedMessageFlow {
     pub nodes: Vec<MessageFlowNode>,
     pub branch_targets: Vec<u16>,
     pub temporary_flag_accesses: Vec<MessageFlowTemporaryFlagAccess>,
+    pub persistent_flag_accesses: Vec<MessageFlowPersistentFlagAccess>,
+    pub switch_accesses: Vec<MessageFlowSwitchAccess>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -91,6 +93,7 @@ pub enum MessageFlowNode {
         next_target_index: u16,
         parameter_0: u16,
         parameter_1: u16,
+        raw_parameter_u32: u32,
         raw_parameters: [u8; 4],
     },
     Unknown {
@@ -122,6 +125,52 @@ pub struct MessageFlowTemporaryFlagAccess {
     pub friendly_name: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageFlowPersistentFlagOperation {
+    Set,
+    Clear,
+    /// `query001` returns the true branch when this bit is clear.
+    BranchTrueWhenClear,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageFlowPersistentFlagAccess {
+    pub node_index: u16,
+    pub operation: MessageFlowPersistentFlagOperation,
+    pub parameter_ordinal: u8,
+    pub label_index: u16,
+    pub packed_backing_coordinate: Option<u16>,
+    pub friendly_name: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageFlowSwitchOperation {
+    Set,
+    Clear,
+    BranchTrueWhenClear,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageFlowSwitchStore {
+    Save,
+    Dungeon,
+    Zone,
+    OneZone,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageFlowSwitchAccess {
+    pub node_index: u16,
+    pub operation: MessageFlowSwitchOperation,
+    pub store: MessageFlowSwitchStore,
+    pub switch_index: u16,
+}
+
 /// Translate the raw BMG branch index through the retail query dispatch table.
 /// The first eight entries are reordered; entries 8..=52 dispatch to handlers
 /// 9..=53 respectively.
@@ -146,6 +195,19 @@ fn generic_message_flag(label_index: u16) -> Option<(u16, &'static str)> {
         53 => (0x0502, "message_flow_control_h"),
         54 => (0x0501, "message_flow_control_i"),
         55 => (0x0680, "message_flow_control_j"),
+        _ => return None,
+    })
+}
+
+fn persistent_message_flag(label_index: u16) -> Option<(u16, &'static str)> {
+    Some(match label_index {
+        6 => (0x0004, "lost_first_gor_coron_match"),
+        62 => (0x0704, "won_gor_coron_match"),
+        63 => (0x0702, "first_gor_coron_conversation"),
+        64 => (0x0701, "goron_mines_clear"),
+        115 => (0x0e20, "spoke_with_spring_goron_a"),
+        152 => (0x1201, "lost_gor_coron_match_with_iron_boots"),
+        154 => (0x1340, "lost_gor_coron_match_again"),
         _ => return None,
     })
 }
@@ -450,6 +512,7 @@ pub fn parse_message_flow(input: &[u8]) -> Result<ExtractedMessageFlow, PlannerC
                 next_target_index: u16::from_be_bytes([raw[2], raw[3]]),
                 parameter_0: u16::from_be_bytes([raw[4], raw[5]]),
                 parameter_1: u16::from_be_bytes([raw[6], raw[7]]),
+                raw_parameter_u32: u32::from_be_bytes(raw[4..8].try_into().unwrap()),
                 raw_parameters: raw[4..8].try_into().unwrap(),
             },
             node_type => MessageFlowNode::Unknown {
@@ -507,6 +570,8 @@ pub fn parse_message_flow(input: &[u8]) -> Result<ExtractedMessageFlow, PlannerC
     }
 
     let mut temporary_flag_accesses = Vec::new();
+    let mut persistent_flag_accesses = Vec::new();
+    let mut switch_accesses = Vec::new();
     for node in &nodes {
         match *node {
             MessageFlowNode::Event {
@@ -550,6 +615,83 @@ pub fn parse_message_flow(input: &[u8]) -> Result<ExtractedMessageFlow, PlannerC
                 0,
                 parameter,
             )),
+            MessageFlowNode::Event {
+                index,
+                event_index: 0 | 1,
+                parameter_0,
+                parameter_1,
+                ..
+            } => {
+                let operation = if matches!(node, MessageFlowNode::Event { event_index: 0, .. }) {
+                    MessageFlowPersistentFlagOperation::Set
+                } else {
+                    MessageFlowPersistentFlagOperation::Clear
+                };
+                for (parameter_ordinal, label_index) in [(0_u8, parameter_0), (1_u8, parameter_1)] {
+                    if label_index != 0 {
+                        persistent_flag_accesses.push(persistent_flag_access(
+                            index,
+                            operation,
+                            parameter_ordinal,
+                            label_index,
+                        ));
+                    }
+                }
+            }
+            MessageFlowNode::Branch {
+                index,
+                query_handler_index: Some(1),
+                parameter,
+                ..
+            } => persistent_flag_accesses.push(persistent_flag_access(
+                index,
+                MessageFlowPersistentFlagOperation::BranchTrueWhenClear,
+                0,
+                parameter,
+            )),
+            MessageFlowNode::Event {
+                index,
+                event_index: 14 | 15,
+                parameter_0,
+                parameter_1,
+                ..
+            } => {
+                if let Some(store) = switch_store(parameter_0) {
+                    switch_accesses.push(MessageFlowSwitchAccess {
+                        node_index: index,
+                        operation: if matches!(
+                            node,
+                            MessageFlowNode::Event {
+                                event_index: 14,
+                                ..
+                            }
+                        ) {
+                            MessageFlowSwitchOperation::Set
+                        } else {
+                            MessageFlowSwitchOperation::Clear
+                        },
+                        store,
+                        switch_index: parameter_1,
+                    });
+                }
+            }
+            MessageFlowNode::Branch {
+                index,
+                query_handler_index: Some(handler @ (13 | 15 | 17 | 19)),
+                parameter,
+                ..
+            } => switch_accesses.push(MessageFlowSwitchAccess {
+                node_index: index,
+                operation: MessageFlowSwitchOperation::BranchTrueWhenClear,
+                store: match handler {
+                    13 => MessageFlowSwitchStore::Save,
+                    15 => MessageFlowSwitchStore::Dungeon,
+                    17 => MessageFlowSwitchStore::Zone,
+                    19 => MessageFlowSwitchStore::OneZone,
+                    _ => unreachable!(),
+                },
+                switch_index: parameter,
+            }),
             _ => {}
         }
     }
@@ -563,6 +705,8 @@ pub fn parse_message_flow(input: &[u8]) -> Result<ExtractedMessageFlow, PlannerC
         nodes,
         branch_targets,
         temporary_flag_accesses,
+        persistent_flag_accesses,
+        switch_accesses,
     })
 }
 
@@ -581,6 +725,33 @@ fn temporary_flag_access(
         packed_backing_coordinate: known.map(|entry| entry.0),
         friendly_name: known.map(|entry| entry.1.to_owned()),
     }
+}
+
+fn persistent_flag_access(
+    node_index: u16,
+    operation: MessageFlowPersistentFlagOperation,
+    parameter_ordinal: u8,
+    label_index: u16,
+) -> MessageFlowPersistentFlagAccess {
+    let known = persistent_message_flag(label_index);
+    MessageFlowPersistentFlagAccess {
+        node_index,
+        operation,
+        parameter_ordinal,
+        label_index,
+        packed_backing_coordinate: known.map(|entry| entry.0),
+        friendly_name: known.map(|entry| entry.1.to_owned()),
+    }
+}
+
+fn switch_store(selector: u16) -> Option<MessageFlowSwitchStore> {
+    Some(match selector {
+        0 => MessageFlowSwitchStore::Save,
+        1 => MessageFlowSwitchStore::Dungeon,
+        2 => MessageFlowSwitchStore::Zone,
+        3 => MessageFlowSwitchStore::OneZone,
+        _ => return None,
+    })
 }
 
 fn decode_yaz0(input: &[u8]) -> Result<Vec<u8>, PlannerContractError> {
@@ -813,17 +984,20 @@ mod tests {
         bmg[0..8].copy_from_slice(b"MESGbmg1");
         bmg[12..16].copy_from_slice(&2_u32.to_be_bytes());
 
-        let mut flw1 = vec![0; 0x30];
+        let mut flw1 = vec![0; 0x50];
         flw1[0..4].copy_from_slice(b"FLW1");
         let flw1_size = flw1.len() as u32;
         flw1[4..8].copy_from_slice(&flw1_size.to_be_bytes());
-        flw1[8..10].copy_from_slice(&3_u16.to_be_bytes());
+        flw1[8..10].copy_from_slice(&6_u16.to_be_bytes());
         flw1[10..12].copy_from_slice(&2_u16.to_be_bytes());
         flw1[0x10..0x18].copy_from_slice(&[3, 10, 0, 0, 0, 10, 0, 51]);
         flw1[0x18..0x20].copy_from_slice(&[2, 0, 0, 10, 0, 11, 0, 0]);
         flw1[0x20..0x28].copy_from_slice(&[1, 0, 0, 7, 0xff, 0xff, 0, 0]);
-        flw1[0x28..0x2a].copy_from_slice(&2_u16.to_be_bytes());
-        flw1[0x2a..0x2c].copy_from_slice(&u16::MAX.to_be_bytes());
+        flw1[0x28..0x30].copy_from_slice(&[3, 0, 0, 0, 0, 62, 0, 0]);
+        flw1[0x30..0x38].copy_from_slice(&[2, 0, 0, 1, 0, 62, 0, 0]);
+        flw1[0x38..0x40].copy_from_slice(&[3, 14, 0, 0, 0, 3, 0, 10]);
+        flw1[0x40..0x42].copy_from_slice(&2_u16.to_be_bytes());
+        flw1[0x42..0x44].copy_from_slice(&u16::MAX.to_be_bytes());
         bmg.extend(flw1);
 
         let mut fli1 = vec![0; 0x20];
@@ -870,7 +1044,7 @@ mod tests {
     #[test]
     fn parses_flow_labels_generic_temp_writers_and_reader() {
         let parsed = parse_message_flow(&bmg_fixture()).unwrap();
-        assert_eq!(parsed.node_count, 3);
+        assert_eq!(parsed.node_count, 6);
         assert_eq!(parsed.labels[0].flow_id, 42);
         assert_eq!(parsed.branch_targets, vec![2, u16::MAX]);
         assert_eq!(
@@ -881,6 +1055,7 @@ mod tests {
                 next_target_index: 0,
                 parameter_0: 10,
                 parameter_1: 51,
+                raw_parameter_u32: 0x000a0033,
                 raw_parameters: [0, 10, 0, 51],
             }
         );
@@ -924,6 +1099,49 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(
+            parsed.persistent_flag_accesses,
+            vec![
+                MessageFlowPersistentFlagAccess {
+                    node_index: 3,
+                    operation: MessageFlowPersistentFlagOperation::Set,
+                    parameter_ordinal: 0,
+                    label_index: 62,
+                    packed_backing_coordinate: Some(0x0704),
+                    friendly_name: Some("won_gor_coron_match".to_owned()),
+                },
+                MessageFlowPersistentFlagAccess {
+                    node_index: 4,
+                    operation: MessageFlowPersistentFlagOperation::BranchTrueWhenClear,
+                    parameter_ordinal: 0,
+                    label_index: 62,
+                    packed_backing_coordinate: Some(0x0704),
+                    friendly_name: Some("won_gor_coron_match".to_owned()),
+                },
+            ]
+        );
+        assert_eq!(
+            parsed.switch_accesses,
+            vec![MessageFlowSwitchAccess {
+                node_index: 5,
+                operation: MessageFlowSwitchOperation::Set,
+                store: MessageFlowSwitchStore::OneZone,
+                switch_index: 10,
+            }]
+        );
+    }
+
+    #[test]
+    fn accepts_retail_header_and_final_alignment_quirks_without_ignoring_payload() {
+        let mut fixture = bmg_fixture();
+        let fli_offset = 0x20 + 0x50;
+        fixture[8..12].copy_from_slice(&(fli_offset as u32).to_be_bytes());
+        fixture[fli_offset + 4..fli_offset + 8].copy_from_slice(&(0x28_u32).to_be_bytes());
+
+        let parsed = parse_message_flow(&fixture).unwrap();
+        assert_eq!(parsed.header_declared_size, fli_offset as u32);
+        assert_eq!(parsed.resource_size, fixture.len() as u32);
+        assert_eq!(parsed.labels[0].flow_id, 42);
     }
 
     #[test]
