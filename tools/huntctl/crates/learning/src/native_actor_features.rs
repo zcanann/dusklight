@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V5: &str = "dusklight-native-actor-feature-view/v5";
+pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V6: &str = "dusklight-native-actor-feature-view/v6";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -33,12 +33,13 @@ pub enum ActorFeatureFamily {
     ReturnPlaceWriter,
     EnemyBase,
     TriggerVolume,
+    Door20,
     GoalRelative,
     PlayerRelationships,
 }
 
 impl ActorFeatureFamily {
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
         Self::Identity,
         Self::AbsoluteMotion,
         Self::BaseLifecycle,
@@ -51,6 +52,7 @@ impl ActorFeatureFamily {
         Self::ReturnPlaceWriter,
         Self::EnemyBase,
         Self::TriggerVolume,
+        Self::Door20,
         Self::GoalRelative,
         Self::PlayerRelationships,
     ];
@@ -204,7 +206,7 @@ impl NativeActorFeatureView {
             })
             .collect();
         let mut view = Self {
-            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V5.into(),
+            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V6.into(),
             source_actor_view_sha256: source.view_sha256,
             spec,
             columns,
@@ -237,7 +239,7 @@ impl NativeActorFeatureView {
     pub fn validate(&self) -> Result<(), NativeActorFeatureError> {
         self.spec.validate()?;
         let expected_columns = columns_for(&self.spec, self.columns.goal_anchor_count);
-        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V5
+        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V6
             || self.source_actor_view_sha256 == Digest::ZERO
             || self.observations.is_empty()
             || self.columns != expected_columns
@@ -272,7 +274,7 @@ impl NativeActorFeatureView {
     fn compute_identity(&self) -> Result<Digest, NativeActorFeatureError> {
         let mut canonical = self.clone();
         canonical.view_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.native-actor-feature-view/v3\0", &canonical)
+        canonical_digest(b"dusklight.native-actor-feature-view/v4\0", &canonical)
     }
 }
 
@@ -420,6 +422,49 @@ fn columns_for(spec: &ActorFeatureSpec, goal_anchor_count: usize) -> ActorFeatur
         extend_names(
             &mut binary,
             &["trigger_enabled", "trigger_vertical_unbounded"],
+        );
+    }
+    if spec.contains(ActorFeatureFamily::Door20) {
+        extend_names(
+            &mut categorical,
+            &[
+                "door20_kind",
+                "door20_model",
+                "door20_front_option",
+                "door20_back_option",
+                "door20_front_room",
+                "door20_back_room",
+                "door20_exit_number",
+                "door20_front_switch",
+                "door20_back_switch",
+                "door20_unlock_effect_switch",
+                "door20_front_event",
+                "door20_back_event",
+                "door20_message_number",
+                "door20_action",
+                "door20_active_side",
+                "door20_event_variant",
+                "door20_key_type",
+                "door20_enemy_clear_debounce",
+                "door20_stopper_side",
+                "door20_front_stopper_status",
+                "door20_back_stopper_status",
+            ],
+        );
+        continuous.push("door20_angle_s16".into());
+        extend_names(
+            &mut binary,
+            &[
+                "door20_message_door",
+                "door20_front_switch_set",
+                "door20_back_switch_set",
+                "door20_unlock_effect_switch_set",
+                "door20_locked",
+                "door20_background_collision_released",
+                "door20_unlock_effect_triggered",
+                "door20_opening_active",
+                "door20_closing_active",
+            ],
         );
     }
     if spec.contains(ActorFeatureFamily::PlayerRelationships) {
@@ -664,6 +709,79 @@ fn materialize_actor(
             extend_binary(&mut row, &[false; 2], false);
         }
     }
+    if spec.contains(ActorFeatureFamily::Door20) {
+        if let Some(door) = &actor.door20 {
+            extend_categories(
+                &mut row,
+                &[
+                    i64::from(door.kind),
+                    i64::from(door.door_model),
+                    i64::from(door.front_option),
+                    i64::from(door.back_option),
+                    i64::from(door.front_room),
+                    i64::from(door.back_room),
+                    i64::from(door.exit_number),
+                ],
+                true,
+            );
+            for switch in [
+                door.front_switch.as_ref(),
+                door.back_switch.as_ref(),
+                door.unlock_effect_switch.as_ref(),
+            ] {
+                push_category(
+                    &mut row,
+                    switch.map_or(0, |switch| i64::from(switch.id)),
+                    switch.is_some(),
+                );
+            }
+            extend_categories(
+                &mut row,
+                &[
+                    i64::from(door.front_event),
+                    i64::from(door.back_event),
+                    i64::from(door.message_number),
+                    door.action as u8 as i64,
+                    door.active_side as u8 as i64,
+                    i64::from(door.event_variant),
+                    i64::from(door.key_type),
+                    i64::from(door.enemy_clear_debounce),
+                    door.stopper_side as u8 as i64,
+                    door.front_stopper_status as u8 as i64,
+                    door.back_stopper_status as u8 as i64,
+                ],
+                true,
+            );
+            push_continuous(&mut row, f32::from(door.door_angle), true);
+            push_binary(&mut row, door.message_door, true);
+            for switch in [
+                door.front_switch.as_ref(),
+                door.back_switch.as_ref(),
+                door.unlock_effect_switch.as_ref(),
+            ] {
+                push_binary(
+                    &mut row,
+                    switch.is_some_and(|switch| switch.set),
+                    switch.is_some(),
+                );
+            }
+            extend_binary(
+                &mut row,
+                &[
+                    door.locked,
+                    door.background_collision_released,
+                    door.unlock_effect_triggered,
+                    door.opening_active,
+                    door.closing_active,
+                ],
+                true,
+            );
+        } else {
+            extend_categories(&mut row, &[0; 21], false);
+            push_continuous(&mut row, 0.0, false);
+            extend_binary(&mut row, &[false; 9], false);
+        }
+    }
     if spec.contains(ActorFeatureFamily::GoalRelative) {
         row.goal_relative_positions = actor.goal_relative_positions.clone();
     }
@@ -773,7 +891,7 @@ fn feature_schema_digest(
     columns: &ActorFeatureColumns,
 ) -> Result<Digest, NativeActorFeatureError> {
     canonical_digest(
-        b"dusklight.native-actor-feature-schema/v2\0",
+        b"dusklight.native-actor-feature-schema/v3\0",
         &(spec, columns),
     )
 }
@@ -1175,6 +1293,80 @@ mod tests {
                 && !actor.binary[enabled]
                 && !actor.binary_present[enabled]
         }));
+    }
+
+    #[test]
+    fn v27_door20_is_selectable_with_nested_switch_masks_and_legacy_absence() {
+        let source = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v27.dseps"
+        ));
+        let view = NativeActorFeatureView::build(
+            &source,
+            ActorFeatureSpec::new([ActorFeatureFamily::Door20]).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(view.columns.categorical.len(), 21);
+        assert_eq!(view.columns.continuous.len(), 1);
+        assert_eq!(view.columns.binary.len(), 9);
+        let kind = categorical(&view, "door20_kind");
+        let front_switch = categorical(&view, "door20_front_switch");
+        let action = categorical(&view, "door20_action");
+        let active_side = categorical(&view, "door20_active_side");
+        let stopper_status = categorical(&view, "door20_front_stopper_status");
+        let angle = continuous(&view, "door20_angle_s16");
+        let message_door = binary(&view, "door20_message_door");
+        let front_switch_set = binary(&view, "door20_front_switch_set");
+        let opening = binary(&view, "door20_opening_active");
+        let actor = view.observations[0]
+            .actors
+            .iter()
+            .find(|actor| actor.categorical_present[kind])
+            .expect("DOOR20 feature row");
+        assert_eq!(actor.categorical[kind], 9);
+        assert_eq!(actor.categorical[front_switch], 0x11);
+        assert!(actor.categorical_present[front_switch]);
+        assert_eq!(actor.categorical[action], 3);
+        assert_eq!(actor.categorical[active_side], 1);
+        assert_eq!(actor.categorical[stopper_status], 0);
+        assert_eq!(actor.continuous[angle], -1234.0);
+        assert!(actor.continuous_present[angle]);
+        assert!(actor.binary[message_door]);
+        assert!(actor.binary[front_switch_set]);
+        assert!(actor.binary[opening]);
+        assert!(actor.binary_present[opening]);
+
+        let legacy = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v26.dseps"
+        ));
+        let legacy = NativeActorFeatureView::build(
+            &legacy,
+            ActorFeatureSpec::new([ActorFeatureFamily::Door20]).unwrap(),
+        )
+        .unwrap();
+        assert!(legacy.observations[0].actors.iter().all(|actor| {
+            actor.categorical[kind] == 0
+                && !actor.categorical_present[kind]
+                && actor.continuous[angle] == 0.0
+                && !actor.continuous_present[angle]
+                && !actor.binary[opening]
+                && !actor.binary_present[opening]
+        }));
+
+        let ablated = NativeActorFeatureView::build(
+            &source,
+            ActorFeatureSpec::new([ActorFeatureFamily::Identity]).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            ablated
+                .columns
+                .categorical
+                .iter()
+                .chain(&ablated.columns.continuous)
+                .chain(&ablated.columns.binary)
+                .all(|name| !name.starts_with("door20_"))
+        );
+        assert_ne!(view.feature_schema_sha256, ablated.feature_schema_sha256);
     }
 
     #[test]

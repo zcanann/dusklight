@@ -115,11 +115,12 @@ pub enum NativeEncoderChannelFamily {
     ActorReturnWriter,
     ActorEnemyBase,
     ActorTriggerVolume,
+    ActorDoor20,
     ActorPlayerRelationships,
 }
 
 impl NativeEncoderChannelFamily {
-    pub const ALL: [Self; 26] = [
+    pub const ALL: [Self; 27] = [
         Self::CorePlayerMotion,
         Self::CoreActionPhase,
         Self::CoreEventContext,
@@ -145,6 +146,7 @@ impl NativeEncoderChannelFamily {
         Self::ActorReturnWriter,
         Self::ActorEnemyBase,
         Self::ActorTriggerVolume,
+        Self::ActorDoor20,
         Self::ActorPlayerRelationships,
     ];
 
@@ -175,6 +177,7 @@ impl NativeEncoderChannelFamily {
             Self::ActorReturnWriter => "actor_return_writer",
             Self::ActorEnemyBase => "actor_enemy_base",
             Self::ActorTriggerVolume => "actor_trigger_volume",
+            Self::ActorDoor20 => "actor_door20",
             Self::ActorPlayerRelationships => "actor_player_relationships",
         }
     }
@@ -260,6 +263,7 @@ fn actor_column_family(family: NativeEncoderChannelFamily) -> bool {
             | NativeEncoderChannelFamily::ActorReturnWriter
             | NativeEncoderChannelFamily::ActorEnemyBase
             | NativeEncoderChannelFamily::ActorTriggerVolume
+            | NativeEncoderChannelFamily::ActorDoor20
             | NativeEncoderChannelFamily::ActorPlayerRelationships
     )
 }
@@ -1597,7 +1601,7 @@ fn native_actor_feature_schema(
     spec: &NativeEncoderFeatureSpec,
 ) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v6\0",
+        b"dusklight.native-direct-actor-features/v7\0",
         &(
             spec,
             selected_feature_names(
@@ -1883,6 +1887,27 @@ fn native_actor_categorical_names() -> Vec<String> {
         "trigger_kind",
         "trigger_shape",
         "trigger_behavior",
+        "door20_kind",
+        "door20_model",
+        "door20_front_option",
+        "door20_back_option",
+        "door20_front_room",
+        "door20_back_room",
+        "door20_exit_number",
+        "door20_front_switch",
+        "door20_back_switch",
+        "door20_unlock_effect_switch",
+        "door20_front_event",
+        "door20_back_event",
+        "door20_message_number",
+        "door20_action",
+        "door20_active_side",
+        "door20_event_variant",
+        "door20_key_type",
+        "door20_enemy_clear_debounce",
+        "door20_stopper_side",
+        "door20_front_stopper_status",
+        "door20_back_stopper_status",
         "attention_lock_type",
         "attention_lock_rank",
         "attention_action_type",
@@ -1934,6 +1959,7 @@ fn native_actor_continuous_names() -> Vec<String> {
         "trigger_yaw_relative_to_link_sin".into(),
         "trigger_yaw_relative_to_link_cos".into(),
     ]);
+    names.push("door20_angle_s16".into());
     for prefix in ["attention_lock", "attention_action", "attention_check"] {
         names.extend([
             format!("{prefix}_weight"),
@@ -1987,6 +2013,16 @@ fn native_actor_binary_names() -> Vec<String> {
             "trigger_volume_present",
             "trigger_enabled",
             "trigger_vertical_unbounded",
+            "door20_present",
+            "door20_message_door",
+            "door20_front_switch_set",
+            "door20_back_switch_set",
+            "door20_unlock_effect_switch_set",
+            "door20_locked",
+            "door20_background_collision_released",
+            "door20_unlock_effect_triggered",
+            "door20_opening_active",
+            "door20_closing_active",
             "attention_lock_candidate",
             "attention_action_candidate",
             "attention_check_candidate",
@@ -2016,6 +2052,7 @@ fn native_actor_binary_names() -> Vec<String> {
             "temporal_event_presence_changed",
             "temporal_enemy_presence_changed",
             "temporal_trigger_presence_changed",
+            "temporal_door20_presence_changed",
         ]
         .into_iter()
         .map(str::to_owned),
@@ -2051,6 +2088,7 @@ fn native_actor_categorical_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::ActorReturnWriter, 7);
     extend_family(&mut families, Family::ActorEnemyBase, 2);
     extend_family(&mut families, Family::ActorTriggerVolume, 3);
+    extend_family(&mut families, Family::ActorDoor20, 21);
     extend_family(&mut families, Family::ActorAttentionCandidates, 6);
     families
 }
@@ -2068,6 +2106,7 @@ fn native_actor_continuous_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::ActorAttention, 6);
     extend_family(&mut families, Family::ActorEnemyBase, 6);
     extend_family(&mut families, Family::ActorTriggerVolume, 11);
+    extend_family(&mut families, Family::ActorDoor20, 1);
     extend_family(&mut families, Family::ActorAttentionCandidates, 9);
     extend_family(&mut families, Family::ActorTemporalDelta, 16);
     families
@@ -2085,8 +2124,9 @@ fn native_actor_binary_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::ActorReturnWriter, 6);
     extend_family(&mut families, Family::ActorPlayerRelationships, 11);
     extend_family(&mut families, Family::ActorTriggerVolume, 3);
+    extend_family(&mut families, Family::ActorDoor20, 10);
     extend_family(&mut families, Family::ActorAttentionCandidates, 3);
-    extend_family(&mut families, Family::ActorTemporalDelta, 26);
+    extend_family(&mut families, Family::ActorTemporalDelta, 27);
     families
 }
 
@@ -2362,6 +2402,45 @@ fn native_actor_node(
             category(0, false);
         }
     }
+    if let Some(door) = &actor.door20 {
+        for value in [
+            door.kind,
+            door.door_model,
+            door.front_option,
+            door.back_option,
+            door.front_room,
+            door.back_room,
+            door.exit_number,
+        ] {
+            category(i64::from(value), true);
+        }
+        for switch in [
+            door.front_switch,
+            door.back_switch,
+            door.unlock_effect_switch,
+        ] {
+            category(i64::from(switch), switch != u8::MAX);
+        }
+        for value in [
+            i64::from(door.front_event),
+            i64::from(door.back_event),
+            i64::from(door.message_number),
+            door.action as u8 as i64,
+            door.active_side as u8 as i64,
+            i64::from(door.event_variant),
+            i64::from(door.key_type),
+            i64::from(door.enemy_clear_debounce),
+            door.stopper_side as u8 as i64,
+            door.front_stopper_status as u8 as i64,
+            door.back_stopper_status as u8 as i64,
+        ] {
+            category(value, true);
+        }
+    } else {
+        for _ in 0..21 {
+            category(0, false);
+        }
+    }
     for candidate in [lock_candidate, action_candidate, check_candidate] {
         category(
             candidate.map_or(0, |(_, value)| i64::from(value.attention_type)),
@@ -2564,6 +2643,15 @@ fn native_actor_node(
             trigger_yaw.is_some() && player_available,
         );
     }
+    push_continuous(
+        &mut continuous,
+        &mut continuous_present,
+        actor
+            .door20
+            .as_ref()
+            .map_or(0.0, |door| f32::from(door.door_angle)),
+        actor.door20.is_some(),
+    );
     for candidate in [lock_candidate, action_candidate, check_candidate] {
         push_continuous(
             &mut continuous,
@@ -2712,6 +2800,30 @@ fn native_actor_node(
             .is_some_and(|value| value.vertical_unbounded),
         actor.trigger_volume.is_some(),
     );
+    boolean(actor.door20.is_some(), true);
+    if let Some(door) = &actor.door20 {
+        boolean(door.message_door, true);
+        for (switch, set) in [
+            (door.front_switch, door.front_switch_set),
+            (door.back_switch, door.back_switch_set),
+            (door.unlock_effect_switch, door.unlock_effect_switch_set),
+        ] {
+            boolean(set, switch != u8::MAX);
+        }
+        for value in [
+            door.locked,
+            door.background_collision_released,
+            door.unlock_effect_triggered,
+            door.opening_active,
+            door.closing_active,
+        ] {
+            boolean(value, true);
+        }
+    } else {
+        for _ in 0..9 {
+            boolean(false, false);
+        }
+    }
     for candidate in [lock_candidate, action_candidate, check_candidate] {
         boolean(candidate.is_some(), attention_available);
     }
@@ -2744,9 +2856,10 @@ fn native_actor_node(
             actor.event_participation.is_some() != previous.event_participation.is_some(),
             actor.enemy_base.is_some() != previous.enemy_base.is_some(),
             actor.trigger_volume.is_some() != previous.trigger_volume.is_some(),
+            actor.door20.is_some() != previous.door20.is_some(),
         ]
     });
-    for value in changed.unwrap_or([false; 25]) {
+    for value in changed.unwrap_or([false; 26]) {
         boolean(value, previous_available);
     }
     debug_assert_eq!(categorical.len(), native_actor_categorical_names().len());
@@ -3836,6 +3949,7 @@ mod tests {
             NativeEncoderChannelFamily::ActorEventParticipation,
             NativeEncoderChannelFamily::ActorEnemyBase,
             NativeEncoderChannelFamily::ActorTriggerVolume,
+            NativeEncoderChannelFamily::ActorDoor20,
         ])
         .unwrap();
         let mut reduced_node = nodes[0].clone();
@@ -3846,6 +3960,128 @@ mod tests {
         assert_ne!(
             native_actor_feature_schema(&reduced).unwrap(),
             native_actor_feature_schema(&all).unwrap()
+        );
+    }
+
+    #[test]
+    fn direct_native_adapter_exposes_ablatable_door20_with_legacy_masks() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v27.dseps"
+        ))
+        .unwrap();
+        let observation = &shard.episodes[0].steps[0].pre_input;
+        let mut nodes = native_actor_nodes(observation, None);
+        let categorical_names = native_actor_categorical_names();
+        let continuous_names = native_actor_continuous_names();
+        let binary_names = native_actor_binary_names();
+        let kind = categorical_names
+            .iter()
+            .position(|name| name == "door20_kind")
+            .unwrap();
+        let front_switch = categorical_names
+            .iter()
+            .position(|name| name == "door20_front_switch")
+            .unwrap();
+        let action = categorical_names
+            .iter()
+            .position(|name| name == "door20_action")
+            .unwrap();
+        let angle = continuous_names
+            .iter()
+            .position(|name| name == "door20_angle_s16")
+            .unwrap();
+        let present = binary_names
+            .iter()
+            .position(|name| name == "door20_present")
+            .unwrap();
+        let front_switch_set = binary_names
+            .iter()
+            .position(|name| name == "door20_front_switch_set")
+            .unwrap();
+        let opening = binary_names
+            .iter()
+            .position(|name| name == "door20_opening_active")
+            .unwrap();
+        let door = nodes
+            .iter()
+            .find(|node| node.binary[present])
+            .expect("direct DOOR20 node");
+        assert!(door.binary_present[present]);
+        assert_eq!(door.categorical[kind], 9);
+        assert_eq!(door.categorical[front_switch], 0x11);
+        assert!(door.categorical_present[front_switch]);
+        assert_eq!(door.categorical[action], 3);
+        assert_eq!(door.continuous[angle], -1234.0);
+        assert!(door.continuous_present[angle]);
+        assert!(door.binary[front_switch_set]);
+        assert!(door.binary[opening]);
+
+        let spec = NativeEncoderFeatureSpec::new([
+            NativeEncoderChannelFamily::ActorPopulation,
+            NativeEncoderChannelFamily::ActorDoor20,
+        ])
+        .unwrap();
+        for node in &mut nodes {
+            retain_node_feature_families(node, &spec);
+            assert_eq!(node.categorical.len(), 21);
+            assert_eq!(node.continuous.len(), 1);
+            assert_eq!(node.binary.len(), 10);
+        }
+        assert_eq!(
+            selected_feature_names(
+                native_actor_categorical_names(),
+                &native_actor_categorical_families(),
+                &spec,
+            )
+            .len(),
+            21
+        );
+
+        let legacy = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v26.dseps"
+        ))
+        .unwrap();
+        let legacy = native_actor_nodes(&legacy.episodes[0].steps[0].pre_input, None);
+        assert!(legacy.iter().all(|node| {
+            !node.binary[present]
+                && node.binary_present[present]
+                && node.categorical[kind] == 0
+                && !node.categorical_present[kind]
+                && node.continuous[angle] == 0.0
+                && !node.continuous_present[angle]
+                && !node.binary[opening]
+                && !node.binary_present[opening]
+        }));
+
+        let all = NativeEncoderFeatureSpec::all();
+        let without_door =
+            NativeEncoderFeatureSpec::excluding([NativeEncoderChannelFamily::ActorDoor20]).unwrap();
+        for (names, families, removed) in [
+            (
+                native_actor_categorical_names(),
+                native_actor_categorical_families(),
+                21,
+            ),
+            (
+                native_actor_continuous_names(),
+                native_actor_continuous_families(),
+                1,
+            ),
+            (
+                native_actor_binary_names(),
+                native_actor_binary_families(),
+                10,
+            ),
+        ] {
+            assert_eq!(
+                selected_feature_names(names.clone(), &families, &all).len()
+                    - selected_feature_names(names, &families, &without_door).len(),
+                removed
+            );
+        }
+        assert_ne!(
+            native_actor_feature_schema(&all).unwrap(),
+            native_actor_feature_schema(&without_door).unwrap()
         );
     }
 

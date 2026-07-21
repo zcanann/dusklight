@@ -7,8 +7,8 @@
 use crate::artifact::Digest;
 use crate::compiled_goal_graph::{CompiledGoalGraph, GoalSpatialAnchor};
 use dusklight_evidence::native_episode_shard::{
-    NativeActorIdentity, NativeActorObservation, NativeChannelStatus, NativeEpisodeShard,
-    NativeLearningObservation, NativeObservationPhase,
+    LEARNING_OBSERVATION_SCHEMA_V27, NativeActorIdentity, NativeActorObservation,
+    NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation, NativeObservationPhase,
 };
 use dusklight_objectives::milestone_dsl::{CompiledMilestones, decode};
 use dusklight_world::actor_profile_catalog::ActorProfileCatalog;
@@ -19,7 +19,7 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const NATIVE_ACTOR_VIEW_SCHEMA_V8: &str = "dusklight-native-actor-view/v8";
+pub const NATIVE_ACTOR_VIEW_SCHEMA_V9: &str = "dusklight-native-actor-view/v9";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -95,6 +95,7 @@ pub struct NativeActorRelation {
     pub base_state: Option<NativeActorBaseState>,
     pub enemy_base: Option<NativeActorEnemyBaseState>,
     pub trigger_volume: Option<NativeActorTriggerVolumeState>,
+    pub door20: Option<NativeActorDoor20State>,
     pub absolute_position: [f32; 3],
     pub absolute_home_position: [f32; 3],
     pub absolute_velocity: [f32; 3],
@@ -188,6 +189,71 @@ pub struct NativeActorTriggerVolumeState {
     pub camera_relative_center: Option<[f32; 3]>,
     pub yaw_relative_to_link: Option<[f32; 2]>,
     pub yaw_relative_to_camera: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeActorDoor20Action {
+    Init,
+    Wait,
+    StopClose,
+    Demo,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeActorDoor20Side {
+    Front,
+    Back,
+    Neither,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeActorDoor20StopperStatus {
+    RoomUnavailable,
+    Open,
+    Closed,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorDoor20SwitchState {
+    pub id: u8,
+    pub set: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorDoor20State {
+    pub kind: u8,
+    pub door_model: u8,
+    pub front_option: u8,
+    pub back_option: u8,
+    pub front_room: u8,
+    pub back_room: u8,
+    pub exit_number: u8,
+    pub message_door: bool,
+    pub front_switch: Option<NativeActorDoor20SwitchState>,
+    pub back_switch: Option<NativeActorDoor20SwitchState>,
+    pub unlock_effect_switch: Option<NativeActorDoor20SwitchState>,
+    pub front_event: u8,
+    pub back_event: u8,
+    pub message_number: u16,
+    pub action: NativeActorDoor20Action,
+    pub active_side: NativeActorDoor20Side,
+    pub event_variant: u8,
+    pub locked: bool,
+    pub background_collision_released: bool,
+    pub unlock_effect_triggered: bool,
+    pub key_type: u8,
+    pub enemy_clear_debounce: u8,
+    pub opening_active: bool,
+    pub closing_active: bool,
+    pub door_angle: i16,
+    pub stopper_side: NativeActorDoor20Side,
+    pub front_stopper_status: NativeActorDoor20StopperStatus,
+    pub back_stopper_status: NativeActorDoor20StopperStatus,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -387,7 +453,7 @@ impl NativeEpisodeActorView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_ACTOR_VIEW_SCHEMA_V8.into(),
+            schema: NATIVE_ACTOR_VIEW_SCHEMA_V9.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             actor_profile_catalog_identity: catalog.identity.clone(),
@@ -421,7 +487,7 @@ impl NativeEpisodeActorView {
     }
 
     pub fn validate(&self) -> Result<(), NativeActorViewError> {
-        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V8
+        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V9
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !valid_catalog_identity(&self.actor_profile_catalog_identity)
@@ -442,8 +508,9 @@ impl NativeEpisodeActorView {
             .goal_graph
             .as_ref()
             .map_or_else(Vec::new, CompiledGoalGraph::spatial_anchors);
+        let door20_sampled = self.observation_schema == LEARNING_OBSERVATION_SCHEMA_V27;
         for observation in &self.observations {
-            validate_observation(observation, &goal_anchors)?;
+            validate_observation(observation, &goal_anchors, door20_sampled)?;
         }
         Ok(())
     }
@@ -454,7 +521,7 @@ impl NativeEpisodeActorView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeActorViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-actor-view/v6\0");
+        hasher.update(b"dusklight.native-actor-view/v7\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -833,6 +900,64 @@ fn materialize_actor(
                     .map(|frame| angle_pair(trigger.yaw.wrapping_sub(frame.view_yaw))),
             }
         }),
+        door20: actor.door20.as_ref().map(|door| {
+            use dusklight_evidence::native_episode_shard::{
+                NativeDoor20Action as SourceAction, NativeDoor20Side as SourceSide,
+                NativeDoor20StopperStatus as SourceStopperStatus,
+            };
+            let switch =
+                |id, set| (id != u8::MAX).then_some(NativeActorDoor20SwitchState { id, set });
+            let side = |side| match side {
+                SourceSide::Front => NativeActorDoor20Side::Front,
+                SourceSide::Back => NativeActorDoor20Side::Back,
+                SourceSide::Neither => NativeActorDoor20Side::Neither,
+            };
+            let stopper_status = |status| match status {
+                SourceStopperStatus::RoomUnavailable => {
+                    NativeActorDoor20StopperStatus::RoomUnavailable
+                }
+                SourceStopperStatus::Open => NativeActorDoor20StopperStatus::Open,
+                SourceStopperStatus::Closed => NativeActorDoor20StopperStatus::Closed,
+            };
+            NativeActorDoor20State {
+                kind: door.kind,
+                door_model: door.door_model,
+                front_option: door.front_option,
+                back_option: door.back_option,
+                front_room: door.front_room,
+                back_room: door.back_room,
+                exit_number: door.exit_number,
+                message_door: door.message_door,
+                front_switch: switch(door.front_switch, door.front_switch_set),
+                back_switch: switch(door.back_switch, door.back_switch_set),
+                unlock_effect_switch: switch(
+                    door.unlock_effect_switch,
+                    door.unlock_effect_switch_set,
+                ),
+                front_event: door.front_event,
+                back_event: door.back_event,
+                message_number: door.message_number,
+                action: match door.action {
+                    SourceAction::Init => NativeActorDoor20Action::Init,
+                    SourceAction::Wait => NativeActorDoor20Action::Wait,
+                    SourceAction::StopClose => NativeActorDoor20Action::StopClose,
+                    SourceAction::Demo => NativeActorDoor20Action::Demo,
+                },
+                active_side: side(door.active_side),
+                event_variant: door.event_variant,
+                locked: door.locked,
+                background_collision_released: door.background_collision_released,
+                unlock_effect_triggered: door.unlock_effect_triggered,
+                key_type: door.key_type,
+                enemy_clear_debounce: door.enemy_clear_debounce,
+                opening_active: door.opening_active,
+                closing_active: door.closing_active,
+                door_angle: door.door_angle,
+                stopper_side: side(door.stopper_side),
+                front_stopper_status: stopper_status(door.front_stopper_status),
+                back_stopper_status: stopper_status(door.back_stopper_status),
+            }
+        }),
         absolute_position: actor.position,
         absolute_home_position: actor.home_position,
         absolute_velocity: actor.velocity,
@@ -945,6 +1070,7 @@ impl CameraFrame {
 fn validate_observation(
     observation: &NativeActorViewObservation,
     expected_goal_anchors: &[GoalSpatialAnchor],
+    door20_sampled: bool,
 ) -> Result<(), NativeActorViewError> {
     if observation.episode_id.is_empty()
         || observation.stage.is_empty()
@@ -1014,6 +1140,7 @@ fn validate_observation(
         }
     }
     for actor in &observation.actors {
+        const ACTOR_NAME_DOOR20: i16 = 0x0e8;
         let option_consistent = observation.player_present
             == actor.link_relative_position.is_some()
             && observation.player_present == actor.link_relative_home_position.is_some()
@@ -1122,6 +1249,12 @@ fn validate_observation(
                 && observation.camera_frame_present == trigger.camera_relative_center.is_some()
                 && observation.camera_frame_present == trigger.yaw_relative_to_camera.is_some()
         });
+        let door20_valid = validate_door20(actor);
+        let door20_sampling_valid = if door20_sampled {
+            (actor.actor_name == ACTOR_NAME_DOOR20) == actor.door20.is_some()
+        } else {
+            actor.door20.is_none()
+        };
         let return_place_writer_valid = actor.return_place_writer.as_ref().is_none_or(|writer| {
             (writer.required_event_set != u16::MAX || writer.event_set_satisfied)
                 && (writer.required_event_unset != u16::MAX || writer.event_unset_satisfied)
@@ -1150,6 +1283,8 @@ fn validate_observation(
             || !base_state_finite
             || !enemy_base_valid
             || !trigger_volume_valid
+            || !door20_valid
+            || !door20_sampling_valid
             || !return_place_writer_valid
             || !finite
         {
@@ -1159,6 +1294,48 @@ fn validate_observation(
         }
     }
     Ok(())
+}
+
+fn validate_door20(actor: &NativeActorRelation) -> bool {
+    const ACTOR_NAME_DOOR20: i16 = 0x0e8;
+    let Some(door) = &actor.door20 else {
+        // Historical shards did not sample profile-bound door state, including
+        // when a DOOR20 happened to be present in the actor population.
+        return true;
+    };
+    let Some(base) = &actor.base_state else {
+        return false;
+    };
+    if actor.actor_name != ACTOR_NAME_DOOR20 {
+        return false;
+    }
+    let home_x = base.home_angle[0] as u16;
+    let home_z = base.home_angle[2] as u16;
+    let switch_matches = |switch: Option<&NativeActorDoor20SwitchState>, id: u8| match switch {
+        None => id == u8::MAX,
+        Some(switch) => id != u8::MAX && switch.id == id,
+    };
+    door.kind == (actor.parameters & 0x1f) as u8
+        && door.door_model == ((actor.parameters >> 5) & 0x7) as u8
+        && door.front_option == ((actor.parameters >> 8) & 0x3) as u8
+        && door.back_option == ((actor.parameters >> 10) & 0x7) as u8
+        && door.front_room == ((actor.parameters >> 13) & 0x3f) as u8
+        && door.back_room == ((actor.parameters >> 19) & 0x3f) as u8
+        && door.exit_number == ((actor.parameters >> 25) & 0x3f) as u8
+        && door.message_door == (actor.parameters >> 31 != 0)
+        && switch_matches(door.front_switch.as_ref(), (home_z & 0xff) as u8)
+        && switch_matches(door.back_switch.as_ref(), (home_z >> 8) as u8)
+        && switch_matches(door.unlock_effect_switch.as_ref(), (home_x >> 8) as u8)
+        && door.front_event == (home_x & 0xff) as u8
+        && door.back_event == (home_x >> 8) as u8
+        && door.message_number == home_x
+        && door.event_variant <= 18
+        && (!door.locked || door.front_option == 2 || door.back_option == 2)
+        && door.key_type <= 1
+        && (door.key_type != 1 || door.kind == 9)
+        && door.enemy_clear_debounce <= 65
+        && !(door.opening_active && door.closing_active)
+        && door.stopper_side != NativeActorDoor20Side::Neither
 }
 
 fn relative_yaw(target: [f32; 3], origin: [f32; 3], yaw: i16) -> [f32; 3] {
@@ -1348,6 +1525,13 @@ mod tests {
     fn shard_v17() -> NativeEpisodeShard {
         NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v17.dseps"
+        ))
+        .unwrap()
+    }
+
+    fn shard_v27() -> NativeEpisodeShard {
+        NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v27.dseps"
         ))
         .unwrap()
     }
@@ -1556,6 +1740,99 @@ mod tests {
                 .iter()
                 .flat_map(|observation| &observation.actors)
                 .all(|actor| actor.trigger_volume.is_none())
+        );
+    }
+
+    #[test]
+    fn exposes_v27_profile_bound_door20_state_and_rejects_authored_drift() {
+        let mut shard = shard_v27();
+        let catalog = catalog_for(&shard);
+        shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build(&shard, &catalog).unwrap();
+        for observation in &view.observations {
+            let door = observation
+                .actors
+                .iter()
+                .find_map(|actor| actor.door20.as_ref())
+                .expect("v27 DOOR20 state");
+            assert_eq!(door.kind, 9);
+            assert_eq!(door.door_model, 3);
+            assert_eq!(door.front_option, 2);
+            assert_eq!(door.back_option, 1);
+            assert_eq!(door.front_room, 4);
+            assert_eq!(door.back_room, 5);
+            assert_eq!(door.exit_number, 6);
+            assert!(door.message_door);
+            assert_eq!(
+                door.front_switch,
+                Some(NativeActorDoor20SwitchState {
+                    id: 0x11,
+                    set: true,
+                })
+            );
+            assert_eq!(
+                door.back_switch,
+                Some(NativeActorDoor20SwitchState {
+                    id: 0x22,
+                    set: false,
+                })
+            );
+            assert_eq!(
+                door.unlock_effect_switch,
+                Some(NativeActorDoor20SwitchState {
+                    id: 0x33,
+                    set: true,
+                })
+            );
+            assert_eq!(door.action, NativeActorDoor20Action::Demo);
+            assert_eq!(door.active_side, NativeActorDoor20Side::Back);
+            assert_eq!(door.event_variant, 13);
+            assert!(door.locked);
+            assert_eq!(door.key_type, 1);
+            assert_eq!(door.enemy_clear_debounce, 42);
+            assert!(door.opening_active);
+            assert!(!door.closing_active);
+            assert_eq!(door.door_angle, -1234);
+            assert_eq!(door.stopper_side, NativeActorDoor20Side::Back);
+            assert_eq!(
+                door.front_stopper_status,
+                NativeActorDoor20StopperStatus::RoomUnavailable
+            );
+            assert_eq!(
+                door.back_stopper_status,
+                NativeActorDoor20StopperStatus::Closed
+            );
+        }
+
+        let mut tampered = view.clone();
+        tampered.observations[0]
+            .actors
+            .iter_mut()
+            .find_map(|actor| actor.door20.as_mut())
+            .unwrap()
+            .front_room = 5;
+        tampered.view_sha256 = tampered.compute_identity().unwrap();
+        assert!(tampered.validate().is_err());
+
+        let mut schema_tampered = view.clone();
+        schema_tampered.observation_schema =
+            dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V26.into();
+        schema_tampered.view_sha256 = schema_tampered.compute_identity().unwrap();
+        assert!(schema_tampered.validate().is_err());
+
+        let mut legacy = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v26.dseps"
+        ))
+        .unwrap();
+        let legacy_catalog = catalog_for(&legacy);
+        legacy.metadata.actor_profile_catalog_identity = Some(legacy_catalog.identity.clone());
+        let legacy_view = NativeEpisodeActorView::build(&legacy, &legacy_catalog).unwrap();
+        assert!(
+            legacy_view
+                .observations
+                .iter()
+                .flat_map(|observation| &observation.actors)
+                .all(|actor| actor.door20.is_none())
         );
     }
 

@@ -2632,6 +2632,12 @@ sequence.
     profile-offset drift observable. This is evidence for future activation
     and reconstruction checks, not a rule that all door families share
     `daDoor20_c` semantics.
+  - Native actor view v9 and its independently selectable learner projections
+    now preserve that exact profile-bound state with explicit component and
+    nested-switch masks. The direct complete-set adapter exposes it only as
+    `actor_door20`, so held-out family ablations can measure its contribution
+    without encoding a preferred door or treating unrelated door profiles as
+    layout-compatible.
 
 #### 11I. Auru recent-item grant
 

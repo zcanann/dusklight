@@ -1009,6 +1009,21 @@ human-authored successful setup.
       Forest Temple audit proves one small-key placement, but other DOOR20
       kinds/configurations, other door families and live temporal variation
       remain open.
+      - [x] Promote the profile-bound component without generalizing it to
+        other door families. Native actor view v9 preserves typed action,
+        side and stopper enums, independently reconstructs every authored
+        field from actor parameters and home angles, and represents each
+        optional switch as an ID/result pair rather than a `0xff` category.
+        Actor-feature view v6 exposes an independently selectable `door20`
+        family with 21 categorical columns, one exact signed-angle column and
+        nine binary columns; absent components and nested absent switches keep
+        distinct canonical masks. Direct native feature schema v7 carries the
+        same state into the complete-set training path as `actor_door20`, adds
+        explicit component presence and a past-only presence-change bit, and
+        removes exactly its columns under ablation. V27 exact-value,
+        source-reconstruction, resealed-tamper, v26 legacy-missingness and
+        family-ablation tests pass. No feature identifies a preferred door,
+        destination, action, route, timing or reward.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
