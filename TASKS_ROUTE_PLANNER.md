@@ -528,9 +528,10 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
-- Refinement-pack schema v3 and composed-catalog schema v3 now live entirely in
-  the planner workspace. `route-planner compose` validates canonical packs,
-  dependency digests, conflicts, deterministic precedence, explicit
+- Refinement-pack schema v5, refinement-stack schema v2, and composed-catalog
+  schema v6 now live entirely in the planner workspace. `route-planner compose`
+  validates canonical packs, dependency digests, conflicts, deterministic
+  layer/pack precedence, explicit
   replacement/disable operations, and all resulting cross-references before it
   emits a canonical catalog. The output seals the base fact/mechanics digests
   and the ordered pack stack, so removal of a pack can recompute consequences
@@ -542,7 +543,7 @@ The current code shows:
   compiles to an explicitly hypothetical resolver. `route-planner solve` can
   consume the composed artifact directly and records its active refinement
   stack in the solve report.
-- Planner graph schema v2 is an independent, canonical projection of fact and
+- Planner graph schema v4 is an independent, canonical projection of fact and
   mechanics catalogs. It exposes typed fact, goal, transition, obligation,
   obstruction, resolver, technique, writer/gate/reader, reconstruction, and
   microtrace nodes with causal edge kinds. Every nested predicate is projected
@@ -550,7 +551,7 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Planner service schema v6 provides a typed JSON-lines transport owned by the
+- Planner service schema v7 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -1735,8 +1736,15 @@ Deliverable: the intentionally permissive logic graph with honest uncertainty.
     one matching rule or the declared default to every live component, rejects
     overlapping selectors, and fails the whole atomic transition on `Unknown`.
 - [ ] Encode an evidence-backed BiTE preservation matrix.
-- [ ] Encode the shared Auru recent-item store/writer/consumer mechanism separately
+- [x] Encode the shared Auru recent-item store/writer/consumer mechanism separately
       from build-specific activation feasibility and external HD evidence.
+  - Native event observations project the recent get-item ID into its own
+    session-lifetime component instead of conflating it with pending
+    `mPreItemNo`. Generic value-copy and item-bit operations demonstrate file A
+    writing an item ID, file B retaining it across a load boundary, and the
+    generic grant consuming that value. This proves the causal mechanism only;
+    Auru interaction geometry and HD/SD activation evidence remain separate
+    open obligations in 11I.
 - [x] Add a hypothetical local-bank rebind refinement for testing.
   - [x] Compose a hypothetical preserve/rebind technique, keep its raw payload
         byte-identical, derive the destination-stage alias and downstream
@@ -1819,7 +1827,14 @@ verified route.
 - [x] Allow a pack to supply a witnessed microtrace with exact pre/post state and
       timing rather than a global named Boolean.
 - [ ] Add built-in packs for ordinary movement and selected sequence breaks.
-- [ ] Add route-local and ephemeral what-if overlays.
+- [x] Add route-local and ephemeral what-if overlays.
+  - Refinement-stack entries identify `enabled_pack`, `route_local`, or
+    `ephemeral_what_if` provenance. Layer order dominates a pack's local
+    precedence, duplicate IDs across layers fail closed, and an earlier layer
+    cannot depend on a disposable later layer. CLI and service composition take
+    the layers separately; solve reports retain every layered stack entry and
+    digest. Removing a what-if layer deterministically restores the route-local
+    result, and removing both restores the enabled-pack result.
 - [x] Distinguish satisfy, bypass, avoid, supersede, and assume-absent resolver
       operations, plus explicit record replace/supersede/disable operations.
 - [ ] Add complete import/export and conflict diagnostics.
@@ -2065,11 +2080,11 @@ Deliverable: route confidence is mechanically explainable.
 
 #### 11I. Auru recent-item grant
 
-- [ ] Model `mGtItm` as a session/process storage site separate from save-file
+- [x] Model `mGtItm` as a session/process storage site separate from save-file
       inventory and `mPreItemNo`.
 - [ ] Enumerate presentation/chest/show-item writers and prove which boundaries
       preserve or reset the value.
-- [ ] Model file A writing an item ID, file load preserving session state, and file
+- [x] Model file A writing an item ID, file load preserving session state, and file
       B consuming it through generic get-item semantics.
 - [ ] Decompose Auru's normal memo path, pending item actor, `DEFAULT_GETITEM`
       handoff, and broken path that avoids the memo overwrite.

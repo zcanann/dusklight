@@ -11,13 +11,15 @@ use dusklight_route_planner::execution::PlannerExecutionStateDocument;
 use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::FactCatalog;
-use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
+use dusklight_route_planner::refinement::{
+    ComposedPlannerCatalog, RefinementLayers, RefinementPack,
+};
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::state::BoundaryKind;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v6";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v7";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -49,6 +51,10 @@ pub enum PlannerServiceRequest {
         facts: Box<FactCatalog>,
         mechanics: Box<MechanicsCatalog>,
         packs: Vec<RefinementPack>,
+        #[serde(default)]
+        route_local_overlays: Vec<RefinementPack>,
+        #[serde(default)]
+        ephemeral_what_if_overlays: Vec<RefinementPack>,
     },
     ProjectGraph {
         request_id: String,
@@ -215,8 +221,19 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
             facts,
             mechanics,
             packs,
+            route_local_overlays,
+            ephemeral_what_if_overlays,
             ..
-        } => ComposedPlannerCatalog::compose(&facts, &mechanics, &packs).and_then(|catalog| {
+        } => ComposedPlannerCatalog::compose_layered(
+            &facts,
+            &mechanics,
+            &RefinementLayers {
+                enabled_packs: packs,
+                route_local_overlays,
+                ephemeral_what_if_overlays,
+            },
+        )
+        .and_then(|catalog| {
             let catalog_sha256 = catalog.digest()?;
             Ok(PlannerServicePayload::ComposedCatalog {
                 catalog: Box::new(catalog),
@@ -459,6 +476,8 @@ mod tests {
             facts: Box::new(facts),
             mechanics: Box::new(mechanics),
             packs: Vec::new(),
+            route_local_overlays: Vec::new(),
+            ephemeral_what_if_overlays: Vec::new(),
         });
         let PlannerServiceOutcome::Ok { payload } = response.outcome else {
             panic!("composition should succeed");
@@ -491,6 +510,8 @@ mod tests {
             facts: Box::new(facts),
             mechanics: Box::new(mechanics),
             packs: Vec::new(),
+            route_local_overlays: Vec::new(),
+            ephemeral_what_if_overlays: Vec::new(),
         });
         assert_eq!(response.request_id.as_deref(), Some("request.bad"));
         assert!(matches!(
@@ -509,6 +530,8 @@ mod tests {
                 facts: Box::new(facts),
                 mechanics: Box::new(mechanics),
                 packs: Vec::new(),
+                route_local_overlays: Vec::new(),
+                ephemeral_what_if_overlays: Vec::new(),
             },
         });
         assert!(matches!(

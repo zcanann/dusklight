@@ -18,8 +18,8 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v5";
-pub const REFINEMENT_STACK_SCHEMA: &str = "dusklight.route-planner.refinement-stack/v1";
-pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v5";
+pub const REFINEMENT_STACK_SCHEMA: &str = "dusklight.route-planner.refinement-stack/v2";
+pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v6";
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -188,9 +188,26 @@ pub struct RefinementPack {
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RefinementStackEntry {
+    pub layer: RefinementLayer,
     pub precedence: i32,
     pub pack_id: String,
     pub pack_sha256: Digest,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefinementLayer {
+    EnabledPack,
+    RouteLocal,
+    EphemeralWhatIf,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefinementLayers {
+    pub enabled_packs: Vec<RefinementPack>,
+    pub route_local_overlays: Vec<RefinementPack>,
+    pub ephemeral_what_if_overlays: Vec<RefinementPack>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -432,19 +449,29 @@ impl RefinementPack {
 
 impl RefinementStack {
     pub fn build(packs: &[RefinementPack]) -> Result<Self, PlannerContractError> {
+        Self::build_layered(&RefinementLayers {
+            enabled_packs: packs.to_vec(),
+            ..RefinementLayers::default()
+        })
+    }
+
+    pub fn build_layered(layers: &RefinementLayers) -> Result<Self, PlannerContractError> {
+        let layered_packs = layers.iter().collect::<Vec<_>>();
         let mut by_id = BTreeMap::new();
         let mut digests = BTreeMap::new();
-        for pack in packs {
+        let mut pack_layers = BTreeMap::new();
+        for &(layer, pack) in &layered_packs {
             pack.validate()?;
             if by_id.insert(pack.manifest.id.as_str(), pack).is_some() {
                 return Err(PlannerContractError::new(
-                    "packs",
-                    "contains duplicate pack IDs",
+                    "refinement_layers",
+                    "contains duplicate pack IDs across layers",
                 ));
             }
+            pack_layers.insert(pack.manifest.id.as_str(), layer);
             digests.insert(pack.manifest.id.as_str(), pack.digest()?);
         }
-        for pack in packs {
+        for &(layer, pack) in &layered_packs {
             for dependency in &pack.manifest.dependencies {
                 let actual = digests.get(dependency.pack_id.as_str()).ok_or_else(|| {
                     PlannerContractError::new(
@@ -458,6 +485,15 @@ impl RefinementStack {
                         format!("digest mismatch for pack {}", dependency.pack_id),
                     ));
                 }
+                if pack_layers[dependency.pack_id.as_str()] > layer {
+                    return Err(PlannerContractError::new(
+                        "manifest.dependencies",
+                        format!(
+                            "pack {} cannot depend on later-layer pack {}",
+                            pack.manifest.id, dependency.pack_id
+                        ),
+                    ));
+                }
             }
             for conflict in &pack.manifest.conflicts {
                 if by_id.contains_key(conflict.as_str()) {
@@ -469,15 +505,34 @@ impl RefinementStack {
             }
         }
         reject_dependency_cycles(&by_id)?;
-        let mut entries = packs
+        let mut entries = layered_packs
             .iter()
-            .map(|pack| RefinementStackEntry {
+            .map(|(layer, pack)| RefinementStackEntry {
+                layer: *layer,
                 precedence: pack.manifest.precedence,
                 pack_id: pack.manifest.id.clone(),
                 pack_sha256: digests[pack.manifest.id.as_str()],
             })
             .collect::<Vec<_>>();
         entries.sort();
+        let positions = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| (entry.pack_id.as_str(), index))
+            .collect::<BTreeMap<_, _>>();
+        for (_, pack) in &layered_packs {
+            for dependency in &pack.manifest.dependencies {
+                if positions[dependency.pack_id.as_str()] >= positions[pack.manifest.id.as_str()] {
+                    return Err(PlannerContractError::new(
+                        "manifest.dependencies",
+                        format!(
+                            "pack {} dependency {} must sort earlier by layer and precedence",
+                            pack.manifest.id, dependency.pack_id
+                        ),
+                    ));
+                }
+            }
+        }
         let stack = Self {
             schema: REFINEMENT_STACK_SCHEMA.into(),
             entries,
@@ -502,7 +557,7 @@ impl RefinementStack {
             if previous.is_some_and(|prior: &RefinementStackEntry| prior >= entry) {
                 return Err(PlannerContractError::new(
                     "entries",
-                    "must be unique and sorted by precedence, ID, and digest",
+                    "must be unique and sorted by layer, precedence, ID, and digest",
                 ));
             }
             previous = Some(entry);
@@ -532,18 +587,51 @@ impl RefinementStack {
     }
 }
 
+impl RefinementLayers {
+    pub fn iter(&self) -> impl Iterator<Item = (RefinementLayer, &RefinementPack)> {
+        self.enabled_packs
+            .iter()
+            .map(|pack| (RefinementLayer::EnabledPack, pack))
+            .chain(
+                self.route_local_overlays
+                    .iter()
+                    .map(|pack| (RefinementLayer::RouteLocal, pack)),
+            )
+            .chain(
+                self.ephemeral_what_if_overlays
+                    .iter()
+                    .map(|pack| (RefinementLayer::EphemeralWhatIf, pack)),
+            )
+    }
+}
+
 impl ComposedPlannerCatalog {
     pub fn compose(
         base_facts: &FactCatalog,
         base_mechanics: &MechanicsCatalog,
         packs: &[RefinementPack],
     ) -> Result<Self, PlannerContractError> {
+        Self::compose_layered(
+            base_facts,
+            base_mechanics,
+            &RefinementLayers {
+                enabled_packs: packs.to_vec(),
+                ..RefinementLayers::default()
+            },
+        )
+    }
+
+    pub fn compose_layered(
+        base_facts: &FactCatalog,
+        base_mechanics: &MechanicsCatalog,
+        layers: &RefinementLayers,
+    ) -> Result<Self, PlannerContractError> {
         base_facts.validate()?;
         base_mechanics.validate()?;
-        let refinement_stack = RefinementStack::build(packs)?;
-        let by_id = packs
+        let refinement_stack = RefinementStack::build_layered(layers)?;
+        let by_id = layers
             .iter()
-            .map(|pack| (pack.manifest.id.as_str(), pack))
+            .map(|(_, pack)| (pack.manifest.id.as_str(), pack))
             .collect::<BTreeMap<_, _>>();
         let mut facts = base_facts.clone();
         let mut mechanics = base_mechanics.clone();
@@ -1957,5 +2045,106 @@ mod tests {
             ComposedPlannerCatalog::compose(&facts, &mechanics, &[replacement, disable]).unwrap();
         assert_eq!(first, second);
         assert!(first.mechanics.goals.is_empty());
+    }
+
+    #[test]
+    fn route_local_and_ephemeral_layers_override_precedence_and_remove_cleanly() {
+        let (facts, mut mechanics) = empty_catalogs();
+        mechanics.goals.push(Goal {
+            id: "goal.base".into(),
+            label: "Base goal".into(),
+            predicate: PredicateExpression::True,
+        });
+        let replacement_pack =
+            |pack_id: &str, precedence: i32, from: &str, to: &str| RefinementPack {
+                schema: REFINEMENT_PACK_SCHEMA.into(),
+                manifest: RefinementPackManifest {
+                    id: pack_id.into(),
+                    version: "1.0.0".into(),
+                    author: "Route research".into(),
+                    source: "Layering regression fixture".into(),
+                    scope: scope(),
+                    precedence,
+                    dependencies: Vec::new(),
+                    conflicts: Vec::new(),
+                },
+                rules: vec![
+                    rule(
+                        &format!("{pack_id}.a-replace"),
+                        RefinementOperation::ReplaceRecord {
+                            target_id: from.into(),
+                            replacement_kind: ReplacementKind::Replace,
+                            replacement_rule_id: Some(format!("{pack_id}.b-goal")),
+                        },
+                    ),
+                    rule(
+                        &format!("{pack_id}.b-goal"),
+                        RefinementOperation::AddGoal {
+                            goal: Goal {
+                                id: to.into(),
+                                label: format!("Goal from {pack_id}"),
+                                predicate: PredicateExpression::True,
+                            },
+                        },
+                    ),
+                ],
+            };
+        let enabled = replacement_pack("enabled.goal", 10_000, "goal.base", "goal.enabled");
+        let mut route = replacement_pack("route.goal", -10_000, "goal.enabled", "goal.route");
+        route.manifest.dependencies = vec![PackDependency {
+            pack_id: enabled.manifest.id.clone(),
+            pack_sha256: enabled.digest().unwrap(),
+        }];
+        let ephemeral = replacement_pack("what-if.goal", -20_000, "goal.route", "goal.what-if");
+        let layers = RefinementLayers {
+            enabled_packs: vec![enabled.clone()],
+            route_local_overlays: vec![route.clone()],
+            ephemeral_what_if_overlays: vec![ephemeral.clone()],
+        };
+        let composed =
+            ComposedPlannerCatalog::compose_layered(&facts, &mechanics, &layers).unwrap();
+        assert_eq!(
+            composed
+                .refinement_stack
+                .entries
+                .iter()
+                .map(|entry| (entry.layer, entry.pack_id.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (RefinementLayer::EnabledPack, "enabled.goal"),
+                (RefinementLayer::RouteLocal, "route.goal"),
+                (RefinementLayer::EphemeralWhatIf, "what-if.goal"),
+            ]
+        );
+        assert_eq!(composed.mechanics.goals[0].id, "goal.what-if");
+
+        let without_what_if = ComposedPlannerCatalog::compose_layered(
+            &facts,
+            &mechanics,
+            &RefinementLayers {
+                enabled_packs: vec![enabled.clone()],
+                route_local_overlays: vec![route],
+                ephemeral_what_if_overlays: Vec::new(),
+            },
+        )
+        .unwrap();
+        assert_eq!(without_what_if.mechanics.goals[0].id, "goal.route");
+        let enabled_only = ComposedPlannerCatalog::compose(&facts, &mechanics, &[enabled]).unwrap();
+        assert_eq!(enabled_only.mechanics.goals[0].id, "goal.enabled");
+
+        let mut invalid_dependency =
+            replacement_pack("enabled.depends-on-what-if", 0, "goal.base", "goal.invalid");
+        invalid_dependency.manifest.dependencies = vec![PackDependency {
+            pack_id: ephemeral.manifest.id.clone(),
+            pack_sha256: ephemeral.digest().unwrap(),
+        }];
+        let error = RefinementStack::build_layered(&RefinementLayers {
+            enabled_packs: vec![invalid_dependency],
+            route_local_overlays: Vec::new(),
+            ephemeral_what_if_overlays: vec![ephemeral],
+        })
+        .unwrap_err();
+        assert_eq!(error.field(), "manifest.dependencies");
+        assert!(error.detail().contains("later-layer"));
     }
 }

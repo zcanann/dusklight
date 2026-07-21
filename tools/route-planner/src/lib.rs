@@ -13,15 +13,15 @@ use dusklight_route_planner::evaluation::{EvidencePolicy, FeasibilityMode};
 use dusklight_route_planner::execution::PlannerExecutionState;
 use dusklight_route_planner::identity::{ContextSelector, EquivalenceSet, ExactContext};
 use dusklight_route_planner::logic::FactCatalog;
-use dusklight_route_planner::refinement::ComposedPlannerCatalog;
+use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementStackEntry};
 use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::solver::{ForwardSolver, SearchResult, SearchStatus, SolverOptions};
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v4";
-pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v3";
+pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v5";
+pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v4";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -71,6 +71,7 @@ pub struct SolveReport {
     pub refinement_stack_sha256: Option<Digest>,
     pub route_book_sha256: Option<Digest>,
     pub refinement_pack_ids: Vec<String>,
+    pub refinement_stack_entries: Vec<RefinementStackEntry>,
     pub equivalence_set_count: usize,
     pub feasibility_mode: RuntimeFeasibilityMode,
     pub evidence_mode: RuntimeEvidenceMode,
@@ -202,6 +203,7 @@ fn solve_catalog_goal_inner(
         refinement_stack_sha256: None,
         route_book_sha256: route_book.map(RouteBook::digest).transpose()?,
         refinement_pack_ids: Vec::new(),
+        refinement_stack_entries: Vec::new(),
         equivalence_set_count: equivalence_sets.len(),
         feasibility_mode: options.feasibility_mode,
         evidence_mode: options.evidence_mode,
@@ -232,6 +234,7 @@ pub fn solve_composed_catalog_goal(
         .iter()
         .map(|entry| entry.pack_id.clone())
         .collect();
+    report.refinement_stack_entries = catalog.refinement_stack.entries.clone();
     Ok(report)
 }
 
@@ -261,6 +264,7 @@ pub fn solve_composed_route_book_goal(
         .iter()
         .map(|entry| entry.pack_id.clone())
         .collect();
+    report.refinement_stack_entries = catalog.refinement_stack.entries.clone();
     Ok(report)
 }
 
@@ -358,6 +362,7 @@ pub fn solve_composed_portable_route_book_goal(
             .iter()
             .map(|entry| entry.pack_id.clone())
             .collect();
+        context.report.refinement_stack_entries = catalog.refinement_stack.entries.clone();
     }
     Ok(portable)
 }
@@ -428,8 +433,8 @@ mod tests {
         ValueReference,
     };
     use dusklight_route_planner::refinement::{
-        REFINEMENT_PACK_SCHEMA, RefinementOperation, RefinementPack, RefinementPackManifest,
-        RefinementRule,
+        REFINEMENT_PACK_SCHEMA, RefinementLayer, RefinementLayers, RefinementOperation,
+        RefinementPack, RefinementPackManifest, RefinementRule,
     };
     use dusklight_route_planner::route_book::{ROUTE_BOOK_SCHEMA, RouteBookManifest};
     use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
@@ -914,9 +919,16 @@ mod tests {
         .unwrap();
         assert_ne!(baseline.result.status, SearchStatus::Reached);
 
-        let composed =
-            ComposedPlannerCatalog::compose(&facts, &mechanics, std::slice::from_ref(&overlay))
-                .unwrap();
+        let composed = ComposedPlannerCatalog::compose_layered(
+            &facts,
+            &mechanics,
+            &RefinementLayers {
+                enabled_packs: Vec::new(),
+                route_local_overlays: Vec::new(),
+                ephemeral_what_if_overlays: vec![overlay],
+            },
+        )
+        .unwrap();
         let established_only = solve_composed_catalog_goal(
             start.clone(),
             &composed,
@@ -941,6 +953,11 @@ mod tests {
         assert_eq!(
             research.refinement_pack_ids,
             vec!["what-if.local-bank-rebind"]
+        );
+        assert_eq!(research.refinement_stack_entries.len(), 1);
+        assert_eq!(
+            research.refinement_stack_entries[0].layer,
+            RefinementLayer::EphemeralWhatIf
         );
         assert_eq!(
             research

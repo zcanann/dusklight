@@ -299,6 +299,24 @@ pub fn snapshot_native_observation(
     );
     push_statused_structured(
         &mut components,
+        "event-recent-item",
+        ComponentKind::Session,
+        observation.event_handoff_status,
+        observation.event_handoff.as_ref().map(|value| {
+            fields([(
+                "get_item_no",
+                StateValue::Unsigned(value.get_item_no.into()),
+            )])
+        }),
+        ComponentBinding::Session {
+            session_id: context.session_id.clone(),
+        },
+        SemanticLifetime::Session,
+        SerializationOwner::None,
+        &provenance,
+    );
+    push_statused_structured(
+        &mut components,
         "message-session",
         ComponentKind::MessageFlow,
         observation.message_session_status,
@@ -597,10 +615,6 @@ fn event_handoff_fields(value: &NativeEventHandoffObservation) -> BTreeMap<Strin
         (
             "pre_item_no",
             StateValue::Unsigned(value.pre_item_no.into()),
-        ),
-        (
-            "get_item_no",
-            StateValue::Unsigned(value.get_item_no.into()),
         ),
         (
             "event_flags",
@@ -1100,6 +1114,18 @@ mod tests {
             fields["message_cut_status"],
             StateValue::Text("unavailable".into())
         );
+        assert!(!fields.contains_key("get_item_no"));
+        let recent_item = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "event-recent-item")
+            .unwrap();
+        assert_eq!(recent_item.component_kind, ComponentKind::Session);
+        assert_eq!(recent_item.lifetime, SemanticLifetime::Session);
+        let ComponentPayload::Structured { fields } = &recent_item.payload else {
+            panic!("recent item must be structured");
+        };
         assert_eq!(fields["get_item_no"], StateValue::Unsigned(0x43));
         let writer = snapshot
             .environment

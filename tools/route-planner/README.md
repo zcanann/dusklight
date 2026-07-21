@@ -16,10 +16,12 @@ cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 
 The planner CLI currently owns twelve operations:
 
-- `compose` validates deterministic refinement-pack stacks and emits a canonical
-  composed fact/mechanics catalog. Authored obstruction selectors bind to
-  concrete actions during composition, producing solver/graph dependencies
-  without route-book wiring.
+- `compose` validates deterministic layered refinement stacks and emits a
+  canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
+  `--what-if-overlay` are distinct precedence domains; disposable overlays
+  cannot silently become installed knowledge. Authored obstruction selectors
+  bind to concrete actions during composition, producing solver/graph
+  dependencies without route-book wiring.
 - `edit-route-book` applies an atomic, expected-digest-checked batch of typed
   route-book edits and emits a fully revalidated canonical revision.
 - `diff-state` compares two executable states across a named boundary, retaining
@@ -52,7 +54,8 @@ The planner CLI currently owns twelve operations:
   player rotation, action, and control; and evidence-scoped temporal microtraces.
   Absent actors, geometry, or timing witnesses remain unknown. Exact matching
   temporal witnesses appear in solve proofs and auto-bind to their obligations
-  in the planner graph.
+  in the planner graph. Composed solve reports retain each active refinement
+  entry's layer, pack ID, digest, and local precedence.
 - `solve-portable` expands a route book's exact/equivalent context scope,
   requires one explicit start state per exact context, solves each context
   independently, and reports whether the route reaches its goal everywhere.

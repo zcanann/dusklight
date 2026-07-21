@@ -3,16 +3,17 @@
 use crate::artifact::Digest;
 use crate::logic::{ContextScope, PredicateExpression, RuleEvidence, ValueReference};
 use crate::state::{
-    ComponentBinding, ComponentSelector, PlaneRelation, SemanticLifetime, SerializationOwner,
-    StateComponent, StateValue, validate_binding as validate_component_binding,
-    validate_component_kind, validate_serialization_owner,
+    ComponentBinding, ComponentSelector, PlaneRelation, RuntimeFile, RuntimeFileLifecycle,
+    SemanticLifetime, SerializationOwner, StateComponent, StateValue,
+    validate_binding as validate_component_binding, validate_component_kind,
+    validate_serialization_owner,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v4";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v5";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -28,6 +29,17 @@ pub enum StateOperation {
     Write {
         target: ComponentFieldTarget,
         value: StateValue,
+    },
+    CopyValue {
+        source: ComponentFieldTarget,
+        target: ComponentFieldTarget,
+    },
+    /// Inserts a runtime-selected nonnegative integer into a byte-backed set.
+    /// Value `n` selects bit `n % 8` of byte `n / 8`; the operation never
+    /// replaces existing members.
+    SetBitFromValue {
+        source: ComponentFieldTarget,
+        target: ComponentFieldTarget,
     },
     WriteRaw {
         component_id: String,
@@ -83,6 +95,9 @@ pub enum StateOperation {
     Rebind {
         selector: ComponentSelector,
         binding: ComponentBinding,
+    },
+    SetActiveRuntimeFile {
+        runtime_file: RuntimeFile,
     },
     SetLocation {
         location: crate::state::SceneLocation,
@@ -422,6 +437,17 @@ impl StateOperation {
                 validate_field_target(target)?;
                 validate_state_value(value)
             }
+            Self::CopyValue { source, target } | Self::SetBitFromValue { source, target } => {
+                validate_field_target(source)?;
+                validate_field_target(target)?;
+                if source == target {
+                    return Err(PlannerContractError::new(
+                        "operation.target",
+                        "must differ from the source field",
+                    ));
+                }
+                Ok(())
+            }
             Self::WriteRaw {
                 component_id,
                 byte_offset: _,
@@ -518,6 +544,16 @@ impl StateOperation {
             Self::Bind { selector, binding } | Self::Rebind { selector, binding } => {
                 validate_component_selector(selector)?;
                 validate_binding(binding)
+            }
+            Self::SetActiveRuntimeFile { runtime_file } => {
+                runtime_file.validate()?;
+                if runtime_file.lifecycle != RuntimeFileLifecycle::Active {
+                    return Err(PlannerContractError::new(
+                        "operation.runtime_file.lifecycle",
+                        "must be active",
+                    ));
+                }
+                Ok(())
             }
             Self::SetLocation { location } => location.validate(),
             Self::Project {

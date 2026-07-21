@@ -8,7 +8,9 @@ use dusklight_route_planner::fact_pack::{
 use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
-use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
+use dusklight_route_planner::refinement::{
+    ComposedPlannerCatalog, RefinementLayers, RefinementPack,
+};
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::state::BoundaryKind;
@@ -387,13 +389,22 @@ fn compose(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mechanics_path = required_path(args, "--mechanics")?;
     let output = required_path(args, "--output")?;
     let pack_paths = repeated_option(args, "--pack");
+    let route_overlay_paths = repeated_option(args, "--route-overlay");
+    let what_if_overlay_paths = repeated_option(args, "--what-if-overlay");
     let facts = FactCatalog::decode_canonical(&fs::read(facts_path)?)?;
     let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics_path)?)?;
-    let mut packs = Vec::with_capacity(pack_paths.len());
-    for path in pack_paths {
-        packs.push(RefinementPack::decode_canonical(&fs::read(path)?)?);
-    }
-    let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &packs)?;
+    let load_packs = |paths: Vec<String>| {
+        paths
+            .into_iter()
+            .map(|path| Ok(RefinementPack::decode_canonical(&fs::read(path)?)?))
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()
+    };
+    let layers = RefinementLayers {
+        enabled_packs: load_packs(pack_paths)?,
+        route_local_overlays: load_packs(route_overlay_paths)?,
+        ephemeral_what_if_overlays: load_packs(what_if_overlay_paths)?,
+    };
+    let catalog = ComposedPlannerCatalog::compose_layered(&facts, &mechanics, &layers)?;
     let bytes = catalog.canonical_bytes()?;
     write_file(&output, &bytes)?;
     println!(
@@ -406,6 +417,9 @@ fn compose(args: &[String]) -> Result<(), Box<dyn Error>> {
             "base_mechanics_catalog_sha256": catalog.base_mechanics_catalog_sha256,
             "bytes": bytes.len(),
             "packs": catalog.refinement_stack.entries.len(),
+            "enabled_packs": layers.enabled_packs.len(),
+            "route_local_overlays": layers.route_local_overlays.len(),
+            "ephemeral_what_if_overlays": layers.ephemeral_what_if_overlays.len(),
             "aliases": catalog.facts.aliases.len(),
             "derived_facts": catalog.facts.derived_facts.len(),
             "transitions": catalog.mechanics.transitions.len(),
@@ -729,6 +743,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json\n  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]\n  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]\n  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]\n  route-planner serve-stdio"
     );
 }

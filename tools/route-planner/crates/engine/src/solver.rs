@@ -1463,8 +1463,8 @@ mod tests {
         ValueReference,
     };
     use crate::refinement::{
-        ComposedPlannerCatalog, REFINEMENT_PACK_SCHEMA, RefinementOperation, RefinementPack,
-        RefinementPackManifest, RefinementRule,
+        ComposedPlannerCatalog, REFINEMENT_PACK_SCHEMA, RefinementLayers, RefinementOperation,
+        RefinementPack, RefinementPackManifest, RefinementRule,
     };
     use crate::route_book::{
         CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_SCHEMA, ReferenceStep,
@@ -1942,7 +1942,16 @@ mod tests {
                 evidence: evidence(TruthStatus::Hypothetical),
             }],
         };
-        let composed = ComposedPlannerCatalog::compose(&facts, &mechanics, &[pack]).unwrap();
+        let composed = ComposedPlannerCatalog::compose_layered(
+            &facts,
+            &mechanics,
+            &RefinementLayers {
+                enabled_packs: Vec::new(),
+                route_local_overlays: Vec::new(),
+                ephemeral_what_if_overlays: vec![pack],
+            },
+        )
+        .unwrap();
         let options = SolverOptions {
             evidence_policy: EvidencePolicy::RESEARCH,
             ..SolverOptions::default()

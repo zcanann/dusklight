@@ -352,6 +352,70 @@ impl PlannerExecutionState {
                 fields.insert(target.field.clone(), value.clone());
                 mark_transition(component, application_id);
             }
+            StateOperation::CopyValue { source, target } => {
+                let value = self.structured_value(source, "operation.copy_value")?;
+                let component = self.component_mut(&target.component_id)?;
+                let ComponentPayload::Structured { fields } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.copy_value",
+                        "requires a structured destination component",
+                    ));
+                };
+                fields.insert(target.field.clone(), value);
+                mark_transition(component, application_id);
+            }
+            StateOperation::SetBitFromValue { source, target } => {
+                let index = match self.structured_value(source, "operation.set_bit_from_value")? {
+                    StateValue::Unsigned(value) => usize::try_from(value).map_err(|_| {
+                        PlannerContractError::new(
+                            "operation.set_bit_from_value",
+                            "source value does not fit this host",
+                        )
+                    })?,
+                    StateValue::Signed(value) if value >= 0 => {
+                        usize::try_from(value).map_err(|_| {
+                            PlannerContractError::new(
+                                "operation.set_bit_from_value",
+                                "source value does not fit this host",
+                            )
+                        })?
+                    }
+                    _ => {
+                        return Err(PlannerContractError::new(
+                            "operation.set_bit_from_value",
+                            "requires a nonnegative integer source field",
+                        ));
+                    }
+                };
+                let component = self.component_mut(&target.component_id)?;
+                let ComponentPayload::Structured { fields } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.set_bit_from_value",
+                        "requires a structured destination component",
+                    ));
+                };
+                let StateValue::Bytes(bits) = fields.get_mut(&target.field).ok_or_else(|| {
+                    PlannerContractError::new(
+                        "operation.set_bit_from_value",
+                        "references an absent destination bit set",
+                    )
+                })?
+                else {
+                    return Err(PlannerContractError::new(
+                        "operation.set_bit_from_value",
+                        "requires a byte-backed destination bit set",
+                    ));
+                };
+                let byte_index = index / 8;
+                let Some(byte) = bits.get_mut(byte_index) else {
+                    return Err(PlannerContractError::new(
+                        "operation.set_bit_from_value",
+                        "source index exceeds the destination bit set",
+                    ));
+                };
+                *byte |= 1_u8 << (index % 8);
+                mark_transition(component, application_id);
+            }
             StateOperation::WriteRaw {
                 component_id,
                 byte_offset,
@@ -585,6 +649,9 @@ impl PlannerExecutionState {
                     mark_transition(component, application_id);
                 }
             }
+            StateOperation::SetActiveRuntimeFile { runtime_file } => {
+                self.snapshot.environment.active_runtime_file = runtime_file.clone();
+            }
             StateOperation::SetLocation { location } => {
                 self.snapshot.environment.location = location.clone();
             }
@@ -688,6 +755,32 @@ impl PlannerExecutionState {
                     "references an absent component",
                 )
             })
+    }
+
+    fn structured_value(
+        &self,
+        target: &crate::transition::ComponentFieldTarget,
+        field: &str,
+    ) -> Result<StateValue, PlannerContractError> {
+        let component = self
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == target.component_id)
+            .ok_or_else(|| {
+                PlannerContractError::new(field, "references an absent source component")
+            })?;
+        let ComponentPayload::Structured { fields } = &component.payload else {
+            return Err(PlannerContractError::new(
+                field,
+                "requires a structured source component",
+            ));
+        };
+        fields
+            .get(&target.field)
+            .cloned()
+            .ok_or_else(|| PlannerContractError::new(field, "references an absent source field"))
     }
 
     fn component_mut(&mut self, id: &str) -> Result<&mut StateComponent, PlannerContractError> {
@@ -1172,6 +1265,212 @@ mod tests {
                 .transition_id
                 .as_deref(),
             Some("transition.enter-forest")
+        );
+    }
+
+    #[test]
+    fn recent_item_survives_file_load_and_drives_generic_inventory_grant() {
+        const ROD_ITEM_ID: u64 = 42;
+        const MEMO_ITEM_ID: u64 = 7;
+
+        let mut source = snapshot();
+        let mut recent_item = structured_component(
+            "event.recent-item",
+            ComponentKind::Session,
+            ComponentBinding::Session {
+                session_id: "session-1".into(),
+            },
+        );
+        recent_item.lifetime = SemanticLifetime::Session;
+        recent_item.serialization_owner = SerializationOwner::None;
+        let ComponentPayload::Structured { fields } = &mut recent_item.payload else {
+            unreachable!()
+        };
+        fields.insert("get_item_no".into(), StateValue::Unsigned(0));
+
+        let mut handoff = structured_component(
+            "event.item-handoff",
+            ComponentKind::PendingOperation,
+            ComponentBinding::Session {
+                session_id: "session-1".into(),
+            },
+        );
+        handoff.lifetime = SemanticLifetime::Action;
+        handoff.serialization_owner = SerializationOwner::None;
+        let ComponentPayload::Structured { fields } = &mut handoff.payload else {
+            unreachable!()
+        };
+        fields.insert("pre_item_no".into(), StateValue::Unsigned(3));
+
+        let mut inventory_a = structured_component(
+            "inventory.active",
+            ComponentKind::Inventory,
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            },
+        );
+        let ComponentPayload::Structured { fields } = &mut inventory_a.payload else {
+            unreachable!()
+        };
+        fields.insert("owned_item_ids".into(), StateValue::Bytes(vec![0; 32]));
+        source
+            .environment
+            .components
+            .extend([recent_item, handoff, inventory_a]);
+        source
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+
+        let mut state = PlannerExecutionState::new(source).unwrap();
+        state
+            .apply_operations(
+                "writer.file-a-rod-presentation",
+                "snapshot.file-a-rod-prepared",
+                &[StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: "event.recent-item".into(),
+                        field: "get_item_no".into(),
+                    },
+                    value: StateValue::Unsigned(ROD_ITEM_ID),
+                }],
+            )
+            .unwrap();
+
+        let mut inventory_b = structured_component(
+            "inventory.active",
+            ComponentKind::Inventory,
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "file-b".into(),
+            },
+        );
+        inventory_b.serialization_owner = SerializationOwner::RuntimeFile {
+            runtime_file_id: "file-b".into(),
+        };
+        let ComponentPayload::Structured { fields } = &mut inventory_b.payload else {
+            unreachable!()
+        };
+        fields.insert("owned_item_ids".into(), StateValue::Bytes(vec![0; 32]));
+        let policy = BoundaryPolicy {
+            schema: BOUNDARY_POLICY_SCHEMA.into(),
+            id: "boundary.load-file-b".into(),
+            boundary: BoundaryKind::LoadPhysicalSlot,
+            default_disposition: BoundaryDisposition::Clear,
+            component_rules: vec![
+                ComponentBoundaryRule {
+                    selector: id_selector("event.recent-item"),
+                    disposition: BoundaryDisposition::Preserve,
+                },
+                ComponentBoundaryRule {
+                    selector: id_selector("inventory.active"),
+                    disposition: BoundaryDisposition::Reinitialize {
+                        initializer_id: "inventory.active".into(),
+                    },
+                },
+            ],
+        };
+        state
+            .apply_boundary(
+                "boundary.load-file-b",
+                "snapshot.file-b-loaded",
+                &policy,
+                &BTreeMap::from([("inventory.active".into(), inventory_b)]),
+            )
+            .unwrap();
+        assert_eq!(
+            field(&state, "event.recent-item", "get_item_no"),
+            &StateValue::Unsigned(ROD_ITEM_ID)
+        );
+        assert!(
+            state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .all(|component| component.id != "event.item-handoff")
+        );
+
+        let loaded = state.clone();
+        let file_b = RuntimeFile {
+            id: "file-b".into(),
+            origin: RuntimeFileOrigin::LoadedSlot {
+                slot: PhysicalSlotId(1),
+            },
+            backing: BackingAttachment::CardBacked {
+                slot: PhysicalSlotId(1),
+            },
+            allowed_serialization_targets: vec![PhysicalSlotId(1)],
+            lifecycle: RuntimeFileLifecycle::Active,
+        };
+        state
+            .apply_operations(
+                "auru.broken-generic-get-item",
+                "snapshot.file-b-rod-granted",
+                &[
+                    StateOperation::SetActiveRuntimeFile {
+                        runtime_file: file_b.clone(),
+                    },
+                    StateOperation::SetBitFromValue {
+                        source: ComponentFieldTarget {
+                            component_id: "event.recent-item".into(),
+                            field: "get_item_no".into(),
+                        },
+                        target: ComponentFieldTarget {
+                            component_id: "inventory.active".into(),
+                            field: "owned_item_ids".into(),
+                        },
+                    },
+                ],
+            )
+            .unwrap();
+        let StateValue::Bytes(items) = field(&state, "inventory.active", "owned_item_ids") else {
+            unreachable!()
+        };
+        assert_ne!(
+            items[ROD_ITEM_ID as usize / 8] & (1 << (ROD_ITEM_ID % 8)),
+            0
+        );
+
+        let mut normal_path = loaded;
+        normal_path
+            .apply_operations(
+                "auru.normal-memo-get-item",
+                "snapshot.file-b-memo-granted",
+                &[
+                    StateOperation::SetActiveRuntimeFile {
+                        runtime_file: file_b,
+                    },
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: "event.recent-item".into(),
+                            field: "get_item_no".into(),
+                        },
+                        value: StateValue::Unsigned(MEMO_ITEM_ID),
+                    },
+                    StateOperation::SetBitFromValue {
+                        source: ComponentFieldTarget {
+                            component_id: "event.recent-item".into(),
+                            field: "get_item_no".into(),
+                        },
+                        target: ComponentFieldTarget {
+                            component_id: "inventory.active".into(),
+                            field: "owned_item_ids".into(),
+                        },
+                    },
+                ],
+            )
+            .unwrap();
+        let StateValue::Bytes(items) = field(&normal_path, "inventory.active", "owned_item_ids")
+        else {
+            unreachable!()
+        };
+        assert_ne!(
+            items[MEMO_ITEM_ID as usize / 8] & (1 << (MEMO_ITEM_ID % 8)),
+            0
+        );
+        assert_eq!(
+            items[ROD_ITEM_ID as usize / 8] & (1 << (ROD_ITEM_ID % 8)),
+            0
         );
     }
 
