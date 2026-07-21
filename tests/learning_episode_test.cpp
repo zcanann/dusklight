@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -205,10 +206,11 @@ struct ObservationFixture {
         observation.playerGroundHeight = 2.0F;
         observation.eventId = -1;
         observation.eventMapToolId = 0xff;
-        observation.nextStageName = "";
-        observation.nextRoom = -1;
-        observation.nextLayer = -1;
-        observation.nextPoint = -1;
+        observation.nextStageEnabled = true;
+        observation.nextStageName = "F_SP104";
+        observation.nextRoom = 2;
+        observation.nextLayer = 1;
+        observation.nextPoint = 3;
         observation.rng.streams[0].id = GameRngStreamId::Primary;
         observation.rng.streams[1].id = GameRngStreamId::Secondary;
         observation.playerResourcesPresent = true;
@@ -433,6 +435,25 @@ struct ObservationFixture {
         observation.attentionCandidates.actionCandidates[0].distance = 90.0F;
         observation.attentionCandidates.actionCandidates[0].angle = 0x200;
         observation.attentionCandidates.actionCandidates[0].type = 6;
+        observation.eventTransition.status = MilestoneObservation::ChannelStatus::Present;
+        observation.eventTransition.eventDataLoaded = true;
+        observation.eventTransition.cameraPlay = 2;
+        observation.eventTransition.currentEventStatus =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.eventTransition.currentEventId = 0x123;
+        observation.eventTransition.currentEventType = 1;
+        observation.eventTransition.currentEventRoom = 0;
+        observation.eventTransition.eventGoalStatus =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.eventTransition.eventGoal = {10.0F, 20.0F, 30.0F};
+        observation.eventTransition.nextStageStatus =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.eventTransition.nextStage = {'F', '_', 'S', 'P', '1', '0', '4', '\0'};
+        observation.eventTransition.nextRoom = 2;
+        observation.eventTransition.nextLayer = 1;
+        observation.eventTransition.nextPoint = 3;
+        observation.eventTransition.nextWipe = 5;
+        observation.eventTransition.nextWipeSpeed = 2;
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -534,7 +555,9 @@ struct ObservationFixture {
         gameplayTrace.playerBackgroundCollision.resolvedFrameDisplacement = {0.5F, 0.0F, 0.0F};
         gameplayTrace.playerBackgroundCollision.finalPosition = {-1.0F, 2.0F, 3.0F};
         gameplayTrace.playerCollisionSurfacesStatus = GameplayTraceChannelStatus::Present;
-        gameplayTrace.playerCollisionSurfaces.flags = GameplayTraceCollisionSurfaceCurrentRoomValid;
+        gameplayTrace.playerCollisionSurfaces.flags =
+            GameplayTraceCollisionSurfaceCurrentRoomValid |
+            GameplayTraceCollisionSurfaceNextStagePending;
         gameplayTrace.playerCollisionSurfaces.currentRoom = 0;
         gameplayTrace.playerCollisionSurfaces.identityCount = 1;
         gameplayTrace.playerCollisionSurfaces.backingCodeCount = 1;
@@ -977,6 +1000,32 @@ void test_attention_candidates_fail_closed() {
     REQUIRE(error.find("inconsistent attention-candidate state") != std::string::npos);
 }
 
+void test_event_transition_fails_closed() {
+    ObservationFixture mismatch;
+    mismatch.observation.eventTransition.nextPoint += 1;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, mismatch.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent event-transition") != std::string::npos);
+
+    ObservationFixture nonfinite;
+    nonfinite.observation.eventTransition.eventGoal[1] =
+        std::numeric_limits<float>::infinity();
+    bytes.clear();
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, nonfinite.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent event-transition") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -1079,6 +1128,7 @@ int main(const int argc, char** argv) {
     test_event_queue_fails_closed();
     test_process_lifecycle_fails_closed();
     test_attention_candidates_fail_closed();
+    test_event_transition_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

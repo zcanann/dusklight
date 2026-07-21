@@ -379,6 +379,15 @@ fn record_transition(
         before.attention_candidates.as_ref(),
         after.attention_candidates.as_ref()
     );
+    record!(
+        "event_transition.status",
+        before.event_transition_status != after.event_transition_status
+    );
+    record_optional!(
+        "event_transition.value",
+        before.event_transition.as_ref(),
+        after.event_transition.as_ref()
+    );
 }
 
 pub fn inspect_global_temporal_coverage(shards: &[NativeEpisodeShard]) -> GlobalTemporalCoverage {
@@ -555,5 +564,24 @@ mod tests {
         let report = inspect_global_temporal_coverage(&[shard]);
         assert_eq!(report.fields["process_lifecycle.value"].compared_pairs, 1);
         assert_eq!(report.fields["process_lifecycle.value"].changed_pairs, 1);
+    }
+
+    #[test]
+    fn reports_event_transition_changes_without_encoding_a_route() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v22.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .event_transition
+            .as_mut()
+            .unwrap()
+            .camera_play = 1;
+
+        let report = inspect_global_temporal_coverage(&[shard]);
+        assert_eq!(report.fields["event_transition.value"].compared_pairs, 1);
+        assert_eq!(report.fields["event_transition.value"].changed_pairs, 1);
     }
 }

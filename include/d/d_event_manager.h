@@ -120,8 +120,9 @@ public:
 
 private:
 #if DUSK_ENABLE_AUTOMATION_OBSERVERS
-    // DUSKLIGHT OBSERVATION-ONLY APERTURE: exposes immutable event identity
-    // to fork instrumentation without adding a gameplay query or side effect.
+    // DUSKLIGHT OBSERVATION-ONLY APERTURE: exposes immutable event-manager
+    // state to fork instrumentation without adding a gameplay query or side
+    // effect.
     friend struct dusk::automation::MilestoneEventManagerReadAdapter;
 #endif
 

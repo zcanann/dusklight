@@ -41,6 +41,7 @@ const OBSERVATION_VERSION_V18: u16 = 18;
 const OBSERVATION_VERSION_V19: u16 = 19;
 const OBSERVATION_VERSION_V20: u16 = 20;
 const OBSERVATION_VERSION_V21: u16 = 21;
+const OBSERVATION_VERSION_V22: u16 = 22;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -61,11 +62,12 @@ pub use collision_solver::{
 mod planner;
 pub use planner::{
     NativeAttentionCandidateObservation, NativeAttentionCandidatesObservation,
-    NativeEventActorReferenceObservation, NativeEventHandoffObservation,
-    NativeEventQueueObservation, NativeMessageFlowObservation, NativeMessageSessionObservation,
-    NativePendingEventOrderObservation, NativePhysicalSlotObservation,
-    NativePlayerControlObservation, NativeRestartObservation, NativeReturnPlaceObservation,
-    NativeRuntimeFileObservation,
+    NativeCurrentEventObservation, NativeEventActorReferenceObservation,
+    NativeEventHandoffObservation, NativeEventQueueObservation, NativeEventTransitionObservation,
+    NativeMessageFlowObservation, NativeMessageSessionObservation,
+    NativePendingEventOrderObservation, NativePendingStageObservation,
+    NativePhysicalSlotObservation, NativePlayerControlObservation, NativeRestartObservation,
+    NativeReturnPlaceObservation, NativeRuntimeFileObservation,
 };
 
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V1: &str = "dusklight-native-episode-shard/v1";
@@ -90,6 +92,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V18: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V19: &str = "dusklight-learning-observation/v19";
 pub const LEARNING_OBSERVATION_SCHEMA_V20: &str = "dusklight-learning-observation/v20";
 pub const LEARNING_OBSERVATION_SCHEMA_V21: &str = "dusklight-learning-observation/v21";
+pub const LEARNING_OBSERVATION_SCHEMA_V22: &str = "dusklight-learning-observation/v22";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -733,6 +736,8 @@ pub struct NativeLearningObservation {
     pub process_lifecycle: Option<NativeProcessLifecycleObservation>,
     pub attention_candidates_status: NativeChannelStatus,
     pub attention_candidates: Option<NativeAttentionCandidatesObservation>,
+    pub event_transition_status: NativeChannelStatus,
+    pub event_transition: Option<NativeEventTransitionObservation>,
 }
 
 #[derive(Debug)]
@@ -806,6 +811,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V19
                 | OBSERVATION_VERSION_V20
                 | OBSERVATION_VERSION_V21
+                | OBSERVATION_VERSION_V22
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -941,6 +947,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V19 => LEARNING_OBSERVATION_SCHEMA_V19,
         OBSERVATION_VERSION_V20 => LEARNING_OBSERVATION_SCHEMA_V20,
         OBSERVATION_VERSION_V21 => LEARNING_OBSERVATION_SCHEMA_V21,
+        OBSERVATION_VERSION_V22 => LEARNING_OBSERVATION_SCHEMA_V22,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1857,6 +1864,112 @@ fn decode_attention_candidates(
     ))
 }
 
+fn decode_event_transition(
+    reader: &mut Reader<'_>,
+) -> Result<
+    (
+        NativeChannelStatus,
+        Option<NativeEventTransitionObservation>,
+    ),
+    NativeEpisodeShardError,
+> {
+    let status = decode_channel_status(reader)?;
+    let event_data_loaded = reader.bool()?;
+    let current_status = decode_channel_status(reader)?;
+    let goal_status = decode_channel_status(reader)?;
+    let next_status = decode_channel_status(reader)?;
+    let wipe = reader.i8()?;
+    let wipe_speed = reader.u8()?;
+    if reader.u8()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero event-transition reserved byte",
+        ));
+    }
+    let camera_play = reader.i32()?;
+    let current_event_id = reader.i16()?;
+    if reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero event-transition reserved field",
+        ));
+    }
+    let current_event_type = reader.i32()?;
+    let current_event_room = reader.i32()?;
+    let goal = reader.f32x3()?;
+    let stage = reader.fixed_name()?;
+    let next_room = reader.i8()?;
+    let next_layer = reader.i8()?;
+    let next_point = reader.i16()?;
+
+    let current_empty =
+        current_event_id == -1 && current_event_type == 0 && current_event_room == -1;
+    let goal_empty = goal == [0.0; 3];
+    let next_empty = stage.is_empty()
+        && next_room == -1
+        && next_layer == -1
+        && next_point == -1
+        && wipe == 0
+        && wipe_speed == 0;
+    if !matches!(
+        status,
+        NativeChannelStatus::Present | NativeChannelStatus::Unavailable
+    ) || (status == NativeChannelStatus::Present
+        && !matches!(
+            (current_status, goal_status),
+            (NativeChannelStatus::Present, NativeChannelStatus::Present)
+                | (NativeChannelStatus::Absent, NativeChannelStatus::Absent)
+        ))
+        || (current_status != NativeChannelStatus::Present && !current_empty)
+        || (goal_status != NativeChannelStatus::Present && !goal_empty)
+        || !matches!(
+            next_status,
+            NativeChannelStatus::Present
+                | NativeChannelStatus::Absent
+                | NativeChannelStatus::NotSampled
+        )
+        || (next_status != NativeChannelStatus::Present && !next_empty)
+        || (next_status == NativeChannelStatus::Present && stage.is_empty())
+        || (status == NativeChannelStatus::Unavailable
+            && (event_data_loaded
+                || camera_play != 0
+                || current_status != NativeChannelStatus::NotSampled
+                || goal_status != NativeChannelStatus::NotSampled
+                || next_status != NativeChannelStatus::NotSampled
+                || !current_empty
+                || !goal_empty
+                || !next_empty))
+    {
+        return Err(NativeEpisodeShardError::new(
+            "event-transition status and payload disagree",
+        ));
+    }
+
+    let current_event =
+        (current_status == NativeChannelStatus::Present).then_some(NativeCurrentEventObservation {
+            event_id: current_event_id,
+            event_type: current_event_type,
+            room: current_event_room,
+            goal,
+        });
+    let pending_stage =
+        (next_status == NativeChannelStatus::Present).then_some(NativePendingStageObservation {
+            stage,
+            room: next_room,
+            layer: next_layer,
+            point: next_point,
+            wipe,
+            wipe_speed,
+        });
+    Ok((
+        status,
+        (status == NativeChannelStatus::Present).then_some(NativeEventTransitionObservation {
+            event_data_loaded,
+            camera_play,
+            current_event,
+            pending_stage,
+        }),
+    ))
+}
+
 fn decode_camera(
     reader: &mut Reader<'_>,
 ) -> Result<NativeCameraObservation, NativeEpisodeShardError> {
@@ -2738,7 +2851,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V18
         | OBSERVATION_VERSION_V19
         | OBSERVATION_VERSION_V20
-        | OBSERVATION_VERSION_V21 => {
+        | OBSERVATION_VERSION_V21
+        | OBSERVATION_VERSION_V22 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3559,6 +3673,25 @@ fn decode_observation(
     {
         decode_pending_process_records(reader, lifecycle)?;
     }
+    let (event_transition_status, event_transition) =
+        if observation_version >= OBSERVATION_VERSION_V22 {
+            decode_event_transition(reader)?
+        } else {
+            (NativeChannelStatus::NotSampled, None)
+        };
+    if event_transition.as_ref().is_some_and(|transition| {
+        transition.pending_stage.as_ref().is_some_and(|pending| {
+            flags & (1 << 2) == 0
+                || pending.stage != next_stage_raw
+                || pending.room != next_room
+                || pending.layer != next_layer
+                || pending.point != next_point
+        }) || (flags & (1 << 2) != 0 && transition.pending_stage.is_none())
+    }) {
+        return Err(NativeEpisodeShardError::new(
+            "event-transition pending stage disagrees with core observation",
+        ));
+    }
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -3655,6 +3788,8 @@ fn decode_observation(
         process_lifecycle,
         attention_candidates_status,
         attention_candidates,
+        event_transition_status,
+        event_transition,
     })
 }
 
