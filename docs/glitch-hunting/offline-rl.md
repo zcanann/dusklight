@@ -1041,6 +1041,17 @@ is never a policy input. Actor and collider populations remain in the native
 episode by reference, so a later set/graph encoder can change without
 recollecting or pretending that a flat tensor was the raw evidence.
 
+Before training, inspect actual signal support in every partition:
+
+```powershell
+huntctl learn inspect-auxiliary --input auxiliary-dataset.json
+```
+
+The report counts distinct actions, motion, contacts, procedure/mode changes,
+event/loading changes, actor lifecycle events, and goal-reachable examples per
+split. Aggregate transition count is not accepted as evidence that a rare
+mechanic or terminal outcome has held-out coverage.
+
 Transition batches can be inspected and transformed without weakening their
 schema or content identities:
 
