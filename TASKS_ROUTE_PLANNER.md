@@ -528,8 +528,8 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
-- Refinement-pack schema v5, refinement-stack schema v2, and composed-catalog
-  schema v6 now live entirely in the planner workspace. `route-planner compose`
+- Refinement-pack schema v6, refinement-stack schema v2, and composed-catalog
+  schema v7 now live entirely in the planner workspace. `route-planner compose`
   validates canonical packs, dependency digests, conflicts, deterministic
   layer/pack precedence, explicit
   replacement/disable operations, and all resulting cross-references before it
@@ -551,7 +551,7 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Planner service schema v7 provides a typed JSON-lines transport owned by the
+- Planner service schema v9 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -564,18 +564,21 @@ The current code shows:
   obstruction IDs, discharged/unknown obligations, and temporal witnesses. The
   planner-owned `project-feasibility-diff` command and service expose it without
   changing the base graph or route book.
-- State-inspection schema v3 preserves the full execution-state document—live
+- State-inspection schema v4 preserves the full execution-state document—live
   components, serialized owner stores, bindings, lifetimes, provenance, gates,
   cleanup, runtime-file identity, physical slots, location, and player state—
   while evaluating every friendly alias and derived fact under the selected
   exact context and evidence policy. `route-planner inspect-state` and the
-  service protocol expose the same projection, so raw inventory/flag bytes and
-  their semantic names remain inspectable together.
-- State-inspection-diff schema v1 combines the raw/component boundary diff with
+  service protocol expose the same projection, so raw inventory/flag bytes,
+  their semantic names, ordered mutations, last field writers, and gate history
+  remain inspectable together.
+- State-inspection-diff schema v2 combines the raw/component boundary diff with
   before/after friendly fact evaluations. It classifies binding-only changes,
   payload changes, direct derived-fact dependency changes, relevant gate reads,
   and runtime-context changes separately. An unchanged payload digest and empty
-  raw-byte delta therefore remain visible when rebind alone changes an alias.
+  raw-byte delta therefore remain visible when rebind alone changes an alias;
+  common-prefix and divergent history suffixes identify exactly which ordered
+  operations separate two execution states.
   The standalone `diff-state` command and service expose the same report.
 - Route-book schema v2 is a validated, exact-context-scoped preference layer over
   mechanics. It can name goals and path constraints, reference ordered actions,
@@ -1704,8 +1707,11 @@ Deliverable: replayable state evidence that can validate transition rules.
         unknown blocking gates, resolve reader source values separately from
         friendly interpretations, and append the responsible transition to every
         component mutation.
-  - [ ] Execute ordered writer/gate/read programs from imported mechanics and
-        retain a queryable last-writer/gate event history across search states.
+  - [x] Retain a queryable, ordered operation/boundary history across search
+        states and expose current-field last writers plus per-gate event history.
+        History is part of full state identity and inspection but excluded from
+        semantic search dominance; failed atomic batches cannot leak events.
+  - [ ] Execute ordered writer/gate/read programs from imported mechanics.
 - [ ] Generate the upper-bound authorization graph.
   - [x] Add exact-context, evidence-aware tri-state predicate evaluation and
         per-transition upper-bound assessment; unknown raw bits, absent values,
@@ -1903,8 +1909,15 @@ Deliverable: a headless query API and deterministic fixture suite.
 - [ ] Explain derived lockouts as failed producer cuts.
 - [x] Explain active/unknown obstructions and the resolver/technique chosen for
       each reached approach; retain the closest unresolved witness on failure.
-- [ ] Show component transformation and provenance histories.
-- [ ] Show last-writer and gate history for latched values.
+- [x] Show component transformation and provenance histories.
+- [x] Show last-writer and gate history for latched values.
+  - Execution-state schema v4 records every typed operation and every resolved
+    per-component boundary disposition with contiguous application-local order,
+    affected component IDs, source sequence, and result snapshot. State
+    inspection exposes the full log, a direct last-writer result for each live
+    structured field, and all set/clear events for each gate. A Fanadi-shaped
+    fixture verifies that a held return-place value retains its earlier writer
+    while `NO_TELOP` is set and changes only after clear plus a later write.
 - [ ] Label all hypothetical and low-confidence dependencies.
 - [ ] Generate concise collapsed summaries and fully expanded research views.
 
@@ -2088,11 +2101,19 @@ Deliverable: route confidence is mechanically explainable.
       B consuming it through generic get-item semantics.
 - [ ] Decompose Auru's normal memo path, pending item actor, `DEFAULT_GETITEM`
       handoff, and broken path that avoids the memo overwrite.
-- [ ] Author the talk-volume/outside-trigger/player-control obligation.
-- [ ] Mark the known HD targeting resolver as external build evidence; keep the SD
+- [x] Author the talk-volume/outside-trigger/player-control obligation.
+  - The interaction fixture requires Auru's live actor, inclusion in the talk
+    volume, exclusion from the cutscene trigger, player control, and the talk
+    action; missing actor or geometry observations remain unknown.
+- [x] Mark the known HD targeting resolver as external build evidence; keep the SD
       candidate surfaced as obstructed or unknown rather than absent.
-- [ ] Add a hypothetical SD geometry/interaction resolver and verify arbitrary
+- [x] Add a hypothetical SD geometry/interaction resolver and verify arbitrary
       recent-item producers become usable without editing Auru's grant rule.
+  - The solver fixture labels the HD resolver as community/external evidence,
+    leaves the SD transition in its blocked frontier, and adds a removable
+    hypothetical SD refinement. The unchanged `SetBitFromValue` grant reaches
+    both Fishing Rod (`0x4a`) and Auru's Memo (`0x90`) goals depending only on
+    the session recent-item producer.
 - [ ] Model the optional memo-preservation sidehop/backflip interruption as a
       separate frame-exact microtransition.
 

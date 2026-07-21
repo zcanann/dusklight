@@ -4,18 +4,21 @@ use crate::RuntimeEvidenceMode;
 use dusklight_route_planner::PlannerContractError;
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::evaluation::{EvaluatedTruth, EvidencePolicy, PredicateEvaluator};
-use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
+use dusklight_route_planner::execution::{
+    ExecutionHistoryEvent, ExecutionHistoryKind, PlannerExecutionState,
+    PlannerExecutionStateDocument,
+};
 use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::{
     FactCatalog, PredicateExpression, RawFactBinding, TruthStatus, ValueReference,
 };
 use dusklight_route_planner::snapshot::StateDiff;
-use dusklight_route_planner::state::BoundaryKind;
+use dusklight_route_planner::state::{BoundaryKind, ComponentPayload};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v3";
-pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v1";
+pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v4";
+pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v2";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -26,7 +29,25 @@ pub struct StateInspection {
     pub fact_catalog_sha256: Digest,
     pub evidence_mode: RuntimeEvidenceMode,
     pub state: PlannerExecutionStateDocument,
+    pub last_field_writers: Vec<InspectedLastFieldWriter>,
+    pub gate_histories: Vec<InspectedGateHistory>,
     pub facts: Vec<InspectedFact>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InspectedLastFieldWriter {
+    pub component_id: String,
+    pub field: String,
+    pub event: Option<ExecutionHistoryEvent>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InspectedGateHistory {
+    pub gate_id: String,
+    pub current_state: Option<bool>,
+    pub events: Vec<ExecutionHistoryEvent>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -67,6 +88,9 @@ pub struct StateInspectionDiff {
     pub evidence_mode: RuntimeEvidenceMode,
     pub state_diff: StateDiff,
     pub gate_state_deltas: Vec<GateStateDelta>,
+    pub execution_history_common_prefix_len: usize,
+    pub before_execution_history_suffix: Vec<ExecutionHistoryEvent>,
+    pub after_execution_history_suffix: Vec<ExecutionHistoryEvent>,
     pub fact_deltas: Vec<InspectedFactDelta>,
 }
 
@@ -147,6 +171,42 @@ pub fn inspect_state(
         });
     }
     inspected.sort_by(|left, right| left.id.cmp(&right.id));
+    let mut last_field_writers = Vec::new();
+    for component in &state.snapshot.environment.components {
+        let ComponentPayload::Structured { fields } = &component.payload else {
+            continue;
+        };
+        for field in fields.keys() {
+            last_field_writers.push(InspectedLastFieldWriter {
+                component_id: component.id.clone(),
+                field: field.clone(),
+                event: state.last_field_writer(&component.id, field).cloned(),
+            });
+        }
+    }
+    last_field_writers.sort_by(|left, right| {
+        (&left.component_id, &left.field).cmp(&(&right.component_id, &right.field))
+    });
+    let mut gate_ids = state.gate_states.keys().cloned().collect::<BTreeSet<_>>();
+    for event in &state.execution_history {
+        if let ExecutionHistoryKind::Operation {
+            operation:
+                dusklight_route_planner::transition::StateOperation::SetGate { gate_id }
+                | dusklight_route_planner::transition::StateOperation::ClearGate { gate_id },
+            ..
+        } = &event.event
+        {
+            gate_ids.insert(gate_id.clone());
+        }
+    }
+    let gate_histories = gate_ids
+        .into_iter()
+        .map(|gate_id| InspectedGateHistory {
+            current_state: state.gate_states.get(&gate_id).copied(),
+            events: state.gate_history(&gate_id).into_iter().cloned().collect(),
+            gate_id,
+        })
+        .collect();
     Ok(StateInspection {
         schema: STATE_INSPECTION_SCHEMA.into(),
         execution_state_sha256: state.digest()?,
@@ -154,6 +214,8 @@ pub fn inspect_state(
         fact_catalog_sha256: facts.digest()?,
         evidence_mode,
         state: state.to_document()?,
+        last_field_writers,
+        gate_histories,
         facts: inspected,
     })
 }
@@ -191,6 +253,12 @@ pub fn inspect_state_diff(
     let runtime_context_changed = before.snapshot.environment.runtime_configuration
         != after.snapshot.environment.runtime_configuration;
     let gates_changed = before.gate_states != after.gate_states;
+    let execution_history_common_prefix_len = before
+        .execution_history
+        .iter()
+        .zip(&after.execution_history)
+        .take_while(|(left, right)| left == right)
+        .count();
     let mut fact_deltas = Vec::with_capacity(changed_fact_ids.len());
     for fact_id in changed_fact_ids {
         let before_fact = before_facts[fact_id];
@@ -255,6 +323,12 @@ pub fn inspect_state_diff(
         evidence_mode,
         state_diff,
         gate_state_deltas: diff_gate_states(&before.gate_states, &after.gate_states),
+        execution_history_common_prefix_len,
+        before_execution_history_suffix: before.execution_history
+            [execution_history_common_prefix_len..]
+            .to_vec(),
+        after_execution_history_suffix: after.execution_history[execution_history_common_prefix_len..]
+            .to_vec(),
         fact_deltas,
     })
 }
@@ -393,8 +467,9 @@ mod tests {
         BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
         EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm, PlayerState,
         ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
-        SemanticLifetime, SerializationOwner, StateComponent,
+        SemanticLifetime, SerializationOwner, StateComponent, StateValue,
     };
+    use dusklight_route_planner::transition::{ComponentFieldTarget, StateOperation};
     use std::collections::BTreeMap;
 
     #[test]
@@ -437,27 +512,52 @@ mod tests {
                     has_control: Some(true),
                     action: "idle".into(),
                 },
-                components: vec![StateComponent {
-                    id: "inventory.active".into(),
-                    component_kind: ComponentKind::Inventory,
-                    payload: ComponentPayload::Raw {
-                        bytes: vec![0b0000_0100],
-                        known_mask: vec![0xff],
+                components: vec![
+                    StateComponent {
+                        id: "inventory.active".into(),
+                        component_kind: ComponentKind::Inventory,
+                        payload: ComponentPayload::Raw {
+                            bytes: vec![0b0000_0100],
+                            known_mask: vec![0xff],
+                        },
+                        binding: ComponentBinding::RuntimeFile {
+                            runtime_file_id: "file-0".into(),
+                        },
+                        lifetime: SemanticLifetime::RuntimeFile,
+                        serialization_owner: SerializationOwner::RuntimeFile {
+                            runtime_file_id: "file-0".into(),
+                        },
+                        provenance: vec![ComponentProvenance {
+                            source_kind: ProvenanceSourceKind::TraceObservation,
+                            source_id: "trace.inventory".into(),
+                            source_sha256: Some(Digest([3; 32])),
+                            transition_id: None,
+                        }],
                     },
-                    binding: ComponentBinding::RuntimeFile {
-                        runtime_file_id: "file-0".into(),
+                    StateComponent {
+                        id: "save.return".into(),
+                        component_kind: ComponentKind::Restart,
+                        payload: ComponentPayload::Structured {
+                            fields: BTreeMap::from([(
+                                "player_return_place".into(),
+                                StateValue::Text("unknown".into()),
+                            )]),
+                        },
+                        binding: ComponentBinding::RuntimeFile {
+                            runtime_file_id: "file-0".into(),
+                        },
+                        lifetime: SemanticLifetime::RuntimeFile,
+                        serialization_owner: SerializationOwner::RuntimeFile {
+                            runtime_file_id: "file-0".into(),
+                        },
+                        provenance: vec![ComponentProvenance {
+                            source_kind: ProvenanceSourceKind::TraceObservation,
+                            source_id: "trace.return-place".into(),
+                            source_sha256: Some(Digest([4; 32])),
+                            transition_id: None,
+                        }],
                     },
-                    lifetime: SemanticLifetime::RuntimeFile,
-                    serialization_owner: SerializationOwner::RuntimeFile {
-                        runtime_file_id: "file-0".into(),
-                    },
-                    provenance: vec![ComponentProvenance {
-                        source_kind: ProvenanceSourceKind::TraceObservation,
-                        source_id: "trace.inventory".into(),
-                        source_sha256: Some(Digest([3; 32])),
-                        transition_id: None,
-                    }],
-                }],
+                ],
                 static_world_objects: Vec::new(),
                 spatial_volumes: Vec::new(),
                 spatial_connections: Vec::new(),
@@ -467,7 +567,25 @@ mod tests {
             },
             semantic_observations: Vec::new(),
         };
-        let state = PlannerExecutionState::new(snapshot).unwrap();
+        let mut state = PlannerExecutionState::new(snapshot).unwrap();
+        state
+            .apply_operations(
+                "writer.return-place.ordon",
+                "snapshot.inspect-written",
+                &[
+                    StateOperation::Write {
+                        target: ComponentFieldTarget {
+                            component_id: "save.return".into(),
+                            field: "player_return_place".into(),
+                        },
+                        value: StateValue::Text("F_SP103:0:0:0".into()),
+                    },
+                    StateOperation::SetGate {
+                        gate_id: "gate.no-telop".into(),
+                    },
+                ],
+            )
+            .unwrap();
         let facts = FactCatalog {
             schema: FACT_CATALOG_SCHEMA.into(),
             aliases: vec![FriendlyAlias {
@@ -502,13 +620,24 @@ mod tests {
         let inspection =
             inspect_state(&state, &facts, &[], RuntimeEvidenceMode::EstablishedOnly).unwrap();
         assert_eq!(inspection.facts[0].evaluated, InspectionTruth::True);
-        assert_eq!(inspection.state.snapshot.environment.components.len(), 1);
+        assert_eq!(inspection.state.snapshot.environment.components.len(), 2);
         assert_eq!(inspection.state.serialized_component_stores.len(), 0);
+        assert_eq!(inspection.last_field_writers.len(), 1);
+        assert_eq!(
+            inspection.last_field_writers[0]
+                .event
+                .as_ref()
+                .unwrap()
+                .application_id,
+            "writer.return-place.ordon"
+        );
+        assert_eq!(inspection.gate_histories.len(), 1);
+        assert_eq!(inspection.gate_histories[0].events.len(), 1);
 
         let before = state;
         let mut after = before.clone();
         after.snapshot.id = "snapshot.inspect-rebound".into();
-        after.snapshot.sequence = 2;
+        after.snapshot.sequence = before.snapshot.sequence + 1;
         after.snapshot.environment.components[0].binding = ComponentBinding::Stage {
             stage: "D_MN09".into(),
         };

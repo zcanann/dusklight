@@ -2644,6 +2644,290 @@ mod tests {
     }
 
     #[test]
+    fn auru_activation_is_separate_from_the_shared_recent_item_grant() {
+        const FISHING_ROD: u64 = 0x4a;
+        const AURUS_MEMO: u64 = 0x90;
+
+        let setup = |content_byte: u8, recent_item_id: u64| {
+            let mut state = snapshot();
+            state.environment.runtime_configuration.content_sha256 = Digest([content_byte; 32]);
+            state.environment.player.action = "talk".into();
+            state.environment.components = vec![
+                StateComponent {
+                    id: "event.recent-item".into(),
+                    component_kind: ComponentKind::Session,
+                    payload: ComponentPayload::Structured {
+                        fields: BTreeMap::from([(
+                            "get_item_no".into(),
+                            StateValue::Unsigned(recent_item_id),
+                        )]),
+                    },
+                    binding: ComponentBinding::Session {
+                        session_id: "session-1".into(),
+                    },
+                    lifetime: SemanticLifetime::Session,
+                    serialization_owner: SerializationOwner::None,
+                    provenance: vec![ComponentProvenance {
+                        source_kind: ProvenanceSourceKind::Transition,
+                        source_id: format!("writer.item-{recent_item_id:02x}"),
+                        source_sha256: Some(Digest([7; 32])),
+                        transition_id: Some(format!("writer.item-{recent_item_id:02x}")),
+                    }],
+                },
+                StateComponent {
+                    id: "inventory.active".into(),
+                    component_kind: ComponentKind::Inventory,
+                    payload: ComponentPayload::Structured {
+                        fields: BTreeMap::from([(
+                            "owned_item_ids".into(),
+                            StateValue::Bytes(vec![0; 32]),
+                        )]),
+                    },
+                    binding: ComponentBinding::RuntimeFile {
+                        runtime_file_id: "file-0".into(),
+                    },
+                    lifetime: SemanticLifetime::RuntimeFile,
+                    serialization_owner: SerializationOwner::RuntimeFile {
+                        runtime_file_id: "file-0".into(),
+                    },
+                    provenance: vec![ComponentProvenance {
+                        source_kind: ProvenanceSourceKind::Initialized,
+                        source_id: "fixture.empty-inventory".into(),
+                        source_sha256: Some(Digest([8; 32])),
+                        transition_id: None,
+                    }],
+                },
+            ];
+            state
+        };
+        let item_goal = |item_id: u64| {
+            let mut mask = vec![0; 32];
+            mask[item_id as usize / 8] |= 1 << (item_id % 8);
+            PredicateExpression::Compare {
+                left: ValueReference::ComponentField {
+                    component_id: "inventory.active".into(),
+                    field: "owned_item_ids".into(),
+                },
+                operator: ComparisonOperator::ContainsBits,
+                right: ValueReference::Literal {
+                    value: StateValue::Bytes(mask),
+                },
+            }
+        };
+        let mechanics_for = |state: &StateSnapshot| {
+            let exact_scope = scope(state);
+            let mut mechanics = catalog(vec![CandidateTransition {
+                id: "transition.auru-generic-get-item".into(),
+                label: "Auru DEFAULT_GETITEM handoff".into(),
+                scope: exact_scope.clone(),
+                transition_kind: TransitionKind::ItemAcquisition,
+                approach_id: "approach.auru-talk-outside-trigger".into(),
+                activation: ActivationContract {
+                    hard_guards: PredicateExpression::Compare {
+                        left: ValueReference::ComponentField {
+                            component_id: "event.recent-item".into(),
+                            field: "get_item_no".into(),
+                        },
+                        operator: ComparisonOperator::NotEqual,
+                        right: ValueReference::Literal {
+                            value: StateValue::Unsigned(0xff),
+                        },
+                    },
+                    physical_obligation_ids: vec!["obligation.auru-activation".into()],
+                    effects: vec![StateOperation::SetBitFromValue {
+                        source: crate::transition::ComponentFieldTarget {
+                            component_id: "event.recent-item".into(),
+                            field: "get_item_no".into(),
+                        },
+                        target: crate::transition::ComponentFieldTarget {
+                            component_id: "inventory.active".into(),
+                            field: "owned_item_ids".into(),
+                        },
+                    }],
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            }]);
+            mechanics.obligations = vec![FeasibilityObligation {
+                id: "obligation.auru-activation".into(),
+                label: "Reach Auru's talk volume outside his cutscene trigger with control".into(),
+                scope: exact_scope.clone(),
+                obligation_kind: ObligationKind::Interaction,
+                detail: ObligationDetail::Interaction {
+                    actor_instance_id: "actor.auru".into(),
+                    interaction_mode: "talk".into(),
+                    required_volumes: vec![crate::transition::VolumeReference {
+                        object_id: "actor.auru".into(),
+                        volume_id: "talk".into(),
+                    }],
+                    excluded_volumes: vec![crate::transition::VolumeReference {
+                        object_id: "actor.auru".into(),
+                        volume_id: "cutscene-trigger".into(),
+                    }],
+                    pose_predicate: PredicateExpression::All {
+                        terms: vec![
+                            PredicateExpression::Compare {
+                                left: ValueReference::PlayerControl,
+                                operator: ComparisonOperator::Equal,
+                                right: ValueReference::Literal {
+                                    value: StateValue::Boolean(true),
+                                },
+                            },
+                            PredicateExpression::Compare {
+                                left: ValueReference::PlayerAction,
+                                operator: ComparisonOperator::Equal,
+                                right: ValueReference::Literal {
+                                    value: StateValue::Text("talk".into()),
+                                },
+                            },
+                        ],
+                    },
+                    temporal_requirement: None,
+                },
+                evidence: evidence(TruthStatus::Established),
+            }];
+            mechanics.obstructions = vec![Obstruction {
+                id: "obstruction.auru-trigger-overlap".into(),
+                label: "Known Auru activation geometry has no enabled setup".into(),
+                scope: exact_scope,
+                blocked_action_id: "transition.auru-generic-get-item".into(),
+                approach_id: "approach.auru-talk-outside-trigger".into(),
+                active_when: PredicateExpression::True,
+                obligation_ids: vec!["obligation.auru-activation".into()],
+                evidence: evidence(TruthStatus::Established),
+            }];
+            mechanics
+        };
+        let resolver = |state: &StateSnapshot, id: &str, truth: TruthStatus| ObstructionResolver {
+            id: id.into(),
+            label: "Resolve Auru interaction geometry".into(),
+            scope: scope(state),
+            obstruction_id: "obstruction.auru-trigger-overlap".into(),
+            resolution_kind: ResolutionKind::Satisfy,
+            applicable_when: PredicateExpression::True,
+            operations: Vec::new(),
+            evidence: if truth == TruthStatus::Established {
+                RuleEvidence {
+                    truth,
+                    records: vec![EvidenceRecord {
+                        id: "external.hd-auru-targeting".into(),
+                        kind: EvidenceKind::CommunityReported,
+                        source_sha256: None,
+                        note:
+                            "External TPHD targeting-range evidence; no HD executable is imported."
+                                .into(),
+                    }],
+                }
+            } else {
+                evidence(truth)
+            },
+        };
+
+        let hd = setup(0x44, FISHING_ROD);
+        let mut hd_mechanics = mechanics_for(&hd);
+        hd_mechanics.resolvers = vec![resolver(
+            &hd,
+            "resolver.hd-external-auru-targeting",
+            TruthStatus::Established,
+        )];
+        let hd_result = ForwardSolver::new(&facts(), &hd_mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(hd).unwrap(),
+                &item_goal(FISHING_ROD),
+            )
+            .unwrap();
+        assert_eq!(hd_result.status, SearchStatus::Reached);
+        assert_eq!(
+            hd_result.steps[0].selected_resolver_ids,
+            vec!["resolver.hd-external-auru-targeting"]
+        );
+
+        for item_id in [FISHING_ROD, AURUS_MEMO] {
+            let sd = setup(0x53, item_id);
+            let base_mechanics = mechanics_for(&sd);
+            let base = ForwardSolver::new(
+                &facts(),
+                &base_mechanics,
+                &[],
+                SolverOptions {
+                    evidence_policy: EvidencePolicy::RESEARCH,
+                    ..SolverOptions::default()
+                },
+            )
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(sd.clone()).unwrap(),
+                &item_goal(item_id),
+            )
+            .unwrap();
+            assert_ne!(base.status, SearchStatus::Reached);
+            assert_eq!(
+                base.blocked_transition_witnesses[0].transition_id,
+                "transition.auru-generic-get-item"
+            );
+
+            let hypothetical = resolver(
+                &sd,
+                "resolver.sd-hypothetical-auru-geometry",
+                TruthStatus::Hypothetical,
+            );
+            let pack = RefinementPack {
+                schema: REFINEMENT_PACK_SCHEMA.into(),
+                manifest: RefinementPackManifest {
+                    id: "pack.sd-hypothetical-auru-geometry".into(),
+                    version: "1.0.0".into(),
+                    author: "Route planner acceptance fixture".into(),
+                    source: "Hypothetical SD interaction resolver".into(),
+                    scope: scope(&sd),
+                    precedence: 100,
+                    dependencies: Vec::new(),
+                    conflicts: Vec::new(),
+                },
+                rules: vec![RefinementRule {
+                    id: "rule.add-sd-auru-geometry".into(),
+                    label: "Add hypothetical SD Auru interaction resolver".into(),
+                    operation: RefinementOperation::AddResolver {
+                        resolver: hypothetical,
+                    },
+                    evidence: evidence(TruthStatus::Hypothetical),
+                }],
+            };
+            let composed = ComposedPlannerCatalog::compose_layered(
+                &facts(),
+                &base_mechanics,
+                &RefinementLayers {
+                    enabled_packs: Vec::new(),
+                    route_local_overlays: Vec::new(),
+                    ephemeral_what_if_overlays: vec![pack],
+                },
+            )
+            .unwrap();
+            let reached = ForwardSolver::new(
+                &composed.facts,
+                &composed.mechanics,
+                &[],
+                SolverOptions {
+                    evidence_policy: EvidencePolicy::RESEARCH,
+                    ..SolverOptions::default()
+                },
+            )
+            .unwrap()
+            .solve(PlannerExecutionState::new(sd).unwrap(), &item_goal(item_id))
+            .unwrap();
+            assert_eq!(reached.status, SearchStatus::Reached);
+            assert_eq!(
+                reached.steps[0].selected_resolver_ids,
+                vec!["resolver.sd-hypothetical-auru-geometry"]
+            );
+            assert_eq!(
+                reached.steps[0].action_id,
+                "transition.auru-generic-get-item"
+            );
+        }
+    }
+
+    #[test]
     fn unresolved_obstruction_returns_a_minimal_failure_witness() {
         let snapshot = snapshot();
         let mut mechanics = obstructed_transition_catalog(&snapshot);

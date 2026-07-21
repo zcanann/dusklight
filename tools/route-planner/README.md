@@ -31,7 +31,9 @@ The planner CLI currently owns twelve operations:
 - `extract-world` converts generic canonical world artifacts into conservative
   planner facts and unresolved physical obligations.
 - `inspect-state` exposes every live and serialized component store alongside
-  exact-context friendly aliases and derived fact evaluations.
+  exact-context friendly aliases and derived fact evaluations. It also retains
+  ordered operation/boundary history, reports the last known writer of each live
+  structured field, and groups set/clear history for every observed write gate.
 - `project-graph` emits a planner-native causal graph with typed relations and
   collapsible predicate regions and optional route-book plan regions; it does
   not use TAS timeline graph schemas.

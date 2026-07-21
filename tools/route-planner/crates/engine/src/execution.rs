@@ -13,13 +13,86 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v3";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v4";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterruptionRecord {
     pub action_id: String,
     pub window: TemporalWindow,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExecutionHistoryKind {
+    Operation {
+        operation: StateOperation,
+        affected_component_ids: Vec<String>,
+    },
+    BoundaryComponent {
+        policy_id: String,
+        boundary: crate::state::BoundaryKind,
+        component_id: String,
+        disposition: BoundaryDisposition,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExecutionHistoryEvent {
+    pub event_index: u64,
+    pub source_snapshot_sequence: u64,
+    pub application_id: String,
+    pub result_snapshot_id: String,
+    pub operation_index: u32,
+    pub event: ExecutionHistoryKind,
+}
+
+impl ExecutionHistoryEvent {
+    fn validate(&self) -> Result<(), PlannerContractError> {
+        match &self.event {
+            ExecutionHistoryKind::Operation {
+                operation,
+                affected_component_ids,
+            } => {
+                operation.validate()?;
+                let mut previous = None;
+                for component_id in affected_component_ids {
+                    validate_stable_id("execution_history.affected_component_ids", component_id)?;
+                    if previous.is_some_and(|prior: &str| prior >= component_id.as_str()) {
+                        return Err(PlannerContractError::new(
+                            "execution_history.affected_component_ids",
+                            "must be unique and sorted",
+                        ));
+                    }
+                    previous = Some(component_id.as_str());
+                }
+                Ok(())
+            }
+            ExecutionHistoryKind::BoundaryComponent {
+                policy_id,
+                boundary,
+                component_id,
+                disposition,
+            } => {
+                validate_stable_id("execution_history.policy_id", policy_id)?;
+                validate_stable_id("execution_history.component_id", component_id)?;
+                if let crate::state::BoundaryKind::Custom { id } = boundary {
+                    validate_stable_id("execution_history.boundary.id", id)?;
+                }
+                match disposition {
+                    BoundaryDisposition::Reinitialize { initializer_id } => {
+                        validate_stable_id("execution_history.initializer_id", initializer_id)
+                    }
+                    BoundaryDisposition::Serialize { owner }
+                    | BoundaryDisposition::Restore { owner } => validate_serialization_owner(owner),
+                    BoundaryDisposition::Preserve
+                    | BoundaryDisposition::Clear
+                    | BoundaryDisposition::Unknown => Ok(()),
+                }
+            }
+        }
+    }
 }
 
 /// Mutable search state that keeps non-save backing stores separate from the
@@ -33,6 +106,7 @@ pub struct PlannerExecutionState {
     pub preserved_component_ids: BTreeSet<String>,
     pub scheduled_cleanup_ids: BTreeSet<String>,
     pub interruption_log: Vec<InterruptionRecord>,
+    pub execution_history: Vec<ExecutionHistoryEvent>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +133,7 @@ pub struct PlannerExecutionStateDocument {
     pub preserved_component_ids: BTreeSet<String>,
     pub scheduled_cleanup_ids: BTreeSet<String>,
     pub interruption_log: Vec<InterruptionRecord>,
+    pub execution_history: Vec<ExecutionHistoryEvent>,
 }
 
 #[derive(Serialize)]
@@ -69,6 +144,7 @@ struct ExecutionStateIdentity<'a> {
     preserved_component_ids: &'a BTreeSet<String>,
     scheduled_cleanup_ids: &'a BTreeSet<String>,
     interruption_log: &'a [InterruptionRecord],
+    execution_history: &'a [ExecutionHistoryEvent],
 }
 
 #[derive(Serialize)]
@@ -86,6 +162,7 @@ impl PlannerExecutionState {
             preserved_component_ids: BTreeSet::new(),
             scheduled_cleanup_ids: BTreeSet::new(),
             interruption_log: Vec::new(),
+            execution_history: Vec::new(),
         };
         state.validate()?;
         Ok(state)
@@ -144,6 +221,55 @@ impl PlannerExecutionState {
             validate_stable_id("interruption_log.action_id", &interruption.action_id)?;
             interruption.window.validate()?;
         }
+        if self.execution_history.len() > 1_000_000 {
+            return Err(PlannerContractError::new(
+                "execution_history",
+                "must contain at most 1000000 events",
+            ));
+        }
+        let mut previous_group: Option<(u64, &str, &str, u32)> = None;
+        for (expected_index, event) in self.execution_history.iter().enumerate() {
+            if event.event_index != expected_index as u64 {
+                return Err(PlannerContractError::new(
+                    "execution_history.event_index",
+                    "must be contiguous and zero-based",
+                ));
+            }
+            validate_stable_id("execution_history.application_id", &event.application_id)?;
+            validate_stable_id(
+                "execution_history.result_snapshot_id",
+                &event.result_snapshot_id,
+            )?;
+            if event.source_snapshot_sequence > self.snapshot.sequence {
+                return Err(PlannerContractError::new(
+                    "execution_history.source_snapshot_sequence",
+                    "cannot exceed the current snapshot sequence",
+                ));
+            }
+            let same_group = previous_group.is_some_and(|(sequence, application, result, _)| {
+                sequence == event.source_snapshot_sequence
+                    && application == event.application_id
+                    && result == event.result_snapshot_id
+            });
+            if (same_group
+                && previous_group.is_some_and(|(_, _, _, operation_index)| {
+                    operation_index.checked_add(1) != Some(event.operation_index)
+                }))
+                || (!same_group && event.operation_index != 0)
+            {
+                return Err(PlannerContractError::new(
+                    "execution_history.operation_index",
+                    "must be contiguous and zero-based within each application",
+                ));
+            }
+            event.validate()?;
+            previous_group = Some((
+                event.source_snapshot_sequence,
+                &event.application_id,
+                &event.result_snapshot_id,
+                event.operation_index,
+            ));
+        }
         Ok(())
     }
 
@@ -160,6 +286,7 @@ impl PlannerExecutionState {
             preserved_component_ids: &self.preserved_component_ids,
             scheduled_cleanup_ids: &self.scheduled_cleanup_ids,
             interruption_log: &self.interruption_log,
+            execution_history: &self.execution_history,
         };
         Ok(Digest(Sha256::digest(canonical_json(&identity)?).into()))
     }
@@ -181,6 +308,7 @@ impl PlannerExecutionState {
             }
         }
         normalized.interruption_log.clear();
+        normalized.execution_history.clear();
         normalized.digest()
     }
 
@@ -201,6 +329,7 @@ impl PlannerExecutionState {
             preserved_component_ids: self.preserved_component_ids.clone(),
             scheduled_cleanup_ids: self.scheduled_cleanup_ids.clone(),
             interruption_log: self.interruption_log.clone(),
+            execution_history: self.execution_history.clone(),
         })
     }
 
@@ -214,9 +343,25 @@ impl PlannerExecutionState {
         validate_stable_id("result_snapshot_id", result_snapshot_id)?;
         let source_snapshot_sha256 = self.snapshot.digest()?;
         let mut next = self.clone();
-        for operation in operations {
+        for (operation_index, operation) in operations.iter().enumerate() {
             operation.validate()?;
+            let affected_component_ids = next.affected_component_ids(operation);
             next.apply_operation(application_id, operation)?;
+            next.push_history(
+                self.snapshot.sequence,
+                application_id,
+                result_snapshot_id,
+                u32::try_from(operation_index).map_err(|_| {
+                    PlannerContractError::new(
+                        "operations",
+                        "contains more operations than can be indexed",
+                    )
+                })?,
+                ExecutionHistoryKind::Operation {
+                    operation: operation.clone(),
+                    affected_component_ids,
+                },
+            )?;
         }
         next.snapshot.sequence = next.snapshot.sequence.checked_add(1).ok_or_else(|| {
             PlannerContractError::new("snapshot.sequence", "cannot advance past u64::MAX")
@@ -277,8 +422,12 @@ impl PlannerExecutionState {
             }
         }
 
+        let operation_count = dispositions.len();
         let mut resulting_components = Vec::new();
-        for (mut component, disposition) in dispositions {
+        for (operation_index, (mut component, disposition)) in dispositions.into_iter().enumerate()
+        {
+            let component_id = component.id.clone();
+            let history_disposition = disposition.clone();
             match disposition {
                 BoundaryDisposition::Preserve => {
                     mark_transition(&mut component, application_id);
@@ -317,6 +466,23 @@ impl PlannerExecutionState {
                     ));
                 }
             }
+            next.push_history(
+                self.snapshot.sequence,
+                application_id,
+                result_snapshot_id,
+                u32::try_from(operation_index).map_err(|_| {
+                    PlannerContractError::new(
+                        "boundary",
+                        "contains more component dispositions than can be indexed",
+                    )
+                })?,
+                ExecutionHistoryKind::BoundaryComponent {
+                    policy_id: policy.id.clone(),
+                    boundary: policy.boundary.clone(),
+                    component_id,
+                    disposition: history_disposition,
+                },
+            )?;
         }
         next.snapshot.environment.components = resulting_components;
         next.preserved_component_ids.clear();
@@ -331,8 +497,114 @@ impl PlannerExecutionState {
         Ok(OperationApplication {
             source_snapshot_sha256,
             result_snapshot_sha256,
-            operation_count: policy.component_rules.len(),
+            operation_count,
         })
+    }
+
+    pub fn last_field_writer(
+        &self,
+        component_id: &str,
+        field: &str,
+    ) -> Option<&ExecutionHistoryEvent> {
+        self.execution_history
+            .iter()
+            .rev()
+            .find(|event| history_event_writes_field(event, component_id, field))
+    }
+
+    pub fn gate_history(&self, gate_id: &str) -> Vec<&ExecutionHistoryEvent> {
+        self.execution_history
+            .iter()
+            .filter(|event| {
+                matches!(
+                    &event.event,
+                    ExecutionHistoryKind::Operation {
+                        operation: StateOperation::SetGate { gate_id: changed }
+                            | StateOperation::ClearGate { gate_id: changed },
+                        ..
+                    } if changed == gate_id
+                )
+            })
+            .collect()
+    }
+
+    fn push_history(
+        &mut self,
+        source_snapshot_sequence: u64,
+        application_id: &str,
+        result_snapshot_id: &str,
+        operation_index: u32,
+        event: ExecutionHistoryKind,
+    ) -> Result<(), PlannerContractError> {
+        let event_index = u64::try_from(self.execution_history.len()).map_err(|_| {
+            PlannerContractError::new("execution_history", "event index does not fit in u64")
+        })?;
+        self.execution_history.push(ExecutionHistoryEvent {
+            event_index,
+            source_snapshot_sequence,
+            application_id: application_id.into(),
+            result_snapshot_id: result_snapshot_id.into(),
+            operation_index,
+            event,
+        });
+        Ok(())
+    }
+
+    fn affected_component_ids(&self, operation: &StateOperation) -> Vec<String> {
+        let mut ids = match operation {
+            StateOperation::Write { target, .. }
+            | StateOperation::CopyValue { target, .. }
+            | StateOperation::SetBitFromValue { target, .. }
+            | StateOperation::Adjust { target, .. }
+            | StateOperation::ClearField { target } => vec![target.component_id.clone()],
+            StateOperation::WriteRaw { component_id, .. }
+            | StateOperation::InvalidateRaw { component_id, .. } => vec![component_id.clone()],
+            StateOperation::ClearComponent { selector }
+            | StateOperation::Preserve { selector }
+            | StateOperation::Serialize { selector, .. }
+            | StateOperation::Bind { selector, .. }
+            | StateOperation::Rebind { selector, .. } => {
+                self.matching_ids(selector).into_iter().collect()
+            }
+            StateOperation::Initialize { component } => vec![component.id.clone()],
+            StateOperation::Copy {
+                destination_component_id,
+                ..
+            }
+            | StateOperation::Restore {
+                destination_component_id,
+                ..
+            } => vec![destination_component_id.clone()],
+            StateOperation::Move {
+                source,
+                destination_component_id,
+                ..
+            } => {
+                let mut ids = self.matching_ids(source).into_iter().collect::<Vec<_>>();
+                ids.push(destination_component_id.clone());
+                ids
+            }
+            StateOperation::Project { component_ids, .. } => component_ids.clone(),
+            StateOperation::Consume {
+                pending_operation_id,
+            } => vec![pending_operation_id.clone()],
+            StateOperation::AdvanceFlow {
+                flow_component_id, ..
+            }
+            | StateOperation::BranchFlow {
+                flow_component_id, ..
+            } => vec![flow_component_id.clone()],
+            StateOperation::SetActiveRuntimeFile { .. }
+            | StateOperation::SetLocation { .. }
+            | StateOperation::SetGate { .. }
+            | StateOperation::ClearGate { .. }
+            | StateOperation::ScheduleCleanup { .. }
+            | StateOperation::CancelCleanup { .. }
+            | StateOperation::Interrupt { .. } => Vec::new(),
+        };
+        ids.sort();
+        ids.dedup();
+        ids
     }
 
     fn apply_operation(
@@ -932,6 +1204,7 @@ impl PlannerExecutionStateDocument {
             preserved_component_ids: self.preserved_component_ids,
             scheduled_cleanup_ids: self.scheduled_cleanup_ids,
             interruption_log: self.interruption_log,
+            execution_history: self.execution_history,
         };
         state.validate()?;
         Ok(state)
@@ -964,6 +1237,75 @@ fn selector_matches(selector: &ComponentSelector, component: &StateComponent) ->
         ComponentSelector::Id { component_id } => component.id == *component_id,
         ComponentSelector::Kind { component_kind } => component.component_kind == *component_kind,
         ComponentSelector::Binding { binding } => component.binding == *binding,
+    }
+}
+
+fn history_event_writes_field(
+    event: &ExecutionHistoryEvent,
+    component_id: &str,
+    field: &str,
+) -> bool {
+    match &event.event {
+        ExecutionHistoryKind::BoundaryComponent {
+            component_id: changed,
+            disposition,
+            ..
+        } => {
+            changed == component_id
+                && !matches!(
+                    disposition,
+                    BoundaryDisposition::Preserve | BoundaryDisposition::Unknown
+                )
+        }
+        ExecutionHistoryKind::Operation {
+            operation,
+            affected_component_ids,
+        } => match operation {
+            StateOperation::Write { target, .. }
+            | StateOperation::CopyValue { target, .. }
+            | StateOperation::SetBitFromValue { target, .. }
+            | StateOperation::Adjust { target, .. }
+            | StateOperation::ClearField { target } => {
+                target.component_id == component_id && target.field == field
+            }
+            StateOperation::AdvanceFlow {
+                flow_component_id, ..
+            } => flow_component_id == component_id && field == "node_id",
+            StateOperation::BranchFlow {
+                flow_component_id, ..
+            } => flow_component_id == component_id && matches!(field, "node_id" | "last_edge_id"),
+            StateOperation::Initialize { component } => component.id == component_id,
+            StateOperation::Copy {
+                destination_component_id,
+                ..
+            }
+            | StateOperation::Move {
+                destination_component_id,
+                ..
+            }
+            | StateOperation::Restore {
+                destination_component_id,
+                ..
+            } => destination_component_id == component_id,
+            StateOperation::ClearComponent { .. } => affected_component_ids
+                .binary_search_by(|id| id.as_str().cmp(component_id))
+                .is_ok(),
+            StateOperation::WriteRaw { .. }
+            | StateOperation::InvalidateRaw { .. }
+            | StateOperation::Preserve { .. }
+            | StateOperation::Serialize { .. }
+            | StateOperation::Bind { .. }
+            | StateOperation::Rebind { .. }
+            | StateOperation::SetActiveRuntimeFile { .. }
+            | StateOperation::SetLocation { .. }
+            | StateOperation::Project { .. }
+            | StateOperation::Consume { .. }
+            | StateOperation::SetGate { .. }
+            | StateOperation::ClearGate { .. }
+            | StateOperation::ScheduleCleanup { .. }
+            | StateOperation::CancelCleanup { .. }
+            | StateOperation::Interrupt { .. } => false,
+        },
     }
 }
 
@@ -1251,6 +1593,22 @@ mod tests {
             &StateValue::Unsigned(1)
         );
         assert_eq!(state.gate_states.get("gate.no-teleport"), Some(&true));
+        assert_eq!(state.execution_history.len(), 3);
+        let mut without_history = state.clone();
+        without_history.execution_history.clear();
+        assert_ne!(state.digest().unwrap(), without_history.digest().unwrap());
+        assert_eq!(
+            state.semantic_digest().unwrap(),
+            without_history.semantic_digest().unwrap()
+        );
+        assert_eq!(
+            state
+                .last_field_writer("save.main", "small_keys")
+                .unwrap()
+                .application_id,
+            "transition.enter-forest"
+        );
+        assert_eq!(state.gate_history("gate.no-teleport").len(), 1);
         assert_eq!(
             state
                 .snapshot
@@ -1269,9 +1627,78 @@ mod tests {
     }
 
     #[test]
+    fn held_writer_value_and_gate_history_remain_queryable_in_order() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        let return_place = ComponentFieldTarget {
+            component_id: "save.main".into(),
+            field: "player_return_place".into(),
+        };
+        state
+            .apply_operations(
+                "writer.return-place.ordon",
+                "snapshot.return-place.ordon",
+                &[StateOperation::Write {
+                    target: return_place.clone(),
+                    value: StateValue::Text("F_SP103:0:0:0".into()),
+                }],
+            )
+            .unwrap();
+        state
+            .apply_operations(
+                "gate.fanadi-lock.set",
+                "snapshot.fanadi-lock.set",
+                &[StateOperation::SetGate {
+                    gate_id: "gate.no-telop".into(),
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(
+            field(&state, "save.main", "player_return_place"),
+            &StateValue::Text("F_SP103:0:0:0".into())
+        );
+        assert_eq!(
+            state
+                .last_field_writer("save.main", "player_return_place")
+                .unwrap()
+                .application_id,
+            "writer.return-place.ordon"
+        );
+        let gate_history = state.gate_history("gate.no-telop");
+        assert_eq!(gate_history.len(), 1);
+        assert_eq!(gate_history[0].application_id, "gate.fanadi-lock.set");
+
+        state
+            .apply_operations(
+                "gate.fanadi-lock.release-and-write",
+                "snapshot.fanadi-lock.released",
+                &[
+                    StateOperation::ClearGate {
+                        gate_id: "gate.no-telop".into(),
+                    },
+                    StateOperation::Write {
+                        target: return_place,
+                        value: StateValue::Text("R_SP109:0:0:0".into()),
+                    },
+                ],
+            )
+            .unwrap();
+        assert_eq!(state.gate_history("gate.no-telop").len(), 2);
+        let last_writer = state
+            .last_field_writer("save.main", "player_return_place")
+            .unwrap();
+        assert_eq!(
+            last_writer.application_id,
+            "gate.fanadi-lock.release-and-write"
+        );
+        assert_eq!(last_writer.operation_index, 1);
+    }
+
+    #[test]
     fn recent_item_survives_file_load_and_drives_generic_inventory_grant() {
-        const ROD_ITEM_ID: u64 = 42;
-        const MEMO_ITEM_ID: u64 = 7;
+        // dItemNo_FISHING_ROD_1_e and dItemNo_RAFRELS_MEMO_e.
+        const ROD_ITEM_ID: u64 = 0x4a;
+        const MEMO_ITEM_ID: u64 = 0x90;
 
         let mut source = snapshot();
         let mut recent_item = structured_component(
