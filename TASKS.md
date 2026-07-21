@@ -848,8 +848,13 @@ PAD and gameplay sequence as ordinary playback.
     button bits and bounded duration. It derives press/release edges relative
     to the preceding held state, exposes Cartesian and polar stick features,
     rejects controller transport/error state, and compresses/re-expands raw
-    frame sequences exactly. Policy-output parameterization and native online
-    execution through this schema remain open.
+    frame sequences exactly. Native online execution through this schema
+    remains open.
+  - [x] Add a continuous factorized policy head with independent bounded main
+    stick, camera stick, analog, button-logit and duration outputs. Quantization
+    reaches every native byte extreme, zero output is a one-frame neutral PAD,
+    nonfinite/detached rows fail closed, and the head configuration has its own
+    schema identity. Native online execution through the head remains open.
 - [ ] Let a policy invoke bounded stateful tactics through the same native
   episode boundary. Tactics may query read-only world state, but their exact
   consumed PAD and every intermediate transition must be recorded.

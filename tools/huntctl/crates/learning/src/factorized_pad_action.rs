@@ -14,6 +14,8 @@ use std::fmt;
 pub const FACTORIZED_PAD_ACTION_SCHEMA_V1: &str = "dusklight-factorized-pad-action/v1";
 pub const FACTORIZED_PAD_FEATURE_SCHEMA_V1: &str = "dusklight-factorized-pad-features/v1";
 pub const FACTORIZED_PAD_FEATURE_WIDTH: usize = 33;
+pub const FACTORIZED_PAD_POLICY_HEAD_SCHEMA_V1: &str = "dusklight-factorized-pad-policy-head/v1";
+pub const FACTORIZED_PAD_POLICY_HEAD_WIDTH: usize = 25;
 pub const MAX_FACTORIZED_PAD_DURATION: u32 = 4096;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -166,6 +168,88 @@ pub struct ButtonEdges {
     pub held: u16,
 }
 
+/// Interpretation of one continuous policy-output row. Stick channels use
+/// `[-1, 1]`, analog and duration channels use `[0, 1]`, and buttons use logits
+/// with a strict `> threshold` decision. Finite values outside a bounded channel
+/// saturate; NaN and infinities fail closed.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct FactorizedPadPolicyHead {
+    pub maximum_duration_ticks: u32,
+    pub button_logit_threshold: f32,
+}
+
+impl Default for FactorizedPadPolicyHead {
+    fn default() -> Self {
+        Self {
+            maximum_duration_ticks: 1,
+            button_logit_threshold: 0.0,
+        }
+    }
+}
+
+impl FactorizedPadPolicyHead {
+    pub fn validate(&self) -> Result<(), FactorizedPadActionError> {
+        if self.maximum_duration_ticks == 0
+            || self.maximum_duration_ticks > MAX_FACTORIZED_PAD_DURATION
+            || !self.button_logit_threshold.is_finite()
+        {
+            return Err(FactorizedPadActionError::InvalidPolicyHead);
+        }
+        Ok(())
+    }
+
+    pub fn decode(&self, output: &[f32]) -> Result<FactorizedPadAction, FactorizedPadActionError> {
+        self.validate()?;
+        if output.len() != FACTORIZED_PAD_POLICY_HEAD_WIDTH
+            || output.iter().any(|value| !value.is_finite())
+        {
+            return Err(FactorizedPadActionError::InvalidPolicyOutput);
+        }
+        let mut buttons = 0_u16;
+        for bit in 0..16 {
+            if output[8 + bit] > self.button_logit_threshold {
+                buttons |= 1 << bit;
+            }
+        }
+        let duration_ticks = if self.maximum_duration_ticks == 1 {
+            1
+        } else {
+            (output[24].clamp(0.0, 1.0) * (self.maximum_duration_ticks - 1) as f32).round() as u32
+                + 1
+        };
+        let action = FactorizedPadAction {
+            schema: FACTORIZED_PAD_ACTION_SCHEMA_V1.into(),
+            main_stick: StickBytes {
+                x: quantize_signed_axis(output[0]),
+                y: quantize_signed_axis(output[1]),
+            },
+            camera_stick: StickBytes {
+                x: quantize_signed_axis(output[2]),
+                y: quantize_signed_axis(output[3]),
+            },
+            trigger_left: quantize_unit_byte(output[4]),
+            trigger_right: quantize_unit_byte(output[5]),
+            analog_a: quantize_unit_byte(output[6]),
+            analog_b: quantize_unit_byte(output[7]),
+            buttons,
+            duration_ticks,
+        };
+        action.validate()?;
+        Ok(action)
+    }
+
+    pub fn schema_sha256(&self) -> Result<[u8; 32], FactorizedPadActionError> {
+        self.validate()?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"dusklight.factorized-pad-policy-head/v1\0");
+        hasher.update(FACTORIZED_PAD_POLICY_HEAD_SCHEMA_V1.as_bytes());
+        hasher.update((FACTORIZED_PAD_POLICY_HEAD_WIDTH as u32).to_le_bytes());
+        hasher.update(self.maximum_duration_ticks.to_le_bytes());
+        hasher.update(self.button_logit_threshold.to_bits().to_le_bytes());
+        Ok(hasher.finalize().into())
+    }
+}
+
 pub fn expand_actions(
     actions: &[FactorizedPadAction],
 ) -> Result<Vec<NativeRawPad>, FactorizedPadActionError> {
@@ -232,12 +316,27 @@ fn signed_byte_unit(value: i8) -> f32 {
     }
 }
 
+fn quantize_signed_axis(value: f32) -> i8 {
+    let value = value.clamp(-1.0, 1.0);
+    if value < 0.0 {
+        (value * 128.0).round() as i8
+    } else {
+        (value * 127.0).round() as i8
+    }
+}
+
+fn quantize_unit_byte(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FactorizedPadActionError {
     InvalidAction,
     UnavailablePad,
     InvalidFrameSequence,
     ExpansionTooLarge,
+    InvalidPolicyHead,
+    InvalidPolicyOutput,
 }
 
 impl fmt::Display for FactorizedPadActionError {
@@ -250,6 +349,10 @@ impl fmt::Display for FactorizedPadActionError {
             Self::InvalidFrameSequence => formatter.write_str("invalid raw PAD frame sequence"),
             Self::ExpansionTooLarge => {
                 formatter.write_str("factorized PAD expansion exceeds its bounded frame budget")
+            }
+            Self::InvalidPolicyHead => formatter.write_str("invalid factorized PAD policy head"),
+            Self::InvalidPolicyOutput => {
+                formatter.write_str("invalid factorized PAD policy output")
             }
         }
     }
@@ -329,6 +432,62 @@ mod tests {
         assert_eq!(
             FactorizedPadAction::neutral(MAX_FACTORIZED_PAD_DURATION + 1),
             Err(FactorizedPadActionError::InvalidAction)
+        );
+    }
+
+    #[test]
+    fn zero_policy_output_is_one_frame_of_neutral_pad() {
+        let head = FactorizedPadPolicyHead {
+            maximum_duration_ticks: 32,
+            ..FactorizedPadPolicyHead::default()
+        };
+        let action = head
+            .decode(&[0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH])
+            .unwrap();
+        assert_eq!(action, FactorizedPadAction::neutral(1).unwrap());
+        assert_ne!(head.schema_sha256().unwrap(), [0; 32]);
+    }
+
+    #[test]
+    fn policy_head_reaches_every_channel_extreme_and_independent_button_bit() {
+        let head = FactorizedPadPolicyHead {
+            maximum_duration_ticks: MAX_FACTORIZED_PAD_DURATION,
+            button_logit_threshold: 0.25,
+        };
+        let mut output = [0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH];
+        output[0] = -4.0;
+        output[1] = 4.0;
+        output[2] = 1.0;
+        output[3] = -1.0;
+        output[4] = -2.0;
+        output[5] = 2.0;
+        output[6] = 1.0;
+        output[7] = 0.5;
+        output[8 + 11] = 0.250_001;
+        output[24] = 3.0;
+        let action = head.decode(&output).unwrap();
+        assert_eq!(action.main_stick, StickBytes { x: -128, y: 127 });
+        assert_eq!(action.camera_stick, StickBytes { x: 127, y: -128 });
+        assert_eq!(action.trigger_left, 0);
+        assert_eq!(action.trigger_right, 255);
+        assert_eq!(action.analog_a, 255);
+        assert_eq!(action.analog_b, 128);
+        assert_eq!(action.buttons, 1 << 11);
+        assert_eq!(action.duration_ticks, MAX_FACTORIZED_PAD_DURATION);
+    }
+
+    #[test]
+    fn policy_head_rejects_nonfinite_or_detached_rows() {
+        let head = FactorizedPadPolicyHead::default();
+        assert_eq!(
+            head.decode(&[0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH - 1]),
+            Err(FactorizedPadActionError::InvalidPolicyOutput)
+        );
+        let mut output = [0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH];
+        output[3] = f32::NAN;
+        assert_eq!(
+            head.decode(&output),
+            Err(FactorizedPadActionError::InvalidPolicyOutput)
         );
     }
 }
