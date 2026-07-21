@@ -373,6 +373,28 @@ struct ObservationFixture {
         observation.processLifecycle.activeActorCount = 1;
         observation.processLifecycle.pendingCreateCount = 2;
         observation.processLifecycle.pendingDeleteCount = 3;
+        observation.attentionCandidates.status = MilestoneObservation::ChannelStatus::Present;
+        observation.attentionCandidates.playerAttentionFlags = 0x1234;
+        observation.attentionCandidates.attentionStatus = 2;
+        observation.attentionCandidates.attentionBlockTimer = 3;
+        observation.attentionCandidates.lockCount = 1;
+        observation.attentionCandidates.lockCandidates[0].actor.status =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.attentionCandidates.lockCandidates[0].actor.identity =
+            observation.messageSession.talkActor;
+        observation.attentionCandidates.lockCandidates[0].weight = 0.25F;
+        observation.attentionCandidates.lockCandidates[0].distance = 80.0F;
+        observation.attentionCandidates.lockCandidates[0].angle = -0x100;
+        observation.attentionCandidates.lockCandidates[0].type = 1;
+        observation.attentionCandidates.actionCount = 1;
+        observation.attentionCandidates.actionCandidates[0].actor.status =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.attentionCandidates.actionCandidates[0].actor.identity =
+            observation.messageSession.talkActor;
+        observation.attentionCandidates.actionCandidates[0].weight = 0.5F;
+        observation.attentionCandidates.actionCandidates[0].distance = 90.0F;
+        observation.attentionCandidates.actionCandidates[0].angle = 0x200;
+        observation.attentionCandidates.actionCandidates[0].type = 6;
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -861,6 +883,41 @@ void test_process_lifecycle_fails_closed() {
     REQUIRE(error.find("inconsistent process-lifecycle state") != std::string::npos);
 }
 
+void test_attention_candidates_fail_closed() {
+    ObservationFixture fixture;
+    fixture.observation.attentionCandidates.actionCandidates[0].actor.identity.actorName = 0x124;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent attention-candidate state") != std::string::npos);
+
+    ObservationFixture invalidCount;
+    invalidCount.observation.attentionCandidates.actionCount = 5;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, invalidCount.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent attention-candidate state") != std::string::npos);
+
+    ObservationFixture invalidType;
+    invalidType.observation.attentionCandidates.lockCandidates[0].type =
+        MilestoneObservation::AttentionCandidateState::AttentionTypeCount;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, invalidType.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent attention-candidate state") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -962,6 +1019,7 @@ int main(const int argc, char** argv) {
     test_message_session_fails_closed();
     test_event_queue_fails_closed();
     test_process_lifecycle_fails_closed();
+    test_attention_candidates_fail_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

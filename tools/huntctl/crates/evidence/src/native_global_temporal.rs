@@ -370,6 +370,15 @@ fn record_transition(
         before.process_lifecycle.as_ref(),
         after.process_lifecycle.as_ref()
     );
+    record!(
+        "attention_candidates.status",
+        before.attention_candidates_status != after.attention_candidates_status
+    );
+    record_optional!(
+        "attention_candidates.value",
+        before.attention_candidates.as_ref(),
+        after.attention_candidates.as_ref()
+    );
 }
 
 pub fn inspect_global_temporal_coverage(shards: &[NativeEpisodeShard]) -> GlobalTemporalCoverage {
@@ -501,5 +510,28 @@ mod tests {
             report.fields["process_lifecycle.value"].missing_pairs,
             report.transition_count
         );
+    }
+
+    #[test]
+    fn reports_attention_candidate_changes_without_selecting_an_actor() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v20.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .attention_candidates
+            .as_mut()
+            .unwrap()
+            .action_candidates[0]
+            .distance += 1.0;
+
+        let report = inspect_global_temporal_coverage(&[shard]);
+        assert_eq!(
+            report.fields["attention_candidates.value"].compared_pairs,
+            1
+        );
+        assert_eq!(report.fields["attention_candidates.value"].changed_pairs, 1);
     }
 }

@@ -77,6 +77,10 @@ fn golden_v19() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v19.dseps")
 }
 
+fn golden_v20() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v20.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -1020,6 +1024,59 @@ fn decodes_v19_process_lifecycle_pressure_with_legacy_missingness() {
 }
 
 #[test]
+fn decodes_v20_pointer_free_attention_candidate_lists() {
+    let shard = NativeEpisodeShard::decode(golden_v20()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V20
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(
+            observation.attention_candidates_status,
+            NativeChannelStatus::Present
+        );
+        let attention = observation.attention_candidates.as_ref().unwrap();
+        assert_eq!(attention.player_attention_flags, 0x1234);
+        assert_eq!(attention.attention_status, 2);
+        assert_eq!(attention.attention_block_timer, 3);
+        assert_eq!(attention.lock_candidates.len(), 1);
+        assert_eq!(attention.action_candidates.len(), 1);
+        assert!(attention.check_candidates.is_empty());
+        assert_eq!(attention.lock_candidates[0].weight, 0.25);
+        assert_eq!(attention.lock_candidates[0].distance, 80.0);
+        assert_eq!(attention.lock_candidates[0].angle, -0x100);
+        assert_eq!(attention.lock_candidates[0].attention_type, 1);
+        assert_eq!(
+            attention.lock_candidates[0]
+                .actor
+                .actor
+                .as_ref()
+                .unwrap()
+                .runtime_generation,
+            7
+        );
+        assert_eq!(attention.action_candidates[0].attention_type, 6);
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v19()).unwrap();
+    assert!(legacy.episodes.iter().all(|episode| {
+        episode.steps.iter().all(|step| {
+            [&step.pre_input, &step.post_simulation]
+                .into_iter()
+                .all(|observation| {
+                    observation.attention_candidates_status == NativeChannelStatus::NotSampled
+                        && observation.attention_candidates.is_none()
+                })
+        })
+    }));
+}
+
+#[test]
 fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
     let unknown_type = mutate_first_v18_episode(|expanded| {
         let queue = first_v18_event_queue_offset(expanded);
@@ -1230,6 +1287,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V17
                             | LEARNING_OBSERVATION_SCHEMA_V18
                             | LEARNING_OBSERVATION_SCHEMA_V19
+                            | LEARNING_OBSERVATION_SCHEMA_V20
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1276,6 +1334,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V17
             | LEARNING_OBSERVATION_SCHEMA_V18
             | LEARNING_OBSERVATION_SCHEMA_V19
+            | LEARNING_OBSERVATION_SCHEMA_V20
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

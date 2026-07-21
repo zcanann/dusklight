@@ -3,7 +3,8 @@
 use crate::artifact::Digest;
 use crate::identity::RuntimeConfiguration;
 use crate::native_observation::{
-    NativeChannelStatus, NativeEventActorReferenceObservation, NativeEventHandoffObservation,
+    NativeAttentionCandidateObservation, NativeAttentionCandidatesObservation, NativeChannelStatus,
+    NativeEventActorReferenceObservation, NativeEventHandoffObservation,
     NativeEventQueueObservation, NativeLearningObservation, NativeMessageSessionObservation,
     NativePlayerResourcesObservation,
 };
@@ -337,6 +338,22 @@ pub fn snapshot_native_observation(
         ComponentKind::PendingOperation,
         observation.event_queue_status,
         observation.event_queue.as_ref().map(event_queue_fields),
+        ComponentBinding::Session {
+            session_id: context.session_id.clone(),
+        },
+        SemanticLifetime::Action,
+        SerializationOwner::None,
+        &provenance,
+    );
+    push_statused_structured(
+        &mut components,
+        "attention-candidates",
+        ComponentKind::PendingOperation,
+        observation.attention_candidates_status,
+        observation
+            .attention_candidates
+            .as_ref()
+            .map(attention_candidate_fields),
         ComponentBinding::Session {
             session_id: context.session_id.clone(),
         },
@@ -847,6 +864,79 @@ fn event_queue_fields(value: &NativeEventQueueObservation) -> BTreeMap<String, S
     output
 }
 
+fn attention_candidate_fields(
+    value: &NativeAttentionCandidatesObservation,
+) -> BTreeMap<String, StateValue> {
+    let mut output = fields([
+        (
+            "player_attention_flags",
+            StateValue::Unsigned(value.player_attention_flags.into()),
+        ),
+        (
+            "attention_status",
+            StateValue::Unsigned(value.attention_status.into()),
+        ),
+        (
+            "attention_block_timer",
+            StateValue::Signed(value.attention_block_timer.into()),
+        ),
+        (
+            "lock_offset",
+            StateValue::Unsigned(value.lock_offset.into()),
+        ),
+        (
+            "action_offset",
+            StateValue::Unsigned(value.action_offset.into()),
+        ),
+        (
+            "check_offset",
+            StateValue::Unsigned(value.check_offset.into()),
+        ),
+    ]);
+    for (list_name, candidates) in [
+        ("lock", value.lock_candidates.as_slice()),
+        ("action", value.action_candidates.as_slice()),
+        ("check", value.check_candidates.as_slice()),
+    ] {
+        output.insert(
+            format!("{list_name}.count"),
+            StateValue::Unsigned(candidates.len() as u64),
+        );
+        for (index, candidate) in candidates.iter().enumerate() {
+            append_attention_candidate_fields(
+                &mut output,
+                &format!("{list_name}.{index}"),
+                candidate,
+            );
+        }
+    }
+    output
+}
+
+fn append_attention_candidate_fields(
+    output: &mut BTreeMap<String, StateValue>,
+    prefix: &str,
+    candidate: &NativeAttentionCandidateObservation,
+) {
+    output.insert(
+        format!("{prefix}.weight_f32_bits"),
+        StateValue::Unsigned(candidate.weight.to_bits().into()),
+    );
+    output.insert(
+        format!("{prefix}.distance_f32_bits"),
+        StateValue::Unsigned(candidate.distance.to_bits().into()),
+    );
+    output.insert(
+        format!("{prefix}.angle"),
+        StateValue::Signed(candidate.angle.into()),
+    );
+    output.insert(
+        format!("{prefix}.attention_type"),
+        StateValue::Unsigned(candidate.attention_type.into()),
+    );
+    event_actor_reference_fields(output, &format!("{prefix}.actor"), &candidate.actor);
+}
+
 fn player_resource_fields(
     value: &NativePlayerResourcesObservation,
 ) -> BTreeMap<String, StateValue> {
@@ -929,7 +1019,8 @@ mod tests {
     use super::*;
     use crate::identity::RUNTIME_CONFIGURATION_SCHEMA;
     use crate::native_observation::{
-        NativeActorIdentity, NativeActorObservation, NativeEventActorReferenceObservation,
+        NativeActorIdentity, NativeActorObservation, NativeAttentionCandidateObservation,
+        NativeAttentionCandidatesObservation, NativeEventActorReferenceObservation,
         NativeEventQueueObservation, NativeMessageFlowObservation,
         NativePendingEventOrderObservation, NativePhysicalSlotObservation,
         NativePlayerActionObservation, NativePlayerRelationshipsObservation,
@@ -1056,6 +1147,27 @@ mod tests {
                     status: NativeChannelStatus::Absent,
                     actor: None,
                 },
+                ..Default::default()
+            }),
+            attention_candidates_status: NativeChannelStatus::Present,
+            attention_candidates: Some(NativeAttentionCandidatesObservation {
+                player_attention_flags: 0x1234,
+                attention_status: 2,
+                attention_block_timer: 3,
+                action_candidates: vec![NativeAttentionCandidateObservation {
+                    actor: NativeEventActorReferenceObservation {
+                        status: NativeChannelStatus::Present,
+                        actor: Some(NativeActorIdentity {
+                            present: true,
+                            runtime_generation: 42,
+                            actor_name: 0x123,
+                        }),
+                    },
+                    weight: 0.5,
+                    distance: 90.0,
+                    angle: 0x200,
+                    attention_type: 6,
+                }],
                 ..Default::default()
             }),
             actors: vec![NativeActorObservation {
@@ -1205,6 +1317,32 @@ mod tests {
         assert_eq!(
             fields["pending.0.target_actor.status"],
             StateValue::Text("absent".into())
+        );
+    }
+
+    #[test]
+    fn projects_attention_candidates_without_selecting_one() {
+        let snapshot = snapshot_native_observation(&observation(), context(1)).unwrap();
+        let attention = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "attention-candidates")
+            .unwrap();
+        assert_eq!(attention.component_kind, ComponentKind::PendingOperation);
+        let ComponentPayload::Structured { fields } = &attention.payload else {
+            panic!("attention candidates must be structured");
+        };
+        assert_eq!(fields["capture_status"], StateValue::Text("present".into()));
+        assert_eq!(fields["action.count"], StateValue::Unsigned(1));
+        assert_eq!(fields["action.0.attention_type"], StateValue::Unsigned(6));
+        assert_eq!(
+            fields["action.0.actor.runtime_generation"],
+            StateValue::Unsigned(42)
+        );
+        assert_eq!(
+            fields["action.0.distance_f32_bits"],
+            StateValue::Unsigned(90.0_f32.to_bits().into())
         );
     }
 

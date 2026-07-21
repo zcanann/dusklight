@@ -622,6 +622,108 @@ bool append_process_lifecycle_state(std::vector<std::uint8_t>& output,
     return true;
 }
 
+bool append_attention_candidate_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    using Attention = MilestoneObservation::AttentionCandidateState;
+    using Reference = MilestoneObservation::EventQueueState::ActorReference;
+    const auto& attention = observation.attentionCandidates;
+    const bool statusValid =
+        observation.playerPresent ?
+            (attention.status == Status::Present || attention.status == Status::Unavailable) :
+            attention.status == Status::Absent;
+    const auto countOffsetValid = [](const std::uint8_t count, const std::uint8_t offset,
+                                      const std::size_t capacity) {
+        return count <= capacity && ((count == 0 && offset == 0) || (count != 0 && offset < count));
+    };
+    const auto joined = [&](const MilestoneObservation::ActorIdentity& identity) {
+        if (!identity.present)
+            return false;
+        const auto found = std::ranges::lower_bound(observation.actors, identity.runtimeGeneration,
+            {}, &MilestoneObservation::Actor::runtimeGeneration);
+        return found != observation.actors.end() &&
+               found->runtimeGeneration == identity.runtimeGeneration &&
+               found->actorName == identity.actorName && found->setId == identity.setId &&
+               found->homeRoom == identity.homeRoom && found->currentRoom == identity.currentRoom &&
+               identity.homePositionPresent && found->homePositionX == identity.homePositionX &&
+               found->homePositionY == identity.homePositionY &&
+               found->homePositionZ == identity.homePositionZ;
+    };
+    const auto candidateValid = [&](const Attention::Candidate& candidate, const bool retained) {
+        if (!retained)
+            return candidate.actor.status == Status::NotSampled &&
+                   !candidate.actor.identity.present && candidate.weight == 0.0F &&
+                   candidate.distance == 0.0F && candidate.angle == 0 && candidate.type == 0;
+        return candidate.actor.status == Status::Present && joined(candidate.actor.identity) &&
+               std::isfinite(candidate.weight) && std::isfinite(candidate.distance) &&
+               candidate.distance >= 0.0F && candidate.type < Attention::AttentionTypeCount;
+    };
+    const auto listValid = [&](const auto& list, const std::uint8_t count) {
+        for (std::size_t index = 0; index < list.size(); ++index) {
+            if (!candidateValid(list[index], index < count))
+                return false;
+        }
+        return true;
+    };
+    const bool channelPresent = attention.status == Status::Present;
+    const bool countsValid = countOffsetValid(attention.lockCount, attention.lockOffset,
+                                 Attention::MaximumLockCandidates) &&
+                             countOffsetValid(attention.actionCount, attention.actionOffset,
+                                 Attention::MaximumActionCandidates) &&
+                             countOffsetValid(attention.checkCount, attention.checkOffset,
+                                 Attention::MaximumCheckCandidates);
+    const bool payloadEmpty =
+        attention.playerAttentionFlags == 0 && attention.attentionStatus == 0 &&
+        attention.attentionBlockTimer == 0 && attention.lockCount == 0 &&
+        attention.lockOffset == 0 && attention.actionCount == 0 && attention.actionOffset == 0 &&
+        attention.checkCount == 0 && attention.checkOffset == 0;
+    if (!statusValid || !countsValid ||
+        (channelPresent && (!listValid(attention.lockCandidates, attention.lockCount) ||
+                               !listValid(attention.actionCandidates, attention.actionCount) ||
+                               !listValid(attention.checkCandidates, attention.checkCount))) ||
+        (!channelPresent && (!payloadEmpty || !listValid(attention.lockCandidates, 0) ||
+                                !listValid(attention.actionCandidates, 0) ||
+                                !listValid(attention.checkCandidates, 0))))
+    {
+        error = "learning observation has inconsistent attention-candidate state";
+        return false;
+    }
+
+    append_integer(output, static_cast<std::uint8_t>(attention.status));
+    append_integer(output, attention.attentionStatus);
+    append_integer(output, attention.lockCount);
+    append_integer(output, attention.lockOffset);
+    append_integer(output, attention.actionCount);
+    append_integer(output, attention.actionOffset);
+    append_integer(output, attention.checkCount);
+    append_integer(output, attention.checkOffset);
+    append_integer(output, attention.playerAttentionFlags);
+    append_integer(output, attention.attentionBlockTimer);
+    const auto appendReference = [&](const Reference& reference) {
+        append_integer(output, static_cast<std::uint8_t>(reference.status));
+        append_integer<std::uint8_t>(output, 0);
+        append_integer<std::uint16_t>(output, 0);
+        return append_actor_identity(output, reference.identity, error);
+    };
+    const auto appendList = [&](const auto& list, const std::uint8_t count) {
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto& candidate = list[index];
+            if (!append_float(output, candidate.weight, error) ||
+                !append_float(output, candidate.distance, error))
+                return false;
+            append_integer(output, candidate.angle);
+            append_integer<std::uint16_t>(output, 0);
+            append_integer(output, candidate.type);
+            if (!appendReference(candidate.actor))
+                return false;
+        }
+        return true;
+    };
+    return appendList(attention.lockCandidates, attention.lockCount) &&
+           appendList(attention.actionCandidates, attention.actionCount) &&
+           appendList(attention.checkCandidates, attention.checkCount);
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -1223,9 +1325,10 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     }
     if (!append_planner_runtime_state(output, observation, error) ||
         !append_message_session_state(output, observation, error) ||
-        !append_event_queue_state(output, observation, error))
+        !append_event_queue_state(output, observation, error) ||
+        !append_process_lifecycle_state(output, observation, error))
         return false;
-    return append_process_lifecycle_state(output, observation, error);
+    return append_attention_candidate_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

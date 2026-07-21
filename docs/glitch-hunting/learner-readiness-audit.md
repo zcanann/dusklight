@@ -21,8 +21,13 @@ contacts, static geometry, complete active actors, actor identity/kinematics,
 base actor state, attention/event participation, complete dynamic collision
 shapes, eleven pointer-free Link-rooted actor relationships, Link's cached
 background-collision solver modes and work geometry, the global message
-session, and the bounded priority-ordered event request/participant graph.
-These are evidence channels, not prescribed model inputs.
+session, the bounded priority-ordered event request/participant graph, and the
+ordinary attention pass's pointer-free lock/action/check candidate lists with
+their rank, type, weight, distance and angle. The candidate lists are also
+available to the shared complete-actor-set encoder through explicit masks;
+they do not prescribe which actor to target or which input to use. Other items
+in this baseline remain evidence channels unless separately promoted through
+learner evaluation.
 
 The audit uses these controlled capability names:
 
@@ -37,7 +42,9 @@ The audit uses these controlled capability names:
 - **typed actor state**: actor-specific action, animation phase, timers and
   state-machine values, explicitly masked outside the matching actor type;
 - **relationships**: targeting, ownership, attachment, carried/held and
-  projectile-to-actor links expressed without pointers;
+  projectile-to-actor links expressed without pointers. Ordinary attention
+  candidate eligibility is captured and joined to actor nodes; retained or
+  item-specific target queues remain incomplete;
 - **item/projectile state**: typed lifecycle, trajectory, collision and item
   action state;
 - **event/loading state**: the message session and pending generic event

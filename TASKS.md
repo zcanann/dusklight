@@ -325,6 +325,20 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     desired outcome is encoded. Collision-backed exits and profile-specific
     volume/guard interpretation for inactive authored trigger placements remain
     part of the open parent audit.
+  - [x] Retain the ordinary attention pass's complete bounded lock, action and
+    check candidate lists as pointer-free learner evidence. Observation v20
+    preserves list order, offsets, candidate type, weight, distance and angle,
+    plus the player attention flags/status/block timer; every present candidate
+    must join the complete actor population by stable runtime generation.
+    Corpus-inspection v10 and generic temporal coverage distinguish channel
+    absence from present-but-empty lists and report value changes. The shared
+    complete-set learner adapter v3 now joins each list independently onto
+    every actor node with explicit membership and value masks, so legacy or
+    unavailable data cannot masquerade as a negative candidate. The generated
+    cross-language fixture is
+    `7e05f3fd629139387af0b9b27a3798dd5e7ef36342dda2a3e9bae0f0eeaae922`.
+    This exposes eligibility state only: it does not choose a target, prescribe
+    input timing, encode a route or define a reward.
   - [x] Carry the complete immutable authored-placement population into the
     world-bound learner artifact instead of exposing only active processes and
     nearby collision. Geometry view v4 stores every ACT*/SCO*/TRES placement

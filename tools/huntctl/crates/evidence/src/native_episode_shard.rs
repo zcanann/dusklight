@@ -39,6 +39,7 @@ const OBSERVATION_VERSION_V16: u16 = 16;
 const OBSERVATION_VERSION_V17: u16 = 17;
 const OBSERVATION_VERSION_V18: u16 = 18;
 const OBSERVATION_VERSION_V19: u16 = 19;
+const OBSERVATION_VERSION_V20: u16 = 20;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -57,6 +58,7 @@ pub use collision_solver::{
 #[path = "native_episode_planner.rs"]
 mod planner;
 pub use planner::{
+    NativeAttentionCandidateObservation, NativeAttentionCandidatesObservation,
     NativeEventActorReferenceObservation, NativeEventHandoffObservation,
     NativeEventQueueObservation, NativeMessageFlowObservation, NativeMessageSessionObservation,
     NativePendingEventOrderObservation, NativePhysicalSlotObservation,
@@ -84,6 +86,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V16: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V17: &str = "dusklight-learning-observation/v17";
 pub const LEARNING_OBSERVATION_SCHEMA_V18: &str = "dusklight-learning-observation/v18";
 pub const LEARNING_OBSERVATION_SCHEMA_V19: &str = "dusklight-learning-observation/v19";
+pub const LEARNING_OBSERVATION_SCHEMA_V20: &str = "dusklight-learning-observation/v20";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -696,6 +699,8 @@ pub struct NativeLearningObservation {
     pub event_queue: Option<NativeEventQueueObservation>,
     pub process_lifecycle_status: NativeChannelStatus,
     pub process_lifecycle: Option<NativeProcessLifecycleObservation>,
+    pub attention_candidates_status: NativeChannelStatus,
+    pub attention_candidates: Option<NativeAttentionCandidatesObservation>,
 }
 
 #[derive(Debug)]
@@ -767,6 +772,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V17
                 | OBSERVATION_VERSION_V18
                 | OBSERVATION_VERSION_V19
+                | OBSERVATION_VERSION_V20
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -900,6 +906,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V17 => LEARNING_OBSERVATION_SCHEMA_V17,
         OBSERVATION_VERSION_V18 => LEARNING_OBSERVATION_SCHEMA_V18,
         OBSERVATION_VERSION_V19 => LEARNING_OBSERVATION_SCHEMA_V19,
+        OBSERVATION_VERSION_V20 => LEARNING_OBSERVATION_SCHEMA_V20,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1714,6 +1721,108 @@ fn decode_event_queue(
     ))
 }
 
+fn decode_attention_candidate(
+    reader: &mut Reader<'_>,
+) -> Result<NativeAttentionCandidateObservation, NativeEpisodeShardError> {
+    let weight = reader.f32()?;
+    let distance = reader.f32()?;
+    let angle = reader.i16()?;
+    if reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero attention-candidate reserved field",
+        ));
+    }
+    let attention_type = reader.u32()?;
+    let actor = decode_event_actor_reference(reader)?;
+    if distance < 0.0
+        || attention_type >= 13
+        || actor.status != NativeChannelStatus::Present
+        || actor.actor.is_none()
+    {
+        return Err(NativeEpisodeShardError::new("invalid attention candidate"));
+    }
+    Ok(NativeAttentionCandidateObservation {
+        actor,
+        weight,
+        distance,
+        angle,
+        attention_type,
+    })
+}
+
+fn decode_attention_candidates(
+    reader: &mut Reader<'_>,
+) -> Result<
+    (
+        NativeChannelStatus,
+        Option<NativeAttentionCandidatesObservation>,
+    ),
+    NativeEpisodeShardError,
+> {
+    let status = decode_channel_status(reader)?;
+    let attention_status = reader.u8()?;
+    let lock_count = usize::from(reader.u8()?);
+    let lock_offset = reader.u8()?;
+    let action_count = usize::from(reader.u8()?);
+    let action_offset = reader.u8()?;
+    let check_count = usize::from(reader.u8()?);
+    let check_offset = reader.u8()?;
+    let player_attention_flags = reader.u32()?;
+    let attention_block_timer = reader.i32()?;
+    let count_offset_valid = |count: usize, offset: u8, capacity: usize| {
+        count <= capacity
+            && ((count == 0 && offset == 0) || (count != 0 && usize::from(offset) < count))
+    };
+    if !count_offset_valid(lock_count, lock_offset, 8)
+        || !count_offset_valid(action_count, action_offset, 4)
+        || !count_offset_valid(check_count, check_offset, 4)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "attention-candidate count or offset is invalid",
+        ));
+    }
+    let mut decode_list = |count: usize| {
+        (0..count)
+            .map(|_| decode_attention_candidate(reader))
+            .collect::<Result<Vec<_>, _>>()
+    };
+    let lock_candidates = decode_list(lock_count)?;
+    let action_candidates = decode_list(action_count)?;
+    let check_candidates = decode_list(check_count)?;
+    let channel_present = status == NativeChannelStatus::Present;
+    if !matches!(
+        status,
+        NativeChannelStatus::Present
+            | NativeChannelStatus::Unavailable
+            | NativeChannelStatus::Absent
+    ) || (!channel_present
+        && (attention_status != 0
+            || player_attention_flags != 0
+            || attention_block_timer != 0
+            || !lock_candidates.is_empty()
+            || !action_candidates.is_empty()
+            || !check_candidates.is_empty()))
+    {
+        return Err(NativeEpisodeShardError::new(
+            "attention-candidate status and payload disagree",
+        ));
+    }
+    Ok((
+        status,
+        channel_present.then_some(NativeAttentionCandidatesObservation {
+            player_attention_flags,
+            attention_status,
+            attention_block_timer,
+            lock_offset,
+            action_offset,
+            check_offset,
+            lock_candidates,
+            action_candidates,
+            check_candidates,
+        }),
+    ))
+}
+
 fn decode_camera(
     reader: &mut Reader<'_>,
 ) -> Result<NativeCameraObservation, NativeEpisodeShardError> {
@@ -2495,7 +2604,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V16
         | OBSERVATION_VERSION_V17
         | OBSERVATION_VERSION_V18
-        | OBSERVATION_VERSION_V19 => {
+        | OBSERVATION_VERSION_V19
+        | OBSERVATION_VERSION_V20 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3279,6 +3389,39 @@ fn decode_observation(
         } else {
             (NativeChannelStatus::NotSampled, None)
         };
+    let (attention_candidates_status, attention_candidates) =
+        if observation_version >= OBSERVATION_VERSION_V20 {
+            decode_attention_candidates(reader)?
+        } else {
+            (NativeChannelStatus::NotSampled, None)
+        };
+    let player_present = flags & 1 != 0;
+    if (observation_version >= OBSERVATION_VERSION_V20
+        && ((player_present
+            && !matches!(
+                attention_candidates_status,
+                NativeChannelStatus::Present | NativeChannelStatus::Unavailable
+            ))
+            || (!player_present && attention_candidates_status != NativeChannelStatus::Absent)))
+        || attention_candidates.as_ref().is_some_and(|attention| {
+            attention
+                .lock_candidates
+                .iter()
+                .chain(&attention.action_candidates)
+                .chain(&attention.check_candidates)
+                .any(|candidate| {
+                    candidate
+                        .actor
+                        .actor
+                        .as_ref()
+                        .is_none_or(|identity| !actor_identity_joins(identity))
+                })
+        })
+    {
+        return Err(NativeEpisodeShardError::new(
+            "attention-candidate actor or player availability is inconsistent",
+        ));
+    }
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -3373,6 +3516,8 @@ fn decode_observation(
         event_queue,
         process_lifecycle_status,
         process_lifecycle,
+        attention_candidates_status,
+        attention_candidates,
     })
 }
 

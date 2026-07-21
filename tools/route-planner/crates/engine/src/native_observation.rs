@@ -135,6 +135,30 @@ pub struct NativeEventQueueObservation {
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct NativeAttentionCandidateObservation {
+    pub actor: NativeEventActorReferenceObservation,
+    pub weight: f32,
+    pub distance: f32,
+    pub angle: i16,
+    pub attention_type: u32,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAttentionCandidatesObservation {
+    pub player_attention_flags: u32,
+    pub attention_status: u8,
+    pub attention_block_timer: i32,
+    pub lock_offset: u8,
+    pub action_offset: u8,
+    pub check_offset: u8,
+    pub lock_candidates: Vec<NativeAttentionCandidateObservation>,
+    pub action_candidates: Vec<NativeAttentionCandidateObservation>,
+    pub check_candidates: Vec<NativeAttentionCandidateObservation>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeEventHandoffObservation {
     pub pre_item_no: u8,
     pub get_item_no: u8,
@@ -256,4 +280,6 @@ pub struct NativeLearningObservation {
     pub message_session: Option<NativeMessageSessionObservation>,
     pub event_queue_status: NativeChannelStatus,
     pub event_queue: Option<NativeEventQueueObservation>,
+    pub attention_candidates_status: NativeChannelStatus,
+    pub attention_candidates: Option<NativeAttentionCandidatesObservation>,
 }
