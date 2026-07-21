@@ -54,7 +54,9 @@ The planner CLI currently owns thirty-eight operations:
 - `diff-state` compares two executable states across a named boundary, retaining
   raw/component deltas and recomputed friendly-fact deltas. Binding-only changes
   are identified separately from payload changes, so identical bytes receiving
-  a new semantic interpretation remain visible.
+  a new semantic interpretation remain visible. When a runtime lifetime ends,
+  the report derives the fate of every source-owned live component/store plus
+  preserved or changed outside-lifetime state and physical images.
 - `diff-orig` compares two canonical extracted bundles at both archive-byte and
   decoded-record levels while sealing both exact input bundle digests. Optional
   left/right locale selection pairs message groups and ignored candidates across
@@ -200,8 +202,11 @@ manifest and its nested stage-bank stores. `save_runtime_to_slot` creates or
 overwrites that image without pretending file 0 became slot 0;
 `load_runtime_from_slot` restores it into a fresh card-backed runtime identity,
 records the prior runtime as ended, and leaves session-owned components outside
-the projection. `activate_stage_bank` performs the initial stage-bank restore,
-while `set_location` remains a separate effect.
+the projection. An optional disjoint carry manifest can splice only explicitly
+named source-owned runtime metadata into the destination without claiming it
+came from the card; omitted runtime metadata dies with the source lifetime.
+`activate_stage_bank` performs the initial stage-bank restore, while
+`set_location` remains a separate effect.
 
 Raw stage-memory semantics can also be addressed by backing rather than by a
 transient component ID. `bound_raw_bits` reads numeric fields or item masks from

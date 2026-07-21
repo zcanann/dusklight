@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v19";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v20";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -166,8 +166,9 @@ pub enum StateOperation {
         stage_bank_stages: Vec<String>,
     },
     /// Ends the current runtime-file lifetime, restores the exact persistent
-    /// projection from a physical slot, and activates a new loaded runtime.
-    /// Session-owned state is not part of the file projection and survives.
+    /// projection from a physical slot, explicitly carries selected non-card
+    /// runtime metadata, and activates a new loaded runtime. Session-owned
+    /// state is not part of the file projection and survives.
     LoadRuntimeFromSlot {
         source_runtime_file_id: String,
         source_slot: PhysicalSlotId,
@@ -176,6 +177,7 @@ pub enum StateOperation {
         destination_allowed_serialization_targets: Vec<PhysicalSlotId>,
         runtime_component_ids: Vec<String>,
         stage_bank_stages: Vec<String>,
+        carried_runtime_component_ids: Vec<String>,
     },
     /// Ends the active runtime-file lifetime, derives a fresh runtime ID from
     /// its old ID plus `destination_id_suffix`, and rekeys every live and
@@ -836,6 +838,7 @@ impl StateOperation {
                 destination_allowed_serialization_targets,
                 runtime_component_ids,
                 stage_bank_stages,
+                carried_runtime_component_ids,
             } => {
                 validate_stable_id("operation.source_runtime_file_id", source_runtime_file_id)?;
                 source_slot.validate("operation.source_slot")?;
@@ -862,7 +865,22 @@ impl StateOperation {
                     runtime_component_ids,
                     false,
                 )?;
-                validate_stage_list("operation.stage_bank_stages", stage_bank_stages)
+                validate_stage_list("operation.stage_bank_stages", stage_bank_stages)?;
+                validate_id_list(
+                    "operation.carried_runtime_component_ids",
+                    carried_runtime_component_ids,
+                    true,
+                )?;
+                if carried_runtime_component_ids
+                    .iter()
+                    .any(|id| runtime_component_ids.binary_search(id).is_ok())
+                {
+                    return Err(PlannerContractError::new(
+                        "operation.carried_runtime_component_ids",
+                        "must be disjoint from the persistent image manifest",
+                    ));
+                }
+                Ok(())
             }
             Self::BeginRuntimeFileLifetime {
                 destination_id_suffix,
@@ -1718,6 +1736,24 @@ mod tests {
         assert_eq!(
             catalog.validate().unwrap_err().field(),
             "transitions.activation.physical_obligation_ids"
+        );
+    }
+
+    #[test]
+    fn loaded_image_and_runtime_carry_manifests_must_be_disjoint() {
+        let operation = StateOperation::LoadRuntimeFromSlot {
+            source_runtime_file_id: "file-0".into(),
+            source_slot: PhysicalSlotId(1),
+            source_persistent_file_id: "persistent-slot-1".into(),
+            destination_runtime_file_id: "loaded-slot-1".into(),
+            destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
+            runtime_component_ids: vec!["save.main".into()],
+            stage_bank_stages: Vec::new(),
+            carried_runtime_component_ids: vec!["save.main".into()],
+        };
+        assert_eq!(
+            operation.validate().unwrap_err().field(),
+            "operation.carried_runtime_component_ids"
         );
     }
 

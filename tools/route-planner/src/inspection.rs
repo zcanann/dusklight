@@ -14,14 +14,15 @@ use dusklight_route_planner::logic::{
 };
 use dusklight_route_planner::snapshot::{DeltaKind, StateDiff};
 use dusklight_route_planner::state::{
-    BoundaryKind, ComponentBindingReference, ComponentPayload, SerializationOwner,
+    BoundaryKind, ComponentBinding, ComponentBindingReference, ComponentKind, ComponentPayload,
+    RuntimeFile, RuntimeFileLifecycle, SerializationOwner, StateComponent,
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v10";
-pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v10";
+pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v11";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -90,6 +91,7 @@ pub struct StateInspectionDiff {
     pub fact_catalog_sha256: Digest,
     pub evidence_mode: RuntimeEvidenceMode,
     pub state_diff: StateDiff,
+    pub runtime_lifetime_cut: Option<RuntimeLifetimeCut>,
     pub serialized_store_deltas: Vec<SerializedStoreDelta>,
     pub persistent_file_image_deltas: Vec<PersistentFileImageDelta>,
     pub gate_state_deltas: Vec<GateStateDelta>,
@@ -97,6 +99,55 @@ pub struct StateInspectionDiff {
     pub before_execution_history_suffix: Vec<ExecutionHistoryEvent>,
     pub after_execution_history_suffix: Vec<ExecutionHistoryEvent>,
     pub fact_deltas: Vec<InspectedFactDelta>,
+}
+
+/// Complete ownership-level explanation of one active runtime lifetime ending.
+/// This deliberately describes observed backing-store fates rather than
+/// assigning game-specific semantic meaning such as "lost Fishing Rod".
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeLifetimeCut {
+    pub source_runtime_file: RuntimeFile,
+    pub destination_runtime_file: RuntimeFile,
+    pub source_lifecycle_after: RuntimeFileLifecycle,
+    pub source_owned_live_components: Vec<RuntimeLifetimeComponentFate>,
+    pub source_owned_serialized_stores: Vec<RuntimeLifetimeStoreFate>,
+    pub outside_lifetime_live_component_ids_preserved: Vec<String>,
+    pub outside_lifetime_live_component_ids_changed: Vec<String>,
+    pub physical_file_image_ids_preserved: Vec<String>,
+    pub physical_file_image_ids_changed: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeLifetimeComponentFate {
+    pub component_id: String,
+    pub component_kind: ComponentKind,
+    pub before_binding: ComponentBinding,
+    pub before_serialization_owner: SerializationOwner,
+    pub after_binding: Option<ComponentBinding>,
+    pub after_serialization_owner: Option<SerializationOwner>,
+    pub disposition: RuntimeLifetimeCutDisposition,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimeLifetimeStoreFate {
+    pub before_owner: SerializationOwner,
+    pub after_owner: Option<SerializationOwner>,
+    pub component_ids_before: Vec<String>,
+    pub component_ids_after: Vec<String>,
+    pub disposition: RuntimeLifetimeCutDisposition,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeLifetimeCutDisposition {
+    AbsentAfterCut,
+    EquivalentPayloadAtDestination,
+    DifferentPayloadAtDestination,
+    StillOwnedByEndedSource,
+    MovedOutsideDestination,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -381,6 +432,7 @@ pub fn inspect_state_diff(
         after_execution_state_sha256: after.semantic_digest()?,
         fact_catalog_sha256: facts.digest()?,
         evidence_mode,
+        runtime_lifetime_cut: explain_runtime_lifetime_cut(before, after),
         state_diff,
         serialized_store_deltas: diff_serialized_stores(before, after)?,
         persistent_file_image_deltas: diff_persistent_file_images(before, after)?,
@@ -394,6 +446,223 @@ pub fn inspect_state_diff(
             .to_vec(),
         fact_deltas,
     })
+}
+
+fn explain_runtime_lifetime_cut(
+    before: &PlannerExecutionState,
+    after: &PlannerExecutionState,
+) -> Option<RuntimeLifetimeCut> {
+    let source = &before.snapshot.environment.active_runtime_file;
+    let destination = &after.snapshot.environment.active_runtime_file;
+    if source.id == destination.id {
+        return None;
+    }
+    let ended_source = after
+        .snapshot
+        .environment
+        .inactive_runtime_files
+        .iter()
+        .find(|runtime| {
+            runtime.id == source.id && runtime.lifecycle == RuntimeFileLifecycle::Ended
+        })?;
+
+    let before_components = before
+        .snapshot
+        .environment
+        .components
+        .iter()
+        .map(|component| (component.id.as_str(), component))
+        .collect::<BTreeMap<_, _>>();
+    let after_components = after
+        .snapshot
+        .environment
+        .components
+        .iter()
+        .map(|component| (component.id.as_str(), component))
+        .collect::<BTreeMap<_, _>>();
+
+    let source_owned_live_components = before_components
+        .values()
+        .filter(|component| component_references_runtime(component, &source.id))
+        .map(|component| {
+            let after_component = after_components.get(component.id.as_str()).copied();
+            RuntimeLifetimeComponentFate {
+                component_id: component.id.clone(),
+                component_kind: component.component_kind.clone(),
+                before_binding: component.binding.clone(),
+                before_serialization_owner: component.serialization_owner.clone(),
+                after_binding: after_component.map(|value| value.binding.clone()),
+                after_serialization_owner: after_component
+                    .map(|value| value.serialization_owner.clone()),
+                disposition: component_cut_disposition(
+                    component,
+                    after_component,
+                    &source.id,
+                    &destination.id,
+                ),
+            }
+        })
+        .collect();
+
+    let mut outside_lifetime_live_component_ids_preserved = Vec::new();
+    let mut outside_lifetime_live_component_ids_changed = Vec::new();
+    for component in before_components
+        .values()
+        .filter(|component| !component_references_runtime(component, &source.id))
+    {
+        match after_components.get(component.id.as_str()) {
+            Some(after_component) if *component == *after_component => {
+                outside_lifetime_live_component_ids_preserved.push(component.id.clone());
+            }
+            _ => outside_lifetime_live_component_ids_changed.push(component.id.clone()),
+        }
+    }
+
+    let source_owned_serialized_stores = before
+        .serialized_components
+        .iter()
+        .filter(|(owner, _)| owner_references_runtime(owner, &source.id))
+        .map(|(before_owner, before_store)| {
+            let expected_destination_owner = rekey_owner(before_owner, &source.id, &destination.id);
+            let retained_source_store = after.serialized_components.get(before_owner);
+            let destination_store = after.serialized_components.get(&expected_destination_owner);
+            let (after_owner, after_store, disposition) = if let Some(store) = retained_source_store
+            {
+                (
+                    Some(before_owner.clone()),
+                    Some(store),
+                    RuntimeLifetimeCutDisposition::StillOwnedByEndedSource,
+                )
+            } else if let Some(store) = destination_store {
+                let disposition = if stores_have_equivalent_payloads(before_store, store) {
+                    RuntimeLifetimeCutDisposition::EquivalentPayloadAtDestination
+                } else {
+                    RuntimeLifetimeCutDisposition::DifferentPayloadAtDestination
+                };
+                (Some(expected_destination_owner), Some(store), disposition)
+            } else {
+                (None, None, RuntimeLifetimeCutDisposition::AbsentAfterCut)
+            };
+            RuntimeLifetimeStoreFate {
+                before_owner: before_owner.clone(),
+                after_owner,
+                component_ids_before: component_ids(Some(before_store)),
+                component_ids_after: component_ids(after_store.map(Vec::as_slice)),
+                disposition,
+            }
+        })
+        .collect();
+
+    let mut physical_file_image_ids_preserved = Vec::new();
+    let mut physical_file_image_ids_changed = Vec::new();
+    for id in before
+        .persistent_file_images
+        .keys()
+        .chain(after.persistent_file_images.keys())
+        .collect::<BTreeSet<_>>()
+    {
+        match (
+            before.persistent_file_images.get(id),
+            after.persistent_file_images.get(id),
+        ) {
+            (Some(left), Some(right)) if left == right => {
+                physical_file_image_ids_preserved.push(id.clone());
+            }
+            _ => physical_file_image_ids_changed.push(id.clone()),
+        }
+    }
+
+    Some(RuntimeLifetimeCut {
+        source_runtime_file: source.clone(),
+        destination_runtime_file: destination.clone(),
+        source_lifecycle_after: ended_source.lifecycle,
+        source_owned_live_components,
+        source_owned_serialized_stores,
+        outside_lifetime_live_component_ids_preserved,
+        outside_lifetime_live_component_ids_changed,
+        physical_file_image_ids_preserved,
+        physical_file_image_ids_changed,
+    })
+}
+
+fn component_cut_disposition(
+    before: &StateComponent,
+    after: Option<&StateComponent>,
+    source_runtime_file_id: &str,
+    destination_runtime_file_id: &str,
+) -> RuntimeLifetimeCutDisposition {
+    let Some(after) = after else {
+        return RuntimeLifetimeCutDisposition::AbsentAfterCut;
+    };
+    if component_references_runtime(after, source_runtime_file_id) {
+        RuntimeLifetimeCutDisposition::StillOwnedByEndedSource
+    } else if component_references_runtime(after, destination_runtime_file_id) {
+        if before.component_kind == after.component_kind
+            && before.payload == after.payload
+            && before.lifetime == after.lifetime
+        {
+            RuntimeLifetimeCutDisposition::EquivalentPayloadAtDestination
+        } else {
+            RuntimeLifetimeCutDisposition::DifferentPayloadAtDestination
+        }
+    } else {
+        RuntimeLifetimeCutDisposition::MovedOutsideDestination
+    }
+}
+
+fn component_references_runtime(component: &StateComponent, runtime_file_id: &str) -> bool {
+    matches!(
+        &component.binding,
+        ComponentBinding::RuntimeFile {
+            runtime_file_id: bound_runtime_file_id,
+        } if bound_runtime_file_id == runtime_file_id
+    ) || owner_references_runtime(&component.serialization_owner, runtime_file_id)
+}
+
+fn owner_references_runtime(owner: &SerializationOwner, runtime_file_id: &str) -> bool {
+    matches!(
+        owner,
+        SerializationOwner::RuntimeFile {
+            runtime_file_id: owner_runtime_file_id,
+        } | SerializationOwner::StageBank {
+            runtime_file_id: owner_runtime_file_id,
+            ..
+        } if owner_runtime_file_id == runtime_file_id
+    )
+}
+
+fn rekey_owner(
+    owner: &SerializationOwner,
+    source_runtime_file_id: &str,
+    destination_runtime_file_id: &str,
+) -> SerializationOwner {
+    match owner {
+        SerializationOwner::RuntimeFile { runtime_file_id }
+            if runtime_file_id == source_runtime_file_id =>
+        {
+            SerializationOwner::RuntimeFile {
+                runtime_file_id: destination_runtime_file_id.into(),
+            }
+        }
+        SerializationOwner::StageBank {
+            runtime_file_id,
+            stage,
+        } if runtime_file_id == source_runtime_file_id => SerializationOwner::StageBank {
+            runtime_file_id: destination_runtime_file_id.into(),
+            stage: stage.clone(),
+        },
+        _ => owner.clone(),
+    }
+}
+
+fn stores_have_equivalent_payloads(left: &[StateComponent], right: &[StateComponent]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.id == right.id
+                && left.component_kind == right.component_kind
+                && left.payload == right.payload
+                && left.lifetime == right.lifetime
+        })
 }
 
 fn diff_serialized_stores(
@@ -856,6 +1125,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(diff.fact_deltas.len(), 1);
+        assert!(diff.runtime_lifetime_cut.is_none());
         assert_ne!(
             diff.before_execution_state_sha256,
             diff.after_execution_state_sha256
@@ -963,6 +1233,183 @@ mod tests {
         assert_eq!(
             backing_diff.persistent_file_image_deltas[0].delta_kind,
             DeltaKind::Added
+        );
+
+        let mut cut_before = backed.clone();
+        cut_before
+            .snapshot
+            .environment
+            .components
+            .push(StateComponent {
+                id: "session.control".into(),
+                component_kind: ComponentKind::Session,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([("phase".into(), StateValue::Text("retained".into()))]),
+                },
+                binding: ComponentBinding::Session {
+                    session_id: "process".into(),
+                },
+                lifetime: SemanticLifetime::Session,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "trace.session-control".into(),
+                    source_sha256: Some(Digest([8; 32])),
+                    transition_id: None,
+                }],
+            });
+        cut_before
+            .snapshot
+            .environment
+            .components
+            .push(StateComponent {
+                id: "runtime.ephemeral".into(),
+                component_kind: ComponentKind::Custom {
+                    id: "ephemeral-runtime-metadata".into(),
+                },
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([("value".into(), StateValue::Unsigned(9))]),
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "trace.ephemeral-runtime".into(),
+                    source_sha256: Some(Digest([9; 32])),
+                    transition_id: None,
+                }],
+            });
+        cut_before
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        cut_before
+            .apply_operations(
+                "boundary.seed-runtime-store",
+                "snapshot.inspect-runtime-store",
+                &[StateOperation::Serialize {
+                    selector: dusklight_route_planner::state::ComponentSelector::Id {
+                        component_id: "save.return".into(),
+                    },
+                    owner: SerializationOwner::RuntimeFile {
+                        runtime_file_id: "file-0".into(),
+                    },
+                }],
+            )
+            .unwrap();
+
+        let mut rekeyed = cut_before.clone();
+        rekeyed
+            .apply_operations(
+                "boundary.begin-derived-runtime",
+                "snapshot.inspect-derived-runtime",
+                &[StateOperation::BeginRuntimeFileLifetime {
+                    destination_id_suffix: "derived".into(),
+                    origin: RuntimeFileOrigin::Other {
+                        id: "derived-runtime".into(),
+                    },
+                    backing: BackingAttachment::MemoryOnly,
+                    allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                }],
+            )
+            .unwrap();
+        let rekey_diff = inspect_state_diff(
+            &cut_before,
+            &rekeyed,
+            BoundaryKind::TitleReturn,
+            &facts,
+            &[],
+            RuntimeEvidenceMode::EstablishedOnly,
+        )
+        .unwrap();
+        let cut = rekey_diff.runtime_lifetime_cut.unwrap();
+        assert_eq!(cut.source_runtime_file.id, "file-0");
+        assert_eq!(cut.destination_runtime_file.id, "file-0.derived");
+        assert_eq!(cut.source_lifecycle_after, RuntimeFileLifecycle::Ended);
+        assert_eq!(cut.source_owned_live_components.len(), 3);
+        assert!(cut.source_owned_live_components.iter().all(|fate| {
+            fate.disposition == RuntimeLifetimeCutDisposition::EquivalentPayloadAtDestination
+        }));
+        assert_eq!(cut.source_owned_serialized_stores.len(), 1);
+        assert_eq!(
+            cut.source_owned_serialized_stores[0].disposition,
+            RuntimeLifetimeCutDisposition::EquivalentPayloadAtDestination
+        );
+        assert_eq!(
+            cut.physical_file_image_ids_preserved,
+            vec!["persistent-file-1"]
+        );
+        assert_eq!(
+            cut.outside_lifetime_live_component_ids_preserved,
+            vec!["session.control"]
+        );
+        assert!(cut.outside_lifetime_live_component_ids_changed.is_empty());
+        assert!(cut.physical_file_image_ids_changed.is_empty());
+
+        let mut loaded = cut_before.clone();
+        loaded
+            .apply_operations(
+                "boundary.load-runtime",
+                "snapshot.inspect-loaded-runtime",
+                &[StateOperation::LoadRuntimeFromSlot {
+                    source_runtime_file_id: "file-0".into(),
+                    source_slot: PhysicalSlotId(1),
+                    source_persistent_file_id: "persistent-file-1".into(),
+                    destination_runtime_file_id: "loaded-slot-1".into(),
+                    destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                    runtime_component_ids: vec!["inventory.active".into(), "save.return".into()],
+                    stage_bank_stages: Vec::new(),
+                    carried_runtime_component_ids: Vec::new(),
+                }],
+            )
+            .unwrap();
+        let load_diff = inspect_state_diff(
+            &cut_before,
+            &loaded,
+            BoundaryKind::LoadPhysicalSlot,
+            &facts,
+            &[],
+            RuntimeEvidenceMode::EstablishedOnly,
+        )
+        .unwrap();
+        let cut = load_diff.runtime_lifetime_cut.unwrap();
+        assert_eq!(cut.destination_runtime_file.id, "loaded-slot-1");
+        assert_eq!(cut.source_owned_live_components.len(), 3);
+        assert_eq!(
+            cut.source_owned_live_components
+                .iter()
+                .filter(|fate| {
+                    fate.disposition
+                        == RuntimeLifetimeCutDisposition::EquivalentPayloadAtDestination
+                })
+                .count(),
+            2
+        );
+        assert_eq!(
+            cut.source_owned_live_components
+                .iter()
+                .find(|fate| fate.component_id == "runtime.ephemeral")
+                .unwrap()
+                .disposition,
+            RuntimeLifetimeCutDisposition::AbsentAfterCut
+        );
+        assert_eq!(
+            cut.source_owned_serialized_stores[0].disposition,
+            RuntimeLifetimeCutDisposition::AbsentAfterCut
+        );
+        assert_eq!(
+            cut.physical_file_image_ids_preserved,
+            vec!["persistent-file-1"]
+        );
+        assert_eq!(
+            cut.outside_lifetime_live_component_ids_preserved,
+            vec!["session.control"]
         );
 
         assert_eq!(

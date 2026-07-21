@@ -91,6 +91,21 @@ match the sealed image exactly. It then:
 5. activates the fresh runtime with `loaded_slot` origin, card backing, and the
    explicitly authored set of future save targets.
 
+The load operation also accepts an explicit runtime-component carry manifest.
+This manifest is separate from the persistent-image manifest: carried state is
+not relabeled as card data. Every carried ID must name a live, runtime-lifetime
+component owned by the source runtime, cannot name a stage-bank/physical-slot
+component, and must be disjoint from the exact card-image component IDs. Those
+selected components are rekeyed to the fresh destination runtime with transition
+provenance. Unselected source-runtime metadata and every source-owned serialized
+store are removed. A missing, duplicate, unsorted, card-overlapping, session,
+stage-bank, or otherwise invalid carry entry fails the whole load atomically.
+This is the generic splice required for BiTE-like preservation; which concrete
+components a retail BiTE setup carries remains an evidence-matrix task.
+The source-audited GZ2E01 file-select use of the generic mechanism is separated
+in `gz2e01-file-select-branches.md`; its concrete branch transitions remain an
+implementation task.
+
 `activate_stage_bank` is the initial `getSave(stage)` half: it restores one
 loaded stage entry into an absent live component without committing a previous
 stage. A following `set_location` chooses the scene. When all operations are in
@@ -136,3 +151,12 @@ lifetime's live and serialized owners. It does not reinterpret a card image as
 the live file, invent slot 0, or absorb session state.
 See `gz2e01-title-boundary-audit.md`; the versions above record the earlier
 runtime-file-coordinate milestone rather than the current wire versions.
+
+The selected runtime-component carry manifest advances execution state to v13
+and mechanics catalog to v20. The lifetime-cut inspection advances
+state-inspection diff to v11 and, together with the carry operation, planner
+service to v26. A lifetime-cut report is derived from two executable states: it
+classifies every source-owned live component and serialized store by its actual
+destination payload/ownership fate, then separately reports unchanged/changed
+outside-lifetime live components and sealed physical-file images. It does not
+encode a game-specific list of alleged BiT losses.

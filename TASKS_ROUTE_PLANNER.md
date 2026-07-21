@@ -453,8 +453,11 @@ The current code shows:
   plus nested stage-bank stores. `save_runtime_to_slot` seals that projection in
   physical slot 1–3; `load_runtime_from_slot` verifies the complete manifest,
   retires the active runtime, restores a fresh card-backed runtime, and preserves
-  unrelated session-owned state. Initial `getSave(stage)` activation and scene
-  location change remain separate ordered operations.
+  unrelated session-owned state. A separate, explicit, disjoint carry manifest
+  can rekey selected runtime-lifetime metadata into the destination without
+  pretending it came from the card image; omitted runtime metadata is removed.
+  Initial `getSave(stage)` activation and scene location change remain separate
+  ordered operations.
 - The same per-stage `dSv_memory_c`/`dSv_memBit_c` payload contains chest bits,
   switches, item bits, a small-key count, and dungeon-item bits including the boss
   key. Key and boss-key semantics therefore derive from the bound backing store,
@@ -589,7 +592,7 @@ The current code shows:
   audited production profiles, actor entry contracts, and further handler
   audits remain open. See
   `docs/route-planner/message-flow-programs.md`.
-- Planner service schema v24 provides a typed JSON-lines transport owned by the
+- Planner service schema v26 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -611,14 +614,17 @@ The current code shows:
   service protocol expose the same projection, so raw inventory/flag bytes,
   their semantic names, ordered mutations, last field writers, and gate history
   remain inspectable together.
-- State-inspection-diff schema v10 combines the raw/component boundary diff with
+- State-inspection-diff schema v11 combines the raw/component boundary diff with
   before/after friendly fact evaluations. It classifies binding-only changes,
   payload changes, direct derived-fact dependency changes, relevant gate reads,
   runtime-context changes, serialized owner-store changes, and sealed persistent-
-  file image changes separately. An unchanged payload digest and empty raw-byte
-  delta therefore remain visible when rebind alone changes an alias; common-prefix
-  and divergent history suffixes identify exactly which ordered operations
-  separate two execution states.
+  file image changes separately. When the active runtime ends, it additionally
+  derives every source-owned live component/store fate, unchanged or changed
+  outside-lifetime components, and preserved or changed physical images from the
+  two concrete states. An unchanged payload digest and empty raw-byte delta
+  therefore remain visible when rebind alone changes an alias; common-prefix and
+  divergent history suffixes identify exactly which ordered operations separate
+  two execution states.
   The standalone `diff-state` command and service expose the same report.
 - Route-book schema v5 is a validated, exact-context-scoped preference layer over
   mechanics. It can name goals and path constraints, reference ordered actions,
@@ -1678,6 +1684,12 @@ evidenced overlays over the generated base rather than silent edits to it.
         `mNewFile = 0` and `mNoFile = 0` only after the name process/create phase
         is independently observed. See
         `docs/route-planner/gz2e01-title-boundary-audit.md`.
+  - [x] Source-audit the next GZ2E01 file-select decisions without promoting
+        them to executable rules: blank-slot selection, existing-slot
+        `card_to_memory`, no-save/no-card initialization, header writers,
+        load-time normalization, and the pending play-scene request are separated
+        in `docs/route-planner/gz2e01-file-select-branches.md`. Exact transition
+        implementation and retail-DOL evidence remain open.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
       bits, normal/abnormal cleanup, and item/event handoffs.
@@ -2043,6 +2055,11 @@ Deliverable: the intentionally permissive logic graph with honest uncertainty.
     one matching rule or the declared default to every live component, rejects
     overlapping selectors, and fails the whole atomic transition on `Unknown`.
 - [ ] Encode an evidence-backed BiTE preservation matrix.
+  - [x] Add a generic checked carry manifest to physical-slot load. Only named,
+        runtime-lifetime, source-owned, non-stage-bank components are rekeyed;
+        the manifest must be sorted, unique, disjoint from the card image, and
+        every omitted source-runtime component/store is removed atomically.
+        Concrete BiTE component membership and activation evidence remain open.
 - [x] Encode the shared Auru recent-item store/writer/consumer mechanism separately
       from build-specific activation feasibility and external HD evidence.
   - Native event observations project the recent get-item ID into its own
@@ -2359,8 +2376,18 @@ Deliverable: route confidence is mechanically explainable.
   - [x] Model the chosen-slot projection/load mechanics independently of the
         still-unmodeled void/title-state preconditions and normalization rules.
 - [ ] Model BiTE as a selected component splice into an existing file.
+  - [x] Implement the generic selected runtime-component splice into a freshly
+        loaded existing file, with destination ownership and mixed provenance.
+        The evidence-backed BiTE preservation matrix and setup transitions remain
+        open.
 - [ ] Allow an unsaved file-0 goal and hypothetical escape overlay.
-- [ ] Explain exactly which components die when a file-0 lifetime ends.
+- [x] Explain exactly which components die when a file-0 lifetime ends.
+  - State inspection diffs derive the complete ownership cut from the actual
+    before/after states: every source-owned live component and serialized store
+    is classified as absent, represented by an equivalent or different
+    destination payload, retained illegally by the ended source, or moved
+    outside the expected destination. Outside-lifetime components and sealed
+    physical images are independently reported as preserved or changed.
 
 #### 11C. EMS to Hyrule Castle/Ganon
 

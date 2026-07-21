@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v12";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v13";
 pub const PERSISTENT_FILE_IMAGE_SCHEMA: &str = "dusklight.route-planner.persistent-file-image/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1977,6 +1977,7 @@ impl PlannerExecutionState {
             destination_allowed_serialization_targets,
             runtime_component_ids,
             stage_bank_stages,
+            carried_runtime_component_ids,
         } = operation
         else {
             unreachable!("load helper is called only for its operation variant")
@@ -2070,10 +2071,62 @@ impl PlannerExecutionState {
             ));
         }
 
-        self.snapshot
-            .environment
-            .components
-            .retain(|component| !component_belongs_to_runtime(component, source_runtime_file_id));
+        let carried_component_ids = carried_runtime_component_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        for component_id in carried_runtime_component_ids {
+            let component = self
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == *component_id)
+                .ok_or_else(|| {
+                    PlannerContractError::new(
+                        "operation.load_runtime_from_slot.carried_runtime_component_ids",
+                        "references an absent live component",
+                    )
+                })?;
+            if !component_belongs_to_runtime(component, source_runtime_file_id)
+                || component.lifetime != crate::state::SemanticLifetime::RuntimeFile
+            {
+                return Err(PlannerContractError::new(
+                    "operation.load_runtime_from_slot.carried_runtime_component_ids",
+                    "must name runtime-lifetime state owned by the active runtime",
+                ));
+            }
+            if matches!(
+                component.serialization_owner,
+                SerializationOwner::StageBank { .. } | SerializationOwner::PhysicalSlot { .. }
+            ) {
+                return Err(PlannerContractError::new(
+                    "operation.load_runtime_from_slot.carried_runtime_component_ids",
+                    "cannot carry stage-bank or physical-slot state as runtime metadata",
+                ));
+            }
+        }
+
+        for component in &mut self.snapshot.environment.components {
+            if carried_component_ids.contains(component.id.as_str()) {
+                rekey_component_runtime(
+                    component,
+                    source_runtime_file_id,
+                    destination_runtime_file_id,
+                );
+                rekey_serialization_owner_runtime(
+                    &mut component.serialization_owner,
+                    source_runtime_file_id,
+                    destination_runtime_file_id,
+                );
+                mark_transition(component, application_id);
+            }
+        }
+
+        self.snapshot.environment.components.retain(|component| {
+            carried_component_ids.contains(component.id.as_str())
+                || !component_belongs_to_runtime(component, source_runtime_file_id)
+        });
         self.preserved_component_ids.retain(|component_id| {
             self.snapshot
                 .environment
@@ -4999,6 +5052,29 @@ mod tests {
         };
         fields.insert("item".into(), StateValue::Unsigned(0x4a));
         source.environment.components.push(session);
+        let mut carried = structured_component(
+            "runtime.bite-equipment",
+            ComponentKind::Custom {
+                id: "bite-equipment-transfer".into(),
+            },
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            },
+        );
+        let ComponentPayload::Structured { fields } = &mut carried.payload else {
+            unreachable!()
+        };
+        fields.insert("equipped_item".into(), StateValue::Unsigned(0x28));
+        source.environment.components.push(carried);
+        source.environment.components.push(structured_component(
+            "runtime.unselected-metadata",
+            ComponentKind::Custom {
+                id: "unselected-runtime-metadata".into(),
+            },
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            },
+        ));
         source
             .environment
             .components
@@ -5072,6 +5148,7 @@ mod tests {
                     destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
                     runtime_component_ids: vec!["save.main".into(), "save.raw-counter".into()],
                     stage_bank_stages: vec!["F_SP103".into()],
+                    carried_runtime_component_ids: Vec::new(),
                 }],
             )
             .unwrap_err();
@@ -5080,6 +5157,29 @@ mod tests {
             "operation.load_runtime_from_slot.stage_bank_stages"
         );
         assert_eq!(state, before_failed_load);
+
+        let before_failed_carry = state.clone();
+        let error = state
+            .apply_operations(
+                "boundary.invalid-runtime-carry",
+                "snapshot.not-produced",
+                &[StateOperation::LoadRuntimeFromSlot {
+                    source_runtime_file_id: "file-0".into(),
+                    source_slot: PhysicalSlotId(1),
+                    source_persistent_file_id: "persistent-slot-1".into(),
+                    destination_runtime_file_id: "slot-1-runtime".into(),
+                    destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                    runtime_component_ids: vec!["save.main".into(), "save.raw-counter".into()],
+                    stage_bank_stages: vec!["D_MN05".into(), "F_SP103".into()],
+                    carried_runtime_component_ids: vec!["session.recent-item".into()],
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.field(),
+            "operation.load_runtime_from_slot.carried_runtime_component_ids"
+        );
+        assert_eq!(state, before_failed_carry);
 
         state
             .apply_operations(
@@ -5094,6 +5194,7 @@ mod tests {
                         destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
                         runtime_component_ids: vec!["save.main".into(), "save.raw-counter".into()],
                         stage_bank_stages: vec!["D_MN05".into(), "F_SP103".into()],
+                        carried_runtime_component_ids: vec!["runtime.bite-equipment".into()],
                     },
                     StateOperation::ActivateStageBank {
                         component_id: "stage.live".into(),
@@ -5144,6 +5245,41 @@ mod tests {
         assert_eq!(
             field(&state, "session.recent-item", "item"),
             &StateValue::Unsigned(0x4a)
+        );
+        assert_eq!(
+            field(&state, "runtime.bite-equipment", "equipped_item"),
+            &StateValue::Unsigned(0x28)
+        );
+        let carried = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "runtime.bite-equipment")
+            .unwrap();
+        assert_eq!(
+            carried.binding,
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "slot-1-runtime".into(),
+            }
+        );
+        assert_eq!(
+            carried.serialization_owner,
+            SerializationOwner::RuntimeFile {
+                runtime_file_id: "slot-1-runtime".into(),
+            }
+        );
+        assert_eq!(
+            carried.provenance.last().unwrap().transition_id.as_deref(),
+            Some("boundary.load-slot-1")
+        );
+        assert!(
+            state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .all(|component| component.id != "runtime.unselected-metadata")
         );
         assert_eq!(
             state
