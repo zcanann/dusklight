@@ -1103,7 +1103,7 @@ motion. These compact channels do not retain another complete actor set per
 sample and never expose the current transition's post-simulation state to a
 forward head.
 
-Report v6 includes rare-event classification diagnostics in addition to MSE.
+Report v7 includes rare-event classification diagnostics in addition to MSE.
 Contact, procedure, mode and actor-disappearance heads expose support and
 confusion counts, precision/recall, specificity, balanced accuracy, F1 and a
 clamped Brier score for both the learned model and training-mean baseline.
@@ -1118,7 +1118,7 @@ the answer into inverse dynamics. The standalone `encode(pre_state)` API stays
 state-only for policy use; action and post-state are training/evaluation head
 context, not live policy observation.
 
-Report v6 lists `pre_state_and_action` or `pre_and_post_state` for every target.
+Report v7 lists `pre_state_and_action` or `pre_and_post_state` for every target.
 Executable invariants require forward predictions to remain identical when
 only post-state changes and inverse predictions to remain identical when only
 the supplied action changes. A model that violates either separation is an

@@ -1305,13 +1305,23 @@ and geometry set sizes without schema changes.
     complete set or silently replacing the mean/max baseline. Four seeded
     softmax queries attend over shared per-actor embeddings; gradients update
     both queries and actor transforms, while mean/max features remain available
-    to the same state head. Report/model v6 binds the pooling mode and reports
+    to the same state head. Report/model v7 binds the pooling mode and reports
     each query's norm, held-out normalized entropy and maximum weight. Tests
     prove seeded model identity, query updates, permutation invariance and
     bounded diagnostics. The CLI exposes `mean-max` and
     `mean-max-learned-attention`, and the shuffled control is forced through the
     same selected pooler. A real equal-budget Ordon comparison and cross-seed
     attention stability measurement remain open before the parent can close.
+    The first v6 treatment improved aggregate test error only modestly (84.35%
+    versus 83.24%) and changed neither contact recall (22/30) nor actor-
+    disappearance recall (0/15). More importantly, every query remained almost
+    uniform: normalized entropy was 0.9994-0.9998 and mean maximum actor weight
+    was 2.34-2.47% over 47-48 actors (`6bc19c05...a416`; mean/max
+    `5c92ad48...d2c8`). That treatment is rejected rather than promoted on its
+    aggregate score. V7 removes a redundant square-root scale from already
+    variance-scaled query initialization; equal-budget revalidation remains
+    required, and task/goal-conditioned queries are the next alternative if
+    global queries still fail to specialize.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.

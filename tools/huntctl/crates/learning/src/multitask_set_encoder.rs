@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V6: &str =
-    "dusklight-multitask-set-encoder-report/v6";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V7: &str =
+    "dusklight-multitask-set-encoder-report/v7";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -798,7 +798,7 @@ impl CompleteSetMultiTaskEncoder {
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let held_out_attention = model.attention_diagnostics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V6,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V7,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
@@ -926,7 +926,7 @@ impl CompleteSetMultiTaskEncoder {
     }
 
     pub fn model_sha256(&self) -> Result<Digest, TrainableSetError> {
-        canonical_digest(b"dusklight.complete-set-multitask-encoder/v4\0", self)
+        canonical_digest(b"dusklight.complete-set-multitask-encoder/v5\0", self)
     }
 
     pub fn parameter_count(&self) -> usize {
@@ -1148,7 +1148,6 @@ impl CompleteSetMultiTaskEncoder {
             }
         }
         let attention_heads = self.pooling.attention_heads();
-        let attention_scale = (self.config.node_hidden_width as f64).sqrt().max(1.0);
         let mut attention_weights = Vec::with_capacity(attention_heads);
         let mut attention_pools = Vec::with_capacity(attention_heads);
         for head in 0..attention_heads {
@@ -1161,7 +1160,7 @@ impl CompleteSetMultiTaskEncoder {
                 [head * self.config.node_hidden_width..(head + 1) * self.config.node_hidden_width];
             let logits = node_hidden
                 .iter()
-                .map(|hidden| dot(hidden, query) / attention_scale)
+                .map(|hidden| dot(hidden, query))
                 .collect::<Vec<_>>();
             let maximum = logits.iter().copied().max_by(f64::total_cmp).unwrap_or(0.0);
             let mut weights = logits
@@ -1380,7 +1379,6 @@ impl CompleteSetMultiTaskEncoder {
         let d_max = &d_state_input[pool_offset + self.config.node_hidden_width
             ..pool_offset + self.config.node_hidden_width * 2];
         let attention_offset = pool_offset + self.config.node_hidden_width * 2;
-        let attention_scale = (self.config.node_hidden_width as f64).sqrt().max(1.0);
         let node_count = forward.node_hidden.len();
         for node_index in 0..node_count {
             for hidden in 0..self.config.node_hidden_width {
@@ -1405,10 +1403,9 @@ impl CompleteSetMultiTaskEncoder {
                             .sum::<f64>();
                     gradient += weight * d_pool[hidden]
                         + score_gradient
-                            * attention_before[head * self.config.node_hidden_width + hidden]
-                            / attention_scale;
+                            * attention_before[head * self.config.node_hidden_width + hidden];
                     gradients.attention_queries[head * self.config.node_hidden_width + hidden] +=
-                        score_gradient * forward.node_hidden[node_index][hidden] / attention_scale;
+                        score_gradient * forward.node_hidden[node_index][hidden];
                 }
                 let delta = gradient * (1.0 - forward.node_hidden[node_index][hidden].powi(2));
                 for input in 0..self.layout.node_input_width {
@@ -3450,7 +3447,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v6\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v7\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {

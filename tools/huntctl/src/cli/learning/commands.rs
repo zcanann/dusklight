@@ -939,7 +939,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 pooling,
             )?;
             let artifact = json!({
-                "schema": "dusklight-native-multitask-encoder-artifact/v5",
+                "schema": "dusklight-native-multitask-encoder-artifact/v6",
                 "source_auxiliary_dataset_sha256": dataset.dataset_sha256,
                 "source_native_shard_sha256": source_native_shard_sha256,
                 "actor_feature_schema_sha256": corpus.actor_feature_schema_sha256,
