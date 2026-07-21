@@ -2587,16 +2587,21 @@ sequence.
   - [x] Canonically join and validate the topology, including exact source
         digests and explicit unresolved coverage for the STB program, failed
         resource flow, and return-place writers.
+  - [x] Add planner-owned exact DOL function evidence and prove that GZ2E01
+        `dComIfGp_ret_wp_set__FSc` is exactly one `blr`. The room-loader call
+        therefore preserves arbitrary incoming return-place values; other
+        possible JStudio/glitch-path writers remain open.
 - [ ] Capture normal completion and actor-corruption/archive-load-failure paths;
       identify the last confirmed operation and every flag or writer that becomes
       skipped versus unknown.
 - [ ] Model actor corruption as the producer of the failed-load/exceptional-flow
       predicate, not as a direct Castle Town warp.
-- [ ] Verify a preexisting Castle Town return place survives only when its
-      overwriting writer is skipped, and that ordinary savewarp subsequently
-      reads it from Zelda's tower.
-- [ ] Vary the incoming return place and prove the cutscene failure preserves
-      that value generically rather than hard-coding Castle Town.
+- [ ] Verify whether any writer other than the proven room-loader no-op can run
+      on the actor-corruption path, and that ordinary savewarp subsequently
+      reads the retained value from Zelda's tower.
+- [ ] Vary the incoming return place across a witnessed actor-corruption trace;
+      the GZ2E01 room-loader call is already proven to preserve it generically,
+      but the complete failure suffix is not yet bounded.
 - [ ] Keep the route unknown in established mode until the relevant partial
       effects and scene-change branch have source or trace evidence.
 

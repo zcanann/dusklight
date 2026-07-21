@@ -4,8 +4,10 @@ Status: the planner has a strict, versioned cutscene-program schema and compiler
 For the post-Zelda tower sequence, planner-owned extractors now establish the
 exact outer event/resource/normal-exit/skip-exit topology and a generic wrapper
 join seals those records as `cutscene-wrapper-topology/v1`. The JStudio phase
-internals, archive-failure behavior, and return-place writer boundary still
-require source/runtime evidence; the model deliberately does not claim them.
+internals and the actor-corruption failure boundary still require source/runtime
+evidence. Exact GZ2E01 executable evidence now proves that the room-loader's
+nominal `dComIfGp_ret_wp_set` call is a retail no-op; this resolves that one
+writer site without claiming that no other cutscene writer exists.
 
 ## Why this is a program
 
@@ -55,9 +57,11 @@ is invalidated, and no return-place write is invented.
 The exact GZ2E01 wrapper is audited in
 `gz2e01-zelda-cutscene-source-audit.md`: `demo07_02` selects
 `Demo07_02/demo07_02.stb`, map-tool ID 4, normal SCLS exit 1 to Castle Town, and
-skip SCLS exit 2 back to Zelda's tower. Remaining Zelda-specific evidence work
-is to decode the JStudio phases, identify the actual failure branch and last
-completed operation, and trace every return/restart writer and affected bit.
+skip SCLS exit 2 back to Zelda's tower. The room-loader return-place call is an
+exact four-byte `blr`, so it preserves every incoming value generically.
+Remaining Zelda-specific evidence work is to decode the JStudio phases, identify
+the actual actor-corruption failure branch and last completed operation, and
+trace any other return/restart writer and affected bit.
 The wrapper topology is deliberately not compiled to executable transitions:
 its two SCLS destinations are authored completion choices, while the behavior
 of a failed resource load is still unresolved.

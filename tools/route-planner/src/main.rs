@@ -1,4 +1,5 @@
 use dusklight_route_planner::artifact::Digest;
+use dusklight_route_planner::binary_evidence::extract_dol_function_evidence;
 use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::cutscene_import::{
     CutsceneWrapperSourceIdentity, CutsceneWrapperTopology,
@@ -73,6 +74,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("compose") => compose(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
         Some("extract-event-list") => extract_event_list(&args[1..]),
+        Some("extract-function-evidence") => extract_function_evidence(&args[1..]),
         Some("extract-cutscene-wrapper") => extract_cutscene_wrapper(&args[1..]),
         Some("extract-message-flow") => extract_message_flow(&args[1..]),
         Some("extract-orig") => extract_orig(&args[1..]),
@@ -706,6 +708,32 @@ fn extract_stage_data(args: &[String]) -> Result<(), Box<dyn Error>> {
             "map_events": stage.map_events.len(),
             "demo_archive_banks": stage.demo_archive_banks.len(),
             "actor_placements": stage.actor_placements.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn extract_function_evidence(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let dol_path = required_path(args, "--dol")?;
+    let symbols_path = required_path(args, "--symbols")?;
+    let symbol = option(args, "--symbol")
+        .ok_or_else(|| "missing required --symbol <exact-name>".to_owned())?;
+    let output = required_path(args, "--output")?;
+    let evidence =
+        extract_dol_function_evidence(&fs::read(&dol_path)?, &fs::read(&symbols_path)?, &symbol)?;
+    write_file(&output, &evidence.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": evidence.schema,
+            "output": output,
+            "sha256": evidence.digest()?,
+            "symbol": evidence.symbol,
+            "virtual_address": evidence.virtual_address,
+            "function_size": evidence.function_size,
+            "file_offset": evidence.file_offset,
+            "code_sha256": evidence.code_sha256,
+            "shape": evidence.shape,
         }))?
     );
     Ok(())
@@ -1576,6 +1604,7 @@ fn print_usage() {
             "  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]",
             "  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json",
             "  route-planner extract-event-list --archive ARCHIVE.arc [--resource event_list.dat] --output EVENTS.json",
+            "  route-planner extract-function-evidence --dol main.dol --symbols symbols.txt --symbol EXACT_NAME --output EVIDENCE.json",
             "  route-planner extract-cutscene-wrapper --archive ARCHIVE.arc [--stage-resource room.dzr] [--event-list-resource event_list.dat] --event-name NAME --layer LAYER --output WRAPPER.json",
             "  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json",
             "  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json",

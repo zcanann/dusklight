@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns twenty-six operations:
+The planner CLI currently owns twenty-seven operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -85,6 +85,11 @@ The planner CLI currently owns twenty-six operations:
 - `extract-event-list` emits the bounded event, staff, cut, linked parameter,
   and typed value tables from one exact `event_list.dat`, retaining raw records
   and rejecting invalid references or overlapping tables.
+- `extract-function-evidence` resolves one exact text-function record from a
+  symbol table into its DOL text section, seals both source identities and the
+  selected bytes, and classifies only the mechanically decidable one-instruction
+  `blr` shape as an immediate return. Gameplay meaning remains a separate
+  audited binding.
 - `extract-cutscene-wrapper` joins one named REVT/LBNK/SCLS event to its exact
   `event_list.dat` staff/cut/parameter graph. Its coverage record keeps JStudio
   phases, exceptional load flow, and return-place writers unresolved until a
