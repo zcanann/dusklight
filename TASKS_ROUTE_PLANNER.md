@@ -1696,7 +1696,8 @@ evidenced overlays over the generated base rather than silent edits to it.
   - [x] Source-audit the distinct GZ2E01 void/hazard collision-exit and held
         restart-room branches, lethal diversion, four death-continue destination
         families, return-to-title reset handoff, and pre-restart live mutations.
-        Keep exact DOL sealing and witnessed traces open. See
+        The seven top-level branch functions are exact-DOL sealed; callee
+        decoding and witnessed traces remain open. See
         `docs/route-planner/gz2e01-void-death-source-audit.md`.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
@@ -2027,8 +2028,8 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Source-audit void/hazard and death selection without collapsing
           collision exits, held restart-room state, captured actor exits,
           boss/special-stage branches, and title reset into one reload edge.
-          Executable transition programs and exact GZ2E01 binary sealing remain
-          open.
+          Seven top-level GZ2E01 functions are exact-binary sealed; executable
+          transition programs and deeper callee decoding remain open.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
