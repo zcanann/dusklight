@@ -142,7 +142,8 @@ activating world state, just as the earlier title-to-name-scene request does.
 
 ## Required executable-model checks
 
-The implementation should prove all of the following:
+Mechanics catalog v21 and execution state v14 now prove the backing-store and
+branching subset below:
 
 - blank, existing, and no-card guards cannot all execute from one observed
   control state;
@@ -156,7 +157,15 @@ The implementation should prove all of the following:
   physical-slot load;
 - `mNewFile`, `mNoFile`, and `mDataNum` follow their actual independent writers;
   and
-- play-scene requests remain pending until process/world activation is observed.
+- a generic active-runtime load derives both its fresh lifetime ID and the exact
+  selected sealed manifest at execution time rather than embedding ephemeral
+  runtime/persistent IDs in authored mechanics.
+
+Existing-slot Start deliberately retains an explicit unknown requirement for
+the post-copy life clamp, dungeon-6 key clear, hookshot slot rewrites, lineup
+rebuild, vibration, and displayed save-stage update. Those effects, name-entry
+completion, and the play-scene request still require executable projection;
+the backing-store load alone does not claim them.
 
 The save-time `memory_to_card` normalization path, successful physical write,
 void/death restart selection, and build/platform variants remain separate audit

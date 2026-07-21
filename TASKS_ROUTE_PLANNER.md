@@ -592,7 +592,7 @@ The current code shows:
   audited production profiles, actor entry contracts, and further handler
   audits remain open. See
   `docs/route-planner/message-flow-programs.md`.
-- Planner service schema v26 provides a typed JSON-lines transport owned by the
+- Planner service schema v27 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -1677,7 +1677,8 @@ evidenced overlays over the generated base rather than silent edits to it.
         banks without touching unrelated inactive stores or physical images.
         A non-title runtime now enters a fresh memory-backed title-file-0
         lifetime atomically at that same phase boundary. Unprojected save
-        members, file-select branches, void, and death suffixes remain open. The
+        members, file-select post-copy/name/play/save suffixes, void, and death
+        remain open. The
         source-audited title A/Start input, pending `PROC_NAME_SCENE` request,
         and normal GCN file-select creation are now separate guarded actions;
         the latter repeats the save-domain initializer and writes
@@ -1688,8 +1689,9 @@ evidenced overlays over the generated base rather than silent edits to it.
         them to executable rules: blank-slot selection, existing-slot
         `card_to_memory`, no-save/no-card initialization, header writers,
         load-time normalization, and the pending play-scene request are separated
-        in `docs/route-planner/gz2e01-file-select-branches.md`. Exact transition
-        implementation and retail-DOL evidence remain open.
+        in `docs/route-planner/gz2e01-file-select-branches.md`. The branch and
+        backing-store subset is now executable; post-copy normalization,
+        name/play/save suffixes, and retail-DOL evidence remain open.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
       bits, normal/abnormal cleanup, and item/event handoffs.
@@ -2001,6 +2003,14 @@ Deliverable: replayable state evidence that can validate transition rules.
           `fopScnM_ChangeReq` as completed process activation. The create step
           requires independent `PROC_NAME_SCENE`/phase observation, repeats the
           audited save-domain reset, and writes `mNewFile = 0` and `mNoFile = 0`.
+    - [x] Model mutually exclusive GZ2E01 blank-slot, existing-slot-menu, and
+          no-card decisions over observed file-select control state. Blank slots
+          write zero-based `mDataNum`/`mNewFile = 128` without creating an image;
+          no-card initializes three explicit custom session buffers and copies
+          entry 0 into the memory-only live runtime; existing Start derives the
+          selected sealed manifest, fresh runtime identity, and explicit
+          header/restart/temporary carry set. Post-copy normalization remains an
+          unknown requirement rather than an assumed success.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
@@ -2370,6 +2380,11 @@ Deliverable: route confidence is mechanically explainable.
         initialization only after the active name process/create phase is
         independently observed. This exposes the distinct pre-file-select and
         file-select-open file-0 payloads rather than conflating them.
+  - [x] Branch file-select-open state into blank slot 1–3, existing-slot Start,
+        or no-card initialization without conflating the process buffer, active
+        runtime, and physical slot. Verify branch exclusivity, zero-based header
+        writes, slotless blank/no-card behavior, selected image restoration,
+        source-lifetime retirement, and explicit non-card metadata carry.
 - [x] Show physical slots 1–3 separately.
   - Populated slots seal distinct persistent-file images; slot 0 is rejected.
 - [ ] Model void/title-state handling and save projection to a chosen slot.

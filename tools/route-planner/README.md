@@ -32,13 +32,18 @@ The planner CLI currently owns thirty-eight operations:
   execution remains a live-state dependency rather than an assumed success.
 - `compile-title-boundary-mechanics` emits the exact successful GZ2E01 reset
   prefix, route-relevant title-file-0 opening projection, source-audited title
-  input/request steps, and normal file-select create projection. Pending F_SP102
+  input/request steps, normal file-select create projection, and the mutually
+  exclusive blank-slot, existing-slot, and no-card decisions. Pending F_SP102
   remains non-traversable and cannot reach phase 4 without an explicit process-
   scheduler observation. Likewise, the title actor's name-scene request does not
   become an active process until independently observed. The two save-domain
   initializers replace only audited backing payloads; the first can enter a
   fresh title-origin lifetime, while neither can mutate unrelated inactive
-  stores or physical-slot images.
+  stores or physical-slot images. No-card initialization uses three explicit
+  custom session buffers and copies buffer 1 into live state without creating a
+  card image. Existing-slot Start derives the selected sealed manifest and a
+  fresh runtime identity at execution time, while its remaining retail
+  `card_to_memory` normalization is reported as an unknown requirement.
 - `construct-message-flows` selects every message group for one exact
   content/runtime/language profile and emits canonical source programs without
   guessing unaudited backing stores.
