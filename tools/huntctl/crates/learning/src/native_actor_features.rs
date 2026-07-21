@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V4: &str = "dusklight-native-actor-feature-view/v4";
+pub const NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V5: &str = "dusklight-native-actor-feature-view/v5";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +30,7 @@ pub enum ActorFeatureFamily {
     ParentRelative,
     Attention,
     EventParticipation,
+    ReturnPlaceWriter,
     EnemyBase,
     TriggerVolume,
     GoalRelative,
@@ -37,7 +38,7 @@ pub enum ActorFeatureFamily {
 }
 
 impl ActorFeatureFamily {
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::Identity,
         Self::AbsoluteMotion,
         Self::BaseLifecycle,
@@ -47,6 +48,7 @@ impl ActorFeatureFamily {
         Self::ParentRelative,
         Self::Attention,
         Self::EventParticipation,
+        Self::ReturnPlaceWriter,
         Self::EnemyBase,
         Self::TriggerVolume,
         Self::GoalRelative,
@@ -202,7 +204,7 @@ impl NativeActorFeatureView {
             })
             .collect();
         let mut view = Self {
-            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V4.into(),
+            schema: NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V5.into(),
             source_actor_view_sha256: source.view_sha256,
             spec,
             columns,
@@ -235,7 +237,7 @@ impl NativeActorFeatureView {
     pub fn validate(&self) -> Result<(), NativeActorFeatureError> {
         self.spec.validate()?;
         let expected_columns = columns_for(&self.spec, self.columns.goal_anchor_count);
-        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V4
+        if self.schema != NATIVE_ACTOR_FEATURE_VIEW_SCHEMA_V5
             || self.source_actor_view_sha256 == Digest::ZERO
             || self.observations.is_empty()
             || self.columns != expected_columns
@@ -371,6 +373,31 @@ fn columns_for(spec: &ActorFeatureSpec, goal_anchor_count: usize) -> ActorFeatur
                 "event_id",
                 "event_map_tool_id",
                 "event_index",
+            ],
+        );
+    }
+    if spec.contains(ActorFeatureFamily::ReturnPlaceWriter) {
+        extend_names(
+            &mut categorical,
+            &[
+                "return_place_save_room",
+                "return_place_save_point",
+                "return_place_switch_room",
+                "return_place_required_event_set",
+                "return_place_required_event_unset",
+                "return_place_required_switch_set",
+                "return_place_required_switch_unset",
+            ],
+        );
+        extend_names(
+            &mut binary,
+            &[
+                "return_place_no_telop_clear",
+                "return_place_event_set_satisfied",
+                "return_place_event_unset_satisfied",
+                "return_place_switch_set_satisfied",
+                "return_place_switch_unset_satisfied",
+                "return_place_eligible",
             ],
         );
     }
@@ -561,6 +588,38 @@ fn materialize_actor(
             );
         } else {
             extend_categories(&mut row, &[0; 5], false);
+        }
+    }
+    if spec.contains(ActorFeatureFamily::ReturnPlaceWriter) {
+        if let Some(writer) = &actor.return_place_writer {
+            extend_categories(
+                &mut row,
+                &[
+                    i64::from(writer.save_room),
+                    i64::from(writer.save_point),
+                    i64::from(writer.switch_room),
+                    i64::from(writer.required_event_set),
+                    i64::from(writer.required_event_unset),
+                    i64::from(writer.required_switch_set),
+                    i64::from(writer.required_switch_unset),
+                ],
+                true,
+            );
+            extend_binary(
+                &mut row,
+                &[
+                    writer.no_telop_clear,
+                    writer.event_set_satisfied,
+                    writer.event_unset_satisfied,
+                    writer.switch_set_satisfied,
+                    writer.switch_unset_satisfied,
+                    writer.eligible,
+                ],
+                true,
+            );
+        } else {
+            extend_categories(&mut row, &[0; 7], false);
+            extend_binary(&mut row, &[false; 6], false);
         }
     }
     if spec.contains(ActorFeatureFamily::EnemyBase) {
@@ -1024,6 +1083,56 @@ mod tests {
         assert!(!actor.categorical_present[flags]);
         assert_eq!(actor.continuous[down_x], 0.0);
         assert!(!actor.continuous_present[down_x]);
+    }
+
+    #[test]
+    fn v14_return_place_writer_is_selectable_and_legacy_values_are_masked() {
+        let source = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
+        ));
+        let view = NativeActorFeatureView::build(
+            &source,
+            ActorFeatureSpec::new([ActorFeatureFamily::ReturnPlaceWriter]).unwrap(),
+        )
+        .unwrap();
+        let actor = view.observations[0]
+            .actors
+            .iter()
+            .find(|actor| {
+                let column = categorical(&view, "return_place_save_room");
+                actor.categorical_present[column]
+            })
+            .unwrap();
+        let save_room = categorical(&view, "return_place_save_room");
+        let event_set = categorical(&view, "return_place_required_event_set");
+        let event_unset = categorical(&view, "return_place_required_event_unset");
+        let no_telop = binary(&view, "return_place_no_telop_clear");
+        let event_satisfied = binary(&view, "return_place_event_set_satisfied");
+        let eligible = binary(&view, "return_place_eligible");
+        assert_eq!(actor.categorical[save_room], 3);
+        assert_eq!(actor.categorical[event_set], 0x10);
+        assert_eq!(actor.categorical[event_unset], i64::from(u16::MAX));
+        assert!(actor.categorical_present[event_unset]);
+        assert!(!actor.binary[no_telop]);
+        assert!(actor.binary_present[no_telop]);
+        assert!(actor.binary[event_satisfied]);
+        assert!(!actor.binary[eligible]);
+        assert!(actor.binary_present[eligible]);
+
+        let legacy = actor_view(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v13.dseps"
+        ));
+        let legacy = NativeActorFeatureView::build(
+            &legacy,
+            ActorFeatureSpec::new([ActorFeatureFamily::ReturnPlaceWriter]).unwrap(),
+        )
+        .unwrap();
+        assert!(legacy.observations[0].actors.iter().all(|actor| {
+            actor.categorical[save_room] == 0
+                && !actor.categorical_present[save_room]
+                && !actor.binary[no_telop]
+                && !actor.binary_present[no_telop]
+        }));
     }
 
     #[test]

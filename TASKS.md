@@ -757,7 +757,7 @@ human-authored successful setup.
     actor nodes across all 512 observations, with 512 valid camera frames and
     2,560 resolvable parent relations, in sealed view
     `dcb396bb...fae3a` / content blob `11aad6d5...6c52`;
-  - [ ] expose available typed actor components and goal-relative actor
+  - [x] expose available typed actor components and goal-relative actor
     features without adding gameplay writes or making optional components look
     universally present;
     - [x] Actor base-state component v1 carries the universal observation-v7
@@ -796,6 +796,18 @@ human-authored successful setup.
       goal correctly produced zero fabricated anchors across all 512
       observations in sealed view `890a7787...bd471` / blob
       `1f17770d...3c36a`;
+    - [x] Complete the reusable offline actor projection rather than silently
+      dropping a typed optional component. Actor view v8 now retains the
+      return-place writer's exact destination, sentinel-bearing event/switch
+      guards, current guard satisfaction and eligibility alongside the already
+      projected base, attention, event-participation, enemy-base and trigger
+      components. Actor-feature view v5 exposes it as a separately selectable
+      family with per-value presence masks, so v2-v13 shards and non-writer
+      actors remain absent instead of becoming plausible zeroes. View
+      validation rejects internally inconsistent sentinel guards or a resealed
+      eligibility change. The nine actor-view and eight actor-feature focused
+      tests pass, including exact v14 values, legacy missingness and tampering;
+      all derivation remains read-only and offline;
   - [ ] triggers, exits, loading/event state, goal state, clocks and RNG
     identity beyond the currently retained scene-exit and core channels.
     - [x] Capture the global message session without casting the active talk

@@ -19,7 +19,7 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const NATIVE_ACTOR_VIEW_SCHEMA_V7: &str = "dusklight-native-actor-view/v7";
+pub const NATIVE_ACTOR_VIEW_SCHEMA_V8: &str = "dusklight-native-actor-view/v8";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -116,6 +116,7 @@ pub struct NativeActorRelation {
     pub parent_relative_velocity: Option<[f32; 3]>,
     pub attention: Option<NativeActorAttentionRelation>,
     pub event_participation: Option<NativeActorEventParticipation>,
+    pub return_place_writer: Option<NativeActorReturnPlaceWriterState>,
     /// One entry per semantic goal-graph spatial anchor, preserving explicit
     /// unresolved values.
     pub goal_relative_positions: Vec<Option<[f32; 3]>>,
@@ -208,6 +209,24 @@ pub struct NativeActorEventParticipation {
     pub event_id: i16,
     pub map_tool_id: u8,
     pub index: u8,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeActorReturnPlaceWriterState {
+    pub save_room: i8,
+    pub save_point: u8,
+    pub switch_room: i8,
+    pub required_event_set: u16,
+    pub required_event_unset: u16,
+    pub required_switch_set: u8,
+    pub required_switch_unset: u8,
+    pub no_telop_clear: bool,
+    pub event_set_satisfied: bool,
+    pub event_unset_satisfied: bool,
+    pub switch_set_satisfied: bool,
+    pub switch_unset_satisfied: bool,
+    pub eligible: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -368,7 +387,7 @@ impl NativeEpisodeActorView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_ACTOR_VIEW_SCHEMA_V7.into(),
+            schema: NATIVE_ACTOR_VIEW_SCHEMA_V8.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             actor_profile_catalog_identity: catalog.identity.clone(),
@@ -402,7 +421,7 @@ impl NativeEpisodeActorView {
     }
 
     pub fn validate(&self) -> Result<(), NativeActorViewError> {
-        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V7
+        if self.schema != NATIVE_ACTOR_VIEW_SCHEMA_V8
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || !valid_catalog_identity(&self.actor_profile_catalog_identity)
@@ -861,6 +880,23 @@ fn materialize_actor(
                 index: event.index,
             }
         }),
+        return_place_writer: actor.return_place_writer.as_ref().map(|writer| {
+            NativeActorReturnPlaceWriterState {
+                save_room: writer.save_room,
+                save_point: writer.save_point,
+                switch_room: writer.switch_room,
+                required_event_set: writer.required_event_set,
+                required_event_unset: writer.required_event_unset,
+                required_switch_set: writer.required_switch_set,
+                required_switch_unset: writer.required_switch_unset,
+                no_telop_clear: writer.no_telop_clear,
+                event_set_satisfied: writer.event_set_satisfied,
+                event_unset_satisfied: writer.event_unset_satisfied,
+                switch_set_satisfied: writer.switch_set_satisfied,
+                switch_unset_satisfied: writer.switch_unset_satisfied,
+                eligible: writer.eligible,
+            }
+        }),
         goal_relative_positions: goal_positions
             .iter()
             .map(|position| position.map(|position| subtract(actor.position, position)))
@@ -1086,6 +1122,18 @@ fn validate_observation(
                 && observation.camera_frame_present == trigger.camera_relative_center.is_some()
                 && observation.camera_frame_present == trigger.yaw_relative_to_camera.is_some()
         });
+        let return_place_writer_valid = actor.return_place_writer.as_ref().is_none_or(|writer| {
+            (writer.required_event_set != u16::MAX || writer.event_set_satisfied)
+                && (writer.required_event_unset != u16::MAX || writer.event_unset_satisfied)
+                && (writer.required_switch_set != u8::MAX || writer.switch_set_satisfied)
+                && (writer.required_switch_unset != u8::MAX || writer.switch_unset_satisfied)
+                && writer.eligible
+                    == (writer.no_telop_clear
+                        && writer.event_set_satisfied
+                        && writer.event_unset_satisfied
+                        && writer.switch_set_satisfied
+                        && writer.switch_unset_satisfied)
+        });
         let attention_consistent = actor.attention.as_ref().is_none_or(|attention| {
             attention.flags != 0
                 && observation.player_present == attention.link_relative_position.is_some()
@@ -1102,6 +1150,7 @@ fn validate_observation(
             || !base_state_finite
             || !enemy_base_valid
             || !trigger_volume_valid
+            || !return_place_writer_valid
             || !finite
         {
             return Err(NativeActorViewError::new(
@@ -1276,6 +1325,16 @@ mod tests {
         shard
     }
 
+    fn shard_v14() -> NativeEpisodeShard {
+        let mut shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
+        ))
+        .unwrap();
+        shard.episodes.truncate(1);
+        shard.episodes[0].steps.truncate(1);
+        shard
+    }
+
     fn shard_v15() -> NativeEpisodeShard {
         let mut shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v15.dseps"
@@ -1410,6 +1469,57 @@ mod tests {
                 .actors
                 .iter()
                 .all(|actor| actor.enemy_base.is_none())
+        }));
+    }
+
+    #[test]
+    fn exposes_v14_return_place_writer_without_fabricating_legacy_values() {
+        let mut v14_shard = shard_v14();
+        let catalog = catalog_for(&v14_shard);
+        v14_shard.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build(&v14_shard, &catalog).unwrap();
+        for observation in &view.observations {
+            let writers = observation
+                .actors
+                .iter()
+                .filter_map(|actor| actor.return_place_writer.as_ref())
+                .collect::<Vec<_>>();
+            assert_eq!(writers.len(), 1);
+            let writer = writers[0];
+            assert_eq!(writer.save_room, 3);
+            assert_eq!(writer.save_point, 2);
+            assert_eq!(writer.switch_room, 0);
+            assert_eq!(writer.required_event_set, 0x10);
+            assert_eq!(writer.required_event_unset, u16::MAX);
+            assert_eq!(writer.required_switch_set, 8);
+            assert_eq!(writer.required_switch_unset, u8::MAX);
+            assert!(!writer.no_telop_clear);
+            assert!(writer.event_set_satisfied);
+            assert!(writer.event_unset_satisfied);
+            assert!(writer.switch_set_satisfied);
+            assert!(writer.switch_unset_satisfied);
+            assert!(!writer.eligible);
+        }
+
+        let mut tampered = view.clone();
+        tampered.observations[0]
+            .actors
+            .iter_mut()
+            .find_map(|actor| actor.return_place_writer.as_mut())
+            .unwrap()
+            .eligible = true;
+        tampered.view_sha256 = tampered.compute_identity().unwrap();
+        assert!(tampered.validate().is_err());
+
+        let mut legacy = shard_v10();
+        let catalog = catalog_for(&legacy);
+        legacy.metadata.actor_profile_catalog_identity = Some(catalog.identity.clone());
+        let view = NativeEpisodeActorView::build(&legacy, &catalog).unwrap();
+        assert!(view.observations.iter().all(|observation| {
+            observation
+                .actors
+                .iter()
+                .all(|actor| actor.return_place_writer.is_none())
         }));
     }
 
