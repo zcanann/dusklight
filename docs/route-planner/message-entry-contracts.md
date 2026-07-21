@@ -7,7 +7,7 @@ separate, exact-content join.
 
 ## Source contract
 
-A `message-flow-entry-contract-set/v2` pins both the schema and digest of one
+A `message-flow-entry-contract-set/v3` pins both the schema and digest of one
 `compiled-message-flow-set/v5`. Each entry then names:
 
 - the exact message group, message-resource digest, and flow ID;
@@ -27,6 +27,13 @@ evidence that talking to it is feasible. Interaction volumes, attention
 selection, forced cutscene triggers, player control, timing, and other
 unaudited conditions remain obligations or unknown requirements.
 
+The v3 source set can also bind a presentation request to one actor-backed
+entry. The compiled request reads the resolved flow component's `event_id`,
+`item_id`, and exact `speaker_instance_id`, then copies `item_id` into the named
+recent-item field. This represents the helper call's guaranteed `mGtItm` write;
+it does not claim that presentation-actor creation succeeded or that the item
+was granted.
+
 ## Compilation
 
 `compile-message-entries` resolves the contracts against an extracted-orig
@@ -41,7 +48,7 @@ bundle and the selected compiled message-flow set. Compilation fails when:
 - an obligation is not scoped to the exact selected runtime context.
 
 The output is a canonical
-`compiled-message-flow-entry-set/v2`. It embeds the source contracts, resolved
+`compiled-message-flow-entry-set/v3`. It embeds the source contracts, resolved
 flow component/node/index records, and deterministically reproduced mechanics.
 It therefore remains verifiable after the user's `orig/` directory is removed.
 Tampering with the mechanics without changing the embedded source derivation is

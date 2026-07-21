@@ -14,7 +14,8 @@ use crate::orig_discovery::ExtractedOrigBundle;
 use crate::state::StateValue;
 use crate::transition::{
     ActivationContract, CandidateTransition, ComponentFieldTarget, FeasibilityObligation,
-    MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, StateOperation, TransitionKind, UnknownRequirement,
+    MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ReaderRule, StateOperation, TransitionKind,
+    UnknownRequirement,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
@@ -25,9 +26,9 @@ pub const MESSAGE_FLOW_RESOURCE_OVERLAY_SET_SCHEMA: &str =
 pub const COMPILED_MESSAGE_FLOW_SET_SCHEMA: &str =
     "dusklight.route-planner.compiled-message-flow-set/v5";
 pub const MESSAGE_FLOW_ENTRY_CONTRACT_SET_SCHEMA: &str =
-    "dusklight.route-planner.message-flow-entry-contract-set/v2";
+    "dusklight.route-planner.message-flow-entry-contract-set/v3";
 pub const COMPILED_MESSAGE_FLOW_ENTRY_SET_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-entry-set/v2";
+    "dusklight.route-planner.compiled-message-flow-entry-set/v3";
 const MAX_RESOURCE_OVERLAYS: usize = 256;
 const MAX_ENTRY_CONTRACTS: usize = 65_536;
 const BUNDLED_GZ2E01_ENGLISH_LANAYRU_ENTRY_CONTRACTS: &[u8] =
@@ -90,6 +91,21 @@ pub struct MessageFlowEntryContractSet {
     pub compiled_message_flow_set_schema: String,
     pub compiled_message_flow_set_sha256: Digest,
     pub entries: Vec<MessageFlowEntryContract>,
+    pub presentation_requests: Vec<MessagePresentationRequestContract>,
+}
+
+/// An exact actor caller consuming `event008`'s flow fields and attempting a
+/// presentation-item creation. The helper writes the recent-item byte before
+/// actor creation can fail; later actor execution is intentionally separate.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessagePresentationRequestContract {
+    pub id: String,
+    pub label: String,
+    pub source_entry_id: String,
+    pub event_id: u16,
+    pub item_id: u16,
+    pub recent_item_target: ComponentFieldTarget,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -203,6 +219,39 @@ impl MessageFlowEntryContractSet {
             }
             prior = Some(entry.id.as_str());
             entry.validate()?;
+        }
+        let entry_ids = self
+            .entries
+            .iter()
+            .map(|entry| entry.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut prior_request = None;
+        for request in &self.presentation_requests {
+            if prior_request.is_some_and(|id: &str| id >= request.id.as_str()) {
+                return Err(PlannerContractError::new(
+                    "message_flow_entry_contract_set.presentation_requests",
+                    "must be unique and sorted by request ID",
+                ));
+            }
+            prior_request = Some(request.id.as_str());
+            request.validate()?;
+            if !entry_ids.contains(request.source_entry_id.as_str()) {
+                return Err(PlannerContractError::new(
+                    "message_flow_entry_contract_set.presentation_requests.source_entry_id",
+                    "must name an entry in the same contract set",
+                ));
+            }
+            if self
+                .entries
+                .iter()
+                .find(|entry| entry.id == request.source_entry_id)
+                .is_some_and(|entry| entry.speaker.instance_id.is_none())
+            {
+                return Err(PlannerContractError::new(
+                    "message_flow_entry_contract_set.presentation_requests.source_entry_id",
+                    "must name an actor-backed entry",
+                ));
+            }
         }
         Ok(())
     }
@@ -474,8 +523,10 @@ fn compile_entry_mechanics(
             context: exact_context.clone(),
         }],
     };
-    let mut transitions = Vec::with_capacity(contracts.entries.len());
+    let mut transitions =
+        Vec::with_capacity(contracts.entries.len() + contracts.presentation_requests.len());
     let mut obligations = Vec::new();
+    let mut readers = Vec::new();
     for (entry, resolved) in contracts.entries.iter().zip(resolved_entries) {
         if entry
             .obligations
@@ -513,15 +564,96 @@ fn compile_entry_mechanics(
             evidence: entry.evidence.clone(),
         });
     }
+    for request in &contracts.presentation_requests {
+        let (entry, resolved) = contracts
+            .entries
+            .iter()
+            .zip(resolved_entries)
+            .find(|(entry, _)| entry.id == request.source_entry_id)
+            .expect("contract-set validation requires the source entry");
+        let speaker = entry.speaker.instance_id.as_ref().ok_or_else(|| {
+            PlannerContractError::new(
+                "message_presentation_request.source_entry_id",
+                "must refer to an actor-backed message entry",
+            )
+        })?;
+        let flow_field = |field: &str| ValueReference::ComponentField {
+            component_id: resolved.flow_component_id.clone(),
+            field: field.into(),
+        };
+        let transition_id = format!("transition.message-presentation-request.{}", request.id);
+        let sources = [
+            ("event-id", flow_field("event_id")),
+            ("item-id", flow_field("item_id")),
+            ("speaker", flow_field("speaker_instance_id")),
+        ];
+        let hard_guards = PredicateExpression::All {
+            terms: vec![
+                PredicateExpression::Compare {
+                    left: sources[0].1.clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Unsigned(request.event_id.into()),
+                    },
+                },
+                PredicateExpression::Compare {
+                    left: sources[1].1.clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Unsigned(request.item_id.into()),
+                    },
+                },
+                PredicateExpression::Compare {
+                    left: sources[2].1.clone(),
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text(speaker.clone()),
+                    },
+                },
+            ],
+        };
+        transitions.push(CandidateTransition {
+            id: transition_id.clone(),
+            label: request.label.clone(),
+            scope: scope.clone(),
+            transition_kind: TransitionKind::ActorDriven,
+            approach_id: format!("approach.message-presentation-request.{}", request.id),
+            activation: ActivationContract {
+                hard_guards,
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::CopyValue {
+                    source: ComponentFieldTarget {
+                        component_id: resolved.flow_component_id.clone(),
+                        field: "item_id".into(),
+                    },
+                    target: request.recent_item_target.clone(),
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: entry.evidence.clone(),
+        });
+        readers.extend(sources.into_iter().map(|(suffix, source)| ReaderRule {
+            id: format!(
+                "reader.message-presentation-request.{}.{suffix}",
+                request.id
+            ),
+            scope: scope.clone(),
+            source,
+            consuming_transition_id: transition_id.clone(),
+            interpretation_fact_id: None,
+            evidence: entry.evidence.clone(),
+        }));
+    }
     transitions.sort_by(|left, right| left.id.cmp(&right.id));
     obligations.sort_by(|left, right| left.id.cmp(&right.id));
+    readers.sort_by(|left, right| left.id.cmp(&right.id));
     let mechanics = MechanicsCatalog {
         schema: MECHANICS_CATALOG_SCHEMA.into(),
         transitions,
         obligations,
         writers: Vec::new(),
         gates: Vec::new(),
-        readers: Vec::new(),
+        readers,
         reconstruction_rules: Vec::new(),
         obstructions: Vec::new(),
         resolvers: Vec::new(),
@@ -657,6 +789,37 @@ impl MessageFlowEntryContract {
             ));
         }
         Ok(())
+    }
+}
+
+impl MessagePresentationRequestContract {
+    fn validate(&self) -> Result<(), PlannerContractError> {
+        validate_stable_id("message_presentation_request.id", &self.id)?;
+        validate_label("message_presentation_request.label", &self.label)?;
+        validate_stable_id(
+            "message_presentation_request.source_entry_id",
+            &self.source_entry_id,
+        )?;
+        if self.event_id > u16::from(u8::MAX) || self.item_id > u16::from(u8::MAX) {
+            return Err(PlannerContractError::new(
+                "message_presentation_request",
+                "event and item IDs must fit their retail byte-width handoff fields",
+            ));
+        }
+        StateOperation::CopyValue {
+            source: ComponentFieldTarget {
+                component_id: "message-session".into(),
+                field: "item_id".into(),
+            },
+            target: self.recent_item_target.clone(),
+        }
+        .validate()
+        .map_err(|error| {
+            PlannerContractError::new(
+                "message_presentation_request.recent_item_target",
+                error.detail(),
+            )
+        })
     }
 }
 
@@ -1821,6 +1984,12 @@ mod tests {
         assert_eq!(placement.actor_name, "Seirei");
         assert_eq!(entry.obligations.len(), 1);
         assert_eq!(entry.unknown_requirements.len(), 1);
+        assert_eq!(set.presentation_requests.len(), 1);
+        let request = &set.presentation_requests[0];
+        assert_eq!(request.source_entry_id, entry.id);
+        assert_eq!(request.event_id, 1);
+        assert_eq!(request.item_id, 0xa3);
+        assert_eq!(request.recent_item_target.component_id, "event-recent-item");
         assert!(matches!(
             &entry.additional_hard_guard,
             PredicateExpression::Compare {
@@ -1888,6 +2057,17 @@ mod tests {
             compiled_message_flow_set_schema: COMPILED_MESSAGE_FLOW_SET_SCHEMA.into(),
             compiled_message_flow_set_sha256: compiled.digest().unwrap(),
             entries: vec![entry],
+            presentation_requests: vec![MessagePresentationRequestContract {
+                id: "gor-coron.fixture-presentation".into(),
+                label: "Gor Coron attempts item presentation".into(),
+                source_entry_id: "gor-coron.fixture-flow-7".into(),
+                event_id: 1,
+                item_id: 7,
+                recent_item_target: ComponentFieldTarget {
+                    component_id: "event-recent-item".into(),
+                    field: "get_item_no".into(),
+                },
+            }],
         };
         assert_eq!(
             MessageFlowEntryContractSet::decode_canonical(&set.canonical_bytes().unwrap()).unwrap(),
@@ -1899,7 +2079,8 @@ mod tests {
                 .unwrap(),
             artifact
         );
-        assert_eq!(artifact.mechanics.transitions.len(), 1);
+        assert_eq!(artifact.mechanics.transitions.len(), 2);
+        assert_eq!(artifact.mechanics.readers.len(), 3);
         let transition = &artifact.mechanics.transitions[0];
         assert_eq!(transition.activation.unknown_requirements.len(), 1);
         assert!(transition.activation.effects.iter().any(|effect| matches!(
@@ -1907,6 +2088,19 @@ mod tests {
             StateOperation::Write { target, value: StateValue::Signed(5) }
                 if target.component_id == "flow.active-message" && target.field == "speaker_zone"
         )));
+        let request = artifact
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.id.contains("message-presentation-request"))
+            .unwrap();
+        assert!(matches!(
+            request.activation.effects.as_slice(),
+            [StateOperation::CopyValue { source, target }]
+                if source.component_id == "flow.active-message"
+                    && source.field == "item_id"
+                    && target.component_id == "event-recent-item"
+        ));
         assert!(transition.activation.effects.iter().any(|effect| matches!(
             effect,
             StateOperation::AdvanceFlow { flow_component_id, node_id }
@@ -1915,7 +2109,7 @@ mod tests {
 
         let mut base = empty_mechanics();
         artifact.merge_into(&mut base).unwrap();
-        assert_eq!(base.transitions.len(), 1);
+        assert_eq!(base.transitions.len(), 2);
         let before = base.clone();
         assert!(artifact.merge_into(&mut base).is_err());
         assert_eq!(base, before);

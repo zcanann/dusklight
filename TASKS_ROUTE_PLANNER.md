@@ -1879,6 +1879,9 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Model item ownership as per-item raw backing metadata, project the exact
           five-byte light-drop payload, and compile Lanayru query 22/event 17 to
           the same runtime-file Vessel bit without an abstract inventory flag.
+    - [x] Compile an actor-backed presentation-request consumer from exact
+          speaker/event/item fields to the session recent-item store, while
+          leaving item-actor execution and grant as distinct later transitions.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.

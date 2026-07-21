@@ -159,6 +159,13 @@ post-presentation latch, its next wait orders a speak event; the follow-up flow
 now takes the item-present branch, sets `F_0615`, idempotently reasserts item
 `0xa3`, and sets save-switch 105. Those are ordered effects, not one milestone.
 
+The exact v3 entry pack now compiles the first actor-consumer step as well. It
+requires the same Seirei speaker plus event 1/item `0xa3`, then copies the item
+ID into session-owned `event-recent-item.get_item_no`. That write occurs before
+the presentation helper can fail. Item-actor execution, the actor's latch/event
+change, and generic grant remain later transitions rather than being inferred
+from the request.
+
 ## Backing stores and writers
 
 The Vessel is not an ordinary inventory slot. `DROP_CONTAINER03` is the bit
