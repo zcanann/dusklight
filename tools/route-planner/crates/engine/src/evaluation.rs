@@ -1025,6 +1025,25 @@ impl<'a> PredicateEvaluator<'a> {
                     .find(|component| component.id == *component_id)?,
                 field,
             ),
+            ValueReference::BoundComponentField {
+                component_kind,
+                binding,
+                field,
+            } => {
+                let mut matches = self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .filter(|component| {
+                        component.component_kind == *component_kind && component.binding == *binding
+                    });
+                let component = matches.next()?;
+                if matches.next().is_some() {
+                    return None;
+                }
+                structured_field(component, field)
+            }
             ValueReference::RawBits {
                 component_id,
                 byte_offset,
@@ -1473,6 +1492,90 @@ mod tests {
         assert_eq!(
             evaluator.evaluate(&fact("world.faron.twilight-access")),
             EvaluatedTruth::True
+        );
+    }
+
+    #[test]
+    fn bound_component_fields_follow_the_backing_binding_and_fail_on_ambiguity() {
+        let mut snapshot = snapshot(0xff);
+        snapshot.environment.components.push(StateComponent {
+            id: "dungeon.active".into(),
+            component_kind: ComponentKind::DungeonMemory,
+            payload: ComponentPayload::Structured {
+                fields: BTreeMap::from([("small_keys".into(), StateValue::Unsigned(1))]),
+            },
+            binding: ComponentBinding::Dungeon {
+                dungeon: "forest-temple".into(),
+            },
+            lifetime: SemanticLifetime::StageLoad,
+            serialization_owner: SerializationOwner::StageBank {
+                stage: "D_MN05".into(),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::TraceObservation,
+                source_id: "trace.forest-keys".into(),
+                source_sha256: Some(Digest([4; 32])),
+                transition_id: None,
+            }],
+        });
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let reference = |dungeon: &str| ValueReference::BoundComponentField {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBinding::Dungeon {
+                dungeon: dungeon.into(),
+            },
+            field: "small_keys".into(),
+        };
+        let forest_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            forest_evaluator.resolve_value(&reference("forest-temple")),
+            Some(StateValue::Unsigned(1))
+        );
+        assert_eq!(
+            forest_evaluator.resolve_value(&reference("goron-mines")),
+            None
+        );
+
+        snapshot
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "dungeon.active")
+            .unwrap()
+            .binding = ComponentBinding::Dungeon {
+            dungeon: "goron-mines".into(),
+        };
+        let goron_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            goron_evaluator.resolve_value(&reference("goron-mines")),
+            Some(StateValue::Unsigned(1))
+        );
+        assert_eq!(
+            goron_evaluator.resolve_value(&reference("forest-temple")),
+            None
+        );
+
+        let mut duplicate = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "dungeon.active")
+            .unwrap()
+            .clone();
+        duplicate.id = "dungeon.ambiguous".into();
+        snapshot.environment.components.push(duplicate);
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference("goron-mines")),
+            None
         );
     }
 

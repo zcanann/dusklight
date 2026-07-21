@@ -6,7 +6,7 @@ use crate::evaluation::{
 };
 use crate::execution::PlannerExecutionState;
 use crate::identity::EquivalenceSet;
-use crate::logic::{FactCatalog, PredicateExpression, TruthStatus};
+use crate::logic::{FactCatalog, PredicateExpression, RuleEvidence, TruthStatus};
 use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
 use crate::transition::{CandidateTransition, MechanicsCatalog, PathConstraint};
 use crate::{PlannerContractError, artifact::Digest};
@@ -370,6 +370,27 @@ pub enum SearchActionKind {
     Technique,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceDependencyKind {
+    Fact,
+    Transition,
+    Obstruction,
+    Obligation,
+    Resolver,
+    Technique,
+    Microtrace,
+    UnknownRequirement,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvidenceDependency {
+    pub dependency_kind: EvidenceDependencyKind,
+    pub record_id: String,
+    pub evidence: RuleEvidence,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchStep {
@@ -384,6 +405,8 @@ pub struct SearchStep {
     pub unknown_obligation_ids: Vec<String>,
     pub supporting_microtrace_ids: Vec<String>,
     pub introduced_obligation_ids: Vec<String>,
+    pub evidence_dependencies: Vec<EvidenceDependency>,
+    pub weakest_evidence: Option<TruthStatus>,
     pub source_state_sha256: Digest,
     pub result_state_sha256: Digest,
 }
@@ -404,6 +427,8 @@ pub struct BlockedTransitionWitness {
     pub unknown_obligation_ids: Vec<String>,
     pub supporting_microtrace_ids: Vec<String>,
     pub unknown_requirement_ids: Vec<String>,
+    pub evidence_dependencies: Vec<EvidenceDependency>,
+    pub weakest_evidence: Option<TruthStatus>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -762,6 +787,9 @@ impl<'a> ForwardSolver<'a> {
                     before: node.state.clone(),
                     after: next.clone(),
                 };
+                let evidence_dependencies =
+                    technique_evidence_dependencies(self.facts, self.mechanics, technique);
+                let weakest_evidence = weakest_evidence(&evidence_dependencies);
                 saw_unknown_goal |= self.enqueue_if_new(
                     &mut queue,
                     &visited,
@@ -782,6 +810,8 @@ impl<'a> ForwardSolver<'a> {
                         unknown_obligation_ids: Vec::new(),
                         supporting_microtrace_ids: Vec::new(),
                         introduced_obligation_ids: technique.introduced_obligation_ids.clone(),
+                        evidence_dependencies,
+                        weakest_evidence,
                         source_state_sha256: state_identity,
                         result_state_sha256: Digest::ZERO,
                     },
@@ -895,6 +925,14 @@ impl<'a> ForwardSolver<'a> {
                                 &resolution.unknown_obligation_ids,
                                 self.options.feasibility_mode,
                             );
+                            let evidence_dependencies = transition_evidence_dependencies(
+                                self.facts,
+                                self.mechanics,
+                                transition,
+                                &resolution,
+                                &preliminary,
+                            );
+                            let weakest_evidence = weakest_evidence(&evidence_dependencies);
                             record_blocked_transition_witness(
                                 &mut blocked_transition_witnesses,
                                 BlockedTransitionWitness {
@@ -933,6 +971,8 @@ impl<'a> ForwardSolver<'a> {
                                         .cloned()
                                         .collect(),
                                     unknown_requirement_ids: preliminary.unknown_requirement_ids,
+                                    evidence_dependencies,
+                                    weakest_evidence,
                                 },
                             );
                             continue;
@@ -1042,7 +1082,14 @@ impl<'a> ForwardSolver<'a> {
                                 unknown_transition_ids.insert(transition.id.clone());
                                 record_blocked_transition_witness(
                                     &mut blocked_transition_witnesses,
-                                    blocked_witness(transition, &next, &resolution, &assessment)?,
+                                    blocked_witness(
+                                        self.facts,
+                                        self.mechanics,
+                                        transition,
+                                        &next,
+                                        &resolution,
+                                        &assessment,
+                                    )?,
                                 );
                                 continue;
                             }
@@ -1051,7 +1098,14 @@ impl<'a> ForwardSolver<'a> {
                             | TransitionClassification::Obstructed => {
                                 record_blocked_transition_witness(
                                     &mut blocked_transition_witnesses,
-                                    blocked_witness(transition, &next, &resolution, &assessment)?,
+                                    blocked_witness(
+                                        self.facts,
+                                        self.mechanics,
+                                        transition,
+                                        &next,
+                                        &resolution,
+                                        &assessment,
+                                    )?,
                                 );
                                 continue;
                             }
@@ -1075,6 +1129,14 @@ impl<'a> ForwardSolver<'a> {
                             before: transition_before,
                             after: next.clone(),
                         });
+                        let evidence_dependencies = transition_evidence_dependencies(
+                            self.facts,
+                            self.mechanics,
+                            transition,
+                            &resolution,
+                            &assessment,
+                        );
+                        let weakest_evidence = weakest_evidence(&evidence_dependencies);
                         saw_unknown_goal |= self.enqueue_if_new(
                             &mut queue,
                             &visited,
@@ -1119,6 +1181,8 @@ impl<'a> ForwardSolver<'a> {
                                     .collect::<BTreeSet<_>>()
                                     .into_iter()
                                     .collect(),
+                                evidence_dependencies,
+                                weakest_evidence,
                                 source_state_sha256: state_identity,
                                 result_state_sha256: Digest::ZERO,
                             },
@@ -1362,11 +1426,16 @@ impl<'a> ForwardSolver<'a> {
 }
 
 fn blocked_witness(
+    facts: &FactCatalog,
+    mechanics: &MechanicsCatalog,
     transition: &CandidateTransition,
     source: &PlannerExecutionState,
     resolution: &FeasibilityResolution,
     assessment: &TransitionAssessment,
 ) -> Result<BlockedTransitionWitness, PlannerContractError> {
+    let evidence_dependencies =
+        transition_evidence_dependencies(facts, mechanics, transition, resolution, assessment);
+    let weakest_evidence = weakest_evidence(&evidence_dependencies);
     Ok(BlockedTransitionWitness {
         transition_id: transition.id.clone(),
         source_state_sha256: source.semantic_digest()?,
@@ -1389,7 +1458,283 @@ fn blocked_witness(
             .cloned()
             .collect(),
         unknown_requirement_ids: assessment.unknown_requirement_ids.clone(),
+        evidence_dependencies,
+        weakest_evidence,
     })
+}
+
+fn technique_evidence_dependencies(
+    facts: &FactCatalog,
+    mechanics: &MechanicsCatalog,
+    technique: &crate::transition::Technique,
+) -> Vec<EvidenceDependency> {
+    let mut dependencies = BTreeMap::new();
+    insert_evidence(
+        &mut dependencies,
+        EvidenceDependencyKind::Technique,
+        &technique.id,
+        &technique.evidence,
+    );
+    collect_predicate_evidence(
+        &technique.prerequisites,
+        facts,
+        &mut dependencies,
+        &mut BTreeSet::new(),
+    );
+    for obligation_id in technique
+        .discharged_obligation_ids
+        .iter()
+        .chain(&technique.introduced_obligation_ids)
+    {
+        if let Some(obligation) = mechanics
+            .obligations
+            .iter()
+            .find(|obligation| obligation.id == *obligation_id)
+        {
+            collect_obligation_evidence(obligation, facts, &mut dependencies);
+        }
+    }
+    dependencies
+        .into_iter()
+        .map(
+            |((dependency_kind, record_id), evidence)| EvidenceDependency {
+                dependency_kind,
+                record_id,
+                evidence,
+            },
+        )
+        .collect()
+}
+
+fn transition_evidence_dependencies(
+    facts: &FactCatalog,
+    mechanics: &MechanicsCatalog,
+    transition: &CandidateTransition,
+    resolution: &FeasibilityResolution,
+    assessment: &TransitionAssessment,
+) -> Vec<EvidenceDependency> {
+    let mut dependencies = BTreeMap::new();
+    insert_evidence(
+        &mut dependencies,
+        EvidenceDependencyKind::Transition,
+        &transition.id,
+        &transition.evidence,
+    );
+    collect_predicate_evidence(
+        &transition.activation.hard_guards,
+        facts,
+        &mut dependencies,
+        &mut BTreeSet::new(),
+    );
+    for requirement_id in &assessment.unknown_requirement_ids {
+        if let Some(requirement) = transition
+            .activation
+            .unknown_requirements
+            .iter()
+            .find(|requirement| requirement.id == *requirement_id)
+        {
+            insert_evidence(
+                &mut dependencies,
+                EvidenceDependencyKind::UnknownRequirement,
+                &requirement.id,
+                &requirement.evidence,
+            );
+        }
+    }
+    for obstruction_id in resolution
+        .active_obstruction_ids
+        .iter()
+        .chain(&resolution.unknown_obstruction_ids)
+    {
+        if let Some(obstruction) = mechanics
+            .obstructions
+            .iter()
+            .find(|obstruction| obstruction.id == *obstruction_id)
+        {
+            insert_evidence(
+                &mut dependencies,
+                EvidenceDependencyKind::Obstruction,
+                &obstruction.id,
+                &obstruction.evidence,
+            );
+            collect_predicate_evidence(
+                &obstruction.active_when,
+                facts,
+                &mut dependencies,
+                &mut BTreeSet::new(),
+            );
+        }
+    }
+    for resolver_id in &resolution.applied_resolver_ids {
+        if let Some(resolver) = mechanics
+            .resolvers
+            .iter()
+            .find(|resolver| resolver.id == *resolver_id)
+        {
+            insert_evidence(
+                &mut dependencies,
+                EvidenceDependencyKind::Resolver,
+                &resolver.id,
+                &resolver.evidence,
+            );
+            collect_predicate_evidence(
+                &resolver.applicable_when,
+                facts,
+                &mut dependencies,
+                &mut BTreeSet::new(),
+            );
+        }
+    }
+    for technique_id in &resolution.applicable_technique_ids {
+        if let Some(technique) = mechanics
+            .techniques
+            .iter()
+            .find(|technique| technique.id == *technique_id)
+        {
+            for dependency in technique_evidence_dependencies(facts, mechanics, technique) {
+                dependencies.insert(
+                    (dependency.dependency_kind, dependency.record_id),
+                    dependency.evidence,
+                );
+            }
+        }
+    }
+    let obligation_ids = resolution
+        .discharged_obligation_ids
+        .iter()
+        .chain(&assessment.outstanding_obligation_ids)
+        .chain(&assessment.unknown_obligation_ids)
+        .collect::<BTreeSet<_>>();
+    for obligation_id in obligation_ids {
+        if let Some(obligation) = mechanics
+            .obligations
+            .iter()
+            .find(|obligation| obligation.id == *obligation_id)
+        {
+            collect_obligation_evidence(obligation, facts, &mut dependencies);
+        }
+    }
+    for microtrace_id in &resolution.supporting_microtrace_ids {
+        if let Some(microtrace) = mechanics
+            .microtraces
+            .iter()
+            .find(|microtrace| microtrace.id == *microtrace_id)
+        {
+            insert_evidence(
+                &mut dependencies,
+                EvidenceDependencyKind::Microtrace,
+                &microtrace.id,
+                &microtrace.evidence,
+            );
+            collect_predicate_evidence(
+                &microtrace.precondition,
+                facts,
+                &mut dependencies,
+                &mut BTreeSet::new(),
+            );
+            collect_predicate_evidence(
+                &microtrace.postcondition,
+                facts,
+                &mut dependencies,
+                &mut BTreeSet::new(),
+            );
+        }
+    }
+    dependencies
+        .into_iter()
+        .map(
+            |((dependency_kind, record_id), evidence)| EvidenceDependency {
+                dependency_kind,
+                record_id,
+                evidence,
+            },
+        )
+        .collect()
+}
+
+fn collect_obligation_evidence(
+    obligation: &crate::transition::FeasibilityObligation,
+    facts: &FactCatalog,
+    dependencies: &mut BTreeMap<(EvidenceDependencyKind, String), RuleEvidence>,
+) {
+    insert_evidence(
+        dependencies,
+        EvidenceDependencyKind::Obligation,
+        &obligation.id,
+        &obligation.evidence,
+    );
+    let predicate = match &obligation.detail {
+        crate::transition::ObligationDetail::Predicate { predicate } => Some(predicate),
+        crate::transition::ObligationDetail::Interaction { pose_predicate, .. } => {
+            Some(pose_predicate)
+        }
+        crate::transition::ObligationDetail::Temporal { precondition, .. } => Some(precondition),
+        crate::transition::ObligationDetail::Geometry { .. }
+        | crate::transition::ObligationDetail::PlaneSide { .. }
+        | crate::transition::ObligationDetail::Unresolved { .. } => None,
+    };
+    if let Some(predicate) = predicate {
+        collect_predicate_evidence(predicate, facts, dependencies, &mut BTreeSet::new());
+    }
+}
+
+fn collect_predicate_evidence(
+    predicate: &PredicateExpression,
+    facts: &FactCatalog,
+    dependencies: &mut BTreeMap<(EvidenceDependencyKind, String), RuleEvidence>,
+    visiting: &mut BTreeSet<String>,
+) {
+    match predicate {
+        PredicateExpression::Fact { fact_id } => {
+            if !visiting.insert(fact_id.clone()) {
+                return;
+            }
+            if let Some(alias) = facts.aliases.iter().find(|alias| alias.id == *fact_id) {
+                insert_evidence(
+                    dependencies,
+                    EvidenceDependencyKind::Fact,
+                    &alias.id,
+                    &alias.evidence,
+                );
+            } else if let Some(fact) = facts.derived_facts.iter().find(|fact| fact.id == *fact_id) {
+                insert_evidence(
+                    dependencies,
+                    EvidenceDependencyKind::Fact,
+                    &fact.id,
+                    &fact.evidence,
+                );
+                collect_predicate_evidence(&fact.rule, facts, dependencies, visiting);
+            }
+            visiting.remove(fact_id);
+        }
+        PredicateExpression::All { terms } | PredicateExpression::Any { terms } => {
+            for term in terms {
+                collect_predicate_evidence(term, facts, dependencies, visiting);
+            }
+        }
+        PredicateExpression::Not { term } => {
+            collect_predicate_evidence(term, facts, dependencies, visiting)
+        }
+        PredicateExpression::True
+        | PredicateExpression::False
+        | PredicateExpression::Compare { .. } => {}
+    }
+}
+
+fn insert_evidence(
+    dependencies: &mut BTreeMap<(EvidenceDependencyKind, String), RuleEvidence>,
+    dependency_kind: EvidenceDependencyKind,
+    record_id: &str,
+    evidence: &RuleEvidence,
+) {
+    dependencies.insert((dependency_kind, record_id.into()), evidence.clone());
+}
+
+fn weakest_evidence(dependencies: &[EvidenceDependency]) -> Option<TruthStatus> {
+    dependencies
+        .iter()
+        .map(|dependency| dependency.evidence.truth)
+        .max()
 }
 
 fn record_blocked_transition_witness(
@@ -1479,9 +1824,9 @@ mod tests {
         StateValue,
     };
     use crate::transition::{
-        ActivationContract, CandidateTransition, FeasibilityObligation, Goal,
-        MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind, Obstruction,
-        ObstructionResolver, ResolutionKind, RouteCost, StateOperation, Technique,
+        ActivationContract, ActorReconstructionRule, CandidateTransition, FeasibilityObligation,
+        Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ObligationDetail, ObligationKind,
+        Obstruction, ObstructionResolver, ResolutionKind, RouteCost, StateOperation, Technique,
         TemporalRequirement, TemporalWindow, TransitionKind, WitnessedMicrotrace,
     };
     use std::collections::BTreeMap;
@@ -1986,6 +2331,32 @@ mod tests {
             ]
         );
         assert!(reached.steps[1].selected_technique_ids.is_empty());
+        assert_eq!(
+            reached.steps[0].weakest_evidence,
+            Some(TruthStatus::Hypothetical)
+        );
+        assert_eq!(
+            reached.steps[1].weakest_evidence,
+            Some(TruthStatus::Established)
+        );
+        assert!(
+            reached.steps[1]
+                .evidence_dependencies
+                .iter()
+                .any(|dependency| {
+                    dependency.dependency_kind == EvidenceDependencyKind::Fact
+                        && dependency.record_id == "path.tot-open"
+                })
+        );
+        assert!(
+            reached.steps[1]
+                .evidence_dependencies
+                .iter()
+                .any(|dependency| {
+                    dependency.dependency_kind == EvidenceDependencyKind::Fact
+                        && dependency.record_id == "local.tot-switch"
+                })
+        );
 
         let before = PlannerExecutionState::new(snapshot).unwrap();
         let mut rebound = before.clone();
@@ -2842,6 +3213,10 @@ mod tests {
             hd_result.steps[0].selected_resolver_ids,
             vec!["resolver.hd-external-auru-targeting"]
         );
+        assert_eq!(
+            hd_result.steps[0].weakest_evidence,
+            Some(TruthStatus::Established)
+        );
 
         for item_id in [FISHING_ROD, AURUS_MEMO] {
             let sd = setup(0x53, item_id);
@@ -2924,7 +3299,435 @@ mod tests {
                 reached.steps[0].action_id,
                 "transition.auru-generic-get-item"
             );
+            assert_eq!(
+                reached.steps[0].weakest_evidence,
+                Some(TruthStatus::Hypothetical)
+            );
+            assert!(
+                reached.steps[0]
+                    .evidence_dependencies
+                    .iter()
+                    .any(|dependency| {
+                        dependency.dependency_kind == EvidenceDependencyKind::Resolver
+                            && dependency.record_id == "resolver.sd-hypothetical-auru-geometry"
+                            && dependency.evidence.truth == TruthStatus::Hypothetical
+                    })
+            );
+            assert!(
+                reached.steps[0]
+                    .evidence_dependencies
+                    .iter()
+                    .any(|dependency| {
+                        dependency.dependency_kind == EvidenceDependencyKind::Transition
+                            && dependency.record_id == "transition.auru-generic-get-item"
+                            && dependency.evidence.truth == TruthStatus::Established
+                    })
+            );
         }
+    }
+
+    #[test]
+    fn keyed_door_uses_bound_fungible_keys_and_oob_does_not_mutate_it() {
+        let dungeon_field = |dungeon: &str, field: &str| ValueReference::BoundComponentField {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBinding::Dungeon {
+                dungeon: dungeon.into(),
+            },
+            field: field.into(),
+        };
+        let compare = |left: ValueReference, operator: ComparisonOperator, value: StateValue| {
+            PredicateExpression::Compare {
+                left,
+                operator,
+                right: ValueReference::Literal { value },
+            }
+        };
+        let setup = |stage: &str, bound_dungeon: &str, keys: u64| {
+            let mut state = snapshot();
+            state.environment.location.stage = stage.into();
+            state.environment.components = vec![
+                StateComponent {
+                    id: "actor.small-key-door".into(),
+                    component_kind: ComponentKind::ActorInstance,
+                    payload: ComponentPayload::Structured {
+                        fields: BTreeMap::from([("open".into(), StateValue::Boolean(false))]),
+                    },
+                    binding: ComponentBinding::Actor {
+                        instance_id: "actor.small-key-door".into(),
+                    },
+                    lifetime: SemanticLifetime::RoomLoad,
+                    serialization_owner: SerializationOwner::None,
+                    provenance: vec![ComponentProvenance {
+                        source_kind: ProvenanceSourceKind::Initialized,
+                        source_id: "fixture.closed-door-actor".into(),
+                        source_sha256: Some(Digest([0x31; 32])),
+                        transition_id: None,
+                    }],
+                },
+                StateComponent {
+                    id: "dungeon.active".into(),
+                    component_kind: ComponentKind::DungeonMemory,
+                    payload: ComponentPayload::Structured {
+                        fields: BTreeMap::from([
+                            ("door_01_unlocked".into(), StateValue::Boolean(false)),
+                            ("small_keys".into(), StateValue::Unsigned(keys)),
+                        ]),
+                    },
+                    binding: ComponentBinding::Dungeon {
+                        dungeon: bound_dungeon.into(),
+                    },
+                    lifetime: SemanticLifetime::StageLoad,
+                    serialization_owner: SerializationOwner::StageBank {
+                        stage: if bound_dungeon == "forest-temple" {
+                            "D_MN05".into()
+                        } else {
+                            "D_MN04".into()
+                        },
+                    },
+                    provenance: vec![ComponentProvenance {
+                        source_kind: ProvenanceSourceKind::TraceObservation,
+                        source_id: format!("trace.{bound_dungeon}-memory"),
+                        source_sha256: Some(Digest([0x32; 32])),
+                        transition_id: None,
+                    }],
+                },
+            ];
+            state
+        };
+        let unlock_transition =
+            |state: &StateSnapshot, dungeon: &str, source: &str, destination: &str| {
+                CandidateTransition {
+                    id: format!("transition.{dungeon}-door-01-unlock"),
+                    label: format!("Unlock {dungeon} small-key door 01"),
+                    scope: scope(state),
+                    transition_kind: TransitionKind::Door,
+                    approach_id: format!("approach.{dungeon}-door-01-front"),
+                    activation: ActivationContract {
+                        hard_guards: PredicateExpression::All {
+                            terms: vec![
+                                stage_is(source),
+                                compare(
+                                    dungeon_field(dungeon, "small_keys"),
+                                    ComparisonOperator::GreaterThan,
+                                    StateValue::Unsigned(0),
+                                ),
+                                compare(
+                                    dungeon_field(dungeon, "door_01_unlocked"),
+                                    ComparisonOperator::Equal,
+                                    StateValue::Boolean(false),
+                                ),
+                            ],
+                        },
+                        physical_obligation_ids: Vec::new(),
+                        effects: vec![
+                            StateOperation::Adjust {
+                                target: crate::transition::ComponentFieldTarget {
+                                    component_id: "dungeon.active".into(),
+                                    field: "small_keys".into(),
+                                },
+                                delta: -1,
+                            },
+                            StateOperation::Write {
+                                target: crate::transition::ComponentFieldTarget {
+                                    component_id: "dungeon.active".into(),
+                                    field: "door_01_unlocked".into(),
+                                },
+                                value: StateValue::Boolean(true),
+                            },
+                            StateOperation::Write {
+                                target: crate::transition::ComponentFieldTarget {
+                                    component_id: "actor.small-key-door".into(),
+                                    field: "open".into(),
+                                },
+                                value: StateValue::Boolean(true),
+                            },
+                            StateOperation::SetLocation {
+                                location: SceneLocation {
+                                    stage: destination.into(),
+                                    room: 1,
+                                    layer: 0,
+                                    spawn: 0,
+                                },
+                            },
+                        ],
+                        unknown_requirements: Vec::new(),
+                    },
+                    evidence: evidence(TruthStatus::Established),
+                }
+            };
+        let key_pickup = |state: &StateSnapshot, id: &str, stage: &str| CandidateTransition {
+            id: id.into(),
+            label: format!("Obtain a fungible small key from {id}"),
+            scope: scope(state),
+            transition_kind: TransitionKind::ItemAcquisition,
+            approach_id: format!("approach.{id}"),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        stage_is(stage),
+                        compare(
+                            dungeon_field("forest-temple", "small_keys"),
+                            ComparisonOperator::Equal,
+                            StateValue::Unsigned(0),
+                        ),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::Adjust {
+                    target: crate::transition::ComponentFieldTarget {
+                        component_id: "dungeon.active".into(),
+                        field: "small_keys".into(),
+                    },
+                    delta: 1,
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+
+        let zero_key_state = setup("FOREST_DOOR", "forest-temple", 0);
+        let door = unlock_transition(
+            &zero_key_state,
+            "forest-temple",
+            "FOREST_DOOR",
+            "FOREST_BEYOND_DOOR",
+        );
+        let mut door_only = catalog(vec![door.clone()]);
+        door_only.reconstruction_rules = vec![ActorReconstructionRule {
+            id: "reconstruct.forest-door-01".into(),
+            label: "Reconstruct Forest Temple door 01 from its persisted unlock".into(),
+            scope: scope(&zero_key_state),
+            actor_type: "small-key-door".into(),
+            instantiate_when: compare(
+                dungeon_field("forest-temple", "door_01_unlocked"),
+                ComparisonOperator::Equal,
+                StateValue::Boolean(true),
+            ),
+            initialization_operations: vec![StateOperation::Write {
+                target: crate::transition::ComponentFieldTarget {
+                    component_id: "actor.small-key-door".into(),
+                    field: "open".into(),
+                },
+                value: StateValue::Boolean(true),
+            }],
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let blocked = ForwardSolver::new(&facts(), &door_only, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(zero_key_state.clone()).unwrap(),
+                &stage_is("FOREST_BEYOND_DOOR"),
+            )
+            .unwrap();
+        assert_ne!(blocked.status, SearchStatus::Reached);
+        assert_eq!(
+            blocked.blocked_transition_witnesses[0].classification,
+            TransitionClassification::GuardBlocked
+        );
+
+        for pickup_id in ["pickup.forest-chest-key", "pickup.forest-actor-key"] {
+            let mut with_pickup = door_only.clone();
+            with_pickup
+                .transitions
+                .insert(0, key_pickup(&zero_key_state, pickup_id, "FOREST_DOOR"));
+            with_pickup
+                .transitions
+                .sort_by(|left, right| left.id.cmp(&right.id));
+            let result = ForwardSolver::new(&facts(), &with_pickup, &[], SolverOptions::default())
+                .unwrap()
+                .solve(
+                    PlannerExecutionState::new(zero_key_state.clone()).unwrap(),
+                    &stage_is("FOREST_BEYOND_DOOR"),
+                )
+                .unwrap();
+            assert_eq!(result.status, SearchStatus::Reached);
+            assert_eq!(result.steps[0].action_id, pickup_id);
+            assert_eq!(result.steps[1].action_id, door.id);
+
+            let mut executed = PlannerExecutionState::new(zero_key_state.clone()).unwrap();
+            executed
+                .apply_operations(
+                    pickup_id,
+                    "snapshot.after-key",
+                    &with_pickup
+                        .transitions
+                        .iter()
+                        .find(|transition| transition.id == pickup_id)
+                        .unwrap()
+                        .activation
+                        .effects,
+                )
+                .unwrap();
+            executed
+                .apply_operations(&door.id, "snapshot.after-door", &door.activation.effects)
+                .unwrap();
+            let ComponentPayload::Structured { fields } = &executed
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == "dungeon.active")
+                .unwrap()
+                .payload
+            else {
+                unreachable!()
+            };
+            assert_eq!(fields["small_keys"], StateValue::Unsigned(0));
+            assert_eq!(fields["door_01_unlocked"], StateValue::Boolean(true));
+            assert_eq!(
+                executed
+                    .last_field_writer("dungeon.active", "small_keys")
+                    .unwrap()
+                    .application_id,
+                door.id
+            );
+        }
+
+        let oob = CandidateTransition {
+            id: "transition.forest-door-01-oob-avoid".into(),
+            label: "Go out of bounds around Forest Temple door 01".into(),
+            scope: scope(&zero_key_state),
+            transition_kind: TransitionKind::Technique,
+            approach_id: "approach.forest-door-01-oob".into(),
+            activation: ActivationContract {
+                hard_guards: stage_is("FOREST_DOOR"),
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: "FOREST_BEYOND_DOOR".into(),
+                        room: 1,
+                        layer: 0,
+                        spawn: 0,
+                    },
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let mut avoided = PlannerExecutionState::new(zero_key_state.clone()).unwrap();
+        let before_dungeon = avoided
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "dungeon.active")
+            .unwrap()
+            .clone();
+        avoided
+            .apply_operations(&oob.id, "snapshot.after-oob", &oob.activation.effects)
+            .unwrap();
+        assert_eq!(
+            avoided
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == "dungeon.active")
+                .unwrap(),
+            &before_dungeon
+        );
+
+        let wrong_bank = setup("GORON_DOOR", "forest-temple", 1);
+        let goron_door = unlock_transition(
+            &wrong_bank,
+            "goron-mines",
+            "GORON_DOOR",
+            "GORON_BEYOND_DOOR",
+        );
+        let goron_mechanics = catalog(vec![goron_door.clone()]);
+        let without_rebind = ForwardSolver::new(
+            &facts(),
+            &goron_mechanics,
+            &[],
+            SolverOptions {
+                evidence_policy: EvidencePolicy::RESEARCH,
+                ..SolverOptions::default()
+            },
+        )
+        .unwrap()
+        .solve(
+            PlannerExecutionState::new(wrong_bank.clone()).unwrap(),
+            &stage_is("GORON_BEYOND_DOOR"),
+        )
+        .unwrap();
+        assert_ne!(without_rebind.status, SearchStatus::Reached);
+
+        let rebind = Technique {
+            id: "technique.hypothetical-key-bank-rebind".into(),
+            label: "Interpret the Forest key store as Goron Mines memory".into(),
+            scope: scope(&wrong_bank),
+            prerequisites: PredicateExpression::True,
+            operations: vec![StateOperation::Rebind {
+                selector: ComponentSelector::Id {
+                    component_id: "dungeon.active".into(),
+                },
+                binding: ComponentBinding::Dungeon {
+                    dungeon: "goron-mines".into(),
+                },
+            }],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::from([("theorycraft".into(), 1)]),
+            },
+            evidence: evidence(TruthStatus::Hypothetical),
+        };
+        let pack = RefinementPack {
+            schema: REFINEMENT_PACK_SCHEMA.into(),
+            manifest: RefinementPackManifest {
+                id: "pack.hypothetical-key-bank-rebind".into(),
+                version: "1.0.0".into(),
+                author: "Route planner acceptance fixture".into(),
+                source: "Hypothetical dungeon-memory transfer".into(),
+                scope: scope(&wrong_bank),
+                precedence: 100,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+            },
+            rules: vec![RefinementRule {
+                id: "rule.add-key-bank-rebind".into(),
+                label: "Add hypothetical key-bank rebind".into(),
+                operation: RefinementOperation::AddTechnique { technique: rebind },
+                evidence: evidence(TruthStatus::Hypothetical),
+            }],
+        };
+        let composed = ComposedPlannerCatalog::compose_layered(
+            &facts(),
+            &goron_mechanics,
+            &RefinementLayers {
+                enabled_packs: Vec::new(),
+                route_local_overlays: Vec::new(),
+                ephemeral_what_if_overlays: vec![pack],
+            },
+        )
+        .unwrap();
+        let with_rebind = ForwardSolver::new(
+            &composed.facts,
+            &composed.mechanics,
+            &[],
+            SolverOptions {
+                evidence_policy: EvidencePolicy::RESEARCH,
+                ..SolverOptions::default()
+            },
+        )
+        .unwrap()
+        .solve(
+            PlannerExecutionState::new(wrong_bank).unwrap(),
+            &stage_is("GORON_BEYOND_DOOR"),
+        )
+        .unwrap();
+        assert_eq!(with_rebind.status, SearchStatus::Reached);
+        assert_eq!(
+            with_rebind
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "technique.hypothetical-key-bank-rebind",
+                "transition.goron-mines-door-01-unlock"
+            ]
+        );
     }
 
     #[test]
@@ -2951,6 +3754,15 @@ mod tests {
             vec!["obligation.blocker"]
         );
         assert!(witness.selected_resolver_ids.is_empty());
+        assert_eq!(witness.weakest_evidence, Some(TruthStatus::Established));
+        assert!(witness.evidence_dependencies.iter().any(|dependency| {
+            dependency.dependency_kind == EvidenceDependencyKind::Obstruction
+                && dependency.record_id == "obstruction.npc"
+        }));
+        assert!(witness.evidence_dependencies.iter().any(|dependency| {
+            dependency.dependency_kind == EvidenceDependencyKind::Obligation
+                && dependency.record_id == "obligation.blocker"
+        }));
     }
 
     #[test]

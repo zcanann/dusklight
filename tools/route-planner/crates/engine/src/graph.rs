@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v4";
+pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v5";
 pub const PLANNER_FEASIBILITY_DIFF_SCHEMA: &str =
     "dusklight.route-planner.feasibility-graph-diff/v1";
 

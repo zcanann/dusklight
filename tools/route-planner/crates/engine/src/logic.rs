@@ -2,13 +2,15 @@
 
 use crate::artifact::Digest;
 use crate::identity::ContextSelector;
-use crate::state::{ComponentBinding, ComponentKind, StateValue};
+use crate::state::{
+    ComponentBinding, ComponentKind, StateValue, validate_binding, validate_component_kind,
+};
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v2";
+pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v3";
 pub const MAX_PREDICATE_DEPTH: usize = 64;
 pub const MAX_PREDICATE_CHILDREN: usize = 4_096;
 
@@ -74,6 +76,11 @@ pub enum ValueReference {
     },
     ComponentField {
         component_id: String,
+        field: String,
+    },
+    BoundComponentField {
+        component_kind: ComponentKind,
+        binding: ComponentBinding,
         field: String,
     },
     RawBits {
@@ -377,6 +384,15 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
             field,
         } => {
             validate_stable_id("value.component_id", component_id)?;
+            validate_stable_id("value.field", field)
+        }
+        ValueReference::BoundComponentField {
+            component_kind,
+            binding,
+            field,
+        } => {
+            validate_component_kind(component_kind)?;
+            validate_binding(binding)?;
             validate_stable_id("value.field", field)
         }
         ValueReference::RawBits {

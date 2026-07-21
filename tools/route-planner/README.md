@@ -57,7 +57,10 @@ The planner CLI currently owns twelve operations:
   Absent actors, geometry, or timing witnesses remain unknown. Exact matching
   temporal witnesses appear in solve proofs and auto-bind to their obligations
   in the planner graph. Composed solve reports retain each active refinement
-  entry's layer, pack ID, digest, and local precedence.
+  entry's layer, pack ID, digest, and local precedence. Reached steps and blocked
+  witnesses embed all contributing rule/fact evidence and report their weakest
+  evidence level, so hypothetical support cannot be hidden behind an established
+  transition label.
 - `solve-portable` expands a route book's exact/equivalent context scope,
   requires one explicit start state per exact context, solves each context
   independently, and reports whether the route reaches its goal everywhere.

@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const ROUTE_BOOK_SCHEMA: &str = "dusklight.route-planner.route-book/v2";
-pub const ROUTE_BOOK_EDIT_BATCH_SCHEMA: &str = "dusklight.route-planner.route-book-edit-batch/v2";
+pub const ROUTE_BOOK_SCHEMA: &str = "dusklight.route-planner.route-book/v3";
+pub const ROUTE_BOOK_EDIT_BATCH_SCHEMA: &str = "dusklight.route-planner.route-book-edit-batch/v3";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

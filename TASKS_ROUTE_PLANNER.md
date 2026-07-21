@@ -528,8 +528,8 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
-- Refinement-pack schema v6, refinement-stack schema v2, and composed-catalog
-  schema v7 now live entirely in the planner workspace. `route-planner compose`
+- Refinement-pack schema v7, refinement-stack schema v2, and composed-catalog
+  schema v8 now live entirely in the planner workspace. `route-planner compose`
   validates canonical packs, dependency digests, conflicts, deterministic
   layer/pack precedence, explicit
   replacement/disable operations, and all resulting cross-references before it
@@ -543,7 +543,7 @@ The current code shows:
   compiles to an explicitly hypothetical resolver. `route-planner solve` can
   consume the composed artifact directly and records its active refinement
   stack in the solve report.
-- Planner graph schema v4 is an independent, canonical projection of fact and
+- Planner graph schema v5 is an independent, canonical projection of fact and
   mechanics catalogs. It exposes typed fact, goal, transition, obligation,
   obstruction, resolver, technique, writer/gate/reader, reconstruction, and
   microtrace nodes with causal edge kinds. Every nested predicate is projected
@@ -551,7 +551,7 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Planner service schema v9 provides a typed JSON-lines transport owned by the
+- Planner service schema v11 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -580,20 +580,20 @@ The current code shows:
   common-prefix and divergent history suffixes identify exactly which ordered
   operations separate two execution states.
   The standalone `diff-state` command and service expose the same report.
-- Route-book schema v2 is a validated, exact-context-scoped preference layer over
+- Route-book schema v3 is a validated, exact-context-scoped preference layer over
   mechanics. It can name goals and path constraints, reference ordered actions,
   define alternative methods and nested plan regions, request pin/ban/prefer
   behavior, and attach non-semantic annotations. It deliberately has no effects
   or loss fields: every referenced action and predicate must validate against
   the fact/mechanics catalog. `route-planner validate-route-book` and the typed
   service validate books without composing them into mechanics.
-- Planner graph schema v4 can optionally project a route book as distinct plan
+- Planner graph schema v5 can optionally project a route book as distinct plan
   region, method, and reference-step nodes connected to the underlying causal
   actions. Region outcomes and step pre/postconditions remain nested predicate
   graphs. A book's collapse policy is surfaced, but the catalog projection does
   not mark a region collapsed before a solver proof establishes continuation
   equivalence or supplies residual-state differences.
-- Route-book edit-batch schema v1 provides revision-checked authoritative
+- Route-book edit-batch schema v3 provides revision-checked authoritative
   mutations. Each atomic batch names the expected book digest and can update
   goals, constraints, directives, steps, methods, regions, selection/collapse
   policy, and annotations. Rust applies edits to a clone, sorts canonical sets,
@@ -638,7 +638,7 @@ The current code shows:
   disallowed witnesses remain unknown, and supporting microtrace IDs survive in
   reached and blocked solver proofs. Matching microtraces also auto-bind to the
   obligation as graph `demonstrates` dependencies.
-- Mechanics-catalog schema v4 adds explicit cutscene scene-change and resource-
+- Mechanics-catalog schema v6 includes explicit cutscene scene-change and resource-
   load-failure transition classes plus masked raw-knownness invalidation. This
   supports partial execution records that preserve confirmed prefix bytes while
   marking only unaudited suffix effects unknown; extracting concrete cutscene
@@ -1918,7 +1918,13 @@ Deliverable: a headless query API and deterministic fixture suite.
     structured field, and all set/clear events for each gate. A Fanadi-shaped
     fixture verifies that a held return-place value retains its earlier writer
     while `NO_TELOP` is set and changes only after clear plus a later write.
-- [ ] Label all hypothetical and low-confidence dependencies.
+- [x] Label all hypothetical and low-confidence dependencies.
+  - Every reached step and blocked-transition witness carries canonical evidence
+    dependencies for its transition, recursively referenced facts, active or
+    unknown obstructions, obligations, selected resolvers/techniques, supporting
+    microtraces, and unknown requirements. Each dependency retains its complete
+    `RuleEvidence`, and `weakest_evidence` makes contested, hypothetical, or
+    unknown support directly filterable without rejoining the catalog.
 - [ ] Generate concise collapsed summaries and fully expanded research views.
 
 Deliverable: every route and failure is inspectable rather than magical.
@@ -2081,15 +2087,24 @@ Deliverable: route confidence is mechanically explainable.
 
 - [ ] Extract one representative small-key door's encoded destination without
       making it immediately executable.
-- [ ] Derive the bound dungeon key count from the live per-stage backing store.
-- [ ] Model key pickup provenance independently from the fungible count.
+- [x] Derive the bound dungeon key count from the live per-stage backing store.
+- [x] Model key pickup provenance independently from the fungible count.
 - [ ] Audit and model the door actor's guard, key consumption, persistent unlock
       write, live animation/collision, and reload reconstruction.
-- [ ] Verify any key from the same bound dungeon store can satisfy the door.
-- [ ] Add a hypothetical key-store preserve/rebind overlay and verify it opens
+- [x] Verify any key from the same bound dungeon store can satisfy the door.
+- [x] Add a hypothetical key-store preserve/rebind overlay and verify it opens
       routes only through backing-store semantics, with hypothesis provenance.
-- [ ] Verify an OOB route that avoids the door does not falsely mark the door
+- [x] Verify an OOB route that avoids the door does not falsely mark the door
       unlocked or consume a key.
+  - Fact-catalog schema v3 adds an unambiguous bound-component field reference:
+    kind plus exact backing binding plus field. The keyed-door fixture uses it
+    for `small_keys` and persisted unlock state, rejects zero-key and wrong-bank
+    states, and fails unknown when more than one component claims the same
+    backing. Two independently identified pickups feed the fungible count; the
+    door consumes one key and writes persisted unlock and live actor state. A
+    hypothetical dungeon-bank rebind enables a different dungeon's door only
+    through the changed binding, while the OOB avoidance edge mutates neither
+    the count nor unlock state.
 
 #### 11I. Auru recent-item grant
 
