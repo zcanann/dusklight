@@ -11,15 +11,26 @@ use sha2::{Digest as _, Sha256};
 
 pub const BINARY_FUNCTION_EVIDENCE_SCHEMA: &str =
     "dusklight.route-planner.binary-function-evidence/v1";
+pub const BINARY_RANGE_EVIDENCE_SCHEMA: &str = "dusklight.route-planner.binary-range-evidence/v1";
 const DOL_TEXT_SECTION_COUNT: usize = 7;
+const DOL_DATA_SECTION_COUNT: usize = 11;
+const DOL_SECTION_COUNT: usize = DOL_TEXT_SECTION_COUNT + DOL_DATA_SECTION_COUNT;
 const DOL_ADDRESS_TABLE_OFFSET: usize = 0x48;
 const DOL_SIZE_TABLE_OFFSET: usize = 0x90;
+const MAX_RETAINED_RANGE_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BinaryFunctionShape {
     ImmediateReturn,
     Other,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DolSectionKind {
+    Text,
+    Data,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,6 +47,25 @@ pub struct BinaryFunctionEvidence {
     pub code_sha256: Digest,
     pub code_hex: String,
     pub shape: BinaryFunctionShape,
+}
+
+/// Exact bytes addressed through one loadable DOL text or data section.
+///
+/// This artifact deliberately assigns no semantic meaning to the bytes. A
+/// source audit or instruction-level reference must separately establish why a
+/// retained constant is relevant to a planner rule.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BinaryRangeEvidence {
+    pub schema: String,
+    pub executable_sha256: Digest,
+    pub virtual_address: u32,
+    pub byte_size: u32,
+    pub section_kind: DolSectionKind,
+    pub section_index: u8,
+    pub file_offset: u32,
+    pub bytes_sha256: Digest,
+    pub bytes_hex: String,
 }
 
 impl BinaryFunctionEvidence {
@@ -65,7 +95,7 @@ impl BinaryFunctionEvidence {
                 "is outside the DOL text-section table",
             ));
         }
-        let code = decode_hex(&self.code_hex)?;
+        let code = decode_hex(&self.code_hex, "binary_function_evidence.code_hex")?;
         if code.len() != self.function_size as usize {
             return Err(PlannerContractError::new(
                 "binary_function_evidence.code_hex",
@@ -102,6 +132,74 @@ impl BinaryFunctionEvidence {
         if evidence.canonical_bytes()? != bytes {
             return Err(PlannerContractError::new(
                 "binary_function_evidence",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(evidence)
+    }
+}
+
+impl BinaryRangeEvidence {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != BINARY_RANGE_EVIDENCE_SCHEMA {
+            return Err(PlannerContractError::new(
+                "binary_range_evidence.schema",
+                "is unsupported",
+            ));
+        }
+        if self.executable_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "binary_range_evidence.executable_sha256",
+                "must be nonzero",
+            ));
+        }
+        if self.byte_size == 0 || self.byte_size as usize > MAX_RETAINED_RANGE_BYTES {
+            return Err(PlannerContractError::new(
+                "binary_range_evidence.byte_size",
+                "must be nonzero and within the retained-range limit",
+            ));
+        }
+        let section_count = match self.section_kind {
+            DolSectionKind::Text => DOL_TEXT_SECTION_COUNT,
+            DolSectionKind::Data => DOL_DATA_SECTION_COUNT,
+        };
+        if usize::from(self.section_index) >= section_count {
+            return Err(PlannerContractError::new(
+                "binary_range_evidence.section_index",
+                "is outside the selected DOL section table",
+            ));
+        }
+        let bytes = decode_hex(&self.bytes_hex, "binary_range_evidence.bytes_hex")?;
+        if bytes.len() != self.byte_size as usize {
+            return Err(PlannerContractError::new(
+                "binary_range_evidence.bytes_hex",
+                "length does not match byte_size",
+            ));
+        }
+        if Digest(Sha256::digest(&bytes).into()) != self.bytes_sha256 {
+            return Err(PlannerContractError::new(
+                "binary_range_evidence.bytes_sha256",
+                "does not match the retained bytes",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let evidence: Self = serde_json::from_slice(bytes)?;
+        evidence.validate()?;
+        if evidence.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "binary_range_evidence",
                 "is not canonical JSON",
             ));
         }
@@ -188,6 +286,97 @@ pub fn extract_dol_function_evidence(
     Ok(evidence)
 }
 
+pub fn extract_dol_range_evidence(
+    dol: &[u8],
+    virtual_address: u32,
+    byte_size: u32,
+) -> Result<BinaryRangeEvidence, PlannerContractError> {
+    if byte_size == 0 || byte_size as usize > MAX_RETAINED_RANGE_BYTES {
+        return Err(PlannerContractError::new(
+            "binary_range_evidence.byte_size",
+            "must be nonzero and within the retained-range limit",
+        ));
+    }
+    let virtual_end = virtual_address.checked_add(byte_size).ok_or_else(|| {
+        PlannerContractError::new(
+            "binary_range_evidence.range",
+            "virtual address range overflows",
+        )
+    })?;
+
+    let mut matching_section = None;
+    for global_index in 0..DOL_SECTION_COUNT {
+        let section_offset = read_be_u32(dol, global_index * 4, "dol.section_offset")?;
+        let section_address = read_be_u32(
+            dol,
+            DOL_ADDRESS_TABLE_OFFSET + global_index * 4,
+            "dol.section_address",
+        )?;
+        let section_size = read_be_u32(
+            dol,
+            DOL_SIZE_TABLE_OFFSET + global_index * 4,
+            "dol.section_size",
+        )?;
+        if section_size == 0 {
+            continue;
+        }
+        let section_end = section_address.checked_add(section_size).ok_or_else(|| {
+            PlannerContractError::new("dol.section", "virtual address range overflows")
+        })?;
+        let file_end = section_offset
+            .checked_add(section_size)
+            .ok_or_else(|| PlannerContractError::new("dol.section", "file range overflows"))?;
+        if file_end as usize > dol.len() {
+            return Err(PlannerContractError::new(
+                "dol.section",
+                "declared file range is truncated",
+            ));
+        }
+        if virtual_address >= section_address && virtual_end <= section_end {
+            if matching_section.is_some() {
+                return Err(PlannerContractError::new(
+                    "dol.section",
+                    "range is covered by multiple loadable sections",
+                ));
+            }
+            matching_section = Some((global_index, section_offset, section_address));
+        }
+    }
+    let (global_index, section_offset, section_address) = matching_section.ok_or_else(|| {
+        PlannerContractError::new(
+            "dol.section",
+            "range is not wholly contained in one loadable section",
+        )
+    })?;
+    let file_offset = section_offset
+        .checked_add(virtual_address - section_address)
+        .ok_or_else(|| PlannerContractError::new("dol.range", "file offset overflows"))?;
+    let file_end = file_offset
+        .checked_add(byte_size)
+        .ok_or_else(|| PlannerContractError::new("dol.range", "file range overflows"))?;
+    let bytes = dol
+        .get(file_offset as usize..file_end as usize)
+        .ok_or_else(|| PlannerContractError::new("dol.range", "file range is truncated"))?;
+    let (section_kind, section_index) = if global_index < DOL_TEXT_SECTION_COUNT {
+        (DolSectionKind::Text, global_index)
+    } else {
+        (DolSectionKind::Data, global_index - DOL_TEXT_SECTION_COUNT)
+    };
+    let evidence = BinaryRangeEvidence {
+        schema: BINARY_RANGE_EVIDENCE_SCHEMA.into(),
+        executable_sha256: Digest(Sha256::digest(dol).into()),
+        virtual_address,
+        byte_size,
+        section_kind,
+        section_index: section_index as u8,
+        file_offset,
+        bytes_sha256: Digest(Sha256::digest(bytes).into()),
+        bytes_hex: encode_hex(bytes),
+    };
+    evidence.validate()?;
+    Ok(evidence)
+}
+
 fn parse_function_symbol(
     symbol_table: &str,
     symbol: &str,
@@ -263,10 +452,10 @@ fn encode_hex(bytes: &[u8]) -> String {
     encoded
 }
 
-fn decode_hex(value: &str) -> Result<Vec<u8>, PlannerContractError> {
+fn decode_hex(value: &str, field: &'static str) -> Result<Vec<u8>, PlannerContractError> {
     if !value.len().is_multiple_of(2) {
         return Err(PlannerContractError::new(
-            "binary_function_evidence.code_hex",
+            field,
             "must contain complete bytes",
         ));
     }
@@ -275,12 +464,8 @@ fn decode_hex(value: &str) -> Result<Vec<u8>, PlannerContractError> {
         .chunks_exact(2)
         .map(|pair| {
             let pair = std::str::from_utf8(pair).expect("hex input is ASCII-sized");
-            u8::from_str_radix(pair, 16).map_err(|_| {
-                PlannerContractError::new(
-                    "binary_function_evidence.code_hex",
-                    "contains a non-hex byte",
-                )
-            })
+            u8::from_str_radix(pair, 16)
+                .map_err(|_| PlannerContractError::new(field, "contains a non-hex byte"))
         })
         .collect()
 }
@@ -295,6 +480,10 @@ mod tests {
         dol[0x48..0x4c].copy_from_slice(&0x8000_0000u32.to_be_bytes());
         dol[0x90..0x94].copy_from_slice(&0x40u32.to_be_bytes());
         dol[0x110..0x114].copy_from_slice(&[0x4e, 0x80, 0x00, 0x20]);
+        dol[0x1c..0x20].copy_from_slice(&0x120u32.to_be_bytes());
+        dol[0x64..0x68].copy_from_slice(&0x8040_0000u32.to_be_bytes());
+        dol[0xac..0xb0].copy_from_slice(&0x20u32.to_be_bytes());
+        dol[0x128..0x12d].copy_from_slice(b"Msgus");
         let symbols = b"writer__Fv = .text:0x80000010; // type:function size:0x4 scope:global\n";
         (dol, symbols.to_vec())
     }
@@ -348,6 +537,66 @@ mod tests {
         assert_eq!(
             evidence.canonical_bytes().unwrap_err().field(),
             "binary_function_evidence.shape"
+        );
+    }
+
+    #[test]
+    fn extracts_unaligned_data_range_by_virtual_address() {
+        let (dol, _) = fixture();
+        let evidence = extract_dol_range_evidence(&dol, 0x8040_0008, 5).unwrap();
+        assert_eq!(evidence.section_kind, DolSectionKind::Data);
+        assert_eq!(evidence.section_index, 0);
+        assert_eq!(evidence.file_offset, 0x128);
+        assert_eq!(evidence.bytes_hex, "4d73677573");
+        assert_eq!(
+            BinaryRangeEvidence::decode_canonical(&evidence.canonical_bytes().unwrap()).unwrap(),
+            evidence
+        );
+    }
+
+    #[test]
+    fn range_extraction_rejects_zero_cross_section_overlap_and_truncation() {
+        let (dol, _) = fixture();
+        assert_eq!(
+            extract_dol_range_evidence(&dol, 0x8040_0000, 0)
+                .unwrap_err()
+                .field(),
+            "binary_range_evidence.byte_size"
+        );
+        assert_eq!(
+            extract_dol_range_evidence(&dol, 0x8040_001f, 2)
+                .unwrap_err()
+                .field(),
+            "dol.section"
+        );
+
+        let mut overlap = dol.clone();
+        overlap[0x20..0x24].copy_from_slice(&0x130u32.to_be_bytes());
+        overlap[0x68..0x6c].copy_from_slice(&0x8040_0000u32.to_be_bytes());
+        overlap[0xb0..0xb4].copy_from_slice(&0x10u32.to_be_bytes());
+        assert_eq!(
+            extract_dol_range_evidence(&overlap, 0x8040_0008, 4)
+                .unwrap_err()
+                .field(),
+            "dol.section"
+        );
+
+        assert_eq!(
+            extract_dol_range_evidence(&dol[..0x13f], 0x8040_0008, 4)
+                .unwrap_err()
+                .field(),
+            "dol.section"
+        );
+    }
+
+    #[test]
+    fn canonical_range_decode_rejects_tampered_bytes() {
+        let (dol, _) = fixture();
+        let mut evidence = extract_dol_range_evidence(&dol, 0x8040_0008, 5).unwrap();
+        evidence.bytes_hex = "4d73677500".into();
+        assert_eq!(
+            evidence.canonical_bytes().unwrap_err().field(),
+            "binary_range_evidence.bytes_sha256"
         );
     }
 }
