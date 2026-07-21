@@ -981,7 +981,7 @@ silent truncation or future leakage, and preserves deterministic cold playback.
   (`45093a53...e48808`) before a clean protocol shutdown. The capability is
   intentionally advertised as persistent batch control rather than full engine
   reconstruction.
-- [ ] Support validated intermediate checkpoints along recorded trajectories so
+- [x] Support validated intermediate checkpoints along recorded trajectories so
   short-horizon experiments do not replay unrelated earlier decisions.
   The same-process substrate now preserves raw checkpoint bytes separately from
   semantic gameplay identity and permits only explicitly declared host-ABI
@@ -991,8 +991,20 @@ silent truncation or future leakage, and preserves deterministic cold playback.
   latter stress lane exposed intermittent `dMeter_drawHIO_c` padding changes;
   PDB-resolved field boundaries now exclude exactly its eight top-level ABI
   gaps without changing or weakening raw restore integrity. The primitive is
-  now integrated into the persistent batch loop above; validated checkpoints
-  along arbitrary recorded trajectories remain open.
+  now integrated into the persistent batch loop above. Suffix-batch v3 requires
+  an explicit bounded `recorded_replay_window`: it captures the declared source,
+  records every semantic machine/host/PAD/tape/milestone digest in the fresh
+  future, restores, matches the source semantic identity, and reproduces the
+  same future before any candidate may run. A fresh-root live proof selected
+  frame 500 in `F_SP102` (room 0, point 100, no player), outside the former
+  gameplay-ready-F_SP103 predicate. Its independently identified boundary was
+  `1f849e43...f7d72f`; a stale frame-440 identity failed before capture. The
+  294,694,644-byte checkpoint restored twice, and both eight-tick futures were
+  `20cca69b...04eec` from source semantic identity `a44db546...452b7`.
+  The profile verified all 16 validation samples and the resulting eight-tick
+  shard decoded without phase, PAD, non-finite, or determinism failures. The
+  sealed proof is
+  `docs/glitch-hunting/benchmarks/intermediate-checkpoint-validation-20260721.json`.
 - [ ] Profile checkpoint restore, simulation, observation capture, policy
   inference, corpus encoding, GPU work and CPU draw traversal independently.
   - [x] Publish engine-resident suffix timing v1 with explicit accounting

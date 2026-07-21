@@ -1,0 +1,93 @@
+{
+  "schema": "dusklight-intermediate-checkpoint-validation-report/v1",
+  "recorded_date": "2026-07-21",
+  "verified": true,
+  "build": {
+    "dusklight_commit": "86bc05b8bbe2b7288142f0ad2adadd4ee97db7fc",
+    "aurora_commit": "ce4baccedb2aabddce5b552f0573674e857fb7c3",
+    "profile": "Debug",
+    "executable_sha256": "dd07a78423bdcb476109605e50a8a3721b66fd5497ef3083efd9184658e3ca96"
+  },
+  "trajectory": {
+    "input_tape_sha256": "fad64d9c0610ef954a9f18c348d663dd249ae14d54a164471e766a2d38107f6f",
+    "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "card_fixture_identity": "card-fixture:empty/v1",
+    "world_context_sha256": "194cbb4b0a68e525e92fddf93a387fd72b6d6277d269f485a8e3f5d8656e3b71",
+    "fresh_data_root": true,
+    "fresh_card_root": true,
+    "fresh_renderer_cache": true
+  },
+  "request": {
+    "schema": "dusklight-suffix-batch/v3",
+    "batch_sha256": "5bb3b1a15e20365e6a4735eddb50816f9c484e19429a03f52767ab84b394822b",
+    "source_frame": 500,
+    "source_boundary_fingerprint": "1f849e432274771426236d60fbf7d72f",
+    "checkpoint_validation": {
+      "kind": "recorded_replay_window",
+      "ticks": 8
+    },
+    "maximum_ticks": 8,
+    "verify_state_hashes": true,
+    "candidate": {
+      "id": "recorded-frame-500-window",
+      "source": "tape"
+    }
+  },
+  "source": {
+    "stage": "F_SP102",
+    "room": 0,
+    "point": 100,
+    "layer": 10,
+    "player_present": false,
+    "legacy_gameplay_ready_f_sp103_predicate_satisfied": false,
+    "fingerprint_verified": true,
+    "checkpoint_bytes": 294694644,
+    "checkpoint_restore_identity": "a53017b158e70c3e0738750963741859",
+    "source_semantic_digest": "a44db546775465cf461fe11d596452b7"
+  },
+  "validation": {
+    "verified": true,
+    "fresh_sequence_digest": "20cca69bace084808b2d3f56dfb04eec",
+    "restored_sequence_digest": "20cca69bace084808b2d3f56dfb04eec",
+    "first_divergence_tick": null,
+    "samples": 16,
+    "capture_micros": 1843713,
+    "validation_micros": 7286727,
+    "restore_micros": [
+      5782,
+      4869
+    ],
+    "profile_verified": true
+  },
+  "candidate_result": {
+    "completed": true,
+    "ticks": 8,
+    "success": false,
+    "state_sequence_digest": "a1d76f571aabb2ca0d9982d6590376a6",
+    "state_validation_samples": 8
+  },
+  "corpus": {
+    "schema": "dusklight-native-episode-shard/v2",
+    "observation_schema": "dusklight-learning-observation/v23",
+    "action_schema": "dusklight-raw-pad-action/v2",
+    "episode_count": 1,
+    "transition_count": 8,
+    "observation_count": 16,
+    "terminal_observation_count": 1,
+    "uncompressed_bytes": 65176,
+    "compressed_bytes": 626,
+    "chosen_consumed_pad_mismatches": 0,
+    "validated_non_finite_values": 0,
+    "validated_phase_discontinuities": 0,
+    "determinism_conflicts": 0,
+    "sha256": "b599a5d1b84504dc918f7a55a538fe66e919cb80774ce5554fba8f609d68e83f"
+  },
+  "artifacts": {
+    "passed_result_schema": "dusklight-suffix-batch-result/v4",
+    "passed_result_sha256": "8881a73049baee77433bb9fe3d783976cb866aa4a85a1f44ab2e5ec2ad5f83af",
+    "wrong_boundary_result_sha256": "1b78316d262d6acd77810399d2dc82c68502acbb93355306d332a5beb76fe3f2",
+    "wrong_boundary_rejected_before_capture": true,
+    "wrong_boundary_expected": "ac7c32788fc3b5c59046386d95b9b5b4",
+    "wrong_boundary_observed": "1f849e432274771426236d60fbf7d72f"
+  }
+}
