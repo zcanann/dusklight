@@ -38,6 +38,7 @@ const OBSERVATION_VERSION_V15: u16 = 15;
 const OBSERVATION_VERSION_V16: u16 = 16;
 const OBSERVATION_VERSION_V17: u16 = 17;
 const OBSERVATION_VERSION_V18: u16 = 18;
+const OBSERVATION_VERSION_V19: u16 = 19;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -82,6 +83,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V15: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V16: &str = "dusklight-learning-observation/v16";
 pub const LEARNING_OBSERVATION_SCHEMA_V17: &str = "dusklight-learning-observation/v17";
 pub const LEARNING_OBSERVATION_SCHEMA_V18: &str = "dusklight-learning-observation/v18";
+pub const LEARNING_OBSERVATION_SCHEMA_V19: &str = "dusklight-learning-observation/v19";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -591,6 +593,13 @@ pub struct NativeRngStream {
     pub call_count: u64,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeProcessLifecycleObservation {
+    pub active_actor_count: u32,
+    pub pending_create_count: u32,
+    pub pending_delete_count: u32,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeLearningObservation {
     pub phase: NativeObservationPhase,
@@ -685,6 +694,8 @@ pub struct NativeLearningObservation {
     pub message_session: Option<NativeMessageSessionObservation>,
     pub event_queue_status: NativeChannelStatus,
     pub event_queue: Option<NativeEventQueueObservation>,
+    pub process_lifecycle_status: NativeChannelStatus,
+    pub process_lifecycle: Option<NativeProcessLifecycleObservation>,
 }
 
 #[derive(Debug)]
@@ -755,6 +766,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V16
                 | OBSERVATION_VERSION_V17
                 | OBSERVATION_VERSION_V18
+                | OBSERVATION_VERSION_V19
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -887,6 +899,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V16 => LEARNING_OBSERVATION_SCHEMA_V16,
         OBSERVATION_VERSION_V17 => LEARNING_OBSERVATION_SCHEMA_V17,
         OBSERVATION_VERSION_V18 => LEARNING_OBSERVATION_SCHEMA_V18,
+        OBSERVATION_VERSION_V19 => LEARNING_OBSERVATION_SCHEMA_V19,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2481,7 +2494,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V15
         | OBSERVATION_VERSION_V16
         | OBSERVATION_VERSION_V17
-        | OBSERVATION_VERSION_V18 => {
+        | OBSERVATION_VERSION_V18
+        | OBSERVATION_VERSION_V19 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3228,6 +3242,43 @@ fn decode_observation(
             "event-queue actor is outside the complete actor population",
         ));
     }
+    let (process_lifecycle_status, process_lifecycle) =
+        if observation_version >= OBSERVATION_VERSION_V19 {
+            let status = decode_channel_status(reader)?;
+            if reader.bytes(3)?.iter().any(|byte| *byte != 0) {
+                return Err(NativeEpisodeShardError::new(
+                    "nonzero process-lifecycle reserved bytes",
+                ));
+            }
+            let lifecycle = NativeProcessLifecycleObservation {
+                active_actor_count: reader.u32()?,
+                pending_create_count: reader.u32()?,
+                pending_delete_count: reader.u32()?,
+            };
+            if status == NativeChannelStatus::Present {
+                if usize::try_from(lifecycle.active_actor_count).ok() != Some(actors.len()) {
+                    return Err(NativeEpisodeShardError::new(
+                        "process-lifecycle actor count disagrees with complete actor population",
+                    ));
+                }
+                (status, Some(lifecycle))
+            } else if status == NativeChannelStatus::Unavailable
+                && lifecycle
+                    == (NativeProcessLifecycleObservation {
+                        active_actor_count: 0,
+                        pending_create_count: 0,
+                        pending_delete_count: 0,
+                    })
+            {
+                (status, None)
+            } else {
+                return Err(NativeEpisodeShardError::new(
+                    "process-lifecycle status or payload is inconsistent",
+                ));
+            }
+        } else {
+            (NativeChannelStatus::NotSampled, None)
+        };
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -3320,6 +3371,8 @@ fn decode_observation(
         message_session,
         event_queue_status,
         event_queue,
+        process_lifecycle_status,
+        process_lifecycle,
     })
 }
 

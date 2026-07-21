@@ -369,6 +369,10 @@ struct ObservationFixture {
         observation.eventQueue.activeDoorActor.status = MilestoneObservation::ChannelStatus::Absent;
         observation.eventQueue.changeActor.status = MilestoneObservation::ChannelStatus::Absent;
         observation.eventQueue.skipActor.status = MilestoneObservation::ChannelStatus::Absent;
+        observation.processLifecycle.status = MilestoneObservation::ChannelStatus::Present;
+        observation.processLifecycle.activeActorCount = 1;
+        observation.processLifecycle.pendingCreateCount = 2;
+        observation.processLifecycle.pendingDeleteCount = 3;
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -550,6 +554,8 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
     completeActors.back().eventParticipationPresent = false;
     fixture.observation.actors = completeActors;
     fixture.observation.actorObservedCount = static_cast<std::uint32_t>(completeActors.size());
+    fixture.observation.processLifecycle.activeActorCount =
+        static_cast<std::uint32_t>(completeActors.size());
     RawPadState pad;
     pad.buttons = 0x0100;
     pad.stickX = 100;
@@ -708,6 +714,8 @@ void test_actor_population_is_not_limited_by_controller_capacity() {
         actors[index].runtimeGeneration = index + 1;
     fixture.observation.actors = actors;
     fixture.observation.actorObservedCount = static_cast<std::uint32_t>(actors.size());
+    fixture.observation.processLifecycle.activeActorCount =
+        static_cast<std::uint32_t>(actors.size());
 
     std::vector<std::uint8_t> bytes;
     begin_learning_episode(bytes);
@@ -839,6 +847,20 @@ void test_event_queue_fails_closed() {
     REQUIRE(error.find("inconsistent event-queue state") != std::string::npos);
 }
 
+void test_process_lifecycle_fails_closed() {
+    ObservationFixture fixture;
+    fixture.observation.processLifecycle.activeActorCount = 2;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent process-lifecycle state") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -939,6 +961,7 @@ int main(const int argc, char** argv) {
     test_runtime_file_attachment_fails_closed();
     test_message_session_fails_closed();
     test_event_queue_fails_closed();
+    test_process_lifecycle_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

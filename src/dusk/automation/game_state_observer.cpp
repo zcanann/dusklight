@@ -23,6 +23,8 @@
 #include "dusk/automation/rng.hpp"
 #include "f_op/f_op_actor_iter.h"
 #include "f_op/f_op_actor_mng.h"
+#include "f_pc/f_pc_create_tag.h"
+#include "f_pc/f_pc_delete_tag.h"
 
 #include <algorithm>
 #include <cmath>
@@ -1089,6 +1091,16 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     observation.actors = storage.actors;
     observation.actorObservedCount = storage.actorObservedCount;
     observation.actorsTruncated = false;
+
+    auto& lifecycle = observation.processLifecycle;
+    if (g_fpcCtTg_Queue.mSize >= 0 && g_fpcDtTg_Queue.mSize >= 0) {
+        lifecycle.status = MilestoneObservation::ChannelStatus::Present;
+        lifecycle.activeActorCount = storage.actorObservedCount;
+        lifecycle.pendingCreateCount = static_cast<std::uint32_t>(g_fpcCtTg_Queue.mSize);
+        lifecycle.pendingDeleteCount = static_cast<std::uint32_t>(g_fpcDtTg_Queue.mSize);
+    } else {
+        lifecycle.status = MilestoneObservation::ChannelStatus::Unavailable;
+    }
 
     capture_dynamic_colliders(storage, player != nullptr);
     observation.dynamicColliders = storage.dynamicColliders;

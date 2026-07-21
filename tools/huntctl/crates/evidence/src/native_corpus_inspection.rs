@@ -1076,6 +1076,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         ),
                         ("message_session", observation.message_session_status),
                         ("event_queue", observation.event_queue_status),
+                        ("process_lifecycle", observation.process_lifecycle_status),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }
@@ -1486,6 +1487,18 @@ mod tests {
         let report = inspect_native_episode_corpus(&[shard]);
         assert_eq!(
             report.channel_coverage["event_queue"].present,
+            report.observation_count
+        );
+    }
+
+    #[test]
+    fn audits_v19_process_lifecycle_coverage() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v19.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(
+            report.channel_coverage["process_lifecycle"].present,
             report.observation_count
         );
     }

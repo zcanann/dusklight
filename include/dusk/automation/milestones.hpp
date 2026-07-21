@@ -121,6 +121,17 @@ struct MilestoneObservation {
 
     GameRngSnapshot rng;
 
+    // Process-manager pressure sampled read-only at the same observation
+    // boundary. Queue depths are semantic scheduler state; no queue node,
+    // pointer, allocator address, or host implementation detail escapes.
+    struct ProcessLifecycleState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint32_t activeActorCount = 0;
+        std::uint32_t pendingCreateCount = 0;
+        std::uint32_t pendingDeleteCount = 0;
+    };
+    ProcessLifecycleState processLifecycle;
+
     // Typed, read-only gameplay resources. This deliberately exposes semantic
     // save-state fields rather than copying dSv_player_c bytes or host padding.
     // The component is unavailable before an active player exists.
