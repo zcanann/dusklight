@@ -216,7 +216,7 @@ fn print_usage() {
     );
     eprintln!("  huntctl learn inspect-episode --input IMMUTABLE-EPISODE.json");
     eprintln!(
-        "  huntctl learn native-replay --source SOURCE.json [--source MORE.json] --output CORPUS.json [--previous CORPUS.json] [--artifact-store ROOT]"
+        "  huntctl learn native-replay (--source SOURCE.json [--source MORE.json] | --input EPISODES.dseps [--input MORE.dseps] --role demonstration|policy_rollout|randomized_coverage|alternate_terminal [--policy-lineage-sha256 SHA256]) --output CORPUS.json [--previous CORPUS.json] [--artifact-store ROOT]"
     );
     eprintln!(
         "  huntctl learn auxiliary-dataset --corpus CORPUS.json --input EPISODES.dseps [--input MORE.dseps] --output DATASET.json [--training-basis-points N] [--validation-basis-points N] [--seed N] [--artifact-store ROOT]"

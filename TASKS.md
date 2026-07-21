@@ -955,8 +955,13 @@ and geometry set sizes without schema changes.
     shard/payload, checkpoint, source boundary, objective, parent-entry and
     policy-lineage identities; rejects duplicate episodes and invalid role
     claims; reports outcome/role/checkpoint diversity; and stores each manifest
-    content-addressed. Campaign ingestion and a live mixed-source generation
-    remain open before the parent item can close.
+    content-addressed. Whole farming shards can be ingested directly under an
+    explicit collection role, without producing one descriptor per episode.
+    A real 128-episode Ordon coverage shard produced a 16,000-transition replay
+    generation (`72a59a90...ab806`) and episode-held-out auxiliary dataset
+    (`9538f07a...7bf23`; 11,500 train / 2,625 validation / 1,875 test rows).
+    Automatic live mixed-source generations remain open before the parent item
+    can close.
 - [ ] Pretrain and continually refresh the shared state encoder from every
   phase-correct transition, not only successful episodes. Compare bounded
   auxiliary objectives such as next-state/delta prediction, inverse action,

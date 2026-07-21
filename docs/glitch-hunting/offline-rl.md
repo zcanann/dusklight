@@ -1009,6 +1009,17 @@ parents, successes and failures, and complete role counts. Duplicate source
 episodes, missing branch parents, detached identities, invalid role metadata,
 or incompatible predecessor schemas are rejected.
 
+For a farming batch whose collection role applies to every episode, ingest the
+whole shard directly instead of generating per-episode descriptors:
+
+```powershell
+huntctl learn native-replay --input coverage.dseps `
+  --role randomized_coverage --output replay-generation.json
+```
+
+`policy_rollout` additionally requires `--policy-lineage-sha256`; a shard may
+not silently claim policy provenance without that identity.
+
 The replay corpus deliberately references complete native observations. Model
 views may derive bounded tensors, actor sets, collision graphs, or temporal
 windows from those observations, but those lossy views do not replace the

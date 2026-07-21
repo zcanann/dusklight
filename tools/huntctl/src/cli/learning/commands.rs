@@ -76,6 +76,19 @@ struct NativeReplaySourceDescriptor {
     parent_entry_sha256: Option<Digest>,
 }
 
+fn parse_replay_role(value: &str) -> Result<ReplayExperienceRole, Box<dyn Error>> {
+    match value {
+        "demonstration" => Ok(ReplayExperienceRole::Demonstration),
+        "policy_rollout" => Ok(ReplayExperienceRole::PolicyRollout),
+        "randomized_coverage" => Ok(ReplayExperienceRole::RandomizedCoverage),
+        "alternate_terminal" => Ok(ReplayExperienceRole::AlternateTerminal),
+        _ => Err(
+            "replay role must be demonstration, policy_rollout, randomized_coverage, or alternate_terminal"
+                .into(),
+        ),
+    }
+}
+
 fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
     let direct_inputs = repeated_option(learn_args, "--input");
     let dataset_path = option(learn_args, "--dataset").map(PathBuf::from);
@@ -613,9 +626,12 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("native-replay") => {
             let learn_args = &args[1..];
             let source_paths = repeated_option(learn_args, "--source");
-            if source_paths.is_empty() || source_paths.len() > MAX_LEARN_INPUT_CORPORA {
+            let shard_paths = repeated_option(learn_args, "--input");
+            if source_paths.is_empty() == shard_paths.is_empty()
+                || source_paths.len().max(shard_paths.len()) > MAX_LEARN_INPUT_CORPORA
+            {
                 return Err(format!(
-                    "learn native-replay requires 1..={MAX_LEARN_INPUT_CORPORA} --source SOURCE.json"
+                    "learn native-replay requires either 1..={MAX_LEARN_INPUT_CORPORA} --source SOURCE.json or --input EPISODES.dseps with --role ROLE"
                 )
                 .into());
             }
@@ -635,51 +651,84 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     Ok(corpus)
                 })
                 .transpose()?;
-            let mut loaded = Vec::with_capacity(source_paths.len());
-            for source_path in source_paths {
-                let descriptor_path = PathBuf::from(source_path);
-                let descriptor: NativeReplaySourceDescriptor =
-                    serde_json::from_slice(&fs::read(&descriptor_path)?)?;
-                if descriptor.schema != NATIVE_REPLAY_SOURCE_SCHEMA_V1 {
-                    return Err(format!(
-                        "native replay source has invalid schema: {}",
-                        descriptor_path.display()
-                    )
-                    .into());
+            let corpus = if !source_paths.is_empty() {
+                let mut loaded = Vec::with_capacity(source_paths.len());
+                for source_path in source_paths {
+                    let descriptor_path = PathBuf::from(source_path);
+                    let descriptor: NativeReplaySourceDescriptor =
+                        serde_json::from_slice(&fs::read(&descriptor_path)?)?;
+                    if descriptor.schema != NATIVE_REPLAY_SOURCE_SCHEMA_V1 {
+                        return Err(format!(
+                            "native replay source has invalid schema: {}",
+                            descriptor_path.display()
+                        )
+                        .into());
+                    }
+                    let shard_path = if descriptor.shard.is_absolute() {
+                        descriptor.shard.clone()
+                    } else {
+                        descriptor_path
+                            .parent()
+                            .unwrap_or(Path::new("."))
+                            .join(&descriptor.shard)
+                    };
+                    loaded.push((descriptor, NativeEpisodeShard::read(shard_path)?));
                 }
-                let shard_path = if descriptor.shard.is_absolute() {
-                    descriptor.shard.clone()
-                } else {
-                    descriptor_path
-                        .parent()
-                        .unwrap_or(Path::new("."))
-                        .join(&descriptor.shard)
-                };
-                loaded.push((descriptor, NativeEpisodeShard::read(shard_path)?));
-            }
-            let sources = loaded
-                .iter()
-                .map(|(descriptor, shard)| {
-                    let episode_index = shard
-                        .episodes
-                        .iter()
-                        .position(|episode| episode.id == descriptor.episode_id)
-                        .ok_or_else(|| {
-                            format!(
-                                "native replay episode {:?} is absent from shard {}",
-                                descriptor.episode_id, shard.content_sha256
-                            )
-                        })?;
-                    Ok(ReplayEpisodeSource {
-                        shard,
-                        episode_index,
-                        role: descriptor.role,
-                        policy_lineage_sha256: descriptor.policy_lineage_sha256,
-                        parent_entry_sha256: descriptor.parent_entry_sha256,
+                let sources = loaded
+                    .iter()
+                    .map(|(descriptor, shard)| {
+                        let episode_index = shard
+                            .episodes
+                            .iter()
+                            .position(|episode| episode.id == descriptor.episode_id)
+                            .ok_or_else(|| {
+                                format!(
+                                    "native replay episode {:?} is absent from shard {}",
+                                    descriptor.episode_id, shard.content_sha256
+                                )
+                            })?;
+                        Ok(ReplayEpisodeSource {
+                            shard,
+                            episode_index,
+                            role: descriptor.role,
+                            policy_lineage_sha256: descriptor.policy_lineage_sha256,
+                            parent_entry_sha256: descriptor.parent_entry_sha256,
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            let corpus = NativeReplayCorpus::build(previous.as_ref(), &sources)?;
+                    .collect::<Result<Vec<_>, String>>()?;
+                NativeReplayCorpus::build(previous.as_ref(), &sources)?
+            } else {
+                let role_value = option(learn_args, "--role")
+                    .ok_or("native replay shard ingestion requires --role ROLE")?;
+                let role = parse_replay_role(&role_value)?;
+                let policy_lineage_sha256 = option(learn_args, "--policy-lineage-sha256")
+                    .map(|value| value.parse::<Digest>())
+                    .transpose()?;
+                if (role == ReplayExperienceRole::PolicyRollout) != policy_lineage_sha256.is_some()
+                {
+                    return Err(
+                        "policy_rollout shard ingestion requires exactly one --policy-lineage-sha256"
+                            .into(),
+                    );
+                }
+                let shards = shard_paths
+                    .iter()
+                    .map(NativeEpisodeShard::read)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let sources = shards
+                    .iter()
+                    .flat_map(|shard| {
+                        (0..shard.episodes.len()).map(move |episode_index| ReplayEpisodeSource {
+                            shard,
+                            episode_index,
+                            role,
+                            policy_lineage_sha256,
+                            parent_entry_sha256: None,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                NativeReplayCorpus::build(previous.as_ref(), &sources)?
+            };
             let bytes = serde_json::to_vec_pretty(&corpus)?;
             if let Some(parent) = output
                 .parent()

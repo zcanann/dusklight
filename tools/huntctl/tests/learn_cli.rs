@@ -216,6 +216,28 @@ fn native_replay_cli_classifies_rich_episodes_without_copying_the_shard() {
         serde_json::from_slice(&fs::read(&dataset_path).unwrap()).unwrap();
     dataset.validate().unwrap();
     assert_eq!(dataset.replay_corpus_sha256, corpus.corpus_sha256);
+
+    let direct_path = root.join("direct-replay.json");
+    let direct_output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "native-replay", "--input"])
+        .arg(&fixture)
+        .args(["--role", "randomized_coverage", "--output"])
+        .arg(&direct_path)
+        .args(["--artifact-store"])
+        .arg(&content)
+        .output()
+        .unwrap();
+    assert!(
+        direct_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&direct_output.stderr)
+    );
+    let direct: NativeReplayCorpus =
+        serde_json::from_slice(&fs::read(&direct_path).unwrap()).unwrap();
+    direct.validate().unwrap();
+    assert_eq!(direct.entries.len(), shard.episodes.len());
+    assert!(direct.entries.iter().all(|entry| entry.role
+        == huntctl::learning::native_replay_corpus::ReplayExperienceRole::RandomizedCoverage));
     fs::remove_dir_all(root).unwrap();
 }
 
