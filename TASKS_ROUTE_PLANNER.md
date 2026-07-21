@@ -577,6 +577,16 @@ The current code shows:
   inventing a default. The same schema distinguishes portal, void/death reload,
   title return, wrong-state respawn, and actor-driven transitions and provides
   typed operations for form, mount, control, and action changes.
+- Message-flow-program and compiled-message-flow-program schemas v1 turn an
+  exact extracted `FLW1`/`FLI1` graph plus explicit backing layouts into ordinary
+  message-action transitions, raw readers/writers, label entry points, and
+  friendly aliases. Known generic temporary/persistent/switch handlers compile
+  exactly; unknown node types have no invented successor, unsupported handlers
+  retain unknown requirements, and separately evidenced event/cleanup contracts
+  can express item handoffs, controlled jumps, and caller-specific cleanup.
+  Automatic construction/pack merge for every selected language resource and
+  further handler audits remain open. See
+  `docs/route-planner/message-flow-programs.md`.
 - Planner service schema v21 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
@@ -1790,6 +1800,17 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
       predicates, normal cleanup, and item/event handoffs from the selected
       language resources where decidable.
+  - [x] Add a planner-owned message-flow program/compiler that turns extracted
+        nodes and known generic temporary/persistent/switch handlers into
+        binding-sensitive transitions, readers, and friendly aliases. Preserve
+        unknown node/handler semantics explicitly; compile caller-specific
+        cleanup edges and exact node-level event handoff contracts without a
+        special-case glitch capability. See
+        `docs/route-planner/message-flow-programs.md`.
+  - [ ] Construct these programs automatically from every exact selected
+        language resource, attach stage/actor entry contracts, import additional
+        decidable item/event/jump handlers and real cleanup caller predicates,
+        and merge the results into resolved fact packs with conflict diagnostics.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.

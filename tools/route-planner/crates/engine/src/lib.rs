@@ -15,6 +15,7 @@ pub mod fact_pack_cache;
 pub mod graph;
 pub mod identity;
 pub mod logic;
+pub mod message_flow;
 pub mod native_observation;
 pub mod native_snapshot;
 pub mod orig_diff;
