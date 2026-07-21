@@ -868,6 +868,12 @@ PAD and gameplay sequence as ordinary playback.
     reaches every native byte extreme, zero output is a one-frame neutral PAD,
     nonfinite/detached rows fail closed, and the head configuration has its own
     schema identity. Native online execution through the head remains open.
+  - [x] Implement the same fail-closed policy-head decoder in the native
+    automation substrate and prove Rust/C++ quantization against one shared
+    golden fixture, including neutral output, asymmetric signed-byte rounding,
+    saturation, analog rounding, button thresholds and duration. This is a pure
+    decoder only; loading a bound model and invoking it on phase-correct native
+    observations remains open.
 - [ ] Let a policy invoke bounded stateful tactics through the same native
   episode boundary. Tactics may query read-only world state, but their exact
   consumed PAD and every intermediate transition must be recorded.

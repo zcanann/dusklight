@@ -1,0 +1,77 @@
+{
+  "schema": "dusklight-factorized-pad-policy-golden/v1",
+  "cases": [
+    {
+      "name": "zero_is_neutral",
+      "maximum_duration_ticks": 32,
+      "button_logit_threshold": 0.0,
+      "output": [
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0
+      ],
+      "expected": {
+        "buttons": 0,
+        "stick_x": 0,
+        "stick_y": 0,
+        "substick_x": 0,
+        "substick_y": 0,
+        "trigger_left": 0,
+        "trigger_right": 0,
+        "analog_a": 0,
+        "analog_b": 0,
+        "duration_ticks": 1
+      }
+    },
+    {
+      "name": "saturation_rounding_and_buttons",
+      "maximum_duration_ticks": 4096,
+      "button_logit_threshold": 0.25,
+      "output": [
+        -4.0, 4.0, 1.0, -1.0,
+        -2.0, 2.0, 1.0, 0.5,
+        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0, 0.250001, 0.0, 0.0, 0.0, 0.0,
+        3.0
+      ],
+      "expected": {
+        "buttons": 2048,
+        "stick_x": -128,
+        "stick_y": 127,
+        "substick_x": 127,
+        "substick_y": -128,
+        "trigger_left": 0,
+        "trigger_right": 255,
+        "analog_a": 255,
+        "analog_b": 128,
+        "duration_ticks": 4096
+      }
+    },
+    {
+      "name": "asymmetric_signed_byte_quantization",
+      "maximum_duration_ticks": 9,
+      "button_logit_threshold": -0.5,
+      "output": [
+        -0.5, 0.5, -0.00390625, 0.003937007874015748,
+        0.1, 0.2, 0.3, 0.4,
+        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0,
+        -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, -1.0, 1.0,
+        0.5
+      ],
+      "expected": {
+        "buttons": 32768,
+        "stick_x": -64,
+        "stick_y": 64,
+        "substick_x": -1,
+        "substick_y": 1,
+        "trigger_left": 26,
+        "trigger_right": 51,
+        "analog_a": 77,
+        "analog_b": 102,
+        "duration_ticks": 5
+      }
+    }
+  ]
+}
