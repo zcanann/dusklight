@@ -1693,6 +1693,12 @@ evidenced overlays over the generated base rather than silent edits to it.
         backing-store subset plus pending play-scene requests are now executable;
         post-copy normalization, name/save suffixes, and retail-DOL evidence
         remain open.
+  - [x] Source-audit the distinct GZ2E01 void/hazard collision-exit and held
+        restart-room branches, lethal diversion, four death-continue destination
+        families, return-to-title reset handoff, and pre-restart live mutations.
+        The seven top-level branch functions are exact-DOL sealed; callee
+        decoding and witnessed traces remain open. See
+        `docs/route-planner/gz2e01-void-death-source-audit.md`.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
       bits, normal/abnormal cleanup, and item/event handoffs.
@@ -2016,6 +2022,16 @@ Deliverable: replayable state evidence that can validate transition rules.
           requests after independently observed selection completion. Both retain
           active `PROC_NAME_SCENE`; the pending destination does not make the
           retained world traversable or prove `PROC_PLAY_SCENE` activation.
+      - [x] Represent all three no-card `dFile_select_c::mSaveData` entries as
+            independent process/session-owned custom stores, copy entry 0's
+            exact modeled payload projection into the live runtime without
+            changing its ownership, and keep both stores distinct from physical
+            slots and persistent-file images.
+    - [x] Source-audit void/hazard and death selection without collapsing
+          collision exits, held restart-room state, captured actor exits,
+          boss/special-stage branches, and title reset into one reload edge.
+          Seven top-level GZ2E01 functions are exact-binary sealed; executable
+          transition programs and deeper callee decoding remain open.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from

@@ -1,9 +1,27 @@
 # GZ2E01 void, death, and title-return source audit
 
-This audit records the source-visible branch structure that must precede an
-executable GZ2E01 void/death model. It deliberately does not turn every branch
+This audit records the exact-executable and source-visible branch structure that
+must precede an executable GZ2E01 void/death model. It deliberately does not turn every branch
 into a generic “reload” transition. Several branches consume different backing
 stores, and some destinations are encoded indirectly through collision exits.
+
+## Exact executable evidence
+
+The planner-owned `binary-function-evidence/v1` extractor resolved these exact
+symbols from the registered GZ2E01 `main.dol` and symbol table. The executable
+SHA-256 is `e7f197436815e66c4a11df3d7bd557d66083b641ff8a8e76439f3caba7ae60e8`;
+the symbol-table SHA-256 is
+`8b8c98b86b6270543709adbbd489ca4a5cd4fa5c30fd4a410420702fd37a085a`.
+
+| Function | VA | Size | Code SHA-256 | Artifact SHA-256 |
+| --- | ---: | ---: | --- | --- |
+| `memory_to_card__10dSv_info_cFPci` | `0x80035798` | `0x26c` | `7cf6fc958ed1e4cdcf4b3e168364cbd7a42a545a1812d139a4442e41ae5fd8e9` | `5b65a8833c8fb246e5c0292e0f22ecf6b05f5e3a123f2f18ee33c343a9805f1e` |
+| `startRestartRoom__9daAlink_cFUliii` | `0x800bdf60` | `0x30c` | `738eea0aabe272b6a9ac7ecd84e62c137769813721770955f82cf9695f3dae9e` | `7a05e8bb294e50e0a6d8cf87152bf7ac88aca71e57bd3738d8007a171ae4e56f` |
+| `checkRestartRoom__9daAlink_cFv` | `0x800be3e4` | `0x5f0` | `dbb2fe71121cbdbfe2514010bb066ac0b3c063434e99b4a769459ccbfacbdbfb` | `0a557c9bed46530e109182f8d1e648182a6b10c1ded0eec56649b67451d0e92f` |
+| `checkRestartDead__9daAlink_cFii` | `0x80118b34` | `0xc0` | `940c69251522802fc97558c38a661867ce5c47077358e8450d5de5aa43983dc8` | `5823f9b8cd273dbf128cfece69b1d89690fd9c3f383789108d4ee10ce063fb0f` |
+| `procCoDead__9daAlink_cFv` | `0x8011c1b4` | `0x478` | `22f6a70a37b32139d98899711fb1f52daa6f5c71db301bcb9fa041986265d9e6` | `84641294b6728c4acad403f2dc37b897df75b8c1e8976808a91f551e2bcd7a4e` |
+| `saveClose_proc__11dGameover_cFv` | `0x8019b5f4` | `0x1c8` | `1c670da55f7f8c8f49c6e16682407b615ab8064a099aec72c6fa3a9fc95ce7b4` | `f94057684bf4cf10a1cdbf8ea1c9c451683d430faf5faaa4932b531ee913b3d9` |
+| `restartInit__12dMenu_save_cFv` | `0x801f30b8` | `0xf8` | `22acf942d9526e73e3e01d320f3da1658e7c4de5e16cfb3e8640d6fda7e4018e` | `fe4ae5527102a981d9981d27e156c91771dc48aee7e7a4a33934c183cf4058e0` |
 
 ## Audited sources
 
@@ -17,8 +35,8 @@ stores, and some destinations are encoded indirectly through collision exits.
 | `src/d/d_com_inf_game.cpp` | `b9b37aed0b76eef2d27b35a2ece6ee077086a970f98d18936a83649303f15761` | reset-to-opening guard and play-state initialization |
 | `src/d/d_save.cpp` | `7e6f09aa36af30932e8ce64423284f885ed0b4e632b22f18d6f0a6b4d104b453` | transient save projection in `memory_to_card` |
 
-These hashes seal the audited source family. Exact GZ2E01 DOL function ranges
-and witnessed runtime traces remain separate evidence requirements.
+These hashes seal the audited source family. The table above separately seals
+the exact retail functions; witnessed runtime traces remain independent evidence.
 
 ## Void and hazard restart selection
 
@@ -111,7 +129,9 @@ projection.
 
 ## Remaining evidence gaps
 
-- Seal exact GZ2E01 DOL ranges for the branch functions and destination readers.
+- Seal any remaining callee ranges needed to decode collision-exit and packed
+  restart-parameter semantics; the seven top-level branch functions above are
+  already exact-GZ2E01 evidence.
 - Capture voids using a polygon exit and the `0x3f` restart fallback.
 - Capture ordinary death continue, boss-room death, and return-to-title.
 - Identify the exact actor fields that hold the captured death exit/room pair.
