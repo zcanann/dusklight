@@ -81,6 +81,15 @@ the copies with save/restore provenance, and atomically installs the sealed
 image. The source runtime stays active; this operation alone does not claim that
 file 0 ended or that title/void preconditions were satisfied.
 
+The active-runtime form may additionally carry a bounded ordered projection
+program. The executor applies only projection-safe field/raw writes to a private
+clone, seals the image from that clone, and copies back only the physical-slot
+and image stores. The live runtime and its stage banks are therefore untouched.
+Every projection target must belong to the explicit runtime-component manifest;
+nested saves, ownership changes, lifecycle changes, and writes to session-only
+targets fail catalog validation. GZ2E01 `memory_to_card` uses this boundary for
+its temporary monkey-event and lantern/oil adjustments.
+
 `load_runtime_from_slot` requires its authored component and stage lists to
 match the sealed image exactly. It then:
 
@@ -185,10 +194,15 @@ true, an explicit absent observation is false, and uncaptured/not-sampled state
 remains unknown. A structured-field operation can attach a return-place-derived
 pending world load to the active process without activating that world.
 
-The neutral successful-save milestone advances mechanics catalog to v26.
+The successful-save milestone advanced mechanics catalog to v26.
 `save_active_runtime_to_slot` derives the persistent image identity from the
 runtime that is active at execution, selects every available stage bank owned
 by that runtime, and delegates to the existing atomic slot projection. This
 keeps authored save-menu mechanics valid across prior load/lifetime handoffs
 without weakening slot authorization or treating a failed asynchronous command
 as a sealed image.
+
+The transformed-save milestone advances mechanics catalog to v27. The same
+operation now accepts the validated private-clone projection program described
+above, and byte-valued structured fields support masked reads/writes without
+being relabeled as opaque raw components.

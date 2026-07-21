@@ -53,11 +53,13 @@ The planner CLI currently owns thirty-nine operations:
   `selection_end` writer without touching a physical slot. New/existing
   play-scene actions then retain `PROC_NAME_SCENE` and record only the fixed or
   return-place-derived pending world load and requested `PROC_PLAY_SCENE`.
-  Exact save-menu submission/wait evidence also promotes the neutral successful
-  save branch: SaveSync result 1 derives a sealed image from the active runtime,
-  commits all available stage banks, replaces only the selected slot, and then
-  writes `mDataNum`/`mNoFile`; result 2 changes no slot. Conditional
-  lantern/event projection and save timestamps remain explicit gaps.
+  Exact save-menu submission/wait evidence also promotes successful saves:
+  SaveSync result 1 derives a sealed image from the active runtime, commits all
+  available stage banks, applies the exact projection-only monkey-event and
+  missing-lantern/oil repairs without mutating live state, replaces only the
+  selected slot, and then writes `mDataNum`/`mNoFile`; result 2 changes no slot.
+  Save-time clock values are explicitly invalidated rather than left stale
+  until an authenticated clock observation can compute them.
 - `construct-message-flows` selects every message group for one exact
   content/runtime/language profile and emits canonical source programs without
   guessing unaudited backing stores.

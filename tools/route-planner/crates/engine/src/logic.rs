@@ -79,6 +79,16 @@ pub enum ValueReference {
         component_id: String,
         field: String,
     },
+    /// Reads masked little-endian bits from a byte-valued structured field.
+    /// This keeps semantic byte vectors (for example item-acquisition flags)
+    /// structured while still permitting exact bit predicates.
+    ComponentBytes {
+        component_id: String,
+        field: String,
+        byte_offset: u32,
+        byte_width: u8,
+        mask: u64,
+    },
     BoundComponentField {
         component_kind: ComponentKind,
         binding: ComponentBindingReference,
@@ -406,6 +416,17 @@ fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerCon
         } => {
             validate_stable_id("value.component_id", component_id)?;
             validate_stable_id("value.field", field)
+        }
+        ValueReference::ComponentBytes {
+            component_id,
+            field,
+            byte_width,
+            mask,
+            ..
+        } => {
+            validate_stable_id("value.component_id", component_id)?;
+            validate_stable_id("value.field", field)?;
+            validate_raw_value_shape(*byte_width, *mask)
         }
         ValueReference::BoundComponentField {
             component_kind,

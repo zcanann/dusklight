@@ -1010,7 +1010,7 @@ fn append_attention_candidate_fields(
 fn player_resource_fields(
     value: &NativePlayerResourcesObservation,
 ) -> BTreeMap<String, StateValue> {
-    fields([
+    let mut output = fields([
         (
             "maximum_life",
             StateValue::Unsigned(value.maximum_life.into()),
@@ -1041,7 +1041,17 @@ fn player_resource_fields(
             "collect_item_bits",
             StateValue::Bytes(value.collect_item_bits.to_vec()),
         ),
-    ])
+    ]);
+    if let Some(maximum_oil) = value.maximum_oil {
+        output.insert(
+            "maximum_oil".into(),
+            StateValue::Unsigned(maximum_oil.into()),
+        );
+    }
+    if let Some(oil) = value.oil {
+        output.insert("oil".into(), StateValue::Unsigned(oil.into()));
+    }
+    output
 }
 
 fn observed_mount(observation: &NativeLearningObservation) -> Option<PlayerMount> {
@@ -1330,6 +1340,8 @@ mod tests {
         observation.stage = "D_MN05".into();
         observation.player_resources_status = NativeChannelStatus::Present;
         observation.player_resources = Some(NativePlayerResourcesObservation {
+            maximum_oil: Some(21_600),
+            oil: Some(1_234),
             small_keys: 3,
             dungeon_map: true,
             dungeon_compass: true,
@@ -1361,6 +1373,8 @@ mod tests {
         ] {
             assert!(!fields.contains_key(local_field));
         }
+        assert_eq!(fields["maximum_oil"], StateValue::Unsigned(21_600));
+        assert_eq!(fields["oil"], StateValue::Unsigned(1_234));
 
         let dungeon = snapshot
             .environment

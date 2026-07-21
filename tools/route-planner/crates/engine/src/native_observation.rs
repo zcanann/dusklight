@@ -190,6 +190,10 @@ pub struct NativePlayerResourcesObservation {
     pub maximum_life: u16,
     pub life: u16,
     pub rupees: u16,
+    #[serde(default)]
+    pub maximum_oil: Option<u16>,
+    #[serde(default)]
+    pub oil: Option<u16>,
     pub small_keys: u8,
     pub dungeon_map: bool,
     pub dungeon_compass: bool,

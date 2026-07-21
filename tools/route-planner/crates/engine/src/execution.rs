@@ -778,6 +778,9 @@ impl PlannerExecutionState {
                     })
                     .collect()
             }
+            StateOperation::WriteBytesField { target, .. } => {
+                vec![target.component_id.clone()]
+            }
             StateOperation::WriteRaw { component_id, .. }
             | StateOperation::InvalidateRaw { component_id, .. }
             | StateOperation::CommitLoadStageBank { component_id, .. }
@@ -1181,6 +1184,47 @@ impl PlannerExecutionState {
                     bytes[offset + index] =
                         (bytes[offset + index] & !selected) | (value[index] & selected);
                     known_mask[offset + index] |= selected;
+                }
+                mark_transition(component, application_id);
+            }
+            StateOperation::WriteBytesField {
+                target,
+                byte_offset,
+                mask,
+                value,
+            } => {
+                let component = self.component_mut(&target.component_id)?;
+                let ComponentPayload::Structured { fields } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.write_bytes_field",
+                        "requires a structured destination component",
+                    ));
+                };
+                let Some(StateValue::Bytes(bytes)) = fields.get_mut(&target.field) else {
+                    return Err(PlannerContractError::new(
+                        "operation.write_bytes_field",
+                        "requires an existing byte-valued destination field",
+                    ));
+                };
+                let offset = usize::try_from(*byte_offset).map_err(|_| {
+                    PlannerContractError::new(
+                        "operation.write_bytes_field.byte_offset",
+                        "does not fit this host",
+                    )
+                })?;
+                let end = offset.checked_add(mask.len()).ok_or_else(|| {
+                    PlannerContractError::new("operation.write_bytes_field", "range overflows")
+                })?;
+                if end > bytes.len() {
+                    return Err(PlannerContractError::new(
+                        "operation.write_bytes_field",
+                        "range exceeds the destination field",
+                    ));
+                }
+                for index in 0..mask.len() {
+                    let selected = mask[index];
+                    bytes[offset + index] =
+                        (bytes[offset + index] & !selected) | (value[index] & selected);
                 }
                 mark_transition(component, application_id);
             }
@@ -2353,6 +2397,7 @@ impl PlannerExecutionState {
             destination_slot,
             destination_id_suffix,
             runtime_component_ids,
+            projection_operations,
         } = operation
         else {
             unreachable!("active-runtime save helper is called only for its operation variant")
@@ -2381,7 +2426,12 @@ impl PlannerExecutionState {
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        self.save_runtime_to_slot(
+        let mut projected = self.clone();
+        for projection_operation in projection_operations {
+            projected
+                .apply_operation(application_id, &projection_operation.to_state_operation())?;
+        }
+        projected.save_runtime_to_slot(
             application_id,
             &StateOperation::SaveRuntimeToSlot {
                 source_runtime_file_id,
@@ -2390,7 +2440,10 @@ impl PlannerExecutionState {
                 runtime_component_ids: runtime_component_ids.clone(),
                 stage_bank_stages,
             },
-        )
+        )?;
+        self.snapshot.environment.physical_slots = projected.snapshot.environment.physical_slots;
+        self.persistent_file_images = projected.persistent_file_images;
+        Ok(())
     }
 
     fn load_runtime_from_slot(
@@ -3208,6 +3261,7 @@ fn history_event_writes_field(
                 .binary_search_by(|id| id.as_str().cmp(component_id))
                 .is_ok(),
             StateOperation::WriteRaw { .. }
+            | StateOperation::WriteBytesField { .. }
             | StateOperation::WriteBoundRaw { .. }
             | StateOperation::InvalidateRaw { .. }
             | StateOperation::InvalidateBoundRaw { .. }
@@ -6122,6 +6176,7 @@ mod tests {
                     destination_slot: PhysicalSlotId(1),
                     destination_id_suffix: "save-slot-1".into(),
                     runtime_component_ids: vec!["raw.flags".into(), "save.main".into()],
+                    projection_operations: Vec::new(),
                 }],
             )
             .unwrap();

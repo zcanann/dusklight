@@ -18,7 +18,7 @@ use crate::state::{
 };
 use crate::transition::{
     ActivationContract, CandidateTransition, ComponentFieldTarget, MECHANICS_CATALOG_SCHEMA,
-    MechanicsCatalog, StateOperation, TransitionKind,
+    MechanicsCatalog, SaveProjectionOperation, StateOperation, TransitionKind,
 };
 use std::collections::BTreeMap;
 
@@ -1227,7 +1227,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
         component_id: SAVE_MENU_CONTROL_COMPONENT.into(),
         field: field.into(),
     };
-    let neutral_lantern_event_projection = PredicateExpression::Any {
+    let identity_lantern_event_projection = PredicateExpression::Any {
         terms: vec![
             pending_compare(
                 ValueReference::RawBits {
@@ -1249,13 +1249,126 @@ pub fn gz2e01_reset_to_opening_mechanics(
             ),
         ],
     };
-    let neutral_lantern_item_projection = pending_compare(
-        ValueReference::ComponentField {
-            component_id: INVENTORY_COMPONENT.into(),
-            field: "acquired_item_bits".into(),
-        },
-        StateValue::Bytes(vec![0; 32]),
-    );
+    let event_projection_required = PredicateExpression::All {
+        terms: vec![
+            pending_compare(
+                ValueReference::RawBits {
+                    component_id: PERSISTENT_EVENT_COMPONENT.into(),
+                    byte_offset: 0x1b,
+                    byte_width: 1,
+                    mask: 0x08,
+                },
+                StateValue::Unsigned(0),
+            ),
+            PredicateExpression::Compare {
+                left: ValueReference::RawBits {
+                    component_id: PERSISTENT_EVENT_COMPONENT.into(),
+                    byte_offset: 0x1b,
+                    byte_width: 1,
+                    mask: 0x30,
+                },
+                operator: ComparisonOperator::NotEqual,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(0),
+                },
+            },
+        ],
+    };
+    let lantern_acquired = ValueReference::ComponentBytes {
+        component_id: INVENTORY_COMPONENT.into(),
+        field: "acquired_item_bits".into(),
+        byte_offset: 9,
+        byte_width: 1,
+        mask: 0x01,
+    };
+    let inventory_slot_one = ValueReference::ComponentBytes {
+        component_id: INVENTORY_COMPONENT.into(),
+        field: "inventory".into(),
+        byte_offset: 1,
+        byte_width: 1,
+        mask: 0xff,
+    };
+    let identity_lantern_item_projection = PredicateExpression::Any {
+        terms: vec![
+            pending_compare(lantern_acquired.clone(), StateValue::Unsigned(0)),
+            PredicateExpression::Compare {
+                left: inventory_slot_one.clone(),
+                operator: ComparisonOperator::NotEqual,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(ITEM_NONE.into()),
+                },
+            },
+        ],
+    };
+    let lantern_item_projection_required = PredicateExpression::All {
+        terms: vec![
+            pending_compare(lantern_acquired, StateValue::Unsigned(1)),
+            pending_compare(inventory_slot_one, StateValue::Unsigned(ITEM_NONE.into())),
+            PredicateExpression::Compare {
+                left: save_field("oil_gauge_backup"),
+                operator: ComparisonOperator::GreaterThanOrEqual,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(0),
+                },
+            },
+            PredicateExpression::Compare {
+                left: save_field("oil_gauge_backup"),
+                operator: ComparisonOperator::LessThanOrEqual,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(u16::MAX.into()),
+                },
+            },
+        ],
+    };
+    let event_projection_branches = [
+        (
+            "",
+            identity_lantern_event_projection,
+            Vec::<SaveProjectionOperation>::new(),
+        ),
+        (
+            "event-clear",
+            event_projection_required,
+            vec![SaveProjectionOperation::WriteRaw {
+                component_id: PERSISTENT_EVENT_COMPONENT.into(),
+                byte_offset: 0x1b,
+                mask: vec![0x30],
+                value: vec![0],
+            }],
+        ),
+    ];
+    let item_projection_branches = [
+        (
+            "",
+            identity_lantern_item_projection,
+            Vec::<SaveProjectionOperation>::new(),
+        ),
+        (
+            "lantern-restore",
+            lantern_item_projection_required,
+            vec![
+                SaveProjectionOperation::WriteBytesField {
+                    target: ComponentFieldTarget {
+                        component_id: INVENTORY_COMPONENT.into(),
+                        field: "inventory".into(),
+                    },
+                    byte_offset: 1,
+                    mask: vec![0xff],
+                    value: vec![0x48],
+                },
+                SaveProjectionOperation::CopyValue {
+                    source: ComponentFieldTarget {
+                        component_id: SAVE_MENU_CONTROL_COMPONENT.into(),
+                        field: "oil_gauge_backup".into(),
+                    },
+                    target: ComponentFieldTarget {
+                        component_id: INVENTORY_COMPONENT.into(),
+                        field: "oil".into(),
+                    },
+                },
+            ],
+        ),
+    ];
     let saved_runtime_component_ids = vec![
         PERSISTENT_EVENT_COMPONENT.into(),
         INVENTORY_COMPONENT.into(),
@@ -1270,12 +1383,56 @@ pub fn gz2e01_reset_to_opening_mechanics(
             ("continue", vec![1_u64, 2], "game_continue_disp"),
             ("event", vec![3_u64, 4], "save_end"),
         ] {
-            file_select_branch_transitions.push(CandidateTransition {
-                id: format!("transition.gz2e01.save-menu-complete-slot-{slot}-{family}"),
-                label: format!("Complete a successful save to slot {slot} ({family} UI)"),
+            for (event_suffix, event_guard, event_operations) in &event_projection_branches {
+                for (item_suffix, item_guard, item_operations) in &item_projection_branches {
+                    let projection_suffix = [*event_suffix, *item_suffix]
+                        .into_iter()
+                        .filter(|suffix| !suffix.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("-");
+                    let id_suffix = if projection_suffix.is_empty() {
+                        String::new()
+                    } else {
+                        format!("-{projection_suffix}")
+                    };
+                    let mut projection_operations = vec![
+                        SaveProjectionOperation::InvalidateField {
+                            target: ComponentFieldTarget {
+                                component_id: PLAYER_INFO_COMPONENT.into(),
+                                field: "total_time_ticks".into(),
+                            },
+                        },
+                        SaveProjectionOperation::InvalidateField {
+                            target: ComponentFieldTarget {
+                                component_id: PLAYER_INFO_COMPONENT.into(),
+                                field: "date_ipl_ticks".into(),
+                            },
+                        },
+                    ];
+                    projection_operations.extend(event_operations.clone());
+                    projection_operations.extend(item_operations.clone());
+                    file_select_branch_transitions.push(CandidateTransition {
+                id: format!(
+                    "transition.gz2e01.save-menu-complete-slot-{slot}-{family}{id_suffix}"
+                ),
+                label: format!(
+                    "Complete a successful save to slot {slot} ({family} UI, {} projection)",
+                    if projection_suffix.is_empty() {
+                        "identity"
+                    } else {
+                        projection_suffix.as_str()
+                    }
+                ),
                 scope: reset_transition.scope.clone(),
                 transition_kind: TransitionKind::Other,
-                approach_id: format!("save-menu.success.slot-{slot}.{family}"),
+                approach_id: format!(
+                    "save-menu.success.slot-{slot}.{family}{}",
+                    if projection_suffix.is_empty() {
+                        String::new()
+                    } else {
+                        format!(".{projection_suffix}")
+                    }
+                ),
                 activation: ActivationContract {
                     hard_guards: PredicateExpression::All {
                         terms: vec![
@@ -1299,7 +1456,8 @@ pub fn gz2e01_reset_to_opening_mechanics(
                             pending_compare(save_field("wait_timer_raw"), StateValue::Unsigned(0)),
                             PredicateExpression::Any {
                                 terms: use_types
-                                    .into_iter()
+                                    .iter()
+                                    .copied()
                                     .map(|use_type| {
                                         pending_compare(
                                             save_field("use_type_raw"),
@@ -1308,8 +1466,8 @@ pub fn gz2e01_reset_to_opening_mechanics(
                                     })
                                     .collect(),
                             },
-                            neutral_lantern_event_projection.clone(),
-                            neutral_lantern_item_projection.clone(),
+                            event_guard.clone(),
+                            item_guard.clone(),
                         ],
                     },
                     physical_obligation_ids: Vec::new(),
@@ -1318,6 +1476,19 @@ pub fn gz2e01_reset_to_opening_mechanics(
                             destination_slot: PhysicalSlotId(slot as u8),
                             destination_id_suffix: format!("save-slot-{slot}"),
                             runtime_component_ids: saved_runtime_component_ids.clone(),
+                            projection_operations,
+                        },
+                        StateOperation::InvalidateField {
+                            target: ComponentFieldTarget {
+                                component_id: PLAYER_INFO_COMPONENT.into(),
+                                field: "total_time_ticks".into(),
+                            },
+                        },
+                        StateOperation::InvalidateField {
+                            target: ComponentFieldTarget {
+                                component_id: PLAYER_INFO_COMPONENT.into(),
+                                field: "date_ipl_ticks".into(),
+                            },
                         },
                         StateOperation::WriteFields {
                             component_id: RUNTIME_FILE_HEADER_COMPONENT.into(),
@@ -1338,6 +1509,8 @@ pub fn gz2e01_reset_to_opening_mechanics(
                 },
                 evidence: successful_save_evidence.clone(),
             });
+                }
+            }
         }
     }
     file_select_branch_transitions.push(CandidateTransition {
@@ -1602,6 +1775,8 @@ fn dcomifgs_init_effects() -> Vec<StateOperation> {
                         "player_name_bytes".into(),
                         StateValue::Bytes(DEFAULT_PLAYER_NAME_BYTES.to_vec()),
                     ),
+                    ("total_time_ticks".into(), StateValue::Unsigned(0)),
+                    ("date_ipl_ticks".into(), StateValue::Unsigned(0)),
                 ]),
             },
         },
@@ -1653,6 +1828,8 @@ fn base_inventory_payload() -> ComponentPayload {
             ("maximum_life".into(), StateValue::Unsigned(15)),
             ("life".into(), StateValue::Unsigned(12)),
             ("rupees".into(), StateValue::Unsigned(0)),
+            ("maximum_oil".into(), StateValue::Unsigned(0)),
+            ("oil".into(), StateValue::Unsigned(0)),
             ("inventory".into(), StateValue::Bytes(vec![0xff; 24])),
             ("item_lineup".into(), StateValue::Bytes(vec![0xff; 24])),
             ("selected_items".into(), StateValue::Bytes(vec![0xff; 4])),
@@ -1799,6 +1976,8 @@ fn initialized_file_select_buffer(slot: u8) -> Vec<StateComponent> {
                 fields: BTreeMap::from([
                     ("horse_name_bytes".into(), StateValue::Bytes(vec![0])),
                     ("player_name_bytes".into(), StateValue::Bytes(vec![0])),
+                    ("total_time_ticks".into(), StateValue::Unsigned(0)),
+                    ("date_ipl_ticks".into(), StateValue::Unsigned(0)),
                 ]),
             },
         ),
@@ -1994,6 +2173,8 @@ mod tests {
                     "player_name_bytes",
                     StateValue::Bytes(DEFAULT_PLAYER_NAME_BYTES.to_vec()),
                 ),
+                ("total_time_ticks", StateValue::Unsigned(0)),
+                ("date_ipl_ticks", StateValue::Unsigned(0)),
             ],
         )
     }
@@ -2059,13 +2240,19 @@ mod tests {
         component
     }
 
-    fn save_menu_control(selected_index: u64, command_state: u64, use_type: u64) -> StateComponent {
+    fn save_menu_control(
+        selected_index: u64,
+        command_state: u64,
+        use_type: u64,
+        oil_gauge_backup: u64,
+    ) -> StateComponent {
         let mut component = component(
             SAVE_MENU_CONTROL_COMPONENT,
             ComponentKind::Session,
             [
                 ("buffer_loaded", StateValue::Boolean(true)),
                 ("command_state_raw", StateValue::Unsigned(command_state)),
+                ("oil_gauge_backup", StateValue::Unsigned(oil_gauge_backup)),
                 ("phase", StateValue::Text("data_save_wait2".into())),
                 ("selected_index_raw", StateValue::Unsigned(selected_index)),
                 ("use_type_raw", StateValue::Unsigned(use_type)),
@@ -3718,7 +3905,7 @@ mod tests {
         before
             .environment
             .components
-            .push(save_menu_control(1, 1, 1));
+            .push(save_menu_control(1, 1, 1, 0));
         before
             .environment
             .components
@@ -3802,7 +3989,7 @@ mod tests {
         failed_before
             .environment
             .components
-            .push(save_menu_control(1, 2, 1));
+            .push(save_menu_control(1, 2, 1, 0));
         failed_before
             .environment
             .components
@@ -3832,6 +4019,143 @@ mod tests {
             fields_for(&failed, SAVE_MENU_CONTROL_COMPONENT)["phase"],
             StateValue::Text("memcard_command_end2".into())
         );
+    }
+
+    #[test]
+    fn successful_save_projects_lantern_repairs_without_mutating_the_live_runtime() {
+        let (content, runtime) = context();
+        let catalog = gz2e01_reset_to_opening_mechanics(&content, &runtime).unwrap();
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let transition_id =
+            "transition.gz2e01.save-menu-complete-slot-3-continue-event-clear-lantern-restore";
+        let transition = catalog
+            .transitions
+            .iter()
+            .find(|transition| transition.id == transition_id)
+            .unwrap();
+
+        let mut before = snapshot(runtime);
+        let persistent_events = before
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == PERSISTENT_EVENT_COMPONENT)
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &mut persistent_events.payload else {
+            unreachable!()
+        };
+        bytes[0x1b] = 0xa0;
+        let inventory = before
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == INVENTORY_COMPONENT)
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut inventory.payload else {
+            unreachable!()
+        };
+        let StateValue::Bytes(acquired) = fields.get_mut("acquired_item_bits").unwrap() else {
+            unreachable!()
+        };
+        acquired[9] |= 1;
+        fields.insert("oil".into(), StateValue::Unsigned(77));
+        before
+            .environment
+            .components
+            .push(save_menu_control(2, 1, 1, 4_321));
+        before
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+
+        let mut state = PlannerExecutionState::new(before).unwrap();
+        let classification = PredicateEvaluator::new(
+            &state.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap()
+        .assess_transition(
+            transition,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            FeasibilityMode::Modeled,
+        )
+        .classification;
+        assert_eq!(classification, TransitionClassification::Executable);
+
+        state
+            .apply_operations(
+                transition_id,
+                "snapshot.transformed-save",
+                &transition.activation.effects,
+            )
+            .unwrap();
+
+        let live_events = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == PERSISTENT_EVENT_COMPONENT)
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &live_events.payload else {
+            unreachable!()
+        };
+        assert_eq!(bytes[0x1b], 0xa0);
+        let live_inventory = fields_for(&state, INVENTORY_COMPONENT);
+        let StateValue::Bytes(live_items) = &live_inventory["inventory"] else {
+            unreachable!()
+        };
+        assert_eq!(live_items[1], ITEM_NONE);
+        assert_eq!(live_inventory["oil"], StateValue::Unsigned(77));
+        let live_player_info = fields_for(&state, PLAYER_INFO_COMPONENT);
+        assert!(!live_player_info.contains_key("total_time_ticks"));
+        assert!(!live_player_info.contains_key("date_ipl_ticks"));
+
+        let image = &state.persistent_file_images["file-0.save-slot-3"];
+        let saved_events = image
+            .runtime_components
+            .iter()
+            .find(|component| component.id == PERSISTENT_EVENT_COMPONENT)
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &saved_events.payload else {
+            unreachable!()
+        };
+        assert_eq!(bytes[0x1b], 0x80);
+        let saved_inventory = image
+            .runtime_components
+            .iter()
+            .find(|component| component.id == INVENTORY_COMPONENT)
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &saved_inventory.payload else {
+            unreachable!()
+        };
+        let StateValue::Bytes(saved_items) = &fields["inventory"] else {
+            unreachable!()
+        };
+        assert_eq!(saved_items[1], 0x48);
+        assert_eq!(fields["oil"], StateValue::Unsigned(4_321));
+        let StateValue::Bytes(saved_acquired) = &fields["acquired_item_bits"] else {
+            unreachable!()
+        };
+        assert_eq!(saved_acquired[9] & 1, 1);
+        let saved_player_info = image
+            .runtime_components
+            .iter()
+            .find(|component| component.id == PLAYER_INFO_COMPONENT)
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &saved_player_info.payload else {
+            unreachable!()
+        };
+        assert!(!fields.contains_key("total_time_ticks"));
+        assert!(!fields.contains_key("date_ipl_ticks"));
     }
 
     #[test]

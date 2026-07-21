@@ -1069,6 +1069,27 @@ impl<'a> PredicateEvaluator<'a> {
                 }
                 structured_field(component, field)
             }
+            ValueReference::ComponentBytes {
+                component_id,
+                field,
+                byte_offset,
+                byte_width,
+                mask,
+            } => {
+                let component = self
+                    .snapshot
+                    .environment
+                    .components
+                    .iter()
+                    .find(|component| component.id == *component_id)?;
+                if !self.component_readable(component) {
+                    return None;
+                }
+                let StateValue::Bytes(bytes) = structured_field(component, field)? else {
+                    return None;
+                };
+                byte_vector_bits(&bytes, *byte_offset, *byte_width, *mask).map(StateValue::Unsigned)
+            }
             ValueReference::BoundComponentField {
                 component_kind,
                 binding,
@@ -1321,6 +1342,20 @@ fn raw_bits(
         known |= u64::from(known_mask[offset + index]) << (index * 8);
     }
     (known & mask == mask).then_some(value & mask)
+}
+
+fn byte_vector_bits(bytes: &[u8], byte_offset: u32, byte_width: u8, mask: u64) -> Option<u64> {
+    let offset = usize::try_from(byte_offset).ok()?;
+    let width = usize::from(byte_width);
+    let end = offset.checked_add(width)?;
+    if width == 0 || width > 8 || end > bytes.len() {
+        return None;
+    }
+    let mut value = 0_u64;
+    for index in 0..width {
+        value |= u64::from(bytes[offset + index]) << (index * 8);
+    }
+    Some(value & mask)
 }
 
 fn configuration_value(value: &ConfigurationValue) -> StateValue {

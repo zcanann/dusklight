@@ -249,20 +249,22 @@ requested `PROC_PLAY_SCENE`, and leave the prior world location non-traversable.
 
 ## Successful save completion
 
-The catalog now also closes the neutral new-file path through an independently
-observed successful in-game save-menu command. Exact artifacts seal current
-stage-bank commit, runtime-to-buffer projection, asynchronous wait, and the
+The catalog now also closes the exact observed-lantern branches through an
+independently observed successful in-game save-menu command. Exact artifacts
+seal current stage-bank commit, runtime-to-buffer projection, asynchronous wait, and the
 result-1/result-2 split. Result 1 derives a persistent image from whatever
 runtime is active, includes every available stage bank, replaces only the
 selected physical slot, writes the selected zero-based `mDataNum`, clears
 `mNoFile`, and retains the live runtime lifetime. Result 2 enters the error path
 without changing a slot or either header field.
 
-This promotion is guarded to the identity subset of `memory_to_card`: lantern
-recovery is complete or both transient monkey-lantern bits are already clear,
-and all projected acquisition bytes are zero. The conditional lantern/oil
-projection therefore cannot run. The transformed lantern/event branches and
-unprojected save timestamps remain open. See
+Mechanics v27 selects exclusive identity/event-clear and
+identity/missing-lantern branches from the recovery, stolen/dropped,
+acquisition, slot-1 and meter-backup values. Projection-safe operations mutate a
+private clone only, so the card image receives the exact temporary repairs while
+the live lantern/event state is retained. The clock-derived `totalTime` and
+`dateIpl` writes are explicitly invalidated in live and serialized player info
+instead of retaining stale values. Exact clock reconstruction remains open. See
 `gz2e01-file-select-branches.md` for the exact functions and guard boundary.
 
 That member-level distinction is central to file-0 and Back in Time reasoning.
@@ -272,8 +274,8 @@ all.”
 
 Still open:
 
-- execute the transformed `memory_to_card` lantern/event branches and project
-  save timestamps;
+- observe the save clock inputs and compute exact `totalTime` / `dateIpl`
+  values instead of conservative invalidation;
 - audit void and death restart selection, including their special-stage and
   boss-room branches; and
 - produce traces that distinguish pending scene requests from completed world

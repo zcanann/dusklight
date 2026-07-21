@@ -196,16 +196,17 @@ the continue prompt (`mUseType` 1/2) or event save-end path (`mUseType` 3/4).
 Result `2` enters the error UI and must not create a sealed planner slot or
 claim either header write.
 
-Mechanics catalog v26 promotes that successful completion for the exact neutral
-projection currently expressible by native components. The guards require:
+Mechanics catalog v27 promotes that successful completion for every exact
+combination of the observed lantern projection inputs. The guards require:
 
 - active world execution and an observed loaded save buffer;
 - `data_save_wait2`, command result `1`, timer zero, one selected index, and an
   exact use type;
-- either the monkey-lantern recovery event bit set or both transient stolen /
-  dropped bits clear; and
-- all projected first-item acquisition bytes zero, which proves that the
-  conditional missing-lantern inventory/oil rewrite cannot run.
+- the monkey-lantern recovery bit and stolen/dropped bits needed to select the
+  identity or event-clear projection;
+- the exact lantern acquisition bit and slot-1 byte needed to select the
+  identity or missing-lantern projection; and
+- a known unsigned 16-bit meter oil backup when the latter projection runs.
 
 The active-runtime save operation derives its persistent image identity at
 execution time, so it remains valid after arbitrary prior loads. It seals the
@@ -213,12 +214,15 @@ named runtime-file projection plus every available stage bank, overwrites only
 the selected physical slot, and leaves the active runtime lifetime intact. A
 separate failure transition proves that result `2` changes no slot.
 
-This is deliberately not yet the universal `memory_to_card` transform. When
-the lantern is acquired but absent from slot 1, the serialized image temporarily
-receives the lantern and backed-up oil; when recovery is incomplete, stolen and
-dropped event bits are temporarily cleared. Total-time/date fields also remain
-outside the current player-info projection. Those transformed branches stay
-open rather than inheriting the neutral result.
+Projection operations run on a private clone. When the lantern is acquired but
+absent from slot 1, only the serialized image receives item `0x48` and the
+meter's backed-up oil. When recovery is incomplete, only its stolen/dropped
+event bits are cleared. A regression test composes both branches and proves the
+live event byte, slot 1, and oil remain byte-for-byte unchanged while the sealed
+image contains both repairs. Save-time `totalTime` and `dateIpl` writes are
+represented as explicit unknown invalidations in both live state and the image,
+not stale pre-save values; exact clock-derived values await an authenticated
+native clock channel.
 
 ## Transition to play scene
 
@@ -240,7 +244,7 @@ activating world state, just as the earlier title-to-name-scene request does.
 
 ## Required executable-model checks
 
-Mechanics catalog v26 and execution state v15 now prove the backing-store and
+Mechanics catalog v27 and execution state v15 now prove the backing-store and
 branching subset below:
 
 - blank, existing, and no-card guards cannot all execute from one observed
@@ -288,6 +292,5 @@ its digest-verified sealed image copy, lifetime cut, and all route-relevant
 selection and both pending play-scene request shapes remain independently
 executable.
 
-The non-neutral `memory_to_card` lantern/event projection, unprojected time/date
-fields, void/death restart selection, and build/platform variants remain
-separate audit and implementation tasks.
+Exact clock-derived save time/date values, void/death restart selection, and
+build/platform variants remain separate audit and implementation tasks.

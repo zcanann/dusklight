@@ -293,6 +293,14 @@ impl RelevanceBuilder {
                 component_id: component_id.clone(),
                 field: field.clone(),
             },
+            ValueReference::ComponentBytes {
+                component_id,
+                field,
+                ..
+            } => StateDependency::ComponentField {
+                component_id: component_id.clone(),
+                field: field.clone(),
+            },
             ValueReference::BoundComponentField {
                 component_kind,
                 binding,
@@ -682,9 +690,18 @@ impl RelevanceBuilder {
             StateOperation::SaveRuntimeToSlot {
                 runtime_component_ids,
                 ..
+            } => {
+                self.dependencies.extend(
+                    runtime_component_ids
+                        .iter()
+                        .cloned()
+                        .map(|component_id| StateDependency::Component { component_id }),
+                );
+                self.dependencies.insert(StateDependency::AnyState);
             }
-            | StateOperation::SaveActiveRuntimeToSlot {
+            StateOperation::SaveActiveRuntimeToSlot {
                 runtime_component_ids,
+                projection_operations,
                 ..
             } => {
                 self.dependencies.extend(
@@ -694,6 +711,9 @@ impl RelevanceBuilder {
                         .map(|component_id| StateDependency::Component { component_id }),
                 );
                 self.dependencies.insert(StateDependency::AnyState);
+                for projection_operation in projection_operations {
+                    self.add_operation_inputs(&projection_operation.to_state_operation());
+                }
             }
             StateOperation::LoadRuntimeFromSlot { .. }
             | StateOperation::LoadActiveRuntimeFromSlot { .. }
@@ -742,6 +762,7 @@ impl RelevanceBuilder {
             | StateOperation::InvalidatePayloads { .. }
             | StateOperation::InvalidateActiveRuntimeSerializedPayloads { .. }
             | StateOperation::WriteRaw { .. }
+            | StateOperation::WriteBytesField { .. }
             | StateOperation::WriteBoundRaw { .. }
             | StateOperation::InvalidateRaw { .. }
             | StateOperation::InvalidateBoundRaw { .. }
@@ -798,6 +819,7 @@ impl RelevanceBuilder {
 fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
     match operation {
         StateOperation::Write { target, .. }
+        | StateOperation::WriteBytesField { target, .. }
         | StateOperation::Adjust { target, .. }
         | StateOperation::ClampUnsignedMinimum { target, .. }
         | StateOperation::ClearField { target }

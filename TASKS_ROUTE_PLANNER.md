@@ -1694,8 +1694,8 @@ evidenced overlays over the generated base rather than silent edits to it.
         Exact GZ2E01 DOL artifacts seal `card_to_memory` and `setLineUpItem`,
         and typed operations execute the conditional 12-life floor, dungeon-6
         key reset, hookshot migration/lineup rebuild, saved vibration, and
-        displayed return-place stage. Transformed save-time lantern/event and
-        timestamp projection stays open.
+        displayed return-place stage. Exact clock-derived save timestamps stay
+        open.
   - [x] Seal and execute the exact GZ2E01 new-file name-entry suffix. Player and
         horse confirmations copy observed encoded byte strings into runtime-file
         player info; the default-horse/fade chain, ordinary/no-card player Back,
@@ -1703,13 +1703,14 @@ evidenced overlays over the generated base rather than silent edits to it.
         now writes `selection_end` without fabricating a physical save. Four
         exact-DOL function artifacts and the source audit are recorded in
         `docs/route-planner/gz2e01-file-select-branches.md`.
-  - [x] Seal and execute the exact GZ2E01 successful physical-save result for
-        the neutral new-file projection. A dynamic active-runtime save derives
+  - [x] Seal and execute the exact GZ2E01 successful physical-save result and
+        all observed lantern/event projection branches. A dynamic active-runtime save derives
         its persistent identity after arbitrary prior loads, commits every
         available stage bank, changes only the selected slot, writes
         `mDataNum`/`mNoFile` only on SaveSync result 1, and leaves result 2
-        slotless. The conditional lantern/event transform and unprojected save
-        timestamps remain open.
+        slotless. Projection-only event clearing and missing-lantern/backed-oil
+        repair leave live state unchanged. Clock-derived save timestamps are
+        explicit unknowns pending native clock evidence.
   - [x] Source-audit the distinct GZ2E01 void/hazard collision-exit and held
         restart-room branches, lethal diversion, four death-continue destination
         families, return-to-title reset handoff, and pre-restart live mutations.
@@ -2432,10 +2433,11 @@ Deliverable: route confidence is mechanically explainable.
   - [x] Execute player/horse confirmation and Back paths from observed name
         bytes, timer, reset, and no-file state; reach `selection_end` through the
         actual horse-confirmation writer rather than a test-state injection.
-  - [x] Connect the neutral new-file runtime to physical slot 1–3 only after an
+  - [x] Connect the active runtime to physical slot 1–3 only after an
         exact successful save-menu completion; infer the active runtime and all
-        available stage banks at execution time, preserve unselected slots, and
-        prove the failed command changes no slot/header.
+        available stage banks at execution time, apply exact lantern/event
+        projection on a private clone, preserve live and unselected-slot state,
+        and prove the failed command changes no slot/header.
 - [x] Show physical slots 1–3 separately.
   - Populated slots seal distinct persistent-file images; slot 0 is rejected.
 - [ ] Model void/title-state handling and save projection to a chosen slot.

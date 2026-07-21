@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v26";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v27";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -22,6 +22,45 @@ pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 pub struct ComponentFieldTarget {
     pub component_id: String,
     pub field: String,
+}
+
+/// A deliberately bounded subset of state operations that may alter a private
+/// runtime clone before it is sealed as a persistent image.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SaveProjectionOperation {
+    Write {
+        target: ComponentFieldTarget,
+        value: StateValue,
+    },
+    WriteFields {
+        component_id: String,
+        fields: BTreeMap<String, StateValue>,
+    },
+    CopyValue {
+        source: ComponentFieldTarget,
+        target: ComponentFieldTarget,
+    },
+    WriteRaw {
+        component_id: String,
+        byte_offset: u32,
+        mask: Vec<u8>,
+        value: Vec<u8>,
+    },
+    WriteBytesField {
+        target: ComponentFieldTarget,
+        byte_offset: u32,
+        mask: Vec<u8>,
+        value: Vec<u8>,
+    },
+    InvalidateRaw {
+        component_id: String,
+        byte_offset: u32,
+        mask: Vec<u8>,
+    },
+    InvalidateField {
+        target: ComponentFieldTarget,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -71,6 +110,13 @@ pub enum StateOperation {
     },
     WriteRaw {
         component_id: String,
+        byte_offset: u32,
+        mask: Vec<u8>,
+        value: Vec<u8>,
+    },
+    /// Writes masked bytes within a `StateValue::Bytes` structured field.
+    WriteBytesField {
+        target: ComponentFieldTarget,
         byte_offset: u32,
         mask: Vec<u8>,
         value: Vec<u8>,
@@ -213,6 +259,9 @@ pub enum StateOperation {
         destination_slot: PhysicalSlotId,
         destination_id_suffix: String,
         runtime_component_ids: Vec<String>,
+        /// Ordered writes applied to a private runtime clone before its
+        /// persistent image is sealed. They never mutate the live runtime.
+        projection_operations: Vec<SaveProjectionOperation>,
     },
     /// Ends the current runtime-file lifetime, restores the exact persistent
     /// projection from a physical slot, explicitly carries selected non-card
@@ -710,6 +759,15 @@ impl StateOperation {
                 }
                 Ok(())
             }
+            Self::WriteBytesField {
+                target,
+                byte_offset: _,
+                mask,
+                value,
+            } => {
+                validate_field_target(target)?;
+                validate_raw_write(mask, value, "operation.write_bytes_field")
+            }
             Self::WriteBoundRaw {
                 component_kind,
                 binding,
@@ -1007,6 +1065,7 @@ impl StateOperation {
                 destination_slot,
                 destination_id_suffix,
                 runtime_component_ids,
+                projection_operations,
             } => {
                 destination_slot.validate("operation.destination_slot")?;
                 validate_stable_id("operation.destination_id_suffix", destination_id_suffix)?;
@@ -1014,7 +1073,8 @@ impl StateOperation {
                     "operation.runtime_component_ids",
                     runtime_component_ids,
                     false,
-                )
+                )?;
+                validate_save_projection_operations(runtime_component_ids, projection_operations)
             }
             Self::LoadRuntimeFromSlot {
                 source_runtime_file_id,
@@ -1231,6 +1291,100 @@ fn validate_raw_mask(mask: &[u8], field: &str) -> Result<(), PlannerContractErro
             field,
             "must select at least one bit",
         ));
+    }
+    Ok(())
+}
+
+impl SaveProjectionOperation {
+    pub(crate) fn to_state_operation(&self) -> StateOperation {
+        match self {
+            Self::Write { target, value } => StateOperation::Write {
+                target: target.clone(),
+                value: value.clone(),
+            },
+            Self::WriteFields {
+                component_id,
+                fields,
+            } => StateOperation::WriteFields {
+                component_id: component_id.clone(),
+                fields: fields.clone(),
+            },
+            Self::CopyValue { source, target } => StateOperation::CopyValue {
+                source: source.clone(),
+                target: target.clone(),
+            },
+            Self::WriteRaw {
+                component_id,
+                byte_offset,
+                mask,
+                value,
+            } => StateOperation::WriteRaw {
+                component_id: component_id.clone(),
+                byte_offset: *byte_offset,
+                mask: mask.clone(),
+                value: value.clone(),
+            },
+            Self::WriteBytesField {
+                target,
+                byte_offset,
+                mask,
+                value,
+            } => StateOperation::WriteBytesField {
+                target: target.clone(),
+                byte_offset: *byte_offset,
+                mask: mask.clone(),
+                value: value.clone(),
+            },
+            Self::InvalidateRaw {
+                component_id,
+                byte_offset,
+                mask,
+            } => StateOperation::InvalidateRaw {
+                component_id: component_id.clone(),
+                byte_offset: *byte_offset,
+                mask: mask.clone(),
+            },
+            Self::InvalidateField { target } => StateOperation::InvalidateField {
+                target: target.clone(),
+            },
+        }
+    }
+
+    fn target_component_id(&self) -> &str {
+        match self {
+            Self::Write { target, .. }
+            | Self::WriteBytesField { target, .. }
+            | Self::InvalidateField { target } => &target.component_id,
+            Self::WriteFields { component_id, .. }
+            | Self::WriteRaw { component_id, .. }
+            | Self::InvalidateRaw { component_id, .. } => component_id,
+            Self::CopyValue { target, .. } => &target.component_id,
+        }
+    }
+}
+
+fn validate_save_projection_operations(
+    runtime_component_ids: &[String],
+    operations: &[SaveProjectionOperation],
+) -> Result<(), PlannerContractError> {
+    if operations.len() > 256 {
+        return Err(PlannerContractError::new(
+            "operation.save_active_runtime_to_slot.projection_operations",
+            "must contain at most 256 operations",
+        ));
+    }
+    for operation in operations {
+        let target_component_id = operation.target_component_id();
+        if runtime_component_ids
+            .binary_search_by(|candidate| candidate.as_str().cmp(target_component_id))
+            .is_err()
+        {
+            return Err(PlannerContractError::new(
+                "operation.save_active_runtime_to_slot.projection_operations",
+                "targets a component outside the persistent runtime projection",
+            ));
+        }
+        operation.to_state_operation().validate()?;
     }
     Ok(())
 }
@@ -2105,6 +2259,26 @@ mod tests {
         assert_eq!(
             operation.validate().unwrap_err().field(),
             "operation.component_ids"
+        );
+    }
+
+    #[test]
+    fn save_projection_cannot_write_outside_its_persistent_manifest() {
+        let operation = StateOperation::SaveActiveRuntimeToSlot {
+            destination_slot: PhysicalSlotId(1),
+            destination_id_suffix: "save-slot-1".into(),
+            runtime_component_ids: vec!["save.main".into()],
+            projection_operations: vec![SaveProjectionOperation::Write {
+                target: ComponentFieldTarget {
+                    component_id: "save-menu-control".into(),
+                    field: "phase".into(),
+                },
+                value: StateValue::Text("done".into()),
+            }],
+        };
+        assert_eq!(
+            operation.validate().unwrap_err().field(),
+            "operation.save_active_runtime_to_slot.projection_operations"
         );
     }
 
