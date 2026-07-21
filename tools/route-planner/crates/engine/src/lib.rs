@@ -10,6 +10,7 @@ pub mod artifact;
 pub mod evaluation;
 pub mod execution;
 pub mod fact_pack;
+pub mod fact_pack_cache;
 pub mod graph;
 pub mod identity;
 pub mod logic;

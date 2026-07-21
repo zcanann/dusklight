@@ -1673,7 +1673,7 @@ Deliverable: replayable state evidence that can validate transition rules.
 
 ### Phase 3 — Base mechanisms and upper-bound graph
 
-- [ ] Build the deterministic `orig/` extraction pipeline and cache/reuse its
+- [x] Build the deterministic `orig/` extraction pipeline and cache/reuse its
       content-addressed derived fact packs without requiring original assets at
       planner runtime.
   - [x] Compile canonical world inventories into a strict exact-context payload
@@ -1690,8 +1690,16 @@ Deliverable: replayable state evidence that can validate transition rules.
       complete fingerprint, and emits a canonical decoded stage/message bundle
       plus sealed fact-pack manifest without host paths or original bytes. See
       `docs/route-planner/orig-discovery-and-extraction.md`.
-- [ ] Auto-detect and verify supported inputs; reject label/digest disagreement
+  - [x] Install and reload canonical payload/manifest pairs through an immutable
+        manifest-digest cache; materialization re-verifies both artifacts and
+        needs no `orig/` tree.
+- [x] Auto-detect and verify supported inputs; reject label/digest disagreement
       and represent unknown inputs as unsupported rather than guessing.
+  - The canonical supported-build registry accepts only complete exact
+    fingerprints. `identify-orig` automatically selects an exact match, emits a
+    typed unsupported result for unknown bytes, and treats `--content-id` only
+    as a checked selection hint. Populating audited retail entries remains the
+    separate Phase 0 evidence-catalogue task.
 - [x] Import world-context stages, room/layer bindings, player spawns, static
       placements, raw SCLS records, and collision/SCLS activation joins.
   - [x] Own the compatible world/native observation input contracts inside the

@@ -1,8 +1,9 @@
 # Planner-owned `orig/` discovery and extraction
 
-Status: deterministic discovery and one-command stage/message extraction are
-implemented for extracted GameCube and Wii disc trees. Friendly known-build
-auto-selection and content-addressed cache reuse remain separate open work.
+Status: deterministic discovery, exact registry classification, one-command
+stage/message extraction, and immutable content-addressed fact-pack reuse are
+implemented for extracted GameCube and Wii disc trees. Populating the registry
+with audited retail fingerprints remains evidence work.
 
 ## Commands
 
@@ -25,6 +26,22 @@ route-planner extract-orig \
   --manifest extracted-orig.manifest.json
 ```
 
+Classify a tree against an exact supported-build registry:
+
+```text
+route-planner identify-orig \
+  --orig /path/to/orig \
+  --registry supported-builds.json \
+  --output identification.json
+```
+
+`--content-id ID` may select one friendly registry entry when the parent holds
+multiple games. The friendly ID is only a selection hint: all fingerprint fields
+must still match or the command fails. Without a hint, an exact fingerprint is
+selected automatically. A well-formed but unlisted fingerprint produces an
+explicit `unsupported` result containing the detected fingerprint; it never
+inherits a nearby build's facts.
+
 `--orig` may name the extracted game root containing `sys/` and `files/`, or a
 parent containing one or more product directories. `extract-orig` uses the
 product ID in the exact content identity to select among multiple games.
@@ -34,8 +51,10 @@ product ID in the exact content identity to select among multiple games.
 
 Discovery reads the six-byte disc product ID and revision byte from
 `sys/boot.bin`. Platform and region derive from that header, not from the folder
-name. It then hashes `sys/main.dol`, every regular file in the extracted game,
-and a resource-only manifest. Those three values form the detected
+name. It then hashes `sys/main.dol`, every regular file beneath the extracted
+`sys/` and `files/` trees, and a resource-only manifest. Optional container ISO
+images or unrelated files beside those trees cannot change content identity or
+force a redundant multi-gigabyte hash. Those three values form the detected
 `ContentFingerprint`:
 
 - executable SHA-256: `sys/main.dol`;
@@ -51,10 +70,12 @@ friendly label cannot override detected content. Unsupported disc prefixes,
 unsupported region codes, missing boot/executable/resource files, ambiguous
 roots, non-UTF-8 paths, and symbolic links all fail closed.
 
-The planner does not yet ship a registry that maps fingerprints to friendly
-supported-build IDs. That omission is deliberate: an unknown fingerprint is
-inspectable through `scan-orig`, but is not silently treated as the nearest
-known revision.
+The strict registry schema maps a friendly content ID to one complete
+`ContentIdentity`, is canonical and sorted, and rejects duplicate IDs or two
+labels for one fingerprint. The repository does not yet claim audited complete
+fingerprints for retail builds it cannot reproduce locally. An unknown
+fingerprint is inspectable through `scan-orig` and classifiable as unsupported,
+but is not silently treated as the nearest known revision.
 
 ## Derived artifact
 
@@ -78,6 +99,38 @@ bundle and group number separately. Any recognized archive that fails bounded
 Yaz0/RARC/BMG/DZS decoding aborts the operation instead of producing a partial
 success that looks complete.
 
+## Content-addressed reuse
+
+Install any derived payload and its canonical fact-pack manifest into the
+planner-owned immutable cache:
+
+```text
+route-planner cache-fact-pack \
+  --cache /path/to/planner-cache \
+  --payload extracted-orig.json \
+  --manifest extracted-orig.manifest.json \
+  --receipt cache-receipt.json
+```
+
+The entry key is the manifest SHA-256. The cache verifies the payload digest,
+uses create-new installation semantics, accepts byte-identical reuse, and
+rejects collisions, tampering, or symlinked entries. Original game assets are
+never installed.
+
+Materialize the verified derived pack later, including on a machine with no
+`orig/` tree:
+
+```text
+route-planner materialize-fact-pack \
+  --cache /path/to/planner-cache \
+  --manifest-sha256 SHA256 \
+  --payload extracted-orig.json \
+  --manifest extracted-orig.manifest.json
+```
+
+Loading rechecks the canonical manifest, requested manifest key, and payload
+digest before returning bytes.
+
 ## Acceptance coverage
 
 `orig_discovery::tests` verifies:
@@ -86,6 +139,10 @@ success that looks complete.
 - a misleading directory name cannot change the detected product;
 - product mismatch, ambiguous roots, and symlinks fail closed;
 - exact identity verification catches digest disagreement;
+- registry lookup accepts only an exact fingerprint, reports unknown bytes as
+  unsupported, and rejects a friendly-label override;
 - one call decodes synthetic stage and message archives into a canonical bundle;
 - serialized output contains no host path; and
-- mutating an archive after creating the identity causes extraction to fail.
+- mutating an archive after creating the identity causes extraction to fail;
+- identical packs reuse one immutable cache entry; and
+- payload mismatch or post-install tampering fails closed.

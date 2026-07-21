@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns seventeen operations:
+The planner CLI currently owns twenty operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -40,6 +40,13 @@ The planner CLI currently owns seventeen operations:
   identity, then decodes every recognized stage/room archive and message bundle
   into one canonical derived artifact plus a fact-pack manifest. Original bytes
   and host paths are not copied into either output.
+- `identify-orig` classifies a scanned tree through a canonical registry of
+  complete fingerprints. Unknown bytes remain explicitly unsupported, while a
+  requested friendly ID whose fingerprint disagrees is rejected.
+- `cache-fact-pack` installs a verified payload/manifest pair in the planner's
+  immutable manifest-digest store; identical installs are reused.
+- `materialize-fact-pack` retrieves and re-verifies that derived pack without
+  needing the original game assets.
 - `extract-message-flow` emits the BMG flow labels, nodes, branch-target table,
   correctly resolved query-handler numbers, raw 32-bit event parameters, and
   source-derived temporary-bit, persistent-event-bit, and switch accesses. Raw

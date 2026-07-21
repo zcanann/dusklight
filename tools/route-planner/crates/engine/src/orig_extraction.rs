@@ -11,8 +11,7 @@ const MAX_DECODED_ARCHIVE_BYTES: usize = 64 * 1024 * 1024;
 const RARC_FILE_ENTRY_SIZE: usize = 0x14;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
-pub const EXTRACTED_STAGE_DATA_SCHEMA: &str =
-    "dusklight.route-planner.extracted-stage-data/v2";
+pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v2";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

@@ -20,9 +20,13 @@ use std::path::{Component, Path, PathBuf};
 
 pub const ORIG_INPUT_SCAN_SCHEMA: &str = "dusklight.route-planner.orig-input-scan/v1";
 pub const EXTRACTED_ORIG_BUNDLE_SCHEMA: &str = "dusklight.route-planner.extracted-orig-bundle/v1";
+pub const SUPPORTED_BUILD_REGISTRY_SCHEMA: &str =
+    "dusklight.route-planner.supported-build-registry/v1";
+pub const ORIG_IDENTIFICATION_SCHEMA: &str = "dusklight.route-planner.orig-identification/v1";
 const ORIG_FILE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.orig-file-manifest/v1";
 const MAX_ORIG_FILES: usize = 100_000;
 const MAX_ARCHIVE_INPUT_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_SUPPORTED_IDENTITIES: usize = 1024;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -72,6 +76,30 @@ pub struct ExtractedOrigBundle {
     pub input_scan: OrigInputScan,
     pub stages: Vec<ExtractedOrigStageArchive>,
     pub message_flows: Vec<ExtractedOrigMessageArchive>,
+}
+
+/// Exact identities the caller is prepared to support. Product IDs and friendly
+/// names are never sufficient on their own.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SupportedBuildRegistry {
+    pub schema: String,
+    pub identities: Vec<ContentIdentity>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum OrigSupportStatus {
+    Supported { content: ContentIdentity },
+    Unsupported { fingerprint: ContentFingerprint },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrigIdentification {
+    pub schema: String,
+    pub scan_sha256: Digest,
+    pub support: OrigSupportStatus,
 }
 
 #[derive(Serialize)]
@@ -132,10 +160,41 @@ impl OrigInputScan {
             }
         }
         let manifest_sha256 = digest_file_manifest(&self.fingerprint.product_id, &self.files)?;
-        if manifest_sha256 != self.file_manifest_sha256 {
+        if manifest_sha256 != self.file_manifest_sha256
+            || manifest_sha256 != self.fingerprint.game_data_sha256
+        {
             return Err(PlannerContractError::new(
                 "orig.scan.file_manifest_sha256",
-                "does not match the canonical file manifest",
+                "does not match the canonical file manifest and content fingerprint",
+            ));
+        }
+        let executable = self
+            .files
+            .iter()
+            .find(|record| record.relative_path == "sys/main.dol")
+            .ok_or_else(|| PlannerContractError::new("orig.scan", "is missing sys/main.dol"))?;
+        if executable.sha256 != self.fingerprint.executable_sha256 {
+            return Err(PlannerContractError::new(
+                "orig.scan.fingerprint.executable_sha256",
+                "does not match sys/main.dol in the sealed manifest",
+            ));
+        }
+        let resources = self
+            .files
+            .iter()
+            .filter(|record| {
+                record.relative_path.starts_with("files/res/")
+                    && record.relative_path.ends_with(".arc")
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if resources.is_empty()
+            || digest_file_manifest(&self.fingerprint.product_id, &resources)?
+                != self.fingerprint.resource_manifest_sha256
+        {
+            return Err(PlannerContractError::new(
+                "orig.scan.fingerprint.resource_manifest_sha256",
+                "does not match the resource archives in the sealed manifest",
             ));
         }
         Ok(())
@@ -222,6 +281,126 @@ impl ExtractedOrigBundle {
             )?;
         }
         Ok(())
+    }
+}
+
+impl SupportedBuildRegistry {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != SUPPORTED_BUILD_REGISTRY_SCHEMA {
+            return Err(PlannerContractError::new(
+                "supported_build_registry.schema",
+                "is unsupported",
+            ));
+        }
+        if self.identities.len() > MAX_SUPPORTED_IDENTITIES {
+            return Err(PlannerContractError::new(
+                "supported_build_registry.identities",
+                format!("must contain at most {MAX_SUPPORTED_IDENTITIES} entries"),
+            ));
+        }
+        let mut previous_id = None;
+        for identity in &self.identities {
+            identity.validate()?;
+            if previous_id.is_some_and(|id: &str| id >= identity.id.as_str()) {
+                return Err(PlannerContractError::new(
+                    "supported_build_registry.identities",
+                    "must be unique and sorted by friendly content ID",
+                ));
+            }
+            if self
+                .identities
+                .iter()
+                .filter(|candidate| candidate.fingerprint == identity.fingerprint)
+                .count()
+                != 1
+            {
+                return Err(PlannerContractError::new(
+                    "supported_build_registry.identities",
+                    "must not assign two friendly IDs to one exact fingerprint",
+                ));
+            }
+            previous_id = Some(identity.id.as_str());
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let registry: Self = serde_json::from_slice(bytes)?;
+        registry.validate()?;
+        if registry.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "supported_build_registry",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(registry)
+    }
+
+    pub fn identify(
+        &self,
+        scan: &OrigInputScan,
+        requested_content_id: Option<&str>,
+    ) -> Result<OrigIdentification, PlannerContractError> {
+        self.validate()?;
+        scan.validate()?;
+        let exact_match = self
+            .identities
+            .iter()
+            .find(|identity| identity.fingerprint == scan.fingerprint);
+        let support = if let Some(requested_id) = requested_content_id {
+            let requested = self
+                .identities
+                .iter()
+                .find(|identity| identity.id == requested_id)
+                .ok_or_else(|| {
+                    PlannerContractError::new(
+                        "requested_content_id",
+                        "is absent from the supported-build registry",
+                    )
+                })?;
+            requested.verify_detected(&scan.fingerprint)?;
+            OrigSupportStatus::Supported {
+                content: requested.clone(),
+            }
+        } else if let Some(identity) = exact_match {
+            OrigSupportStatus::Supported {
+                content: identity.clone(),
+            }
+        } else {
+            OrigSupportStatus::Unsupported {
+                fingerprint: scan.fingerprint.clone(),
+            }
+        };
+        Ok(OrigIdentification {
+            schema: ORIG_IDENTIFICATION_SCHEMA.into(),
+            scan_sha256: scan.digest()?,
+            support,
+        })
+    }
+}
+
+impl OrigIdentification {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != ORIG_IDENTIFICATION_SCHEMA || self.scan_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "orig_identification",
+                "has an unsupported schema or zero scan digest",
+            ));
+        }
+        match &self.support {
+            OrigSupportStatus::Supported { content } => content.validate(),
+            OrigSupportStatus::Unsupported { fingerprint } => fingerprint.validate(),
+        }
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
     }
 }
 
@@ -322,7 +501,18 @@ fn discover_orig_tree(
     let (platform, region) = decode_product_id(&product_id)?;
     let revision = format!("1.{}", boot[7]);
     let mut paths = Vec::new();
-    collect_regular_files(&game_root, &game_root, &mut paths)?;
+    for subtree in ["sys", "files"] {
+        let directory = game_root.join(subtree);
+        let metadata =
+            fs::symlink_metadata(&directory).map_err(|error| io_error("orig.directory", error))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(PlannerContractError::new(
+                "orig.directory",
+                format!("{subtree} must be a real directory"),
+            ));
+        }
+        collect_regular_files(&game_root, &directory, &mut paths)?;
+    }
     if paths.len() > MAX_ORIG_FILES {
         return Err(PlannerContractError::new(
             "orig.files",
@@ -394,6 +584,14 @@ fn locate_game_root(
     supplied_root: &Path,
     expected_product_id: Option<&str>,
 ) -> Result<PathBuf, PlannerContractError> {
+    let supplied_metadata =
+        fs::symlink_metadata(supplied_root).map_err(|error| io_error("orig.root", error))?;
+    if supplied_metadata.file_type().is_symlink() || !supplied_metadata.is_dir() {
+        return Err(PlannerContractError::new(
+            "orig.root",
+            "must be a real directory rather than a symlink",
+        ));
+    }
     if supplied_root.join("sys/boot.bin").is_file() {
         return Ok(supplied_root.to_path_buf());
     }
@@ -403,6 +601,12 @@ fn locate_game_root(
         .map_err(|error| io_error("orig.root", error))?;
     let mut candidates = Vec::new();
     for entry in entries {
+        let file_type = entry
+            .file_type()
+            .map_err(|error| io_error("orig.root", error))?;
+        if file_type.is_symlink() || !file_type.is_dir() {
+            continue;
+        }
         let candidate = entry.path();
         let boot_path = candidate.join("sys/boot.bin");
         if !boot_path.is_file() {
@@ -758,12 +962,19 @@ mod tests {
     fn discovers_parent_or_game_root_without_trusting_the_directory_label() {
         let fixture = FixtureRoot::new();
         let game = game_fixture(&fixture.0, "GZ2E01", 0);
+        write(&game.join("GZ2E01.iso"), b"redundant container image");
         let parent_scan = scan_orig_tree(&fixture.0, Some("GZ2E01")).unwrap();
         let direct_scan = scan_orig_tree(&game, Some("GZ2E01")).unwrap();
         assert_eq!(parent_scan, direct_scan);
         assert_eq!(parent_scan.fingerprint.platform, GamePlatform::GameCube);
         assert_eq!(parent_scan.fingerprint.region, GameRegion::Usa);
         assert_eq!(parent_scan.fingerprint.revision, "1.0");
+        assert!(
+            parent_scan
+                .files
+                .iter()
+                .all(|record| record.relative_path != "GZ2E01.iso")
+        );
         assert_eq!(
             parent_scan.extractable_archive_paths,
             vec![
@@ -810,6 +1021,61 @@ mod tests {
         let mut wrong = exact;
         wrong.fingerprint.resource_manifest_sha256 = Digest([0x55; 32]);
         assert!(wrong.verify_detected(&scan.fingerprint).is_err());
+    }
+
+    #[test]
+    fn registry_classifies_only_exact_fingerprints_and_rejects_label_override() {
+        let fixture = FixtureRoot::new();
+        let game = game_fixture(&fixture.0, "GZ2E01", 0);
+        let scan = scan_orig_tree(&game, Some("GZ2E01")).unwrap();
+        let known = ContentIdentity::new("gcn-us-1.0", scan.fingerprint.clone()).unwrap();
+        let registry = SupportedBuildRegistry {
+            schema: SUPPORTED_BUILD_REGISTRY_SCHEMA.into(),
+            identities: vec![known.clone()],
+        };
+        let identified = registry.identify(&scan, None).unwrap();
+        assert_eq!(
+            identified.support,
+            OrigSupportStatus::Supported {
+                content: known.clone()
+            }
+        );
+        assert_eq!(
+            SupportedBuildRegistry::decode_canonical(&registry.canonical_bytes().unwrap()).unwrap(),
+            registry
+        );
+
+        let mut changed_scan = scan.clone();
+        changed_scan.fingerprint.executable_sha256 = Digest([0x44; 32]);
+        changed_scan
+            .files
+            .iter_mut()
+            .find(|record| record.relative_path == "sys/main.dol")
+            .unwrap()
+            .sha256 = Digest([0x44; 32]);
+        changed_scan.file_manifest_sha256 =
+            digest_file_manifest(&changed_scan.fingerprint.product_id, &changed_scan.files)
+                .unwrap();
+        changed_scan.fingerprint.game_data_sha256 = changed_scan.file_manifest_sha256;
+        let unsupported = registry.identify(&changed_scan, None).unwrap();
+        assert!(matches!(
+            unsupported.support,
+            OrigSupportStatus::Unsupported { .. }
+        ));
+        assert!(
+            registry
+                .identify(&changed_scan, Some("gcn-us-1.0"))
+                .is_err()
+        );
+
+        let duplicate = SupportedBuildRegistry {
+            schema: SUPPORTED_BUILD_REGISTRY_SCHEMA.into(),
+            identities: vec![
+                ContentIdentity::new("gcn-us-1.0", scan.fingerprint.clone()).unwrap(),
+                ContentIdentity::new("gcn-us-copy", scan.fingerprint.clone()).unwrap(),
+            ],
+        };
+        assert!(duplicate.validate().is_err());
     }
 
     #[test]
