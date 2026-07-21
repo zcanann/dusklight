@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v22";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v23";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -142,6 +142,21 @@ pub enum StateOperation {
         owner: SerializationOwner,
         destination_component_id: String,
     },
+    /// Replaces one explicit process/session-owned backing store with an exact
+    /// authored component manifest. Physical-slot and runtime-file stores are
+    /// deliberately excluded; their lifetimes use dedicated operations.
+    ReplaceCustomStore {
+        owner: SerializationOwner,
+        components: Vec<StateComponent>,
+    },
+    /// Copies the complete payload manifest from one custom backing store into
+    /// same-ID live components while retaining each destination's binding,
+    /// lifetime, and serialization owner. The source manifest must match
+    /// `component_ids` exactly.
+    RestorePayloadsFromCustomStore {
+        owner: SerializationOwner,
+        component_ids: Vec<String>,
+    },
     /// Commits the currently bound stage-local payload to its runtime-file-owned
     /// backing entry, then restores the destination stage's entry into the same
     /// live component. The execution engine checks all identities atomically.
@@ -186,14 +201,14 @@ pub enum StateOperation {
         stage_bank_stages: Vec<String>,
         carried_runtime_component_ids: Vec<String>,
     },
-    /// Resolves the persistent identity and exact component/stage manifest from
-    /// one populated physical slot at execution time, then performs the same
-    /// checked runtime cut as `LoadRuntimeFromSlot`. This is suitable for a
-    /// file-select action whose sealed image identity is user-state data rather
-    /// than a catalog constant.
-    LoadRuntimeFromSlotImage {
+    /// Active-runtime form of `load_runtime_from_slot`. The executor derives a
+    /// fresh destination ID from the active runtime ID and a stable suffix,
+    /// allowing authored mechanics to remain valid across nested file-0 and
+    /// repeated load lifetimes without guessing an ephemeral runtime ID.
+    LoadActiveRuntimeFromSlot {
         source_slot: PhysicalSlotId,
-        destination_runtime_id_suffix: String,
+        destination_id_suffix: String,
+        destination_allowed_serialization_targets: Vec<PhysicalSlotId>,
         carried_runtime_component_ids: Vec<String>,
     },
     /// Ends the active runtime-file lifetime, derives a fresh runtime ID from
@@ -792,6 +807,47 @@ impl StateOperation {
                     destination_component_id,
                 )
             }
+            Self::ReplaceCustomStore { owner, components } => {
+                validate_custom_store_owner("operation.replace_custom_store.owner", owner)?;
+                if components.is_empty() || components.len() > 4_096 {
+                    return Err(PlannerContractError::new(
+                        "operation.replace_custom_store.components",
+                        "must contain between 1 and 4096 components",
+                    ));
+                }
+                let mut previous_id = None;
+                for component in components {
+                    component.validate()?;
+                    if component.serialization_owner != *owner {
+                        return Err(PlannerContractError::new(
+                            "operation.replace_custom_store.components",
+                            "every component must name the custom store as its serialization owner",
+                        ));
+                    }
+                    if previous_id.is_some_and(|previous: &str| previous >= component.id.as_str()) {
+                        return Err(PlannerContractError::new(
+                            "operation.replace_custom_store.components",
+                            "must be sorted by unique component ID",
+                        ));
+                    }
+                    previous_id = Some(component.id.as_str());
+                }
+                Ok(())
+            }
+            Self::RestorePayloadsFromCustomStore {
+                owner,
+                component_ids,
+            } => {
+                validate_custom_store_owner(
+                    "operation.restore_payloads_from_custom_store.owner",
+                    owner,
+                )?;
+                validate_id_list(
+                    "operation.restore_payloads_from_custom_store.component_ids",
+                    component_ids,
+                    false,
+                )
+            }
             Self::CommitLoadStageBank {
                 component_id,
                 runtime_file_id,
@@ -912,15 +968,17 @@ impl StateOperation {
                 }
                 Ok(())
             }
-            Self::LoadRuntimeFromSlotImage {
+            Self::LoadActiveRuntimeFromSlot {
                 source_slot,
-                destination_runtime_id_suffix,
+                destination_id_suffix,
+                destination_allowed_serialization_targets,
                 carried_runtime_component_ids,
             } => {
                 source_slot.validate("operation.source_slot")?;
-                validate_stable_id(
-                    "operation.destination_runtime_id_suffix",
-                    destination_runtime_id_suffix,
+                validate_stable_id("operation.destination_id_suffix", destination_id_suffix)?;
+                validate_slot_list(
+                    "operation.destination_allowed_serialization_targets",
+                    destination_allowed_serialization_targets,
                 )?;
                 validate_id_list(
                     "operation.carried_runtime_component_ids",
@@ -1540,6 +1598,20 @@ fn validate_owner(owner: &SerializationOwner) -> Result<(), PlannerContractError
     validate_serialization_owner(owner)
 }
 
+fn validate_custom_store_owner(
+    field: &str,
+    owner: &SerializationOwner,
+) -> Result<(), PlannerContractError> {
+    validate_owner(owner)?;
+    if !matches!(owner, SerializationOwner::Custom { .. }) {
+        return Err(PlannerContractError::new(
+            field,
+            "must name a custom process/session backing store",
+        ));
+    }
+    Ok(())
+}
+
 fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerContractError> {
     PredicateExpression::Compare {
         left: reference.clone(),
@@ -1807,6 +1879,31 @@ mod tests {
         assert_eq!(
             operation.validate().unwrap_err().field(),
             "operation.carried_runtime_component_ids"
+        );
+    }
+
+    #[test]
+    fn process_buffer_operations_cannot_replace_runtime_or_physical_stores() {
+        let replace = StateOperation::ReplaceCustomStore {
+            owner: SerializationOwner::PhysicalSlot {
+                slot: PhysicalSlotId(1),
+            },
+            components: Vec::new(),
+        };
+        assert_eq!(
+            replace.validate().unwrap_err().field(),
+            "operation.replace_custom_store.owner"
+        );
+
+        let restore = StateOperation::RestorePayloadsFromCustomStore {
+            owner: SerializationOwner::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            },
+            component_ids: vec!["save.main".into()],
+        };
+        assert_eq!(
+            restore.validate().unwrap_err().field(),
+            "operation.restore_payloads_from_custom_store.owner"
         );
     }
 

@@ -19,7 +19,7 @@ use dusklight_route_planner::state::BoundaryKind;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v27";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v28";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

@@ -669,8 +669,11 @@ impl RelevanceBuilder {
                 self.dependencies.insert(StateDependency::AnyState);
             }
             StateOperation::LoadRuntimeFromSlot { .. }
-            | StateOperation::LoadRuntimeFromSlotImage { .. }
+            | StateOperation::LoadActiveRuntimeFromSlot { .. }
             | StateOperation::BeginRuntimeFileLifetime { .. } => {
+                self.dependencies.insert(StateDependency::AnyState);
+            }
+            StateOperation::RestorePayloadsFromCustomStore { .. } => {
                 self.dependencies.insert(StateDependency::AnyState);
             }
             StateOperation::CompletePendingWorldLoad => {
@@ -721,6 +724,7 @@ impl RelevanceBuilder {
             | StateOperation::InvalidateField { .. }
             | StateOperation::Initialize { .. }
             | StateOperation::Restore { .. }
+            | StateOperation::ReplaceCustomStore { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
             | StateOperation::SetExecutionContext { .. }
             | StateOperation::SetLocation { .. }
@@ -876,6 +880,11 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         } => vec![StateDependency::Component {
             component_id: destination_component_id.clone(),
         }],
+        StateOperation::RestorePayloadsFromCustomStore { component_ids, .. } => component_ids
+            .iter()
+            .cloned()
+            .map(|component_id| StateDependency::Component { component_id })
+            .collect(),
         StateOperation::CommitLoadStageBank { component_id, .. } => vec![
             StateDependency::Component {
                 component_id: component_id.clone(),
@@ -890,7 +899,7 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         ],
         StateOperation::SaveRuntimeToSlot { .. }
         | StateOperation::LoadRuntimeFromSlot { .. }
-        | StateOperation::LoadRuntimeFromSlotImage { .. }
+        | StateOperation::LoadActiveRuntimeFromSlot { .. }
         | StateOperation::BeginRuntimeFileLifetime { .. } => vec![StateDependency::AnyState],
         StateOperation::SetLocation { .. } => vec![
             StateDependency::ExecutionContext,
@@ -933,6 +942,7 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         }],
         StateOperation::Preserve { .. }
         | StateOperation::Serialize { .. }
+        | StateOperation::ReplaceCustomStore { .. }
         | StateOperation::Bind { .. }
         | StateOperation::Rebind { .. }
         | StateOperation::SetActiveRuntimeFile { .. }

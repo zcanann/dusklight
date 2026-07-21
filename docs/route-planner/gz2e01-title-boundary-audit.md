@@ -198,11 +198,30 @@ state, or active-process observation makes the corresponding transition
 unknown or blocked. This preserves the distinction between an input, a scene
 request, process activation, and completed file-select initialization.
 
-## Remaining audited suffix, not yet executable
+## File-select decision suffix
 
-File-select branches load a selected card image or construct new-file/no-card
-state, and successful saving updates `mDataNum` and `mNoFile`. Those member-level
-branches remain separate from the now-modeled normal file-select creation.
+The source-audited blank-slot, existing-slot Start, and no-card decisions are now
+separate transitions. Blank selection writes `mNewFile = 128` and the zero-based
+`mDataNum` without loading or populating a slot. No-card acceptance initializes
+three custom session-buffer stores, copies entry 0's persistent projection into
+the still-memory-only live runtime, and writes `mNoFile = 1`, `mDataNum = 0`
+without executing the blank-slot `mNewFile` writer.
+
+Existing-slot Start derives the persistent-file identity and complete manifest
+from the selected populated physical slot, retires the active file-0 lifetime,
+and restores a fresh card-backed runtime. Header, restart, and temporary-event
+metadata are explicit non-card carries; omitted runtime metadata dies. Exact
+post-copy life/key/hookshot/lineup/vibration/display normalization remains an
+unknown requirement, so this edge cannot silently become established merely
+because the backing projection is executable. See
+`gz2e01-file-select-branches.md`.
+
+After independently observed `selection_end`, the next source-audited actions
+remain process requests rather than world activation. A new file records the
+fixed pending F_SP108/room 1/spawn 21/layer 13 destination. An existing file
+reads stage, room, and player-status/spawn from its restored return-place
+component with layer -1. Both retain active `PROC_NAME_SCENE`, record the
+requested `PROC_PLAY_SCENE`, and leave the prior world location non-traversable.
 
 That member-level distinction is central to file-0 and Back in Time reasoning.
 Future projection coverage must continue adding ordered writers and explicitly
@@ -211,7 +230,8 @@ all.”
 
 Still open:
 
-- model no-card, new-file, selected-slot, and successful-save branches;
+- finish existing-slot post-copy normalization, name confirmation, and
+  successful-save branches;
 - audit void and death restart selection, including their special-stage and
   boss-room branches; and
 - produce traces that distinguish pending scene requests from completed world
