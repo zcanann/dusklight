@@ -10,6 +10,7 @@ pub use dusklight_automation_contracts::artifact;
 pub mod evaluation;
 pub mod execution;
 pub mod fact_pack;
+pub mod graph;
 pub mod identity;
 pub mod logic;
 pub mod native_snapshot;

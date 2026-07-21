@@ -4,6 +4,7 @@ use dusklight_route_planner::fact_pack::{
     CoverageDomain, CoverageStatus, ExtractorIdentity, FactPackCoverage, FactPackManifest,
     FactPackSource, SourceArtifactKind,
 };
+use dusklight_route_planner::graph::PlannerGraph;
 use dusklight_route_planner::identity::{ContentIdentity, RuntimeConfiguration};
 use dusklight_route_planner::logic::FactCatalog;
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
@@ -35,6 +36,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("compose") => compose(&args[1..]),
         Some("extract-world") => extract_world(&args[1..]),
+        Some("project-graph") => project_graph(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
         Some("solve") => solve(&args[1..]),
         Some("help" | "--help" | "-h") | None => {
@@ -46,6 +48,46 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn project_graph(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let output = required_path(args, "--output")?;
+    let catalog_path = option(args, "--catalog");
+    let facts_path = option(args, "--facts");
+    let mechanics_path = option(args, "--mechanics");
+    let graph = match (catalog_path, facts_path, mechanics_path) {
+        (Some(path), None, None) => {
+            let catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?;
+            PlannerGraph::project_composed(&catalog)?
+        }
+        (None, Some(facts), Some(mechanics)) => {
+            let facts = FactCatalog::decode_canonical(&fs::read(facts)?)?;
+            let mechanics = MechanicsCatalog::decode_canonical(&fs::read(mechanics)?)?;
+            PlannerGraph::project(&facts, &mechanics)?
+        }
+        _ => {
+            return Err(
+                "project-graph requires either --catalog CATALOG.json or both --facts FACTS.json and --mechanics MECHANICS.json"
+                    .into(),
+            );
+        }
+    };
+    let bytes = graph.canonical_bytes()?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": graph.schema,
+            "output": output,
+            "sha256": graph.digest()?,
+            "bytes": bytes.len(),
+            "nodes": graph.nodes.len(),
+            "edges": graph.edges.len(),
+            "regions": graph.regions.len(),
+            "refinement_stack_sha256": graph.refinement_stack_sha256,
+        }))?
+    );
+    Ok(())
 }
 
 fn compose(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -304,6 +346,6 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), Box<dyn Error>> {
 
 fn print_usage() {
     eprintln!(
-        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]"
+        "Independent TP route planner:\n  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--pack REFINEMENT.json]... --output CATALOG.json\n  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json\n  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output GRAPH.json\n  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]"
     );
 }

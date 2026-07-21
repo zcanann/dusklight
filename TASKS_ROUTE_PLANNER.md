@@ -500,6 +500,14 @@ The current code shows:
   compiles to an explicitly hypothetical resolver. `route-planner solve` can
   consume the composed artifact directly and records its active refinement
   stack in the solve report.
+- Planner graph schema v1 is an independent, canonical projection of fact and
+  mechanics catalogs. It exposes typed fact, goal, transition, obligation,
+  obstruction, resolver, technique, writer/gate/reader, reconstruction, and
+  microtrace nodes with causal edge kinds. Every nested predicate is projected
+  as an ordered `all`/`any`/`not`/fact/comparison tree inside its own collapsible
+  region, so the editor can summarize requirements without flattening or losing
+  their interchangeability. The planner-owned `route-planner project-graph`
+  command emits this artifact from either base or composed catalogs.
 
 Primary source anchors:
 
@@ -1636,7 +1644,9 @@ Deliverable: every route and failure is inspectable rather than magical.
   - [x] Establish `tools/route-planner` as a separate Cargo workspace, library
         API, CLI, and versioned solve-report owner without registering anything
         in Huntctl.
-  - [ ] Add the planner-specific graph projection and server transport.
+  - [x] Add the planner-specific canonical graph projection with typed causal
+        relations and ordered, collapsible predicate subgraphs.
+  - [ ] Add the planner-owned server transport and authoritative edit commands.
 - [ ] Match the Route Workbench's visual grammar and navigation conventions with
       a side-by-side design inventory of reusable colors, spacing, node anatomy,
       camera controls, breadcrumbs, selection, grouping, and detail-pane patterns.
