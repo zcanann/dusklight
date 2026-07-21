@@ -156,6 +156,7 @@ private:
         ProfileClock::time_point cpuDrawStart{};
         ProfileClock::time_point cpuRendererStart{};
         std::uint64_t batchWallMicros = 0;
+        std::uint64_t policyHeadDecodeNanos = 0;
         std::uint64_t policyApplicationNanos = 0;
         std::uint64_t simulationMicros = 0;
         std::uint64_t observationCaptureMicros = 0;
@@ -163,6 +164,7 @@ private:
         std::uint64_t corpusEncodingMicros = 0;
         std::uint64_t cpuDrawTraversalMicros = 0;
         std::uint64_t cpuRendererSubmissionMicros = 0;
+        std::uint64_t policyHeadDecodeSamples = 0;
         std::uint64_t policyApplicationSamples = 0;
         std::uint64_t simulationSamples = 0;
         std::uint64_t observationCaptureSamples = 0;

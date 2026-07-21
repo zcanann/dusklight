@@ -647,11 +647,38 @@ void SuffixBatchRunner::applyCandidateInput() {
         mCandidateIndex >= mDefinition.candidates.size() ||
         mCandidateTick >= mDefinition.maximumTicks)
         return;
+    const auto& candidate = mDefinition.candidates[mCandidateIndex];
+    if (candidate.tapePassthrough) {
+        AccumulateNanos policy(mProfile.policyApplicationNanos);
+        ++mProfile.policyApplicationSamples;
+        return;
+    }
+    RawPadState chosen = candidate.pads[mCandidateTick];
+    if (candidate.factorizedPolicy) {
+        const std::uint32_t outputIndex = candidate.policyOutputIndexByTick[mCandidateTick];
+        FactorizedPadPolicyDecision decision;
+        std::string decodeError;
+        {
+            AccumulateNanos inference(mProfile.policyHeadDecodeNanos);
+            ++mProfile.policyHeadDecodeSamples;
+            if (outputIndex >= candidate.policyOutputs.size() ||
+                !decode_factorized_pad_policy(candidate.policyHead,
+                    candidate.policyOutputs[outputIndex], decision, decodeError))
+            {
+                fail("factorized PAD policy output failed at the native input boundary: " +
+                     decodeError);
+                return;
+            }
+        }
+        chosen = decision.pad;
+        if (chosen != candidate.pads[mCandidateTick]) {
+            fail("factorized PAD policy output disagrees with its validated expected PAD");
+            return;
+        }
+    }
     AccumulateNanos policy(mProfile.policyApplicationNanos);
     ++mProfile.policyApplicationSamples;
-    if (mDefinition.candidates[mCandidateIndex].tapePassthrough) return;
-    const PADStatus status = raw_pad_state_to_pad_status(
-        mDefinition.candidates[mCandidateIndex].pads[mCandidateTick]);
+    const PADStatus status = raw_pad_state_to_pad_status(chosen);
     PADSetAutomationStatus(0, &status);
 }
 
@@ -1040,6 +1067,11 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         std::uint64_t{0}, [](const std::uint64_t total, const CandidateResult& candidate) {
             return total + candidate.ticksExecuted;
         });
+    std::uint64_t expectedPolicyHeadDecodeSamples = 0;
+    for (std::size_t index = 0; index < mResults.size(); ++index) {
+        if (mDefinition.candidates[index].factorizedPolicy)
+            expectedPolicyHeadDecodeSamples += mResults[index].ticksExecuted;
+    }
     const std::size_t expectedRestores =
         mDefinition.candidates.size() - 1 + (mProfile.sourceCheckpointReused ? 1 : 0) +
         (!mProfile.sourceCheckpointReused && mDefinition.checkpointValidation ==
@@ -1048,6 +1080,7 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                 0);
     const bool profileVerified =
         mProfile.complete && mProfile.policyApplicationSamples == candidateTicks &&
+        mProfile.policyHeadDecodeSamples == expectedPolicyHeadDecodeSamples &&
         mProfile.simulationSamples == candidateTicks &&
         mProfile.observationCaptureSamples == candidateTicks * 2 &&
         mProfile.cpuDrawTraversalSamples == candidateTicks &&
@@ -1115,6 +1148,14 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                 {"samples", mValidationSamples},
             }},
             {"policy_inference", {{"status", "not_present"}, {"micros", nullptr}}},
+            {"policy_head_decode", expectedPolicyHeadDecodeSamples == 0
+                ? nlohmann::json{{"status", "not_present"}, {"micros", nullptr}}
+                : nlohmann::json{{"status", "measured"},
+                      {"schema", kFactorizedPadPolicyHeadSchema},
+                      {"micros", mProfile.policyHeadDecodeNanos / 1'000},
+                      {"nanoseconds", mProfile.policyHeadDecodeNanos},
+                      {"samples", mProfile.policyHeadDecodeSamples},
+                      {"input", "precomputed continuous policy-output row"}}},
             {"policy_application", {
                 {"status", "measured"},
                 {"micros", mProfile.policyApplicationNanos / 1'000},

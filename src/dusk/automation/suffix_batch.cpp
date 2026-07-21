@@ -1,6 +1,7 @@
 #include "dusk/automation/suffix_batch.hpp"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -134,17 +135,56 @@ bool parse_checkpoint_validation(const json& value, SuffixBatchDefinition& outpu
     return true;
 }
 
+bool parse_policy_head(const json& value, FactorizedPadPolicyHeadConfig& output) {
+    constexpr std::array Keys{std::string_view{"schema"},
+        std::string_view{"maximum_duration_ticks"},
+        std::string_view{"button_logit_threshold"}};
+    if (!has_exact_keys(value, Keys) || !value["schema"].is_string() ||
+        value["schema"].get_ref<const std::string&>() != kFactorizedPadPolicyHeadSchema ||
+        !value["button_logit_threshold"].is_number())
+        return false;
+    FactorizedPadPolicyHeadConfig parsed;
+    if (!read_integer(value["maximum_duration_ticks"], std::uint32_t{1},
+            kMaximumFactorizedPadDuration, parsed.maximumDurationTicks))
+        return false;
+    const double threshold = value["button_logit_threshold"].get<double>();
+    if (!std::isfinite(threshold) || threshold < -std::numeric_limits<float>::max() ||
+        threshold > std::numeric_limits<float>::max())
+        return false;
+    parsed.buttonLogitThreshold = static_cast<float>(threshold);
+    output = parsed;
+    return true;
+}
+
+bool parse_policy_output(const json& value,
+    std::array<float, kFactorizedPadPolicyHeadWidth>& output) {
+    if (!value.is_array() || value.size() != output.size()) return false;
+    for (std::size_t index = 0; index < output.size(); ++index) {
+        if (!value[index].is_number()) return false;
+        const double parsed = value[index].get<double>();
+        if (!std::isfinite(parsed) || parsed < -std::numeric_limits<float>::max() ||
+            parsed > std::numeric_limits<float>::max())
+            return false;
+        output[index] = static_cast<float>(parsed);
+    }
+    return true;
+}
+
 bool parse_candidate(const json& value, const std::size_t maximumTicks,
-    SuffixBatchCandidate& output, std::string& error) {
+    const bool allowFactorizedPolicy, SuffixBatchCandidate& output, std::string& error) {
     constexpr std::array ActionKeys{
         std::string_view{"id"}, std::string_view{"actions"}};
     constexpr std::array TapeKeys{
         std::string_view{"id"}, std::string_view{"source"}};
+    constexpr std::array PolicyKeys{std::string_view{"id"},
+        std::string_view{"policy_head"}, std::string_view{"policy_outputs"}};
     const bool actionCandidate = has_exact_keys(value, ActionKeys);
     const bool tapeCandidate = has_exact_keys(value, TapeKeys);
-    if ((!actionCandidate && !tapeCandidate) || !value["id"].is_string())
+    const bool policyCandidate = has_exact_keys(value, PolicyKeys);
+    if ((!actionCandidate && !tapeCandidate && !policyCandidate) ||
+        (policyCandidate && !allowFactorizedPolicy) || !value["id"].is_string())
     {
-        error = "candidate must contain id plus either actions or source";
+        error = "candidate must contain id plus actions, source, or v4 factorized policy outputs";
         return false;
     }
     const std::string id = value["id"].get<std::string>();
@@ -166,6 +206,45 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
             return false;
         }
         output = {.id = id, .tapePassthrough = true};
+        return true;
+    }
+    if (policyCandidate) {
+        SuffixBatchCandidate parsed;
+        parsed.id = id;
+        parsed.factorizedPolicy = true;
+        if (!parse_policy_head(value["policy_head"], parsed.policyHead) ||
+            !value["policy_outputs"].is_array() || value["policy_outputs"].empty() ||
+            value["policy_outputs"].size() > maximumTicks)
+        {
+            error = "candidate factorized policy head or output rows are invalid";
+            return false;
+        }
+        parsed.policyOutputs.reserve(value["policy_outputs"].size());
+        parsed.policyOutputIndexByTick.reserve(maximumTicks);
+        parsed.pads.reserve(maximumTicks);
+        for (std::size_t index = 0; index < value["policy_outputs"].size(); ++index) {
+            std::array<float, kFactorizedPadPolicyHeadWidth> row{};
+            FactorizedPadPolicyDecision decision;
+            std::string decodeError;
+            if (!parse_policy_output(value["policy_outputs"][index], row) ||
+                !decode_factorized_pad_policy(parsed.policyHead, row, decision, decodeError) ||
+                decision.durationTicks > maximumTicks - parsed.pads.size())
+            {
+                error = "candidate policy output " + std::to_string(index) +
+                        " is invalid or exceeds maximum_ticks";
+                return false;
+            }
+            parsed.policyOutputs.push_back(row);
+            parsed.pads.insert(parsed.pads.end(), decision.durationTicks, decision.pad);
+            parsed.policyOutputIndexByTick.insert(parsed.policyOutputIndexByTick.end(),
+                decision.durationTicks, static_cast<std::uint32_t>(index));
+        }
+        if (parsed.pads.size() != maximumTicks) {
+            error = "candidate factorized policy outputs expand to " +
+                    std::to_string(parsed.pads.size()) + " ticks instead of maximum_ticks";
+            return false;
+        }
+        output = std::move(parsed);
         return true;
     }
 
@@ -249,7 +328,8 @@ bool parse_suffix_batch(
     }
     const auto& schema = root["schema"].get_ref<const std::string&>();
     const bool legacy = schema == LegacySuffixBatchSchema;
-    if ((!legacy && schema != SuffixBatchSchema) ||
+    const bool previous = schema == PreviousSuffixBatchSchema;
+    if ((!legacy && !previous && schema != SuffixBatchSchema) ||
         !(legacy ? has_exact_keys(root, LegacyRootKeys) : has_exact_keys(root, RootKeys)) ||
         !valid_boundary_fingerprint(root["source_boundary_fingerprint"]) ||
         !root["verify_state_hashes"].is_boolean() || !root["candidates"].is_array())
@@ -287,7 +367,8 @@ bool parse_suffix_batch(
     ids.reserve(candidates.size());
     for (std::size_t index = 0; index < candidates.size(); ++index) {
         SuffixBatchCandidate candidate;
-        if (!parse_candidate(candidates[index], parsed.maximumTicks, candidate, error)) {
+        if (!parse_candidate(candidates[index], parsed.maximumTicks,
+                schema == SuffixBatchSchema, candidate, error)) {
             error = "candidate " + std::to_string(index) + ": " + error;
             return false;
         }

@@ -89,6 +89,63 @@ void test_legacy_fixed_milestone_batch_remains_distinct() {
     REQUIRE(batch.validationTicks == 0);
 }
 
+std::string factorized_batch() {
+    return R"({
+        "schema":"dusklight-suffix-batch/v4","source_frame":500,
+        "source_boundary_fingerprint":"1f849e432274771426236d60fbf7d72f",
+        "checkpoint_validation":{"kind":"recorded_replay_window","ticks":2},
+        "maximum_ticks":3,"verify_state_hashes":false,
+        "candidates":[{"id":"factorized-online",
+          "policy_head":{"schema":"dusklight-factorized-pad-policy-head/v1",
+            "maximum_duration_ticks":2,"button_logit_threshold":0.0},
+          "policy_outputs":[
+            [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+            [1,-1,0.5,-0.5,1,0.5,0.25,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]
+          ]}]
+    })";
+}
+
+void test_factorized_policy_rows_expand_to_an_online_native_program() {
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(factorized_batch(), batch, error));
+    REQUIRE(error.empty());
+    REQUIRE(batch.candidates.size() == 1);
+    const auto& candidate = batch.candidates[0];
+    REQUIRE(candidate.factorizedPolicy);
+    REQUIRE(!candidate.tapePassthrough);
+    REQUIRE(candidate.policyOutputs.size() == 2);
+    REQUIRE(candidate.policyOutputIndexByTick.size() == 3);
+    REQUIRE(candidate.policyOutputIndexByTick[0] == 0);
+    REQUIRE(candidate.policyOutputIndexByTick[1] == 1);
+    REQUIRE(candidate.policyOutputIndexByTick[2] == 1);
+    REQUIRE(candidate.pads.size() == 3);
+    REQUIRE(candidate.pads[0].stickX == 0);
+    REQUIRE(candidate.pads[1].stickX == 127);
+    REQUIRE(candidate.pads[1].stickY == -128);
+    REQUIRE(candidate.pads[1].substickX == 64);
+    REQUIRE(candidate.pads[1].substickY == -64);
+    REQUIRE(candidate.pads[1].triggerLeft == 255);
+    REQUIRE(candidate.pads[1].triggerRight == 128);
+    REQUIRE(candidate.pads[1].analogA == 64);
+    REQUIRE(candidate.pads[1].buttons == 1);
+    REQUIRE(candidate.pads[1] == candidate.pads[2]);
+
+    std::string oldSchema = factorized_batch();
+    const std::size_t schema = oldSchema.find("dusklight-suffix-batch/v4");
+    REQUIRE(schema != std::string::npos);
+    oldSchema.replace(schema, std::string("dusklight-suffix-batch/v4").size(),
+        "dusklight-suffix-batch/v3");
+    REQUIRE(!parse_suffix_batch(oldSchema, batch, error));
+
+    std::string wrongDuration = factorized_batch();
+    const std::size_t finalRow = wrongDuration.find(",0,1]\n");
+    REQUIRE(finalRow != std::string::npos);
+    wrongDuration.replace(finalRow, std::string(",0,1]\n").size(), ",0,0]\n");
+    REQUIRE(!parse_suffix_batch(wrongDuration, batch, error));
+    REQUIRE(error.find("instead of maximum_ticks") != std::string::npos);
+}
+
 void test_invalid_batches_fail_closed() {
     SuffixBatchDefinition batch;
     std::string error;
@@ -152,6 +209,7 @@ int main() {
     test_valid_batch_expands_before_the_hot_path();
     test_tape_passthrough_candidate();
     test_legacy_fixed_milestone_batch_remains_distinct();
+    test_factorized_policy_rows_expand_to_an_online_native_program();
     test_invalid_batches_fail_closed();
     std::cout << "suffix batch tests passed\n";
     return 0;
