@@ -260,12 +260,15 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     water modes (1/2), two solver flag states, 29 ground heights and 29 player
     positions (`3d8905e9...35ce75`). This proves action-driven capture
     variation, not a useful model representation or deliberate contact
-    coverage. Native collision-history v1 now derives bounded, episode-reset
+    coverage. Native collision-history v2 now derives bounded, episode-reset
     decision histories containing only the current pre-input state and already
     completed transitions; the current action's realized delta is isolated in
-    an auxiliary-target table. An eight-tick view over a live 250-transition
-    v12 shard retained all 250 solver states and 228 changing solver targets
-    (`172feab2...410af`, content `790b252e...90de8c`). Legacy missingness,
+    an auxiliary-target table. A depth-eight view over a live 250-transition
+    v12 shard retained 252 normalized boundary snapshots, all 250 solver
+    decision states and 228 changing solver/background targets
+    (`6dcedd43...365995`, content `a189887b...a34a4`). Its indexed snapshot and
+    transition tables keep that artifact to 819,243 bytes instead of copying
+    state and history throughout every decision row. Legacy missingness,
     future-history insertion, delta tampering and nonfinite state fail closed.
     Deliberate generic contact probes remain open. A 30-tick
     neutral follow-up proved that the initially empty wall table becomes the
