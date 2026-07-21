@@ -128,5 +128,11 @@ to v8, mechanics catalog to v18, state-inspection diff to v10, and planner
 service to v23. Whole-payload invalidation can include only serialized stores
 owned by the active runtime; inactive runtime stores and physical images remain
 separate storage sites.
+
+The title-file-0 lifetime handoff advances execution state to v12, mechanics
+catalog to v19, and planner service to v24. `begin_runtime_file_lifetime` ends
+the incoming active lifetime, derives a fresh runtime ID, and rekeys only that
+lifetime's live and serialized owners. It does not reinterpret a card image as
+the live file, invent slot 0, or absorb session state.
 See `gz2e01-title-boundary-audit.md`; the versions above record the earlier
 runtime-file-coordinate milestone rather than the current wire versions.

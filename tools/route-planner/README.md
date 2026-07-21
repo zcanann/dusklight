@@ -34,8 +34,9 @@ The planner CLI currently owns thirty-eight operations:
   prefix and route-relevant title-file-0 opening projection. Pending F_SP102
   remains non-traversable and cannot reach phase 4 without an explicit process-
   scheduler observation; the initializer replaces audited backing payloads,
-  invalidates active stored stage memory, and cannot mutate inactive stores or
-  physical-slot images.
+  enters a fresh title-origin runtime lifetime when needed, invalidates active
+  stored stage memory, and cannot mutate unrelated inactive stores or physical-
+  slot images.
 - `construct-message-flows` selects every message group for one exact
   content/runtime/language profile and emits canonical source programs without
   guessing unaudited backing stores.

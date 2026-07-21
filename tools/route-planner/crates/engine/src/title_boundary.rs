@@ -12,7 +12,8 @@ use crate::logic::{
 };
 use crate::return_place::{GZ2E01_CONTENT_SHA256, GZ2E01_EN_RUNTIME_SHA256};
 use crate::state::{
-    ComponentKind, ComponentPayload, ComponentSelector, ExecutionContext, SceneLocation, StateValue,
+    BackingAttachment, ComponentKind, ComponentPayload, ComponentSelector, ExecutionContext,
+    PhysicalSlotId, RuntimeFileOrigin, SceneLocation, StateValue,
 };
 use crate::transition::{
     ActivationContract, CandidateTransition, ComponentFieldTarget, MECHANICS_CATALOG_SCHEMA,
@@ -308,6 +309,67 @@ pub fn gz2e01_reset_to_opening_mechanics(
             value: StateValue::Text("complete".into()),
         },
     ];
+    let opening_process_guards = vec![
+        pending_compare(
+            ValueReference::ExecutionProcess,
+            StateValue::Text("PROC_OPENING_SCENE".into()),
+        ),
+        pending_compare(
+            ValueReference::PendingWorldLoadStage,
+            StateValue::Text("F_SP102".into()),
+        ),
+        pending_compare(ValueReference::PendingWorldLoadRoom, StateValue::Signed(0)),
+        pending_compare(
+            ValueReference::PendingWorldLoadLayer,
+            StateValue::Signed(10),
+        ),
+        pending_compare(
+            ValueReference::PendingWorldLoadSpawn,
+            StateValue::Signed(100),
+        ),
+        pending_compare(
+            ValueReference::ComponentField {
+                component_id: OPENING_PROCESS_CONTROL_COMPONENT.into(),
+                field: "phase".into(),
+            },
+            StateValue::Text("phase_4".into()),
+        ),
+    ];
+    let title_file_0_guard = pending_compare(
+        ValueReference::ActiveRuntimeFileOrigin,
+        StateValue::Text("title_file_0".into()),
+    );
+    let mut enter_and_initialize_effects = vec![StateOperation::BeginRuntimeFileLifetime {
+        destination_id_suffix: "title-file-0".into(),
+        origin: RuntimeFileOrigin::TitleFile0,
+        backing: BackingAttachment::MemoryOnly,
+        allowed_serialization_targets: vec![
+            PhysicalSlotId(1),
+            PhysicalSlotId(2),
+            PhysicalSlotId(3),
+        ],
+    }];
+    enter_and_initialize_effects.extend(opening_effects.clone());
+    let enter_and_initialize_transition = CandidateTransition {
+        id: "transition.gz2e01.opening-enter-and-initialize-file0".into(),
+        label: "Begin title-origin file 0 and run opening phase 4".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::TitleReturn,
+        approach_id: "process.opening-scene.phase-4.new-runtime".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: std::iter::once(PredicateExpression::Not {
+                    term: Box::new(title_file_0_guard.clone()),
+                })
+                .chain(opening_process_guards.iter().cloned())
+                .collect(),
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: enter_and_initialize_effects,
+            unknown_requirements: Vec::new(),
+        },
+        evidence: opening_evidence.clone(),
+    };
     let opening_transition = CandidateTransition {
         id: "transition.gz2e01.opening-file0-initialize".into(),
         label: "Run opening phase 4 and initialize title-origin file 0".into(),
@@ -316,36 +378,9 @@ pub fn gz2e01_reset_to_opening_mechanics(
         approach_id: "process.opening-scene.phase-4".into(),
         activation: ActivationContract {
             hard_guards: PredicateExpression::All {
-                terms: vec![
-                    pending_compare(
-                        ValueReference::ActiveRuntimeFileOrigin,
-                        StateValue::Text("title_file_0".into()),
-                    ),
-                    pending_compare(
-                        ValueReference::ExecutionProcess,
-                        StateValue::Text("PROC_OPENING_SCENE".into()),
-                    ),
-                    pending_compare(
-                        ValueReference::PendingWorldLoadStage,
-                        StateValue::Text("F_SP102".into()),
-                    ),
-                    pending_compare(ValueReference::PendingWorldLoadRoom, StateValue::Signed(0)),
-                    pending_compare(
-                        ValueReference::PendingWorldLoadLayer,
-                        StateValue::Signed(10),
-                    ),
-                    pending_compare(
-                        ValueReference::PendingWorldLoadSpawn,
-                        StateValue::Signed(100),
-                    ),
-                    pending_compare(
-                        ValueReference::ComponentField {
-                            component_id: OPENING_PROCESS_CONTROL_COMPONENT.into(),
-                            field: "phase".into(),
-                        },
-                        StateValue::Text("phase_4".into()),
-                    ),
-                ],
+                terms: std::iter::once(title_file_0_guard)
+                    .chain(opening_process_guards)
+                    .collect(),
             },
             physical_obligation_ids: Vec::new(),
             effects: opening_effects,
@@ -355,7 +390,11 @@ pub fn gz2e01_reset_to_opening_mechanics(
     };
     let catalog = MechanicsCatalog {
         schema: MECHANICS_CATALOG_SCHEMA.into(),
-        transitions: vec![opening_transition, reset_transition],
+        transitions: vec![
+            enter_and_initialize_transition,
+            opening_transition,
+            reset_transition,
+        ],
         obligations: Vec::new(),
         writers: Vec::new(),
         gates: Vec::new(),
@@ -566,6 +605,60 @@ mod tests {
         component
     }
 
+    fn reset_control_component() -> StateComponent {
+        let mut component = component(
+            RESET_CONTROL_COMPONENT,
+            ComponentKind::Session,
+            [
+                ("reset_requested", StateValue::Boolean(true)),
+                ("return_to_menu", StateValue::Boolean(false)),
+                ("fader_status", StateValue::Unsigned(1)),
+            ],
+        );
+        component.binding = ComponentBinding::Session {
+            session_id: "process".into(),
+        };
+        component.lifetime = SemanticLifetime::Session;
+        component.serialization_owner = SerializationOwner::None;
+        component
+    }
+
+    fn retarget_runtime(snapshot: &mut StateSnapshot, runtime_file_id: &str) {
+        let source_runtime_file_id = snapshot.environment.active_runtime_file.id.clone();
+        for component in &mut snapshot.environment.components {
+            if let ComponentBinding::RuntimeFile {
+                runtime_file_id: bound_runtime,
+            } = &mut component.binding
+                && *bound_runtime == source_runtime_file_id
+            {
+                *bound_runtime = runtime_file_id.into();
+            }
+            match &mut component.serialization_owner {
+                SerializationOwner::RuntimeFile {
+                    runtime_file_id: owner_runtime,
+                }
+                | SerializationOwner::StageBank {
+                    runtime_file_id: owner_runtime,
+                    ..
+                } if *owner_runtime == source_runtime_file_id => {
+                    *owner_runtime = runtime_file_id.into();
+                }
+                _ => {}
+            }
+        }
+        snapshot.environment.active_runtime_file = RuntimeFile {
+            id: runtime_file_id.into(),
+            origin: RuntimeFileOrigin::NewFile,
+            backing: BackingAttachment::MemoryOnly,
+            allowed_serialization_targets: vec![
+                PhysicalSlotId(1),
+                PhysicalSlotId(2),
+                PhysicalSlotId(3),
+            ],
+            lifecycle: RuntimeFileLifecycle::Active,
+        };
+    }
+
     fn component_for<'a>(state: &'a PlannerExecutionState, id: &str) -> &'a StateComponent {
         state
             .snapshot
@@ -598,7 +691,11 @@ mod tests {
                     id: "file-0".into(),
                     origin: RuntimeFileOrigin::TitleFile0,
                     backing: BackingAttachment::MemoryOnly,
-                    allowed_serialization_targets: Vec::new(),
+                    allowed_serialization_targets: vec![
+                        PhysicalSlotId(1),
+                        PhysicalSlotId(2),
+                        PhysicalSlotId(3),
+                    ],
                     lifecycle: RuntimeFileLifecycle::Active,
                 },
                 inactive_runtime_files: Vec::new(),
@@ -654,15 +751,7 @@ mod tests {
                         ComponentKind::Inventory,
                         [("life", StateValue::Unsigned(80))],
                     ),
-                    component(
-                        RESET_CONTROL_COMPONENT,
-                        ComponentKind::Session,
-                        [
-                            ("reset_requested", StateValue::Boolean(true)),
-                            ("return_to_menu", StateValue::Boolean(false)),
-                            ("fader_status", StateValue::Unsigned(1)),
-                        ],
-                    ),
+                    reset_control_component(),
                     component(
                         RESTART_COMPONENT,
                         ComponentKind::Restart,
@@ -978,6 +1067,141 @@ mod tests {
                 )
                 .classification,
             TransitionClassification::GuardBlocked
+        );
+    }
+
+    #[test]
+    fn new_runtime_enters_a_fresh_title_file_zero_lifetime_atomically() {
+        let (content, runtime) = context();
+        let catalog = gz2e01_reset_to_opening_mechanics(&content, &runtime).unwrap();
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let mut before = snapshot(runtime);
+        retarget_runtime(&mut before, "new-file");
+        let mut state = PlannerExecutionState::new(before).unwrap();
+        let reset = catalog
+            .transitions
+            .iter()
+            .find(|transition| transition.id == "transition.gz2e01.reset-to-opening")
+            .unwrap();
+        state
+            .apply_operations(
+                &reset.id,
+                "snapshot.new-file-opening-requested",
+                &reset.activation.effects,
+            )
+            .unwrap();
+        state
+            .snapshot
+            .environment
+            .components
+            .push(opening_process_control());
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        state.validate().unwrap();
+
+        let existing_file_zero = catalog
+            .transitions
+            .iter()
+            .find(|transition| transition.id == "transition.gz2e01.opening-file0-initialize")
+            .unwrap();
+        let enter_file_zero = catalog
+            .transitions
+            .iter()
+            .find(|transition| {
+                transition.id == "transition.gz2e01.opening-enter-and-initialize-file0"
+            })
+            .unwrap();
+        let evaluator = PredicateEvaluator::new(
+            &state.snapshot,
+            &facts,
+            &[],
+            &BTreeMap::new(),
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    existing_file_zero,
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::GuardBlocked
+        );
+        assert_eq!(
+            evaluator
+                .assess_transition(
+                    enter_file_zero,
+                    &BTreeSet::new(),
+                    &BTreeSet::new(),
+                    FeasibilityMode::Modeled,
+                )
+                .classification,
+            TransitionClassification::Executable
+        );
+
+        let header_before = fields_for(&state, "runtime-file.header").clone();
+        state
+            .apply_operations(
+                &enter_file_zero.id,
+                "snapshot.title-file-zero-initialized",
+                &enter_file_zero.activation.effects,
+            )
+            .unwrap();
+
+        let active = &state.snapshot.environment.active_runtime_file;
+        assert_eq!(active.id, "new-file.title-file-0");
+        assert_eq!(active.origin, RuntimeFileOrigin::TitleFile0);
+        assert_eq!(active.backing, BackingAttachment::MemoryOnly);
+        assert_eq!(
+            active.allowed_serialization_targets,
+            vec![PhysicalSlotId(1), PhysicalSlotId(2), PhysicalSlotId(3)]
+        );
+        assert_eq!(
+            state
+                .snapshot
+                .environment
+                .inactive_runtime_files
+                .iter()
+                .find(|runtime| runtime.id == "new-file")
+                .unwrap()
+                .lifecycle,
+            RuntimeFileLifecycle::Ended
+        );
+        assert_eq!(fields_for(&state, "runtime-file.header"), &header_before);
+        assert_eq!(
+            fields_for(&state, INVENTORY_COMPONENT).get("equipment"),
+            Some(&StateValue::Bytes(vec![0x2f, 0x28, 0x2c, 0xff, 0xff, 0]))
+        );
+        assert!(
+            state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .filter(|component| {
+                    matches!(
+                        component.serialization_owner,
+                        SerializationOwner::RuntimeFile { .. }
+                            | SerializationOwner::StageBank { .. }
+                    )
+                })
+                .all(|component| match &component.serialization_owner {
+                    SerializationOwner::RuntimeFile { runtime_file_id }
+                    | SerializationOwner::StageBank {
+                        runtime_file_id, ..
+                    } => runtime_file_id == "new-file.title-file-0",
+                    _ => unreachable!(),
+                })
         );
     }
 

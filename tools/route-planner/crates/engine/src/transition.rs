@@ -3,18 +3,18 @@
 use crate::artifact::Digest;
 use crate::logic::{ContextScope, PredicateExpression, RuleEvidence, ValueReference};
 use crate::state::{
-    ComponentBinding, ComponentBindingReference, ComponentKind, ComponentSelector,
-    ExecutionContext, PhysicalSlotId, PlaneRelation, PlayerForm, PlayerMount, RuntimeFile,
-    RuntimeFileLifecycle, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
-    validate_binding as validate_component_binding, validate_binding_reference,
-    validate_component_kind, validate_serialization_owner,
+    BackingAttachment, ComponentBinding, ComponentBindingReference, ComponentKind,
+    ComponentSelector, ExecutionContext, PhysicalSlotId, PlaneRelation, PlayerForm, PlayerMount,
+    RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SemanticLifetime, SerializationOwner,
+    StateComponent, StateValue, validate_binding as validate_component_binding,
+    validate_binding_reference, validate_component_kind, validate_serialization_owner,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v18";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v19";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -176,6 +176,16 @@ pub enum StateOperation {
         destination_allowed_serialization_targets: Vec<PhysicalSlotId>,
         runtime_component_ids: Vec<String>,
         stage_bank_stages: Vec<String>,
+    },
+    /// Ends the active runtime-file lifetime, derives a fresh runtime ID from
+    /// its old ID plus `destination_id_suffix`, and rekeys every live and
+    /// serialized component owned by that lifetime. Physical file images and
+    /// session/process state are not part of the handoff.
+    BeginRuntimeFileLifetime {
+        destination_id_suffix: String,
+        origin: RuntimeFileOrigin,
+        backing: BackingAttachment,
+        allowed_serialization_targets: Vec<PhysicalSlotId>,
     },
     Bind {
         selector: ComponentSelector,
@@ -853,6 +863,22 @@ impl StateOperation {
                     false,
                 )?;
                 validate_stage_list("operation.stage_bank_stages", stage_bank_stages)
+            }
+            Self::BeginRuntimeFileLifetime {
+                destination_id_suffix,
+                origin,
+                backing,
+                allowed_serialization_targets,
+            } => {
+                validate_stable_id("operation.destination_id_suffix", destination_id_suffix)?;
+                RuntimeFile {
+                    id: format!("runtime.{destination_id_suffix}"),
+                    origin: origin.clone(),
+                    backing: backing.clone(),
+                    allowed_serialization_targets: allowed_serialization_targets.clone(),
+                    lifecycle: RuntimeFileLifecycle::Active,
+                }
+                .validate()
             }
             Self::Bind { selector, binding } | Self::Rebind { selector, binding } => {
                 validate_component_selector(selector)?;

@@ -100,13 +100,21 @@ observations make activation unknown.
 
 ## Confirmed opening/file-0 initialization
 
-The catalog also contains a second transition for opening phase 4. It requires
-all of the following independently observable state:
+The catalog also contains two mutually exclusive opening-phase-4 transitions.
+Both require all of the following independently observable state:
 
 - process `PROC_OPENING_SCENE`;
-- a title-origin file-0 runtime;
 - pending stage `F_SP102`, room `0`, layer `10`, spawn `100`; and
 - planner process-scheduler component `opening-process-control` at `phase_4`.
+
+If the active runtime is already title-origin file 0, the direct initializer
+uses it. Otherwise, the enter-and-initialize variant atomically ends the
+incoming runtime lifetime, derives a fresh runtime ID from it, rekeys every
+runtime-owned live component and serialized stage store to that new lifetime,
+and gives it `title_file_0` origin, memory-only backing, and slots 1–3 as legal
+serialization targets. Session/process components, unrelated inactive
+runtimes, and sealed physical-slot images remain independent. This is a
+lifetime transition, not a fictional physical slot 0.
 
 The explicit scheduler guard matters: merely requesting F_SP102 does not prove
 that opening phases 0–3 and their resource work have reached phase 4. The
@@ -141,7 +149,8 @@ remain unknown. Friendly label-only event/temporary/dungeon/room-switch views ar
 invalidated rather than made inconsistent with their backing bytes. Existing
 serialized `DungeonMemory` stores owned by the active runtime are also
 invalidated because their representation may not expose the same raw layout.
-Inactive runtime stores and sealed physical-slot images are not touched.
+Unrelated inactive runtime stores and sealed physical-slot images are not
+touched.
 
 The initializer preserves `mRestart`, `mTurnRestart`, `mDataNum`, `mNewFile`,
 `mNoFile`, and time controls because `dSv_info_c::init()` does not write them.
@@ -151,10 +160,10 @@ all 32 saved stage banks, the secondary visited-room banks, dungeon working
 memory, and zone-array fields are not all projected by current native snapshots;
 this milestone does not claim those absent fields as modeled defaults.
 
-This transition is intentionally restricted to an already identified
-title-origin file 0. Converting a loaded/new runtime into file 0 on title return
-still needs an evidenced runtime-lifetime operation; the planner does not infer
-that identity change from the reset request.
+The lifetime handoff is attached to phase 4 rather than the earlier reset
+request: requesting `PROC_OPENING_SCENE` does not itself prove that
+`dComIfGs_init()` executed. Unknown runtime origin also remains unknown instead
+of being silently classified as file 0.
 
 ## Remaining audited suffix, not yet executable
 
@@ -175,7 +184,6 @@ all.”
 
 Still open:
 
-- model the loaded/new-runtime-to-file-0 lifetime handoff;
 - model title input and name/file-select processes;
 - model no-card, new-file, selected-slot, and successful-save branches;
 - audit void and death restart selection, including their special-stage and

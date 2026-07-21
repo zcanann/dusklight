@@ -667,7 +667,8 @@ impl RelevanceBuilder {
                 );
                 self.dependencies.insert(StateDependency::AnyState);
             }
-            StateOperation::LoadRuntimeFromSlot { .. } => {
+            StateOperation::LoadRuntimeFromSlot { .. }
+            | StateOperation::BeginRuntimeFileLifetime { .. } => {
                 self.dependencies.insert(StateDependency::AnyState);
             }
             StateOperation::CompletePendingWorldLoad => {
@@ -868,9 +869,9 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             },
             StateDependency::AnyState,
         ],
-        StateOperation::SaveRuntimeToSlot { .. } | StateOperation::LoadRuntimeFromSlot { .. } => {
-            vec![StateDependency::AnyState]
-        }
+        StateOperation::SaveRuntimeToSlot { .. }
+        | StateOperation::LoadRuntimeFromSlot { .. }
+        | StateOperation::BeginRuntimeFileLifetime { .. } => vec![StateDependency::AnyState],
         StateOperation::SetLocation { .. } => vec![
             StateDependency::ExecutionContext,
             StateDependency::LocationStage,

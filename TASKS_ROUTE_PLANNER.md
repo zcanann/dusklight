@@ -589,7 +589,7 @@ The current code shows:
   audited production profiles, actor entry contracts, and further handler
   audits remain open. See
   `docs/route-planner/message-flow-programs.md`.
-- Planner service schema v23 provides a typed JSON-lines transport owned by the
+- Planner service schema v24 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -1668,9 +1668,10 @@ evidenced overlays over the generated base rather than silent edits to it.
         scheduler state, completes the pending load without authorizing world
         traversal, resets the canonical inventory/event/temporary/stage-memory/
         return-place projections, and invalidates active-runtime stored stage
-        banks without touching inactive stores or physical images. Loaded/new-
-        runtime file-0 identity handoff, unprojected save members, no-file/file-
-        select, void, and death suffixes remain open. See
+        banks without touching unrelated inactive stores or physical images.
+        A non-title runtime now enters a fresh memory-backed title-file-0
+        lifetime atomically at that same phase boundary. Unprojected save
+        members, no-file/file-select, void, and death suffixes remain open. See
         `docs/route-planner/gz2e01-title-boundary-audit.md`.
 - [ ] Audit SCLS and actor-driven transition consumers.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
@@ -1970,10 +1971,14 @@ Deliverable: replayable state evidence that can validate transition rules.
           transition with an explicit process context and pending world-load
           request; do not conflate that request with a completed map load.
     - [x] Model the route-relevant exact title-origin-file-0 opening projection
-          as a second guarded transition. It requires an explicit phase-4
-          scheduler observation, replaces complete known component payloads,
-          and invalidates only active-runtime stored stage-bank projections;
-          inactive runtimes and physical images remain independent.
+          as mutually exclusive direct and enter-new-lifetime transitions. They
+          require an explicit phase-4 scheduler observation, replace complete
+          known component payloads, and invalidate only active-runtime stored
+          stage-bank projections; unrelated inactive runtimes and physical
+          images remain independent.
+    - [x] Add a generic runtime-lifetime handoff that ends the incoming runtime,
+          derives a fresh identity, and rekeys all of its live and serialized
+          backing stores without copying session state or mutating card images.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
@@ -2330,6 +2335,9 @@ Deliverable: route confidence is mechanically explainable.
         sword/shield setters' distinct collection masks are retained;
         unprojected reset fields remain open rather than inheriting pre-title
         values.
+  - [x] Enter that GZ2E01 title-origin runtime from a loaded or new non-title
+        runtime as one atomic phase-4 lifetime/reset transition; the source
+        lifetime ends and the derived file 0 remains slotless.
 - [x] Show physical slots 1–3 separately.
   - Populated slots seal distinct persistent-file images; slot 0 is rejected.
 - [ ] Model void/title-state handling and save projection to a chosen slot.

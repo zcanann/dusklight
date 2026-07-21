@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v11";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v12";
 pub const PERSISTENT_FILE_IMAGE_SCHEMA: &str = "dusklight.route-planner.persistent-file-image/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -831,6 +831,30 @@ impl PlannerExecutionState {
                     );
                     ids
                 }
+                StateOperation::BeginRuntimeFileLifetime { .. } => {
+                    let source_runtime_file_id = &self.snapshot.environment.active_runtime_file.id;
+                    let mut ids = self
+                        .snapshot
+                        .environment
+                        .components
+                        .iter()
+                        .filter(|component| {
+                            component_belongs_to_runtime(component, source_runtime_file_id)
+                        })
+                        .map(|component| component.id.clone())
+                        .collect::<Vec<_>>();
+                    ids.extend(
+                        self.serialized_components
+                            .iter()
+                            .filter(|(owner, _)| {
+                                owner_belongs_to_runtime(owner, source_runtime_file_id)
+                            })
+                            .flat_map(|(_, components)| {
+                                components.iter().map(|component| component.id.clone())
+                            }),
+                    );
+                    ids
+                }
                 StateOperation::Consume {
                     pending_operation_id,
                 } => vec![pending_operation_id.clone()],
@@ -1377,6 +1401,9 @@ impl PlannerExecutionState {
             }
             operation @ StateOperation::LoadRuntimeFromSlot { .. } => {
                 self.load_runtime_from_slot(application_id, operation)?
+            }
+            operation @ StateOperation::BeginRuntimeFileLifetime { .. } => {
+                self.begin_runtime_file_lifetime(application_id, operation)?
             }
             StateOperation::Bind { selector, binding } => {
                 let ids = self.matching_ids(selector);
@@ -2133,6 +2160,110 @@ impl PlannerExecutionState {
         Ok(())
     }
 
+    fn begin_runtime_file_lifetime(
+        &mut self,
+        application_id: &str,
+        operation: &StateOperation,
+    ) -> Result<(), PlannerContractError> {
+        let StateOperation::BeginRuntimeFileLifetime {
+            destination_id_suffix,
+            origin,
+            backing,
+            allowed_serialization_targets,
+        } = operation
+        else {
+            unreachable!("runtime-lifetime helper is called only for its operation variant")
+        };
+        let source_runtime = self.snapshot.environment.active_runtime_file.clone();
+        let destination_runtime_file_id =
+            format!("{}.{}", source_runtime.id, destination_id_suffix);
+        crate::validate_stable_id(
+            "operation.begin_runtime_file_lifetime.destination_runtime_file_id",
+            &destination_runtime_file_id,
+        )?;
+        if self
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .iter()
+            .any(|runtime| runtime.id == destination_runtime_file_id)
+        {
+            return Err(PlannerContractError::new(
+                "operation.begin_runtime_file_lifetime.destination_runtime_file_id",
+                "must derive a fresh runtime-file lifetime",
+            ));
+        }
+
+        for component in &mut self.snapshot.environment.components {
+            if !component_belongs_to_runtime(component, &source_runtime.id) {
+                continue;
+            }
+            rekey_component_runtime(component, &source_runtime.id, &destination_runtime_file_id);
+            rekey_serialization_owner_runtime(
+                &mut component.serialization_owner,
+                &source_runtime.id,
+                &destination_runtime_file_id,
+            );
+            mark_transition(component, application_id);
+        }
+
+        let source_stores = std::mem::take(&mut self.serialized_components);
+        for (mut owner, mut components) in source_stores {
+            let owned_by_source = owner_belongs_to_runtime(&owner, &source_runtime.id);
+            if owned_by_source {
+                rekey_serialization_owner_runtime(
+                    &mut owner,
+                    &source_runtime.id,
+                    &destination_runtime_file_id,
+                );
+                for component in &mut components {
+                    rekey_component_runtime(
+                        component,
+                        &source_runtime.id,
+                        &destination_runtime_file_id,
+                    );
+                    rekey_serialization_owner_runtime(
+                        &mut component.serialization_owner,
+                        &source_runtime.id,
+                        &destination_runtime_file_id,
+                    );
+                    mark_transition(component, application_id);
+                }
+            }
+            if self
+                .serialized_components
+                .insert(owner, components)
+                .is_some()
+            {
+                return Err(PlannerContractError::new(
+                    "operation.begin_runtime_file_lifetime.serialized_components",
+                    "rekeyed owner collides with an existing store",
+                ));
+            }
+        }
+
+        let mut ended = source_runtime;
+        ended.lifecycle = RuntimeFileLifecycle::Ended;
+        let insert_at = self
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .binary_search_by(|runtime| runtime.id.cmp(&ended.id))
+            .expect_err("validated active runtime is absent from inactive lifetimes");
+        self.snapshot
+            .environment
+            .inactive_runtime_files
+            .insert(insert_at, ended);
+        self.snapshot.environment.active_runtime_file = RuntimeFile {
+            id: destination_runtime_file_id,
+            origin: origin.clone(),
+            backing: backing.clone(),
+            allowed_serialization_targets: allowed_serialization_targets.clone(),
+            lifecycle: RuntimeFileLifecycle::Active,
+        };
+        Ok(())
+    }
+
     fn structured_value(
         &self,
         target: &crate::transition::ComponentFieldTarget,
@@ -2510,6 +2641,7 @@ fn history_event_writes_field(
             | StateOperation::Preserve { .. }
             | StateOperation::Serialize { .. }
             | StateOperation::SaveRuntimeToSlot { .. }
+            | StateOperation::BeginRuntimeFileLifetime { .. }
             | StateOperation::Bind { .. }
             | StateOperation::Rebind { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
@@ -2663,6 +2795,22 @@ fn rekey_component_runtime(component: &mut StateComponent, source: &str, destina
         component.binding = ComponentBinding::RuntimeFile {
             runtime_file_id: destination.into(),
         };
+    }
+}
+
+fn rekey_serialization_owner_runtime(
+    owner: &mut SerializationOwner,
+    source: &str,
+    destination: &str,
+) {
+    match owner {
+        SerializationOwner::RuntimeFile { runtime_file_id }
+        | SerializationOwner::StageBank {
+            runtime_file_id, ..
+        } if runtime_file_id == source => {
+            *runtime_file_id = destination.into();
+        }
+        _ => {}
     }
 }
 
@@ -3799,6 +3947,233 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.field(), "operation.invalidate_payloads");
         assert_eq!(state, before_failure);
+    }
+
+    #[test]
+    fn beginning_runtime_lifetime_rekeys_owned_stores_and_preserves_physical_images() {
+        let mut source = snapshot();
+        for component in &mut source.environment.components {
+            if matches!(component.binding, ComponentBinding::Session { .. }) {
+                component.serialization_owner = SerializationOwner::None;
+                component.lifetime = SemanticLifetime::Session;
+            }
+        }
+        let session_before = source
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flow.main")
+            .unwrap()
+            .clone();
+        let mut state = PlannerExecutionState::new(source).unwrap();
+        state
+            .apply_operations(
+                "boundary.seed-physical-image",
+                "snapshot.physical-image-seeded",
+                &[StateOperation::SaveRuntimeToSlot {
+                    source_runtime_file_id: "file-0".into(),
+                    destination_slot: PhysicalSlotId(1),
+                    destination_persistent_file_id: "persistent-slot-1".into(),
+                    runtime_component_ids: vec!["raw.flags".into(), "save.main".into()],
+                    stage_bank_stages: Vec::new(),
+                }],
+            )
+            .unwrap();
+        let physical_image_before = state.persistent_file_images["persistent-slot-1"].clone();
+
+        state.snapshot.environment.active_runtime_file = RuntimeFile {
+            id: "loaded-a".into(),
+            origin: RuntimeFileOrigin::LoadedSlot {
+                slot: PhysicalSlotId(1),
+            },
+            backing: BackingAttachment::CardBacked {
+                slot: PhysicalSlotId(1),
+            },
+            allowed_serialization_targets: vec![PhysicalSlotId(1)],
+            lifecycle: RuntimeFileLifecycle::Active,
+        };
+        for component in &mut state.snapshot.environment.components {
+            rekey_component_runtime(component, "file-0", "loaded-a");
+            rekey_serialization_owner_runtime(
+                &mut component.serialization_owner,
+                "file-0",
+                "loaded-a",
+            );
+        }
+        let stage_owner = SerializationOwner::StageBank {
+            runtime_file_id: "loaded-a".into(),
+            stage: "F_SP103".into(),
+        };
+        let mut stage_component = raw_component();
+        stage_component.id = "stage.live".into();
+        stage_component.binding = ComponentBinding::Stage {
+            stage: "F_SP103".into(),
+        };
+        stage_component.lifetime = SemanticLifetime::StageLoad;
+        stage_component.serialization_owner = stage_owner.clone();
+        state
+            .snapshot
+            .environment
+            .components
+            .push(stage_component.clone());
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        state
+            .serialized_components
+            .insert(stage_owner, vec![stage_component]);
+        let unrelated_owner = SerializationOwner::StageBank {
+            runtime_file_id: "suspended".into(),
+            stage: "D_MN05".into(),
+        };
+        let mut unrelated_component = raw_component();
+        unrelated_component.id = "stage.unrelated".into();
+        unrelated_component.binding = ComponentBinding::Stage {
+            stage: "D_MN05".into(),
+        };
+        unrelated_component.lifetime = SemanticLifetime::StageLoad;
+        unrelated_component.serialization_owner = unrelated_owner.clone();
+        state
+            .serialized_components
+            .insert(unrelated_owner.clone(), vec![unrelated_component]);
+        state
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .push(RuntimeFile {
+                id: "suspended".into(),
+                origin: RuntimeFileOrigin::NewFile,
+                backing: BackingAttachment::MemoryOnly,
+                allowed_serialization_targets: Vec::new(),
+                lifecycle: RuntimeFileLifecycle::Suspended,
+            });
+        state.validate().unwrap();
+
+        let mut colliding = state.clone();
+        let colliding_runtime = RuntimeFile {
+            id: "loaded-a.title-file-0".into(),
+            origin: RuntimeFileOrigin::TitleFile0,
+            backing: BackingAttachment::MemoryOnly,
+            allowed_serialization_targets: Vec::new(),
+            lifecycle: RuntimeFileLifecycle::Ended,
+        };
+        let insert_at = colliding
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .binary_search_by(|runtime| runtime.id.cmp(&colliding_runtime.id))
+            .unwrap_err();
+        colliding
+            .snapshot
+            .environment
+            .inactive_runtime_files
+            .insert(insert_at, colliding_runtime);
+        colliding.validate().unwrap();
+        let before_collision = colliding.clone();
+        let error = colliding
+            .apply_operations(
+                "boundary.colliding-title-file-0",
+                "snapshot.not-produced",
+                &[StateOperation::BeginRuntimeFileLifetime {
+                    destination_id_suffix: "title-file-0".into(),
+                    origin: RuntimeFileOrigin::TitleFile0,
+                    backing: BackingAttachment::MemoryOnly,
+                    allowed_serialization_targets: Vec::new(),
+                }],
+            )
+            .unwrap_err();
+        assert_eq!(
+            error.field(),
+            "operation.begin_runtime_file_lifetime.destination_runtime_file_id"
+        );
+        assert_eq!(colliding, before_collision);
+
+        state
+            .apply_operations(
+                "boundary.begin-title-file-0",
+                "snapshot.title-file-0-active",
+                &[StateOperation::BeginRuntimeFileLifetime {
+                    destination_id_suffix: "title-file-0".into(),
+                    origin: RuntimeFileOrigin::TitleFile0,
+                    backing: BackingAttachment::MemoryOnly,
+                    allowed_serialization_targets: vec![
+                        PhysicalSlotId(1),
+                        PhysicalSlotId(2),
+                        PhysicalSlotId(3),
+                    ],
+                }],
+            )
+            .unwrap();
+
+        let destination = "loaded-a.title-file-0";
+        assert_eq!(
+            state.snapshot.environment.active_runtime_file.id,
+            destination
+        );
+        assert_eq!(
+            state.snapshot.environment.active_runtime_file.origin,
+            RuntimeFileOrigin::TitleFile0
+        );
+        assert_eq!(
+            state.snapshot.environment.active_runtime_file.backing,
+            BackingAttachment::MemoryOnly
+        );
+        assert_eq!(
+            state
+                .snapshot
+                .environment
+                .inactive_runtime_files
+                .iter()
+                .find(|runtime| runtime.id == "loaded-a")
+                .unwrap()
+                .lifecycle,
+            RuntimeFileLifecycle::Ended
+        );
+        let save = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "save.main")
+            .unwrap();
+        assert_eq!(
+            save.binding,
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: destination.into()
+            }
+        );
+        assert_eq!(
+            save.serialization_owner,
+            SerializationOwner::RuntimeFile {
+                runtime_file_id: destination.into()
+            }
+        );
+        let destination_stage_owner = SerializationOwner::StageBank {
+            runtime_file_id: destination.into(),
+            stage: "F_SP103".into(),
+        };
+        assert!(
+            state
+                .serialized_components
+                .contains_key(&destination_stage_owner)
+        );
+        assert!(state.serialized_components.contains_key(&unrelated_owner));
+        assert_eq!(
+            state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == "flow.main")
+                .unwrap(),
+            &session_before
+        );
+        assert_eq!(
+            state.persistent_file_images["persistent-slot-1"],
+            physical_image_before
+        );
     }
 
     #[test]
