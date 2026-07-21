@@ -2070,14 +2070,23 @@ Deliverable: route confidence is mechanically explainable.
 
 #### 11E. Fanadi save-location lock
 
-- [ ] Model SavMem writer, event/switch guards, and placements.
-- [ ] Model `NO_TELOP` as a write gate with observed lifetime.
-- [ ] Model Fanadi setter/clearer and Ooccoo/setup prerequisites.
-- [ ] Retain the exact last successful `PlayerReturnPlace` write.
-- [ ] Model savewarp as a reader of the held value.
-- [ ] Search for setup orderings and explain intervening writes.
-- [ ] Add a hypothetical Fanadi-access bypass and verify earlier return locations
+- [x] Model SavMem writer, event/switch guards, and placements.
+- [x] Model `NO_TELOP` as a write gate with observed lifetime.
+- [x] Model Fanadi setter/clearer and Ooccoo/setup prerequisites.
+- [x] Retain the exact last successful `PlayerReturnPlace` write.
+- [x] Model savewarp as a reader of the held value.
+- [x] Search for setup orderings and explain intervening writes.
+- [x] Add a hypothetical Fanadi-access bypass and verify earlier return locations
       become usable without modifying the core lock mechanism.
+  - A source-shaped acceptance fixture separates the decoded Castle Town SavMem
+    placement, its inside/event/switch activation, the `NO_TELOP` writer gate,
+    Fanadi's setter and normal clearer, Ooccoo ownership, and two savewarp
+    consumers. The normal route must execute the Castle Town writer before the
+    lock and its savewarp proof reads `CASTLE_TOWN`. Without an overlay, the
+    earlier `ORDON_SPRING` return is unreachable. A removable hypothetical
+    direct-Fanadi technique avoids only the intervening placement; the unchanged
+    setter, gate, and savewarp reader then preserve and consume `ORDON_SPRING`,
+    with the hypothetical evidence retained in the route proof.
 
 #### 11F. Faron-twilight return research
 

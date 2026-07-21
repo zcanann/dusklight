@@ -2633,6 +2633,463 @@ mod tests {
     }
 
     #[test]
+    fn fanadi_lock_preserves_only_the_last_successful_prelock_savmem_write() {
+        let mut start = snapshot();
+        start.environment.location.stage = "ROUTE_START".into();
+        start.environment.components = vec![
+            StateComponent {
+                id: "inventory.quest".into(),
+                component_kind: ComponentKind::Inventory,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([("has_ooccoo".into(), StateValue::Boolean(true))]),
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "trace.ooccoo-owned".into(),
+                    source_sha256: Some(Digest([0x51; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "restart.return-place".into(),
+                component_kind: ComponentKind::Restart,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([(
+                        "stage".into(),
+                        StateValue::Text("ORDON_SPRING".into()),
+                    )]),
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "trace.ordon-return-place".into(),
+                    source_sha256: Some(Digest([0x52; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "route.fanadi".into(),
+                component_kind: ComponentKind::Session,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([("lock_seen".into(), StateValue::Boolean(false))]),
+                },
+                binding: ComponentBinding::Session {
+                    session_id: "session-1".into(),
+                },
+                lifetime: SemanticLifetime::Session,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Initialized,
+                    source_id: "fixture.fanadi-route".into(),
+                    source_sha256: Some(Digest([0x53; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "savmem.castle-town-placement".into(),
+                component_kind: ComponentKind::ActorInstance,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("event_guard".into(), StateValue::Boolean(true)),
+                        ("inside".into(), StateValue::Boolean(false)),
+                        ("switch_guard".into(), StateValue::Boolean(false)),
+                    ]),
+                },
+                binding: ComponentBinding::Actor {
+                    instance_id: "savmem.castle-town-placement".into(),
+                },
+                lifetime: SemanticLifetime::StageLoad,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::ExtractedFact,
+                    source_id: "placement.castle-town-savmem".into(),
+                    source_sha256: Some(Digest([0x54; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "temporary.event-flags".into(),
+                component_kind: ComponentKind::TemporaryFlags,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([("no_telop".into(), StateValue::Boolean(false))]),
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "trace.no-telop-clear".into(),
+                    source_sha256: Some(Digest([0x55; 32])),
+                    transition_id: None,
+                }],
+            },
+        ];
+        start
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let exact_scope = scope(&start);
+        let field_is =
+            |component_id: &str, field: &str, value: StateValue| PredicateExpression::Compare {
+                left: ValueReference::ComponentField {
+                    component_id: component_id.into(),
+                    field: field.into(),
+                },
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal { value },
+            };
+        let return_is = |stage: &str| {
+            field_is(
+                "restart.return-place",
+                "stage",
+                StateValue::Text(stage.into()),
+            )
+        };
+        let write = |component_id: &str, field: &str, value: StateValue| StateOperation::Write {
+            target: crate::transition::ComponentFieldTarget {
+                component_id: component_id.into(),
+                field: field.into(),
+            },
+            value,
+        };
+        let location = |stage: &str| StateOperation::SetLocation {
+            location: SceneLocation {
+                stage: stage.into(),
+                room: 0,
+                layer: 0,
+                spawn: 0,
+            },
+        };
+        let candidate =
+            |id: &str,
+             label: &str,
+             kind: TransitionKind,
+             guard: PredicateExpression,
+             effects: Vec<StateOperation>| CandidateTransition {
+                id: id.into(),
+                label: label.into(),
+                scope: exact_scope.clone(),
+                transition_kind: kind,
+                approach_id: format!("approach.{id}"),
+                activation: ActivationContract {
+                    hard_guards: guard,
+                    physical_obligation_ids: Vec::new(),
+                    effects,
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            };
+
+        let mut mechanics = catalog(vec![
+            candidate(
+                "transition.enter-fanadi-after-savmem",
+                "Continue from the Castle Town SavMem placement to Fanadi",
+                TransitionKind::EncodedMapExit,
+                PredicateExpression::All {
+                    terms: vec![stage_is("CASTLE_SAVMEM"), return_is("CASTLE_TOWN")],
+                },
+                vec![
+                    write(
+                        "savmem.castle-town-placement",
+                        "inside",
+                        StateValue::Boolean(false),
+                    ),
+                    location("FANADI"),
+                ],
+            ),
+            candidate(
+                "transition.fanadi-clear-no-telop",
+                "Fanadi's normal cleanup clears NO_TELOP",
+                TransitionKind::MessageAction,
+                PredicateExpression::All {
+                    terms: vec![
+                        stage_is("FANADI"),
+                        field_is(
+                            "temporary.event-flags",
+                            "no_telop",
+                            StateValue::Boolean(true),
+                        ),
+                    ],
+                },
+                vec![write(
+                    "temporary.event-flags",
+                    "no_telop",
+                    StateValue::Boolean(false),
+                )],
+            ),
+            candidate(
+                "transition.fanadi-set-no-telop",
+                "Fanadi sets NO_TELOP with Ooccoo available",
+                TransitionKind::MessageAction,
+                PredicateExpression::All {
+                    terms: vec![
+                        stage_is("FANADI"),
+                        field_is("inventory.quest", "has_ooccoo", StateValue::Boolean(true)),
+                        field_is(
+                            "temporary.event-flags",
+                            "no_telop",
+                            StateValue::Boolean(false),
+                        ),
+                    ],
+                },
+                vec![
+                    write(
+                        "temporary.event-flags",
+                        "no_telop",
+                        StateValue::Boolean(true),
+                    ),
+                    write("route.fanadi", "lock_seen", StateValue::Boolean(true)),
+                ],
+            ),
+            candidate(
+                "transition.pass-castle-savmem",
+                "Pass through the Castle Town SavMem placement",
+                TransitionKind::ActorReload,
+                stage_is("ROUTE_START"),
+                vec![
+                    write(
+                        "savmem.castle-town-placement",
+                        "inside",
+                        StateValue::Boolean(true),
+                    ),
+                    location("CASTLE_SAVMEM"),
+                ],
+            ),
+            candidate(
+                "transition.savewarp-castle-town",
+                "Savewarp using a held Castle Town return place",
+                TransitionKind::SaveWarp,
+                PredicateExpression::All {
+                    terms: vec![
+                        return_is("CASTLE_TOWN"),
+                        field_is("route.fanadi", "lock_seen", StateValue::Boolean(true)),
+                    ],
+                },
+                vec![location("SAVEWARP_CASTLE_TOWN")],
+            ),
+            candidate(
+                "transition.savewarp-ordon-spring",
+                "Savewarp using a held Ordon Spring return place",
+                TransitionKind::SaveWarp,
+                PredicateExpression::All {
+                    terms: vec![
+                        return_is("ORDON_SPRING"),
+                        field_is("route.fanadi", "lock_seen", StateValue::Boolean(true)),
+                    ],
+                },
+                vec![location("SAVEWARP_ORDON_SPRING")],
+            ),
+        ]);
+        mechanics
+            .transitions
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        mechanics.writers = vec![WriterRule {
+            id: "writer.savmem-castle-town".into(),
+            scope: exact_scope.clone(),
+            activation: PredicateExpression::All {
+                terms: vec![
+                    stage_is("CASTLE_SAVMEM"),
+                    field_is(
+                        "savmem.castle-town-placement",
+                        "inside",
+                        StateValue::Boolean(true),
+                    ),
+                    field_is(
+                        "savmem.castle-town-placement",
+                        "event_guard",
+                        StateValue::Boolean(true),
+                    ),
+                    field_is(
+                        "savmem.castle-town-placement",
+                        "switch_guard",
+                        StateValue::Boolean(false),
+                    ),
+                ],
+            },
+            operation: write(
+                "restart.return-place",
+                "stage",
+                StateValue::Text("CASTLE_TOWN".into()),
+            ),
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.gates = vec![GateRule {
+            id: "gate.no-telop".into(),
+            scope: exact_scope.clone(),
+            active_when: field_is(
+                "temporary.event-flags",
+                "no_telop",
+                StateValue::Boolean(true),
+            ),
+            blocked_writer_ids: vec!["writer.savmem-castle-town".into()],
+            lifetime: SemanticLifetime::RuntimeFile,
+            evidence: evidence(TruthStatus::Established),
+        }];
+        mechanics.readers = vec![
+            ReaderRule {
+                id: "reader.savewarp-castle-town-return".into(),
+                scope: exact_scope.clone(),
+                source: ValueReference::ComponentField {
+                    component_id: "restart.return-place".into(),
+                    field: "stage".into(),
+                },
+                consuming_transition_id: "transition.savewarp-castle-town".into(),
+                interpretation_fact_id: None,
+                evidence: evidence(TruthStatus::Established),
+            },
+            ReaderRule {
+                id: "reader.savewarp-ordon-spring-return".into(),
+                scope: exact_scope.clone(),
+                source: ValueReference::ComponentField {
+                    component_id: "restart.return-place".into(),
+                    field: "stage".into(),
+                },
+                consuming_transition_id: "transition.savewarp-ordon-spring".into(),
+                interpretation_fact_id: None,
+                evidence: evidence(TruthStatus::Established),
+            },
+        ];
+
+        let castle = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(start.clone()).unwrap(),
+                &stage_is("SAVEWARP_CASTLE_TOWN"),
+            )
+            .unwrap();
+        assert_eq!(castle.status, SearchStatus::Reached);
+        assert_eq!(
+            castle
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "transition.pass-castle-savmem",
+                "writer.savmem-castle-town",
+                "transition.enter-fanadi-after-savmem",
+                "transition.fanadi-set-no-telop",
+                "transition.savewarp-castle-town",
+            ]
+        );
+        assert_eq!(
+            castle.steps[4].reader_results[0].source_value,
+            StateValue::Text("CASTLE_TOWN".into())
+        );
+
+        let ordon_without_bypass = ForwardSolver::new(
+            &facts(),
+            &mechanics,
+            &[],
+            SolverOptions {
+                evidence_policy: EvidencePolicy::RESEARCH,
+                ..SolverOptions::default()
+            },
+        )
+        .unwrap()
+        .solve(
+            PlannerExecutionState::new(start.clone()).unwrap(),
+            &stage_is("SAVEWARP_ORDON_SPRING"),
+        )
+        .unwrap();
+        assert_ne!(ordon_without_bypass.status, SearchStatus::Reached);
+
+        let bypass = Technique {
+            id: "technique.hypothetical-direct-fanadi-access".into(),
+            label: "Reach Fanadi without crossing the Castle Town SavMem placement".into(),
+            scope: exact_scope.clone(),
+            prerequisites: stage_is("ROUTE_START"),
+            operations: vec![location("FANADI")],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::from([("theorycraft".into(), 1)]),
+            },
+            evidence: evidence(TruthStatus::Hypothetical),
+        };
+        let pack = RefinementPack {
+            schema: REFINEMENT_PACK_SCHEMA.into(),
+            manifest: RefinementPackManifest {
+                id: "pack.hypothetical-direct-fanadi-access".into(),
+                version: "1.0.0".into(),
+                author: "Route planner acceptance fixture".into(),
+                source: "Hypothetical Fanadi access avoiding intervening SavMem".into(),
+                scope: exact_scope,
+                precedence: 100,
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+            },
+            rules: vec![RefinementRule {
+                id: "rule.add-direct-fanadi-access".into(),
+                label: "Add hypothetical direct Fanadi access".into(),
+                operation: RefinementOperation::AddTechnique { technique: bypass },
+                evidence: evidence(TruthStatus::Hypothetical),
+            }],
+        };
+        let composed = ComposedPlannerCatalog::compose_layered(
+            &facts(),
+            &mechanics,
+            &RefinementLayers {
+                enabled_packs: Vec::new(),
+                route_local_overlays: Vec::new(),
+                ephemeral_what_if_overlays: vec![pack],
+            },
+        )
+        .unwrap();
+        let ordon_with_bypass = ForwardSolver::new(
+            &composed.facts,
+            &composed.mechanics,
+            &[],
+            SolverOptions {
+                evidence_policy: EvidencePolicy::RESEARCH,
+                ..SolverOptions::default()
+            },
+        )
+        .unwrap()
+        .solve(
+            PlannerExecutionState::new(start).unwrap(),
+            &stage_is("SAVEWARP_ORDON_SPRING"),
+        )
+        .unwrap();
+        assert_eq!(ordon_with_bypass.status, SearchStatus::Reached);
+        assert_eq!(
+            ordon_with_bypass
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "technique.hypothetical-direct-fanadi-access",
+                "transition.fanadi-set-no-telop",
+                "transition.savewarp-ordon-spring",
+            ]
+        );
+        assert_eq!(
+            ordon_with_bypass.steps[2].reader_results[0].source_value,
+            StateValue::Text("ORDON_SPRING".into())
+        );
+        assert_eq!(
+            ordon_with_bypass.steps[0].weakest_evidence,
+            Some(TruthStatus::Hypothetical)
+        );
+    }
+
+    #[test]
     fn hypothetical_local_bank_rebind_changes_semantics_without_changing_payload() {
         let mut snapshot = snapshot();
         snapshot.environment.components = vec![StateComponent {
