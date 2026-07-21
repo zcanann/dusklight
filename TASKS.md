@@ -972,6 +972,21 @@ human-authored successful setup.
       not distinguishable from structural readiness, and generic allocation
       failure plus live temporal variation remain open; no outcome is inferred
       beyond the state the engine actually retains.
+      - [x] Promote the variable occupied-slot table as native resource-load
+        view v1 instead of flattening archive identities into fixed scalar
+        features. Every present boundary retains a canonical masked set with
+        object/stage kind, slot, categorical archive name, reference count,
+        structural outcome and pointer-presence predicates plus the exact
+        128/64 capacities and occupancies. Legacy observations retain outer
+        `not_sampled` missingness and create no rows. The sealed artifact binds
+        its source shard/schema, verifies every row back against the decoded
+        source, and rejects resealed order, outcome or shortened-set tampering;
+        `learn resource-load-view` publishes it through its own content type. A
+        four-boundary materialization retained all 12 fixture rows as sealed
+        view `5f27c892...b871f` / 3,844-byte blob `dc74270c...000fb`.
+        All 210 learning and 10 CLI tests pass. This is representation only: no
+        archive is selected or requested, and no target outcome, action, route
+        or reward is supplied.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.

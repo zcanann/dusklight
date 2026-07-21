@@ -6,6 +6,7 @@ use huntctl::learning::option_values::{
 };
 use huntctl::native_collision_history::NativeCollisionHistoryView;
 use huntctl::native_episode_shard::NativeEpisodeShard;
+use huntctl::native_resource_load_view::NativeEpisodeResourceLoadView;
 use huntctl::native_room_load_view::NativeEpisodeRoomLoadView;
 use huntctl::option_execution::OptionType;
 use huntctl::reward_shaping::{
@@ -96,6 +97,47 @@ fn room_load_view_cli_emits_a_complete_masked_set() {
     assert_eq!(report["live_room_scenes"], 4);
     assert_eq!(report["content_blob"]["kind"], "native_room_load_view");
     NativeEpisodeRoomLoadView::decode_canonical(&fs::read(&output_path).unwrap()).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn resource_load_view_cli_emits_a_complete_masked_set() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-resource-load-view-{nonce}"));
+    fs::create_dir_all(&root).unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/automation/native_episode_v26.dseps");
+    let output_path = root.join("resource-load.json");
+    let content = root.join("content");
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "resource-load-view", "--input"])
+        .arg(&fixture)
+        .args(["--output"])
+        .arg(&output_path)
+        .args(["--artifact-store"])
+        .arg(&content)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["schema"], "dusklight-native-resource-load-view/v1");
+    assert_eq!(report["observations"], 4);
+    assert_eq!(report["present"], 4);
+    assert_eq!(report["archive_rows"], 12);
+    assert_eq!(report["object_rows"], 8);
+    assert_eq!(report["stage_rows"], 4);
+    assert_eq!(report["mounting_rows"], 4);
+    assert_eq!(report["ready_rows"], 4);
+    assert_eq!(report["failed_rows"], 4);
+    assert_eq!(report["content_blob"]["kind"], "native_resource_load_view");
+    NativeEpisodeResourceLoadView::decode_canonical(&fs::read(&output_path).unwrap()).unwrap();
     fs::remove_dir_all(root).unwrap();
 }
 
