@@ -6,6 +6,9 @@
 //! coverage, duplicates, and suspicious outcome partitions are visible before
 //! learner code is allowed to treat the data as useful.
 
+use crate::native_dynamic_collider_temporal::{
+    DynamicColliderTemporalCoverage, inspect_dynamic_collider_temporal_coverage,
+};
 use crate::native_episode_shard::{
     NativeActorObservation, NativeChannelStatus, NativeEpisode, NativeEpisodeShard,
     NativeLearningObservation, NativeRawPad,
@@ -14,7 +17,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V5: &str = "dusklight-native-corpus-inspection/v5";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V6: &str = "dusklight-native-corpus-inspection/v6";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -143,6 +146,7 @@ pub struct NativeCorpusInspection {
     pub dynamic_collider_set_sizes: SetSizeSummary,
     pub unique_actor_types: usize,
     pub actor_temporal_coverage: ActorTemporalCoverage,
+    pub dynamic_collider_temporal_coverage: DynamicColliderTemporalCoverage,
     pub channel_coverage: BTreeMap<String, ChannelCoverage>,
     pub player_relationship_role_presence: BTreeMap<String, u64>,
     pub missing_mask_counts: BTreeMap<String, u64>,
@@ -856,6 +860,7 @@ fn observation_constants(observation: &NativeLearningObservation) -> Vec<(&'stat
 }
 
 pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCorpusInspection {
+    let dynamic_collider_temporal_coverage = inspect_dynamic_collider_temporal_coverage(shards);
     let mut observation_schemas = BTreeMap::new();
     let mut action_schemas = BTreeMap::new();
     let mut channel_coverage = BTreeMap::<String, ChannelCoverage>::new();
@@ -1186,9 +1191,15 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     {
         warnings.push("actor runtime-generation identity is inconsistent within an episode".into());
     }
+    if dynamic_collider_temporal_coverage.duplicate_identity_boundaries != 0 {
+        warnings.push("dynamic collider identities are duplicated within a boundary".into());
+    }
+    if dynamic_collider_temporal_coverage.unresolved_owner_samples != 0 {
+        warnings.push("dynamic collider owners do not join the complete actor set".into());
+    }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V5.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V6.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -1213,6 +1224,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         dynamic_collider_set_sizes: dynamic_collider_sizes.finish(),
         unique_actor_types: actor_types.len(),
         actor_temporal_coverage,
+        dynamic_collider_temporal_coverage,
         channel_coverage,
         player_relationship_role_presence,
         missing_mask_counts,
@@ -1335,7 +1347,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V5);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V6);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -1362,7 +1374,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V5);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V6);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count

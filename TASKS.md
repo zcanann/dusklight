@@ -290,6 +290,17 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     truncation, crash or rejected case; its actor-parity report is
     `061ed9a4...cb0a`. This exposes interaction geometry but supplies no
     interaction target, tactic, route or reward.
+  - [x] Audit that complete collider set as temporal learner evidence rather
+    than only reporting terminal counts. Native corpus inspection v6 joins
+    every collider owner back to the complete actor set, reconstructs unique
+    episode boundaries, separates local lifecycle from room/stage teardown and
+    counts changes in hit partners, enable/hit state, masks, shape, geometry and
+    correction per owner profile without retaining raw values. A live v13
+    two-episode shard yielded 6,074 collider samples over 252 boundaries, 5,956
+    persistent pairs and 70 local appearances plus 70 disappearances. Four of
+    eight owner-profile groups changed typed fields; all owners resolved and no
+    boundary contained a duplicate identity (`bdbfe46d...5f654`). This reports
+    available signal and does not nominate a contact, actor, reward or action.
   - [x] Retain the current Link background-collision solver configuration and
     realized work geometry through a typed read-only component. Observation
     v11 records the known mode/contact flags, cached line, wall cylinder,

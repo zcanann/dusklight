@@ -13,6 +13,7 @@ pub mod corpus;
 pub mod episode;
 pub mod episode_store;
 pub mod native_corpus_inspection;
+pub mod native_dynamic_collider_temporal;
 pub mod native_episode_shard;
 pub mod observation_parity;
 pub mod semantic_state_hash;
