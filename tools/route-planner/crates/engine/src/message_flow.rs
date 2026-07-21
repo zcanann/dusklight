@@ -23,8 +23,8 @@ use crate::state::{
     validate_component_kind,
 };
 use crate::transition::{
-    ActivationContract, CandidateTransition, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog,
-    ReaderRule, StateOperation, TransitionKind, UnknownRequirement,
+    ActivationContract, CandidateTransition, ComponentFieldTarget, MECHANICS_CATALOG_SCHEMA,
+    MechanicsCatalog, ReaderRule, StateOperation, TransitionKind, UnknownRequirement,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
@@ -2629,6 +2629,76 @@ mod tests {
             .unwrap();
         assert_eq!(jump.activation.unknown_requirements.len(), 1);
         assert!(jump.activation.effects.is_empty());
+    }
+
+    #[test]
+    fn event_request_publishes_ids_without_granting_the_item() {
+        let mut program = program();
+        program.extracted.node_count = 7;
+        program.extracted.branch_target_count = 7;
+        program.extracted.branch_targets.push(u16::MAX);
+        program.extracted.nodes.push(MessageFlowNode::Event {
+            index: 6,
+            event_index: 8,
+            next_target_index: 6,
+            parameter_0: 1,
+            parameter_1: 0xa3,
+            raw_parameter_u32: 0x0001_00a3,
+            raw_parameters: [0, 1, 0, 0xa3],
+        });
+
+        let compiled = program.compile().unwrap();
+        let request = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("event 8 at node 6"))
+            .unwrap();
+        assert!(request.activation.unknown_requirements.is_empty());
+        assert!(matches!(
+            request.activation.effects.as_slice(),
+            [
+                StateOperation::Write {
+                    target: ComponentFieldTarget { field: event_id, .. },
+                    value: StateValue::Unsigned(1),
+                },
+                StateOperation::Write {
+                    target: ComponentFieldTarget { field: item_id, .. },
+                    value: StateValue::Unsigned(0xa3),
+                },
+                StateOperation::AdvanceFlow { node_id, .. },
+            ] if event_id == "event_id" && item_id == "item_id" && node_id.ends_with(".end")
+        ));
+        assert!(!request.activation.effects.iter().any(|operation| matches!(
+            operation,
+            StateOperation::SetBitFromValue { .. }
+                | StateOperation::WriteRaw { .. }
+                | StateOperation::WriteBoundRaw { .. }
+        )));
+
+        let MessageFlowNode::Event {
+            parameter_0,
+            parameter_1,
+            raw_parameter_u32,
+            raw_parameters,
+            ..
+        } = &mut program.extracted.nodes[6]
+        else {
+            unreachable!()
+        };
+        *parameter_0 = 27;
+        *parameter_1 = 0;
+        *raw_parameter_u32 = 27 << 16;
+        *raw_parameters = [0, 27, 0, 0];
+        let fundraising = program.compile().unwrap();
+        let request = fundraising
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("event 8 at node 6"))
+            .unwrap();
+        assert_eq!(request.activation.unknown_requirements.len(), 1);
+        assert_eq!(request.activation.effects.len(), 3);
     }
 
     #[test]

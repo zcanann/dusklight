@@ -150,8 +150,9 @@ obligation, and leaves the shared attention distance/facing/input/event-owner
 path explicitly unknown. The exact compile produced one transition and one
 obligation; it did not infer interaction feasibility from placement.
 
-`event008` does not grant the item. It only leaves event ID 1 and item ID `0xa3`
-in the live flow state. The spirit actor reads those values, creates the
+The generic compiler now emits `event008` as two explicit live-flow writes—
+event ID 1 and item ID `0xa3`—followed by its target-table terminal. It does not
+grant the item. The spirit actor reads those values, creates the
 presentation item actor, and changes to `DEFAULT_GETITEM`. Generic item
 completion then writes the Lanayru Vessel backing. Because the actor sets its
 post-presentation latch, its next wait orders a speak event; the follow-up flow

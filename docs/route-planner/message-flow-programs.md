@@ -46,6 +46,14 @@ successor. Unknown query handlers expose both encoded outcomes only behind an
 explicit unknown requirement. Unsupported event handlers similarly retain an
 unknown requirement rather than silently becoming no-ops.
 
+`event008` publishes its two parameters as `event_id` and `item_id` fields on
+the active flow component, then follows the correctly resolved target-table
+successor. It does not grant that item or create an item actor. Those are
+separate actor/event-manager transitions that can depend on the published
+fields. Event ID 27 additionally mutates unimported fundraising state, so that
+side effect remains an explicit unknown while the two handoff fields stay
+known.
+
 ## Backing stores
 
 Temporary accesses use their session/runtime binding. Persistent accesses can

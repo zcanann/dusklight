@@ -1870,6 +1870,9 @@ Deliverable: replayable state evidence that can validate transition rules.
           while keeping message-node direct successors and branch-node paired
           target entries distinct. Real node 315 now reaches its encoded terminal
           target instead of being misread as direct node 201.
+    - [x] Compile `event008` into explicit flow-component `event_id`/`item_id`
+          handoff writes without granting the item or creating its actor. Keep
+          event-27 fundraising state explicit as an unimported side effect.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.
