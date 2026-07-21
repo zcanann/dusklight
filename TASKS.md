@@ -342,6 +342,19 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     presence. A neutral eight-client D_MN01 batch verified all 16/16 entries
     with zero rejected cases in sealed report `1a16c1c4...d9bb274`. The parent
     remains open for timers, loading state and cross-map/form variation.
+  - [x] Audit global channels temporally without flattening unavailable values
+    into constants. Native corpus inspection v7 reconstructs unique episode
+    boundaries and reports comparable, changed and missing transition pairs for
+    stage/loading, event/menu, RNG, player motion/action, camera, collision,
+    scene exit, resources, relationships, flag banks, runtime-file, restart,
+    return-place and event-handoff state, both in aggregate and by source stage.
+    A live v13 shard exposed 18 changing fields over 250 transitions, including
+    RNG on every tick and changes in player action/procedure, scene exit,
+    contacts, collision surfaces/solver and event handoff; roof height was
+    explicitly missing for all 250 pairs (`cf263f13...403e1`). An older v4
+    mixed-outcome shard retained nine historically missing field families. No
+    available native shard crossed a context boundary, so real loading and
+    cross-map evidence remain open; synthetic tests only prove attribution.
 - [ ] Run short generic observation probes where safe—idle, movement, camera,
   targeting, contact, basic actions, actor activation and loading—and use them
   only to expose changing fields. They are not route or glitch attempts.

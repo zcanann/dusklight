@@ -13,11 +13,12 @@ use crate::native_episode_shard::{
     NativeActorObservation, NativeChannelStatus, NativeEpisode, NativeEpisodeShard,
     NativeLearningObservation, NativeRawPad,
 };
+use crate::native_global_temporal::{GlobalTemporalCoverage, inspect_global_temporal_coverage};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V6: &str = "dusklight-native-corpus-inspection/v6";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V7: &str = "dusklight-native-corpus-inspection/v7";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -147,6 +148,7 @@ pub struct NativeCorpusInspection {
     pub unique_actor_types: usize,
     pub actor_temporal_coverage: ActorTemporalCoverage,
     pub dynamic_collider_temporal_coverage: DynamicColliderTemporalCoverage,
+    pub global_temporal_coverage: GlobalTemporalCoverage,
     pub channel_coverage: BTreeMap<String, ChannelCoverage>,
     pub player_relationship_role_presence: BTreeMap<String, u64>,
     pub missing_mask_counts: BTreeMap<String, u64>,
@@ -861,6 +863,7 @@ fn observation_constants(observation: &NativeLearningObservation) -> Vec<(&'stat
 
 pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCorpusInspection {
     let dynamic_collider_temporal_coverage = inspect_dynamic_collider_temporal_coverage(shards);
+    let global_temporal_coverage = inspect_global_temporal_coverage(shards);
     let mut observation_schemas = BTreeMap::new();
     let mut action_schemas = BTreeMap::new();
     let mut channel_coverage = BTreeMap::<String, ChannelCoverage>::new();
@@ -1199,7 +1202,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V6.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V7.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -1225,6 +1228,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         unique_actor_types: actor_types.len(),
         actor_temporal_coverage,
         dynamic_collider_temporal_coverage,
+        global_temporal_coverage,
         channel_coverage,
         player_relationship_role_presence,
         missing_mask_counts,
@@ -1347,7 +1351,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V6);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V7);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -1374,7 +1378,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V6);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V7);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count
