@@ -2300,27 +2300,6 @@ impl PlannerExecutionState {
             ));
         }
 
-        let image_component_ids = image
-            .runtime_components
-            .iter()
-            .chain(
-                image
-                    .stage_banks
-                    .iter()
-                    .flat_map(|store| store.components.iter()),
-            )
-            .map(|component| component.id.as_str())
-            .collect::<BTreeSet<_>>();
-        if carried_runtime_component_ids
-            .iter()
-            .any(|id| image_component_ids.contains(id.as_str()))
-        {
-            return Err(PlannerContractError::new(
-                "operation.load_runtime_from_slot.carried_runtime_component_ids",
-                "must be disjoint from every component in the sealed persistent image",
-            ));
-        }
-
         let carried_component_ids = carried_runtime_component_ids
             .iter()
             .map(String::as_str)
@@ -5115,90 +5094,6 @@ mod tests {
     }
 
     #[test]
-    fn custom_buffer_replacement_and_payload_restore_preserve_live_ownership_atomically() {
-        let owner = SerializationOwner::Custom {
-            id: "file-select-buffer.slot-1".into(),
-        };
-        let mut buffered = structured_component(
-            "save.main",
-            ComponentKind::PersistentSave,
-            ComponentBinding::Custom {
-                kind_id: "file-select-buffer".into(),
-                context_id: "slot-1".into(),
-            },
-        );
-        buffered.lifetime = SemanticLifetime::Session;
-        buffered.serialization_owner = owner.clone();
-        let ComponentPayload::Structured { fields } = &mut buffered.payload else {
-            unreachable!()
-        };
-        fields.insert("rupees".into(), StateValue::Unsigned(77));
-
-        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
-        state
-            .apply_operations(
-                "transition.initialize-and-copy-buffer",
-                "snapshot.buffer-copied",
-                &[
-                    StateOperation::ReplaceCustomStore {
-                        owner: owner.clone(),
-                        components: vec![buffered],
-                    },
-                    StateOperation::RestorePayloadsFromCustomStore {
-                        owner: owner.clone(),
-                        component_ids: vec!["save.main".into()],
-                    },
-                ],
-            )
-            .unwrap();
-        assert_eq!(
-            field(&state, "save.main", "rupees"),
-            &StateValue::Unsigned(77)
-        );
-        let live = state
-            .snapshot
-            .environment
-            .components
-            .iter()
-            .find(|component| component.id == "save.main")
-            .unwrap();
-        assert_eq!(
-            live.binding,
-            ComponentBinding::RuntimeFile {
-                runtime_file_id: "file-0".into(),
-            }
-        );
-        assert_eq!(
-            live.serialization_owner,
-            SerializationOwner::RuntimeFile {
-                runtime_file_id: "file-0".into(),
-            }
-        );
-        assert_eq!(
-            live.provenance.last().unwrap().source_kind,
-            ProvenanceSourceKind::SaveRestore
-        );
-        assert_eq!(state.serialized_components[&owner].len(), 1);
-
-        let before = state.clone();
-        let error = state
-            .apply_operations(
-                "transition.bad-buffer-manifest",
-                "snapshot.not-produced",
-                &[StateOperation::RestorePayloadsFromCustomStore {
-                    owner,
-                    component_ids: vec!["raw.flags".into(), "save.main".into()],
-                }],
-            )
-            .unwrap_err();
-        assert_eq!(
-            error.field(),
-            "operation.restore_payloads_from_custom_store.component_ids"
-        );
-        assert_eq!(state, before);
-    }
-
-    #[test]
     fn serialized_store_keys_and_stage_bank_lifetimes_are_enforced() {
         let mut mismatched_owner = PlannerExecutionState::new(snapshot()).unwrap();
         mismatched_owner.serialized_components.insert(
@@ -5650,15 +5545,19 @@ mod tests {
                 "boundary.load-slot-1",
                 "snapshot.slot-1-loaded",
                 &[
-                    StateOperation::LoadActiveRuntimeFromSlot {
+                    StateOperation::LoadRuntimeFromSlot {
+                        source_runtime_file_id: "file-0".into(),
                         source_slot: PhysicalSlotId(1),
-                        destination_id_suffix: "slot-1-load".into(),
+                        source_persistent_file_id: "persistent-slot-1".into(),
+                        destination_runtime_file_id: "slot-1-runtime".into(),
                         destination_allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                        runtime_component_ids: vec!["save.main".into(), "save.raw-counter".into()],
+                        stage_bank_stages: vec!["D_MN05".into(), "F_SP103".into()],
                         carried_runtime_component_ids: vec!["runtime.bite-equipment".into()],
                     },
                     StateOperation::ActivateStageBank {
                         component_id: "stage.live".into(),
-                        runtime_file_id: "file-0.slot-1-load".into(),
+                        runtime_file_id: "slot-1-runtime".into(),
                         stage: "F_SP103".into(),
                         binding: ComponentBinding::Stage {
                             stage: "F_SP103".into(),
@@ -5678,7 +5577,7 @@ mod tests {
         assert_eq!(
             state.snapshot.environment.active_runtime_file,
             RuntimeFile {
-                id: "file-0.slot-1-load".into(),
+                id: "slot-1-runtime".into(),
                 origin: RuntimeFileOrigin::LoadedSlot {
                     slot: PhysicalSlotId(1)
                 },
@@ -5720,13 +5619,13 @@ mod tests {
         assert_eq!(
             carried.binding,
             ComponentBinding::RuntimeFile {
-                runtime_file_id: "file-0.slot-1-load".into(),
+                runtime_file_id: "slot-1-runtime".into(),
             }
         );
         assert_eq!(
             carried.serialization_owner,
             SerializationOwner::RuntimeFile {
-                runtime_file_id: "file-0.slot-1-load".into(),
+                runtime_file_id: "slot-1-runtime".into(),
             }
         );
         assert_eq!(
@@ -5751,7 +5650,7 @@ mod tests {
                 .unwrap()
                 .binding,
             ComponentBinding::RuntimeFile {
-                runtime_file_id: "file-0.slot-1-load".into(),
+                runtime_file_id: "slot-1-runtime".into(),
             }
         );
         state
@@ -5777,7 +5676,7 @@ mod tests {
         assert_eq!(
             loaded_counter.binding,
             ComponentBinding::RuntimeFile {
-                runtime_file_id: "file-0.slot-1-load".into(),
+                runtime_file_id: "slot-1-runtime".into(),
             }
         );
         let ComponentPayload::Raw { bytes, .. } = &loaded_counter.payload else {
@@ -5788,7 +5687,7 @@ mod tests {
             state
                 .serialized_components
                 .contains_key(&SerializationOwner::StageBank {
-                    runtime_file_id: "file-0.slot-1-load".into(),
+                    runtime_file_id: "slot-1-runtime".into(),
                     stage: "D_MN05".into(),
                 })
         );

@@ -2398,6 +2398,9 @@ Deliverable: route confidence is mechanically explainable.
 - [ ] Model void/title-state handling and save projection to a chosen slot.
   - [x] Model the chosen-slot projection/load mechanics independently of the
         still-unmodeled void/title-state preconditions and normalization rules.
+  - [x] Enumerate the source-backed void, lethal, death-continue, and title-reset
+        branches and the backing each consumes. Exact runtime programs remain
+        open until restart-parameter decoding and binary/trace evidence land.
 - [ ] Model BiTE as a selected component splice into an existing file.
   - [x] Implement the generic selected runtime-component splice into a freshly
         loaded existing file, with destination ownership and mixed provenance.

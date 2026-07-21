@@ -143,16 +143,14 @@ pub enum StateOperation {
         destination_component_id: String,
     },
     /// Replaces one explicit process/session-owned backing store with an exact
-    /// authored component manifest. Physical-slot and runtime-file stores are
-    /// deliberately excluded; their lifetimes use dedicated operations.
+    /// authored component manifest. Physical-slot and runtime-file stores use
+    /// their dedicated lifetime operations instead.
     ReplaceCustomStore {
         owner: SerializationOwner,
         components: Vec<StateComponent>,
     },
-    /// Copies the complete payload manifest from one custom backing store into
-    /// same-ID live components while retaining each destination's binding,
-    /// lifetime, and serialization owner. The source manifest must match
-    /// `component_ids` exactly.
+    /// Copies an exact custom-store payload manifest into same-ID live
+    /// components while retaining the live components' ownership and binding.
     RestorePayloadsFromCustomStore {
         owner: SerializationOwner,
         component_ids: Vec<String>,

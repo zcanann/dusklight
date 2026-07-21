@@ -154,7 +154,8 @@ branching subset below:
   ends the previous runtime lifetime atomically;
 - omitted runtime metadata dies at that lifetime cut;
 - no-card initialization is represented as a session-buffer-to-live copy, not a
-  physical-slot load;
+  physical-slot load, and all three initialized buffer entries remain explicit,
+  independently inspectable custom stores after entry 0 is copied;
 - `mNewFile`, `mNoFile`, and `mDataNum` follow their actual independent writers;
   and
 - a generic active-runtime load derives both its fresh lifetime ID and the exact

@@ -866,6 +866,12 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         StateOperation::Initialize { component } => vec![StateDependency::Component {
             component_id: component.id.clone(),
         }],
+        StateOperation::ReplaceCustomStore { .. } => vec![StateDependency::AnyState],
+        StateOperation::RestorePayloadsFromCustomStore { component_ids, .. } => component_ids
+            .iter()
+            .cloned()
+            .map(|component_id| StateDependency::Component { component_id })
+            .collect(),
         StateOperation::Copy {
             destination_component_id,
             ..
@@ -880,11 +886,6 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         } => vec![StateDependency::Component {
             component_id: destination_component_id.clone(),
         }],
-        StateOperation::RestorePayloadsFromCustomStore { component_ids, .. } => component_ids
-            .iter()
-            .cloned()
-            .map(|component_id| StateDependency::Component { component_id })
-            .collect(),
         StateOperation::CommitLoadStageBank { component_id, .. } => vec![
             StateDependency::Component {
                 component_id: component_id.clone(),
@@ -942,7 +943,6 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
         }],
         StateOperation::Preserve { .. }
         | StateOperation::Serialize { .. }
-        | StateOperation::ReplaceCustomStore { .. }
         | StateOperation::Bind { .. }
         | StateOperation::Rebind { .. }
         | StateOperation::SetActiveRuntimeFile { .. }
