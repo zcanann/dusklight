@@ -21,21 +21,31 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V2: &str =
-    "dusklight-multitask-set-encoder-report/v2";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V3: &str =
+    "dusklight-multitask-set-encoder-report/v3";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
 const MAX_HIDDEN_WIDTH: usize = 256;
 const MAX_EPOCHS: usize = 2_048;
 const MAX_PARAMETERS: usize = 16_000_000;
+const ACTION_CONTEXT_WIDTH: usize = 24;
 type TargetNormalization = (Vec<f64>, Vec<f64>, Vec<usize>);
 
 #[derive(Clone, Debug)]
 pub struct MultiTaskSetSample {
     pub input: TypedSetSample,
+    pub post_input: TypedSetSample,
+    pub action_context: Vec<f32>,
     pub targets: Vec<f32>,
     pub target_present: Vec<bool>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuxiliaryHeadConditioning {
+    PreStateAndAction,
+    PreAndPostState,
 }
 
 #[derive(Clone, Debug)]
@@ -249,6 +259,10 @@ impl NativeMultiTaskActorCorpus {
             .map(|episode| (episode.id.as_str(), episode))
             .collect::<BTreeMap<_, _>>();
         let target_names = native_target_names();
+        debug_assert_eq!(
+            target_conditioning_for_names(&target_names),
+            native_target_conditioning()
+        );
         let mut training = Vec::new();
         let mut validation = Vec::new();
         let mut test = Vec::new();
@@ -262,14 +276,17 @@ impl NativeMultiTaskActorCorpus {
                 .ok_or_else(|| {
                     TrainableSetError::new("native multitask step is absent from episode")
                 })?;
-            if hex_128(step.pre_input.state_identity) != example.pre_input_state_xxh3_128 {
+            if hex_128(step.pre_input.state_identity) != example.pre_input_state_xxh3_128
+                || hex_128(step.post_simulation.state_identity)
+                    != example.post_simulation_state_xxh3_128
+            {
                 return Err(TrainableSetError::new(
-                    "native multitask pre-input state identity is detached",
+                    "native multitask pre/post state identity is detached",
                 ));
             }
-            if step.pre_input.actors_truncated {
+            if step.pre_input.actors_truncated || step.post_simulation.actors_truncated {
                 return Err(TrainableSetError::new(
-                    "native multitask actor observations must be complete",
+                    "native multitask pre/post actor observations must be complete",
                 ));
             }
             let (mut base, mut base_present) = broad_base(&step.pre_input);
@@ -288,6 +305,34 @@ impl NativeMultiTaskActorCorpus {
             for node in &mut nodes {
                 retain_node_feature_families(node, &feature_spec);
             }
+            let (mut post_base, mut post_base_present) = broad_base(&step.post_simulation);
+            suppress_base_family(
+                &mut post_base,
+                &mut post_base_present,
+                NativeEncoderChannelFamily::CorePreviousInput,
+            );
+            retain_feature_families(
+                &mut post_base,
+                &mut post_base_present,
+                &native_base_feature_families(),
+                &feature_spec,
+            );
+            let mut post_nodes =
+                if feature_spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
+                    native_actor_nodes(&step.post_simulation)
+                } else {
+                    Vec::new()
+                };
+            for node in &mut post_nodes {
+                retain_node_feature_families(node, &feature_spec);
+            }
+            let post_sample_sha256 = canonical_digest(
+                b"dusklight.native-multitask-post-input/v1\0",
+                &(
+                    example.example_sha256,
+                    &example.post_simulation_state_xxh3_128,
+                ),
+            )?;
             let sample = MultiTaskSetSample {
                 input: TypedSetSample {
                     sample_sha256: example.example_sha256,
@@ -297,6 +342,15 @@ impl NativeMultiTaskActorCorpus {
                     nodes,
                     target: 0.0,
                 },
+                post_input: TypedSetSample {
+                    sample_sha256: post_sample_sha256,
+                    actor_feature_schema_sha256,
+                    base: post_base,
+                    base_present: post_base_present,
+                    nodes: post_nodes,
+                    target: 0.0,
+                },
+                action_context: native_action_context(example),
                 targets,
                 target_present,
             };
@@ -327,24 +381,45 @@ impl NativeMultiTaskActorCorpus {
 
 impl MultiTaskSetSample {
     #[allow(clippy::too_many_arguments)]
-    pub fn from_native_actor_observation(
+    pub fn from_native_actor_transition(
         view: &NativeActorFeatureView,
-        observation_index: usize,
-        sample_sha256: Digest,
-        base: Vec<f32>,
-        base_present: Vec<bool>,
+        pre_observation_index: usize,
+        post_observation_index: usize,
+        pre_sample_sha256: Digest,
+        post_sample_sha256: Digest,
+        pre_base: Vec<f32>,
+        pre_base_present: Vec<bool>,
+        post_base: Vec<f32>,
+        post_base_present: Vec<bool>,
+        action_context: Vec<f32>,
         targets: Vec<f32>,
         target_present: Vec<bool>,
     ) -> Result<Self, TrainableSetError> {
+        if action_context.len() != ACTION_CONTEXT_WIDTH
+            || action_context.iter().any(|value| !value.is_finite())
+        {
+            return Err(TrainableSetError::new(
+                "native actor transition action context is invalid",
+            ));
+        }
         Ok(Self {
             input: TypedSetSample::from_native_actor_observation(
                 view,
-                observation_index,
-                sample_sha256,
-                base,
-                base_present,
+                pre_observation_index,
+                pre_sample_sha256,
+                pre_base,
+                pre_base_present,
                 0.0,
             )?,
+            post_input: TypedSetSample::from_native_actor_observation(
+                view,
+                post_observation_index,
+                post_sample_sha256,
+                post_base,
+                post_base_present,
+                0.0,
+            )?,
+            action_context,
             targets,
             target_present,
         })
@@ -470,6 +545,7 @@ pub struct MultiTaskSetEncoderReport {
     pub held_out_dataset_sha256: Digest,
     pub config: TrainableSetConfig,
     pub target_names: Vec<String>,
+    pub target_conditioning: Vec<AuxiliaryHeadConditioning>,
     pub target_support_training: Vec<usize>,
     pub target_support_held_out: Vec<usize>,
     pub maximum_training_nodes: usize,
@@ -494,6 +570,7 @@ pub struct CompleteSetMultiTaskEncoder {
     layout: FeatureLayout,
     config: TrainableSetConfig,
     target_names: Vec<String>,
+    target_conditioning: Vec<AuxiliaryHeadConditioning>,
     target_mean: Vec<f64>,
     target_inverse_stddev: Vec<f64>,
     node_weights: Vec<f64>,
@@ -505,13 +582,26 @@ pub struct CompleteSetMultiTaskEncoder {
     optimizer_steps: u64,
 }
 
-struct MultiTaskForward {
+struct StateForward {
     node_inputs: Vec<Vec<f64>>,
     node_hidden: Vec<Vec<f64>>,
     max_indices: Vec<Option<usize>>,
     state_input: Vec<f64>,
     state_hidden: Vec<f64>,
+}
+
+struct ConditionedForward {
+    pre: StateForward,
+    post: StateForward,
+    head_inputs: Vec<Vec<f64>>,
     predictions: Vec<f64>,
+}
+
+struct EncoderGradients {
+    node_weights: Vec<f64>,
+    node_bias: Vec<f64>,
+    state_weights: Vec<f64>,
+    state_bias: Vec<f64>,
 }
 
 impl CompleteSetMultiTaskEncoder {
@@ -534,7 +624,13 @@ impl CompleteSetMultiTaskEncoder {
             held_out,
             config,
         )?;
-        let layout = FeatureLayout::fit(training.iter().map(|sample| &sample.input), dimensions)?;
+        let layout = FeatureLayout::fit(
+            training
+                .iter()
+                .flat_map(|sample| [&sample.input, &sample.post_input]),
+            dimensions,
+        )?;
+        let target_conditioning = target_conditioning_for_names(&target_names);
         let (target_mean, target_inverse_stddev, target_support_training) =
             target_normalization(training, target_names.len())?;
         let target_support_held_out = target_support(held_out, target_names.len());
@@ -548,6 +644,7 @@ impl CompleteSetMultiTaskEncoder {
             layout,
             config,
             target_names.clone(),
+            target_conditioning.clone(),
             target_mean,
             target_inverse_stddev,
         )?;
@@ -575,22 +672,23 @@ impl CompleteSetMultiTaskEncoder {
         };
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V2,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V3,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
             config,
             target_names,
+            target_conditioning,
             target_support_training,
             target_support_held_out,
             maximum_training_nodes: training
                 .iter()
-                .map(|sample| sample.input.nodes.len())
+                .flat_map(|sample| [sample.input.nodes.len(), sample.post_input.nodes.len()])
                 .max()
                 .unwrap_or(0),
             maximum_held_out_nodes: held_out
                 .iter()
-                .map(|sample| sample.input.nodes.len())
+                .flat_map(|sample| [sample.input.nodes.len(), sample.post_input.nodes.len()])
                 .max()
                 .unwrap_or(0),
             parameter_count: model.parameter_count(),
@@ -615,16 +713,23 @@ impl CompleteSetMultiTaskEncoder {
         layout: FeatureLayout,
         config: TrainableSetConfig,
         target_names: Vec<String>,
+        target_conditioning: Vec<AuxiliaryHeadConditioning>,
         target_mean: Vec<f64>,
         target_inverse_stddev: Vec<f64>,
     ) -> Result<Self, TrainableSetError> {
         let state_input_width = layout.base_input_width + 2 + config.node_hidden_width * 2;
         let target_width = target_names.len();
+        if target_conditioning.len() != target_width {
+            return Err(TrainableSetError::new(
+                "multitask target conditioning width is invalid",
+            ));
+        }
+        let head_input_width = config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
         let parameter_count = config
             .node_hidden_width
             .checked_mul(layout.node_input_width + 1)
             .and_then(|value| value.checked_add(config.head_hidden_width * (state_input_width + 1)))
-            .and_then(|value| value.checked_add(target_width * (config.head_hidden_width + 1)))
+            .and_then(|value| value.checked_add(target_width * (head_input_width + 1)))
             .ok_or_else(|| TrainableSetError::new("multitask parameter count overflowed"))?;
         if parameter_count > MAX_PARAMETERS {
             return Err(TrainableSetError::new(
@@ -646,11 +751,12 @@ impl CompleteSetMultiTaskEncoder {
                 &mut rng,
             ),
             state_bias: vec![0.0; config.head_hidden_width],
-            output_weights: initialized_weights(target_width, config.head_hidden_width, &mut rng),
+            output_weights: initialized_weights(target_width, head_input_width, &mut rng),
             output_bias: vec![0.0; target_width],
             layout,
             config,
             target_names,
+            target_conditioning,
             target_mean,
             target_inverse_stddev,
             optimizer_steps: 0,
@@ -660,17 +766,17 @@ impl CompleteSetMultiTaskEncoder {
     pub fn encode(&self, sample: &TypedSetSample) -> Result<Vec<f32>, TrainableSetError> {
         self.validate_input(sample)?;
         Ok(self
-            .forward(sample)
+            .state_forward(sample)
             .state_hidden
             .into_iter()
             .map(|value| value as f32)
             .collect())
     }
 
-    pub fn predict(&self, sample: &TypedSetSample) -> Result<Vec<f32>, TrainableSetError> {
-        self.validate_input(sample)?;
+    pub fn predict(&self, sample: &MultiTaskSetSample) -> Result<Vec<f32>, TrainableSetError> {
+        self.validate_transition(sample)?;
         Ok(self
-            .forward(sample)
+            .conditioned_forward(sample)
             .predictions
             .iter()
             .enumerate()
@@ -681,7 +787,7 @@ impl CompleteSetMultiTaskEncoder {
     }
 
     pub fn model_sha256(&self) -> Result<Digest, TrainableSetError> {
-        canonical_digest(b"dusklight.complete-set-multitask-encoder/v1\0", self)
+        canonical_digest(b"dusklight.complete-set-multitask-encoder/v2\0", self)
     }
 
     pub fn parameter_count(&self) -> usize {
@@ -708,7 +814,7 @@ impl CompleteSetMultiTaskEncoder {
         let mut baseline_error = vec![0.0; self.target_names.len()];
         let mut support = vec![0_usize; self.target_names.len()];
         for sample in samples {
-            let predictions = self.predict(&sample.input)?;
+            let predictions = self.predict(sample)?;
             for target in 0..self.target_names.len() {
                 if sample.target_present[target] {
                     let prediction = f64::from(predictions[target]);
@@ -765,7 +871,7 @@ impl CompleteSetMultiTaskEncoder {
         let mut model = vec![BinaryEventAccumulator::default(); targets.len()];
         let mut baseline = vec![BinaryEventAccumulator::default(); targets.len()];
         for sample in samples {
-            let predictions = self.predict(&sample.input)?;
+            let predictions = self.predict(sample)?;
             for (metric, (target, _)) in targets.iter().enumerate() {
                 if sample.target_present[*target] {
                     let expected = sample.targets[*target] > 0.5;
@@ -797,7 +903,20 @@ impl CompleteSetMultiTaskEncoder {
         validate_sample_dimensions(sample, self.layout.dimensions())
     }
 
-    fn forward(&self, sample: &TypedSetSample) -> MultiTaskForward {
+    fn validate_transition(&self, sample: &MultiTaskSetSample) -> Result<(), TrainableSetError> {
+        self.validate_input(&sample.input)?;
+        self.validate_input(&sample.post_input)?;
+        if sample.action_context.len() != ACTION_CONTEXT_WIDTH
+            || sample.action_context.iter().any(|value| !value.is_finite())
+        {
+            return Err(TrainableSetError::new(
+                "multitask action context is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    fn state_forward(&self, sample: &TypedSetSample) -> StateForward {
         let nodes = ordered_nodes(&sample.nodes);
         let node_inputs = nodes
             .iter()
@@ -843,30 +962,63 @@ impl CompleteSetMultiTaskEncoder {
             &self.state_bias,
             self.config.head_hidden_width,
         );
-        let predictions = (0..self.target_names.len())
-            .map(|target| {
-                dot(
-                    &state_hidden,
-                    &self.output_weights[target * self.config.head_hidden_width
-                        ..(target + 1) * self.config.head_hidden_width],
-                ) + self.output_bias[target]
-            })
-            .collect();
-        MultiTaskForward {
+        StateForward {
             node_inputs,
             node_hidden,
             max_indices,
             state_input,
             state_hidden,
+        }
+    }
+
+    fn conditioned_forward(&self, sample: &MultiTaskSetSample) -> ConditionedForward {
+        let pre = self.state_forward(&sample.input);
+        let post = self.state_forward(&sample.post_input);
+        let head_input_width = self.config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
+        let head_inputs = self
+            .target_conditioning
+            .iter()
+            .map(|conditioning| {
+                let mut input = Vec::with_capacity(head_input_width);
+                input.extend(&pre.state_hidden);
+                match conditioning {
+                    AuxiliaryHeadConditioning::PreStateAndAction => {
+                        input.extend(std::iter::repeat_n(0.0, self.config.head_hidden_width));
+                        input.extend(sample.action_context.iter().map(|value| f64::from(*value)));
+                    }
+                    AuxiliaryHeadConditioning::PreAndPostState => {
+                        input.extend(&post.state_hidden);
+                        input.extend(std::iter::repeat_n(0.0, ACTION_CONTEXT_WIDTH));
+                    }
+                }
+                input
+            })
+            .collect::<Vec<_>>();
+        let predictions = head_inputs
+            .iter()
+            .enumerate()
+            .map(|(target, input)| {
+                dot(
+                    input,
+                    &self.output_weights
+                        [target * head_input_width..(target + 1) * head_input_width],
+                ) + self.output_bias[target]
+            })
+            .collect();
+        ConditionedForward {
+            pre,
+            post,
+            head_inputs,
             predictions,
         }
     }
 
     fn train_one(&mut self, sample: &MultiTaskSetSample) -> Result<(), TrainableSetError> {
-        self.validate_input(&sample.input)?;
-        let forward = self.forward(&sample.input);
+        self.validate_transition(sample)?;
+        let forward = self.conditioned_forward(sample);
         let output_before = self.output_weights.clone();
         let state_before = self.state_weights.clone();
+        let head_input_width = self.config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
         let present_count = sample
             .target_present
             .iter()
@@ -883,63 +1035,58 @@ impl CompleteSetMultiTaskEncoder {
                 2.0 * (forward.predictions[target] - expected) / present_count as f64,
                 self.config.gradient_clip,
             );
-            for hidden in 0..self.config.head_hidden_width {
-                let parameter = target * self.config.head_hidden_width + hidden;
-                let gradient = *d_output * forward.state_hidden[hidden]
+            for input in 0..head_input_width {
+                let parameter = target * head_input_width + input;
+                let gradient = *d_output * forward.head_inputs[target][input]
                     + self.config.l2_penalty * self.output_weights[parameter];
                 self.output_weights[parameter] -=
                     self.config.learning_rate * clip(gradient, self.config.gradient_clip);
             }
             self.output_bias[target] -= self.config.learning_rate * *d_output;
         }
-        let mut d_state_pre = vec![0.0; self.config.head_hidden_width];
+        let mut d_pre_hidden = vec![0.0; self.config.head_hidden_width];
+        let mut d_post_hidden = vec![0.0; self.config.head_hidden_width];
         for hidden in 0..self.config.head_hidden_width {
-            let gradient = (0..self.target_names.len())
-                .map(|target| {
-                    d_outputs[target]
-                        * output_before[target * self.config.head_hidden_width + hidden]
-                })
-                .sum::<f64>();
-            d_state_pre[hidden] = gradient * (1.0 - forward.state_hidden[hidden].powi(2));
-        }
-        let mut d_state_input = vec![0.0; forward.state_input.len()];
-        for (output, delta) in d_state_pre.iter().copied().enumerate() {
-            for (input, d_input) in d_state_input.iter_mut().enumerate() {
-                let parameter = output * forward.state_input.len() + input;
-                *d_input += state_before[parameter] * delta;
-                let gradient = delta * forward.state_input[input]
-                    + self.config.l2_penalty * self.state_weights[parameter];
-                self.state_weights[parameter] -=
-                    self.config.learning_rate * clip(gradient, self.config.gradient_clip);
-            }
-            self.state_bias[output] -=
-                self.config.learning_rate * clip(delta, self.config.gradient_clip);
-        }
-        let pool_offset = self.layout.base_input_width + 2;
-        let d_mean = &d_state_input[pool_offset..pool_offset + self.config.node_hidden_width];
-        let d_max = &d_state_input[pool_offset + self.config.node_hidden_width..];
-        let node_count = forward.node_hidden.len();
-        let mut node_weight_gradient = vec![0.0; self.node_weights.len()];
-        let mut node_bias_gradient = vec![0.0; self.node_bias.len()];
-        for node_index in 0..node_count {
-            for hidden in 0..self.config.node_hidden_width {
-                let mut gradient = d_mean[hidden] / node_count as f64;
-                if forward.max_indices[hidden] == Some(node_index) {
-                    gradient += d_max[hidden];
+            for target in 0..self.target_names.len() {
+                d_pre_hidden[hidden] +=
+                    d_outputs[target] * output_before[target * head_input_width + hidden];
+                if self.target_conditioning[target] == AuxiliaryHeadConditioning::PreAndPostState {
+                    d_post_hidden[hidden] += d_outputs[target]
+                        * output_before
+                            [target * head_input_width + self.config.head_hidden_width + hidden];
                 }
-                let delta = gradient * (1.0 - forward.node_hidden[node_index][hidden].powi(2));
-                for input in 0..self.layout.node_input_width {
-                    node_weight_gradient[hidden * self.layout.node_input_width + input] +=
-                        delta * forward.node_inputs[node_index][input];
-                }
-                node_bias_gradient[hidden] += delta;
             }
         }
-        for (weight, gradient) in self.node_weights.iter_mut().zip(node_weight_gradient) {
+        let mut gradients = EncoderGradients {
+            node_weights: vec![0.0; self.node_weights.len()],
+            node_bias: vec![0.0; self.node_bias.len()],
+            state_weights: vec![0.0; self.state_weights.len()],
+            state_bias: vec![0.0; self.state_bias.len()],
+        };
+        self.accumulate_encoder_gradients(
+            &forward.pre,
+            &d_pre_hidden,
+            &state_before,
+            &mut gradients,
+        );
+        self.accumulate_encoder_gradients(
+            &forward.post,
+            &d_post_hidden,
+            &state_before,
+            &mut gradients,
+        );
+        for (weight, gradient) in self.state_weights.iter_mut().zip(gradients.state_weights) {
             let gradient = gradient + self.config.l2_penalty * *weight;
             *weight -= self.config.learning_rate * clip(gradient, self.config.gradient_clip);
         }
-        for (bias, gradient) in self.node_bias.iter_mut().zip(node_bias_gradient) {
+        for (bias, gradient) in self.state_bias.iter_mut().zip(gradients.state_bias) {
+            *bias -= self.config.learning_rate * clip(gradient, self.config.gradient_clip);
+        }
+        for (weight, gradient) in self.node_weights.iter_mut().zip(gradients.node_weights) {
+            let gradient = gradient + self.config.l2_penalty * *weight;
+            *weight -= self.config.learning_rate * clip(gradient, self.config.gradient_clip);
+        }
+        for (bias, gradient) in self.node_bias.iter_mut().zip(gradients.node_bias) {
             *bias -= self.config.learning_rate * clip(gradient, self.config.gradient_clip);
         }
         self.optimizer_steps += 1;
@@ -960,12 +1107,53 @@ impl CompleteSetMultiTaskEncoder {
         Ok(())
     }
 
+    fn accumulate_encoder_gradients(
+        &self,
+        forward: &StateForward,
+        d_hidden: &[f64],
+        state_before: &[f64],
+        gradients: &mut EncoderGradients,
+    ) {
+        let d_state_pre = d_hidden
+            .iter()
+            .zip(&forward.state_hidden)
+            .map(|(gradient, hidden)| gradient * (1.0 - hidden.powi(2)))
+            .collect::<Vec<_>>();
+        let mut d_state_input = vec![0.0; forward.state_input.len()];
+        for (output, delta) in d_state_pre.iter().copied().enumerate() {
+            for (input, d_input) in d_state_input.iter_mut().enumerate() {
+                let parameter = output * forward.state_input.len() + input;
+                *d_input += state_before[parameter] * delta;
+                gradients.state_weights[parameter] += delta * forward.state_input[input];
+            }
+            gradients.state_bias[output] += delta;
+        }
+        let pool_offset = self.layout.base_input_width + 2;
+        let d_mean = &d_state_input[pool_offset..pool_offset + self.config.node_hidden_width];
+        let d_max = &d_state_input[pool_offset + self.config.node_hidden_width..];
+        let node_count = forward.node_hidden.len();
+        for node_index in 0..node_count {
+            for hidden in 0..self.config.node_hidden_width {
+                let mut gradient = d_mean[hidden] / node_count as f64;
+                if forward.max_indices[hidden] == Some(node_index) {
+                    gradient += d_max[hidden];
+                }
+                let delta = gradient * (1.0 - forward.node_hidden[node_index][hidden].powi(2));
+                for input in 0..self.layout.node_input_width {
+                    gradients.node_weights[hidden * self.layout.node_input_width + input] +=
+                        delta * forward.node_inputs[node_index][input];
+                }
+                gradients.node_bias[hidden] += delta;
+            }
+        }
+    }
+
     fn normalized_mse(&self, samples: &[MultiTaskSetSample]) -> Result<f64, TrainableSetError> {
         let mut squared_error = 0.0;
         let mut count = 0_usize;
         for sample in samples {
-            self.validate_input(&sample.input)?;
-            let prediction = self.forward(&sample.input).predictions;
+            self.validate_transition(sample)?;
+            let prediction = self.conditioned_forward(sample).predictions;
             for (target, predicted) in prediction.iter().enumerate() {
                 if sample.target_present[target] {
                     let expected = (f64::from(sample.targets[target]) - self.target_mean[target])
@@ -1012,7 +1200,7 @@ impl CompleteSetMultiTaskEncoder {
             let mut baseline_error = vec![0.0; self.target_names.len()];
             let mut support = vec![0_usize; self.target_names.len()];
             for sample in samples {
-                let predictions = self.predict(&sample.input)?;
+                let predictions = self.predict(sample)?;
                 for target in 0..self.target_names.len() {
                     if sample.target_present[target] {
                         let expected = f64::from(sample.targets[target]);
@@ -1495,6 +1683,25 @@ fn retain_feature_families<T>(
         .zip(retained)
         .filter_map(|(value, retained)| retained.then_some(value))
         .collect();
+}
+
+fn suppress_base_family(
+    values: &mut [f32],
+    present: &mut [bool],
+    suppressed: NativeEncoderChannelFamily,
+) {
+    debug_assert_eq!(values.len(), present.len());
+    debug_assert_eq!(values.len(), native_base_feature_families().len());
+    for ((value, available), family) in values
+        .iter_mut()
+        .zip(present)
+        .zip(native_base_feature_families())
+    {
+        if family == suppressed {
+            *value = 0.0;
+            *available = false;
+        }
+    }
 }
 
 fn retain_node_feature_families(node: &mut TypedSetNode, spec: &NativeEncoderFeatureSpec) {
@@ -1987,13 +2194,56 @@ fn native_target_names() -> Vec<String> {
         "procedure_changed",
         "mode_flags_changed",
         "actor_disappearance_count",
-        "consumed_stick_x",
-        "consumed_stick_y",
-        "consumed_button_0x0100",
+        "inverse_stick_x",
+        "inverse_stick_y",
+        "inverse_button_0x0100",
     ]
     .into_iter()
     .map(str::to_owned)
     .collect()
+}
+
+fn native_target_conditioning() -> Vec<AuxiliaryHeadConditioning> {
+    let mut conditioning = vec![AuxiliaryHeadConditioning::PreStateAndAction; 11];
+    conditioning.extend([AuxiliaryHeadConditioning::PreAndPostState; 3]);
+    conditioning
+}
+
+fn target_conditioning_for_names(names: &[String]) -> Vec<AuxiliaryHeadConditioning> {
+    names
+        .iter()
+        .map(|name| {
+            if name.starts_with("inverse_") {
+                AuxiliaryHeadConditioning::PreAndPostState
+            } else {
+                AuxiliaryHeadConditioning::PreStateAndAction
+            }
+        })
+        .collect()
+}
+
+fn native_action_context(example: &NativeAuxiliaryExample) -> Vec<f32> {
+    let action = example.targets.inverse_action;
+    let mut context = [
+        action.stick_x,
+        action.stick_y,
+        action.substick_x,
+        action.substick_y,
+    ]
+    .map(|value| f32::from(value) / 128.0)
+    .to_vec();
+    context.extend(
+        [
+            action.trigger_left,
+            action.trigger_right,
+            action.analog_a,
+            action.analog_b,
+        ]
+        .map(|value| f32::from(value) / 255.0),
+    );
+    context.extend((0..16).map(|bit| f32::from(action.buttons & (1_u16 << bit) != 0)));
+    debug_assert_eq!(context.len(), ACTION_CONTEXT_WIDTH);
+    context
 }
 
 fn native_targets(example: &NativeAuxiliaryExample) -> (Vec<f32>, Vec<bool>) {
@@ -2171,12 +2421,14 @@ fn broad_base(observation: &NativeLearningObservation) -> (Vec<f32>, Vec<bool>) 
 
 fn sample_manifest_digest(samples: &[MultiTaskSetSample]) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-multitask-sample-dataset/v1\0",
+        b"dusklight.native-multitask-sample-dataset/v2\0",
         &samples
             .iter()
             .map(|sample| {
                 (
                     sample.input.sample_sha256,
+                    sample.post_input.sample_sha256,
+                    &sample.action_context,
                     &sample.targets,
                     &sample.target_present,
                 )
@@ -2233,7 +2485,8 @@ fn validate_samples(
     let first_node = training
         .iter()
         .chain(held_out)
-        .find_map(|sample| sample.input.nodes.first());
+        .flat_map(|sample| [&sample.input, &sample.post_input])
+        .find_map(|input| input.nodes.first());
     let dimensions = Dimensions {
         categorical: first_node.map_or(0, |node| node.categorical.len()),
         continuous: first_node.map_or(0, |node| node.continuous.len()),
@@ -2244,7 +2497,13 @@ fn validate_samples(
     for sample in training.iter().chain(held_out) {
         if sample.input.sample_sha256 == Digest::ZERO
             || !identities.insert(sample.input.sample_sha256)
+            || sample.post_input.sample_sha256 == Digest::ZERO
+            || sample.post_input.sample_sha256 == sample.input.sample_sha256
+            || !identities.insert(sample.post_input.sample_sha256)
             || sample.input.actor_feature_schema_sha256 != actor_feature_schema_sha256
+            || sample.post_input.actor_feature_schema_sha256 != actor_feature_schema_sha256
+            || sample.action_context.len() != ACTION_CONTEXT_WIDTH
+            || sample.action_context.iter().any(|value| !value.is_finite())
             || sample.targets.len() != target_names.len()
             || sample.target_present.len() != target_names.len()
             || sample
@@ -2258,6 +2517,7 @@ fn validate_samples(
             ));
         }
         validate_sample_dimensions(&sample.input, dimensions)?;
+        validate_sample_dimensions(&sample.post_input, dimensions)?;
     }
     if target_support(training, target_names.len()).contains(&0) {
         return Err(TrainableSetError::new(
@@ -2327,7 +2587,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v2\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v3\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -2370,6 +2630,15 @@ mod tests {
             nodes.reverse();
         }
         let second_present = !identity.is_multiple_of(5);
+        let mut post_nodes = nodes.clone();
+        for node in &mut post_nodes {
+            node.continuous[0] += first - second;
+        }
+        let post_sample_sha256 =
+            canonical_digest(b"dusklight.synthetic-multitask-post/v1\0", &identity).unwrap();
+        let mut action_context = vec![0.0; ACTION_CONTEXT_WIDTH];
+        action_context[0] = first;
+        action_context[1] = second;
         MultiTaskSetSample {
             input: TypedSetSample {
                 sample_sha256: Digest([identity; 32]),
@@ -2379,6 +2648,15 @@ mod tests {
                 nodes,
                 target: 0.0,
             },
+            post_input: TypedSetSample {
+                sample_sha256: post_sample_sha256,
+                actor_feature_schema_sha256: Digest([7; 32]),
+                base: vec![first + second],
+                base_present: vec![true],
+                nodes: post_nodes,
+                target: 0.0,
+            },
+            action_context,
             targets: vec![
                 first + second,
                 if second_present { first - second } else { 0.0 },
@@ -2429,6 +2707,22 @@ mod tests {
         let all = NativeEncoderFeatureSpec::all();
         assert_eq!(native_base_feature_names().len(), 129);
         assert_eq!(native_base_feature_families().len(), 129);
+        let mut post_base = base.clone();
+        let mut post_present = present.clone();
+        suppress_base_family(
+            &mut post_base,
+            &mut post_present,
+            NativeEncoderChannelFamily::CorePreviousInput,
+        );
+        for (index, family) in native_base_feature_families().into_iter().enumerate() {
+            if family == NativeEncoderChannelFamily::CorePreviousInput {
+                assert_eq!(post_base[index], 0.0);
+                assert!(!post_present[index]);
+            } else {
+                assert_eq!(post_base[index], base[index]);
+                assert_eq!(post_present[index], present[index]);
+            }
+        }
         assert_ne!(native_actor_feature_schema(&all).unwrap(), Digest::ZERO);
         let reduced = NativeEncoderFeatureSpec::excluding([
             NativeEncoderChannelFamily::ActorAttention,
@@ -2509,7 +2803,7 @@ mod tests {
         };
         let control = fit_shuffled_auxiliary_control(
             Digest([7; 32]),
-            vec!["sum".into(), "difference".into()],
+            vec!["forward_sum".into(), "inverse_difference".into()],
             training,
             sample_manifest_digest(&validation).unwrap(),
             &validation,
@@ -2534,12 +2828,14 @@ mod tests {
         for sample in training.iter_mut().chain(&mut held_out) {
             sample.input.actor_feature_schema_sha256 = Digest([6; 32]);
             sample.input.nodes.clear();
+            sample.post_input.actor_feature_schema_sha256 = Digest([6; 32]);
+            sample.post_input.nodes.clear();
         }
         let (report, model) = CompleteSetMultiTaskEncoder::fit(
             Digest([6; 32]),
             Digest([8; 32]),
             Digest([9; 32]),
-            vec!["sum".into(), "difference".into()],
+            vec!["forward_sum".into(), "inverse_difference".into()],
             &training,
             &held_out,
             TrainableSetConfig {
@@ -2571,7 +2867,7 @@ mod tests {
             Digest([7; 32]),
             Digest([8; 32]),
             Digest([9; 32]),
-            vec!["sum".into(), "difference".into()],
+            vec!["forward_sum".into(), "inverse_difference".into()],
             &training,
             &held_out,
             config,
@@ -2579,13 +2875,30 @@ mod tests {
         .unwrap();
         assert_eq!(report.target_support_training, vec![96, 77]);
         assert_eq!(report.target_support_held_out, vec![32, 25]);
+        assert_eq!(
+            report.target_conditioning,
+            vec![
+                AuxiliaryHeadConditioning::PreStateAndAction,
+                AuxiliaryHeadConditioning::PreAndPostState,
+            ]
+        );
         assert!(report.relative_held_out_improvement > 0.25);
         assert_eq!(
             report.decision,
             MultiTaskEncoderDecision::SharedEncoderCandidate
         );
         assert_eq!(model.encode(&held_out[0].input).unwrap().len(), 16);
-        assert_eq!(model.predict(&held_out[0].input).unwrap().len(), 2);
+        assert_eq!(model.predict(&held_out[0]).unwrap().len(), 2);
+        let baseline = model.predict(&held_out[0]).unwrap();
+        let mut changed_post = held_out[0].clone();
+        changed_post.post_input.base[0] += 1000.0;
+        changed_post.post_input.nodes[0].continuous[0] -= 1000.0;
+        let post_prediction = model.predict(&changed_post).unwrap();
+        assert_eq!(baseline[0], post_prediction[0]);
+        let mut changed_action = held_out[0].clone();
+        changed_action.action_context.fill(0.75);
+        let action_prediction = model.predict(&changed_action).unwrap();
+        assert_eq!(baseline[1], action_prediction[1]);
         let evaluation = model.evaluate(&held_out).unwrap();
         assert_eq!(evaluation.samples, 32);
         assert!(evaluation.relative_improvement > 0.25);
@@ -2603,7 +2916,7 @@ mod tests {
                 Digest([7; 32]),
                 Digest([8; 32]),
                 Digest([9; 32]),
-                vec!["sum".into(), "difference".into()],
+                vec!["forward_sum".into(), "inverse_difference".into()],
                 &training,
                 &held_out,
                 TrainableSetConfig::default(),
@@ -2620,7 +2933,7 @@ mod tests {
                 Digest([7; 32]),
                 Digest([8; 32]),
                 Digest([9; 32]),
-                vec!["sum".into(), "difference".into()],
+                vec!["forward_sum".into(), "inverse_difference".into()],
                 &training,
                 &unsupported,
                 TrainableSetConfig::default(),

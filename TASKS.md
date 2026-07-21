@@ -1142,6 +1142,25 @@ and geometry set sizes without schema changes.
     minute three-copy path. This establishes useful generic representation
     signal and a leakage control, not goal reachability, continual refresh,
     channel-family attribution or policy promotion.
+  - [x] Correct the auxiliary conditioning contract instead of rewarding policy
+    memorization. Report/model v3 encodes authenticated pre and post complete
+    actor sets with one shared encoder: motion/contact/phase/lifecycle forward
+    heads receive pre-state plus exact consumed PAD, while inverse PAD heads
+    receive pre plus post state and cannot see that PAD. The post observation's
+    echoed `previous_input` family is masked before encoding; tests prove that
+    changing post state cannot affect forward heads and changing action cannot
+    affect inverse heads. Pre/post identities, action context, targets and masks
+    bind the split digest. On the regenerated current-schema Ordon corpus
+    (`3b6a3eea...cfc5`), a two-epoch model reached 66.48% untouched-test
+    improvement (`996adf19...3641`). At eight epochs it reached 77.71%, with
+    22/30 contact recall and two false positives; inverse stick-X/stick-Y/button
+    heads improved 91.06% / 75.79% / 83.12%, while the equal-step shuffled
+    control fell to -0.60% (`145d9a52...7ffe`; model
+    `3e63f09d...2f26`; control `1935ee7d...e848`). All 128 actor-
+    disappearance positives occur at episode step seven, but the eight-epoch
+    model still recalls 0/15 held-out positives. That remains evidence for
+    missing history or actor attention—not permission to hide the miss with
+    aggregate MSE or route-specific timing.
 - [ ] Measure learned feature selection rather than assuming that more inputs
   helped: report attention/gating stability, held-out prediction by channel,
   rare-event recall and controlled channel-family ablations. Reject a broad

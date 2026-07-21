@@ -1093,11 +1093,26 @@ the population and every actor family for a control that cannot leak set
 cardinality. The artifact binds the exact retained family list and resulting
 feature schema.
 
-Report v2 includes rare-event classification diagnostics in addition to MSE.
+Report v3 includes rare-event classification diagnostics in addition to MSE.
 Contact, procedure, mode and actor-disappearance heads expose support and
 confusion counts, precision/recall, specificity, balanced accuracy, F1 and a
 clamped Brier score for both the learned model and training-mean baseline.
 Aggregate auxiliary improvement must not conceal zero recall on rare mechanics.
+
+Auxiliary head conditioning is explicit and serialized. Forward motion,
+contact, action-phase and lifecycle heads consume the encoded pre-state plus
+the exact action that caused the transition. Inverse PAD heads consume the
+same shared encoder's pre- and post-state latents and receive no action input.
+The post observation's `previous_input` fields are masked so they cannot echo
+the answer into inverse dynamics. The standalone `encode(pre_state)` API stays
+state-only for policy use; action and post-state are training/evaluation head
+context, not live policy observation.
+
+Report v3 lists `pre_state_and_action` or `pre_and_post_state` for every target.
+Executable invariants require forward predictions to remain identical when
+only post-state changes and inverse predictions to remain identical when only
+the supplied action changes. A model that violates either separation is an
+invalid auxiliary experiment regardless of held-out loss.
 
 Transition batches can be inspected and transformed without weakening their
 schema or content identities:
