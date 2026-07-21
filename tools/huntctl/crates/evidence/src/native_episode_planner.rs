@@ -123,6 +123,32 @@ pub struct NativeAttentionCandidatesObservation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct NativeCurrentEventObservation {
+    pub event_id: i16,
+    pub event_type: i32,
+    pub room: i32,
+    pub goal: [f32; 3],
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativePendingStageObservation {
+    pub stage: String,
+    pub room: i8,
+    pub layer: i8,
+    pub point: i16,
+    pub wipe: i8,
+    pub wipe_speed: u8,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeEventTransitionObservation {
+    pub event_data_loaded: bool,
+    pub camera_play: i32,
+    pub current_event: Option<NativeCurrentEventObservation>,
+    pub pending_stage: Option<NativePendingStageObservation>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct NativeEventHandoffObservation {
     pub pre_item_no: u8,
     pub get_item_no: u8,

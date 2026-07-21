@@ -780,6 +780,72 @@ bool append_attention_candidate_state(std::vector<std::uint8_t>& output,
            appendList(attention.checkCandidates, attention.checkCount);
 }
 
+bool append_event_transition_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    const auto& transition = observation.eventTransition;
+    const bool present = transition.status == Status::Present;
+    const bool unavailable = transition.status == Status::Unavailable;
+    const bool currentPresent = transition.currentEventStatus == Status::Present;
+    const bool currentAbsent = transition.currentEventStatus == Status::Absent;
+    const bool goalPresent = transition.eventGoalStatus == Status::Present;
+    const bool goalAbsent = transition.eventGoalStatus == Status::Absent;
+    const bool nextPresent = transition.nextStageStatus == Status::Present;
+    const bool nextAbsent = transition.nextStageStatus == Status::Absent;
+    const bool currentEmpty = transition.currentEventId == -1 &&
+                              transition.currentEventType == 0 &&
+                              transition.currentEventRoom == -1;
+    const bool goalEmpty = std::ranges::all_of(
+        transition.eventGoal, [](const float value) { return value == 0.0F; });
+    const bool nextEmpty = transition.nextStage[0] == '\0' && transition.nextRoom == -1 &&
+                           transition.nextLayer == -1 && transition.nextPoint == -1 &&
+                           transition.nextWipe == 0 && transition.nextWipeSpeed == 0;
+    const bool nextMatchesCore =
+        nextPresent && observation.nextStageEnabled && observation.nextStageName != nullptr &&
+        std::strncmp(transition.nextStage.data(), observation.nextStageName,
+            transition.nextStage.size()) == 0 &&
+        transition.nextRoom == observation.nextRoom &&
+        transition.nextLayer == observation.nextLayer &&
+        transition.nextPoint == observation.nextPoint;
+    if ((!present && !unavailable) ||
+        (present && (!((currentPresent && goalPresent) || (currentAbsent && goalAbsent)) ||
+                        !((nextPresent && nextMatchesCore) ||
+                            (nextAbsent && !observation.nextStageEnabled && nextEmpty)))) ||
+        (!currentPresent && !currentEmpty) || (!goalPresent && !goalEmpty) ||
+        (goalPresent && !std::ranges::all_of(transition.eventGoal,
+                            [](const float value) { return std::isfinite(value); })) ||
+        (!present && (transition.eventDataLoaded || transition.cameraPlay != 0 ||
+                         transition.currentEventStatus != Status::NotSampled ||
+                         transition.eventGoalStatus != Status::NotSampled ||
+                         transition.nextStageStatus != Status::NotSampled || !currentEmpty ||
+                         !goalEmpty || !nextEmpty)))
+    {
+        error = "learning observation has inconsistent event-transition state";
+        return false;
+    }
+
+    append_integer(output, static_cast<std::uint8_t>(transition.status));
+    append_integer(output, static_cast<std::uint8_t>(transition.eventDataLoaded));
+    append_integer(output, static_cast<std::uint8_t>(transition.currentEventStatus));
+    append_integer(output, static_cast<std::uint8_t>(transition.eventGoalStatus));
+    append_integer(output, static_cast<std::uint8_t>(transition.nextStageStatus));
+    append_integer(output, transition.nextWipe);
+    append_integer(output, transition.nextWipeSpeed);
+    append_integer<std::uint8_t>(output, 0);
+    append_integer(output, transition.cameraPlay);
+    append_integer(output, transition.currentEventId);
+    append_integer<std::uint16_t>(output, 0);
+    append_integer(output, transition.currentEventType);
+    append_integer(output, transition.currentEventRoom);
+    if (!append_float_array(output, transition.eventGoal, error))
+        return false;
+    output.insert(output.end(), transition.nextStage.begin(), transition.nextStage.end());
+    append_integer(output, transition.nextRoom);
+    append_integer(output, transition.nextLayer);
+    append_integer(output, transition.nextPoint);
+    return true;
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -1386,7 +1452,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         return false;
     if (!append_attention_candidate_state(output, observation, error))
         return false;
-    return append_process_lifecycle_records(output, observation, error);
+    if (!append_process_lifecycle_records(output, observation, error))
+        return false;
+    return append_event_transition_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

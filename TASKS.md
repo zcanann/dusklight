@@ -367,9 +367,9 @@ relationship, coordinate corridor, or success sequence.
     preserves list order, offsets, candidate type, weight, distance and angle,
     plus the player attention flags/status/block timer; every present candidate
     must join the complete actor population by stable runtime generation.
-    Corpus-inspection v10 and generic temporal coverage distinguish channel
+    Corpus-inspection v12 and generic temporal coverage distinguish channel
     absence from present-but-empty lists and report value changes. The shared
-    complete-set learner adapter v3 now joins each list independently onto
+    complete-set learner adapter v4 now joins each list independently onto
     every actor node with explicit membership and value masks, so legacy or
     unavailable data cannot masquerade as a negative candidate. The generated
     cross-language fixture is
@@ -795,6 +795,24 @@ human-authored successful setup.
       This supplies evidence from whatever requests ordinary gameplay creates;
       it contains no selected actor, desired overlap, input timing, outcome,
       route or reward. Door/warp/loading queues and clock domains remain open.
+    - [x] Retain the generic event-manager and pending scene-handoff state at
+      the same pre-input/post-simulation boundary. Learning observation v22
+      captures event-data readiness, camera-play state, current composite event
+      ID/type/room, the retained event goal, and pending stage/room/layer/point
+      plus wipe mode/speed. The observer uses an automation-only friend aperture
+      to copy private event-manager values without invoking gameplay methods;
+      no pointer or address crosses the boundary and no event or load is
+      advanced. The native writer cross-checks pending destination state
+      against the existing core observation, rejects nonfinite goals and
+      status/payload disagreement, while the Rust decoder preserves v2-v21
+      missingness. Corpus-inspection v13 and temporal coverage report the
+      channel, and complete-set learner adapter v4 exposes it as the separately
+      ablatable `core_event_transition` family with independent masks for an
+      absent current event or destination. Cross-language v22 fixture
+      `ad778ba4...1259242c` and fail-closed tests pass. This is generic state from
+      whatever transition ordinary gameplay reaches; it contains no named
+      setup, selected event, desired destination, input sequence, route or
+      reward. Door/warp/resource queues and distinct clock domains remain open.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
@@ -1231,9 +1249,13 @@ and geometry set sizes without schema changes.
     (`d33d98d4...53482`; model `83b03421...724bc`; no-temporal report
     `a8813ade...4415`). Temporal input also raised contact recall from 12/30 to
     22/30 with one false positive in each treatment, but both still recalled
-    0/15 actor disappearances. Temporal state therefore carries real held-out
-    signal, but does not rescue the lifecycle head; actor selection/gating or a
-    stronger temporal set encoder remains an open, falsifiable next step.
+    0/15 actor disappearances. Separating the two families under the same budget
+    showed independent signal rather than one passenger family: core-only and
+    actor-only temporal views reached 81.71% and 81.64% test improvement and
+    each recalled 21/30 contacts (`f6fef6d1...ba175`,
+    `d856f2f9...30c2c`). Temporal state therefore carries real held-out signal,
+    but does not rescue the lifecycle head; actor selection/gating or a stronger
+    temporal set encoder remains an open, falsifiable next step.
 - [ ] Measure learned feature selection rather than assuming that more inputs
   helped: report attention/gating stability, held-out prediction by channel,
   rare-event recall and controlled channel-family ablations. Reject a broad

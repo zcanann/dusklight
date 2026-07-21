@@ -431,6 +431,29 @@ struct MilestoneObservation {
     };
     AttentionCandidateState attentionCandidates;
 
+    // Read-only state at the event/scene transition boundary. This describes
+    // what the ordinary event manager and next-stage handoff currently retain;
+    // it does not select an event, advance a load, or encode a route.
+    struct EventTransitionState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        bool eventDataLoaded = false;
+        std::int32_t cameraPlay = 0;
+        ChannelStatus currentEventStatus = ChannelStatus::NotSampled;
+        std::int16_t currentEventId = -1;
+        std::int32_t currentEventType = 0;
+        std::int32_t currentEventRoom = -1;
+        ChannelStatus eventGoalStatus = ChannelStatus::NotSampled;
+        std::array<float, 3> eventGoal{};
+        ChannelStatus nextStageStatus = ChannelStatus::NotSampled;
+        std::array<char, 8> nextStage{};
+        std::int8_t nextRoom = -1;
+        std::int8_t nextLayer = -1;
+        std::int16_t nextPoint = -1;
+        std::int8_t nextWipe = 0;
+        std::uint8_t nextWipeSpeed = 0;
+    };
+    EventTransitionState eventTransition;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

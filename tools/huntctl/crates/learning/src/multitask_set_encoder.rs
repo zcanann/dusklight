@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V4: &str =
-    "dusklight-multitask-set-encoder-report/v4";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V5: &str =
+    "dusklight-multitask-set-encoder-report/v5";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -68,6 +68,7 @@ pub enum NativeEncoderChannelFamily {
     CorePlayerMotion,
     CoreActionPhase,
     CoreEventContext,
+    CoreEventTransition,
     CorePreviousInput,
     CoreCameraCollisionWorld,
     CoreRng,
@@ -91,10 +92,11 @@ pub enum NativeEncoderChannelFamily {
 }
 
 impl NativeEncoderChannelFamily {
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::CorePlayerMotion,
         Self::CoreActionPhase,
         Self::CoreEventContext,
+        Self::CoreEventTransition,
         Self::CorePreviousInput,
         Self::CoreCameraCollisionWorld,
         Self::CoreRng,
@@ -122,6 +124,7 @@ impl NativeEncoderChannelFamily {
             Self::CorePlayerMotion => "core_player_motion",
             Self::CoreActionPhase => "core_action_phase",
             Self::CoreEventContext => "core_event_context",
+            Self::CoreEventTransition => "core_event_transition",
             Self::CorePreviousInput => "core_previous_input",
             Self::CoreCameraCollisionWorld => "core_camera_collision_world",
             Self::CoreRng => "core_rng",
@@ -703,7 +706,7 @@ impl CompleteSetMultiTaskEncoder {
         };
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V4,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V5,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
@@ -1356,7 +1359,7 @@ fn native_actor_feature_schema(
     spec: &NativeEncoderFeatureSpec,
 ) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v3\0",
+        b"dusklight.native-direct-actor-features/v4\0",
         &(
             spec,
             selected_feature_names(
@@ -1407,6 +1410,32 @@ fn native_base_feature_names() -> Vec<String> {
             "room",
             "layer",
             "point",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    names.extend(
+        [
+            "event_transition_data_loaded",
+            "event_transition_camera_play",
+            "event_transition_current_event_id",
+            "event_transition_current_event_type",
+            "event_transition_current_event_room",
+            "event_transition_goal_x",
+            "event_transition_goal_y",
+            "event_transition_goal_z",
+            "event_transition_pending_stage",
+            "event_transition_pending_room",
+            "event_transition_pending_layer",
+            "event_transition_pending_point",
+            "event_transition_pending_wipe",
+            "event_transition_pending_wipe_speed",
+        ]
+        .into_iter()
+        .map(str::to_owned),
+    );
+    names.extend(
+        [
             "previous_stick_x",
             "previous_stick_y",
             "previous_substick_x",
@@ -1710,6 +1739,7 @@ fn native_base_feature_families() -> Vec<NativeEncoderChannelFamily> {
     extend_family(&mut families, Family::CorePlayerMotion, 13);
     extend_family(&mut families, Family::CoreActionPhase, 41);
     extend_family(&mut families, Family::CoreEventContext, 8);
+    extend_family(&mut families, Family::CoreEventTransition, 14);
     extend_family(&mut families, Family::CorePreviousInput, 24);
     extend_family(&mut families, Family::CoreCameraCollisionWorld, 22);
     extend_family(&mut families, Family::CoreRng, 12);
@@ -2623,6 +2653,56 @@ fn broad_base(observation: &NativeLearningObservation) -> (Vec<f32>, Vec<bool>) 
     push(f32::from(observation.room), true);
     push(f32::from(observation.layer), true);
     push(f32::from(observation.point), true);
+    let transition = observation.event_transition.as_ref();
+    push(
+        transition.map_or(0.0, |value| f32::from(value.event_data_loaded)),
+        transition.is_some(),
+    );
+    push(
+        transition.map_or(0.0, |value| value.camera_play as f32),
+        transition.is_some(),
+    );
+    let current_event = transition.and_then(|value| value.current_event.as_ref());
+    push(
+        current_event.map_or(0.0, |value| f32::from(value.event_id)),
+        current_event.is_some(),
+    );
+    push(
+        current_event.map_or(0.0, |value| value.event_type as f32),
+        current_event.is_some(),
+    );
+    push(
+        current_event.map_or(0.0, |value| value.room as f32),
+        current_event.is_some(),
+    );
+    for index in 0..3 {
+        push(
+            current_event.map_or(0.0, |value| value.goal[index]),
+            current_event.is_some(),
+        );
+    }
+    let pending_stage = transition.and_then(|value| value.pending_stage.as_ref());
+    push(f32::from(pending_stage.is_some()), transition.is_some());
+    push(
+        pending_stage.map_or(0.0, |value| f32::from(value.room)),
+        pending_stage.is_some(),
+    );
+    push(
+        pending_stage.map_or(0.0, |value| f32::from(value.layer)),
+        pending_stage.is_some(),
+    );
+    push(
+        pending_stage.map_or(0.0, |value| f32::from(value.point)),
+        pending_stage.is_some(),
+    );
+    push(
+        pending_stage.map_or(0.0, |value| f32::from(value.wipe)),
+        pending_stage.is_some(),
+    );
+    push(
+        pending_stage.map_or(0.0, |value| f32::from(value.wipe_speed)),
+        pending_stage.is_some(),
+    );
     for value in [
         observation.previous_input.stick_x,
         observation.previous_input.stick_y,
@@ -3040,7 +3120,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v4\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v5\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -3129,6 +3209,41 @@ mod tests {
     }
 
     #[test]
+    fn direct_native_adapter_exposes_generic_event_transition_with_masks() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v22.dseps"
+        ))
+        .unwrap();
+        let observation = &shard.episodes[0].steps[0].pre_input;
+        let (base, present) = broad_base(observation);
+        assert_eq!(
+            &base[62..76],
+            &[
+                1.0, 2.0, 291.0, 1.0, 0.0, 10.0, 20.0, 30.0, 1.0, 2.0, 1.0, 3.0, 5.0, 2.0
+            ]
+        );
+        assert!(present[62..76].iter().all(|value| *value));
+
+        let mut base = base;
+        let mut present = present;
+        append_core_temporal_features(&mut base, &mut present, observation, None);
+
+        let reduced =
+            NativeEncoderFeatureSpec::excluding([NativeEncoderChannelFamily::CoreEventTransition])
+                .unwrap();
+        let mut reduced_values = base;
+        let mut reduced_present = present;
+        retain_feature_families(
+            &mut reduced_values,
+            &mut reduced_present,
+            &native_base_feature_families(),
+            &reduced,
+        );
+        assert_eq!(reduced_values.len(), 194);
+        assert_eq!(reduced_present.len(), 194);
+    }
+
+    #[test]
     fn direct_native_adapter_keeps_the_complete_typed_actor_population() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v15.dseps"
@@ -3164,18 +3279,20 @@ mod tests {
                 .all(|node| !node.binary[lock_membership] && !node.binary_present[lock_membership])
         );
         let (base, present) = broad_base(observation);
-        assert_eq!(base.len(), 169);
-        assert_eq!(present.len(), 169);
-        assert!(base[129..].iter().all(|value| *value == 0.0));
-        assert!(present[129..].iter().all(|value| !*value));
+        assert_eq!(base.len(), 183);
+        assert_eq!(present.len(), 183);
+        assert!(base[62..76].iter().all(|value| *value == 0.0));
+        assert!(present[62..76].iter().all(|value| !*value));
+        assert!(base[143..].iter().all(|value| *value == 0.0));
+        assert!(present[143..].iter().all(|value| !*value));
         let mut temporal_base = base.clone();
         let mut temporal_present = present.clone();
         append_core_temporal_features(&mut temporal_base, &mut temporal_present, observation, None);
         let all = NativeEncoderFeatureSpec::all();
-        assert_eq!(temporal_base.len(), 194);
-        assert_eq!(temporal_present.len(), 194);
-        assert_eq!(native_base_feature_names().len(), 194);
-        assert_eq!(native_base_feature_families().len(), 194);
+        assert_eq!(temporal_base.len(), 208);
+        assert_eq!(temporal_present.len(), 208);
+        assert_eq!(native_base_feature_names().len(), 208);
+        assert_eq!(native_base_feature_families().len(), 208);
         let previous_available = native_base_feature_names()
             .iter()
             .position(|name| name == "temporal_previous_state_available")
@@ -3388,15 +3505,16 @@ mod tests {
         assert_eq!(binary("attention_action_candidate"), (true, true));
         assert_eq!(binary("attention_check_candidate"), (false, true));
         let (base, base_present) = broad_base(observation);
-        assert_eq!(base.len(), 169);
-        assert!(base_present[129..].iter().all(|value| *value));
-        assert_eq!(base[129 + 2], 1.0);
-        assert_eq!(base[129 + 4], 1.0);
-        assert_eq!(base[161], 2.0);
-        assert_eq!(base[162], 3.0);
-        assert_eq!(base[163], 1.0);
-        assert_eq!(base[165], 1.0);
-        assert_eq!(base[167], 0.0);
+        assert_eq!(base.len(), 183);
+        assert!(base_present[62..76].iter().all(|value| !*value));
+        assert!(base_present[143..].iter().all(|value| *value));
+        assert_eq!(base[143 + 2], 1.0);
+        assert_eq!(base[143 + 4], 1.0);
+        assert_eq!(base[175], 2.0);
+        assert_eq!(base[176], 3.0);
+        assert_eq!(base[177], 1.0);
+        assert_eq!(base[179], 1.0);
+        assert_eq!(base[181], 0.0);
     }
 
     #[test]

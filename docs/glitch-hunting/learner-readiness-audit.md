@@ -25,7 +25,10 @@ session, the bounded priority-ordered event request/participant graph, and the
 ordinary attention pass's pointer-free lock/action/check candidate lists with
 their rank, type, weight, distance and angle. The candidate lists are also
 available to the shared complete-actor-set encoder through explicit masks;
-they do not prescribe which actor to target or which input to use. Other items
+the generic event-manager and pending scene-handoff state now additionally
+retains event-data readiness, camera-play state, current event identity/goal,
+pending destination, and wipe mode/speed. These channels do not prescribe an
+actor, event, destination, route, or input. Other items
 in this baseline remain evidence channels unless separately promoted through
 learner evaluation.
 
@@ -47,9 +50,10 @@ The audit uses these controlled capability names:
   item-specific target queues remain incomplete;
 - **item/projectile state**: typed lifecycle, trajectory, collision and item
   action state;
-- **event/loading state**: the message session and pending generic event
-  requests/participants are captured; trigger, door, warp and loading queues
-  plus their time domains remain incomplete;
+- **event/loading state**: the message session, pending generic event
+  requests/participants, event-manager readiness/current identity/goal, and
+  pending destination/wipe state are captured; door, warp and resource queues
+  plus their distinct time domains remain incomplete;
 - **lifecycle/capacity state**: process creation/deletion, actor slots,
   resource loads and heap/allocation outcomes.
 
@@ -132,10 +136,11 @@ Implementation order follows missing reusable evidence, not the order of any
 published technique. The current highest-leverage gaps are complete collision
 transition coverage, non-Link relationship edges, profile-bound item/actor
 state, remaining transition/loading clocks, and semantic lifecycle outcomes.
-Existing v18 event-queue and v21 semantic pending-process channels are partial
-evidence for the last two rows; their presence does not make those rows
-complete. V21 records queue order and typed create/delete process state but not
-slot/resource capacity, resource-load results or allocation outcomes.
+Existing v18 event-queue, v21 semantic pending-process, and v22 generic
+event-transition channels are partial evidence for the last two rows; their
+presence does not make those rows complete. V21 records queue order and typed
+create/delete process state but not slot/resource capacity, resource-load
+results or allocation outcomes.
 
 For every item, promotion requires four separate claims with evidence:
 

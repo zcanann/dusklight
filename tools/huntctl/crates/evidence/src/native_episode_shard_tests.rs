@@ -85,6 +85,10 @@ fn golden_v21() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v21.dseps")
 }
 
+fn golden_v22() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v22.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -1104,6 +1108,61 @@ fn decodes_v20_pointer_free_attention_candidate_lists() {
 }
 
 #[test]
+fn decodes_v22_generic_event_transition_state_with_legacy_missingness() {
+    let shard = NativeEpisodeShard::decode(golden_v22()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V22
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(
+            observation.event_transition_status,
+            NativeChannelStatus::Present
+        );
+        let transition = observation.event_transition.as_ref().unwrap();
+        assert!(transition.event_data_loaded);
+        assert_eq!(transition.camera_play, 2);
+        assert_eq!(
+            transition.current_event.as_ref().unwrap(),
+            &NativeCurrentEventObservation {
+                event_id: 0x123,
+                event_type: 1,
+                room: 0,
+                goal: [10.0, 20.0, 30.0],
+            }
+        );
+        assert_eq!(
+            transition.pending_stage.as_ref().unwrap(),
+            &NativePendingStageObservation {
+                stage: "F_SP104".into(),
+                room: 2,
+                layer: 1,
+                point: 3,
+                wipe: 5,
+                wipe_speed: 2,
+            }
+        );
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v21()).unwrap();
+    assert!(legacy.episodes.iter().all(|episode| {
+        episode.steps.iter().all(|step| {
+            [&step.pre_input, &step.post_simulation]
+                .into_iter()
+                .all(|observation| {
+                    observation.event_transition_status == NativeChannelStatus::NotSampled
+                        && observation.event_transition.is_none()
+                })
+        })
+    }));
+}
+
+#[test]
 fn rejects_nonsemantic_v18_event_queue_ordering_and_types() {
     let unknown_type = mutate_first_v18_episode(|expanded| {
         let queue = first_v18_event_queue_offset(expanded);
@@ -1369,6 +1428,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V19
                             | LEARNING_OBSERVATION_SCHEMA_V20
                             | LEARNING_OBSERVATION_SCHEMA_V21
+                            | LEARNING_OBSERVATION_SCHEMA_V22
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1417,6 +1477,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V19
             | LEARNING_OBSERVATION_SCHEMA_V20
             | LEARNING_OBSERVATION_SCHEMA_V21
+            | LEARNING_OBSERVATION_SCHEMA_V22
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

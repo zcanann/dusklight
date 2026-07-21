@@ -136,6 +136,26 @@ struct MilestoneCollisionReadAdapter {
 };
 
 struct MilestoneEventManagerReadAdapter {
+    struct State {
+        bool dataLoaded = false;
+        int cameraPlay = 0;
+        s16 currentEventId = -1;
+        int currentEventType = 0;
+        int room = -1;
+        cXyz goal{};
+    };
+
+    static State state(const dEvent_manager_c& manager) {
+        return {
+            .dataLoaded = manager.mDataLoaded,
+            .cameraPlay = manager.mCameraPlay,
+            .currentEventId = manager.mCurrentEvId,
+            .currentEventType = manager.mCurrentEvType,
+            .room = manager.mRoomNo,
+            .goal = manager.mGoal,
+        };
+    }
+
     static const char* runningEventName(const dEvent_manager_c& manager) {
         if (manager.mCurrentEvId == -1)
             return nullptr;
@@ -1102,6 +1122,36 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
             (messageObject->isMsgSendLocal() ? Message::Send : 0) |
             (messageObject->isMsgSendControlLocal() ? Message::SendControl : 0));
         message.talkActor = actorIdentity(dMsgObject_c::getpTalkActor());
+    }
+
+    auto& transition = observation.eventTransition;
+    const auto eventManagerState =
+        MilestoneEventManagerReadAdapter::state(dComIfGp_getEventManager());
+    transition.status = MilestoneObservation::ChannelStatus::Present;
+    transition.eventDataLoaded = eventManagerState.dataLoaded;
+    transition.cameraPlay = eventManagerState.cameraPlay;
+    if (eventManagerState.currentEventId == -1) {
+        transition.currentEventStatus = MilestoneObservation::ChannelStatus::Absent;
+        transition.eventGoalStatus = MilestoneObservation::ChannelStatus::Absent;
+    } else {
+        transition.currentEventStatus = MilestoneObservation::ChannelStatus::Present;
+        transition.currentEventId = eventManagerState.currentEventId;
+        transition.currentEventType = eventManagerState.currentEventType;
+        transition.currentEventRoom = eventManagerState.room;
+        transition.eventGoalStatus = MilestoneObservation::ChannelStatus::Present;
+        transition.eventGoal = {
+            eventManagerState.goal.x, eventManagerState.goal.y, eventManagerState.goal.z};
+    }
+    if (observation.nextStageEnabled) {
+        transition.nextStageStatus = MilestoneObservation::ChannelStatus::Present;
+        copyFixedName(transition.nextStage, observation.nextStageName);
+        transition.nextRoom = observation.nextRoom;
+        transition.nextLayer = observation.nextLayer;
+        transition.nextPoint = observation.nextPoint;
+        transition.nextWipe = dComIfGp_getNextStageWipe();
+        transition.nextWipeSpeed = dComIfGp_getNextStageWipeSpeed();
+    } else {
+        transition.nextStageStatus = MilestoneObservation::ChannelStatus::Absent;
     }
 
     if (player != nullptr) {
