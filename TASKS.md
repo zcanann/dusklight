@@ -351,6 +351,28 @@ probe, demonstration, curriculum, option, reward term or preferred action.
       not evidence that the sweep sought or completed any particular contact or
       interaction. Actor activation and a dedicated loading perturbation remain
       open.
+    - [x] Expand the identical sweep to one default-layer spawn from 16
+      deterministically spaced catalog stages in one explicit parallel batch.
+      All 16 additions classified ready, including `D_MN09`, whose inventory is
+      unreadable offline; the ledger now has 20/20 ready cases. Its 3,200 exact-
+      PAD records form 18 actual-stage cells with no truncated channel, 2,053
+      varying and 584 ambiguous field paths (`93f1fff9...bd5f1`). Background
+      collision and realized surfaces are present in 16 cells and explicitly
+      ambiguous across the two loading slices. The paired terminal-population
+      report verifies 1,344 actors, 139 profiles and 331 stage/profile cells
+      with 19,843 present, 4,228 varying, 875 absent and 81 ambiguous typed
+      field paths (`d4aabd9b...0c921`). This remains a stratified
+      20/9,084-candidate sample and supplies no route label, desired value or
+      preferred action.
+    - [x] Exercise a second generic action family across eight dungeon stages in
+      one repeatable explicit-candidate batch. The nine-worker basic-action pass
+      retained 720 authenticated records and 613 complete terminal actors across
+      104 profiles; F_SP103 failed closed as `actor_catalog_incomplete` during
+      loading rather than admitting partial evidence. The observation matrix
+      contains eight stage cells (`90d2dfc5...380ff`) and actor coverage contains
+      208 stage/profile cells with zero rejected ready snapshots
+      (`84206ee5...6919d`, ledger `112e3aca...ba5af`). The fixed profile has no
+      objective, actor selector, desired transition or preferred outcome.
 - [ ] Visually inspect a stratified sample and reconcile visible actors,
   collision, triggers and state transitions against captured data.
 - [ ] Publish a machine-readable coverage matrix by stage and actor profile:
