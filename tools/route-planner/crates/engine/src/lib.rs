@@ -16,6 +16,7 @@ pub mod fact_pack;
 pub mod fact_pack_cache;
 pub mod graph;
 pub mod identity;
+pub mod jstudio_import;
 pub mod logic;
 pub mod message_flow;
 pub mod message_import;

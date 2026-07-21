@@ -3,9 +3,11 @@
 Status: the planner has a strict, versioned cutscene-program schema and compiler.
 For the post-Zelda tower sequence, planner-owned extractors now establish the
 exact outer event/resource/normal-exit/skip-exit topology and a generic wrapper
-join seals those records as `cutscene-wrapper-topology/v1`. The JStudio phase
-internals and the actor-corruption failure boundary still require source/runtime
-evidence. Exact GZ2E01 executable evidence now proves that the room-loader's
+join seals those records as `cutscene-wrapper-topology/v1`. A separate
+`jstudio-stb-program/v1` decoder now extracts object sequences and paragraph
+boundaries, but their object-specific effects and the actor-corruption failure
+boundary still require source/runtime evidence. Exact GZ2E01 executable evidence
+proves that the room-loader's
 nominal `dComIfGp_ret_wp_set` call is a retail no-op; this resolves that one
 writer site without claiming that no other cutscene writer exists.
 
@@ -59,9 +61,11 @@ The exact GZ2E01 wrapper is audited in
 `Demo07_02/demo07_02.stb`, map-tool ID 4, normal SCLS exit 1 to Castle Town, and
 skip SCLS exit 2 back to Zelda's tower. The room-loader return-place call is an
 exact four-byte `blr`, so it preserves every incoming value generically.
-Remaining Zelda-specific evidence work is to decode the JStudio phases, identify
-the actual actor-corruption failure branch and last completed operation, and
-trace any other return/restart writer and affected bit.
+The STB's 29 object streams, 387 commands, and 817 paragraph headers are now
+bounded and digest-sealed. Remaining Zelda-specific evidence work is to bind its
+object-specific paragraph types through the TP adaptors, identify the actual
+actor-corruption failure branch and last completed operation, and trace any
+other return/restart writer and affected bit.
 The wrapper topology is deliberately not compiled to executable transitions:
 its two SCLS destinations are authored completion choices, while the behavior
 of a failed resource load is still unresolved.

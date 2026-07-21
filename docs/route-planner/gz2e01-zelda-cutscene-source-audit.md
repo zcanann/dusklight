@@ -44,7 +44,19 @@ unresolved.
 `7a5de4cf1bfb197430a7631b913311e245ed249b16d97616575cb58e001ac11a`.
 Its selected `demo07_02.stb` resource has SHA-256
 `6417533ffd470dfadcb96ef8a70f2acc7ee9037a4c71f5b864db50b84c176017`.
-The JStudio payload itself is not decoded yet.
+The planner-owned structural decoder emits canonical artifact SHA-256
+`b9334b80cfd8417c0c9eaf10123b1e3ba8187ac742fe9be3dc3987b416c72ff4`.
+It proves a version-3 STB targeting JStudio version 6, with 30 outer blocks:
+one FVB bank containing 200 indexed functions and 29 object streams. Those
+streams contain 387 commands and 817 paragraph headers. The command stream has
+29 explicit ends, 189 waits, 3 suspends, 166 paragraph bundles, and no explicit
+relative jumps.
+
+This is structural rather than semantic coverage. The object streams comprise
+actors, camera, Link, message, control, particle, and sound objects, and expose
+26 object-specific paragraph type codes plus reserved raw-data paragraphs. Their
+adaptor meanings, actor-resource requests, and gameplay writes remain
+unresolved.
 
 ## Exact room-loader writer evidence
 
@@ -136,6 +148,11 @@ route-planner extract-function-evidence \
   --symbols config/GZ2E01/symbols.txt \
   --symbol dComIfGp_ret_wp_set__FSc \
   --output gz2e01-ret-wp-set.json
+
+route-planner extract-jstudio-stb \
+  --archive files/res/Object/Demo07_02.arc \
+  --resource demo07_02.stb \
+  --output gz2e01-demo07_02-program.json
 ```
 
 The extraction commands reject malformed offsets, overlapping tables,

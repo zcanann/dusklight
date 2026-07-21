@@ -1882,6 +1882,9 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Compile an actor-backed presentation-request consumer from exact
           speaker/event/item fields to the session recent-item store, while
           leaving item-actor execution and grant as distinct later transitions.
+    - [x] Resolve each requested item's exact ownership backing and compile one
+          shared generic get-item consumer whose presentation-actor execution
+          is an auto-bound actor-state obligation, not an inferred success.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.
@@ -2594,6 +2597,10 @@ sequence.
         `dComIfGp_ret_wp_set__FSc` is exactly one `blr`. The room-loader call
         therefore preserves arbitrary incoming return-place values; other
         possible JStudio/glitch-path writers remain open.
+  - [x] Structurally decode and seal `demo07_02.stb`: 30 outer blocks, 200 FVB
+        functions, 29 object streams, 387 commands, and 817 paragraph headers.
+        Keep all 26 object-specific paragraph type meanings unresolved until
+        their TP adaptors are audited.
 - [ ] Capture normal completion and actor-corruption/archive-load-failure paths;
       identify the last confirmed operation and every flag or writer that becomes
       skipped versus unknown.
