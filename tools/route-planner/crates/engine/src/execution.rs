@@ -2066,6 +2066,28 @@ mod tests {
             .components
             .sort_by(|left, right| left.id.cmp(&right.id));
         event_cleanup.snapshot.validate().unwrap();
+        event_cleanup
+            .apply_operations(
+                "writer.show-item-x",
+                "snapshot.after-show-item-x",
+                &[StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: "event.shown-item".into(),
+                        field: "pre_item_no".into(),
+                    },
+                    value: StateValue::Unsigned(0x4b),
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            field(&event_cleanup, "event.shown-item", "pre_item_no"),
+            &StateValue::Unsigned(0x4b)
+        );
+        assert_eq!(
+            field(&event_cleanup, "event.recent-item", "get_item_no"),
+            &StateValue::Unsigned(ROD_ITEM_ID),
+            "show-item acceptance writes mPreItemNo, not mGtItm"
+        );
         let cleanup_policy = BoundaryPolicy {
             schema: BOUNDARY_POLICY_SCHEMA.into(),
             id: "boundary.event-control-remove".into(),
@@ -2127,9 +2149,7 @@ mod tests {
         let process_restart = BoundaryPolicy {
             schema: BOUNDARY_POLICY_SCHEMA.into(),
             id: "boundary.process-restart".into(),
-            boundary: BoundaryKind::Custom {
-                id: "process-restart".into(),
-            },
+            boundary: BoundaryKind::ProcessRestart,
             default_disposition: BoundaryDisposition::Clear,
             component_rules: vec![ComponentBoundaryRule {
                 selector: id_selector("event.recent-item"),

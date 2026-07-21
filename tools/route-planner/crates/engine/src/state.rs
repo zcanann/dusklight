@@ -356,6 +356,7 @@ pub enum BoundaryKind {
     VoidReload,
     SaveWarp,
     TitleReturn,
+    ProcessRestart,
     LoadPhysicalSlot,
     SaveRuntimeToSlot,
     WrongStateRespawn,

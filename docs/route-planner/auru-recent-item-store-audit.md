@@ -27,6 +27,72 @@ souls, ordinary chests, small keys, dungeon items, insects, and loose scripted
 items therefore share one last-writer-wins byte. Provenance identifies which
 presentation wrote the value; provenance does not change the byte's semantics.
 
+<details>
+<summary>Complete present-demo call-site inventory (48 calls)</summary>
+
+| Source | Calls |
+| --- | ---: |
+| `src/d/d_shop_system.cpp` | 2 |
+| `src/d/actor/d_a_npc_seirei.cpp` | 1 |
+| `src/d/actor/d_a_npc_shad.cpp` | 1 |
+| `src/d/actor/d_a_npc_zrz.cpp` | 1 |
+| `src/d/actor/d_a_npc_yelia.cpp` | 1 |
+| `src/d/actor/d_a_npc_kkri.cpp` | 1 |
+| `src/d/actor/d_a_npc_tks.cpp` | 2 |
+| `src/d/actor/d_a_npc_gro.cpp` | 1 |
+| `src/d/actor/d_a_npc_ashB.cpp` | 2 |
+| `src/d/actor/d_a_e_po.cpp` | 1 |
+| `src/d/actor/d_a_npc_zra.inc` | 1 |
+| `src/d/actor/d_a_tbox2.cpp` | 1 |
+| `src/d/actor/d_a_npc_rafrel.cpp` | 2 |
+| `src/d/actor/d_a_npc_doorboy.cpp` | 1 |
+| `src/d/actor/d_a_npc_moir.cpp` | 1 |
+| `src/d/actor/d_a_npc_fairy.cpp` | 1 |
+| `src/d/actor/d_a_npc_aru.cpp` | 1 |
+| `src/d/actor/d_a_npc_len.cpp` | 1 |
+| `src/d/actor/d_a_npc_fairy_seirei.cpp` | 1 |
+| `src/d/actor/d_a_alink_demo.inc` | 3 |
+| `src/d/actor/d_a_npc_impal.cpp` | 3 |
+| `src/d/actor/d_a_e_hp.cpp` | 1 |
+| `src/d/actor/d_a_npc_uri.cpp` | 1 |
+| `src/d/actor/d_a_npc_grs.cpp` | 1 |
+| `src/d/actor/d_a_npc_wrestler.cpp` | 1 |
+| `src/d/actor/d_a_npc_ykw.cpp` | 2 |
+| `src/d/actor/d_a_npc_myna2.cpp` | 1 |
+| `src/d/actor/d_a_npc_ins.cpp` | 1 |
+| `src/d/actor/d_a_npc_maro.cpp` | 1 |
+| `src/d/actor/d_a_npc_gra.cpp` | 1 |
+| `src/d/actor/d_a_npc_chin.cpp` | 1 |
+| `src/d/actor/d_a_tbox.cpp` | 1 |
+| `src/d/actor/d_a_npc_grc.cpp` | 1 |
+| `src/d/actor/d_a_npc_the.cpp` | 1 |
+| `src/d/actor/d_a_npc_tkj.cpp` | 1 |
+| `src/d/actor/d_a_npc_zrc.cpp` | 1 |
+| `src/d/actor/d_a_npc_pouya.cpp` | 2 |
+| `src/d/actor/d_a_npc_grr.cpp` | 1 |
+
+</details>
+
+<details>
+<summary>Complete treasure/get-demo call-site inventory (12 calls)</summary>
+
+| Source | Calls |
+| --- | ---: |
+| `src/d/d_insect.cpp` | 1 |
+| `src/d/actor/d_a_e_th_ball.cpp` | 1 |
+| `src/d/actor/d_a_obj_wood_statue.cpp` | 1 |
+| `src/d/actor/d_a_obj_sword.cpp` | 1 |
+| `src/d/actor/d_a_tag_statue_evt.cpp` | 1 |
+| `src/d/actor/d_a_tbox2.cpp` | 1 |
+| `src/d/actor/d_a_obj_shield.cpp` | 1 |
+| `src/d/actor/d_a_obj_item.cpp` | 1 |
+| `src/d/actor/d_a_obj_life_container.cpp` | 1 |
+| `src/d/actor/d_a_tbox.cpp` | 1 |
+| `src/d/actor/d_a_obj_kantera.cpp` | 1 |
+| `src/d/actor/d_a_obj_smallkey.cpp` | 1 |
+
+</details>
+
 The write occurs before either helper rejects `dItemNo_NONE_e`, so even a failed
 creation request has already overwritten `mGtItm`. Actor-creation failure after
 a valid request likewise does not roll the write back.
@@ -37,6 +103,12 @@ a valid request likewise does not roll the write back.
 `mGtItm`. `dEvt_control_c::endProc()` and `remove()` clear `mPreItemNo`; neither
 touches `mGtItm`. The two `reset()` overloads only request/change event cleanup
 and also do not touch it.
+
+The five simple-demo call sites (arrow actors/guard logic and the target-practice
+rupee actor) use `fopAcM_createItemForSimpleDemo`; that helper does not call
+`setGtItm`. Direct-get and ordinary item creation helpers likewise do not write
+the byte. The source tree has one gameplay reader: Link's `0x100` get-item demo
+branch described below.
 
 This distinction is essential for text displacement and Auru theorycrafting. A
 shown inventory item can change the pending dialogue branch without changing
@@ -74,7 +146,7 @@ result is:
 | Return through title within the same process | preserved | soft initialization/removal has no writer |
 | Wrong-state respawn | preserved | no implicit writer |
 | Any later presentation/chest request | overwritten | the shared helpers are unconditional writers |
-| Fresh process/global construction | reinitialized | static process storage starts anew |
+| Fresh process/global construction | reinitialized to zero | zero-initialized global storage is followed by constructors whose `remove()`/`ct()` paths do not write this byte |
 
 The planner acceptance test applies every modeled in-process boundary to the
 session component, separately proves event cleanup clears `mPreItemNo` without
