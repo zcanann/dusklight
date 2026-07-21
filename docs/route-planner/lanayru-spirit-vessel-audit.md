@@ -1,117 +1,164 @@
-# Lanayru spirit and Vessel of Light source audit
+# Lanayru spirit and Vessel of Light audit
 
-Status: partial source audit. The committed C++ establishes the generic actor,
-message, item, and save semantics below. `orig/` is currently empty, so the
-retail stage placement and `Seirei1` message-flow asset cannot yet be extracted.
-Those missing resources are required before claiming an exact build-specific
-appearance/grant predicate.
+Status: exact for the supplied GZ2E01 original-data tree; other builds remain
+unverified. Actor placement, spatial switch writer, layer selection, message
+flow, item presentation, persistent Vessel backing, and post-grant story writes
+are separate predicates and transitions.
 
-## What is established
+## Exact GZ2E01 placement and layer
 
-The light-spirit actor does not delete itself from an event-bit check. Its
-`isDelete()` always returns false; actor existence therefore begins with a
-placement on the loaded stage/room/layer and successful resource creation, not
-with the friendly “received vessel” flag
-([actor source](../../src/d/actor/d_a_npc_seirei.cpp#L230),
-[delete predicate](../../src/d/actor/d_a_npc_seirei.cpp#L336)). The actor reads
-the following placement data:
-
-- low parameter byte: spirit type `0`, `1`, `2`, or fallback `3`;
-- bits `12..19`: room switch used for attention/interaction;
-- bit `8`, inverted: whether the actor supplies the first-meeting Do-button
-  prompt;
-- high parameter nibble: particle-only (`0`) versus modeled spirit (nonzero);
-- home angle X: message-flow node, with `0xffff` meaning none.
-
-These decoders are explicit in the actor and header
-([type/high nibble](../../src/d/actor/d_a_npc_seirei.cpp#L230),
-[parameter accessors](../../include/d/actor/d_a_npc_seirei.h#L91)).
-
-For the particle/first-meeting form, the decoded room switch must not be `0xff`
-and must be on in the actor's current room before the actor advertises the
-`SPEAK` attention flag
-([attention gate](../../src/d/actor/d_a_npc_seirei.cpp#L388)). The visible
-particle emission uses the same switch check. A normal manual first-meeting
-prompt additionally requires particle form, the type-specific first-meeting
-predicate, an enabled Do-button check, and the engine's speak test
-([wait action](../../src/d/actor/d_a_npc_seirei.cpp#L732)). Type `2` checks that
-event-bit index `67` (`M_034`, raw save label `0x0820`) is false; notably, it does
-not check `F_0615` in this C++ path
-([type checks](../../src/d/actor/d_a_npc_seirei.cpp#L661),
-[raw labels](../../include/d/d_save_bit_labels.inc#L740)). Whether the Lanayru
-vessel placement is type `2`, and its exact parameter/switch/layer values, still
-has to come from the stage asset.
-
-Talking is not itself the item grant. The actor starts its placement-selected
-message flow. Only after that flow returns event ID `1` with an item number does
-the actor create the presentation item actor and switch to the shared
-`DEFAULT_GETITEM` event
-([talk handoff](../../src/d/actor/d_a_npc_seirei.cpp#L761)). Thus the model needs
-separate states for actor loaded, attention/speak eligible, talk started, flow
-reaching its item event, presentation actor executing, and generic get-item
-completion.
-
-The actual Lanayru Vessel storage is not an ordinary inventory slot. Item
-`DROP_CONTAINER03` sets bit `1 << 2` (`0x04`) in
-`dSv_player_info_c::mLightDrop.mLightDropGetFlag`; the three vessel indices are
-Faron `0`, Eldin `1`, and Lanayru `2`
-([item writer](../../src/d/d_item.cpp#L1072),
-[indices](../../include/d/d_save.h#L106),
-[backing layout](../../include/d/d_save.h#L438),
-[bit operation](../../src/d/d_save.cpp#L936)). The message-flow `Item Set`
-handler has the same special-case write and also changes a meter-only display
-state
-([flow writer](../../src/d/d_msg_flow.cpp#L2023)). The corresponding item check
-reads the vessel bit, so these are genuine alternate writers of the same backing
-store rather than separate conceptual items
-([item reader](../../src/d/d_item.cpp#L1739)).
-
-`F_0615` is a different persistent event bit with raw save label `0x4b04`
-([label](../../include/d/d_save_bit_labels.inc#L504)). Neither generic Vessel
-item writer above sets it. If the normal Lanayru flow sets `F_0615`, that is a
-separate message-flow event-node write whose ordering must be extracted from the
-missing `Seirei1` flow asset. The planner must not derive `F_0615` merely from
-the Vessel ownership bit, or derive the Vessel bit merely from `F_0615`.
-
-Lanayru Spring is stage `F_SP115`, room `1`; known loader metadata exposes spawns
-`0, 1, 20, 21, 22, 23, 100`
-([map metadata](../../include/dusk/map_loader_definitions.h#L222)). This identifies
-the candidate map, but not the retail actor layer or activation switch.
-
-## Current exact precondition answer
-
-With the currently committed evidence, the strongest honest predicate is:
+`orig/GZ2E01/files/res/Stage/F_SP115/R01_00.arc` has SHA-256
+`c904e517476e46884cd719930d45129a480cefd6405f05e48fa0cb43737db4c8`.
+Its `room.dzr` contains this layer-`d` (`13`) actor:
 
 ```text
-placement NPC_SEIREI is loaded on its authored F_SP115 room-1 layer
-AND its resource archive finishes loading
-AND placement high-nibble == 0                    # particle/talk form
-AND placement switch != 0xff
-AND room_switch(current_room, placement.switch) == true
-AND (if manual first-meeting prompt is required:
-       placement type's first-meeting bit is false
-       AND placement bit 8 == 0
-       AND engine speak-range/facing/control test succeeds)
-AND placement-selected Seirei1 flow reaches event ID 1
-AND that event's item ID == DROP_CONTAINER03 (0xA3)
-AND the presentation item actor successfully executes
+ACTd[0]
+name       Seirei
+parameters 0x0000c102
+position   (2.677870, 753.708252, -620.950562)
+angle      (21, -32768, 0)
+set_id     0xffff
+raw        53656972656900000000c102402b6239443c6d54c41b3cd6001580000000ffff
 ```
 
-The resulting grant writes `player.light_drop.get_flags |= 0x04`. The exact
-layer, placement parameter word, room-switch number, flow node, flow branches,
-and any `F_0615` write remain unknown until an original-data directory containing
-`F_SP115` and `Seirei1` resources is supplied and content-identified.
+The actor's committed decoders make those bytes semantic
+([actor creation](../../src/d/actor/d_a_npc_seirei.cpp),
+[parameter accessors](../../include/d/actor/d_a_npc_seirei.h)):
 
-## Planner records still needed
+- low byte `0x02`: spirit type 2 (Lanayru);
+- bits `12..19`: current-room switch `0x0c`;
+- bit 8 is set: the optional first-meeting Do-status helper is disabled;
+- high parameter nibble `0`: particle form, with no modeled spirit heap;
+- home angle X `21`: message flow 21.
 
-1. Import the exact `F_SP115` room-1 actor placement on every supported build and
-   bind its layer, parameter word, home angle X, position, and resource archive.
-2. Decode the referenced `Seirei1` flow node, retaining every branch and ordered
-   event node, especially event ID `1`, item `0xA3`, and event-bit writes.
-3. Represent the room switch as local stage/room backing, the Vessel flag as
-   persistent player backing byte `mLightDrop + 4` mask `0x04`, and `F_0615` as
-   persistent event raw label `0x4b04`.
-4. Keep appearance, speak eligibility, talk, flow item request, presentation,
-   generic get-item, Vessel write, and story-bit write as distinct transitions.
-5. Trace normal and alternate entrances against the exact loaded layer and live
-   actor placement; absent placement/layer evidence must remain unknown.
+The placement is loaded only on layer 13. With a default scene layer, Lake
+Hylia/Lanayru twilight first selects layer 14. If `M_032` is set, the shared
+layer selector replaces 14 with 13 for `F_SP115`; `M_032` has raw event label
+`0x0880` and means the Zora river ice was melted with the magma rock
+([layer selection](../../src/d/d_com_inf_game.cpp),
+[raw label](../../include/d/d_save_bit_labels.inc)). An explicitly forced layer
+13 can load the same placement without reproducing that normal derivation, so
+the planner records both `selected layer == 13` and its usual writer provenance.
+
+The actor's `isDelete()` is always false. Vessel ownership, `F_0615`, and
+`M_034` do not remove the placement. Successful `Seirei1` resource loading is
+still required; type 2 loads that archive and its event list
+([resource table](../../src/d/actor/d_a_npc_seirei.cpp)).
+
+## What makes the particle visible and speak-eligible
+
+The same room archive contains this scaled layer-13 actor:
+
+```text
+SCOd[0]
+name       SwAreaC
+parameters 0xff0cff0c
+position   (19.151329, 208.822067, -1908.488037)
+angle      (255, 0, 0)
+scale_raw  (0x46, 0x46, 0x46)
+raw        5377417265614300ff0cff0c4199b1ec4350d273c4ee8f9e00ff00000000ffff464646ff
+```
+
+Its type is 0, output switch is `0x0c`, secondary switch is `0xff`, and event ID
+is `0xff`. While the player is inside its box it turns current-room switch
+`0x0c` on; outside it turns the switch off. It does not permanently award a
+story flag ([switch-area execution](../../src/d/actor/d_a_swc00.cpp)).
+
+The spirit independently reads that same current-room switch. When `0x0c` is
+on, particle form emits the two spirit particle effects and advertises the
+`SPEAK` attention flag; when it is off, both disappear
+([attention and particles](../../src/d/actor/d_a_npc_seirei.cpp)). The exact
+visible/eligible predicate is therefore:
+
+```text
+scene.stage == F_SP115
+AND scene.room == 1
+AND selected_layer == 13
+AND ACTd[0] Seirei resource creation completed
+AND actor.parameters == 0x0000c102
+AND player_position is inside SCOd[0] SwAreaC's decoded box
+AND room_switch(F_SP115, room 1, 0x0c) == true
+AND no incompatible event currently owns interaction control
+```
+
+The final line is an engine scheduling/attention condition, not an authored
+story bit. `M_034` (raw `0x0820`) is consulted by `chkFirstMeeting()` for type 2,
+but the placed actor's bit-8 setting makes that predicate irrelevant to its
+disabled Do-status helper. `F_0615` is not an appearance or attention guard.
+
+## Exact flow 21
+
+The stage `STAG` record selects message group 8. In the supplied US-English
+build, `orig/GZ2E01/files/res/Msgus/bmgres8.arc` has SHA-256
+`2562ae9662648e71b8f30a5682dbc440dae3a7de55782bbd5992e4192e38e2cb`.
+Its `zel_08.bmg` maps flow label 21 to node 321. The relevant graph is:
+
+```text
+321 query001(saveBitLabels[615] == F_0615)
+  F_0615 set     -> message 272 -> message 273 -> end
+  F_0615 clear   -> 314 query022(item 0xa3 / DROP_CONTAINER03 owned)
+    item absent  -> messages 266, 267, 268
+                 -> event008(event_id=1, item_id=0xa3) -> end
+    item present -> messages 269, 270, 271
+                 -> event000(saveBitLabels[615])
+                 -> event017(item=0xa3, count=1)
+                 -> event014(save-switch=105) -> end
+```
+
+The branch result order follows the C++ query implementations: `query001`
+returns 1 when its event bit is clear, and `query022` returns 1 when its item is
+absent ([flow queries and events](../../src/d/d_msg_flow.cpp)).
+
+`event008` does not grant the item. It only leaves event ID 1 and item ID `0xa3`
+in the live flow state. The spirit actor reads those values, creates the
+presentation item actor, and changes to `DEFAULT_GETITEM`. Generic item
+completion then writes the Lanayru Vessel backing. Because the actor sets its
+post-presentation latch, its next wait orders a speak event; the follow-up flow
+now takes the item-present branch, sets `F_0615`, idempotently reasserts item
+`0xa3`, and sets save-switch 105. Those are ordered effects, not one milestone.
+
+## Backing stores and writers
+
+The Vessel is not an ordinary inventory slot. `DROP_CONTAINER03` is the bit
+`1 << LANAYRU_VESSEL`, or mask `0x04`, in
+`dSv_player_info_c::mLightDrop.mLightDropGetFlag`. Both the generic item writer
+and message-flow `event017` write that bit
+([generic item writer](../../src/d/d_item.cpp),
+[flow item writer](../../src/d/d_msg_flow.cpp),
+[save backing](../../src/d/d_save.cpp)). Item checks read the same bit.
+
+`F_0615` is a different persistent event bit with raw label `0x4b04`. Flow 21's
+item-present branch writes it through `event000`; neither generic item grant nor
+the Vessel backing setter implies it. This distinction explains the otherwise
+surprising intermediate state `Vessel owned && F_0615 clear` during normal
+presentation and makes item injection/duplication theorycrafting representable.
+
+Tear count is another store again: `mLightDropNum[LANAYRU_VESSEL]`. Individual
+tear actors increment the count through `dComIfGs_setLightDropNum`, the
+`KYTAG04` controller authors the required-count runtime value and compares it
+against the current dark-area count, message-flow query 027 reads it, and meter,
+map, player-effect, save-HIO, and twilight-end consumers display or react to it.
+Vessel ownership must not be inferred from a nonzero tear count, nor vice versa.
+
+## Route-planner implications
+
+- Alternate entrances and wrong-state respawns work only if their selected
+  layer is 13 and they place Link inside or allow Link to reach the switch box.
+- A forced wrong layer can reach the room while omitting both `Seirei` and
+  `SwAreaC`; location alone is insufficient.
+- Directly transferring current-room switch `0x0c` can make the spirit visible,
+  but the type-0 switch-area actor will clear it on its next outside-volume
+  execution. A durable hypothetical transfer must also account for that writer.
+- Transferring only the Vessel bit changes flow 21 to the item-present branch;
+  it does not create the actor, select layer 13, or satisfy spatial interaction.
+- Transferring only `F_0615` makes flow 21 take its completed dialogue branch;
+  it does not grant the Vessel.
+- Actor/resource failure after the presentation request must preserve an
+  explicit pending operation or unknown suffix; the solver may not assume the
+  generic grant occurred.
+
+The planner acceptance fixture follows this exact ordering and proves that
+appearance, interaction, item request, presentation, Vessel write, `F_0615`, and
+post-flow switch state can be queried separately. Only GZ2E01 has an exact raw
+predicate today; each additional build/language must be content-identified and
+compared rather than silently mapped to these offsets and node numbers.

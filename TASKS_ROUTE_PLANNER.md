@@ -2132,20 +2132,24 @@ independent portal, return-place, restart, scene-change, or transfer producer.
 #### 11G. Lanayru spirit and Vessel of Light
 
 Source-audit checkpoint: `docs/route-planner/lanayru-spirit-vessel-audit.md`
-separates actor placement/creation, switch-gated speak eligibility, message-flow
-item request, presentation, generic grant, the persistent Lanayru vessel bit,
-and the distinct `F_0615` story bit. The committed C++ proves the generic
-parameter decoders and `mLightDropGetFlag` mask `0x04`; exact layer, switch,
-flow node/branches, and story-bit ordering remain blocked on an original-data
-tree containing the `F_SP115` and `Seirei1` resources (`orig/` is empty).
+now decodes the supplied GZ2E01 resources exactly. `F_SP115/R01` layer 13 has
+`Seirei` parameters `0x0000c102` and a colocated type-0 `SwAreaC` writer for
+current-room switch `0x0c`; normal layer selection derives 13 from Lanayru
+twilight plus `M_032` (`0x0880`). Message group 8 flow 21 checks `F_0615`, then
+item `0xa3`, requests presentation through event 1, and on the item-owned
+follow-up writes `F_0615`, reasserts the Vessel bit, and sets save-switch 105.
+The acceptance fixture preserves each of those steps, rejects a wrong layer in
+established mode, admits an explicit hypothetical layer-13 respawn only in
+research mode, and proves that transferred Vessel and `F_0615` bits affect
+different branches. Other builds still require original-data comparison.
 
 - [ ] Locate the spirit actor/event flow and every build-specific placement.
-- [ ] Identify the raw event bits, temporary bits, room/layer, form, twilight,
+- [x] Identify the raw event bits, temporary bits, room/layer, form, twilight,
       approach, and cutscene prerequisites for the spirit to appear.
-- [ ] Separate appearance, interaction, cutscene start, Vessel grant, and post-grant
+- [x] Separate appearance, interaction, cutscene start, Vessel grant, and post-grant
       state into distinct transitions rather than one milestone.
-- [ ] Identify all writers and consumers of the Vessel and tear-count state.
-- [ ] Test whether alternate entrances, wrong layers, wrong-state respawns, or
+- [x] Identify all writers and consumers of the Vessel and tear-count state.
+- [x] Test whether alternate entrances, wrong layers, wrong-state respawns, or
       component transfers can satisfy or bypass individual prerequisites.
 - [ ] Produce both a friendly explanation and the exact raw predicate for each
       supported build, with unknown conditions called out explicitly.

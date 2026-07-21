@@ -4774,6 +4774,689 @@ mod tests {
     }
 
     #[test]
+    fn gz2e01_lanayru_placement_switch_and_flow21_remain_separate_steps() {
+        const VESSEL_ITEM: u64 = 0xa3;
+
+        let mut start = snapshot();
+        start.id = "snapshot.gz2e01-lanayru-before-layer-selection".into();
+        start.environment.location = SceneLocation {
+            stage: "F_SP115".into(),
+            room: 1,
+            layer: 14,
+            spawn: 20,
+        };
+        start.environment.player.form = PlayerForm::Wolf;
+        start.environment.components = vec![
+            StateComponent {
+                id: "actor.lanayru-spirit".into(),
+                component_kind: ComponentKind::ActorInstance,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("flow_node".into(), StateValue::Unsigned(21)),
+                        ("loaded".into(), StateValue::Boolean(false)),
+                        ("parameters".into(), StateValue::Unsigned(0x0000_c102)),
+                        ("post_present_latch".into(), StateValue::Boolean(false)),
+                    ]),
+                },
+                binding: ComponentBinding::Actor {
+                    instance_id: "actor.lanayru-spirit".into(),
+                },
+                lifetime: SemanticLifetime::RoomLoad,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::ExtractedFact,
+                    source_id: "gz2e01:f_sp115/r01/actd/0".into(),
+                    source_sha256: Some(Digest([0xc9; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "flow.lanayru-21".into(),
+                component_kind: ComponentKind::MessageFlow,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("active".into(), StateValue::Boolean(false)),
+                        ("cursor".into(), StateValue::Unsigned(0xffff)),
+                        ("event_id".into(), StateValue::Unsigned(0)),
+                        ("item_id".into(), StateValue::Unsigned(0)),
+                    ]),
+                },
+                binding: ComponentBinding::Session {
+                    session_id: "session-1".into(),
+                },
+                lifetime: SemanticLifetime::Action,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::ExtractedFact,
+                    source_id: "gz2e01:msgus/bmgres8/flow/21".into(),
+                    source_sha256: Some(Digest([0x25; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "room.f_sp115-r01-switches".into(),
+                component_kind: ComponentKind::ZoneMemory,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("inside_switch_area_0c".into(), StateValue::Boolean(false)),
+                        ("save_switch_105".into(), StateValue::Boolean(false)),
+                        ("switch_0c".into(), StateValue::Boolean(false)),
+                    ]),
+                },
+                binding: ComponentBinding::Room {
+                    stage: "F_SP115".into(),
+                    room: 1,
+                },
+                lifetime: SemanticLifetime::RoomLoad,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::ExtractedFact,
+                    source_id: "gz2e01:f_sp115/r01/scod/0".into(),
+                    source_sha256: Some(Digest([0xc9; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "save.event-flags".into(),
+                component_kind: ComponentKind::PersistentSave,
+                payload: ComponentPayload::Raw {
+                    bytes: {
+                        let mut bytes = vec![0; 0x4c];
+                        bytes[0x08] = 0x80; // M_032: normal layer-13 producer.
+                        bytes
+                    },
+                    known_mask: vec![0xff; 0x4c],
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Initialized,
+                    source_id: "fixture.m032-set-f0615-clear".into(),
+                    source_sha256: Some(Digest([0x32; 32])),
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "save.player-light-drop".into(),
+                component_kind: ComponentKind::PersistentSave,
+                payload: ComponentPayload::Raw {
+                    bytes: vec![0; 5],
+                    known_mask: vec![0xff; 5],
+                },
+                binding: ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                lifetime: SemanticLifetime::RuntimeFile,
+                serialization_owner: SerializationOwner::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Initialized,
+                    source_id: "fixture.lanayru-vessel-clear".into(),
+                    source_sha256: Some(Digest([0x33; 32])),
+                    transition_id: None,
+                }],
+            },
+        ];
+        start
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        start.validate().unwrap();
+
+        let component_is =
+            |component_id: &str, field: &str, value: StateValue| PredicateExpression::Compare {
+                left: ValueReference::ComponentField {
+                    component_id: component_id.into(),
+                    field: field.into(),
+                },
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal { value },
+            };
+        let raw_is = |component_id: &str, byte_offset: u32, mask: u64, value: u64| {
+            PredicateExpression::Compare {
+                left: ValueReference::RawBits {
+                    component_id: component_id.into(),
+                    byte_offset,
+                    byte_width: 1,
+                    mask,
+                },
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(value),
+                },
+            }
+        };
+        let exact_scene = |layer: i8| PredicateExpression::All {
+            terms: vec![
+                stage_is("F_SP115"),
+                PredicateExpression::Compare {
+                    left: ValueReference::LocationRoom,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Signed(1),
+                    },
+                },
+                PredicateExpression::Compare {
+                    left: ValueReference::LocationLayer,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Signed(i64::from(layer)),
+                    },
+                },
+            ],
+        };
+        let m032 = raw_is("save.event-flags", 0x08, 0x80, 0x80);
+        let vessel = raw_is("save.player-light-drop", 4, 0x04, 0x04);
+        let no_vessel = raw_is("save.player-light-drop", 4, 0x04, 0);
+        let f0615 = raw_is("save.event-flags", 0x4b, 0x04, 0x04);
+        let no_f0615 = raw_is("save.event-flags", 0x4b, 0x04, 0);
+        let field = |component_id: &str, name: &str| crate::transition::ComponentFieldTarget {
+            component_id: component_id.into(),
+            field: name.into(),
+        };
+        let transition =
+            |id: &str,
+             kind: TransitionKind,
+             guard: PredicateExpression,
+             effects: Vec<StateOperation>| CandidateTransition {
+                id: id.into(),
+                label: id.into(),
+                scope: scope(&start),
+                transition_kind: kind,
+                approach_id: "approach.gz2e01-lanayru-flow21".into(),
+                activation: ActivationContract {
+                    hard_guards: guard,
+                    physical_obligation_ids: Vec::new(),
+                    effects,
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            };
+
+        let mut mechanics = catalog(vec![
+            transition(
+                "transition.lanayru-01-select-layer13",
+                TransitionKind::Other,
+                PredicateExpression::All {
+                    terms: vec![exact_scene(14), m032.clone()],
+                },
+                vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: "F_SP115".into(),
+                        room: 1,
+                        layer: 13,
+                        spawn: 20,
+                    },
+                }],
+            ),
+            transition(
+                "transition.lanayru-02-load-actd0",
+                TransitionKind::ActorDriven,
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_scene(13),
+                        component_is(
+                            "actor.lanayru-spirit",
+                            "parameters",
+                            StateValue::Unsigned(0x0000_c102),
+                        ),
+                    ],
+                },
+                vec![StateOperation::Write {
+                    target: field("actor.lanayru-spirit", "loaded"),
+                    value: StateValue::Boolean(true),
+                }],
+            ),
+            transition(
+                "transition.lanayru-03-enter-scod0-switch-area",
+                TransitionKind::ActorDriven,
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_scene(13),
+                        component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(true)),
+                    ],
+                },
+                vec![
+                    StateOperation::Write {
+                        target: field("room.f_sp115-r01-switches", "inside_switch_area_0c"),
+                        value: StateValue::Boolean(true),
+                    },
+                    StateOperation::Write {
+                        target: field("room.f_sp115-r01-switches", "switch_0c"),
+                        value: StateValue::Boolean(true),
+                    },
+                ],
+            ),
+            transition(
+                "transition.lanayru-04-start-talk-flow21",
+                TransitionKind::MessageAction,
+                PredicateExpression::All {
+                    terms: vec![
+                        component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(true)),
+                        component_is(
+                            "room.f_sp115-r01-switches",
+                            "switch_0c",
+                            StateValue::Boolean(true),
+                        ),
+                        PredicateExpression::Compare {
+                            left: ValueReference::PlayerControl,
+                            operator: ComparisonOperator::Equal,
+                            right: ValueReference::Literal {
+                                value: StateValue::Boolean(true),
+                            },
+                        },
+                    ],
+                },
+                vec![
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "active"),
+                        value: StateValue::Boolean(true),
+                    },
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "cursor"),
+                        value: StateValue::Unsigned(321),
+                    },
+                ],
+            ),
+            transition(
+                "transition.lanayru-05-flow21-request-vessel",
+                TransitionKind::MessageAction,
+                PredicateExpression::All {
+                    terms: vec![
+                        component_is("flow.lanayru-21", "cursor", StateValue::Unsigned(321)),
+                        no_f0615.clone(),
+                        no_vessel,
+                    ],
+                },
+                vec![
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "cursor"),
+                        value: StateValue::Unsigned(315),
+                    },
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "event_id"),
+                        value: StateValue::Unsigned(1),
+                    },
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "item_id"),
+                        value: StateValue::Unsigned(VESSEL_ITEM),
+                    },
+                ],
+            ),
+            transition(
+                "transition.lanayru-06-create-presentation",
+                TransitionKind::Cutscene,
+                PredicateExpression::All {
+                    terms: vec![
+                        component_is("flow.lanayru-21", "event_id", StateValue::Unsigned(1)),
+                        component_is(
+                            "flow.lanayru-21",
+                            "item_id",
+                            StateValue::Unsigned(VESSEL_ITEM),
+                        ),
+                    ],
+                },
+                vec![
+                    StateOperation::Initialize {
+                        component: StateComponent {
+                            id: "pending.lanayru-vessel-presentation".into(),
+                            component_kind: ComponentKind::PendingOperation,
+                            payload: ComponentPayload::Structured {
+                                fields: BTreeMap::from([(
+                                    "item_id".into(),
+                                    StateValue::Unsigned(VESSEL_ITEM),
+                                )]),
+                            },
+                            binding: ComponentBinding::Session {
+                                session_id: "session-1".into(),
+                            },
+                            lifetime: SemanticLifetime::Action,
+                            serialization_owner: SerializationOwner::None,
+                            provenance: vec![ComponentProvenance {
+                                source_kind: ProvenanceSourceKind::Transition,
+                                source_id: "transition.lanayru-06-create-presentation".into(),
+                                source_sha256: None,
+                                transition_id: Some(
+                                    "transition.lanayru-06-create-presentation".into(),
+                                ),
+                            }],
+                        },
+                    },
+                    StateOperation::Write {
+                        target: field("actor.lanayru-spirit", "post_present_latch"),
+                        value: StateValue::Boolean(true),
+                    },
+                ],
+            ),
+            transition(
+                "transition.lanayru-07-generic-vessel-grant",
+                TransitionKind::ItemAcquisition,
+                component_is(
+                    "pending.lanayru-vessel-presentation",
+                    "item_id",
+                    StateValue::Unsigned(VESSEL_ITEM),
+                ),
+                vec![
+                    StateOperation::WriteRaw {
+                        component_id: "save.player-light-drop".into(),
+                        byte_offset: 4,
+                        mask: vec![0x04],
+                        value: vec![0x04],
+                    },
+                    StateOperation::Consume {
+                        pending_operation_id: "pending.lanayru-vessel-presentation".into(),
+                    },
+                ],
+            ),
+            transition(
+                "transition.lanayru-08-post-grant-autospeak",
+                TransitionKind::MessageAction,
+                PredicateExpression::All {
+                    terms: vec![
+                        vessel.clone(),
+                        no_f0615.clone(),
+                        component_is(
+                            "actor.lanayru-spirit",
+                            "post_present_latch",
+                            StateValue::Boolean(true),
+                        ),
+                        component_is(
+                            "room.f_sp115-r01-switches",
+                            "switch_0c",
+                            StateValue::Boolean(true),
+                        ),
+                    ],
+                },
+                vec![StateOperation::Write {
+                    target: field("flow.lanayru-21", "cursor"),
+                    value: StateValue::Unsigned(321),
+                }],
+            ),
+            transition(
+                "transition.lanayru-09-flow21-owned-branch",
+                TransitionKind::MessageAction,
+                PredicateExpression::All {
+                    terms: vec![
+                        component_is("flow.lanayru-21", "cursor", StateValue::Unsigned(321)),
+                        vessel.clone(),
+                        no_f0615.clone(),
+                    ],
+                },
+                vec![StateOperation::Write {
+                    target: field("flow.lanayru-21", "cursor"),
+                    value: StateValue::Unsigned(314),
+                }],
+            ),
+            transition(
+                "transition.lanayru-10-flow21-set-f0615",
+                TransitionKind::MessageAction,
+                PredicateExpression::All {
+                    terms: vec![
+                        component_is("flow.lanayru-21", "cursor", StateValue::Unsigned(314)),
+                        vessel.clone(),
+                    ],
+                },
+                vec![
+                    StateOperation::WriteRaw {
+                        component_id: "save.event-flags".into(),
+                        byte_offset: 0x4b,
+                        mask: vec![0x04],
+                        value: vec![0x04],
+                    },
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "cursor"),
+                        value: StateValue::Unsigned(323),
+                    },
+                ],
+            ),
+            transition(
+                "transition.lanayru-11-flow21-reassert-vessel",
+                TransitionKind::MessageAction,
+                component_is("flow.lanayru-21", "cursor", StateValue::Unsigned(323)),
+                vec![
+                    StateOperation::WriteRaw {
+                        component_id: "save.player-light-drop".into(),
+                        byte_offset: 4,
+                        mask: vec![0x04],
+                        value: vec![0x04],
+                    },
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "cursor"),
+                        value: StateValue::Unsigned(326),
+                    },
+                ],
+            ),
+            transition(
+                "transition.lanayru-12-flow21-set-save-switch105",
+                TransitionKind::MessageAction,
+                component_is("flow.lanayru-21", "cursor", StateValue::Unsigned(326)),
+                vec![
+                    StateOperation::Write {
+                        target: field("room.f_sp115-r01-switches", "save_switch_105"),
+                        value: StateValue::Boolean(true),
+                    },
+                    StateOperation::Write {
+                        target: field("flow.lanayru-21", "cursor"),
+                        value: StateValue::Unsigned(0xffff),
+                    },
+                ],
+            ),
+        ]);
+        mechanics
+            .transitions
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        mechanics.techniques = vec![Technique {
+            id: "technique.hypothetical-lanayru-layer13-respawn".into(),
+            label: "Hypothetical wrong-state respawn forcing Lanayru layer 13".into(),
+            scope: scope(&start),
+            prerequisites: exact_scene(14),
+            operations: vec![StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: "F_SP115".into(),
+                    room: 1,
+                    layer: 13,
+                    spawn: 20,
+                },
+            }],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: BTreeMap::from([("hypotheses".into(), 1)]),
+            },
+            evidence: evidence(TruthStatus::Hypothetical),
+        }];
+        mechanics.goals = vec![
+            Goal {
+                id: "goal.lanayru-spirit-visible".into(),
+                label: "Lanayru spirit particle is visible and speak-eligible".into(),
+                predicate: PredicateExpression::All {
+                    terms: vec![
+                        exact_scene(13),
+                        component_is("actor.lanayru-spirit", "loaded", StateValue::Boolean(true)),
+                        component_is(
+                            "room.f_sp115-r01-switches",
+                            "switch_0c",
+                            StateValue::Boolean(true),
+                        ),
+                    ],
+                },
+            },
+            Goal {
+                id: "goal.lanayru-vessel-owned".into(),
+                label: "Lanayru Vessel backing bit is set".into(),
+                predicate: vessel.clone(),
+            },
+            Goal {
+                id: "goal.lanayru-flow-complete".into(),
+                label: "Lanayru story bit and post-flow save switch are set".into(),
+                predicate: PredicateExpression::All {
+                    terms: vec![
+                        f0615.clone(),
+                        component_is(
+                            "room.f_sp115-r01-switches",
+                            "save_switch_105",
+                            StateValue::Boolean(true),
+                        ),
+                    ],
+                },
+            },
+        ];
+        mechanics
+            .goals
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        mechanics.validate().unwrap();
+
+        let facts = facts();
+        let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
+        let initial = PlannerExecutionState::new(start.clone()).unwrap();
+        let visible = solver
+            .solve(initial.clone(), &mechanics.goals[1].predicate)
+            .unwrap();
+        assert_eq!(visible.status, SearchStatus::Reached);
+        assert_eq!(visible.steps.len(), 3);
+        assert_eq!(
+            visible.steps.last().unwrap().action_id,
+            "transition.lanayru-03-enter-scod0-switch-area"
+        );
+
+        let owned = solver.solve(initial.clone(), &vessel).unwrap();
+        assert_eq!(owned.status, SearchStatus::Reached);
+        assert_eq!(
+            owned.steps.last().unwrap().action_id,
+            "transition.lanayru-07-generic-vessel-grant"
+        );
+        assert!(
+            !owned
+                .steps
+                .iter()
+                .any(|step| { step.action_id == "transition.lanayru-09-flow21-set-f0615" })
+        );
+
+        let completed = solver
+            .solve(initial, &mechanics.goals[0].predicate)
+            .unwrap();
+        assert_eq!(completed.status, SearchStatus::Reached);
+        assert_eq!(completed.steps.len(), 12);
+        let completed_ids = completed
+            .steps
+            .iter()
+            .map(|step| step.action_id.as_str())
+            .collect::<Vec<_>>();
+        let grant_index = completed_ids
+            .iter()
+            .position(|id| *id == "transition.lanayru-07-generic-vessel-grant")
+            .unwrap();
+        let story_index = completed_ids
+            .iter()
+            .position(|id| *id == "transition.lanayru-10-flow21-set-f0615")
+            .unwrap();
+        assert!(grant_index < story_index, "{completed_ids:?}");
+        assert_eq!(
+            completed.steps.last().unwrap().action_id,
+            "transition.lanayru-12-flow21-set-save-switch105"
+        );
+
+        let mut vessel_without_story = start.clone();
+        let light_drop = vessel_without_story
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "save.player-light-drop")
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &mut light_drop.payload else {
+            unreachable!();
+        };
+        bytes[4] = 0x04;
+        let transferred_item_route = solver
+            .solve(
+                PlannerExecutionState::new(vessel_without_story).unwrap(),
+                &mechanics.goals[0].predicate,
+            )
+            .unwrap();
+        assert_eq!(transferred_item_route.status, SearchStatus::Reached);
+        assert!(
+            transferred_item_route
+                .steps
+                .iter()
+                .any(|step| { step.action_id == "transition.lanayru-09-flow21-owned-branch" })
+        );
+        assert!(!transferred_item_route.steps.iter().any(|step| {
+            step.action_id == "transition.lanayru-06-create-presentation"
+                || step.action_id == "transition.lanayru-07-generic-vessel-grant"
+        }));
+
+        let mut f0615_without_vessel = start.clone();
+        let event_flags = f0615_without_vessel
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "save.event-flags")
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &mut event_flags.payload else {
+            unreachable!();
+        };
+        bytes[0x4b] = 0x04;
+        let blocked_vessel = solver
+            .solve(
+                PlannerExecutionState::new(f0615_without_vessel).unwrap(),
+                &vessel,
+            )
+            .unwrap();
+        assert_eq!(blocked_vessel.status, SearchStatus::Unknown);
+        assert!(
+            !blocked_vessel
+                .steps
+                .iter()
+                .any(|step| step.action_id == "transition.lanayru-07-generic-vessel-grant")
+        );
+
+        let mut wrong_layer = start;
+        let event_flags = wrong_layer
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "save.event-flags")
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &mut event_flags.payload else {
+            unreachable!();
+        };
+        bytes[0x08] = 0;
+        let established_wrong_layer = solver
+            .solve(
+                PlannerExecutionState::new(wrong_layer.clone()).unwrap(),
+                &mechanics.goals[1].predicate,
+            )
+            .unwrap();
+        assert_ne!(established_wrong_layer.status, SearchStatus::Reached);
+        let research_wrong_state = ForwardSolver::new(
+            &facts,
+            &mechanics,
+            &[],
+            SolverOptions {
+                evidence_policy: EvidencePolicy::RESEARCH,
+                ..SolverOptions::default()
+            },
+        )
+        .unwrap()
+        .solve(
+            PlannerExecutionState::new(wrong_layer).unwrap(),
+            &mechanics.goals[1].predicate,
+        )
+        .unwrap();
+        assert_eq!(research_wrong_state.status, SearchStatus::Reached);
+        assert!(research_wrong_state.steps.iter().any(|step| {
+            step.action_id == "technique.hypothetical-lanayru-layer13-respawn"
+                && step.weakest_evidence == Some(TruthStatus::Hypothetical)
+        }));
+    }
+
+    #[test]
     fn keyed_door_uses_bound_fungible_keys_and_oob_does_not_mutate_it() {
         let dungeon_field = |dungeon: &str, field: &str| ValueReference::BoundComponentField {
             component_kind: ComponentKind::DungeonMemory,
