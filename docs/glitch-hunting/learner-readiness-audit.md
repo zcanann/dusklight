@@ -97,3 +97,49 @@ read-only automation boundary, remain absent where unsupported, preserve exact
 gameplay behavior, and undergo ablation before becoming default learner input.
 The audit does not justify exposing pointers, raw process memory, padding or
 host-only state.
+
+## Capability backlog
+
+This backlog converts the reviewed cases into reusable subsystem work. It is
+not a list of glitches to reproduce. A backlog item may retain state that turns
+out to be useful to many behaviors, but it must never contain a published input
+order, setup tape, coordinate, timing window, desired intermediate value or
+technique-specific reward. The learner, not the collector, is responsible for
+discovering which observations predict a successful action sequence.
+
+The canonical episode keeps typed source evidence. Model views, histories and
+generic proof oracles are derived later and versioned separately so that a new
+representation does not require recollecting gameplay.
+
+| ID | Reusable subsystem signal | Canonical read-only evidence | Permitted derived view or proof | Validation gate |
+| --- | --- | --- | --- | --- |
+| `collision-history` | Player, mount and actor interaction with static and moving collision | Complete realized contacts, solver modes, surface identity and plane, correction, simultaneous floor/wall/ceiling clearance, moving-background ownership and exact phase | Bounded past-only contact/topology history; generic proof that an entity changed collision-connected region without a world transition | Neutral movement/contact collection must exercise begin, continue, switch and end events; independent capture paths agree; replay reproduces every boundary |
+| `relationship-graph` | Ownership, attachment, carry, target, mount, projectile and collision-partner relations | Named pointer-free edges joined to the complete actor population, with explicit absent/unavailable status and lifecycle generation | Masked actor graph; generic proof of a relationship surviving an incompatible owner, lifetime or context | Every present edge joins exactly once, legacy absence remains masked, generic actions produce edge variation, and cold replay preserves the edge sequence |
+| `item-projectile-state` | Items and projectiles whose position, lifecycle or action state can interact with other systems | Profile-bound typed creation/action/animation/timer, trajectory, collision, target and owner components | Object-centric history and transition labels; generic trajectory discontinuity or invalid-lifecycle proof | Components are schema-bound to real profiles, absent elsewhere, parity-checked against an independent read path and varied by non-targeted item probes |
+| `actor-local-state` | Enemy, NPC, door, mount and other profile-family state machines | Profile-bound action/mode, animation identity/frame, health/status, timers and semantic flags; never member-function pointers or opaque bytes | Masked per-family features and bounded transition history; generic proof of an impossible state, duration or transition | Header/source audit establishes semantics, capture is read-only, profile masks are exact, temporal coverage demonstrates real variation and deterministic replay agrees |
+| `event-transition-state` | Dialogue, triggers, doors, warps, scene commitment and resource loading across distinct clock domains | Message and event queues, participants, trigger/door/warp state, pending destination, load/resource phase, and simulation/event/pause/loading clocks | Past-only event graph and clock deltas; generic proof of destination mismatch, persistence across an incompatible transition or violated clock relation | Queue completeness and ordering are validated, actor references join, context boundaries remain explicit, and neutral transition probes vary each supported phase |
+| `lifecycle-capacity-state` | Process creation/deletion, actor occupancy, resource and allocation pressure | Complete active actors, semantic pending-create/delete records, slot/resource occupancy and typed success/failure outcomes; no pointers, addresses or guessed capacity | Lifecycle history and generic proof that a required create/load/allocation failed while its observable preconditions held | Counts bind to complete populations, request records are complete and ordered, success/failure varies in generic stress coverage, and ordinary gameplay behavior is unchanged |
+| `generic-oracles` | Read-only evidence that an outcome or invariant violation occurred | Collision topology, typed resources, relationship lifetime, event destination, lifecycle result, deterministic crash signature and other already-retained semantic facts | Terminal Boolean proof only; oracle identity is separate from observation and is never an intermediate reward or model input | Each oracle is state-local or explicitly history-bound, has negative controls, cannot reveal future labels at pre-input, and is independently cold-replayable |
+
+Implementation order follows missing reusable evidence, not the order of any
+published technique. The current highest-leverage gaps are complete collision
+transition coverage, non-Link relationship edges, profile-bound item/actor
+state, remaining transition/loading clocks, and semantic lifecycle outcomes.
+Existing v18 event-queue and v19 process-pressure channels are partial evidence
+for the last two rows; their presence does not make those rows complete.
+
+For every item, promotion requires four separate claims with evidence:
+
+1. **Authenticity:** the value is read from a documented game subsystem at a
+   declared boundary and contains no host address, padding or guessed offset.
+2. **Completeness:** complete sets are actually complete; optional components
+   distinguish absent, unavailable and historically not sampled.
+3. **Usefulness opportunity:** generic, non-goal-directed collection shows that
+   the value can vary or explains why a constant is still semantically needed.
+4. **Determinism:** identical source state and exact PAD reproduce the same
+   observation sequence. Any disagreement is a framework bug, not a reason to
+   search for a more forgiving tape.
+
+Only after those claims hold may an ablation decide whether a channel enters a
+learner view. Skybook page identity and readiness labels remain audit metadata;
+they are never runtime features, goals or policy hints.

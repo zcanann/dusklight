@@ -561,14 +561,21 @@ ready.
 - [ ] Turn discovered gaps into stable universal channels or explicitly typed
   optional extensions. A map- or boss-specific extension must remain masked
   elsewhere and must not reorder or invalidate the cross-map schema.
-- [ ] Convert the corpus review into a capability backlog, grouped by reusable
+- [x] Convert the corpus review into a capability backlog, grouped by reusable
   signal rather than named technique: actor-local state machines, interaction
   ownership/volumes, animation and action phases, collision and attachment
   relationships, event/dialogue/loading transitions, counters/timers/RNG, and
   generic read-only state-change or invariant-violation oracles. A single typed
   extension should satisfy many cases; a case-specific extension is allowed
   only when it models a genuine game subsystem and is explicitly masked
-  elsewhere.
+  elsewhere. `docs/glitch-hunting/learner-readiness-audit.md` now defines seven
+  subsystem-level backlog entries covering collision history, relationship
+  graphs, item/projectile state, actor-local state, event/transition state,
+  lifecycle/capacity state and generic proof oracles. Each entry specifies the
+  canonical read-only evidence, permitted derived views/proofs and a validation
+  gate, while explicitly excluding published timing, coordinates, action order,
+  setup tapes, desired intermediates and technique-specific rewards. The
+  ordering is by reusable evidence gap, not by any named behavior.
 - [ ] Validate each new capability with neutral collection tests and temporal
   coverage reports. Validation proves that the field is authentic, phase
   correct, complete when promised, varying somewhere in the game, and stable
