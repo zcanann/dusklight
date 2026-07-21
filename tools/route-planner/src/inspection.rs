@@ -18,8 +18,8 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v8";
-pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v7";
+pub const STATE_INSPECTION_SCHEMA: &str = "dusklight.route-planner.state-inspection/v9";
+pub const STATE_INSPECTION_DIFF_SCHEMA: &str = "dusklight.route-planner.state-inspection-diff/v8";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

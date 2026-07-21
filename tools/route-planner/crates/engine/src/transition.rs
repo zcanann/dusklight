@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v14";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v15";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -47,8 +47,21 @@ pub enum StateOperation {
         mask: Vec<u8>,
         value: Vec<u8>,
     },
+    WriteBoundRaw {
+        component_kind: ComponentKind,
+        binding: ComponentBindingReference,
+        byte_offset: u32,
+        mask: Vec<u8>,
+        value: Vec<u8>,
+    },
     InvalidateRaw {
         component_id: String,
+        byte_offset: u32,
+        mask: Vec<u8>,
+    },
+    InvalidateBoundRaw {
+        component_kind: ComponentKind,
+        binding: ComponentBindingReference,
         byte_offset: u32,
         mask: Vec<u8>,
     },
@@ -551,6 +564,16 @@ impl StateOperation {
                 }
                 Ok(())
             }
+            Self::WriteBoundRaw {
+                component_kind,
+                binding,
+                mask,
+                value,
+                ..
+            } => {
+                validate_bound_raw_target(component_kind, binding)?;
+                validate_raw_write(mask, value, "operation.write_bound_raw")
+            }
             Self::InvalidateRaw {
                 component_id,
                 byte_offset: _,
@@ -570,6 +593,15 @@ impl StateOperation {
                     ));
                 }
                 Ok(())
+            }
+            Self::InvalidateBoundRaw {
+                component_kind,
+                binding,
+                mask,
+                ..
+            } => {
+                validate_bound_raw_target(component_kind, binding)?;
+                validate_raw_mask(mask, "operation.invalidate_bound_raw.mask")
             }
             Self::Adjust { target, delta } => {
                 validate_field_target(target)?;
@@ -831,6 +863,55 @@ impl StateOperation {
             }
         }
     }
+}
+
+fn validate_raw_write(mask: &[u8], value: &[u8], field: &str) -> Result<(), PlannerContractError> {
+    if mask.is_empty()
+        || mask.len() != value.len()
+        || mask.len() > crate::state::MAX_COMPONENT_BYTES
+    {
+        return Err(PlannerContractError::new(
+            field,
+            "mask/value must have equal nonzero bounded lengths",
+        ));
+    }
+    validate_raw_mask(mask, &format!("{field}.mask"))
+}
+
+fn validate_raw_mask(mask: &[u8], field: &str) -> Result<(), PlannerContractError> {
+    if mask.is_empty() || mask.len() > crate::state::MAX_COMPONENT_BYTES {
+        return Err(PlannerContractError::new(
+            field,
+            "must have a nonzero bounded length",
+        ));
+    }
+    if mask.iter().all(|byte| *byte == 0) {
+        return Err(PlannerContractError::new(
+            field,
+            "must select at least one bit",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_bound_raw_target(
+    component_kind: &ComponentKind,
+    binding: &ComponentBindingReference,
+) -> Result<(), PlannerContractError> {
+    validate_component_kind(component_kind)?;
+    validate_binding_reference(binding)?;
+    if matches!(
+        binding,
+        ComponentBindingReference::Exact {
+            binding: ComponentBinding::Unbound
+        }
+    ) {
+        return Err(PlannerContractError::new(
+            "operation.bound_raw.binding",
+            "must identify an explicit backing-store binding",
+        ));
+    }
+    Ok(())
 }
 
 impl TemporalWindow {
@@ -1643,6 +1724,20 @@ mod tests {
         assert_eq!(
             operation.validate().unwrap_err().field(),
             "operation.adjust_bound_raw_unsigned.binding"
+        );
+
+        let write = StateOperation::WriteBoundRaw {
+            component_kind: ComponentKind::StageMemory,
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Unbound,
+            },
+            byte_offset: 0,
+            mask: vec![1],
+            value: vec![1],
+        };
+        assert_eq!(
+            write.validate().unwrap_err().field(),
+            "operation.bound_raw.binding"
         );
     }
 }

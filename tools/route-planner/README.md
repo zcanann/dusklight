@@ -145,3 +145,8 @@ one exact component kind/binding, and `adjust_bound_raw_unsigned` mutates a
 uniquely bound known count atomically. This is how small-key counts and dungeon
 items follow the active stage bank through ordinary loads or explicit rebinds;
 see `docs/route-planner/bound-stage-memory-semantics.md`.
+
+Masked `write_bound_raw` and `invalidate_bound_raw` operations address the same
+runtime-resolved backing references. Imported flag and switch writers therefore
+follow the active runtime file, stage, or room without hard-coding a transient
+component ID.

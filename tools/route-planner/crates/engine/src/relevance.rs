@@ -662,7 +662,9 @@ impl RelevanceBuilder {
             }
             StateOperation::Write { .. }
             | StateOperation::WriteRaw { .. }
+            | StateOperation::WriteBoundRaw { .. }
             | StateOperation::InvalidateRaw { .. }
+            | StateOperation::InvalidateBoundRaw { .. }
             | StateOperation::Adjust { .. }
             | StateOperation::ClearComponent { .. }
             | StateOperation::ClearField { .. }
@@ -739,6 +741,24 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             byte_offset: *byte_offset,
             byte_width: mask.len() as u8,
             mask: u64::MAX,
+        }],
+        StateOperation::WriteBoundRaw {
+            component_kind,
+            binding,
+            byte_offset,
+            mask,
+            ..
+        }
+        | StateOperation::InvalidateBoundRaw {
+            component_kind,
+            binding,
+            byte_offset,
+            mask,
+        } => vec![StateDependency::BoundRawBits {
+            component_kind: component_kind.clone(),
+            binding: binding.clone(),
+            byte_offset: *byte_offset,
+            byte_width: mask.len() as u32,
         }],
         StateOperation::AdjustBoundRawUnsigned {
             component_kind,

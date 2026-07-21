@@ -76,3 +76,13 @@ Persistent unlock switches, pickup/chest bits, pending HUD key deltas, and live
 door collision remain separate state. This mechanism does not invent one
 universal door program; actor-family guard and reconstruction audits are still
 required.
+
+## Masked writes and unknownness
+
+`write_bound_raw` and `invalidate_bound_raw` use the same binding-reference and
+exact-one selection rules. A writer changes only the selected bits and marks
+those bits known; invalidation preserves the bytes while clearing only the
+selected knownness bits. This lets imported message events, item grants, and
+door switches address their real backing without a fixture-specific component
+ID. Missing, ambiguous, non-raw, and out-of-range targets fail the entire
+operation batch rather than silently writing a different store.

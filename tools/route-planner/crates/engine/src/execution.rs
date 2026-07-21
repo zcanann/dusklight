@@ -3,10 +3,11 @@
 use crate::artifact::Digest;
 use crate::snapshot::StateSnapshot;
 use crate::state::{
-    BackingAttachment, BoundaryDisposition, BoundaryPolicy, ComponentBinding, ComponentKind,
-    ComponentPayload, ComponentProvenance, ComponentSelector, PhysicalSlot, ProvenanceSourceKind,
-    RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SerializationOwner, StateComponent,
-    StateValue, validate_serialization_owner,
+    BackingAttachment, BoundaryDisposition, BoundaryPolicy, ComponentBinding,
+    ComponentBindingReference, ComponentKind, ComponentPayload, ComponentProvenance,
+    ComponentSelector, PhysicalSlot, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
+    RuntimeFileOrigin, SerializationOwner, StateComponent, StateValue,
+    validate_serialization_owner,
 };
 use crate::transition::{StateOperation, TemporalWindow};
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
@@ -14,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v8";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v9";
 pub const PERSISTENT_FILE_IMAGE_SCHEMA: &str = "dusklight.route-planner.persistent-file-image/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -690,7 +691,17 @@ impl PlannerExecutionState {
                 | StateOperation::ActivateStageBank { component_id, .. } => {
                     vec![component_id.clone()]
                 }
-                StateOperation::AdjustBoundRawUnsigned {
+                StateOperation::WriteBoundRaw {
+                    component_kind,
+                    binding,
+                    ..
+                }
+                | StateOperation::InvalidateBoundRaw {
+                    component_kind,
+                    binding,
+                    ..
+                }
+                | StateOperation::AdjustBoundRawUnsigned {
                     component_kind,
                     binding,
                     ..
@@ -947,6 +958,37 @@ impl PlannerExecutionState {
                 }
                 mark_transition(component, application_id);
             }
+            StateOperation::WriteBoundRaw {
+                component_kind,
+                binding,
+                byte_offset,
+                mask,
+                value,
+            } => {
+                let component_id = self.unique_bound_raw_component_id(
+                    component_kind,
+                    binding,
+                    "operation.write_bound_raw",
+                )?;
+                let component = self.component_mut(&component_id)?;
+                let ComponentPayload::Raw { bytes, known_mask } = &mut component.payload else {
+                    unreachable!("bound raw selection accepted a non-raw component")
+                };
+                let offset = checked_raw_range(
+                    *byte_offset,
+                    mask.len(),
+                    bytes.len(),
+                    known_mask.len(),
+                    "operation.write_bound_raw",
+                )?;
+                for index in 0..mask.len() {
+                    let selected = mask[index];
+                    bytes[offset + index] =
+                        (bytes[offset + index] & !selected) | (value[index] & selected);
+                    known_mask[offset + index] |= selected;
+                }
+                mark_transition(component, application_id);
+            }
             StateOperation::InvalidateRaw {
                 component_id,
                 byte_offset,
@@ -974,6 +1016,33 @@ impl PlannerExecutionState {
                         "range exceeds the destination component",
                     ));
                 }
+                for index in 0..mask.len() {
+                    known_mask[offset + index] &= !mask[index];
+                }
+                mark_transition(component, application_id);
+            }
+            StateOperation::InvalidateBoundRaw {
+                component_kind,
+                binding,
+                byte_offset,
+                mask,
+            } => {
+                let component_id = self.unique_bound_raw_component_id(
+                    component_kind,
+                    binding,
+                    "operation.invalidate_bound_raw",
+                )?;
+                let component = self.component_mut(&component_id)?;
+                let ComponentPayload::Raw { bytes, known_mask } = &mut component.payload else {
+                    unreachable!("bound raw selection accepted a non-raw component")
+                };
+                let offset = checked_raw_range(
+                    *byte_offset,
+                    mask.len(),
+                    bytes.len(),
+                    known_mask.len(),
+                    "operation.invalidate_bound_raw",
+                )?;
                 for index in 0..mask.len() {
                     known_mask[offset + index] &= !mask[index];
                 }
@@ -1920,6 +1989,34 @@ impl PlannerExecutionState {
         Ok(&mut self.snapshot.environment.components[index])
     }
 
+    fn unique_bound_raw_component_id(
+        &self,
+        component_kind: &ComponentKind,
+        binding: &ComponentBindingReference,
+        field: &str,
+    ) -> Result<String, PlannerContractError> {
+        let resolved_binding = binding.resolve(&self.snapshot.environment);
+        let matches = self
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .filter(|component| {
+                component.component_kind == *component_kind
+                    && component.binding == resolved_binding
+                    && matches!(component.payload, ComponentPayload::Raw { .. })
+            })
+            .map(|component| component.id.clone())
+            .collect::<Vec<_>>();
+        let [component_id] = matches.as_slice() else {
+            return Err(PlannerContractError::new(
+                field,
+                "requires exactly one raw component with the selected kind and binding",
+            ));
+        };
+        Ok(component_id.clone())
+    }
+
     fn require_absent_component(&self, id: &str) -> Result<(), PlannerContractError> {
         if self
             .snapshot
@@ -2199,7 +2296,9 @@ fn history_event_writes_field(
                 .binary_search_by(|id| id.as_str().cmp(component_id))
                 .is_ok(),
             StateOperation::WriteRaw { .. }
+            | StateOperation::WriteBoundRaw { .. }
             | StateOperation::InvalidateRaw { .. }
+            | StateOperation::InvalidateBoundRaw { .. }
             | StateOperation::AdjustBoundRawUnsigned { .. }
             | StateOperation::Preserve { .. }
             | StateOperation::Serialize { .. }
@@ -2221,6 +2320,27 @@ fn history_event_writes_field(
             | StateOperation::Interrupt { .. } => false,
         },
     }
+}
+
+fn checked_raw_range(
+    byte_offset: u32,
+    width: usize,
+    bytes_len: usize,
+    known_mask_len: usize,
+    field: &str,
+) -> Result<usize, PlannerContractError> {
+    let offset = usize::try_from(byte_offset)
+        .map_err(|_| PlannerContractError::new(field, "byte offset does not fit this host"))?;
+    let end = offset
+        .checked_add(width)
+        .ok_or_else(|| PlannerContractError::new(field, "range overflows"))?;
+    if end > bytes_len || end > known_mask_len {
+        return Err(PlannerContractError::new(
+            field,
+            "range exceeds the destination component",
+        ));
+    }
+    Ok(offset)
 }
 
 fn mark_transition(component: &mut StateComponent, application_id: &str) {
@@ -3389,6 +3509,92 @@ mod tests {
                 known_mask: vec![0x20]
             }
         );
+    }
+
+    #[test]
+    fn bound_raw_writes_follow_current_stage_and_fail_atomically_on_ambiguity() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state.snapshot.environment.location.stage = "D_MN05".into();
+        let mut component = raw_component();
+        component.id = "stage.raw-flags".into();
+        component.component_kind = ComponentKind::StageMemory;
+        component.binding = ComponentBinding::Stage {
+            stage: "D_MN05".into(),
+        };
+        component.lifetime = SemanticLifetime::StageLoad;
+        component.serialization_owner = SerializationOwner::StageBank {
+            runtime_file_id: "file-0".into(),
+            stage: "D_MN05".into(),
+        };
+        state.snapshot.environment.components.push(component);
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        state.validate().unwrap();
+
+        state
+            .apply_operations(
+                "transition.write-stage-switch",
+                "snapshot.stage-switch-written",
+                &[
+                    StateOperation::WriteBoundRaw {
+                        component_kind: ComponentKind::StageMemory,
+                        binding: ComponentBindingReference::CurrentStage,
+                        byte_offset: 0,
+                        mask: vec![0x30],
+                        value: vec![0x20],
+                    },
+                    StateOperation::InvalidateBoundRaw {
+                        component_kind: ComponentKind::StageMemory,
+                        binding: ComponentBindingReference::CurrentStage,
+                        byte_offset: 0,
+                        mask: vec![0x10],
+                    },
+                ],
+            )
+            .unwrap();
+        let component = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "stage.raw-flags")
+            .unwrap();
+        assert_eq!(
+            component.payload,
+            ComponentPayload::Raw {
+                bytes: vec![0x20],
+                known_mask: vec![0x20],
+            }
+        );
+
+        let mut duplicate = component.clone();
+        duplicate.id = "stage.raw-flags.duplicate".into();
+        state.snapshot.environment.components.push(duplicate);
+        state
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let before = state.clone();
+        assert!(
+            state
+                .apply_operations(
+                    "transition.ambiguous-stage-switch",
+                    "snapshot.not-produced",
+                    &[StateOperation::WriteBoundRaw {
+                        component_kind: ComponentKind::StageMemory,
+                        binding: ComponentBindingReference::CurrentStage,
+                        byte_offset: 0,
+                        mask: vec![1],
+                        value: vec![1],
+                    }],
+                )
+                .is_err()
+        );
+        assert_eq!(state, before);
     }
 
     #[test]

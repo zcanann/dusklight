@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v6";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v7";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
