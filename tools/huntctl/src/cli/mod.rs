@@ -11,6 +11,7 @@ pub mod learning;
 pub mod milestone;
 pub mod observation;
 pub mod oracle;
+pub mod route_planner;
 pub mod search;
 pub mod survey;
 pub mod tape;

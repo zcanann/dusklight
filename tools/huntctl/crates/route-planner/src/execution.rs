@@ -9,11 +9,14 @@ use crate::state::{
 };
 use crate::transition::{StateOperation, TemporalWindow};
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v1";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct InterruptionRecord {
     pub action_id: String,
     pub window: TemporalWindow,
@@ -37,6 +40,25 @@ pub struct OperationApplication {
     pub source_snapshot_sha256: Digest,
     pub result_snapshot_sha256: Digest,
     pub operation_count: usize,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SerializedComponentStore {
+    pub owner: SerializationOwner,
+    pub components: Vec<StateComponent>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannerExecutionStateDocument {
+    pub schema: String,
+    pub snapshot: StateSnapshot,
+    pub gate_states: BTreeMap<String, bool>,
+    pub serialized_component_stores: Vec<SerializedComponentStore>,
+    pub preserved_component_ids: BTreeSet<String>,
+    pub scheduled_cleanup_ids: BTreeSet<String>,
+    pub interruption_log: Vec<InterruptionRecord>,
 }
 
 #[derive(Serialize)]
@@ -160,6 +182,26 @@ impl PlannerExecutionState {
         }
         normalized.interruption_log.clear();
         normalized.digest()
+    }
+
+    pub fn to_document(&self) -> Result<PlannerExecutionStateDocument, PlannerContractError> {
+        self.validate()?;
+        Ok(PlannerExecutionStateDocument {
+            schema: PLANNER_EXECUTION_STATE_SCHEMA.into(),
+            snapshot: self.snapshot.clone(),
+            gate_states: self.gate_states.clone(),
+            serialized_component_stores: self
+                .serialized_components
+                .iter()
+                .map(|(owner, components)| SerializedComponentStore {
+                    owner: owner.clone(),
+                    components: components.clone(),
+                })
+                .collect(),
+            preserved_component_ids: self.preserved_component_ids.clone(),
+            scheduled_cleanup_ids: self.scheduled_cleanup_ids.clone(),
+            interruption_log: self.interruption_log.clone(),
+        })
     }
 
     pub fn apply_operations(
@@ -731,6 +773,67 @@ impl PlannerExecutionState {
     }
 }
 
+impl PlannerExecutionStateDocument {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != PLANNER_EXECUTION_STATE_SCHEMA {
+            return Err(PlannerContractError::new("schema", "is unsupported"));
+        }
+        self.clone().into_state().map(|_| ())
+    }
+
+    pub fn into_state(self) -> Result<PlannerExecutionState, PlannerContractError> {
+        if self.schema != PLANNER_EXECUTION_STATE_SCHEMA {
+            return Err(PlannerContractError::new("schema", "is unsupported"));
+        }
+        let mut stores = BTreeMap::new();
+        let mut previous = None;
+        for store in self.serialized_component_stores {
+            if previous
+                .as_ref()
+                .is_some_and(|owner: &SerializationOwner| owner >= &store.owner)
+            {
+                return Err(PlannerContractError::new(
+                    "serialized_component_stores",
+                    "must be unique and sorted by owner",
+                ));
+            }
+            previous = Some(store.owner.clone());
+            stores.insert(store.owner, store.components);
+        }
+        let state = PlannerExecutionState {
+            snapshot: self.snapshot,
+            gate_states: self.gate_states,
+            serialized_components: stores,
+            preserved_component_ids: self.preserved_component_ids,
+            scheduled_cleanup_ids: self.scheduled_cleanup_ids,
+            interruption_log: self.interruption_log,
+        };
+        state.validate()?;
+        Ok(state)
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let document: Self = serde_json::from_slice(bytes)?;
+        document.validate()?;
+        if document.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "planner_execution_state",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(document)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
 fn selector_matches(selector: &ComponentSelector, component: &StateComponent) -> bool {
     match selector {
         ComponentSelector::Id { component_id } => component.id == *component_id,
@@ -1087,6 +1190,11 @@ mod tests {
             state.semantic_digest().unwrap(),
             history_only.semantic_digest().unwrap()
         );
+
+        let document = state.to_document().unwrap();
+        let bytes = document.canonical_bytes().unwrap();
+        let decoded = PlannerExecutionStateDocument::decode_canonical(&bytes).unwrap();
+        assert_eq!(decoded.into_state().unwrap(), state);
     }
 
     #[test]

@@ -1577,6 +1577,10 @@ Deliverable: researchers can extend the model without editing core code.
       context using only appropriately scoped/equivalent rules.
 - [ ] Add multi-objective cost and K-alternative plan search.
 - [x] Return reachable, unreachable-under-model, or unknown.
+  - [x] Expose canonical fact/mechanics/execution-state artifacts and a headless
+        `huntctl route-planner solve` command with bounded modeled, upper-bound,
+        and research-evidence modes; native snapshots can be wrapped without
+        inventing additional state.
 - [ ] Report minimal missing obligations/assumptions where practical.
 - [ ] Add bounded suspicious-state queries and retain complete proof objects for
       model-bug versus research-lead triage.

@@ -73,6 +73,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         "learn" => cli::learning::command_learn(&args[1..]),
         "observe" => cli::observation::command_observe(&args[1..]),
         "oracle" => cli::oracle::command_oracle(&args[1..]),
+        "route-planner" => cli::route_planner::command_route_planner(&args[1..]),
         "world" => cli::world::command_world(&args[1..]),
         "run" | "replay" => cli::worker::command_not_ready(command, &args[1..]),
         "mock-worker" => mock_worker(&args[1..]),
@@ -239,6 +240,9 @@ fn print_usage() {
     );
     eprintln!(
         "\nSemantic oracles:\n  huntctl oracle evaluate --program ORACLES.json --trace RUN.trace [--supplemental OBSERVATIONS.json] [--run-outcome OUTCOME.json] [--output REPORT.json]\n  huntctl oracle compose --manifest COMPOSITION.json [--output EVIDENCE.json]\n  huntctl oracle compare --program ORACLES.json --evidence COMPARISON.json [--output REPORT.json]"
+    );
+    eprintln!(
+        "\nCausal route planner:\n  huntctl route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json\n  huntctl route-planner solve --state STATE.json --facts FACTS.json --mechanics MECHANICS.json --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]"
     );
     eprintln!(
         "\nOffline world geometry:\n  huntctl world boot-catalog --stage-root STAGE_ROOT --known-loader MAP_LOADER.h --output CATALOG.json [--artifact-store ROOT]\n  huntctl world inventory --stage-dir STAGE_DIR --stage STAGE_ID --output INVENTORY.json [--artifact-store ROOT]\n  huntctl world profile-catalog --input PROFILE-CATALOG.json [--artifact-store ROOT]\n  huntctl world context --game-data-sha256 SHA256 --inventory INVENTORY.json [--inventory MORE.json] --output CONTEXT.json [--artifact-store ROOT]\n  huntctl world planner-facts --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json [--artifact-store ROOT]\n  huntctl world spatial-index (--inventory INVENTORY.json | --stage-dir STAGE_DIR --stage STAGE_ID) --output INDEX.json [--artifact-store ROOT]\n  huntctl world query point WORLD --room N --point X,Y,Z [--max-distance D] [--limit K] [FILTERS]\n  huntctl world query aabb WORLD --room N --min X,Y,Z --max X,Y,Z [--limit K] [FILTERS]\n  huntctl world query ray WORLD --room N --origin X,Y,Z --direction X,Y,Z --max-distance D [--limit K] [FILTERS]\n  WORLD: (--inventory INVENTORY.json | --stage-dir STAGE_DIR --stage STAGE_ID)\n  FILTERS: [--load-triggers-only] [--trigger-id ID] [--destination-stage ID] [--destination-room N] [--destination-point N]\n  huntctl world kcl --archive ROOM.arc --prism INDEX [--point X,Y,Z] [--kcl-name room.kcl] [--plc-name room.plc]\n  huntctl world kcl --kcl room.kcl --plc room.plc --prism INDEX [--point X,Y,Z]"

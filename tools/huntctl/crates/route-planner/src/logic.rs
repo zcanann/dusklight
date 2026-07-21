@@ -3,8 +3,9 @@
 use crate::artifact::Digest;
 use crate::identity::ContextSelector;
 use crate::state::{ComponentBinding, ComponentKind, StateValue};
-use crate::{PlannerContractError, validate_label, validate_stable_id};
+use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v1";
@@ -341,6 +342,27 @@ impl FactCatalog {
         }
         reject_derived_cycles(&derived_by_id)
     }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let catalog: Self = serde_json::from_slice(bytes)?;
+        catalog.validate()?;
+        if catalog.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "fact_catalog",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(catalog)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
 }
 
 fn validate_value_reference(reference: &ValueReference) -> Result<(), PlannerContractError> {
@@ -520,6 +542,9 @@ mod tests {
             }],
         };
         catalog.validate().unwrap();
+        let bytes = catalog.canonical_bytes().unwrap();
+        assert_eq!(FactCatalog::decode_canonical(&bytes).unwrap(), catalog);
+        assert_ne!(catalog.digest().unwrap(), Digest::ZERO);
     }
 
     #[test]

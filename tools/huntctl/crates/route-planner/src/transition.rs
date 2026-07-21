@@ -7,8 +7,9 @@ use crate::state::{
     StateValue, validate_binding as validate_component_binding, validate_component_kind,
     validate_serialization_owner,
 };
-use crate::{PlannerContractError, validate_label, validate_stable_id};
+use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v1";
@@ -643,6 +644,27 @@ impl MechanicsCatalog {
         )?;
         Ok(())
     }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let catalog: Self = serde_json::from_slice(bytes)?;
+        catalog.validate()?;
+        if catalog.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "mechanics_catalog",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(catalog)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
 }
 
 fn validate_transition(transition: &CandidateTransition) -> Result<(), PlannerContractError> {
@@ -1107,6 +1129,9 @@ mod tests {
     fn encoded_destination_requires_both_hard_guard_and_physical_obligation() {
         let catalog = locked_door_catalog();
         catalog.validate().unwrap();
+        let bytes = catalog.canonical_bytes().unwrap();
+        assert_eq!(MechanicsCatalog::decode_canonical(&bytes).unwrap(), catalog);
+        assert_ne!(catalog.digest().unwrap(), Digest::ZERO);
         let transition = &catalog.transitions[0];
         assert!(matches!(
             transition.activation.hard_guards,
