@@ -617,6 +617,10 @@ impl RelevanceBuilder {
             | StateOperation::Restore { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
             | StateOperation::SetLocation { .. }
+            | StateOperation::SetPlayerForm { .. }
+            | StateOperation::SetPlayerMount { .. }
+            | StateOperation::SetPlayerControl { .. }
+            | StateOperation::SetPlayerAction { .. }
             | StateOperation::Consume { .. }
             | StateOperation::SetGate { .. }
             | StateOperation::ClearGate { .. }
@@ -713,6 +717,10 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
             StateDependency::LocationLayer,
             StateDependency::LocationSpawn,
         ],
+        StateOperation::SetPlayerForm { .. } => vec![StateDependency::PlayerForm],
+        StateOperation::SetPlayerMount { .. } => vec![StateDependency::PlayerMount],
+        StateOperation::SetPlayerControl { .. } => vec![StateDependency::PlayerControl],
+        StateOperation::SetPlayerAction { .. } => vec![StateDependency::PlayerAction],
         StateOperation::SetGate { gate_id } | StateOperation::ClearGate { gate_id } => {
             vec![StateDependency::GateState {
                 gate_id: gate_id.clone(),

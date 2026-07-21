@@ -528,8 +528,8 @@ The current code shows:
   upper-bound candidate with a typed scene-location effect, an unresolved
   physical approach obligation, and an explicit unknown while the collision
   activation semantics remain inferred.
-- Refinement-pack schema v7, refinement-stack schema v2, and composed-catalog
-  schema v8 now live entirely in the planner workspace. `route-planner compose`
+- Refinement-pack schema v8, refinement-stack schema v2, and composed-catalog
+  schema v9 now live entirely in the planner workspace. `route-planner compose`
   validates canonical packs, dependency digests, conflicts, deterministic
   layer/pack precedence, explicit
   replacement/disable operations, and all resulting cross-references before it
@@ -551,12 +551,14 @@ The current code shows:
   region, so the editor can summarize requirements without flattening or losing
   their interchangeability. The planner-owned `route-planner project-graph`
   command emits this artifact from either base or composed catalogs.
-- Mechanics-catalog schema v7 makes writer, gate, and reader records executable
+- Mechanics-catalog schema v8 makes writer, gate, and reader records executable
   solver inputs rather than graph-only annotations. Reader proofs retain their
   exact raw source value and optional friendly interpretation; an unresolved or
   evidence-disallowed source makes its consuming transition unknown instead of
-  inventing a default.
-- Planner service schema v13 provides a typed JSON-lines transport owned by the
+  inventing a default. The same schema distinguishes portal, void/death reload,
+  title return, wrong-state respawn, and actor-driven transitions and provides
+  typed operations for form, mount, control, and action changes.
+- Planner service schema v14 provides a typed JSON-lines transport owned by the
   standalone planner runtime. `route-planner serve-stdio` accepts refinement and
   route-book validation/editing, catalog composition, graph projection, state
   inspection, exact-context solve, and portable multi-context solve requests;
@@ -569,7 +571,7 @@ The current code shows:
   obstruction IDs, discharged/unknown obligations, and temporal witnesses. The
   planner-owned `project-feasibility-diff` command and service expose it without
   changing the base graph or route book.
-- State-inspection schema v4 preserves the full execution-state document—live
+- State-inspection schema v5 preserves the full execution-state document—live
   components, serialized owner stores, bindings, lifetimes, provenance, gates,
   cleanup, runtime-file identity, physical slots, location, and player state—
   while evaluating every friendly alias and derived fact under the selected
@@ -577,7 +579,7 @@ The current code shows:
   service protocol expose the same projection, so raw inventory/flag bytes,
   their semantic names, ordered mutations, last field writers, and gate history
   remain inspectable together.
-- State-inspection-diff schema v2 combines the raw/component boundary diff with
+- State-inspection-diff schema v3 combines the raw/component boundary diff with
   before/after friendly fact evaluations. It classifies binding-only changes,
   payload changes, direct derived-fact dependency changes, relevant gate reads,
   and runtime-context changes separately. An unchanged payload digest and empty
@@ -651,11 +653,12 @@ The current code shows:
   disallowed witnesses remain unknown, and supporting microtrace IDs survive in
   reached and blocked solver proofs. Matching microtraces also auto-bind to the
   obligation as graph `demonstrates` dependencies.
-- Mechanics-catalog schema v7 includes explicit cutscene scene-change and resource-
-  load-failure transition classes plus masked raw-knownness invalidation. This
-  supports partial execution records that preserve confirmed prefix bytes while
-  marking only unaudited suffix effects unknown; extracting concrete cutscene
-  phase programs remains open.
+- Mechanics-catalog schema v8 includes explicit cutscene scene-change and resource-
+  load-failure transition classes, the reload/warp/actor transition classes above,
+  player-state operations, and masked raw-knownness invalidation. This supports
+  partial execution records that preserve confirmed prefix bytes while marking
+  only unaudited suffix effects unknown; extracting concrete cutscene phase
+  programs remains open.
 - Soft action and method preferences use deterministic lexicographic search:
   minimize action depth first, then maximize total preference weight among
   equal-depth routes. Each directive contributes at most once, preference and
@@ -1949,7 +1952,7 @@ Deliverable: a headless query API and deterministic fixture suite.
       each reached approach; retain the closest unresolved witness on failure.
 - [x] Show component transformation and provenance histories.
 - [x] Show last-writer and gate history for latched values.
-  - Execution-state schema v4 records every typed operation and every resolved
+  - Execution-state schema v5 records every typed operation and every resolved
     per-component boundary disposition with contiguous application-local order,
     affected component IDs, source sequence, and result snapshot. State
     inspection exposes the full log, a direct last-writer result for each live
@@ -2107,14 +2110,23 @@ Deliverable: route confidence is mechanically explainable.
 
 #### 11F. Faron-twilight return research
 
-- [ ] Define goals for Goats map, Ordon Village, outside Link's house, Link's
+Source-audit checkpoint: `docs/route-planner/faron-twilight-return-audit.md`
+records the GZ2E01 scene identities, portal-table route, form/twilight blockers,
+reload and file-lifetime distinctions, and an exhaustive upper-bound scan of
+target-naming `SCLS` records from every room archive. The acceptance fixture
+keeps executable, obstructed, feasibility-unknown, and hypothetical candidates
+distinct. It also corrects the route premise that normal BiT save/load enters
+Ordon Spring: its destination is `F_SP108`, while `F_SP104` requires an
+independent portal, return-place, restart, scene-change, or transfer producer.
+
+- [x] Define goals for Goats map, Ordon Village, outside Link's house, Link's
       house, and Ordon Spring while Faron remains in twilight.
-- [ ] Enumerate SCLS, spawn, savewarp, void, death, title, cutscene, actor, and
+- [x] Enumerate SCLS, spawn, savewarp, void, death, title, cutscene, actor, and
       technique-provided incoming transitions to each target.
-- [ ] Apply twilight, form, collision, and activation obstructions per approach.
-- [ ] Include BiT/BiTE, held return place, wrong-state respawns, OOB, and proposed
+- [x] Apply twilight, form, collision, and activation obstructions per approach.
+- [x] Include BiT/BiTE, held return place, wrong-state respawns, OOB, and proposed
       component-transfer hypotheses where scoped plausibly.
-- [ ] Report reachable, blocked, and unknown candidates with exact missing
+- [x] Report reachable, blocked, and unknown candidates with exact missing
       obligations instead of flattening them into “no.”
 
 #### 11G. Lanayru spirit and Vessel of Light

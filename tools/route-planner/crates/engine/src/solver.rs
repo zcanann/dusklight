@@ -5283,4 +5283,601 @@ mod tests {
             vec!["resolver.text-state"]
         );
     }
+
+    #[test]
+    fn faron_twilight_return_audit_keeps_warps_blockers_and_file_lifetimes_distinct() {
+        let mut start = snapshot();
+        start.id = "snapshot.faron-twilight".into();
+        start.environment.location = SceneLocation {
+            stage: "F_SP108".into(),
+            room: 0,
+            layer: 14,
+            spawn: 0,
+        };
+        start.environment.player.form = PlayerForm::Wolf;
+        start.environment.components.push(StateComponent {
+            id: "restart.route".into(),
+            component_kind: ComponentKind::Restart,
+            lifetime: SemanticLifetime::RuntimeFile,
+            binding: ComponentBinding::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            },
+            serialization_owner: SerializationOwner::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            },
+            payload: ComponentPayload::Structured {
+                fields: BTreeMap::from([
+                    ("respawn_stage".into(), StateValue::Text("F_SP108".into())),
+                    ("return_stage".into(), StateValue::Text("F_SP108".into())),
+                ]),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::TraceObservation,
+                source_id: "source.faron-restart".into(),
+                source_sha256: Some(Digest([7; 32])),
+                transition_id: None,
+            }],
+        });
+        start
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        start.validate().unwrap();
+
+        let exact_location = |stage: &str, room: i8| PredicateExpression::All {
+            terms: vec![
+                stage_is(stage),
+                PredicateExpression::Compare {
+                    left: ValueReference::LocationRoom,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Signed(i64::from(room)),
+                    },
+                },
+            ],
+        };
+        let form_is = |form: PlayerForm| PredicateExpression::Compare {
+            left: ValueReference::PlayerForm,
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Text(match form {
+                    PlayerForm::Human => "human".into(),
+                    PlayerForm::Wolf => "wolf".into(),
+                    PlayerForm::Other { id } => id,
+                    PlayerForm::Unknown => "unknown".into(),
+                }),
+            },
+        };
+        let component_is = |field: &str, value: &str| PredicateExpression::Compare {
+            left: ValueReference::ComponentField {
+                component_id: "restart.route".into(),
+                field: field.into(),
+            },
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Text(value.into()),
+            },
+        };
+        let location_effect =
+            |stage: &str, room: i8, layer: i8, spawn: i16| StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: stage.into(),
+                    room,
+                    layer,
+                    spawn,
+                },
+            };
+        let candidate = |id: &str,
+                         label: &str,
+                         kind: TransitionKind,
+                         approach: &str,
+                         guard: PredicateExpression,
+                         target: SceneLocation,
+                         truth: TruthStatus| CandidateTransition {
+            id: id.into(),
+            label: label.into(),
+            scope: scope(&start),
+            transition_kind: kind,
+            approach_id: approach.into(),
+            activation: ActivationContract {
+                hard_guards: guard,
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::SetLocation { location: target }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: evidence(truth),
+        };
+        let target = |stage: &str, room: i8, layer: i8, spawn: i16| SceneLocation {
+            stage: stage.into(),
+            room,
+            layer,
+            spawn,
+        };
+
+        let mut transitions = vec![
+            candidate(
+                "transition.actor-scenechange-to-ordon-spring",
+                "Actor-provided scene change to Ordon Spring",
+                TransitionKind::ActorDriven,
+                "approach.actor-scenechange",
+                exact_location("F_SP108", 0),
+                target("F_SP104", 1, 4, 3),
+                TruthStatus::Unknown,
+            ),
+            candidate(
+                "transition.bit-file0-save-load-faron-spring",
+                "BiT file-0 save/load return to Faron Spring",
+                TransitionKind::SaveLoad,
+                "approach.bit-save-load",
+                exact_location("F_SP108", 0),
+                target("F_SP108", 0, 14, 0),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.bite-load-ordon-file",
+                "BiTE load of a compatible Ordon runtime file",
+                TransitionKind::WrongStateRespawn,
+                "approach.bite-file-swap",
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_location("F_SP108", 0),
+                        gate_is("bite.compatible-ordon-slot", true),
+                    ],
+                },
+                target("F_SP103", 0, 1, 0),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.cutscene-scls-to-ordon-spring",
+                "Cutscene SCLS record to Ordon Spring",
+                TransitionKind::CutsceneSceneChange,
+                "approach.cutscene-scls",
+                exact_location("F_SP108", 0),
+                target("F_SP104", 1, 4, 3),
+                TruthStatus::Unknown,
+            ),
+            candidate(
+                "transition.death-reload-ordon-spring",
+                "Death reload using an Ordon Spring restart",
+                TransitionKind::DeathReload,
+                "approach.death-reload",
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_location("F_SP108", 0),
+                        component_is("respawn_stage", "F_SP104"),
+                    ],
+                },
+                target("F_SP104", 1, 4, 3),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.epona-oob-to-ordon-spring",
+                "Epona OOB toward Ordon Spring",
+                TransitionKind::Technique,
+                "approach.epona-oob",
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_location("F_SP108", 0),
+                        PredicateExpression::Compare {
+                            left: ValueReference::PlayerMount,
+                            operator: ComparisonOperator::Equal,
+                            right: ValueReference::Literal {
+                                value: StateValue::Text("epona".into()),
+                            },
+                        },
+                        PredicateExpression::Not {
+                            term: Box::new(gate_is("story.faron-twilight", true)),
+                        },
+                    ],
+                },
+                target("F_SP104", 1, 4, 3),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.midna-portal-to-ordon-spring",
+                "Midna portal warp to Ordon Spring",
+                TransitionKind::PortalWarp,
+                "approach.portal-table-entry-0",
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_location("F_SP108", 0),
+                        gate_is("portal.first-warp-complete", true),
+                        gate_is("portal.ordon-stage0-switch34", true),
+                        PredicateExpression::Compare {
+                            left: ValueReference::PlayerControl,
+                            operator: ComparisonOperator::Equal,
+                            right: ValueReference::Literal {
+                                value: StateValue::Boolean(true),
+                            },
+                        },
+                    ],
+                },
+                target("F_SP104", 1, 4, 0),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.savewarp-ordon-spring",
+                "Savewarp using a held Ordon Spring return",
+                TransitionKind::SaveWarp,
+                "approach.savewarp",
+                PredicateExpression::All {
+                    terms: vec![
+                        gate_is("story.faron-twilight", true),
+                        component_is("return_stage", "F_SP104"),
+                    ],
+                },
+                target("F_SP104", 1, 4, 3),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.spawn-injection-ordon-spring",
+                "Injected Ordon Spring spawn",
+                TransitionKind::Spawn,
+                "approach.spawn-injection",
+                gate_is("hypothesis.spawn-injection", true),
+                target("F_SP104", 1, 4, 3),
+                TruthStatus::Hypothetical,
+            ),
+            candidate(
+                "transition.title-load-ordon-village",
+                "Title/load an Ordon slot retaining Faron twilight",
+                TransitionKind::TitleReturn,
+                "approach.title-slot-load",
+                gate_is("slot.ordon-with-faron-twilight", true),
+                target("F_SP103", 0, 1, 0),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.void-reload-ordon-spring",
+                "Void reload using an Ordon Spring restart",
+                TransitionKind::VoidReload,
+                "approach.void-reload",
+                PredicateExpression::All {
+                    terms: vec![
+                        exact_location("F_SP108", 0),
+                        component_is("respawn_stage", "F_SP104"),
+                    ],
+                },
+                target("F_SP104", 1, 4, 3),
+                TruthStatus::Established,
+            ),
+            CandidateTransition {
+                id: "transition.walk-back-through-faron-barrier".into(),
+                label: "Walk back through the Faron twilight barrier".into(),
+                scope: scope(&start),
+                transition_kind: TransitionKind::EncodedMapExit,
+                approach_id: "approach.faron-barrier".into(),
+                activation: ActivationContract {
+                    hard_guards: exact_location("F_SP108", 0),
+                    physical_obligation_ids: vec!["obligation.cross-faron-barrier".into()],
+                    effects: vec![location_effect("F_SP104", 1, 4, 3)],
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+            candidate(
+                "transition.wolf-oob-to-ordon-spring",
+                "Unverified wolf OOB toward Ordon Spring",
+                TransitionKind::Technique,
+                "approach.wolf-oob",
+                exact_location("F_SP108", 0),
+                target("F_SP104", 1, 4, 3),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.ordon-spring-crawlspace-to-house-yard",
+                "Ordon Spring crawlspace to outside Link's house",
+                TransitionKind::EncodedMapExit,
+                "approach.ordon-crawlspace",
+                PredicateExpression::All {
+                    terms: vec![exact_location("F_SP104", 1), form_is(PlayerForm::Wolf)],
+                },
+                target("F_SP103", 1, 1, 2),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.house-yard-to-ordon-village",
+                "Outside Link's house to main Ordon Village",
+                TransitionKind::EncodedMapExit,
+                "approach.ordon-room-boundary",
+                exact_location("F_SP103", 1),
+                target("F_SP103", 0, 1, 0),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.ordon-village-to-ranch",
+                "Main Ordon Village to the goats map",
+                TransitionKind::EncodedMapExit,
+                "approach.ordon-ranch-gate",
+                exact_location("F_SP103", 0),
+                target("F_SP00", 0, 1, 1),
+                TruthStatus::Established,
+            ),
+            candidate(
+                "transition.house-yard-knob-door-to-links-house",
+                "Open Link's house knob door",
+                TransitionKind::Door,
+                "approach.links-house-kdoor",
+                PredicateExpression::All {
+                    terms: vec![exact_location("F_SP103", 1), form_is(PlayerForm::Human)],
+                },
+                target("R_SP01", 4, 1, 0),
+                TruthStatus::Established,
+            ),
+        ];
+        transitions
+            .iter_mut()
+            .find(|transition| transition.id == "transition.wolf-oob-to-ordon-spring")
+            .unwrap()
+            .activation
+            .unknown_requirements = vec![crate::transition::UnknownRequirement {
+            id: "unknown.wolf-oob-route".into(),
+            description: "No witnessed wolf route reaches this encoded activation.".into(),
+            evidence: evidence(TruthStatus::Unknown),
+        }];
+        transitions.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let obligations = vec![FeasibilityObligation {
+            id: "obligation.cross-faron-barrier".into(),
+            label: "Cross the active Faron twilight barrier".into(),
+            scope: scope(&start),
+            obligation_kind: ObligationKind::Twilight,
+            detail: ObligationDetail::Predicate {
+                predicate: PredicateExpression::Not {
+                    term: Box::new(gate_is("story.faron-twilight", true)),
+                },
+            },
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let obstructions = vec![Obstruction {
+            id: "obstruction.faron-twilight-barrier".into(),
+            label: "Faron twilight barrier rejects the return approach".into(),
+            scope: scope(&start),
+            blocked_action_id: "transition.walk-back-through-faron-barrier".into(),
+            approach_id: "approach.faron-barrier".into(),
+            active_when: gate_is("story.faron-twilight", true),
+            obligation_ids: vec!["obligation.cross-faron-barrier".into()],
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let readers = vec![
+            ReaderRule {
+                id: "reader.death-restart-stage".into(),
+                scope: scope(&start),
+                source: ValueReference::ComponentField {
+                    component_id: "restart.route".into(),
+                    field: "respawn_stage".into(),
+                },
+                consuming_transition_id: "transition.death-reload-ordon-spring".into(),
+                interpretation_fact_id: None,
+                evidence: evidence(TruthStatus::Established),
+            },
+            ReaderRule {
+                id: "reader.savewarp-return-stage".into(),
+                scope: scope(&start),
+                source: ValueReference::ComponentField {
+                    component_id: "restart.route".into(),
+                    field: "return_stage".into(),
+                },
+                consuming_transition_id: "transition.savewarp-ordon-spring".into(),
+                interpretation_fact_id: None,
+                evidence: evidence(TruthStatus::Established),
+            },
+            ReaderRule {
+                id: "reader.void-restart-stage".into(),
+                scope: scope(&start),
+                source: ValueReference::ComponentField {
+                    component_id: "restart.route".into(),
+                    field: "respawn_stage".into(),
+                },
+                consuming_transition_id: "transition.void-reload-ordon-spring".into(),
+                interpretation_fact_id: None,
+                evidence: evidence(TruthStatus::Established),
+            },
+        ];
+        let mut techniques = vec![
+            Technique {
+                id: "technique.ems-human-in-faron-twilight".into(),
+                label: "Early Master Sword enables human form in Faron twilight".into(),
+                scope: scope(&start),
+                prerequisites: gate_is("story.faron-twilight", true),
+                operations: vec![StateOperation::SetPlayerForm {
+                    form: PlayerForm::Human,
+                }],
+                discharged_obligation_ids: Vec::new(),
+                introduced_obligation_ids: Vec::new(),
+                cost: RouteCost {
+                    axes: BTreeMap::from([("difficulty".into(), 8)]),
+                },
+                evidence: evidence(TruthStatus::Established),
+            },
+            Technique {
+                id: "technique.hypothetical-return-place-transfer".into(),
+                label: "Hypothetically transfer an Ordon Spring return place".into(),
+                scope: scope(&start),
+                prerequisites: gate_is("story.faron-twilight", true),
+                operations: vec![StateOperation::Write {
+                    target: crate::transition::ComponentFieldTarget {
+                        component_id: "restart.route".into(),
+                        field: "return_stage".into(),
+                    },
+                    value: StateValue::Text("F_SP104".into()),
+                }],
+                discharged_obligation_ids: Vec::new(),
+                introduced_obligation_ids: Vec::new(),
+                cost: RouteCost {
+                    axes: BTreeMap::from([("hypotheses".into(), 1)]),
+                },
+                evidence: evidence(TruthStatus::Hypothetical),
+            },
+        ];
+        techniques.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let goal_predicate = |stage: &str, room: i8| PredicateExpression::All {
+            terms: vec![
+                exact_location(stage, room),
+                gate_is("story.faron-twilight", true),
+            ],
+        };
+        let mut goals = vec![
+            Goal {
+                id: "goal.faron-twilight.goats-map".into(),
+                label: "Reach the goats map while Faron remains in twilight".into(),
+                predicate: goal_predicate("F_SP00", 0),
+            },
+            Goal {
+                id: "goal.faron-twilight.links-house".into(),
+                label: "Reach Link's house while Faron remains in twilight".into(),
+                predicate: goal_predicate("R_SP01", 4),
+            },
+            Goal {
+                id: "goal.faron-twilight.ordon-spring".into(),
+                label: "Reach Ordon Spring while Faron remains in twilight".into(),
+                predicate: goal_predicate("F_SP104", 1),
+            },
+            Goal {
+                id: "goal.faron-twilight.ordon-village".into(),
+                label: "Reach Ordon Village while Faron remains in twilight".into(),
+                predicate: goal_predicate("F_SP103", 0),
+            },
+            Goal {
+                id: "goal.faron-twilight.outside-links-house".into(),
+                label: "Reach outside Link's house while Faron remains in twilight".into(),
+                predicate: goal_predicate("F_SP103", 1),
+            },
+        ];
+        goals.sort_by(|left, right| left.id.cmp(&right.id));
+        let mechanics = MechanicsCatalog {
+            schema: MECHANICS_CATALOG_SCHEMA.into(),
+            transitions,
+            obligations,
+            writers: Vec::new(),
+            gates: Vec::new(),
+            readers,
+            reconstruction_rules: Vec::new(),
+            obstructions,
+            resolvers: Vec::new(),
+            techniques,
+            microtraces: Vec::new(),
+            goals: goals.clone(),
+        };
+        mechanics.validate().unwrap();
+
+        let mut state = PlannerExecutionState::new(start.clone()).unwrap();
+        state.gate_states.extend([
+            ("portal.first-warp-complete".into(), true),
+            ("portal.ordon-stage0-switch34".into(), true),
+            ("story.faron-twilight".into(), true),
+        ]);
+        state.validate().unwrap();
+        let fact_catalog = facts();
+        let solver =
+            ForwardSolver::new(&fact_catalog, &mechanics, &[], SolverOptions::default()).unwrap();
+        let results = goals
+            .iter()
+            .map(|goal| {
+                (
+                    goal.id.as_str(),
+                    solver.solve(state.clone(), &goal.predicate).unwrap(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        assert!(
+            results
+                .values()
+                .all(|result| result.status == SearchStatus::Reached)
+        );
+        assert_eq!(results["goal.faron-twilight.ordon-spring"].steps.len(), 1);
+        assert_eq!(
+            results["goal.faron-twilight.ordon-spring"].steps[0].action_id,
+            "transition.midna-portal-to-ordon-spring"
+        );
+        assert!(
+            results["goal.faron-twilight.links-house"]
+                .steps
+                .iter()
+                .any(|step| step.action_id == "technique.ems-human-in-faron-twilight")
+        );
+        assert!(
+            results["goal.faron-twilight.links-house"]
+                .steps
+                .iter()
+                .any(|step| step.action_id == "transition.house-yard-knob-door-to-links-house")
+        );
+        assert!(
+            results["goal.faron-twilight.ordon-spring"]
+                .backward_relevance
+                .contains_transition("transition.bit-file0-save-load-faron-spring")
+        );
+        assert!(
+            !results["goal.faron-twilight.ordon-spring"]
+                .steps
+                .iter()
+                .any(|step| step.action_id == "transition.bit-file0-save-load-faron-spring")
+        );
+
+        let mut blocked_state = PlannerExecutionState::new(start).unwrap();
+        blocked_state.gate_states.extend([
+            ("portal.first-warp-complete".into(), true),
+            ("portal.ordon-stage0-switch34".into(), false),
+            ("story.faron-twilight".into(), true),
+        ]);
+        let blocked = solver
+            .solve(blocked_state.clone(), &goal_predicate("F_SP104", 1))
+            .unwrap();
+        assert_eq!(blocked.status, SearchStatus::Unknown);
+        let barrier = blocked
+            .blocked_transition_witnesses
+            .iter()
+            .find(|witness| witness.transition_id == "transition.walk-back-through-faron-barrier")
+            .unwrap();
+        assert_eq!(barrier.classification, TransitionClassification::Obstructed);
+        assert_eq!(
+            barrier.outstanding_obligation_ids,
+            vec!["obligation.cross-faron-barrier"]
+        );
+        assert_eq!(
+            barrier.active_obstruction_ids,
+            vec!["obstruction.faron-twilight-barrier"]
+        );
+        let wolf_oob = blocked
+            .blocked_transition_witnesses
+            .iter()
+            .find(|witness| witness.transition_id == "transition.wolf-oob-to-ordon-spring")
+            .unwrap();
+        assert_eq!(
+            wolf_oob.classification,
+            TransitionClassification::FeasibilityUnknown
+        );
+        assert_eq!(
+            wolf_oob.unknown_requirement_ids,
+            vec!["unknown.wolf-oob-route"]
+        );
+
+        let research = ForwardSolver::new(
+            &facts(),
+            &mechanics,
+            &[],
+            SolverOptions {
+                evidence_policy: EvidencePolicy::RESEARCH,
+                ..SolverOptions::default()
+            },
+        )
+        .unwrap()
+        .solve(blocked_state, &goal_predicate("F_SP104", 1))
+        .unwrap();
+        assert_eq!(research.status, SearchStatus::Reached);
+        assert!(research.steps.iter().any(|step| {
+            step.action_id == "technique.hypothetical-return-place-transfer"
+                && step.weakest_evidence == Some(TruthStatus::Hypothetical)
+        }));
+        let savewarp = research
+            .steps
+            .iter()
+            .find(|step| step.action_id == "transition.savewarp-ordon-spring")
+            .unwrap();
+        assert_eq!(
+            savewarp.reader_results[0].source_value,
+            StateValue::Text("F_SP104".into())
+        );
+    }
 }

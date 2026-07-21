@@ -3,8 +3,8 @@
 use crate::artifact::Digest;
 use crate::logic::{ContextScope, PredicateExpression, RuleEvidence, ValueReference};
 use crate::state::{
-    ComponentBinding, ComponentSelector, PlaneRelation, RuntimeFile, RuntimeFileLifecycle,
-    SemanticLifetime, SerializationOwner, StateComponent, StateValue,
+    ComponentBinding, ComponentSelector, PlaneRelation, PlayerForm, PlayerMount, RuntimeFile,
+    RuntimeFileLifecycle, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
     validate_binding as validate_component_binding, validate_component_kind,
     validate_serialization_owner,
 };
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v7";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v8";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -102,6 +102,18 @@ pub enum StateOperation {
     SetLocation {
         location: crate::state::SceneLocation,
     },
+    SetPlayerForm {
+        form: PlayerForm,
+    },
+    SetPlayerMount {
+        mount: Option<PlayerMount>,
+    },
+    SetPlayerControl {
+        has_control: Option<bool>,
+    },
+    SetPlayerAction {
+        action: String,
+    },
     Project {
         source_runtime_file_id: String,
         destination_runtime_file_id: String,
@@ -158,11 +170,17 @@ pub enum TransitionKind {
     EncodedMapExit,
     Door,
     Spawn,
+    PortalWarp,
     SaveWarp,
+    VoidReload,
+    DeathReload,
+    TitleReturn,
+    WrongStateRespawn,
     ItemAcquisition,
     NpcReward,
     Cutscene,
     CutsceneSceneChange,
+    ActorDriven,
     ResourceLoadFailure,
     BossCompletion,
     FormChange,
@@ -556,6 +574,19 @@ impl StateOperation {
                 Ok(())
             }
             Self::SetLocation { location } => location.validate(),
+            Self::SetPlayerForm {
+                form: PlayerForm::Other { id },
+            } => validate_stable_id("operation.set_player_form.id", id),
+            Self::SetPlayerForm { .. } | Self::SetPlayerControl { .. } => Ok(()),
+            Self::SetPlayerMount { mount } => {
+                if let Some(PlayerMount::Other { id }) = mount {
+                    validate_stable_id("operation.set_player_mount.id", id)?;
+                }
+                Ok(())
+            }
+            Self::SetPlayerAction { action } => {
+                validate_stable_id("operation.set_player_action.action", action)
+            }
             Self::Project {
                 source_runtime_file_id,
                 destination_runtime_file_id,

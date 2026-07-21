@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v4";
+pub const PLANNER_EXECUTION_STATE_SCHEMA: &str = "dusklight.route-planner.execution-state/v5";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -596,6 +596,10 @@ impl PlannerExecutionState {
             } => vec![flow_component_id.clone()],
             StateOperation::SetActiveRuntimeFile { .. }
             | StateOperation::SetLocation { .. }
+            | StateOperation::SetPlayerForm { .. }
+            | StateOperation::SetPlayerMount { .. }
+            | StateOperation::SetPlayerControl { .. }
+            | StateOperation::SetPlayerAction { .. }
             | StateOperation::SetGate { .. }
             | StateOperation::ClearGate { .. }
             | StateOperation::ScheduleCleanup { .. }
@@ -926,6 +930,18 @@ impl PlannerExecutionState {
             }
             StateOperation::SetLocation { location } => {
                 self.snapshot.environment.location = location.clone();
+            }
+            StateOperation::SetPlayerForm { form } => {
+                self.snapshot.environment.player.form = form.clone();
+            }
+            StateOperation::SetPlayerMount { mount } => {
+                self.snapshot.environment.player.mount = mount.clone();
+            }
+            StateOperation::SetPlayerControl { has_control } => {
+                self.snapshot.environment.player.has_control = *has_control;
+            }
+            StateOperation::SetPlayerAction { action } => {
+                self.snapshot.environment.player.action = action.clone();
             }
             StateOperation::Project {
                 source_runtime_file_id,
@@ -1298,6 +1314,10 @@ fn history_event_writes_field(
             | StateOperation::Rebind { .. }
             | StateOperation::SetActiveRuntimeFile { .. }
             | StateOperation::SetLocation { .. }
+            | StateOperation::SetPlayerForm { .. }
+            | StateOperation::SetPlayerMount { .. }
+            | StateOperation::SetPlayerControl { .. }
+            | StateOperation::SetPlayerAction { .. }
             | StateOperation::Project { .. }
             | StateOperation::Consume { .. }
             | StateOperation::SetGate { .. }
@@ -1403,8 +1423,8 @@ mod tests {
     use crate::state::{
         BOUNDARY_POLICY_SCHEMA, BackingAttachment, BoundaryKind, ComponentBoundaryRule,
         EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId, PlayerForm,
-        PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
-        SemanticLifetime,
+        PlayerMount, PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
+        SceneLocation, SemanticLifetime,
     };
     use crate::transition::ComponentFieldTarget;
 
@@ -1624,6 +1644,54 @@ mod tests {
                 .as_deref(),
             Some("transition.enter-forest")
         );
+    }
+
+    #[test]
+    fn player_state_operations_are_ordered_and_round_trip_in_history() {
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state
+            .apply_operations(
+                "cutscene.partial-player-state",
+                "snapshot.partial-player-state",
+                &[
+                    StateOperation::SetPlayerForm {
+                        form: PlayerForm::Wolf,
+                    },
+                    StateOperation::SetPlayerMount {
+                        mount: Some(PlayerMount::Epona),
+                    },
+                    StateOperation::SetPlayerControl { has_control: None },
+                    StateOperation::SetPlayerAction {
+                        action: "cutscene-warp".into(),
+                    },
+                ],
+            )
+            .unwrap();
+
+        assert_eq!(state.snapshot.environment.player.form, PlayerForm::Wolf);
+        assert_eq!(
+            state.snapshot.environment.player.mount,
+            Some(PlayerMount::Epona)
+        );
+        assert_eq!(state.snapshot.environment.player.has_control, None);
+        assert_eq!(state.snapshot.environment.player.action, "cutscene-warp");
+        assert_eq!(state.execution_history.len(), 4);
+        assert!(state.execution_history.iter().all(|event| {
+            matches!(
+                &event.event,
+                ExecutionHistoryKind::Operation {
+                    affected_component_ids,
+                    ..
+                } if affected_component_ids.is_empty()
+            )
+        }));
+
+        let document = state.to_document().unwrap();
+        assert_eq!(document.schema, PLANNER_EXECUTION_STATE_SCHEMA);
+        let decoded =
+            PlannerExecutionStateDocument::decode_canonical(&document.canonical_bytes().unwrap())
+                .unwrap();
+        assert_eq!(decoded.into_state().unwrap(), state);
     }
 
     #[test]
