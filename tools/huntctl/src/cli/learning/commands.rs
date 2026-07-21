@@ -1054,7 +1054,12 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "output": output,
                     "artifact_store": artifact_store,
                     "content_blob": content_blob,
-                    "worlds": view.worlds,
+                    "worlds": view.worlds.iter().map(|world| json!({
+                        "stage": world.stage,
+                        "inventory_sha256": world.inventory_sha256,
+                        "spatial_index_sha256": world.spatial_index_sha256,
+                        "placements": world.placements.len(),
+                    })).collect::<Vec<_>>(),
                     "configuration": view.configuration,
                     "observations": view.observations.len(),
                     "present": present,

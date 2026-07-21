@@ -13,15 +13,16 @@ use dusklight_evidence::native_episode_shard::{
 };
 use dusklight_world::world_context::WorldContext;
 use dusklight_world::world_geometry::Vec3;
-use dusklight_world::world_inventory::WorldInventory;
+use dusklight_world::world_inventory::{PlacementKind, SourceKind, WorldInventory};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_GEOMETRY_VIEW_SCHEMA_V2: &str = "dusklight-native-geometry-view/v2";
+pub const NATIVE_GEOMETRY_VIEW_SCHEMA_V3: &str = "dusklight-native-geometry-view/v3";
 pub const MAX_GEOMETRY_QUERY_DISTANCE: f32 = 65_536.0;
+pub const MAX_STATIC_PLACEMENTS_PER_WORLD: usize = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -69,12 +70,55 @@ pub enum GeometryObservationStatus {
     RoomUnavailable,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct GeometryWorldReference {
     pub stage: String,
     pub inventory_sha256: Digest,
     pub spatial_index_sha256: Digest,
+    /// Complete semantic ACT*/SCO*/TRES/PLY placement population from the
+    /// immutable inventory. It is stored once per world, never copied per tick
+    /// or proximity-selected.
+    pub placements: Vec<NativeStaticPlacement>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeStaticPlacementScope {
+    Stage,
+    Room,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeStaticPlacementKind {
+    Actor,
+    ScaledActor,
+    Treasure,
+    PlayerSpawn,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeStaticPlacement {
+    pub stable_id: String,
+    pub source_sha256: Digest,
+    pub scope: NativeStaticPlacementScope,
+    pub room: Option<i8>,
+    pub chunk_tag: String,
+    pub record_index: usize,
+    pub layer: Option<u8>,
+    pub kind: NativeStaticPlacementKind,
+    /// Exact authored eight-byte actor token with trailing zeroes removed by
+    /// the world parser. This remains a categorical identity, not an ordinal.
+    pub name: String,
+    pub parameters: u32,
+    pub absolute_position: [f32; 3],
+    pub angle: [i16; 3],
+    pub set_id: u16,
+    /// Runtime scale produced by the ordinary stage loader (authored bytes ×
+    /// 0.1). Unscaled placement records keep this explicitly absent.
+    pub scale: Option<[f32; 3]>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -87,6 +131,7 @@ pub struct NativeGeometryObservation {
     pub state_identity_xxh3_128: String,
     pub stage: String,
     pub room: i8,
+    pub layer: i8,
     pub player_present: bool,
     pub player_position: [f32; 3],
     pub player_yaw: i16,
@@ -181,6 +226,7 @@ impl NativeEpisodeGeometryView {
                     spatial_index_sha256: index
                         .artifact_digest()
                         .map_err(|error| NativeGeometryViewError::new(error.to_string()))?,
+                    placements: materialize_static_placements(inventory)?,
                 })
             })
             .collect::<Result<Vec<_>, NativeGeometryViewError>>()?;
@@ -209,7 +255,7 @@ impl NativeEpisodeGeometryView {
             }
         }
         let mut view = Self {
-            schema: NATIVE_GEOMETRY_VIEW_SCHEMA_V2.into(),
+            schema: NATIVE_GEOMETRY_VIEW_SCHEMA_V3.into(),
             native_shard_sha256: shard.content_sha256,
             observation_schema: shard.metadata.observation_schema.clone(),
             world_context_sha256,
@@ -245,7 +291,7 @@ impl NativeEpisodeGeometryView {
 
     pub fn validate(&self) -> Result<(), NativeGeometryViewError> {
         self.configuration.validate()?;
-        if self.schema != NATIVE_GEOMETRY_VIEW_SCHEMA_V2
+        if self.schema != NATIVE_GEOMETRY_VIEW_SCHEMA_V3
             || self.native_shard_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || self.world_context_sha256 == Some(Digest::ZERO)
@@ -269,6 +315,23 @@ impl NativeEpisodeGeometryView {
                 return Err(NativeGeometryViewError::new(
                     "native geometry view contains an invalid world reference",
                 ));
+            }
+            if world.placements.len() > MAX_STATIC_PLACEMENTS_PER_WORLD {
+                return Err(NativeGeometryViewError::new(
+                    "native geometry view world placement population is oversized",
+                ));
+            }
+            let mut previous_placement = None;
+            for placement in &world.placements {
+                validate_static_placement(placement)?;
+                if previous_placement
+                    .is_some_and(|previous: &str| previous >= placement.stable_id.as_str())
+                {
+                    return Err(NativeGeometryViewError::new(
+                        "native geometry view placements are duplicate or noncanonical",
+                    ));
+                }
+                previous_placement = Some(placement.stable_id.as_str());
             }
             previous_stage = Some(world.stage.as_str());
         }
@@ -326,11 +389,107 @@ impl NativeEpisodeGeometryView {
         let bytes = serde_json::to_vec(&canonical)
             .map_err(|error| NativeGeometryViewError::new(error.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-geometry-view/v2\0");
+        hasher.update(b"dusklight.native-geometry-view/v3\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
     }
+}
+
+fn materialize_static_placements(
+    inventory: &WorldInventory,
+) -> Result<Vec<NativeStaticPlacement>, NativeGeometryViewError> {
+    let mut placements = inventory
+        .placements
+        .iter()
+        .chain(&inventory.player_spawns)
+        .map(|placement| NativeStaticPlacement {
+            stable_id: placement.stable_id.clone(),
+            source_sha256: placement.source_sha256,
+            scope: match placement.scope.kind {
+                SourceKind::Stage => NativeStaticPlacementScope::Stage,
+                SourceKind::Room => NativeStaticPlacementScope::Room,
+            },
+            room: placement.scope.room,
+            chunk_tag: placement.chunk_tag.clone(),
+            record_index: placement.record_index,
+            layer: placement.layer,
+            kind: match placement.kind {
+                PlacementKind::Actor => NativeStaticPlacementKind::Actor,
+                PlacementKind::ScaledActor => NativeStaticPlacementKind::ScaledActor,
+                PlacementKind::Treasure => NativeStaticPlacementKind::Treasure,
+                PlacementKind::PlayerSpawn => NativeStaticPlacementKind::PlayerSpawn,
+            },
+            name: placement.name.clone(),
+            parameters: placement.parameters,
+            absolute_position: [
+                placement.position.x,
+                placement.position.y,
+                placement.position.z,
+            ],
+            angle: placement.angle,
+            set_id: placement.set_id,
+            scale: placement.scale_raw.map(|scale| {
+                [
+                    f32::from(scale[0]) * 0.1,
+                    f32::from(scale[1]) * 0.1,
+                    f32::from(scale[2]) * 0.1,
+                ]
+            }),
+        })
+        .collect::<Vec<_>>();
+    if placements.len() > MAX_STATIC_PLACEMENTS_PER_WORLD {
+        return Err(NativeGeometryViewError::new(
+            "native geometry view world placement population is oversized",
+        ));
+    }
+    placements.sort_by(|left, right| left.stable_id.cmp(&right.stable_id));
+    for placement in &placements {
+        validate_static_placement(placement)?;
+    }
+    if placements
+        .windows(2)
+        .any(|pair| pair[0].stable_id == pair[1].stable_id)
+    {
+        return Err(NativeGeometryViewError::new(
+            "native geometry view placements have duplicate stable identities",
+        ));
+    }
+    Ok(placements)
+}
+
+fn validate_static_placement(
+    placement: &NativeStaticPlacement,
+) -> Result<(), NativeGeometryViewError> {
+    let scope_consistent = match placement.scope {
+        NativeStaticPlacementScope::Stage => placement.room.is_none(),
+        NativeStaticPlacementScope::Room => placement.room.is_some(),
+    };
+    let scale_consistent = placement.scale.is_some()
+        == (placement.kind == NativeStaticPlacementKind::ScaledActor)
+        && placement
+            .scale
+            .is_none_or(|scale| scale.iter().all(|value| value.is_finite()));
+    if placement.stable_id.is_empty()
+        || placement.source_sha256 == Digest::ZERO
+        || !scope_consistent
+        || placement.chunk_tag.len() != 4
+        || placement.record_index >= MAX_STATIC_PLACEMENTS_PER_WORLD
+        || placement.name.is_empty()
+        || placement.name.len() > 8
+        || !placement.name.bytes().all(|byte| byte.is_ascii_graphic())
+        || placement.layer.is_some_and(|layer| layer > 15)
+        || !scale_consistent
+        || placement
+            .absolute_position
+            .iter()
+            .any(|value| !value.is_finite())
+    {
+        return Err(NativeGeometryViewError::new(
+            "native geometry view contains an invalid static placement",
+        ));
+    }
+    Ok(())
 }
 
 fn materialize_observation(
@@ -362,6 +521,7 @@ fn materialize_observation(
         state_identity_xxh3_128,
         stage: observation.stage.clone(),
         room: observation.room,
+        layer: observation.layer,
         player_present: observation.player_present,
         player_position: observation.player_position,
         player_yaw: observation.player_shape_angle[1],
@@ -451,7 +611,8 @@ mod tests {
         KclSourceIndices,
     };
     use dusklight_world::world_inventory::{
-        CollisionInventoryRecord, SourceKind, SourceScope, WORLD_INVENTORY_SCHEMA, WorldSource,
+        CollisionInventoryRecord, PlacementKind, PlacementRecord, SourceKind, SourceScope,
+        WORLD_INVENTORY_SCHEMA, WorldSource,
     };
 
     fn digest(label: &[u8]) -> Digest {
@@ -507,8 +668,48 @@ mod tests {
                 },
             ],
             chunks: Vec::new(),
-            placements: Vec::new(),
-            player_spawns: Vec::new(),
+            placements: vec![PlacementRecord {
+                stable_id: "room-placement/0".into(),
+                source_sha256: digest(b"geometry-view-room-data"),
+                scope: SourceScope {
+                    kind: SourceKind::Room,
+                    room: Some(observation.room),
+                },
+                chunk_tag: "ACTR".into(),
+                record_index: 0,
+                layer: None,
+                kind: PlacementKind::Actor,
+                name: "Scex".into(),
+                parameters: 0x1234_5678,
+                position: Vec3 {
+                    x: x + 10.0,
+                    y,
+                    z: z - 20.0,
+                },
+                angle: [1, 2, 3],
+                set_id: 7,
+                scale_raw: None,
+                raw_hex: "00".repeat(32),
+            }],
+            player_spawns: vec![PlacementRecord {
+                stable_id: "stage-spawn/0".into(),
+                source_sha256: digest(b"geometry-view-stage-data"),
+                scope: SourceScope {
+                    kind: SourceKind::Stage,
+                    room: None,
+                },
+                chunk_tag: "PLYR".into(),
+                record_index: 0,
+                layer: None,
+                kind: PlacementKind::PlayerSpawn,
+                name: "Link".into(),
+                parameters: 0,
+                position: Vec3 { x, y, z },
+                angle: [0, 0, 0],
+                set_id: 0xffff,
+                scale_raw: None,
+                raw_hex: "00".repeat(32),
+            }],
             exits: Vec::new(),
             collisions: vec![CollisionInventoryRecord {
                 room: observation.room,
@@ -629,11 +830,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(view.worlds.len(), 1);
+        assert_eq!(view.worlds[0].placements.len(), 2);
+        let placement = &view.worlds[0].placements[0];
+        assert_eq!(placement.stable_id, "room-placement/0");
+        assert_eq!(placement.scope, NativeStaticPlacementScope::Room);
+        assert_eq!(placement.room, Some(view.observations[0].room));
+        assert_eq!(placement.kind, NativeStaticPlacementKind::Actor);
+        assert_eq!(placement.name, "Scex");
+        assert_eq!(placement.parameters, 0x1234_5678);
+        assert_eq!(placement.set_id, 7);
+        assert_eq!(
+            view.worlds[0].placements[1].kind,
+            NativeStaticPlacementKind::PlayerSpawn
+        );
         assert_eq!(view.observations.len(), 2);
         assert!(view.observations.iter().all(|observation| {
             observation.status == GeometryObservationStatus::Present
                 && observation.probes.len() == 1
                 && (observation.probes[0].distance - 10.0).abs() < 0.001
+                && observation.layer == shard.episodes[0].steps[0].pre_input.layer
         }));
         let bytes = view.canonical_bytes().unwrap();
         assert_eq!(
@@ -644,6 +859,33 @@ mod tests {
         let mut tampered = view;
         tampered.observations[0].probes[0].distance = 65.0;
         assert!(tampered.validate().is_err());
+    }
+
+    #[test]
+    fn static_placement_contract_rejects_invalid_semantics_and_order() {
+        let shard = shard();
+        let inventory = inventory_for(&shard.episodes[0].steps[0].pre_input);
+        let view = NativeEpisodeGeometryView::build(
+            &shard,
+            &[inventory],
+            NativeGeometryViewConfiguration::default(),
+        )
+        .unwrap();
+
+        let mut invalid_scope = view.clone();
+        invalid_scope.worlds[0].placements[0].scope = NativeStaticPlacementScope::Stage;
+        invalid_scope.view_sha256 = invalid_scope.compute_identity().unwrap();
+        assert!(invalid_scope.validate().is_err());
+
+        let mut invalid_scale = view.clone();
+        invalid_scale.worlds[0].placements[0].scale = Some([1.0; 3]);
+        invalid_scale.view_sha256 = invalid_scale.compute_identity().unwrap();
+        assert!(invalid_scale.validate().is_err());
+
+        let mut noncanonical_order = view;
+        noncanonical_order.worlds[0].placements.swap(0, 1);
+        noncanonical_order.view_sha256 = noncanonical_order.compute_identity().unwrap();
+        assert!(noncanonical_order.validate().is_err());
     }
 
     #[test]
