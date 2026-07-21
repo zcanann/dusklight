@@ -110,6 +110,67 @@ bool capture_process_lifecycle(MilestoneObservation::ProcessLifecycleState& life
     return true;
 }
 
+bool capture_resource_loads(MilestoneObservation::ResourceLoadState& loads) {
+    using Resource = MilestoneObservation::ResourceLoadState;
+    using Kind = Resource::Kind;
+    using Outcome = Resource::Outcome;
+
+    const auto retain = [&](const Kind kind, const std::size_t slot,
+                            const dRes_info_c& source) {
+        const std::uint16_t references = source.getObservationReferenceCount();
+        if (references == 0)
+            return true;
+        if (loads.entryCount >= loads.entries.size())
+            return false;
+
+        const bool mount = source.hasObservationMountCommand();
+        const bool archive = source.hasObservationArchive();
+        const bool heap = source.hasObservationDataHeap();
+        const bool resources = source.hasObservationResourceTable();
+        if ((mount && (archive || heap || resources)) || (!archive && (heap || resources)))
+            return false;
+
+        auto& entry = loads.entries[loads.entryCount++];
+        entry.kind = kind;
+        entry.slot = static_cast<std::uint8_t>(slot);
+        entry.outcome = mount ? Outcome::Mounting :
+                        archive && resources ? Outcome::Ready : Outcome::Failed;
+        entry.mountCommandPresent = mount;
+        entry.archivePresent = archive;
+        entry.dataHeapPresent = heap;
+        entry.resourceTablePresent = resources;
+        entry.referenceCount = references;
+
+        const char* name = source.getObservationArchiveName();
+        std::size_t length = 0;
+        while (length + 1 < entry.archiveName.size() && name[length] != '\0') {
+            const unsigned char byte = static_cast<unsigned char>(name[length]);
+            if (byte < 0x20 || byte > 0x7e)
+                return false;
+            entry.archiveName[length] = name[length];
+            ++length;
+        }
+        if (length == 0)
+            return false;
+        entry.archiveName[length] = '\0';
+        return true;
+    };
+
+    const auto& control = g_dComIfG_gameInfo.mResControl;
+    for (std::size_t slot = 0; slot < Resource::ObjectCapacity; ++slot) {
+        if (!retain(Kind::Object, slot, control.getObservationObjectInfo(slot)))
+            return false;
+    }
+    loads.objectCount = loads.entryCount;
+    for (std::size_t slot = 0; slot < Resource::StageCapacity; ++slot) {
+        if (!retain(Kind::Stage, slot, control.getObservationStageInfo(slot)))
+            return false;
+    }
+    loads.stageCount = loads.entryCount - loads.objectCount;
+    loads.status = MilestoneObservation::ChannelStatus::Present;
+    return true;
+}
+
 }  // namespace
 
 struct MilestoneCollisionReadAdapter {
@@ -1392,6 +1453,11 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     if (!capture_process_lifecycle(lifecycle, storage.actorObservedCount)) {
         lifecycle = {};
         lifecycle.status = MilestoneObservation::ChannelStatus::Unavailable;
+    }
+
+    if (!capture_resource_loads(observation.resourceLoads)) {
+        observation.resourceLoads = {};
+        observation.resourceLoads.status = MilestoneObservation::ChannelStatus::Unavailable;
     }
 
     capture_dynamic_colliders(storage, player != nullptr);

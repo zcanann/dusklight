@@ -415,6 +415,15 @@ fn record_transition(
         before.warp_session.as_ref(),
         after.warp_session.as_ref()
     );
+    record!(
+        "resource_loads.status",
+        before.resource_load_status != after.resource_load_status
+    );
+    record_optional!(
+        "resource_loads.value",
+        before.resource_loads.as_ref(),
+        after.resource_loads.as_ref()
+    );
 }
 
 pub fn inspect_global_temporal_coverage(shards: &[NativeEpisodeShard]) -> GlobalTemporalCoverage {
@@ -666,5 +675,23 @@ mod tests {
         let report = inspect_global_temporal_coverage(&[shard]);
         assert_eq!(report.fields["warp_session.value"].compared_pairs, 2);
         assert_eq!(report.fields["warp_session.value"].changed_pairs, 1);
+    }
+
+    #[test]
+    fn reports_resource_load_changes_without_requesting_an_archive() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v26.dseps");
+        let mut shard = NativeEpisodeShard::decode(bytes).unwrap();
+        shard.episodes[0].steps[0]
+            .post_simulation
+            .resource_loads
+            .as_mut()
+            .unwrap()
+            .entries[0]
+            .reference_count += 1;
+
+        let report = inspect_global_temporal_coverage(&[shard]);
+        assert_eq!(report.fields["resource_loads.value"].compared_pairs, 2);
+        assert_eq!(report.fields["resource_loads.value"].changed_pairs, 1);
     }
 }

@@ -508,6 +508,32 @@ struct ObservationFixture {
         observation.warpSession.selectedPointStatus =
             MilestoneObservation::ChannelStatus::Present;
         observation.warpSession.selectedPoint = 6;
+        observation.resourceLoads.status = MilestoneObservation::ChannelStatus::Present;
+        observation.resourceLoads.objectCount = 2;
+        observation.resourceLoads.stageCount = 1;
+        observation.resourceLoads.entryCount = 3;
+        auto& mountingResource = observation.resourceLoads.entries[0];
+        mountingResource.kind = MilestoneObservation::ResourceLoadState::Kind::Object;
+        mountingResource.slot = 2;
+        mountingResource.outcome = MilestoneObservation::ResourceLoadState::Outcome::Mounting;
+        mountingResource.mountCommandPresent = true;
+        mountingResource.referenceCount = 1;
+        mountingResource.archiveName = {'O', 'b', 'j', 'A', '\0'};
+        auto& readyResource = observation.resourceLoads.entries[1];
+        readyResource.kind = MilestoneObservation::ResourceLoadState::Kind::Object;
+        readyResource.slot = 7;
+        readyResource.outcome = MilestoneObservation::ResourceLoadState::Outcome::Ready;
+        readyResource.archivePresent = true;
+        readyResource.dataHeapPresent = true;
+        readyResource.resourceTablePresent = true;
+        readyResource.referenceCount = 3;
+        readyResource.archiveName = {'A', 'l', 'w', 'a', 'y', 's', '\0'};
+        auto& failedResource = observation.resourceLoads.entries[2];
+        failedResource.kind = MilestoneObservation::ResourceLoadState::Kind::Stage;
+        failedResource.slot = 1;
+        failedResource.outcome = MilestoneObservation::ResourceLoadState::Outcome::Failed;
+        failedResource.referenceCount = 1;
+        failedResource.archiveName = {'R', '0', '0', '_', '0', '0', '\0'};
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -1181,6 +1207,42 @@ void test_warp_session_state_fails_closed() {
     REQUIRE(error.find("inconsistent warp-session") != std::string::npos);
 }
 
+void test_resource_load_state_fails_closed() {
+    ObservationFixture falseReady;
+    falseReady.observation.resourceLoads.entries[0].outcome =
+        MilestoneObservation::ResourceLoadState::Outcome::Ready;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, falseReady.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent resource-load entry") != std::string::npos);
+
+    ObservationFixture duplicateSlot;
+    duplicateSlot.observation.resourceLoads.entries[1].slot =
+        duplicateSlot.observation.resourceLoads.entries[0].slot;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, duplicateSlot.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent resource-load entry") != std::string::npos);
+
+    ObservationFixture detachedName;
+    detachedName.observation.resourceLoads.entries[0].archiveName = {};
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, detachedName.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent resource-load entry") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -1288,6 +1350,7 @@ int main(const int argc, char** argv) {
     test_rng_identity_fails_closed();
     test_room_load_state_fails_closed();
     test_warp_session_state_fails_closed();
+    test_resource_load_state_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

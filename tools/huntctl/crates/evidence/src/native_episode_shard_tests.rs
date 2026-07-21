@@ -101,6 +101,10 @@ fn golden_v25() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v25.dseps")
 }
 
+fn golden_v26() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v26.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -178,6 +182,10 @@ fn mutate_first_v24_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
 
 fn mutate_first_v25_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
     mutate_first_episode_in(golden_v25(), mutator)
+}
+
+fn mutate_first_v26_episode(mutator: impl FnOnce(&mut [u8])) -> Vec<u8> {
+    mutate_first_episode_in(golden_v26(), mutator)
 }
 
 fn first_v21_process_records_offset(expanded: &[u8]) -> usize {
@@ -1410,6 +1418,126 @@ fn rejects_detached_v25_warp_selection_and_false_transport_match() {
 }
 
 #[test]
+fn decodes_v26_complete_resource_load_outcomes_with_legacy_missingness() {
+    let shard = NativeEpisodeShard::decode(golden_v26()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V26
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(
+            observation.resource_load_status,
+            NativeChannelStatus::Present
+        );
+        assert_eq!(
+            observation.resource_loads.as_ref().unwrap(),
+            &NativeResourceLoadObservation {
+                object_capacity: 128,
+                stage_capacity: 64,
+                object_count: 2,
+                stage_count: 1,
+                entries: vec![
+                    NativeResourceLoadEntryObservation {
+                        kind: NativeResourceArchiveKind::Object,
+                        slot: 2,
+                        outcome: NativeResourceLoadOutcome::Mounting,
+                        mount_command_present: true,
+                        archive_present: false,
+                        data_heap_present: false,
+                        resource_table_present: false,
+                        reference_count: 1,
+                        archive_name: "ObjA".into(),
+                    },
+                    NativeResourceLoadEntryObservation {
+                        kind: NativeResourceArchiveKind::Object,
+                        slot: 7,
+                        outcome: NativeResourceLoadOutcome::Ready,
+                        mount_command_present: false,
+                        archive_present: true,
+                        data_heap_present: true,
+                        resource_table_present: true,
+                        reference_count: 3,
+                        archive_name: "Always".into(),
+                    },
+                    NativeResourceLoadEntryObservation {
+                        kind: NativeResourceArchiveKind::Stage,
+                        slot: 1,
+                        outcome: NativeResourceLoadOutcome::Failed,
+                        mount_command_present: false,
+                        archive_present: false,
+                        data_heap_present: false,
+                        resource_table_present: false,
+                        reference_count: 1,
+                        archive_name: "R00_00".into(),
+                    },
+                ],
+            }
+        );
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v25()).unwrap();
+    assert!(legacy.episodes.iter().all(|episode| {
+        episode.steps.iter().all(|step| {
+            [&step.pre_input, &step.post_simulation]
+                .into_iter()
+                .all(|observation| {
+                    observation.resource_load_status == NativeChannelStatus::NotSampled
+                        && observation.resource_loads.is_none()
+                })
+        })
+    }));
+}
+
+#[test]
+fn rejects_noncanonical_v26_resource_load_state() {
+    const RESOURCE_HEADER: [u8; 12] = [1, 0, 3, 0, 2, 0, 1, 0, 128, 0, 64, 0];
+    let locate = |expanded: &[u8]| {
+        expanded
+            .windows(RESOURCE_HEADER.len())
+            .position(|window| window == RESOURCE_HEADER)
+            .expect("v26 resource-load block")
+    };
+
+    let false_ready = mutate_first_v26_episode(|expanded| {
+        let offset = locate(expanded);
+        expanded[offset + 14] = 2;
+    });
+    let error = NativeEpisodeShard::decode(&false_ready)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("resource-load entry status and payload disagree"),
+        "{error}"
+    );
+
+    let duplicate_slot = mutate_first_v26_episode(|expanded| {
+        let offset = locate(expanded);
+        expanded[offset + 33] = 2;
+    });
+    let error = NativeEpisodeShard::decode(&duplicate_slot)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("resource-load entry status and payload disagree"),
+        "{error}"
+    );
+
+    let detached_name = mutate_first_v26_episode(|expanded| {
+        let offset = locate(expanded);
+        expanded[offset + 20] = 0;
+    });
+    let error = NativeEpisodeShard::decode(&detached_name)
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("noncanonical fixed string"), "{error}");
+}
+
+#[test]
 fn rejects_noncanonical_v24_room_scene_phase() {
     const FIRST_ROOM: [u8; 12] = [
         0x11, 0x03, 0x02, 0x00, 0x03, 0x04, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00,
@@ -1748,6 +1876,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V23
                             | LEARNING_OBSERVATION_SCHEMA_V24
                             | LEARNING_OBSERVATION_SCHEMA_V25
+                            | LEARNING_OBSERVATION_SCHEMA_V26
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -1800,6 +1929,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V23
             | LEARNING_OBSERVATION_SCHEMA_V24
             | LEARNING_OBSERVATION_SCHEMA_V25
+            | LEARNING_OBSERVATION_SCHEMA_V26
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode

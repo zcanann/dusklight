@@ -1072,6 +1072,99 @@ bool append_warp_session_state(std::vector<std::uint8_t>& output,
     return true;
 }
 
+bool append_resource_load_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    using Resource = MilestoneObservation::ResourceLoadState;
+    using Kind = Resource::Kind;
+    using Outcome = Resource::Outcome;
+    const auto& loads = observation.resourceLoads;
+    const bool present = loads.status == Status::Present;
+    const bool unavailable = loads.status == Status::Unavailable;
+    if ((!present && !unavailable) ||
+        (!present && (loads.objectCount != 0 || loads.stageCount != 0 ||
+                         loads.entryCount != 0)) ||
+        loads.objectCount > Resource::ObjectCapacity ||
+        loads.stageCount > Resource::StageCapacity ||
+        loads.entryCount != loads.objectCount + loads.stageCount ||
+        loads.entryCount > loads.entries.size())
+    {
+        error = "learning observation has inconsistent resource-load state";
+        return false;
+    }
+
+    std::int32_t previousObjectSlot = -1;
+    std::int32_t previousStageSlot = -1;
+    for (std::size_t index = 0; index < loads.entryCount; ++index) {
+        const auto& entry = loads.entries[index];
+        const bool object = entry.kind == Kind::Object;
+        const bool stage = entry.kind == Kind::Stage;
+        const bool mounting = entry.outcome == Outcome::Mounting;
+        const bool ready = entry.outcome == Outcome::Ready;
+        const bool failed = entry.outcome == Outcome::Failed;
+        const auto terminator = std::ranges::find(entry.archiveName, '\0');
+        const bool canonicalName = terminator != entry.archiveName.begin() &&
+                                   terminator != entry.archiveName.end() &&
+                                   std::ranges::all_of(terminator, entry.archiveName.end(),
+                                       [](const char value) { return value == '\0'; }) &&
+                                   std::ranges::all_of(entry.archiveName.begin(), terminator,
+                                       [](const char value) {
+                                           const auto byte = static_cast<unsigned char>(value);
+                                           return byte >= 0x20 && byte <= 0x7e;
+                                       });
+        const bool structuralMounting = entry.mountCommandPresent && !entry.archivePresent &&
+                                        !entry.dataHeapPresent &&
+                                        !entry.resourceTablePresent;
+        const bool structuralReady = !entry.mountCommandPresent && entry.archivePresent &&
+                                     entry.resourceTablePresent;
+        const bool structuralFailed = !entry.mountCommandPresent &&
+                                      !entry.resourceTablePresent &&
+                                      (!entry.dataHeapPresent || entry.archivePresent);
+        const bool ordered = object ? index < loads.objectCount &&
+                                              entry.slot < Resource::ObjectCapacity &&
+                                              entry.slot > previousObjectSlot :
+                                     stage && index >= loads.objectCount &&
+                                         entry.slot < Resource::StageCapacity &&
+                                         entry.slot > previousStageSlot;
+        if (!(object || stage) || !(mounting || ready || failed) || !canonicalName ||
+            entry.referenceCount == 0 || !ordered ||
+            (mounting != structuralMounting) || (ready != structuralReady) ||
+            (failed != structuralFailed))
+        {
+            error = "learning observation has inconsistent resource-load entry";
+            return false;
+        }
+        if (object)
+            previousObjectSlot = entry.slot;
+        else
+            previousStageSlot = entry.slot;
+    }
+
+    append_integer(output, static_cast<std::uint8_t>(loads.status));
+    append_integer<std::uint8_t>(output, 0);
+    append_integer(output, loads.entryCount);
+    append_integer(output, loads.objectCount);
+    append_integer(output, loads.stageCount);
+    append_integer<std::uint16_t>(output, Resource::ObjectCapacity);
+    append_integer<std::uint16_t>(output, Resource::StageCapacity);
+    for (std::size_t index = 0; index < loads.entryCount; ++index) {
+        const auto& entry = loads.entries[index];
+        std::uint8_t flags = 0;
+        flags |= entry.mountCommandPresent ? 1u << 0 : 0;
+        flags |= entry.archivePresent ? 1u << 1 : 0;
+        flags |= entry.dataHeapPresent ? 1u << 2 : 0;
+        flags |= entry.resourceTablePresent ? 1u << 3 : 0;
+        append_integer(output, static_cast<std::uint8_t>(entry.kind));
+        append_integer(output, entry.slot);
+        append_integer(output, static_cast<std::uint8_t>(entry.outcome));
+        append_integer(output, flags);
+        append_integer(output, entry.referenceCount);
+        append_integer<std::uint16_t>(output, 0);
+        output.insert(output.end(), entry.archiveName.begin(), entry.archiveName.end());
+    }
+    return true;
+}
+
 std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     const XXH128_hash_t hash = XXH3_128bits(value.data(), value.size());
     XXH128_canonical_t canonical{};
@@ -1703,7 +1796,9 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         return false;
     if (!append_room_load_state(output, observation, error))
         return false;
-    return append_warp_session_state(output, observation, error);
+    if (!append_warp_session_state(output, observation, error))
+        return false;
+    return append_resource_load_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

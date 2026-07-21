@@ -540,6 +540,48 @@ struct MilestoneObservation {
     };
     WarpSessionState warpSession;
 
+    // Complete bounded resource-control occupancy. The structural outcome is
+    // derived solely from engine-owned slot state: mounting, ready, or failed
+    // before a usable archive/resource table was established. Pointer values,
+    // heap addresses, archive contents and loader procedures never cross the
+    // observation boundary.
+    struct ResourceLoadState {
+        static constexpr std::size_t ObjectCapacity = 128;
+        static constexpr std::size_t StageCapacity = 64;
+        static constexpr std::size_t MaximumEntries = ObjectCapacity + StageCapacity;
+        static constexpr std::size_t ArchiveNameSize = 12;
+
+        enum class Kind : std::uint8_t {
+            Object = 0,
+            Stage = 1,
+        };
+
+        enum class Outcome : std::uint8_t {
+            Mounting = 1,
+            Ready = 2,
+            Failed = 3,
+        };
+
+        struct Entry {
+            Kind kind = Kind::Object;
+            std::uint8_t slot = 0;
+            Outcome outcome = Outcome::Failed;
+            bool mountCommandPresent = false;
+            bool archivePresent = false;
+            bool dataHeapPresent = false;
+            bool resourceTablePresent = false;
+            std::uint16_t referenceCount = 0;
+            std::array<char, ArchiveNameSize> archiveName{};
+        };
+
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint16_t objectCount = 0;
+        std::uint16_t stageCount = 0;
+        std::uint16_t entryCount = 0;
+        std::array<Entry, MaximumEntries> entries{};
+    };
+    ResourceLoadState resourceLoads;
+
     struct Actor {
         // The port preserves the GameCube actor layout: nine attention lanes.
         static constexpr std::size_t AttentionDistanceCount = 9;

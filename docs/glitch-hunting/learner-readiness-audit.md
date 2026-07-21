@@ -148,12 +148,14 @@ published technique. The current highest-leverage gaps are complete collision
 transition coverage, non-Link relationship edges, profile-bound item/actor
 state, remaining transition/loading clocks, and semantic lifecycle outcomes.
 Existing v18 event-queue, v21 semantic pending-process, v22 generic
-event-transition, v23 clock-domain, v24 complete room-load and v25 warp-session
-channels are partial evidence for the last two rows; their presence does not
-make those rows complete. V21 records
-queue order and typed
-create/delete process state but not slot/resource capacity, resource-load
-results or allocation outcomes.
+event-transition, v23 clock-domain, v24 complete room-load, v25 warp-session and
+v26 complete resource-slot channels are partial evidence for the last two rows;
+their presence does not make those rows complete. V21 records queue order and
+typed create/delete process state. V26 adds exact 128-object/64-stage occupancy
+and distinguishes mounting, structural readiness and failure before a usable
+archive/resource table exists. It cannot distinguish a later materialization
+failure once the resource table is allocated, general allocation failure, or
+prove live variation; those outcomes remain explicit gaps.
 
 For every item, promotion requires four separate claims with evidence:
 

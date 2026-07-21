@@ -1268,6 +1268,12 @@ separate candidate edges from the phase where they occur. An actor-corruption
 technique may establish a failed-load predicate or corrupted actor/resource
 identity; it does not directly grant the downstream map or return place. Source
 or witnessed microtrace evidence records the last confirmed operation before
+the branch. Native learning observation v26 can now witness complete object and
+stage resource-slot occupancy plus mounting, structural readiness, or failure
+before a usable archive/resource table exists. It does not bind an archive slot
+to a particular cutscene phase and cannot distinguish failures after the table
+was allocated, so those planner results remain `unknown` until source or trace
+evidence establishes the requested archive and exact failure point.
 the branch. When that boundary is unknown, affected flags and cleanup state stay
 unknown while unrelated backing components keep their previous values.
 

@@ -45,6 +45,7 @@ const OBSERVATION_VERSION_V22: u16 = 22;
 const OBSERVATION_VERSION_V23: u16 = 23;
 const OBSERVATION_VERSION_V24: u16 = 24;
 const OBSERVATION_VERSION_V25: u16 = 25;
+const OBSERVATION_VERSION_V26: u16 = 26;
 const ACTION_VERSION: u16 = 2;
 const RNG_SNAPSHOT_VERSION: u32 = 1;
 const RNG_ALGORITHM_VERSION: u32 = 1;
@@ -101,6 +102,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V22: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V23: &str = "dusklight-learning-observation/v23";
 pub const LEARNING_OBSERVATION_SCHEMA_V24: &str = "dusklight-learning-observation/v24";
 pub const LEARNING_OBSERVATION_SCHEMA_V25: &str = "dusklight-learning-observation/v25";
+pub const LEARNING_OBSERVATION_SCHEMA_V26: &str = "dusklight-learning-observation/v26";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -721,6 +723,41 @@ pub struct NativeWarpSessionObservation {
     pub transport_match: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum NativeResourceArchiveKind {
+    Object,
+    Stage,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum NativeResourceLoadOutcome {
+    Mounting,
+    Ready,
+    Failed,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeResourceLoadEntryObservation {
+    pub kind: NativeResourceArchiveKind,
+    pub slot: u8,
+    pub outcome: NativeResourceLoadOutcome,
+    pub mount_command_present: bool,
+    pub archive_present: bool,
+    pub data_heap_present: bool,
+    pub resource_table_present: bool,
+    pub reference_count: u16,
+    pub archive_name: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeResourceLoadObservation {
+    pub object_capacity: u16,
+    pub stage_capacity: u16,
+    pub object_count: u16,
+    pub stage_count: u16,
+    pub entries: Vec<NativeResourceLoadEntryObservation>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct NativeLearningObservation {
     pub phase: NativeObservationPhase,
@@ -827,6 +864,8 @@ pub struct NativeLearningObservation {
     pub room_load: Option<NativeRoomLoadObservation>,
     pub warp_session_status: NativeChannelStatus,
     pub warp_session: Option<NativeWarpSessionObservation>,
+    pub resource_load_status: NativeChannelStatus,
+    pub resource_loads: Option<NativeResourceLoadObservation>,
 }
 
 #[derive(Debug)]
@@ -904,6 +943,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V23
                 | OBSERVATION_VERSION_V24
                 | OBSERVATION_VERSION_V25
+                | OBSERVATION_VERSION_V26
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -1043,6 +1083,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V23 => LEARNING_OBSERVATION_SCHEMA_V23,
         OBSERVATION_VERSION_V24 => LEARNING_OBSERVATION_SCHEMA_V24,
         OBSERVATION_VERSION_V25 => LEARNING_OBSERVATION_SCHEMA_V25,
+        OBSERVATION_VERSION_V26 => LEARNING_OBSERVATION_SCHEMA_V26,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2397,6 +2438,144 @@ fn decode_warp_session(
     ))
 }
 
+fn decode_resource_loads(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, Option<NativeResourceLoadObservation>), NativeEpisodeShardError> {
+    const OBJECT_CAPACITY: u16 = 128;
+    const STAGE_CAPACITY: u16 = 64;
+    const MAXIMUM_ENTRIES: usize = OBJECT_CAPACITY as usize + STAGE_CAPACITY as usize;
+
+    let status = decode_channel_status(reader)?;
+    if reader.u8()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero resource-load reserved byte",
+        ));
+    }
+    let entry_count = reader.u16()?;
+    let object_count = reader.u16()?;
+    let stage_count = reader.u16()?;
+    let object_capacity = reader.u16()?;
+    let stage_capacity = reader.u16()?;
+    let present = status == NativeChannelStatus::Present;
+    if !matches!(
+        status,
+        NativeChannelStatus::Present | NativeChannelStatus::Unavailable
+    ) || object_capacity != OBJECT_CAPACITY
+        || stage_capacity != STAGE_CAPACITY
+        || usize::from(entry_count) > MAXIMUM_ENTRIES
+        || entry_count != object_count.saturating_add(stage_count)
+        || object_count > object_capacity
+        || stage_count > stage_capacity
+        || (!present && entry_count != 0)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "resource-load status and counts disagree",
+        ));
+    }
+
+    let mut entries = Vec::with_capacity(usize::from(entry_count));
+    let mut previous_object_slot: Option<u8> = None;
+    let mut previous_stage_slot: Option<u8> = None;
+    for index in 0..entry_count {
+        let kind = match reader.u8()? {
+            0 => NativeResourceArchiveKind::Object,
+            1 => NativeResourceArchiveKind::Stage,
+            _ => {
+                return Err(NativeEpisodeShardError::new(
+                    "unknown resource archive kind",
+                ));
+            }
+        };
+        let slot = reader.u8()?;
+        let outcome = match reader.u8()? {
+            1 => NativeResourceLoadOutcome::Mounting,
+            2 => NativeResourceLoadOutcome::Ready,
+            3 => NativeResourceLoadOutcome::Failed,
+            _ => {
+                return Err(NativeEpisodeShardError::new(
+                    "unknown resource-load outcome",
+                ));
+            }
+        };
+        let flags = reader.u8()?;
+        let reference_count = reader.u16()?;
+        if flags & !0x0f != 0 || reader.u16()? != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "noncanonical resource-load flags or reserved field",
+            ));
+        }
+        let archive_name = reader.fixed_string(12)?;
+        let mount_command_present = flags & 1 != 0;
+        let archive_present = flags & (1 << 1) != 0;
+        let data_heap_present = flags & (1 << 2) != 0;
+        let resource_table_present = flags & (1 << 3) != 0;
+        let structural_outcome = if mount_command_present
+            && !archive_present
+            && !data_heap_present
+            && !resource_table_present
+        {
+            Some(NativeResourceLoadOutcome::Mounting)
+        } else if !mount_command_present && archive_present && resource_table_present {
+            Some(NativeResourceLoadOutcome::Ready)
+        } else if !mount_command_present
+            && !resource_table_present
+            && (!data_heap_present || archive_present)
+        {
+            Some(NativeResourceLoadOutcome::Failed)
+        } else {
+            None
+        };
+        let ordered = match kind {
+            NativeResourceArchiveKind::Object => {
+                index < object_count
+                    && u16::from(slot) < object_capacity
+                    && previous_object_slot.is_none_or(|previous| slot > previous)
+            }
+            NativeResourceArchiveKind::Stage => {
+                index >= object_count
+                    && u16::from(slot) < stage_capacity
+                    && previous_stage_slot.is_none_or(|previous| slot > previous)
+            }
+        };
+        if reference_count == 0
+            || archive_name.is_empty()
+            || !archive_name.bytes().all(|byte| byte.is_ascii_graphic())
+            || structural_outcome != Some(outcome)
+            || !ordered
+        {
+            return Err(NativeEpisodeShardError::new(
+                "resource-load entry status and payload disagree",
+            ));
+        }
+        match kind {
+            NativeResourceArchiveKind::Object => previous_object_slot = Some(slot),
+            NativeResourceArchiveKind::Stage => previous_stage_slot = Some(slot),
+        }
+        entries.push(NativeResourceLoadEntryObservation {
+            kind,
+            slot,
+            outcome,
+            mount_command_present,
+            archive_present,
+            data_heap_present,
+            resource_table_present,
+            reference_count,
+            archive_name,
+        });
+    }
+
+    Ok((
+        status,
+        present.then_some(NativeResourceLoadObservation {
+            object_capacity,
+            stage_capacity,
+            object_count,
+            stage_count,
+            entries,
+        }),
+    ))
+}
+
 fn decode_camera(
     reader: &mut Reader<'_>,
 ) -> Result<NativeCameraObservation, NativeEpisodeShardError> {
@@ -3282,7 +3461,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V22
         | OBSERVATION_VERSION_V23
         | OBSERVATION_VERSION_V24
-        | OBSERVATION_VERSION_V25 => {
+        | OBSERVATION_VERSION_V25
+        | OBSERVATION_VERSION_V26 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -4145,6 +4325,11 @@ fn decode_observation(
     } else {
         (NativeChannelStatus::NotSampled, None)
     };
+    let (resource_load_status, resource_loads) = if observation_version >= OBSERVATION_VERSION_V26 {
+        decode_resource_loads(reader)?
+    } else {
+        (NativeChannelStatus::NotSampled, None)
+    };
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -4249,6 +4434,8 @@ fn decode_observation(
         room_load,
         warp_session_status,
         warp_session,
+        resource_load_status,
+        resource_loads,
     })
 }
 

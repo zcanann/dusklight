@@ -43,6 +43,16 @@ public:
     u32 incCount() { return ++mCount; }
     u32 decCount() { return --mCount; }
 
+    // Read-only semantic aperture for automation. Pointer identity never crosses
+    // the observation boundary; these predicates only describe the loader-owned
+    // slot's current structural state.
+    u16 getObservationReferenceCount() const { return mCount; }
+    const char* getObservationArchiveName() const { return mArchiveName; }
+    bool hasObservationMountCommand() const { return mDMCommand != NULL; }
+    bool hasObservationArchive() const { return mArchive != NULL; }
+    bool hasObservationDataHeap() const { return mDataHeap != NULL; }
+    bool hasObservationResourceTable() const { return mRes != NULL; }
+
 #if DEBUG
     int getSize() { return mSize; }
 #endif
@@ -68,6 +78,9 @@ STATIC_ASSERT(sizeof(dRes_info_c) == 0x24);
 
 class dRes_control_c {
 public:
+    static constexpr int ObjectInfoCount = 128;
+    static constexpr int StageInfoCount = 64;
+
     dRes_control_c() {}
     ~dRes_control_c();
 
@@ -118,6 +131,14 @@ public:
     }
 
     int syncAllObjectRes() { return syncAllRes(mObjectInfo, ARRAY_SIZEU(mObjectInfo)); }
+
+    const dRes_info_c& getObservationObjectInfo(int i_index) const {
+        return mObjectInfo[i_index];
+    }
+
+    const dRes_info_c& getObservationStageInfo(int i_index) const {
+        return mStageInfo[i_index];
+    }
 
     int deleteObjectRes(const char* i_arcName) {
         return deleteRes(i_arcName, mObjectInfo, ARRAY_SIZEU(mObjectInfo));

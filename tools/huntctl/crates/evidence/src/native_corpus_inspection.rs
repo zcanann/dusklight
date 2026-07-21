@@ -12,15 +12,16 @@ use crate::native_dynamic_collider_temporal::{
 use crate::native_episode_shard::{
     LEARNING_OBSERVATION_SCHEMA_V21, LEARNING_OBSERVATION_SCHEMA_V22,
     LEARNING_OBSERVATION_SCHEMA_V23, LEARNING_OBSERVATION_SCHEMA_V24,
-    LEARNING_OBSERVATION_SCHEMA_V25, NativeActorObservation, NativeChannelStatus, NativeEpisode,
-    NativeEpisodeShard, NativeLearningObservation, NativeRawPad,
+    LEARNING_OBSERVATION_SCHEMA_V25, LEARNING_OBSERVATION_SCHEMA_V26, NativeActorObservation,
+    NativeChannelStatus, NativeEpisode, NativeEpisodeShard, NativeLearningObservation,
+    NativeRawPad, NativeResourceArchiveKind, NativeResourceLoadOutcome,
 };
 use crate::native_global_temporal::{GlobalTemporalCoverage, inspect_global_temporal_coverage};
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V16: &str = "dusklight-native-corpus-inspection/v16";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V17: &str = "dusklight-native-corpus-inspection/v17";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -97,6 +98,19 @@ pub struct ProcessLifecycleRecordCoverage {
     pub unique_process_kinds: usize,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ResourceLoadCoverage {
+    pub present_observations: u64,
+    pub object_entries: u64,
+    pub stage_entries: u64,
+    pub maximum_object_occupancy: u16,
+    pub maximum_stage_occupancy: u16,
+    pub mounting_entries: u64,
+    pub ready_entries: u64,
+    pub failed_entries: u64,
+    pub unique_archives: usize,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ActorTemporalProfileCoverage {
     pub profile_name: i16,
@@ -166,6 +180,7 @@ pub struct NativeCorpusInspection {
     pub dynamic_collider_temporal_coverage: DynamicColliderTemporalCoverage,
     pub global_temporal_coverage: GlobalTemporalCoverage,
     pub process_lifecycle_record_coverage: ProcessLifecycleRecordCoverage,
+    pub resource_load_coverage: ResourceLoadCoverage,
     pub channel_coverage: BTreeMap<String, ChannelCoverage>,
     pub player_relationship_role_presence: BTreeMap<String, u64>,
     pub missing_mask_counts: BTreeMap<String, u64>,
@@ -968,6 +983,8 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     let mut lifecycle_cancelled_creates = 0_u64;
     let mut lifecycle_delete_records = 0_u64;
     let mut lifecycle_process_kinds = BTreeSet::new();
+    let mut resource_load_coverage = ResourceLoadCoverage::default();
+    let mut resource_archives = BTreeSet::new();
     let mut actor_temporal = ActorTemporalAccumulator::default();
     let mut identities = BTreeMap::<String, IdentityValues>::new();
     let mut episode_count = 0_u64;
@@ -987,6 +1004,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                 | LEARNING_OBSERVATION_SCHEMA_V23
                 | LEARNING_OBSERVATION_SCHEMA_V24
                 | LEARNING_OBSERVATION_SCHEMA_V25
+                | LEARNING_OBSERVATION_SCHEMA_V26
         );
         *observation_schemas
             .entry(shard.metadata.observation_schema.clone())
@@ -1120,6 +1138,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         ("clock_domains", observation.clock_domains_status),
                         ("room_load", observation.room_load_status),
                         ("warp_session", observation.warp_session_status),
+                        ("resource_loads", observation.resource_load_status),
                     ] {
                         record_status(channel_coverage.entry(name.into()).or_default(), status);
                     }
@@ -1129,6 +1148,37 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                         .map_or(0, |surfaces| surfaces.surfaces.len());
                     surface_sizes.push(surface_count);
                     dynamic_collider_sizes.push(observation.dynamic_colliders.len());
+                    if let Some(loads) = observation.resource_loads.as_ref() {
+                        resource_load_coverage.present_observations += 1;
+                        resource_load_coverage.maximum_object_occupancy = resource_load_coverage
+                            .maximum_object_occupancy
+                            .max(loads.object_count);
+                        resource_load_coverage.maximum_stage_occupancy = resource_load_coverage
+                            .maximum_stage_occupancy
+                            .max(loads.stage_count);
+                        for entry in &loads.entries {
+                            match entry.kind {
+                                NativeResourceArchiveKind::Object => {
+                                    resource_load_coverage.object_entries += 1;
+                                }
+                                NativeResourceArchiveKind::Stage => {
+                                    resource_load_coverage.stage_entries += 1;
+                                }
+                            }
+                            match entry.outcome {
+                                NativeResourceLoadOutcome::Mounting => {
+                                    resource_load_coverage.mounting_entries += 1;
+                                }
+                                NativeResourceLoadOutcome::Ready => {
+                                    resource_load_coverage.ready_entries += 1;
+                                }
+                                NativeResourceLoadOutcome::Failed => {
+                                    resource_load_coverage.failed_entries += 1;
+                                }
+                            }
+                            resource_archives.insert((entry.kind, entry.archive_name.clone()));
+                        }
+                    }
                     if let Some(lifecycle) = observation.process_lifecycle.as_ref() {
                         if detailed_lifecycle {
                             lifecycle_detailed_observations += 1;
@@ -1340,7 +1390,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V16.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V17.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -1378,6 +1428,10 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
             cancelled_create_requests: lifecycle_cancelled_creates,
             pending_delete_records: lifecycle_delete_records,
             unique_process_kinds: lifecycle_process_kinds.len(),
+        },
+        resource_load_coverage: ResourceLoadCoverage {
+            unique_archives: resource_archives.len(),
+            ..resource_load_coverage
         },
         channel_coverage,
         player_relationship_role_presence,
@@ -1501,7 +1555,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V16);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V17);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -1528,7 +1582,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V16);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V17);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count
@@ -1690,6 +1744,27 @@ mod tests {
             report.channel_coverage["warp_session"].present,
             report.observation_count
         );
+    }
+
+    #[test]
+    fn audits_v26_resource_load_outcomes_and_capacity() {
+        let bytes =
+            include_bytes!("../../../../../tests/fixtures/automation/native_episode_v26.dseps");
+        let shard = NativeEpisodeShard::decode(bytes).unwrap();
+        let report = inspect_native_episode_corpus(&[shard]);
+        assert_eq!(
+            report.channel_coverage["resource_loads"].present,
+            report.observation_count
+        );
+        assert_eq!(report.resource_load_coverage.present_observations, 4);
+        assert_eq!(report.resource_load_coverage.object_entries, 8);
+        assert_eq!(report.resource_load_coverage.stage_entries, 4);
+        assert_eq!(report.resource_load_coverage.maximum_object_occupancy, 2);
+        assert_eq!(report.resource_load_coverage.maximum_stage_occupancy, 1);
+        assert_eq!(report.resource_load_coverage.mounting_entries, 4);
+        assert_eq!(report.resource_load_coverage.ready_entries, 4);
+        assert_eq!(report.resource_load_coverage.failed_entries, 4);
+        assert_eq!(report.resource_load_coverage.unique_archives, 3);
     }
 
     #[test]

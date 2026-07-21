@@ -952,6 +952,26 @@ human-authored successful setup.
       exactly its columns. All 206 learning tests pass, including exact v25,
       legacy-missingness and ablation coverage. No feature names a preferred
       portal, route, action, timing or reward.
+    - [x] Retain complete resource-control occupancy and the engine's observable
+      structural load outcome. Learning observation v26 walks all 128 object
+      and 64 stage archive slots in canonical table order, preserving kind,
+      slot, archive name, reference count and only pointer-presence predicates.
+      Each occupied slot is cross-checked as mounting, structurally ready, or
+      failed before a usable archive/resource table existed; pointer values,
+      heap addresses, resource bytes and loader procedures never cross the
+      boundary. Native and Rust reject duplicate/out-of-order slots, impossible
+      pointer-presence combinations, false outcomes, invalid counts/capacities,
+      noncanonical names, reserved fields and detached payloads. Legacy v2-v25
+      observations remain `not_sampled`. Corpus inspection v17 reports object
+      and stage occupancy, outcome counts and unique-archive coverage, while
+      temporal coverage reports raw state changes without requesting an
+      archive. Cross-language fixture `fef5dc72...e9e871` is 4,870 bytes and
+      passes exact, legacy-missingness and recompressed-tamper tests. Survey
+      observation identity v6 binds v26 without relabeling existing v5/v25
+      ledgers. A failure after the resource table has already been allocated is
+      not distinguishable from structural readiness, and generic allocation
+      failure plus live temporal variation remain open; no outcome is inferred
+      beyond the state the engine actually retains.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
