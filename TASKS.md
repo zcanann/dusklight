@@ -258,8 +258,9 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     (`4e3c8311...207df1ee`). A fresh 90-tick generic movement probe using the
     rebuilt trace-v2 binary observed both empty/initialized wall tables (0/3),
     water modes (1/2), two solver flag states, 29 ground heights and 29 player
-    positions. This proves action-driven capture variation, not a useful model
-    representation or deliberate contact coverage. Contact probes and a
+    positions (`3d8905e9...35ce75`). This proves action-driven capture
+    variation, not a useful model representation or deliberate contact
+    coverage. Contact probes and a
     bounded-history learner view remain open. A 30-tick
     neutral follow-up proved that the initially empty wall table becomes the
     expected initialized three-circle solver (`63b32d58...c004fe04`), but it
@@ -286,6 +287,11 @@ probe, demonstration, curriculum, option, reward term or preferred action.
     every observed applied PAD matches. Probe type and duration are part of the
     resumable ledger identity. These profiles measure channel variation; they
     contain no map path, actor target, published setup or success reward.
+    Strict 90-tick movement, camera, targeting and basic-action runs from one
+    common neutral D_MN01 origin retained complete 75-actor snapshots, produced
+    four distinct state-series identities and had zero rejected cases
+    (`3d8905e9...35ce75`, `95e1e49c...87a97f`, `6c1ec783...9ddea`,
+    `0ad7448a...42fa0`). None configured a goal.
   - [ ] Add general contact, actor-activation and loading probes without
     encoding a known route or interaction sequence, then run a stratified
     cross-map sample and report which typed fields actually vary.
