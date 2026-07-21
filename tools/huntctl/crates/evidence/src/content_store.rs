@@ -27,11 +27,14 @@ pub enum ContentKind {
     WorldContext,
     WorldInventory,
     WorldSpatialIndex,
+    WorldSurfaceGraph,
     StageBootCatalog,
     NativeActorView,
     NativeGeometryView,
     NativeCollisionHistory,
     NativeReplayCorpus,
+    NativeEpisodeHistory,
+    NativeAuxiliaryDataset,
     Screenshot,
     Model,
     DatasetManifest,
@@ -50,6 +53,7 @@ impl ContentKind {
             Self::WorldContext => "application/vnd.dusklight.world-context+json",
             Self::WorldInventory => "application/vnd.dusklight.world-inventory+json",
             Self::WorldSpatialIndex => "application/vnd.dusklight.world-spatial-index+json",
+            Self::WorldSurfaceGraph => "application/vnd.dusklight.world-surface-graph+json",
             Self::StageBootCatalog => "application/vnd.dusklight.stage-boot-catalog+json",
             Self::NativeActorView => "application/vnd.dusklight.native-actor-view+json",
             Self::NativeGeometryView => "application/vnd.dusklight.native-geometry-view+json",
@@ -57,6 +61,10 @@ impl ContentKind {
                 "application/vnd.dusklight.native-collision-history+json"
             }
             Self::NativeReplayCorpus => "application/vnd.dusklight.native-replay-corpus+json",
+            Self::NativeEpisodeHistory => "application/vnd.dusklight.native-episode-history+json",
+            Self::NativeAuxiliaryDataset => {
+                "application/vnd.dusklight.native-auxiliary-dataset+json"
+            }
             Self::Screenshot => "image/png",
             Self::Model => "application/vnd.dusklight.model+json",
             Self::DatasetManifest => "application/vnd.dusklight.dataset-manifest+json",
@@ -515,11 +523,14 @@ mod tests {
             ContentKind::WorldContext,
             ContentKind::WorldInventory,
             ContentKind::WorldSpatialIndex,
+            ContentKind::WorldSurfaceGraph,
             ContentKind::StageBootCatalog,
             ContentKind::NativeActorView,
             ContentKind::NativeGeometryView,
             ContentKind::NativeCollisionHistory,
             ContentKind::NativeReplayCorpus,
+            ContentKind::NativeEpisodeHistory,
+            ContentKind::NativeAuxiliaryDataset,
             ContentKind::Screenshot,
             ContentKind::Model,
             ContentKind::DatasetManifest,

@@ -38,12 +38,13 @@ pub use dusklight_trace::{route_diagnostics, trace, trace_typed_facts};
 pub use dusklight_worker_protocol::{client, pool, protocol, transport};
 pub use dusklight_world::{
     actor_profile_catalog, stage_boot_catalog, world_context, world_geometry, world_inventory,
-    world_spatial,
+    world_spatial, world_surface_graph,
 };
 
 pub use dusklight_learning::{
     action_guidance, calibration, dataset, double_q, fqi, iql, low_data_baselines,
-    native_actor_view, native_collision_history, native_geometry_view, offline_rl, reward_shaping,
+    native_actor_view, native_collision_history, native_episode_history, native_geometry_view,
+    offline_rl, reward_shaping,
 };
 pub use dusklight_proposals::q_search;
 

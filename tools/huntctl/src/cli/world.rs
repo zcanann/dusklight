@@ -12,6 +12,7 @@ use huntctl::world_spatial::{
     Aabb3, WorldAabbQueryRequest, WorldPointQueryRequest, WorldRayQueryRequest, WorldSpatialIndex,
     WorldSurfaceFilter,
 };
+use huntctl::world_surface_graph::{WorldSurfaceGraph, WorldSurfaceNeighborhoodRequest};
 use serde_json::json;
 use std::error::Error;
 use std::fs;
@@ -206,6 +207,80 @@ pub(crate) fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "content_blob": content_blob,
                 }))?
             );
+            Ok(())
+        }
+        Some("surface-graph") => {
+            let output = required_path(&args[1..], "--output")?;
+            let inventory = load_world_inventory(&args[1..])?;
+            let graph = WorldSurfaceGraph::build(&inventory)?;
+            let bytes = graph.artifact().canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(&args[1..], "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::WorldSurfaceGraph)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": graph.artifact().schema,
+                    "stage": inventory.stage,
+                    "inventory_sha256": graph.artifact().inventory_sha256,
+                    "spatial_index_sha256": graph.artifact().spatial_index_sha256,
+                    "surface_graph_sha256": graph.artifact_digest(),
+                    "bytes": bytes.len(),
+                    "rooms": graph.artifact().rooms.len(),
+                    "source_collisions": graph.artifact().source_collision_count,
+                    "nodes": graph.artifact().nodes.len(),
+                    "excluded_nodes": graph.artifact().excluded.len(),
+                    "adjacency_edges": graph.artifact().edges.len(),
+                    "exact_shared_edge_groups": graph.artifact().rooms.iter()
+                        .map(|room| room.exact_shared_edge_groups).sum::<usize>(),
+                    "clustered_shared_edge_groups": graph.artifact().rooms.iter()
+                        .map(|room| room.clustered_shared_edge_groups).sum::<usize>(),
+                    "boundary_edge_groups": graph.artifact().rooms.iter()
+                        .map(|room| room.boundary_edge_groups).sum::<usize>(),
+                    "nonmanifold_edge_groups": graph.artifact().rooms.iter()
+                        .map(|room| room.nonmanifold_edge_groups).sum::<usize>(),
+                    "collapsed_triangle_edges": graph.artifact().rooms.iter()
+                        .map(|room| room.collapsed_triangle_edges).sum::<usize>(),
+                    "vertex_clusters": graph.artifact().rooms.iter()
+                        .map(|room| room.vertex_clusters).sum::<usize>(),
+                    "maximum_vertex_cluster_diameter": graph.artifact().rooms.iter()
+                        .map(|room| room.maximum_vertex_cluster_diameter)
+                        .fold(0.0_f32, f32::max),
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                }))?
+            );
+            Ok(())
+        }
+        Some("graph-query") => {
+            let inventory = load_world_inventory(&args[1..])?;
+            let graph = WorldSurfaceGraph::build(&inventory)?;
+            let room: i8 = option(&args[1..], "--room")
+                .ok_or("missing required --room N")?
+                .parse()?;
+            let mut seed_collision_ids = repeated_option(&args[1..], "--seed");
+            seed_collision_ids.sort();
+            let maximum_hops: u8 = option(&args[1..], "--max-hops")
+                .unwrap_or_else(|| "4".into())
+                .parse()?;
+            let maximum_nodes = usize_option(&args[1..], "--limit", 128)?;
+            let report = graph.neighborhood(WorldSurfaceNeighborhoodRequest {
+                room,
+                seed_collision_ids,
+                maximum_hops,
+                maximum_nodes,
+            })?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
             Ok(())
         }
         Some("query") => command_world_query(&args[1..]),

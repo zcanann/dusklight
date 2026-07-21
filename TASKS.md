@@ -903,6 +903,30 @@ PAD and gameplay sequence as ordinary playback.
   incumbent's corner frames.
 - [ ] Support short observation history or recurrent state for action phases
   and hidden timers that a single frame cannot make Markov.
+  - [x] Publish a generic, authenticated, past-only episode-history index over
+    native shards. Every decision names its exact pre-input observation ordinal
+    and a bounded oldest-to-newest list of transitions completed strictly
+    earlier in the same episode; the current post-simulation state remains in
+    a separate target table. Canonical validation rejects current/future or
+    cross-episode history even after resealing, and history resets at every
+    episode boundary. `huntctl learn episode-history` stores the compact index
+    as a content-addressed artifact without copying complete actor, collision
+    or geometry states. A depth-eight view over a live two-episode, 250-step
+    native shard retained 500 source observation ordinals, 250 exact chosen and
+    consumed PAD transitions, 248 decisions with prior context and two verified
+    zero-history episode starts (`9703f20c...6c32f`; content
+    `4a31a883...bf7e`). This supplies temporal information only: it has no
+    desired outcome, reward, action preference or technique-specific sequence.
+  - [x] Bind that temporal index to the complete typed actor-feature view from
+    the same authenticated native shard. Each resolved decision exposes the
+    current pre-input actor set and only completed earlier actor transitions;
+    the current post-simulation actor set remains a target and cannot enter
+    policy input. The join fails closed on shard, schema, view digest,
+    cardinality, episode, step, phase, boundary, state, stage or room mismatch,
+    and tests cover episode reset and rejection of a detached authenticated
+    shard. This is generic learner input plumbing, not an attempted or encoded
+    technique. Held-out single-frame/stack/recurrent comparison remains open
+    before the parent item can close.
 
 **Gate 3:** the same model-facing contracts execute raw input, precise
 continuous adjustments and stateful tactics; every execution exports an
@@ -931,14 +955,28 @@ and geometry set sizes without schema changes.
     shard/payload, checkpoint, source boundary, objective, parent-entry and
     policy-lineage identities; rejects duplicate episodes and invalid role
     claims; reports outcome/role/checkpoint diversity; and stores each manifest
-    content-addressed. Campaign ingestion and a live mixed-source generation
-    remain open before the parent item can close.
+    content-addressed. Whole farming shards can be ingested directly under an
+    explicit collection role, without producing one descriptor per episode.
+    A real 128-episode Ordon coverage shard produced a 16,000-transition replay
+    generation (`72a59a90...ab806`) and episode-held-out auxiliary dataset
+    (`9538f07a...7bf23`; 11,500 train / 2,625 validation / 1,875 test rows).
+    Automatic live mixed-source generations remain open before the parent item
+    can close.
 - [ ] Pretrain and continually refresh the shared state encoder from every
   phase-correct transition, not only successful episodes. Compare bounded
   auxiliary objectives such as next-state/delta prediction, inverse action,
   contact/surface transition, actor lifecycle, action phase, event/loading and
   short-horizon reachability. These objectives teach representation; they must
   not replace the real predicate and tick cost as outcome authority.
+  - [x] Materialize a sealed, episode-split auxiliary dataset directly from a
+    native replay-corpus generation and its authenticated `.dseps` shards.
+    Every row references the complete pre-input and post-simulation states,
+    retains exact consumed PAD, and derives player-motion, contact, complete
+    actor-lifecycle, action-phase, event/loading and 1/2/4/8-tick terminal
+    targets without flattening the source actor/collider sets. Train,
+    validation and test assignment is deterministic per complete episode, not
+    per frame. Training the shared encoder and reporting held-out auxiliary
+    performance remain open before the parent item can close.
 - [ ] Measure learned feature selection rather than assuming that more inputs
   helped: report attention/gating stability, held-out prediction by channel,
   rare-event recall and controlled channel-family ablations. Reject a broad

@@ -1,4 +1,5 @@
 use huntctl::artifact::Digest;
+use huntctl::learning::native_auxiliary_dataset::NativeAuxiliaryDataset;
 use huntctl::learning::native_replay_corpus::NativeReplayCorpus;
 use huntctl::learning::option_values::{
     OptionActionDescriptor, OptionValueBatch, OptionValueSample,
@@ -182,6 +183,61 @@ fn native_replay_cli_classifies_rich_episodes_without_copying_the_shard() {
             .iter()
             .all(|entry| entry.shard_sha256 == shard.content_sha256)
     );
+
+    let dataset_path = root.join("auxiliary.json");
+    let dataset_output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "auxiliary-dataset", "--corpus"])
+        .arg(&output_path)
+        .args(["--input"])
+        .arg(&fixture)
+        .args(["--output"])
+        .arg(&dataset_path)
+        .args(["--artifact-store"])
+        .arg(&content)
+        .output()
+        .unwrap();
+    assert!(
+        dataset_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&dataset_output.stderr)
+    );
+    let dataset_summary: serde_json::Value =
+        serde_json::from_slice(&dataset_output.stdout).unwrap();
+    assert_eq!(
+        dataset_summary["schema"],
+        "dusklight-native-auxiliary-dataset/v1"
+    );
+    assert_eq!(dataset_summary["report"]["episodes"], 2);
+    assert_eq!(
+        dataset_summary["content_blob"]["kind"],
+        "native_auxiliary_dataset"
+    );
+    let dataset: NativeAuxiliaryDataset =
+        serde_json::from_slice(&fs::read(&dataset_path).unwrap()).unwrap();
+    dataset.validate().unwrap();
+    assert_eq!(dataset.replay_corpus_sha256, corpus.corpus_sha256);
+
+    let direct_path = root.join("direct-replay.json");
+    let direct_output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "native-replay", "--input"])
+        .arg(&fixture)
+        .args(["--role", "randomized_coverage", "--output"])
+        .arg(&direct_path)
+        .args(["--artifact-store"])
+        .arg(&content)
+        .output()
+        .unwrap();
+    assert!(
+        direct_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&direct_output.stderr)
+    );
+    let direct: NativeReplayCorpus =
+        serde_json::from_slice(&fs::read(&direct_path).unwrap()).unwrap();
+    direct.validate().unwrap();
+    assert_eq!(direct.entries.len(), shard.episodes.len());
+    assert!(direct.entries.iter().all(|entry| entry.role
+        == huntctl::learning::native_replay_corpus::ReplayExperienceRole::RandomizedCoverage));
     fs::remove_dir_all(root).unwrap();
 }
 

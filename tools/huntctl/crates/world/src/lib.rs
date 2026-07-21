@@ -11,3 +11,4 @@ pub mod world_context;
 pub mod world_geometry;
 pub mod world_inventory;
 pub mod world_spatial;
+pub mod world_surface_graph;

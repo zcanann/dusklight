@@ -87,5 +87,65 @@ fn spatial_index_and_filtered_point_query_cli_match_real_fixture_when_present() 
         "F_SP104"
     );
 
+    let graph_output_path = std::env::temp_dir().join(format!(
+        "dusklight-world-surface-graph-{}-{nonce}.json",
+        std::process::id()
+    ));
+    let graph_output = graph_output_path.to_string_lossy();
+    let graph = run(&[
+        "world",
+        "surface-graph",
+        "--stage-dir",
+        &stage_dir,
+        "--stage",
+        "F_SP103",
+        "--output",
+        &graph_output,
+    ]);
+    assert_eq!(graph["nodes"], 10_790);
+    assert_eq!(graph["excluded_nodes"], 4);
+    assert_eq!(graph["exact_shared_edge_groups"], 155);
+    assert_eq!(graph["clustered_shared_edge_groups"], 14_760);
+    assert_eq!(graph["adjacency_edges"], 15_265);
+    assert_eq!(graph["boundary_edge_groups"], 2_600);
+    assert_eq!(graph["collapsed_triangle_edges"], 0);
+    assert!(graph["maximum_vertex_cluster_diameter"].as_f64().unwrap() < 0.1);
+    assert_eq!(
+        graph["surface_graph_sha256"],
+        "40fc521620904d9485caf00ef5277f4c04a4ef71aba04457b5c465accc2fcc96"
+    );
+    assert!(graph_output_path.is_file());
+
+    let seed = query["results"][0]["surface"]["authored"]["stable_id"]
+        .as_str()
+        .unwrap();
+    let neighborhood = run(&[
+        "world",
+        "graph-query",
+        "--stage-dir",
+        &stage_dir,
+        "--stage",
+        "F_SP103",
+        "--room",
+        "1",
+        "--seed",
+        seed,
+        "--max-hops",
+        "8",
+        "--limit",
+        "256",
+    ]);
+    assert_eq!(
+        neighborhood["surface_graph_sha256"],
+        graph["surface_graph_sha256"]
+    );
+    assert!(neighborhood["reachable_within_hops"].as_u64().unwrap() > 1);
+    assert_eq!(
+        neighborhood["returned_nodes"],
+        neighborhood["reachable_within_hops"]
+    );
+    assert_eq!(neighborhood["truncated"], false);
+
     fs::remove_file(output_path).expect("temporary spatial artifact must be removable");
+    fs::remove_file(graph_output_path).expect("temporary graph artifact must be removable");
 }

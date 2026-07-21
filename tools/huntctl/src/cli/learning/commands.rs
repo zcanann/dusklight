@@ -18,6 +18,9 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::learning::batch::load_fqi_batch;
+use huntctl::learning::native_auxiliary_dataset::{
+    AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V1, NativeAuxiliaryDataset,
+};
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
@@ -30,6 +33,7 @@ use huntctl::native_collision_history::{
     DEFAULT_COLLISION_HISTORY_DEPTH, NativeCollisionHistoryView,
 };
 use huntctl::native_corpus_inspection::inspect_native_episode_corpus;
+use huntctl::native_episode_history::{DEFAULT_EPISODE_HISTORY_DEPTH, NativeEpisodeHistoryView};
 use huntctl::native_episode_shard::NativeEpisodeShard;
 use huntctl::native_geometry_view::{
     GeometryObservationStatus, NativeEpisodeGeometryView, NativeGeometryViewConfiguration,
@@ -70,6 +74,19 @@ struct NativeReplaySourceDescriptor {
     policy_lineage_sha256: Option<Digest>,
     #[serde(default)]
     parent_entry_sha256: Option<Digest>,
+}
+
+fn parse_replay_role(value: &str) -> Result<ReplayExperienceRole, Box<dyn Error>> {
+    match value {
+        "demonstration" => Ok(ReplayExperienceRole::Demonstration),
+        "policy_rollout" => Ok(ReplayExperienceRole::PolicyRollout),
+        "randomized_coverage" => Ok(ReplayExperienceRole::RandomizedCoverage),
+        "alternate_terminal" => Ok(ReplayExperienceRole::AlternateTerminal),
+        _ => Err(
+            "replay role must be demonstration, policy_rollout, randomized_coverage, or alternate_terminal"
+                .into(),
+        ),
+    }
 }
 
 fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -609,9 +626,12 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("native-replay") => {
             let learn_args = &args[1..];
             let source_paths = repeated_option(learn_args, "--source");
-            if source_paths.is_empty() || source_paths.len() > MAX_LEARN_INPUT_CORPORA {
+            let shard_paths = repeated_option(learn_args, "--input");
+            if source_paths.is_empty() == shard_paths.is_empty()
+                || source_paths.len().max(shard_paths.len()) > MAX_LEARN_INPUT_CORPORA
+            {
                 return Err(format!(
-                    "learn native-replay requires 1..={MAX_LEARN_INPUT_CORPORA} --source SOURCE.json"
+                    "learn native-replay requires either 1..={MAX_LEARN_INPUT_CORPORA} --source SOURCE.json or --input EPISODES.dseps with --role ROLE"
                 )
                 .into());
             }
@@ -631,51 +651,84 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     Ok(corpus)
                 })
                 .transpose()?;
-            let mut loaded = Vec::with_capacity(source_paths.len());
-            for source_path in source_paths {
-                let descriptor_path = PathBuf::from(source_path);
-                let descriptor: NativeReplaySourceDescriptor =
-                    serde_json::from_slice(&fs::read(&descriptor_path)?)?;
-                if descriptor.schema != NATIVE_REPLAY_SOURCE_SCHEMA_V1 {
-                    return Err(format!(
-                        "native replay source has invalid schema: {}",
-                        descriptor_path.display()
-                    )
-                    .into());
+            let corpus = if !source_paths.is_empty() {
+                let mut loaded = Vec::with_capacity(source_paths.len());
+                for source_path in source_paths {
+                    let descriptor_path = PathBuf::from(source_path);
+                    let descriptor: NativeReplaySourceDescriptor =
+                        serde_json::from_slice(&fs::read(&descriptor_path)?)?;
+                    if descriptor.schema != NATIVE_REPLAY_SOURCE_SCHEMA_V1 {
+                        return Err(format!(
+                            "native replay source has invalid schema: {}",
+                            descriptor_path.display()
+                        )
+                        .into());
+                    }
+                    let shard_path = if descriptor.shard.is_absolute() {
+                        descriptor.shard.clone()
+                    } else {
+                        descriptor_path
+                            .parent()
+                            .unwrap_or(Path::new("."))
+                            .join(&descriptor.shard)
+                    };
+                    loaded.push((descriptor, NativeEpisodeShard::read(shard_path)?));
                 }
-                let shard_path = if descriptor.shard.is_absolute() {
-                    descriptor.shard.clone()
-                } else {
-                    descriptor_path
-                        .parent()
-                        .unwrap_or(Path::new("."))
-                        .join(&descriptor.shard)
-                };
-                loaded.push((descriptor, NativeEpisodeShard::read(shard_path)?));
-            }
-            let sources = loaded
-                .iter()
-                .map(|(descriptor, shard)| {
-                    let episode_index = shard
-                        .episodes
-                        .iter()
-                        .position(|episode| episode.id == descriptor.episode_id)
-                        .ok_or_else(|| {
-                            format!(
-                                "native replay episode {:?} is absent from shard {}",
-                                descriptor.episode_id, shard.content_sha256
-                            )
-                        })?;
-                    Ok(ReplayEpisodeSource {
-                        shard,
-                        episode_index,
-                        role: descriptor.role,
-                        policy_lineage_sha256: descriptor.policy_lineage_sha256,
-                        parent_entry_sha256: descriptor.parent_entry_sha256,
+                let sources = loaded
+                    .iter()
+                    .map(|(descriptor, shard)| {
+                        let episode_index = shard
+                            .episodes
+                            .iter()
+                            .position(|episode| episode.id == descriptor.episode_id)
+                            .ok_or_else(|| {
+                                format!(
+                                    "native replay episode {:?} is absent from shard {}",
+                                    descriptor.episode_id, shard.content_sha256
+                                )
+                            })?;
+                        Ok(ReplayEpisodeSource {
+                            shard,
+                            episode_index,
+                            role: descriptor.role,
+                            policy_lineage_sha256: descriptor.policy_lineage_sha256,
+                            parent_entry_sha256: descriptor.parent_entry_sha256,
+                        })
                     })
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            let corpus = NativeReplayCorpus::build(previous.as_ref(), &sources)?;
+                    .collect::<Result<Vec<_>, String>>()?;
+                NativeReplayCorpus::build(previous.as_ref(), &sources)?
+            } else {
+                let role_value = option(learn_args, "--role")
+                    .ok_or("native replay shard ingestion requires --role ROLE")?;
+                let role = parse_replay_role(&role_value)?;
+                let policy_lineage_sha256 = option(learn_args, "--policy-lineage-sha256")
+                    .map(|value| value.parse::<Digest>())
+                    .transpose()?;
+                if (role == ReplayExperienceRole::PolicyRollout) != policy_lineage_sha256.is_some()
+                {
+                    return Err(
+                        "policy_rollout shard ingestion requires exactly one --policy-lineage-sha256"
+                            .into(),
+                    );
+                }
+                let shards = shard_paths
+                    .iter()
+                    .map(NativeEpisodeShard::read)
+                    .collect::<Result<Vec<_>, _>>()?;
+                let sources = shards
+                    .iter()
+                    .flat_map(|shard| {
+                        (0..shard.episodes.len()).map(move |episode_index| ReplayEpisodeSource {
+                            shard,
+                            episode_index,
+                            role,
+                            policy_lineage_sha256,
+                            parent_entry_sha256: None,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                NativeReplayCorpus::build(previous.as_ref(), &sources)?
+            };
             let bytes = serde_json::to_vec_pretty(&corpus)?;
             if let Some(parent) = output
                 .parent()
@@ -700,6 +753,76 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "artifact_store": artifact_store,
                     "content_blob": content_blob,
                     "report": corpus.report,
+                }))?
+            );
+            Ok(())
+        }
+        Some("auxiliary-dataset") => {
+            let learn_args = &args[1..];
+            let corpus_path = required_path(learn_args, "--corpus")?;
+            let input_paths = repeated_option(learn_args, "--input");
+            if input_paths.is_empty() || input_paths.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn auxiliary-dataset requires 1..={MAX_LEARN_INPUT_CORPORA} --input EPISODES.dseps"
+                )
+                .into());
+            }
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "native auxiliary dataset output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let corpus: NativeReplayCorpus = serde_json::from_slice(&fs::read(&corpus_path)?)?;
+            corpus.validate()?;
+            let shards = input_paths
+                .iter()
+                .map(NativeEpisodeShard::read)
+                .collect::<Result<Vec<_>, _>>()?;
+            let defaults = AuxiliarySplitConfig::default();
+            let training_basis_points = usize_option(
+                learn_args,
+                "--training-basis-points",
+                usize::from(defaults.training_basis_points),
+            )?;
+            let validation_basis_points = usize_option(
+                learn_args,
+                "--validation-basis-points",
+                usize::from(defaults.validation_basis_points),
+            )?;
+            let split_config = AuxiliarySplitConfig {
+                training_basis_points: u16::try_from(training_basis_points)
+                    .map_err(|_| "training basis points exceed u16")?,
+                validation_basis_points: u16::try_from(validation_basis_points)
+                    .map_err(|_| "validation basis points exceed u16")?,
+                seed: u64_option(learn_args, "--seed", defaults.seed)?,
+            };
+            let dataset = NativeAuxiliaryDataset::build(&corpus, &shards, split_config)?;
+            let bytes = serde_json::to_vec_pretty(&dataset)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeAuxiliaryDataset)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": NATIVE_AUXILIARY_DATASET_SCHEMA_V1,
+                    "dataset_sha256": dataset.dataset_sha256,
+                    "replay_corpus_sha256": dataset.replay_corpus_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "report": dataset.report,
                 }))?
             );
             Ok(())
@@ -786,6 +909,64 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "background_present": background_present,
                     "solver_changes": solver_changes,
                     "background_changes": background_changes,
+                }))?
+            );
+            Ok(())
+        }
+        Some("episode-history") => {
+            let learn_args = &args[1..];
+            let input = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "episode history output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let history_depth =
+                usize_option(learn_args, "--history-depth", DEFAULT_EPISODE_HISTORY_DEPTH)?;
+            let shard = NativeEpisodeShard::read(&input)?;
+            let view = NativeEpisodeHistoryView::build(&shard, history_depth)?;
+            let bytes = view.canonical_bytes()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeEpisodeHistory)?;
+            let populated_decisions = view
+                .decisions
+                .iter()
+                .filter(|decision| !decision.completed_transition_indices.is_empty())
+                .count();
+            let maximum_realized_depth = view
+                .decisions
+                .iter()
+                .map(|decision| decision.completed_transition_indices.len())
+                .max()
+                .unwrap_or(0);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": view.schema,
+                    "view_sha256": view.view_sha256,
+                    "native_shard_sha256": view.native_shard_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "history_depth": view.history_depth,
+                    "source_observations": view.source_observation_count,
+                    "decisions": view.decisions.len(),
+                    "transitions": view.transitions.len(),
+                    "decisions_with_history": populated_decisions,
+                    "maximum_realized_depth": maximum_realized_depth,
                 }))?
             );
             Ok(())
