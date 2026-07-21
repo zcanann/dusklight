@@ -2193,7 +2193,7 @@ sequence.
 
 - [x] Model `mGtItm` as a session/process storage site separate from save-file
       inventory and `mPreItemNo`.
-- [ ] Enumerate presentation/chest/show-item writers and prove which boundaries
+- [x] Enumerate presentation/chest/show-item writers and prove which boundaries
       preserve or reset the value.
 - [x] Model file A writing an item ID, file load preserving session state, and file
       B consuming it through generic get-item semantics.
@@ -2223,6 +2223,13 @@ sequence.
     temporal obligation in the blocked frontier. The exact retail frame and
     action still require source/runtime evidence rather than being claimed by
     this fixture.
+  - The source/boundary audit finds only the shared present-demo and
+    treasure-box-demo helpers writing `mGtItm`; show-item/catch paths instead
+    write `mPreItemNo`. The acceptance matrix preserves the session component
+    across every modeled in-process room, stage, reload, save/load, title,
+    wrong-state, and dialogue boundary; later presentations overwrite it and an
+    explicit fresh-process boundary reinitializes it. See
+    `docs/route-planner/auru-recent-item-store-audit.md`.
 
 #### 11J. Text Displacement to Goron Mines
 

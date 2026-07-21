@@ -1970,6 +1970,189 @@ mod tests {
     }
 
     #[test]
+    fn recent_item_boundary_matrix_is_process_owned_and_last_writer_wins() {
+        const ROD_ITEM_ID: u64 = 0x4a;
+        const MEMO_ITEM_ID: u64 = 0x90;
+
+        let recent_item_component = |value: u64| {
+            let mut component = structured_component(
+                "event.recent-item",
+                ComponentKind::Session,
+                ComponentBinding::Session {
+                    session_id: "session-1".into(),
+                },
+            );
+            component.lifetime = SemanticLifetime::Session;
+            component.serialization_owner = SerializationOwner::None;
+            let ComponentPayload::Structured { fields } = &mut component.payload else {
+                unreachable!()
+            };
+            fields.insert("get_item_no".into(), StateValue::Unsigned(value));
+            component
+        };
+        let state_with_recent_item = || {
+            let mut source = snapshot();
+            source
+                .environment
+                .components
+                .push(recent_item_component(ROD_ITEM_ID));
+            source
+                .environment
+                .components
+                .sort_by(|left, right| left.id.cmp(&right.id));
+            PlannerExecutionState::new(source).unwrap()
+        };
+
+        let in_process_boundaries = vec![
+            ("room-transition", BoundaryKind::RoomTransition),
+            ("stage-transition", BoundaryKind::StageTransition),
+            ("void-reload", BoundaryKind::VoidReload),
+            ("savewarp", BoundaryKind::SaveWarp),
+            ("title-return", BoundaryKind::TitleReturn),
+            ("load-physical-slot", BoundaryKind::LoadPhysicalSlot),
+            ("save-runtime-to-slot", BoundaryKind::SaveRuntimeToSlot),
+            ("wrong-state-respawn", BoundaryKind::WrongStateRespawn),
+            ("dialogue-interruption", BoundaryKind::DialogueInterruption),
+        ];
+        for (label, boundary) in in_process_boundaries {
+            let mut state = state_with_recent_item();
+            let policy = BoundaryPolicy {
+                schema: BOUNDARY_POLICY_SCHEMA.into(),
+                id: format!("boundary.auru-{label}"),
+                boundary,
+                default_disposition: BoundaryDisposition::Clear,
+                component_rules: vec![ComponentBoundaryRule {
+                    selector: id_selector("event.recent-item"),
+                    disposition: BoundaryDisposition::Preserve,
+                }],
+            };
+            state
+                .apply_boundary(
+                    &policy.id,
+                    &format!("snapshot.after-{label}"),
+                    &policy,
+                    &BTreeMap::new(),
+                )
+                .unwrap();
+            assert_eq!(
+                field(&state, "event.recent-item", "get_item_no"),
+                &StateValue::Unsigned(ROD_ITEM_ID),
+                "{label} must not silently clear process-owned mGtItm"
+            );
+        }
+
+        let mut event_cleanup = state_with_recent_item();
+        let mut shown_item = structured_component(
+            "event.shown-item",
+            ComponentKind::PendingOperation,
+            ComponentBinding::Session {
+                session_id: "session-1".into(),
+            },
+        );
+        shown_item.lifetime = SemanticLifetime::Action;
+        shown_item.serialization_owner = SerializationOwner::None;
+        let ComponentPayload::Structured { fields } = &mut shown_item.payload else {
+            unreachable!()
+        };
+        fields.insert("pre_item_no".into(), StateValue::Unsigned(0x91));
+        event_cleanup
+            .snapshot
+            .environment
+            .components
+            .push(shown_item);
+        event_cleanup
+            .snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        event_cleanup.snapshot.validate().unwrap();
+        let cleanup_policy = BoundaryPolicy {
+            schema: BOUNDARY_POLICY_SCHEMA.into(),
+            id: "boundary.event-control-remove".into(),
+            boundary: BoundaryKind::Custom {
+                id: "event-control-remove".into(),
+            },
+            default_disposition: BoundaryDisposition::Clear,
+            component_rules: vec![ComponentBoundaryRule {
+                selector: id_selector("event.recent-item"),
+                disposition: BoundaryDisposition::Preserve,
+            }],
+        };
+        event_cleanup
+            .apply_boundary(
+                &cleanup_policy.id,
+                "snapshot.after-event-control-remove",
+                &cleanup_policy,
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        assert!(
+            event_cleanup
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .all(|component| component.id != "event.shown-item")
+        );
+        assert_eq!(
+            field(&event_cleanup, "event.recent-item", "get_item_no"),
+            &StateValue::Unsigned(ROD_ITEM_ID)
+        );
+
+        event_cleanup
+            .apply_operations(
+                "writer.auru-normal-memo-presentation",
+                "snapshot.after-memo-presentation",
+                &[StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: "event.recent-item".into(),
+                        field: "get_item_no".into(),
+                    },
+                    value: StateValue::Unsigned(MEMO_ITEM_ID),
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            field(&event_cleanup, "event.recent-item", "get_item_no"),
+            &StateValue::Unsigned(MEMO_ITEM_ID)
+        );
+        assert_eq!(
+            event_cleanup
+                .last_field_writer("event.recent-item", "get_item_no")
+                .unwrap()
+                .application_id,
+            "writer.auru-normal-memo-presentation"
+        );
+
+        let process_restart = BoundaryPolicy {
+            schema: BOUNDARY_POLICY_SCHEMA.into(),
+            id: "boundary.process-restart".into(),
+            boundary: BoundaryKind::Custom {
+                id: "process-restart".into(),
+            },
+            default_disposition: BoundaryDisposition::Clear,
+            component_rules: vec![ComponentBoundaryRule {
+                selector: id_selector("event.recent-item"),
+                disposition: BoundaryDisposition::Reinitialize {
+                    initializer_id: "event.recent-item".into(),
+                },
+            }],
+        };
+        event_cleanup
+            .apply_boundary(
+                &process_restart.id,
+                "snapshot.after-process-restart",
+                &process_restart,
+                &BTreeMap::from([("event.recent-item".into(), recent_item_component(0))]),
+            )
+            .unwrap();
+        assert_eq!(
+            field(&event_cleanup, "event.recent-item", "get_item_no"),
+            &StateValue::Unsigned(0)
+        );
+    }
+
+    #[test]
     fn failed_batches_are_atomic() {
         let mut state = PlannerExecutionState::new(snapshot()).unwrap();
         let before = state.clone();
