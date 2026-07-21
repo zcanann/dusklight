@@ -37,6 +37,7 @@ const OBSERVATION_VERSION_V14: u16 = 14;
 const OBSERVATION_VERSION_V15: u16 = 15;
 const OBSERVATION_VERSION_V16: u16 = 16;
 const OBSERVATION_VERSION_V17: u16 = 17;
+const OBSERVATION_VERSION_V18: u16 = 18;
 const ACTION_VERSION: u16 = 2;
 const MAX_EPISODES: usize = 16_384;
 const MAX_TICKS: usize = 4_096;
@@ -55,9 +56,11 @@ pub use collision_solver::{
 #[path = "native_episode_planner.rs"]
 mod planner;
 pub use planner::{
-    NativeEventHandoffObservation, NativeMessageFlowObservation, NativeMessageSessionObservation,
-    NativePhysicalSlotObservation, NativePlayerControlObservation, NativeRestartObservation,
-    NativeReturnPlaceObservation, NativeRuntimeFileObservation,
+    NativeEventActorReferenceObservation, NativeEventHandoffObservation,
+    NativeEventQueueObservation, NativeMessageFlowObservation, NativeMessageSessionObservation,
+    NativePendingEventOrderObservation, NativePhysicalSlotObservation,
+    NativePlayerControlObservation, NativeRestartObservation, NativeReturnPlaceObservation,
+    NativeRuntimeFileObservation,
 };
 
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V1: &str = "dusklight-native-episode-shard/v1";
@@ -78,6 +81,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V14: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V15: &str = "dusklight-learning-observation/v15";
 pub const LEARNING_OBSERVATION_SCHEMA_V16: &str = "dusklight-learning-observation/v16";
 pub const LEARNING_OBSERVATION_SCHEMA_V17: &str = "dusklight-learning-observation/v17";
+pub const LEARNING_OBSERVATION_SCHEMA_V18: &str = "dusklight-learning-observation/v18";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -679,6 +683,8 @@ pub struct NativeLearningObservation {
     pub event_handoff: Option<NativeEventHandoffObservation>,
     pub message_session_status: NativeChannelStatus,
     pub message_session: Option<NativeMessageSessionObservation>,
+    pub event_queue_status: NativeChannelStatus,
+    pub event_queue: Option<NativeEventQueueObservation>,
 }
 
 #[derive(Debug)]
@@ -748,6 +754,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V15
                 | OBSERVATION_VERSION_V16
                 | OBSERVATION_VERSION_V17
+                | OBSERVATION_VERSION_V18
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -879,6 +886,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V15 => LEARNING_OBSERVATION_SCHEMA_V15,
         OBSERVATION_VERSION_V16 => LEARNING_OBSERVATION_SCHEMA_V16,
         OBSERVATION_VERSION_V17 => LEARNING_OBSERVATION_SCHEMA_V17,
+        OBSERVATION_VERSION_V18 => LEARNING_OBSERVATION_SCHEMA_V18,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -1560,6 +1568,136 @@ fn decode_message_session(
             send_control: flags & SEND_CONTROL != 0,
             talk_actor,
         }),
+    ))
+}
+
+fn decode_event_actor_reference(
+    reader: &mut Reader<'_>,
+) -> Result<NativeEventActorReferenceObservation, NativeEpisodeShardError> {
+    let status = decode_channel_status(reader)?;
+    if reader.u8()? != 0 || reader.u16()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero event-actor-reference reserved field",
+        ));
+    }
+    let identity = decode_actor_identity(reader)?;
+    if (status == NativeChannelStatus::Present) != identity.present {
+        return Err(NativeEpisodeShardError::new(
+            "event actor-reference status and identity disagree",
+        ));
+    }
+    Ok(NativeEventActorReferenceObservation {
+        status,
+        actor: identity.present.then_some(identity),
+    })
+}
+
+fn decode_event_queue(
+    reader: &mut Reader<'_>,
+) -> Result<(NativeChannelStatus, Option<NativeEventQueueObservation>), NativeEpisodeShardError> {
+    const MAXIMUM_PENDING_ORDERS: usize = 8;
+    let status = decode_channel_status(reader)?;
+    let pending_count = usize::from(reader.u8()?);
+    let skip_registered = reader.bool()?;
+    if reader.u8()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero event-queue reserved byte",
+        ));
+    }
+    if pending_count > MAXIMUM_PENDING_ORDERS {
+        return Err(NativeEpisodeShardError::new(
+            "event-queue pending count exceeds the native queue capacity",
+        ));
+    }
+    let mut pending_orders = Vec::with_capacity(pending_count);
+    for _ in 0..pending_count {
+        let event_type = reader.u16()?;
+        let flags = reader.u16()?;
+        let hind_flags = reader.u16()?;
+        let event_id = reader.i16()?;
+        let priority = reader.u16()?;
+        let map_tool_id = reader.u8()?;
+        if reader.u8()? != 0 {
+            return Err(NativeEpisodeShardError::new(
+                "nonzero pending-event-order reserved byte",
+            ));
+        }
+        if !(event_type <= 7 || (10..=13).contains(&event_type)) || priority == 0 {
+            return Err(NativeEpisodeShardError::new(
+                "pending event order has an unknown type or zero priority",
+            ));
+        }
+        pending_orders.push(NativePendingEventOrderObservation {
+            event_type,
+            flags,
+            hind_flags,
+            event_id,
+            priority,
+            map_tool_id,
+            request_actor: decode_event_actor_reference(reader)?,
+            target_actor: decode_event_actor_reference(reader)?,
+        });
+    }
+    if pending_orders
+        .windows(2)
+        .any(|pair| pair[0].priority > pair[1].priority)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "event-queue orders are not in semantic priority order",
+        ));
+    }
+    let event_queue = NativeEventQueueObservation {
+        pending_orders,
+        active_request_actor: decode_event_actor_reference(reader)?,
+        active_target_actor: decode_event_actor_reference(reader)?,
+        active_talk_actor: decode_event_actor_reference(reader)?,
+        active_item_actor: decode_event_actor_reference(reader)?,
+        active_door_actor: decode_event_actor_reference(reader)?,
+        change_actor: decode_event_actor_reference(reader)?,
+        skip_registered,
+        skip_actor: decode_event_actor_reference(reader)?,
+    };
+    let participant_references = [
+        &event_queue.active_request_actor,
+        &event_queue.active_target_actor,
+        &event_queue.active_talk_actor,
+        &event_queue.active_item_actor,
+        &event_queue.active_door_actor,
+        &event_queue.change_actor,
+        &event_queue.skip_actor,
+    ];
+    let references = participant_references.into_iter().chain(
+        event_queue
+            .pending_orders
+            .iter()
+            .flat_map(|order| [&order.request_actor, &order.target_actor]),
+    );
+    let channel_present = status == NativeChannelStatus::Present;
+    if references.into_iter().any(|reference| {
+        if channel_present {
+            reference.status == NativeChannelStatus::NotSampled
+        } else {
+            reference.status != NativeChannelStatus::NotSampled
+        }
+    }) || (!event_queue.skip_registered
+        && event_queue.skip_actor.status == NativeChannelStatus::Present)
+    {
+        return Err(NativeEpisodeShardError::new(
+            "event-queue actor-reference availability is inconsistent",
+        ));
+    }
+    if !matches!(
+        status,
+        NativeChannelStatus::Present | NativeChannelStatus::Unavailable
+    ) || (!channel_present && (!event_queue.pending_orders.is_empty() || skip_registered))
+    {
+        return Err(NativeEpisodeShardError::new(
+            "event-queue status and payload disagree",
+        ));
+    }
+    Ok((
+        status,
+        (status == NativeChannelStatus::Present).then_some(event_queue),
     ))
 }
 
@@ -2342,7 +2480,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V14
         | OBSERVATION_VERSION_V15
         | OBSERVATION_VERSION_V16
-        | OBSERVATION_VERSION_V17 => {
+        | OBSERVATION_VERSION_V17
+        | OBSERVATION_VERSION_V18 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -3026,16 +3165,67 @@ fn decode_observation(
         } else {
             (NativeChannelStatus::NotSampled, None)
         };
-    if message_session.as_ref().is_some_and(|message| {
-        message.talk_actor.present
-            && actors
-                .binary_search_by_key(&u64::from(message.talk_actor.runtime_generation), |actor| {
-                    actor.runtime_generation
-                })
-                .is_err()
-    }) {
+    let actor_identity_joins = |identity: &NativeActorIdentity| {
+        if !identity.present {
+            return true;
+        }
+        actors
+            .binary_search_by_key(&u64::from(identity.runtime_generation), |actor| {
+                actor.runtime_generation
+            })
+            .ok()
+            .map(|index| &actors[index])
+            .is_some_and(|actor| {
+                actor.actor_name == identity.actor_name
+                    && actor.set_id == identity.set_id
+                    && actor.home_room == identity.home_room
+                    && actor.current_room == identity.current_room
+                    && identity.home_position == Some(actor.home_position)
+            })
+    };
+    if message_session
+        .as_ref()
+        .is_some_and(|message| !actor_identity_joins(&message.talk_actor))
+    {
         return Err(NativeEpisodeShardError::new(
             "message-session talk actor is outside the complete actor population",
+        ));
+    }
+    let (event_queue_status, event_queue) = if observation_version >= OBSERVATION_VERSION_V18 {
+        decode_event_queue(reader)?
+    } else {
+        (NativeChannelStatus::NotSampled, None)
+    };
+    if event_queue.as_ref().is_some_and(|queue| {
+        let participants = [
+            &queue.active_request_actor,
+            &queue.active_target_actor,
+            &queue.active_talk_actor,
+            &queue.active_item_actor,
+            &queue.active_door_actor,
+            &queue.change_actor,
+            &queue.skip_actor,
+        ];
+        participants.into_iter().any(|reference| {
+            reference
+                .actor
+                .as_ref()
+                .is_some_and(|identity| !actor_identity_joins(identity))
+        }) || queue.pending_orders.iter().any(|order| {
+            order
+                .request_actor
+                .actor
+                .as_ref()
+                .is_some_and(|identity| !actor_identity_joins(identity))
+                || order
+                    .target_actor
+                    .actor
+                    .as_ref()
+                    .is_some_and(|identity| !actor_identity_joins(identity))
+        })
+    }) {
+        return Err(NativeEpisodeShardError::new(
+            "event-queue actor is outside the complete actor population",
         ));
     }
     Ok(NativeLearningObservation {
@@ -3128,6 +3318,8 @@ fn decode_observation(
         event_handoff,
         message_session_status,
         message_session,
+        event_queue_status,
+        event_queue,
     })
 }
 

@@ -19,9 +19,10 @@ The canonical observation evidence currently retains player motion/action,
 camera state, recent controls, player resources/inventory, realized collision
 contacts, static geometry, complete active actors, actor identity/kinematics,
 base actor state, attention/event participation, complete dynamic collision
-shapes, eleven pointer-free Link-rooted actor relationships, and Link's cached
-background-collision solver modes and work geometry. These are evidence
-channels, not prescribed model inputs.
+shapes, eleven pointer-free Link-rooted actor relationships, Link's cached
+background-collision solver modes and work geometry, the global message
+session, and the bounded priority-ordered event request/participant graph.
+These are evidence channels, not prescribed model inputs.
 
 The audit uses these controlled capability names:
 
@@ -39,8 +40,9 @@ The audit uses these controlled capability names:
   projectile-to-actor links expressed without pointers;
 - **item/projectile state**: typed lifecycle, trajectory, collision and item
   action state;
-- **event/loading state**: event, trigger, door, warp and loading queues plus
-  their time domains;
+- **event/loading state**: the message session and pending generic event
+  requests/participants are captured; trigger, door, warp and loading queues
+  plus their time domains remain incomplete;
 - **lifecycle/capacity state**: process creation/deletion, actor slots,
   resource loads and heap/allocation outcomes.
 
@@ -85,7 +87,8 @@ in this order of cross-case reuse:
    Link-rooted target, ride, held/grabbed, retained-item and attention roles;
 3. typed item/projectile lifecycle, trajectory, collision and action state;
 4. typed enemy/action/animation/timer components with explicit masks;
-5. event, trigger, door, warp and loading queues with explicit clock domains;
+5. remaining trigger, door, warp and loading queues with explicit clock
+   domains (generic message and pending event-request state are now captured);
 6. process lifecycle, actor-slot occupancy, resource capacity and allocation
    outcomes.
 

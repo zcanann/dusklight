@@ -333,6 +333,42 @@ struct ObservationFixture {
             .homePositionY = 2.0F,
             .homePositionZ = -10.0F,
         };
+        observation.eventQueue.status = MilestoneObservation::ChannelStatus::Present;
+        observation.eventQueue.pendingCount = 2;
+        observation.eventQueue.pendingOrders[0].type = 0;
+        observation.eventQueue.pendingOrders[0].flags = 0x10;
+        observation.eventQueue.pendingOrders[0].hindFlags = 0x20;
+        observation.eventQueue.pendingOrders[0].eventId = 12;
+        observation.eventQueue.pendingOrders[0].priority = 2;
+        observation.eventQueue.pendingOrders[0].mapToolId = 3;
+        observation.eventQueue.pendingOrders[0].requestActor.status =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.eventQueue.pendingOrders[0].requestActor.identity =
+            observation.messageSession.talkActor;
+        observation.eventQueue.pendingOrders[0].targetActor.status =
+            MilestoneObservation::ChannelStatus::Absent;
+        observation.eventQueue.pendingOrders[1].type = 2;
+        observation.eventQueue.pendingOrders[1].eventId = 14;
+        observation.eventQueue.pendingOrders[1].priority = 5;
+        observation.eventQueue.pendingOrders[1].mapToolId = 7;
+        observation.eventQueue.pendingOrders[1].requestActor.status =
+            MilestoneObservation::ChannelStatus::Absent;
+        observation.eventQueue.pendingOrders[1].targetActor.status =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.eventQueue.pendingOrders[1].targetActor.identity =
+            observation.messageSession.talkActor;
+        observation.eventQueue.activeRequestActor.status =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.eventQueue.activeRequestActor.identity = observation.messageSession.talkActor;
+        observation.eventQueue.activeTargetActor.status =
+            MilestoneObservation::ChannelStatus::Absent;
+        observation.eventQueue.activeTalkActor.status =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.eventQueue.activeTalkActor.identity = observation.messageSession.talkActor;
+        observation.eventQueue.activeItemActor.status = MilestoneObservation::ChannelStatus::Absent;
+        observation.eventQueue.activeDoorActor.status = MilestoneObservation::ChannelStatus::Absent;
+        observation.eventQueue.changeActor.status = MilestoneObservation::ChannelStatus::Absent;
+        observation.eventQueue.skipActor.status = MilestoneObservation::ChannelStatus::Absent;
         observation.playerRelationshipsPresent = true;
         observation.playerRelationships.targetedActor = {
             .present = true,
@@ -758,6 +794,51 @@ void test_message_session_fails_closed() {
     REQUIRE(error.find("inconsistent message-session state") != std::string::npos);
 }
 
+void test_event_queue_fails_closed() {
+    ObservationFixture fixture;
+    fixture.observation.eventQueue.pendingOrders[0].requestActor.identity.actorName = 0x124;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, fixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent event-queue state") != std::string::npos);
+
+    ObservationFixture unorderedFixture;
+    unorderedFixture.observation.eventQueue.pendingOrders[0].priority = 6;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, unorderedFixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent event-queue state") != std::string::npos);
+
+    ObservationFixture unknownTypeFixture;
+    unknownTypeFixture.observation.eventQueue.pendingOrders[0].type = 9;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, unknownTypeFixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent event-queue state") != std::string::npos);
+
+    ObservationFixture unavailableFixture;
+    unavailableFixture.observation.eventQueue.status =
+        MilestoneObservation::ChannelStatus::Unavailable;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, unavailableFixture.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent event-queue state") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -857,6 +938,7 @@ int main(const int argc, char** argv) {
     test_player_resources_presence_matches_player_presence();
     test_runtime_file_attachment_fails_closed();
     test_message_session_fails_closed();
+    test_event_queue_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

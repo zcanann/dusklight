@@ -70,6 +70,37 @@ pub struct NativeMessageSessionObservation {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub struct NativeEventActorReferenceObservation {
+    pub status: NativeChannelStatus,
+    pub actor: Option<NativeActorIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativePendingEventOrderObservation {
+    pub event_type: u16,
+    pub flags: u16,
+    pub hind_flags: u16,
+    pub event_id: i16,
+    pub priority: u16,
+    pub map_tool_id: u8,
+    pub request_actor: NativeEventActorReferenceObservation,
+    pub target_actor: NativeEventActorReferenceObservation,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeEventQueueObservation {
+    pub pending_orders: Vec<NativePendingEventOrderObservation>,
+    pub active_request_actor: NativeEventActorReferenceObservation,
+    pub active_target_actor: NativeEventActorReferenceObservation,
+    pub active_talk_actor: NativeEventActorReferenceObservation,
+    pub active_item_actor: NativeEventActorReferenceObservation,
+    pub active_door_actor: NativeEventActorReferenceObservation,
+    pub change_actor: NativeEventActorReferenceObservation,
+    pub skip_registered: bool,
+    pub skip_actor: NativeEventActorReferenceObservation,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct NativeEventHandoffObservation {
     pub pre_item_no: u8,
     pub get_item_no: u8,

@@ -678,6 +678,23 @@ human-authored successful setup.
       derive relative geometry offline and mask absence for v2-v16 shards.
       This does not yet cover collision-backed exits, inactive placements or
       richer loading/event clocks, so the parent remains open.
+    - [x] Capture the bounded event-control request graph without turning an
+      observed interaction opportunity into a prescribed action. Learning
+      observation v18 retains the engine's priority-ordered pending requests,
+      typed event IDs/flags/map-tool IDs, request/target endpoints and active
+      request/target/talk/item/door/change/skip roles. Every actor endpoint has
+      explicit present/absent/unavailable status and, when present, a complete
+      pointer-free identity joined to the independently captured actor set;
+      raw or stale pointers are never dereferenced or serialized. The native
+      writer and Rust reader reject over-capacity or misordered queues, unknown
+      event types, zero priorities, status/payload disagreement and any
+      detached or partially mismatched actor identity. Corpus and temporal
+      reports expose the channel, and the planner projection retains every
+      request and role as generic pending-operation state. Cross-language v17
+      fixture `32155dd9...edac0d` plus legacy-missingness and tamper tests pass.
+      This supplies evidence from whatever requests ordinary gameplay creates;
+      it contains no selected actor, desired overlap, input timing, outcome,
+      route or reward. Door/warp/loading queues and clock domains remain open.
 - [x] Store immutable map geometry, placements, and type metadata once per
   world identity. Per-tick episodes reference static data and retain dynamic
   state rather than copying the entire map.
@@ -1057,6 +1074,25 @@ and geometry set sizes without schema changes.
     procedure changes across train/validation/test, but zero terminal successes
     in every split. It can teach common dynamics and rare-contact prediction;
     it cannot train or evaluate goal reachability by itself.
+  - [x] Fit a shared complete-actor-set encoder directly from those native
+    pre-input states without first expanding a second actor-view and feature-
+    view corpus. The typed adapter retains every non-truncated actor, explicit
+    optional masks, lifecycle/physics/components, Link- and parent-relative
+    relationships, player relationships and a 129-channel core state; the raw
+    shard is released before optimization. Fourteen masked motion, contact,
+    procedure/mode, actor-lifecycle and inverse-action heads share one actor
+    transform and pooled state. On the real 128-episode / 16,000-transition
+    Ordon coverage corpus, a two-epoch 8,646-parameter model improved over the
+    training-mean predictor by 65.27% on episode-held-out validation and 65.47%
+    on the untouched test split (`2e6bb373...8345`; model
+    `31625ea1...78d4`). An equal-architecture, equal-23,000-step per-head
+    shuffled-target control fell to -0.009% validation and -0.027% test and
+    retained the mean baseline (`b71ff6fb...4910`). Target assignments and
+    masks are part of each split identity. The paired release run completed in
+    31.1 seconds after replacing the previous multi-gigabyte, greater-than-ten-
+    minute three-copy path. This establishes useful generic representation
+    signal and a leakage control, not goal reachability, continual refresh,
+    channel-family attribution or policy promotion.
 - [ ] Measure learned feature selection rather than assuming that more inputs
   helped: report attention/gating stability, held-out prediction by channel,
   rare-event recall and controlled channel-family ablations. Reject a broad

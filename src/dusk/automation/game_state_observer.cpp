@@ -455,6 +455,7 @@ int capture_milestone_actor(void* candidate, void* context) {
         component.headLockPositionZ = enemy->mHeadLockPos.z;
     }
     snapshot.triggerVolumePresent = capture_actor_trigger_volume(*actor, snapshot.triggerVolume);
+    storage->actorPointers.push_back(actor);
     storage->actors.push_back(snapshot);
     return 1;
 }
@@ -619,6 +620,7 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     // Preserve vector capacity across per-frame captures. This keeps complete
     // actor capture allocation-free after the population high-water mark.
     storage.actors.clear();
+    storage.actorPointers.clear();
     storage.actorObservedCount = 0;
     const fopAc_ac_c* player = dComIfGp_getPlayer(0);
     const bool playerIsLink = player != nullptr && fopAcM_GetName(player) == fpcNm_ALINK_e;
@@ -630,21 +632,54 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     const bool nameEntryActive = nameEntry.active != 0;
     const bool nameEntryInputReady = nameEntryActive && name_entry_observer().inputProcessed();
     const FileSelectObserver& fileSelect = file_select_observer();
-    const auto actorIdentity = [](const fopAc_ac_c* actor) {
-        MilestoneObservation::ActorIdentity identity;
-        if (actor != nullptr) {
-            identity.present = true;
-            identity.runtimeGeneration = static_cast<std::uint32_t>(fopAcM_GetID(actor));
-            identity.actorName = static_cast<std::int16_t>(fopAcM_GetName(actor));
-            identity.setId = static_cast<std::uint16_t>(fopAcM_GetSetId(actor));
-            identity.homeRoom = actor->home.roomNo;
-            identity.currentRoom = actor->current.roomNo;
-            identity.homePositionPresent = true;
-            identity.homePositionX = actor->home.pos.x;
-            identity.homePositionY = actor->home.pos.y;
-            identity.homePositionZ = actor->home.pos.z;
+    fopAcIt_Executor(capture_milestone_actor, &storage);
+    const auto liveActorIdentity =
+        [&](const fopAc_ac_c* actor) -> std::optional<MilestoneObservation::ActorIdentity> {
+        if (actor == nullptr)
+            return MilestoneObservation::ActorIdentity{};
+        const auto found = std::ranges::find(storage.actorPointers, actor);
+        if (found == storage.actorPointers.end())
+            return std::nullopt;
+        const auto& source = storage.actors[std::distance(storage.actorPointers.begin(), found)];
+        return MilestoneObservation::ActorIdentity{
+            .present = true,
+            .runtimeGeneration = static_cast<std::uint32_t>(source.runtimeGeneration),
+            .actorName = source.actorName,
+            .setId = source.setId,
+            .homeRoom = source.homeRoom,
+            .currentRoom = source.currentRoom,
+            .homePositionPresent = true,
+            .homePositionX = source.homePositionX,
+            .homePositionY = source.homePositionY,
+            .homePositionZ = source.homePositionZ,
+        };
+    };
+    const auto actorIdentity = [&](const fopAc_ac_c* actor) {
+        return liveActorIdentity(actor).value_or(MilestoneObservation::ActorIdentity{});
+    };
+    const auto eventActorReference = [&](const fopAc_ac_c* actor) {
+        MilestoneObservation::EventQueueState::ActorReference reference;
+        const auto identity = liveActorIdentity(actor);
+        if (!identity.has_value()) {
+            reference.status = MilestoneObservation::ChannelStatus::Unavailable;
+        } else if (!identity->present) {
+            reference.status = MilestoneObservation::ChannelStatus::Absent;
+        } else {
+            reference.status = MilestoneObservation::ChannelStatus::Present;
+            reference.identity = *identity;
         }
-        return identity;
+        return reference;
+    };
+    const auto eventReferenceFromProcessId = [&](const fpc_ProcID processId) {
+        if (processId == fpcM_ERROR_PROCESS_ID_e)
+            return eventActorReference(nullptr);
+        const fopAc_ac_c* actor = fopAcM_SearchByID(processId);
+        if (actor == nullptr) {
+            MilestoneObservation::EventQueueState::ActorReference reference;
+            reference.status = MilestoneObservation::ChannelStatus::Unavailable;
+            return reference;
+        }
+        return eventActorReference(actor);
     };
     const fopAc_ac_c* talkPartnerActor =
         link == nullptr ? nullptr : fopAcM_getTalkEventPartner(link);
@@ -835,6 +870,66 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         handoff.eventNameStatus = MilestoneObservation::ChannelStatus::Unavailable;
     }
 
+    auto& eventQueue = observation.eventQueue;
+    if (event == nullptr) {
+        eventQueue.status = MilestoneObservation::ChannelStatus::Unavailable;
+    } else {
+        // The scene's event Step runs before the later actor process lists.
+        // Step consumes the prior queue; Link, tags, doors and exits then submit
+        // requests that remain here for the next Step. Observation therefore
+        // records a real pending decision boundary, not stale consumed orders.
+        // Raw actor pointers are matched by address against the complete live
+        // actor walk above and are never dereferenced here.
+        using EventQueue = MilestoneObservation::EventQueueState;
+        EventQueue captured;
+        captured.status = MilestoneObservation::ChannelStatus::Present;
+        captured.activeRequestActor = eventReferenceFromProcessId(event->mPt1);
+        captured.activeTargetActor = eventReferenceFromProcessId(event->mPt2);
+        captured.activeTalkActor = eventReferenceFromProcessId(event->mPtT);
+        captured.activeItemActor = eventReferenceFromProcessId(event->mPtI);
+        captured.activeDoorActor = eventReferenceFromProcessId(event->mPtd);
+        captured.changeActor =
+            eventActorReference(static_cast<const fopAc_ac_c*>(event->mChangeActor));
+        captured.skipRegistered = event->mSkipFunc != nullptr;
+        captured.skipActor = captured.skipRegistered ?
+                                 eventReferenceFromProcessId(event->mSkipActorId) :
+                                 eventActorReference(nullptr);
+
+        const int count = event->mNum;
+        bool queueValid = count >= 0 && count <= static_cast<int>(EventQueue::MaximumPendingOrders);
+        int orderIndex = count == 0 ? -1 : event->mOrderIdx;
+        std::array<bool, EventQueue::MaximumPendingOrders> visited{};
+        for (int outputIndex = 0; queueValid && outputIndex < count; ++outputIndex) {
+            if (orderIndex < 0 ||
+                orderIndex >= static_cast<int>(EventQueue::MaximumPendingOrders) ||
+                visited[orderIndex])
+            {
+                queueValid = false;
+                break;
+            }
+            visited[orderIndex] = true;
+            const dEvt_order_c& source = event->mOrder[orderIndex];
+            auto& destination = captured.pendingOrders[outputIndex];
+            destination.type = source.mEventType;
+            destination.flags = source.mFlag;
+            destination.hindFlags = source.mHindFlag;
+            destination.eventId = source.mEventId;
+            destination.priority = source.mPriority;
+            destination.mapToolId = source.mMapToolId;
+            destination.requestActor = eventActorReference(source.mpRequestActor);
+            destination.targetActor = eventActorReference(source.mpTargetActor);
+            orderIndex = source.mNextOrderIdx;
+        }
+        if (queueValid && orderIndex != -1)
+            queueValid = false;
+        if (queueValid) {
+            captured.pendingCount = static_cast<std::uint8_t>(count);
+            eventQueue = captured;
+        } else {
+            eventQueue.status = MilestoneObservation::ChannelStatus::Unavailable;
+        }
+    }
+
     handoff.messageCutStatus = MilestoneObservation::ChannelStatus::Unavailable;
     if (talkPartnerActor == nullptr) {
         handoff.messageFlowStatus = MilestoneObservation::ChannelStatus::Absent;
@@ -987,7 +1082,6 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
         observation.playerCollisionSolverPresent = true;
     }
 
-    fopAcIt_Executor(capture_milestone_actor, &storage);
     std::sort(
         storage.actors.begin(), storage.actors.end(), [](const auto& left, const auto& right) {
             return left.runtimeGeneration < right.runtimeGeneration;

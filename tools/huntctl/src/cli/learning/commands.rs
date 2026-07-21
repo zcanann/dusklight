@@ -18,12 +18,16 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::learning::batch::load_fqi_batch;
+use huntctl::learning::multitask_set_encoder::{
+    CompleteSetMultiTaskEncoder, NativeMultiTaskActorCorpus, fit_shuffled_auxiliary_control,
+};
 use huntctl::learning::native_auxiliary_dataset::{
     AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V1, NativeAuxiliaryDataset,
 };
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
+use huntctl::learning::trainable_set_encoder::TrainableSetConfig;
 use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
     empirical_return_samples,
@@ -843,6 +847,111 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "replay_corpus_sha256": dataset.replay_corpus_sha256,
                     "report": dataset.report,
                     "split_diagnostics": dataset.split_diagnostics()?,
+                }))?
+            );
+            Ok(())
+        }
+        Some("pretrain-native-encoder") => {
+            let learn_args = &args[1..];
+            let dataset_path = required_path(learn_args, "--dataset")?;
+            let input = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(
+                    format!("native encoder output already exists: {}", output.display()).into(),
+                );
+            }
+            let dataset: NativeAuxiliaryDataset =
+                serde_json::from_slice(&fs::read(&dataset_path)?)?;
+            let shard = NativeEpisodeShard::read(&input)?;
+            let source_native_shard_sha256 = shard.content_sha256;
+            let corpus = NativeMultiTaskActorCorpus::build(&dataset, &shard)?;
+            drop(shard);
+            let defaults = TrainableSetConfig::default();
+            let config = TrainableSetConfig {
+                epochs: usize_option(learn_args, "--epochs", defaults.epochs)?,
+                node_hidden_width: usize_option(
+                    learn_args,
+                    "--node-hidden-width",
+                    defaults.node_hidden_width,
+                )?,
+                head_hidden_width: usize_option(
+                    learn_args,
+                    "--state-width",
+                    defaults.head_hidden_width,
+                )?,
+                learning_rate: option(learn_args, "--learning-rate")
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(defaults.learning_rate),
+                l2_penalty: option(learn_args, "--l2-penalty")
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(defaults.l2_penalty),
+                gradient_clip: option(learn_args, "--gradient-clip")
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(defaults.gradient_clip),
+                minimum_relative_improvement: option(learn_args, "--minimum-relative-improvement")
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(defaults.minimum_relative_improvement),
+                seed: u64_option(learn_args, "--seed", defaults.seed)?,
+                fixed_slot_count: defaults.fixed_slot_count,
+            };
+            let (report, model) = CompleteSetMultiTaskEncoder::fit(
+                corpus.actor_feature_schema_sha256,
+                corpus.training_dataset_sha256,
+                corpus.validation_dataset_sha256,
+                corpus.target_names.clone(),
+                &corpus.training,
+                &corpus.validation,
+                config,
+            )?;
+            let test_evaluation = model.evaluate(&corpus.test)?;
+            let shuffled_target_control = fit_shuffled_auxiliary_control(
+                corpus.actor_feature_schema_sha256,
+                corpus.target_names.clone(),
+                corpus.training,
+                corpus.validation_dataset_sha256,
+                &corpus.validation,
+                &corpus.test,
+                config,
+            )?;
+            let artifact = json!({
+                "schema": "dusklight-native-multitask-encoder-artifact/v1",
+                "source_auxiliary_dataset_sha256": dataset.dataset_sha256,
+                "source_native_shard_sha256": source_native_shard_sha256,
+                "actor_feature_schema_sha256": corpus.actor_feature_schema_sha256,
+                "test_dataset_sha256": corpus.test_dataset_sha256,
+                "report": report,
+                "test_evaluation": test_evaluation,
+                "shuffled_target_control": shuffled_target_control,
+                "model": model,
+            });
+            let bytes = serde_json::to_vec_pretty(&artifact)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob =
+                ContentStore::initialize(&artifact_store)?.put_bytes(&bytes, ContentKind::Model)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": artifact["schema"],
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "report": artifact["report"],
+                    "test_evaluation": artifact["test_evaluation"],
+                    "shuffled_target_control": artifact["shuffled_target_control"],
                 }))?
             );
             Ok(())

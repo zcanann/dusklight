@@ -18,7 +18,7 @@ use std::fmt;
 pub const TRAINABLE_SET_COMPARISON_SCHEMA_V1: &str = "dusklight-trainable-set-comparison/v1";
 const MAX_SAMPLES: usize = 100_000;
 const MAX_NODES: usize = u16::MAX as usize;
-const MAX_FEATURE_COLUMNS: usize = 128;
+const MAX_FEATURE_COLUMNS: usize = 256;
 const MAX_HIDDEN_WIDTH: usize = 256;
 const MAX_EPOCHS: usize = 2_048;
 const MAX_FIXED_SLOTS: usize = 256;
@@ -194,18 +194,18 @@ pub struct FixedSlotRegressor {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-struct FeatureLayout {
-    categorical_values: Vec<Vec<i64>>,
-    continuous_mean: Vec<f64>,
-    continuous_inverse_stddev: Vec<f64>,
-    base_mean: Vec<f64>,
-    base_inverse_stddev: Vec<f64>,
-    categorical_width: usize,
-    continuous_width: usize,
-    binary_width: usize,
-    base_width: usize,
-    node_input_width: usize,
-    base_input_width: usize,
+pub(crate) struct FeatureLayout {
+    pub(crate) categorical_values: Vec<Vec<i64>>,
+    pub(crate) continuous_mean: Vec<f64>,
+    pub(crate) continuous_inverse_stddev: Vec<f64>,
+    pub(crate) base_mean: Vec<f64>,
+    pub(crate) base_inverse_stddev: Vec<f64>,
+    pub(crate) categorical_width: usize,
+    pub(crate) continuous_width: usize,
+    pub(crate) binary_width: usize,
+    pub(crate) base_width: usize,
+    pub(crate) node_input_width: usize,
+    pub(crate) base_input_width: usize,
 }
 
 impl TrainableSetComparison {
@@ -717,7 +717,10 @@ impl FixedSlotRegressor {
 }
 
 impl FeatureLayout {
-    fn fit(training: &[TypedSetSample], dimensions: Dimensions) -> Result<Self, TrainableSetError> {
+    pub(crate) fn fit<'a>(
+        training: impl IntoIterator<Item = &'a TypedSetSample>,
+        dimensions: Dimensions,
+    ) -> Result<Self, TrainableSetError> {
         let mut categorical_values = vec![BTreeSet::new(); dimensions.categorical];
         let mut continuous_values = vec![Vec::new(); dimensions.continuous];
         let mut base_values = vec![Vec::new(); dimensions.base];
@@ -777,7 +780,7 @@ impl FeatureLayout {
         })
     }
 
-    fn dimensions(&self) -> Dimensions {
+    pub(crate) fn dimensions(&self) -> Dimensions {
         Dimensions {
             categorical: self.categorical_width,
             continuous: self.continuous_width,
@@ -786,7 +789,7 @@ impl FeatureLayout {
         }
     }
 
-    fn node_input(&self, node: &TypedSetNode) -> Vec<f64> {
+    pub(crate) fn node_input(&self, node: &TypedSetNode) -> Vec<f64> {
         let mut output = Vec::with_capacity(self.node_input_width);
         for index in 0..self.categorical_width {
             let present = node.categorical_present[index];
@@ -818,7 +821,7 @@ impl FeatureLayout {
         output
     }
 
-    fn base_input(&self, sample: &TypedSetSample) -> Vec<f64> {
+    pub(crate) fn base_input(&self, sample: &TypedSetSample) -> Vec<f64> {
         let mut output = Vec::with_capacity(self.base_input_width);
         for index in 0..self.base_width {
             let present = sample.base_present[index];
@@ -835,11 +838,11 @@ impl FeatureLayout {
 }
 
 #[derive(Clone, Copy)]
-struct Dimensions {
-    categorical: usize,
-    continuous: usize,
-    binary: usize,
-    base: usize,
+pub(crate) struct Dimensions {
+    pub(crate) categorical: usize,
+    pub(crate) continuous: usize,
+    pub(crate) binary: usize,
+    pub(crate) base: usize,
 }
 
 struct SetForward {
@@ -928,7 +931,7 @@ fn validate_samples(
     Ok(dimensions)
 }
 
-fn validate_sample_dimensions(
+pub(crate) fn validate_sample_dimensions(
     sample: &TypedSetSample,
     dimensions: Dimensions,
 ) -> Result<(), TrainableSetError> {
@@ -980,7 +983,7 @@ fn validate_sample_dimensions(
     Ok(())
 }
 
-fn ordered_nodes(nodes: &[TypedSetNode]) -> Vec<&TypedSetNode> {
+pub(crate) fn ordered_nodes(nodes: &[TypedSetNode]) -> Vec<&TypedSetNode> {
     let mut ordered = nodes.iter().collect::<Vec<_>>();
     ordered.sort_by_key(|node| node.stable_id);
     ordered
@@ -1011,14 +1014,18 @@ fn normalization(columns: &[Vec<f64>]) -> (Vec<f64>, Vec<f64>) {
     (means, inverse_stddevs)
 }
 
-fn initialized_weights(outputs: usize, inputs: usize, rng: &mut DeterministicRng) -> Vec<f64> {
+pub(crate) fn initialized_weights(
+    outputs: usize,
+    inputs: usize,
+    rng: &mut DeterministicRng,
+) -> Vec<f64> {
     let scale = (6.0 / (inputs + outputs) as f64).sqrt();
     (0..outputs * inputs)
         .map(|_| (rng.unit() * 2.0 - 1.0) * scale)
         .collect()
 }
 
-fn dense_tanh(input: &[f64], weights: &[f64], bias: &[f64], outputs: usize) -> Vec<f64> {
+pub(crate) fn dense_tanh(input: &[f64], weights: &[f64], bias: &[f64], outputs: usize) -> Vec<f64> {
     (0..outputs)
         .map(|output| {
             (dot(
@@ -1030,14 +1037,14 @@ fn dense_tanh(input: &[f64], weights: &[f64], bias: &[f64], outputs: usize) -> V
         .collect()
 }
 
-fn dot(left: &[f64], right: &[f64]) -> f64 {
+pub(crate) fn dot(left: &[f64], right: &[f64]) -> f64 {
     left.iter()
         .zip(right)
         .map(|(left, right)| left * right)
         .sum()
 }
 
-fn clip(value: f64, limit: f64) -> f64 {
+pub(crate) fn clip(value: f64, limit: f64) -> f64 {
     value.clamp(-limit, limit)
 }
 
@@ -1062,10 +1069,10 @@ fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, Tr
     Ok(Digest(hasher.finalize().into()))
 }
 
-struct DeterministicRng(u64);
+pub(crate) struct DeterministicRng(u64);
 
 impl DeterministicRng {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Self(seed.max(1))
     }
 
@@ -1081,7 +1088,7 @@ impl DeterministicRng {
         (self.next() >> 11) as f64 / ((1_u64 << 53) as f64)
     }
 
-    fn shuffle<T>(&mut self, values: &mut [T]) {
+    pub(crate) fn shuffle<T>(&mut self, values: &mut [T]) {
         for index in (1..values.len()).rev() {
             values.swap(index, self.next() as usize % (index + 1));
         }
@@ -1092,7 +1099,7 @@ impl DeterministicRng {
 pub struct TrainableSetError(String);
 
 impl TrainableSetError {
-    fn new(message: impl Into<String>) -> Self {
+    pub(crate) fn new(message: impl Into<String>) -> Self {
         Self(message.into())
     }
 }

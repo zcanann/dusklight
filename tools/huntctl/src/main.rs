@@ -223,6 +223,9 @@ fn print_usage() {
     );
     eprintln!("  huntctl learn inspect-auxiliary --input DATASET.json");
     eprintln!(
+        "  huntctl learn pretrain-native-encoder --dataset DATASET.json --input EPISODES.dseps --output MODEL.json [--epochs N] [--node-hidden-width N] [--state-width N] [--learning-rate R] [--seed N] [--artifact-store ROOT]"
+    );
+    eprintln!(
         "  huntctl learn collision-history --input EPISODES.dseps --output VIEW.json [--history-depth N] [--artifact-store ROOT]"
     );
     eprintln!(
