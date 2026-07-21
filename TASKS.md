@@ -177,6 +177,15 @@ probe, demonstration, curriculum, option, reward term or preferred action.
   Bounded parallel execution persists each completion independently; an
   eight-client smoke batch classified the first 16 entries as ready with
   64-145 of 64-145 actors retained per entry and no truncation.
+  - [x] Compact every validated ready trace and terminal actor snapshot into an
+    authenticated zstd storage envelope while preserving the ledger's digest of
+    the original bytes. Raw and compressed readers reproduce and verify that
+    identity before decoding; corrupt envelopes fail closed, existing surveys
+    can be compacted repeatably, and new ready attempts compact automatically.
+    A live repeat pass over 331 ready cases verified all 662 ledger-bound
+    artifacts with zero rewrites: 210,717,577 logical bytes occupy 8,729,950
+    bytes, a 201,987,627-byte storage saving, under unchanged ledger identity
+    `89bf5a32...60d01a`.
 - [ ] For every successful entry, prove that the learner observation contains
   the complete active actor population. Inventory all actor profiles and all
   generally available enemy metadata; enemies are sparse enough that this data
@@ -389,17 +398,21 @@ probe, demonstration, curriculum, option, reward term or preferred action.
       not evidence that the sweep sought or completed any particular contact or
       interaction. Actor activation and a dedicated loading perturbation remain
       open.
-    - [x] Expand the identical sweep to one default-layer spawn from 16
-      deterministically spaced catalog stages, then resume through the next 64
-      pending catalog identities in bounded parallel batches. All 84 cases
-      classified ready, including `D_MN09`, whose inventory is unreadable
-      offline. Their 13,440 exact-PAD records form 21 actual-stage cells with no
-      truncated channel, 2,454 varying and 746 ambiguous field paths
-      (`2a02c701...563b63`). The paired terminal-population report verifies
-      6,785 complete actors, 195 profiles and 471 stage/profile cells with
-      26,655 present, 7,407 varying, 1,257 absent and 173 ambiguous typed field
-      paths (`85cf2a62...db6c5`, ledger `2ae6940c...f76a2c`). This remains an
-      84/9,084-candidate sample and supplies no route label, desired value or
+    - [x] Expand the identical sweep through 340 deterministically ordered
+      catalog identities in bounded parallel batches. Of those finalized cases,
+      331 classified ready and retained 52,960 exact-PAD records across 32
+      actual-stage cells. Nine adjacent `D_MN07/room/6/layer/5` spawn points
+      crashed on every bounded attempt and remain explicitly classified
+      `repeated_process_failure`; they were not retried into apparent success.
+      The sealed observation report classifies 2,270 present, 3,645 varying,
+      441 absent, 1,514 ambiguous and 29 truncated field paths
+      (`3f284470...9a39f`). The paired terminal-population report verifies
+      23,238 complete actors, 300 profiles and 841 stage/profile cells with zero
+      rejected ready cases, classifying 45,971 present, 14,824 varying, 2,238
+      absent and 409 ambiguous typed field paths (`824fe2f0...6427d2`, ledger
+      `89bf5a32...60d01a`). Rebuilding both reports after authenticated artifact
+      compaction reproduced those exact report digests. This remains a
+      340/9,084-candidate sample and supplies no route label, desired value or
       preferred action.
     - [x] Exercise a second generic action family across eight dungeon stages in
       one repeatable explicit-candidate batch. The nine-worker basic-action pass
