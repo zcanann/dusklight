@@ -2779,7 +2779,15 @@ mod tests {
             Some("us")
         );
         assert!(profile.bindings.temporary_flags.is_some());
-        assert!(profile.bindings.persistent_flags.is_none());
+        assert_eq!(
+            profile.bindings.persistent_flags,
+            Some(MessageRawStoreBinding {
+                component_kind: ComponentKind::Custom {
+                    id: "persistent-event-registers".into(),
+                },
+                binding: ComponentBindingReference::ActiveRuntimeFile,
+            })
+        );
         assert_eq!(profile.bindings.switch_stores.len(), 1);
         assert_eq!(
             profile.bindings.switch_stores[0].store,

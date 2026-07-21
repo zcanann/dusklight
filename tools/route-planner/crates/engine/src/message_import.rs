@@ -1805,7 +1805,7 @@ mod tests {
         );
         assert_eq!(
             set.compiled_message_flow_set_sha256.to_string(),
-            "aa016f422cb6af85f655ae5f372dbb458f1d529d684564f3fe9e3188e55cdda4"
+            "83a0230c6df6d181510cb93183dc7a396579ecf82b2a1c0d014926dd896741f0"
         );
         let entry = &set.entries[0];
         assert_eq!(entry.message_group, 8);

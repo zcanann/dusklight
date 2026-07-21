@@ -345,9 +345,11 @@ fn persistent_message_flag(label_index: u16) -> Option<(u16, &'static str)> {
         62 => (0x0704, "won_gor_coron_match"),
         63 => (0x0702, "first_gor_coron_conversation"),
         64 => (0x0701, "goron_mines_clear"),
+        66 => (0x0840, "start_carriage_guarding_game"),
         115 => (0x0e20, "spoke_with_spring_goron_a"),
         152 => (0x1201, "lost_gor_coron_match_with_iron_boots"),
         154 => (0x1340, "lost_gor_coron_match_again"),
+        615 => (0x4b04, "received_lanayru_vessel"),
         _ => return None,
     })
 }
@@ -1983,6 +1985,18 @@ mod tests {
                 store: MessageFlowSwitchStore::OneZone,
                 switch_index: 10,
             }]
+        );
+    }
+
+    #[test]
+    fn resolves_audited_lanayru_persistent_message_labels_to_raw_backing() {
+        assert_eq!(
+            persistent_message_flag(615),
+            Some((0x4b04, "received_lanayru_vessel"))
+        );
+        assert_eq!(
+            persistent_message_flag(66),
+            Some((0x0840, "start_carriage_guarding_game"))
         );
     }
 

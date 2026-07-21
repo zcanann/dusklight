@@ -174,6 +174,10 @@ item-present branch writes it through `event000`; neither generic item grant nor
 the Vessel backing setter implies it. This distinction explains the otherwise
 surprising intermediate state `Vessel owned && F_0615 clear` during normal
 presentation and makes item injection/duplication theorycrafting representable.
+The exact message compiler now emits node 321's two branches as opposing reads
+of runtime-file event byte `0x4b`, mask `0x04`, and node 322 as the matching raw
+writer. Nearby node 328 writes label index 66 (`M_033`, byte `0x08`, mask
+`0x40`); it is not another spelling of `F_0615`.
 
 The remaining exact GZ2E01 backing coordinates are:
 

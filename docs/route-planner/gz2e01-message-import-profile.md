@@ -15,6 +15,7 @@ stand in for it.
 | Message operation | Planner backing | Evidence |
 | --- | --- | --- |
 | `dComIfGs_{on,off,is}TmpBit` | `TemporaryFlags` on `active_runtime_file` | `d_msg_flow.cpp`, `d_save.h`, and the exact temporary-label table |
+| `dComIfGs_{on,off,is}EventBit` | custom `persistent-event-registers` raw store on `active_runtime_file` | `d_msg_flow.cpp`, `d_save.h`, and audited `saveBitLabels` coordinates |
 | `dComIfGs_{on,off,is}SaveSwitch` | `DungeonMemory` on `current_stage`, byte base `0x08`, four-byte big-endian words, 128 switches | `d_msg_flow.cpp` and `dSv_memBit_c::mSwitch` |
 
 The source identities carried by the profile are:
@@ -25,12 +26,11 @@ The source identities carried by the profile are:
 | `include/d/d_save.h` | `74a211e5d2ee2c0fe4ce259905fe1f479f373d5b2459d654871cbbd2f61e8756` |
 | `src/d/d_save.cpp` | `7e6f09aa36af30932e8ce64423284f885ed0b4e632b22f18d6f0a6b4d104b453` |
 
-## Deliberately unresolved switch stores
+## Deliberately unresolved stores
 
-The extracted GZ2E01 resources also use four backing classes which the profile
+The extracted GZ2E01 resources also use three switch backing classes which the profile
 does not bind yet:
 
-- persistent event-register bytes addressed through `saveBitLabels`;
 - 146 accesses to `dSv_danBit_c` dungeon-session switches;
 - 57 accesses to zone switches; and
 - 162 accesses to one-zone switches.
@@ -47,10 +47,12 @@ the actual speaker context are therefore required. Binding these handlers to
 `current_room` would be wrong for actors outside the player's room and for
 multiple rooms sharing a zone.
 
-The native observation currently exposes label-indexed persistent flag results,
-not the unique raw event-register array. Those observations are useful facts but
-cannot safely receive a packed-coordinate write. Persistent generic handlers
-therefore remain unknown until that raw backing is captured.
+The planner-owned native boundary can now carry the exact 256-byte
+`dSv_event_c::mEvent` payload separately from the label-indexed persistent-flag
+diagnostic array. The former is the writable runtime-file backing; the latter
+never substitutes for it. Only label indices with audited `saveBitLabels`
+coordinates compile to raw reads or writes. Unmapped indices stay explicit
+unknowns rather than guessing from their friendly names.
 
 Missing bindings do not erase these nodes. Their encoded control-flow edges are
 compiled with explicit `switch-backing` or `branch-predicate` unknown
@@ -61,8 +63,8 @@ model can discharge those unknowns without changing the extracted resources.
 
 Against the audited GZ2E01 bundle, the profile constructs all nine selected
 programs and the sealed compiler retains every FLW1/FLI1 node. The current base
-compile contains explicit unknowns for unsupported generic handlers, persistent
-flag backing, and 123 event-side `switch-backing` requirements; additional
+compile contains explicit unknowns for unsupported generic handlers, unmapped
+persistent-label coordinates, and 123 event-side `switch-backing` requirements; additional
 unresolved switch branch predicates are retained under their branch
 requirements. This count is an audit observation, not a schema invariant.
 

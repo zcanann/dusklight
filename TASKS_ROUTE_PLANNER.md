@@ -1873,6 +1873,9 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Compile `event008` into explicit flow-component `event_id`/`item_id`
           handoff writes without granting the item or creating its actor. Keep
           event-27 fundraising state explicit as an unimported side effect.
+    - [x] Project the exact 256-byte persistent event-register backing separately
+          from label diagnostics, bind it to the active runtime file, and compile
+          audited `F_0615` reads/writes without confusing nearby `M_033`.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.

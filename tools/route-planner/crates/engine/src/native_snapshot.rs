@@ -97,6 +97,16 @@ pub fn snapshot_native_observation(
     context: NativeSnapshotContext,
 ) -> Result<StateSnapshot, PlannerContractError> {
     validate_context(&context)?;
+    if observation
+        .persistent_event_bytes
+        .as_ref()
+        .is_some_and(|bytes| bytes.len() != 256)
+    {
+        return Err(PlannerContractError::new(
+            "native_observation.persistent_event_bytes",
+            "must contain the exact 256-byte dSv_event_c payload",
+        ));
+    }
     if observation.stage.is_empty() {
         return Err(PlannerContractError::new(
             "native_observation.stage",
@@ -175,6 +185,19 @@ pub fn snapshot_native_observation(
         runtime_owner.clone(),
         &provenance,
     ));
+    push_raw_component(
+        &mut components,
+        "flags.persistent-event-registers",
+        ComponentKind::Custom {
+            id: "persistent-event-registers".into(),
+        },
+        observation.persistent_event_bytes.as_deref(),
+        Some(256),
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+        &provenance,
+    );
     push_raw_component(
         &mut components,
         "flags.event",
@@ -1092,6 +1115,7 @@ mod tests {
                     },
                 ],
             }),
+            persistent_event_bytes: Some(vec![0; 256]),
             event_flags: Some(vec![0; 822]),
             temporary_flags: Some(vec![0; 185]),
             temporary_event_bytes: Some(vec![0; 256]),
@@ -1428,8 +1452,30 @@ mod tests {
     }
 
     #[test]
-    fn separates_label_observations_from_writable_temporary_register_backing() {
+    fn separates_label_observations_from_writable_event_register_backings() {
         let snapshot = snapshot_native_observation(&observation(), context(1)).unwrap();
+        let persistent_registers = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.persistent-event-registers")
+            .unwrap();
+        assert_eq!(
+            persistent_registers.component_kind,
+            ComponentKind::Custom {
+                id: "persistent-event-registers".into()
+            }
+        );
+        assert_eq!(
+            persistent_registers.binding,
+            ComponentBinding::RuntimeFile {
+                runtime_file_id: "runtime.fixture".into()
+            }
+        );
+        assert!(matches!(
+            persistent_registers.payload,
+            ComponentPayload::Raw { ref bytes, .. } if bytes.len() == 256
+        ));
         let event_labels = snapshot
             .environment
             .components
@@ -1522,6 +1568,18 @@ mod tests {
                 })
                 .count(),
             1
+        );
+    }
+
+    #[test]
+    fn rejects_partial_persistent_event_register_captures() {
+        let mut observation = observation();
+        observation.persistent_event_bytes = Some(vec![0; 255]);
+        assert_eq!(
+            snapshot_native_observation(&observation, context(1))
+                .unwrap_err()
+                .field(),
+            "native_observation.persistent_event_bytes"
         );
     }
 

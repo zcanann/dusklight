@@ -62,6 +62,11 @@ file-0 projection without naming a fixture-specific file ID. Loaded-stage
 switches can use `current_stage`; room-local stores can use `current_room` or an
 exact zone binding when that is what the audited handler selects.
 
+For GZ2E01, the writable 256-byte persistent event-register payload is projected
+as its own runtime-file component. Label-indexed event observations remain a
+separate diagnostic store. Audited `saveBitLabels` entries therefore compile to
+bound raw predicates and writes, while an unmapped label remains unknown.
+
 Packed flag coordinates contain the byte offset in the high byte and a
 single-bit mask in the low byte. Switch bindings describe:
 
