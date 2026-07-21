@@ -7,12 +7,14 @@
 use crate::PlannerContractError;
 use crate::logic::{FactCatalog, PredicateExpression, ValueReference};
 use crate::route_book::RouteActionRef;
-use crate::state::{ComponentBinding, ComponentBindingReference, ComponentKind};
+use crate::state::{
+    ComponentBinding, ComponentBindingProjection, ComponentBindingReference, ComponentKind,
+};
 use crate::transition::{MechanicsCatalog, ObligationDetail, StateOperation};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
-pub const BACKWARD_RELEVANCE_SCHEMA: &str = "dusklight.route-planner.backward-relevance/v2";
+pub const BACKWARD_RELEVANCE_SCHEMA: &str = "dusklight.route-planner.backward-relevance/v3";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -1014,6 +1016,91 @@ fn binding_references_may_match(
         (R::CurrentRoom, R::Exact { binding }) | (R::Exact { binding }, R::CurrentRoom) => {
             matches!(binding, ComponentBinding::Room { .. })
         }
+        (R::Projected { projection, .. }, R::Exact { binding })
+        | (R::Exact { binding }, R::Projected { projection, .. }) => {
+            projection_may_produce(projection.as_ref(), binding)
+        }
+        (R::ActiveRuntimeFile, R::Projected { projection, .. })
+        | (R::Projected { projection, .. }, R::ActiveRuntimeFile) => {
+            matches!(
+                projection.as_ref(),
+                ComponentBindingProjection::RuntimeFile { .. }
+            )
+        }
+        (R::CurrentStage, R::Projected { projection, .. })
+        | (R::Projected { projection, .. }, R::CurrentStage) => {
+            matches!(
+                projection.as_ref(),
+                ComponentBindingProjection::Stage { .. }
+            )
+        }
+        (R::CurrentRoom, R::Projected { projection, .. })
+        | (R::Projected { projection, .. }, R::CurrentRoom) => {
+            matches!(projection.as_ref(), ComponentBindingProjection::Room { .. })
+        }
+        (
+            R::Projected {
+                projection: left, ..
+            },
+            R::Projected {
+                projection: right, ..
+            },
+        ) => projections_may_match(left.as_ref(), right.as_ref()),
+        _ => false,
+    }
+}
+
+fn projection_may_produce(
+    projection: &ComponentBindingProjection,
+    binding: &ComponentBinding,
+) -> bool {
+    match (projection, binding) {
+        (ComponentBindingProjection::Stage { .. }, ComponentBinding::Stage { .. })
+        | (ComponentBindingProjection::Room { .. }, ComponentBinding::Room { .. })
+        | (ComponentBindingProjection::Zone { .. }, ComponentBinding::Zone { .. })
+        | (ComponentBindingProjection::Dungeon { .. }, ComponentBinding::Dungeon { .. })
+        | (ComponentBindingProjection::RuntimeFile { .. }, ComponentBinding::RuntimeFile { .. })
+        | (ComponentBindingProjection::Actor { .. }, ComponentBinding::Actor { .. })
+        | (ComponentBindingProjection::Session { .. }, ComponentBinding::Session { .. }) => true,
+        (
+            ComponentBindingProjection::Custom { kind_id, .. },
+            ComponentBinding::Custom {
+                kind_id: binding_kind,
+                ..
+            },
+        ) => kind_id == binding_kind,
+        _ => false,
+    }
+}
+
+fn projections_may_match(
+    left: &ComponentBindingProjection,
+    right: &ComponentBindingProjection,
+) -> bool {
+    match (left, right) {
+        (ComponentBindingProjection::Stage { .. }, ComponentBindingProjection::Stage { .. })
+        | (ComponentBindingProjection::Room { .. }, ComponentBindingProjection::Room { .. })
+        | (ComponentBindingProjection::Zone { .. }, ComponentBindingProjection::Zone { .. })
+        | (
+            ComponentBindingProjection::Dungeon { .. },
+            ComponentBindingProjection::Dungeon { .. },
+        )
+        | (
+            ComponentBindingProjection::RuntimeFile { .. },
+            ComponentBindingProjection::RuntimeFile { .. },
+        )
+        | (ComponentBindingProjection::Actor { .. }, ComponentBindingProjection::Actor { .. })
+        | (
+            ComponentBindingProjection::Session { .. },
+            ComponentBindingProjection::Session { .. },
+        ) => true,
+        (
+            ComponentBindingProjection::Custom { kind_id, .. },
+            ComponentBindingProjection::Custom {
+                kind_id: other_kind,
+                ..
+            },
+        ) => kind_id == other_kind,
         _ => false,
     }
 }
@@ -1403,5 +1490,31 @@ mod tests {
             field: "return_place".into(),
         };
         assert!(dependencies_overlap(&active_runtime, &exact_runtime));
+
+        let projected_zone = StateDependency::BoundRawBits {
+            component_kind: ComponentKind::ZoneMemory,
+            binding: ComponentBindingReference::Projected {
+                component_id: "message-session".into(),
+                projection: Box::new(ComponentBindingProjection::Zone {
+                    stage_field: "speaker_stage".into(),
+                    zone_field: "speaker_zone".into(),
+                }),
+            },
+            byte_offset: 4,
+            byte_width: 1,
+        };
+        let exact_zone = StateDependency::BoundRawBits {
+            component_kind: ComponentKind::ZoneMemory,
+            binding: ComponentBindingReference::Exact {
+                binding: ComponentBinding::Zone {
+                    stage: "D_MN01".into(),
+                    zone: 7,
+                },
+            },
+            byte_offset: 4,
+            byte_width: 1,
+        };
+        assert!(dependencies_overlap(&projected_zone, &exact_zone));
+        assert!(!dependencies_overlap(&projected_zone, &exact_room));
     }
 }

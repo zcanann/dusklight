@@ -31,13 +31,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MESSAGE_FLOW_PROGRAM_SCHEMA: &str = "dusklight.route-planner.message-flow-program/v1";
+pub const MESSAGE_FLOW_PROGRAM_SCHEMA: &str = "dusklight.route-planner.message-flow-program/v2";
 pub const COMPILED_MESSAGE_FLOW_PROGRAM_SCHEMA: &str =
-    "dusklight.route-planner.compiled-message-flow-program/v1";
+    "dusklight.route-planner.compiled-message-flow-program/v2";
 pub const MESSAGE_FLOW_IMPORT_PROFILE_SCHEMA: &str =
-    "dusklight.route-planner.message-flow-import-profile/v1";
+    "dusklight.route-planner.message-flow-import-profile/v2";
 pub const MESSAGE_FLOW_PROGRAM_SET_SCHEMA: &str =
-    "dusklight.route-planner.message-flow-program-set/v1";
+    "dusklight.route-planner.message-flow-program-set/v2";
 const MAX_MESSAGE_FLOW_NODES: usize = 65_535;
 const MAX_EVENT_CONTRACTS: usize = 16_384;
 const MAX_CLEANUP_EDGES: usize = 256;
@@ -2458,6 +2458,7 @@ mod tests {
     fn bundled_gz2e01_profile_maps_only_source_audited_backings() {
         let profile = bundled_gz2e01_english_message_flow_profile().unwrap();
         assert_eq!(profile.id, "gcn-us-1.0-gz2e01-en");
+        assert_eq!(profile.flow_component_id, "message-session");
         assert_eq!(
             profile.language_bundles.get("en").map(String::as_str),
             Some("us")

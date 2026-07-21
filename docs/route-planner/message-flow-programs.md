@@ -1,8 +1,8 @@
 # Message-flow programs
 
-Status: planner-owned v1 schema, compiler, and exact-resource program-set
-construction implemented; stage/actor entry attachment and additional
-event-handler audits remain open.
+Status: planner-owned compiler, exact-resource program-set construction, and
+stage/actor entry attachment implemented; additional event-handler and cleanup
+caller audits remain open.
 
 ## Boundary
 
@@ -128,7 +128,7 @@ a locale from a product ID or invent a backing from a handler name.
 
 `construct-message-flows` accepts a canonical extracted-orig bundle, runtime
 configuration, and import profile. It selects the runtime language's locale
-bundle and emits a canonical `message-flow-program-set/v1` with one exact-scope
+bundle and emits a canonical `message-flow-program-set/v2` with one exact-scope
 program per message group. Construction fails closed when the language is not
 mapped, the selected bundle is absent, a group is ambiguous, or a group exceeds
 the runtime width. An extracted temporary, persistent, or switch access whose
@@ -140,14 +140,30 @@ Native observations expose both friendly label-indexed flag arrays and exact
 register bytes. These are intentionally different component kinds. The friendly
 arrays answer “what did each known label read as?” but are not writable backing
 stores; `WriteBoundRaw` targets the unique 256-byte temporary event-register
-component. Persistent event-register bytes are not yet exposed by the native
-observation contract, so a profile must omit that binding until the raw store is
-audited and captured.
+component or the exact 32-byte loaded-stage-memory component. Persistent
+event-register bytes are not yet exposed by the native observation contract, so
+a profile must omit that binding until the raw store is audited and captured.
+
+Bindings may also be projected from structured live state. A projected binding
+names one component plus typed fields that produce a stage, room, zone, dungeon,
+runtime-file, actor, session, or custom binding. This is the generic seam for
+speaker-relative message handlers: an actor-entry contract can record the
+speaker's resolved stage/zone in `message-session`, and every zone-switch reader
+or writer then follows those fields. A missing component, unknown payload,
+wrongly typed field, or out-of-range numeric value resolves to unknown; it never
+falls back to the player's current room. Backward relevance conservatively
+connects a projected store only to compatible binding classes.
 
 Generated programs intentionally have no event contracts or cleanup edges.
 Those operations depend on source-audited handlers and callers, not on the BMG
 graph alone. Adding them later does not alter the extracted graph or the
 profile's storage semantics.
+
+Stage and actor callers are attached through the separate exact-content entry
+contract compiler documented in
+[`message-entry-contracts.md`](message-entry-contracts.md). Its compiled output
+is supplied to `compose` alongside the exact message-flow set; entry mechanics
+cannot silently attach to another build or language resource.
 
 The bundled GZ2E01 English profile intentionally maps only the backing stores
 that are source-audited and uniquely representable today. Persistent event
@@ -181,6 +197,13 @@ route-planner compile-message-flows \
   --overlays audited-resource-overlays.json \
   --output compiled-message-programs.json \
   --manifest compiled-message-programs.manifest.json
+
+route-planner compile-message-entries \
+  --bundle extracted-orig.json \
+  --message-flow-set compiled-message-programs.json \
+  --contracts audited-message-entries.json \
+  --output compiled-message-entries.json \
+  --manifest compiled-message-entries.manifest.json
 ```
 
 The compiled command uses the normal fact-pack manifest contract. It records
@@ -189,20 +212,27 @@ schema, exact content, coverage limits, and payload digest. The payload retains
 each source program beside its compiled artifact, so it can be recompiled and
 validated after the original `orig/` tree is removed.
 
-`compose --message-flow-set compiled-message-programs.json` merges the generated
-aliases/readers/transitions into cloned base catalogs before applying ordinary
-refinement layers. Any duplicate ID or broken cross-reference rejects the merge
-without mutating either base catalog.
+`compose --message-flow-set compiled-message-programs.json --message-entry-set
+compiled-message-entries.json` merges the generated aliases, readers, flow
+transitions, and entry transitions into cloned base catalogs before applying
+ordinary refinement layers. The exact message-flow dependency and context must
+accompany each entry set. Any missing dependency, context mismatch, duplicate
+ID, or broken cross-reference rejects the merge without mutating either base
+catalog.
+
+Entry contracts are deliberately separate from the BMG-derived graph. They
+join an exact stage/STAG message group, optional exact actor placement, and flow
+label, while preserving interaction geometry and other unproved activation as
+obligations or unknown requirements. See `message-entry-contracts.md`.
 
 ## Remaining import work
 
-The v1 compiler and constructor establish the state/control representation,
+The v2 compiler and constructor establish the state/control representation,
 but production fact-pack integration still needs to:
 
-1. publish audited import profiles for supported exact builds and language
-   mappings;
-2. attach stage message-group selection and actor flow-label entry contracts;
-3. audit additional generic item, pending-operation, jump, event-request, and
+1. publish audited import profiles and stage/actor entry-contract packs for
+   additional exact builds and language mappings;
+2. audit additional generic item, pending-operation, jump, event-request, and
    cut handoff handlers;
-4. emit central event and Ooccoo cleanup callers from their actual predicates;
-5. compare semantic flow differences across builds and languages.
+3. emit central event and Ooccoo cleanup callers from their actual predicates;
+4. compare semantic flow differences across builds and languages.

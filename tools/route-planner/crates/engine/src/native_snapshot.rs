@@ -214,10 +214,25 @@ pub fn snapshot_native_observation(
     );
     push_raw_component(
         &mut components,
-        "flags.dungeon",
-        ComponentKind::DungeonMemory,
+        "flags.dungeon-session-labels",
+        ComponentKind::Custom {
+            id: "observed-dungeon-session-switch-labels".into(),
+        },
         observation.dungeon_flags.as_deref(),
         None,
+        ComponentBinding::Stage {
+            stage: observation.stage.clone(),
+        },
+        SemanticLifetime::StageLoad,
+        SerializationOwner::None,
+        &provenance,
+    );
+    push_raw_component(
+        &mut components,
+        "flags.loaded-stage-memory",
+        ComponentKind::DungeonMemory,
+        observation.loaded_stage_memory_bytes.as_deref(),
+        Some(0x20),
         ComponentBinding::Stage {
             stage: observation.stage.clone(),
         },
@@ -230,8 +245,10 @@ pub fn snapshot_native_observation(
     );
     push_raw_component(
         &mut components,
-        "flags.switch",
-        ComponentKind::ZoneMemory,
+        "flags.room-switch-labels",
+        ComponentKind::Custom {
+            id: "observed-room-switch-labels".into(),
+        },
         observation.switch_flags.as_deref(),
         None,
         ComponentBinding::Room {
@@ -1078,6 +1095,7 @@ mod tests {
             event_flags: Some(vec![0; 822]),
             temporary_flags: Some(vec![0; 185]),
             temporary_event_bytes: Some(vec![0; 256]),
+            loaded_stage_memory_bytes: Some(vec![0; 0x20]),
             event_handoff_status: NativeChannelStatus::Present,
             event_handoff: Some(NativeEventHandoffObservation {
                 get_item_no: 0x43,
@@ -1273,7 +1291,7 @@ mod tests {
         let mut stage_memory = vec![0_u8; 0x20];
         stage_memory[0x1c] = 3;
         stage_memory[0x1d] = 0b0100_0111;
-        observation.dungeon_flags = Some(stage_memory);
+        observation.loaded_stage_memory_bytes = Some(stage_memory);
 
         let snapshot = snapshot_native_observation(&observation, context(1)).unwrap();
         let inventory = snapshot
@@ -1299,7 +1317,7 @@ mod tests {
             .environment
             .components
             .iter()
-            .find(|component| component.id == "flags.dungeon")
+            .find(|component| component.id == "flags.loaded-stage-memory")
             .unwrap();
         assert_eq!(dungeon.component_kind, ComponentKind::DungeonMemory);
         assert_eq!(
@@ -1318,6 +1336,7 @@ mod tests {
         let ComponentPayload::Raw { bytes, .. } = &dungeon.payload else {
             panic!("stage memory must retain raw bytes");
         };
+        assert_eq!(bytes.len(), 0x20);
         assert_eq!(bytes[0x1c], 3);
         assert_eq!(bytes[0x1d], 0b0100_0111);
     }
@@ -1452,6 +1471,53 @@ mod tests {
                 .iter()
                 .filter(|component| {
                     component.component_kind == ComponentKind::TemporaryFlags
+                        && matches!(component.payload, ComponentPayload::Raw { .. })
+                })
+                .count(),
+            1
+        );
+
+        let dungeon_session_labels = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.dungeon-session-labels")
+            .unwrap();
+        assert_eq!(
+            dungeon_session_labels.component_kind,
+            ComponentKind::Custom {
+                id: "observed-dungeon-session-switch-labels".into()
+            }
+        );
+        let loaded_stage_memory = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.loaded-stage-memory")
+            .unwrap();
+        assert_eq!(
+            loaded_stage_memory.component_kind,
+            ComponentKind::DungeonMemory
+        );
+        let room_switch_labels = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.room-switch-labels")
+            .unwrap();
+        assert_eq!(
+            room_switch_labels.component_kind,
+            ComponentKind::Custom {
+                id: "observed-room-switch-labels".into()
+            }
+        );
+        assert_eq!(
+            snapshot
+                .environment
+                .components
+                .iter()
+                .filter(|component| {
+                    component.component_kind == ComponentKind::DungeonMemory
                         && matches!(component.payload, ComponentPayload::Raw { .. })
                 })
                 .count(),

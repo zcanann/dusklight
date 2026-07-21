@@ -492,8 +492,12 @@ fn alias_delta_causes(
         if !matching_kind {
             continue;
         }
-        let matching_binding = delta.binding_before.as_ref() == Some(&binding_before)
-            || delta.binding_after.as_ref() == Some(&binding_after);
+        let matching_binding = binding_before
+            .as_ref()
+            .is_some_and(|resolved| delta.binding_before.as_ref() == Some(resolved))
+            || binding_after
+                .as_ref()
+                .is_some_and(|resolved| delta.binding_after.as_ref() == Some(resolved));
         if delta.binding_before != delta.binding_after && matching_binding {
             binding_components.push(delta.component_id.clone());
         }

@@ -265,6 +265,10 @@ pub struct NativeLearningObservation {
     pub event_flags: Option<Vec<u8>>,
     pub temporary_flags: Option<Vec<u8>>,
     pub temporary_event_bytes: Option<Vec<u8>>,
+    /// Exact live `dSv_memBit_c` payload for the currently loaded stage bank.
+    /// `dungeon_flags` is the separate label-indexed `dSv_danBit_c` view.
+    #[serde(default)]
+    pub loaded_stage_memory_bytes: Option<Vec<u8>>,
     pub dungeon_flags: Option<Vec<u8>>,
     pub switch_flags: Option<Vec<u8>>,
     pub switch_flag_room: i8,
@@ -282,4 +286,20 @@ pub struct NativeLearningObservation {
     pub event_queue: Option<NativeEventQueueObservation>,
     pub attention_candidates_status: NativeChannelStatus,
     pub attention_candidates: Option<NativeAttentionCandidatesObservation>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_observations_without_exact_stage_memory_remain_decodable() {
+        let mut value = serde_json::to_value(NativeLearningObservation::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("loaded_stage_memory_bytes");
+        let decoded: NativeLearningObservation = serde_json::from_value(value).unwrap();
+        assert_eq!(decoded.loaded_stage_memory_bytes, None);
+    }
 }

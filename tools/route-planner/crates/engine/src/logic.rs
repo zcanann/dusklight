@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v5";
+pub const FACT_CATALOG_SCHEMA: &str = "dusklight.route-planner.fact-catalog/v6";
 pub const MAX_PREDICATE_DEPTH: usize = 64;
 pub const MAX_PREDICATE_CHILDREN: usize = 4_096;
 

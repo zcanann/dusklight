@@ -8,7 +8,9 @@ the `us` directory name alone is not accepted as equivalence evidence.
 ## Audited bindings
 
 The profile publishes only backing relationships supported by the current
-source and state representation.
+source and state representation. A snapshot or authored start state must supply
+the corresponding exact raw component; label-indexed observation arrays never
+stand in for it.
 
 | Message operation | Planner backing | Evidence |
 | --- | --- | --- |
@@ -34,8 +36,10 @@ does not bind yet:
 - 162 accesses to one-zone switches.
 
 `dSv_danBit_c` is a live bank with its own stage number and reset/init behavior;
-it is not the persisted current-stage `dSv_memBit_c` bank. Treating both as one
-`DungeonMemory` component would hide wrong-flags and transfer questions.
+it is not the persisted current-stage `dSv_memBit_c` bank. Its label-indexed
+native observation therefore has a custom diagnostic component kind. Treating
+both as one `DungeonMemory` component would hide wrong-flags and transfer
+questions.
 
 Zone and one-zone handlers resolve a zone from the message speaker's room, or
 from the current stay room when there is no speaker. A room-to-zone lookup and

@@ -1,13 +1,21 @@
 # Bound stage-memory semantics
 
 The planner treats the live `dSv_memBit_c` payload as one raw component owned by
-the active runtime file's current stage bank. Native projection emits it as
-`flags.dungeon` with:
+the active runtime file's current stage bank. Native projection emits an exact
+32-byte observation supplied through `loaded_stage_memory_bytes` as
+`flags.loaded-stage-memory` with:
 
 - component kind `dungeon_memory`;
 - binding `stage { stage }`;
 - lifetime `stage_load`; and
 - owner `stage_bank { runtime_file_id, stage }`.
+
+The separately observed `dSv_danBit_c` and current-room switch label arrays are
+diagnostic views, not raw backing stores. They use custom component kinds and
+cannot satisfy a bound stage-memory read or write. A producer that has not
+captured the exact 32-byte payload leaves the live backing absent, causing these
+operations to evaluate or execute as unknown/failing rather than mutating a
+label-indexed array.
 
 It does not copy dungeon-local values into the runtime-file inventory component.
 That would create two independently mutable truths and could let a Forest Temple

@@ -14,7 +14,7 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
-The planner CLI currently owns twenty-three operations:
+The planner CLI currently owns twenty-six operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -26,6 +26,16 @@ The planner CLI currently owns twenty-three operations:
   normal, skip, interruption, scene-change, or resource-failure branch into an
   ordinary causal transition. Confirmed prefixes remain ordered and unaudited
   suffix targets become explicit unknownness.
+- `construct-message-flows` selects every message group for one exact
+  content/runtime/language profile and emits canonical source programs without
+  guessing unaudited backing stores.
+- `compile-message-flows` turns those exact resources and optional audited
+  overlays into ordinary fact/mechanics catalogs and seals the result with a
+  fact-pack manifest.
+- `compile-message-entries` joins authored callers to an exact stage resource,
+  actor placement, message resource, and flow label. Its entry transitions keep
+  interaction feasibility separate and can project the audited speaker context
+  into subsequent backing-store references.
 - `edit-route-book` applies an atomic, expected-digest-checked batch of typed
   route-book edits and emits a fully revalidated canonical revision.
 - `diff-state` compares two executable states across a named boundary, retaining

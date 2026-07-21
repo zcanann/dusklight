@@ -975,7 +975,9 @@ impl<'a> PredicateEvaluator<'a> {
     }
 
     fn evaluate_raw_binding(&self, binding: &RawFactBinding) -> EvaluatedTruth {
-        let resolved_binding = binding.binding.resolve(&self.snapshot.environment);
+        let Some(resolved_binding) = binding.binding.resolve(&self.snapshot.environment) else {
+            return EvaluatedTruth::Unknown;
+        };
         let matches = self
             .snapshot
             .environment
@@ -1033,7 +1035,7 @@ impl<'a> PredicateEvaluator<'a> {
                 binding,
                 field,
             } => {
-                let resolved_binding = binding.resolve(&self.snapshot.environment);
+                let resolved_binding = binding.resolve(&self.snapshot.environment)?;
                 let mut matches = self
                     .snapshot
                     .environment
@@ -1073,7 +1075,7 @@ impl<'a> PredicateEvaluator<'a> {
                 byte_width,
                 mask,
             } => {
-                let resolved_binding = binding.resolve(&self.snapshot.environment);
+                let resolved_binding = binding.resolve(&self.snapshot.environment)?;
                 let mut matches = self
                     .snapshot
                     .environment
@@ -1342,12 +1344,12 @@ mod tests {
     };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use crate::state::{
-        ActorLifecycle, BackingAttachment, ComponentBinding, ComponentBindingReference,
-        ComponentKind, ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA,
-        ExecutionEnvironment, LiveWorldObject, PlaneRelation, PlayerForm, PlayerState,
-        ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
-        SemanticLifetime, SerializationOwner, SpatialConnection, SpatialConnectionStatus,
-        SpatialPlane, SpatialVolume, SpatialVolumeShape, StateComponent,
+        ActorLifecycle, BackingAttachment, ComponentBinding, ComponentBindingProjection,
+        ComponentBindingReference, ComponentKind, ComponentPayload, ComponentProvenance,
+        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, LiveWorldObject, PlaneRelation,
+        PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
+        RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, SpatialConnection,
+        SpatialConnectionStatus, SpatialPlane, SpatialVolume, SpatialVolumeShape, StateComponent,
     };
     use crate::transition::{
         ActivationContract, ObligationKind, StateOperation, TemporalWindow, TransitionKind,
@@ -1846,6 +1848,91 @@ mod tests {
         );
 
         snapshot.environment.location.stage = "D_MN04".into();
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference),
+            None
+        );
+    }
+
+    #[test]
+    fn bound_raw_bits_can_follow_a_binding_projected_from_live_flow_state() {
+        let mut snapshot = snapshot(0xff);
+        snapshot.environment.components.extend([
+            StateComponent {
+                id: "message-session".into(),
+                component_kind: ComponentKind::MessageFlow,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("speaker_stage".into(), StateValue::Text("D_MN01".into())),
+                        ("speaker_zone".into(), StateValue::Signed(7)),
+                    ]),
+                },
+                binding: ComponentBinding::Global,
+                lifetime: SemanticLifetime::Action,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Initialized,
+                    source_id: "fixture.message-session".into(),
+                    source_sha256: None,
+                    transition_id: None,
+                }],
+            },
+            StateComponent {
+                id: "zone.raw".into(),
+                component_kind: ComponentKind::ZoneMemory,
+                payload: ComponentPayload::Raw {
+                    bytes: vec![0b0000_0110],
+                    known_mask: vec![0xff],
+                },
+                binding: ComponentBinding::Zone {
+                    stage: "D_MN01".into(),
+                    zone: 7,
+                },
+                lifetime: SemanticLifetime::RoomLoad,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::Initialized,
+                    source_id: "fixture.zone-memory".into(),
+                    source_sha256: None,
+                    transition_id: None,
+                }],
+            },
+        ]);
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let facts = facts(&snapshot, TruthStatus::Established);
+        let reference = ValueReference::BoundRawBits {
+            component_kind: ComponentKind::ZoneMemory,
+            binding: ComponentBindingReference::Projected {
+                component_id: "message-session".into(),
+                projection: Box::new(ComponentBindingProjection::Zone {
+                    stage_field: "speaker_stage".into(),
+                    zone_field: "speaker_zone".into(),
+                }),
+            },
+            byte_offset: 0,
+            byte_width: 1,
+            mask: 0x0f,
+        };
+
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .resolve_value(&reference),
+            Some(StateValue::Unsigned(6))
+        );
+        let flow = snapshot
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "message-session")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut flow.payload else {
+            unreachable!()
+        };
+        fields.insert("speaker_zone".into(), StateValue::Text("unknown".into()));
         assert_eq!(
             evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
                 .resolve_value(&reference),

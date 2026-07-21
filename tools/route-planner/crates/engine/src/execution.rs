@@ -713,7 +713,9 @@ impl PlannerExecutionState {
                         .iter()
                         .filter(|component| {
                             component.component_kind == *component_kind
-                                && component.binding == resolved_binding
+                                && resolved_binding
+                                    .as_ref()
+                                    .is_some_and(|binding| component.binding == *binding)
                                 && matches!(component.payload, ComponentPayload::Raw { .. })
                         })
                         .map(|component| component.id.clone())
@@ -1077,7 +1079,9 @@ impl PlannerExecutionState {
                     .iter()
                     .filter(|component| {
                         component.component_kind == *component_kind
-                            && component.binding == resolved_binding
+                            && resolved_binding
+                                .as_ref()
+                                .is_some_and(|binding| component.binding == *binding)
                             && matches!(component.payload, ComponentPayload::Raw { .. })
                     })
                     .map(|component| component.id.clone())
@@ -2003,7 +2007,9 @@ impl PlannerExecutionState {
             .iter()
             .filter(|component| {
                 component.component_kind == *component_kind
-                    && component.binding == resolved_binding
+                    && resolved_binding
+                        .as_ref()
+                        .is_some_and(|binding| component.binding == *binding)
                     && matches!(component.payload, ComponentPayload::Raw { .. })
             })
             .map(|component| component.id.clone())
@@ -2517,10 +2523,10 @@ mod tests {
     use crate::identity::{RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
     use crate::snapshot::STATE_SNAPSHOT_SCHEMA;
     use crate::state::{
-        BOUNDARY_POLICY_SCHEMA, BackingAttachment, BoundaryKind, ComponentBindingReference,
-        ComponentBoundaryRule, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PhysicalSlotId,
-        PlayerForm, PlayerMount, PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin,
-        SceneLocation, SemanticLifetime,
+        BOUNDARY_POLICY_SCHEMA, BackingAttachment, BoundaryKind, ComponentBindingProjection,
+        ComponentBindingReference, ComponentBoundaryRule, EXECUTION_ENVIRONMENT_SCHEMA,
+        ExecutionEnvironment, PhysicalSlotId, PlayerForm, PlayerMount, PlayerState, RuntimeFile,
+        RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
     };
     use crate::transition::ComponentFieldTarget;
 
@@ -3591,6 +3597,100 @@ mod tests {
                         mask: vec![1],
                         value: vec![1],
                     }],
+                )
+                .is_err()
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn bound_raw_writes_follow_a_binding_projected_from_live_flow_state() {
+        let mut snapshot = snapshot();
+        snapshot.environment.components.extend([
+            StateComponent {
+                id: "message-session".into(),
+                component_kind: ComponentKind::MessageFlow,
+                payload: ComponentPayload::Structured {
+                    fields: BTreeMap::from([
+                        ("speaker_stage".into(), StateValue::Text("D_MN01".into())),
+                        ("speaker_zone".into(), StateValue::Signed(7)),
+                    ]),
+                },
+                binding: ComponentBinding::Global,
+                lifetime: SemanticLifetime::Action,
+                serialization_owner: SerializationOwner::None,
+                provenance: provenance(),
+            },
+            StateComponent {
+                id: "zone.raw".into(),
+                component_kind: ComponentKind::ZoneMemory,
+                payload: ComponentPayload::Raw {
+                    bytes: vec![0],
+                    known_mask: vec![0xff],
+                },
+                binding: ComponentBinding::Zone {
+                    stage: "D_MN01".into(),
+                    zone: 7,
+                },
+                lifetime: SemanticLifetime::RoomLoad,
+                serialization_owner: SerializationOwner::None,
+                provenance: provenance(),
+            },
+        ]);
+        snapshot
+            .environment
+            .components
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let mut state = PlannerExecutionState::new(snapshot).unwrap();
+        let operation = StateOperation::WriteBoundRaw {
+            component_kind: ComponentKind::ZoneMemory,
+            binding: ComponentBindingReference::Projected {
+                component_id: "message-session".into(),
+                projection: Box::new(ComponentBindingProjection::Zone {
+                    stage_field: "speaker_stage".into(),
+                    zone_field: "speaker_zone".into(),
+                }),
+            },
+            byte_offset: 0,
+            mask: vec![0x20],
+            value: vec![0x20],
+        };
+        state
+            .apply_operations(
+                "transition.message-zone-write",
+                "snapshot.message-zone-written",
+                std::slice::from_ref(&operation),
+            )
+            .unwrap();
+        let zone = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "zone.raw")
+            .unwrap();
+        assert!(matches!(
+            &zone.payload,
+            ComponentPayload::Raw { bytes, .. } if bytes == &[0x20]
+        ));
+
+        let flow = state
+            .snapshot
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == "message-session")
+            .unwrap();
+        flow.payload = ComponentPayload::Unknown {
+            expected_bytes: None,
+        };
+        let before = state.clone();
+        assert!(
+            state
+                .apply_operations(
+                    "transition.unresolved-message-zone-write",
+                    "snapshot.not-produced",
+                    &[operation],
                 )
                 .is_err()
         );

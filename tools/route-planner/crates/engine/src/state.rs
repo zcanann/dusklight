@@ -155,10 +155,48 @@ pub enum ComponentBinding {
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ComponentBindingReference {
-    Exact { binding: ComponentBinding },
+    Exact {
+        binding: ComponentBinding,
+    },
     ActiveRuntimeFile,
     CurrentStage,
     CurrentRoom,
+    Projected {
+        component_id: String,
+        projection: Box<ComponentBindingProjection>,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ComponentBindingProjection {
+    Stage {
+        stage_field: String,
+    },
+    Room {
+        stage_field: String,
+        room_field: String,
+    },
+    Zone {
+        stage_field: String,
+        zone_field: String,
+    },
+    Dungeon {
+        dungeon_field: String,
+    },
+    RuntimeFile {
+        runtime_file_id_field: String,
+    },
+    Actor {
+        instance_id_field: String,
+    },
+    Session {
+        session_id_field: String,
+    },
+    Custom {
+        kind_id: String,
+        context_id_field: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -618,8 +656,8 @@ impl ExecutionEnvironment {
 }
 
 impl ComponentBindingReference {
-    pub fn resolve(&self, environment: &ExecutionEnvironment) -> ComponentBinding {
-        match self {
+    pub fn resolve(&self, environment: &ExecutionEnvironment) -> Option<ComponentBinding> {
+        Some(match self {
             Self::Exact { binding } => binding.clone(),
             Self::ActiveRuntimeFile => ComponentBinding::RuntimeFile {
                 runtime_file_id: environment.active_runtime_file.id.clone(),
@@ -631,7 +669,74 @@ impl ComponentBindingReference {
                 stage: environment.location.stage.clone(),
                 room: environment.location.room,
             },
-        }
+            Self::Projected {
+                component_id,
+                projection,
+            } => {
+                let component = environment
+                    .components
+                    .iter()
+                    .find(|component| component.id == *component_id)?;
+                let ComponentPayload::Structured { fields } = &component.payload else {
+                    return None;
+                };
+                projection.resolve(fields)?
+            }
+        })
+    }
+}
+
+impl ComponentBindingProjection {
+    fn resolve(&self, fields: &BTreeMap<String, StateValue>) -> Option<ComponentBinding> {
+        let text = |field: &str| match fields.get(field)? {
+            StateValue::Text(value) => Some(value.clone()),
+            _ => None,
+        };
+        let signed = |field: &str| match fields.get(field)? {
+            StateValue::Signed(value) => Some(*value),
+            StateValue::Unsigned(value) => i64::try_from(*value).ok(),
+            _ => None,
+        };
+        Some(match self {
+            Self::Stage { stage_field } => ComponentBinding::Stage {
+                stage: text(stage_field)?,
+            },
+            Self::Room {
+                stage_field,
+                room_field,
+            } => ComponentBinding::Room {
+                stage: text(stage_field)?,
+                room: signed(room_field)?.try_into().ok()?,
+            },
+            Self::Zone {
+                stage_field,
+                zone_field,
+            } => ComponentBinding::Zone {
+                stage: text(stage_field)?,
+                zone: signed(zone_field)?.try_into().ok()?,
+            },
+            Self::Dungeon { dungeon_field } => ComponentBinding::Dungeon {
+                dungeon: text(dungeon_field)?,
+            },
+            Self::RuntimeFile {
+                runtime_file_id_field,
+            } => ComponentBinding::RuntimeFile {
+                runtime_file_id: text(runtime_file_id_field)?,
+            },
+            Self::Actor { instance_id_field } => ComponentBinding::Actor {
+                instance_id: text(instance_id_field)?,
+            },
+            Self::Session { session_id_field } => ComponentBinding::Session {
+                session_id: text(session_id_field)?,
+            },
+            Self::Custom {
+                kind_id,
+                context_id_field,
+            } => ComponentBinding::Custom {
+                kind_id: kind_id.clone(),
+                context_id: text(context_id_field)?,
+            },
+        })
     }
 }
 
@@ -765,6 +870,49 @@ pub(crate) fn validate_binding_reference(
         ComponentBindingReference::ActiveRuntimeFile
         | ComponentBindingReference::CurrentStage
         | ComponentBindingReference::CurrentRoom => Ok(()),
+        ComponentBindingReference::Projected {
+            component_id,
+            projection,
+        } => {
+            validate_stable_id("binding_reference.component_id", component_id)?;
+            validate_binding_projection(projection)
+        }
+    }
+}
+
+fn validate_binding_projection(
+    projection: &ComponentBindingProjection,
+) -> Result<(), PlannerContractError> {
+    let field = |value: &str| validate_stable_id("binding_projection.field", value);
+    match projection {
+        ComponentBindingProjection::Stage { stage_field } => field(stage_field),
+        ComponentBindingProjection::Room {
+            stage_field,
+            room_field,
+        } => {
+            field(stage_field)?;
+            field(room_field)
+        }
+        ComponentBindingProjection::Zone {
+            stage_field,
+            zone_field,
+        } => {
+            field(stage_field)?;
+            field(zone_field)
+        }
+        ComponentBindingProjection::Dungeon { dungeon_field } => field(dungeon_field),
+        ComponentBindingProjection::RuntimeFile {
+            runtime_file_id_field,
+        } => field(runtime_file_id_field),
+        ComponentBindingProjection::Actor { instance_id_field } => field(instance_id_field),
+        ComponentBindingProjection::Session { session_id_field } => field(session_id_field),
+        ComponentBindingProjection::Custom {
+            kind_id,
+            context_id_field,
+        } => {
+            validate_stable_id("binding_projection.kind_id", kind_id)?;
+            field(context_id_field)
+        }
     }
 }
 
@@ -1305,22 +1453,22 @@ mod tests {
         let environment = file_zero_environment();
         assert_eq!(
             ComponentBindingReference::ActiveRuntimeFile.resolve(&environment),
-            ComponentBinding::RuntimeFile {
+            Some(ComponentBinding::RuntimeFile {
                 runtime_file_id: "file-0".into(),
-            }
+            })
         );
         assert_eq!(
             ComponentBindingReference::CurrentStage.resolve(&environment),
-            ComponentBinding::Stage {
+            Some(ComponentBinding::Stage {
                 stage: "F_SP103".into(),
-            }
+            })
         );
         assert_eq!(
             ComponentBindingReference::CurrentRoom.resolve(&environment),
-            ComponentBinding::Room {
+            Some(ComponentBinding::Room {
                 stage: "F_SP103".into(),
                 room: 0,
-            }
+            })
         );
         let exact = ComponentBindingReference::Exact {
             binding: ComponentBinding::Dungeon {
@@ -1329,9 +1477,43 @@ mod tests {
         };
         assert_eq!(
             exact.resolve(&environment),
-            ComponentBinding::Dungeon {
+            Some(ComponentBinding::Dungeon {
                 dungeon: "forest-temple".into(),
-            }
+            })
         );
+
+        let mut projected_environment = environment;
+        projected_environment.components.push(StateComponent {
+            id: "message-session".into(),
+            component_kind: ComponentKind::MessageFlow,
+            payload: ComponentPayload::Structured {
+                fields: BTreeMap::from([
+                    ("speaker_stage".into(), StateValue::Text("D_MN01".into())),
+                    ("speaker_zone".into(), StateValue::Signed(7)),
+                ]),
+            },
+            binding: ComponentBinding::Global,
+            lifetime: SemanticLifetime::Action,
+            serialization_owner: SerializationOwner::None,
+            provenance: vec![provenance("fixture")],
+        });
+        let projected = ComponentBindingReference::Projected {
+            component_id: "message-session".into(),
+            projection: Box::new(ComponentBindingProjection::Zone {
+                stage_field: "speaker_stage".into(),
+                zone_field: "speaker_zone".into(),
+            }),
+        };
+        assert_eq!(
+            projected.resolve(&projected_environment),
+            Some(ComponentBinding::Zone {
+                stage: "D_MN01".into(),
+                zone: 7,
+            })
+        );
+        projected_environment.components.last_mut().unwrap().payload = ComponentPayload::Unknown {
+            expected_bytes: None,
+        };
+        assert_eq!(projected.resolve(&projected_environment), None);
     }
 }

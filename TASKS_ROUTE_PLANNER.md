@@ -1839,10 +1839,20 @@ Deliverable: replayable state evidence that can validate transition rules.
         sets transactionally into ordinary base catalogs before refinements.
   - [x] Keep extracted accesses with unaudited backing stores as blocking unknown
         requirements, and separate label-indexed observation arrays from the
-        unique writable temporary event-register backing in state snapshots.
-  - [ ] Publish audited exact-build import profiles, attach stage/actor entry
-        contracts, import additional decidable item/event/jump handlers and real
-        cleanup caller predicates.
+        unique writable temporary event-register and loaded-stage-memory
+        backings in state snapshots.
+  - [x] Resolve backing references from typed fields on live components, with
+        unknown-on-missing evaluation, atomic write failure, and conservative
+        relevance matching. This permits later actor-entry contracts to bind
+        speaker-relative zone stores without assuming the player's current room.
+  - [x] Define and compile exact stage/actor message-entry contracts. Pin raw
+        actor placement records and exact flow labels, retain interaction
+        obligations and unknowns, emit a portable deterministic artifact, and
+        require its exact compiled message-flow dependency during composition.
+        See `docs/route-planner/message-entry-contracts.md`.
+  - [ ] Publish audited exact-build import profiles and concrete stage/actor
+        entry packs; import additional decidable item/event/jump handlers and
+        real cleanup caller predicates.
     - [x] Publish the exact GZ2E01 English partial profile for temporary event
           registers and current-stage save switches. Persistent event registers,
           dungeon-session, zone, and one-zone stores remain explicit unknowns
