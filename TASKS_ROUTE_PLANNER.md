@@ -2619,8 +2619,11 @@ sequence.
         event finish flag 5, then emit exact-context candidate transitions where
         clear suppression/skip selects Castle Town, active skip selects Zelda's
         tower for this REVT type, and suppression prevents either scene change.
-- [ ] Model actor corruption as the producer of the failed-load/exceptional-flow
-      predicate, not as a direct Castle Town warp.
+- [x] Model actor corruption as the producer of the failed-load/exceptional-flow
+      predicate, not as a direct Castle Town warp. The exact-context hypothesis
+      transition has unknown evidence and explicit failure-site, all-STB-miss,
+      and completed-prefix requirements; its only effect writes the named
+      failure predicate, never location or return place.
 - [ ] Verify whether any writer other than the proven room-loader no-op can run
       on the actor-corruption path, and that ordinary savewarp subsequently
       reads the retained value from Zelda's tower.

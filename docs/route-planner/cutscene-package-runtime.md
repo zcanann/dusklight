@@ -97,6 +97,17 @@ resolved. They explicitly leave these unresolved:
 Consequently the artifact cannot directly choose Castle Town or Zelda's tower,
 cannot invent a return-place write, and cannot make the later savewarp implicit.
 
+The separate `cutscene-corruption-hypothesis/v1` artifact models the remaining
+research link without promoting it. Its canonical GZ2E01/English artifact
+SHA-256 is
+`4009349305be05f0f005095a341d417a500cb956c41415b475a22d349ec46323`.
+Its unknown-evidence producer writes only
+`package.stb_lookup_result = all_stb_lookups_missing`. It carries three explicit
+unknown requirements for the actual failure site, whether all STB lookups
+really miss, and the last completed operation/prefix. Validation rejects a
+direct location or return-place effect, so theorycrafting the producer cannot
+silently become a Castle Town warp.
+
 ```text
 route-planner resolve-cutscene-package \
   --content-identity gz2e01-content.json \
@@ -112,6 +123,12 @@ route-planner resolve-cutscene-outer \
   --stage-resource-file room.dzr \
   --event-list-resource-file event_list.dat \
   --output gz2e01-demo07_02-outer.json
+
+route-planner compile-cutscene-corruption-hypothesis \
+  --content-identity gz2e01-content.json \
+  --runtime-configuration gz2e01-runtime-en.json \
+  --outer-event gz2e01-demo07_02-outer.json \
+  --output gz2e01-demo07_02-corruption-hypothesis.json
 ```
 
 An explicit `--profile` supports another audited build or a theorycraft profile,

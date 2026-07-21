@@ -72,5 +72,7 @@ The wrapper topology alone is deliberately not executable. The separate exact
 PACKAGE and outer-event resolvers now conditionally compile the all-STB-missing
 path into inspectable PLAY and WAIT steps, followed by normal, skip, and
 scene-change-suppressed branches. No transition produces the missing-STB field
-from actor corruption, so established search still cannot enter this path until
-that producer and the observed runtime flag values are evidenced.
+with established evidence. A separate unknown-evidence corruption hypothesis
+can write only that field and retains three explicit research requirements, so
+established search still cannot enter this path until the producer and the
+observed runtime flag values are evidenced.

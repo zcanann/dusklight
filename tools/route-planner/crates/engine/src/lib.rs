@@ -9,6 +9,7 @@
 pub mod artifact;
 pub mod binary_evidence;
 pub mod cutscene;
+pub mod cutscene_corruption;
 pub mod cutscene_import;
 pub mod cutscene_outer;
 pub mod cutscene_runtime;

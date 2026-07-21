@@ -1,6 +1,7 @@
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::binary_evidence::extract_dol_function_evidence;
 use dusklight_route_planner::cutscene::CutsceneProgram;
+use dusklight_route_planner::cutscene_corruption::compile_actor_corruption_hypothesis;
 use dusklight_route_planner::cutscene_import::{
     CutsceneWrapperSourceIdentity, CutsceneWrapperTopology,
 };
@@ -81,6 +82,9 @@ fn run() -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
         Some("cache-fact-pack") => cache_fact_pack(&args[1..]),
         Some("compile-cutscene") => compile_cutscene(&args[1..]),
+        Some("compile-cutscene-corruption-hypothesis") => {
+            compile_cutscene_corruption_hypothesis_command(&args[1..])
+        }
         Some("compile-message-entries") => compile_message_entries(&args[1..]),
         Some("compile-message-flows") => compile_message_flows(&args[1..]),
         Some("construct-message-flows") => construct_message_flows(&args[1..]),
@@ -911,6 +915,40 @@ fn resolve_cutscene_outer_command(args: &[String]) -> Result<(), Box<dyn Error>>
             "skip_cut_type": resolved.skip_cut_type,
             "transitions": resolved.transitions.len(),
             "coverage": resolved.coverage,
+        }))?
+    );
+    Ok(())
+}
+
+fn compile_cutscene_corruption_hypothesis_command(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let content_path = required_path(args, "--content-identity")?;
+    let runtime_path = required_path(args, "--runtime-configuration")?;
+    let outer_path = required_path(args, "--outer-event")?;
+    let output = required_path(args, "--output")?;
+    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let runtime = RuntimeConfiguration::decode_canonical(&fs::read(runtime_path)?)?;
+    let outer =
+        dusklight_route_planner::cutscene_outer::ResolvedCutsceneOuterEvent::decode_canonical(
+            &fs::read(outer_path)?,
+        )?;
+    let profile = match option(args, "--outer-profile") {
+        Some(profile_path) => {
+            CutsceneOuterRuntimeProfile::decode_canonical(&fs::read(profile_path)?)?
+        }
+        None => bundled_gz2e01_cutscene_outer_runtime_profile()?,
+    };
+    let hypothesis = compile_actor_corruption_hypothesis(&content, &runtime, &outer, &profile)?;
+    write_file(&output, &hypothesis.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": hypothesis.schema,
+            "output": output,
+            "sha256": hypothesis.digest()?,
+            "id": hypothesis.id,
+            "producer_transition": hypothesis.producer.id,
+            "unknown_requirements": hypothesis.producer.activation.unknown_requirements.len(),
+            "coverage": hypothesis.coverage,
         }))?
     );
     Ok(())
@@ -1786,6 +1824,7 @@ fn print_usage() {
             "  route-planner resolve-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --content-identity CONTENT.json [--profile PROFILE.json] --output SEMANTICS.json",
             "  route-planner resolve-cutscene-package --content-identity CONTENT.json --topology WRAPPER.json --semantics SEMANTICS.json [--profile PROFILE.json] --output PACKAGE.json",
             "  route-planner resolve-cutscene-outer --content-identity CONTENT.json --runtime-configuration RUNTIME.json --topology WRAPPER.json --package PACKAGE.json --stage-resource-file room.dzr --event-list-resource-file event_list.dat [--profile PROFILE.json] --output OUTER.json",
+            "  route-planner compile-cutscene-corruption-hypothesis --content-identity CONTENT.json --runtime-configuration RUNTIME.json --outer-event OUTER.json [--outer-profile PROFILE.json] --output HYPOTHESIS.json",
             "  route-planner extract-cutscene-wrapper --archive ARCHIVE.arc [--stage-resource room.dzr] [--event-list-resource event_list.dat] --event-name NAME --layer LAYER --output WRAPPER.json",
             "  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json",
             "  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json",

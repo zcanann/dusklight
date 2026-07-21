@@ -134,6 +134,15 @@ exit is selected. Its coverage keeps the
 actor-corruption producer, actual outer branch taken, and other return-place
 writers unresolved.
 
+The producer boundary is represented separately by
+`cutscene-corruption-hypothesis/v1`, whose exact GZ2E01/English artifact has
+SHA-256
+`4009349305be05f0f005095a341d417a500cb956c41415b475a22d349ec46323`.
+The transition has unknown evidence and writes only the
+all-STB-lookups-missing field. Its required unknowns retain the actual failure
+site, proof that all STB lookups miss, and the last completed operation/prefix.
+It has no direct scene or return-place effect.
+
 The failure must therefore still be modeled as a resource/actor failure
 predicate with an unknown exceptional suffix, never as a direct warp to
 `R_SP107` or `F_SP116`. The no-op proof narrows the unknown suffix: this specific
@@ -197,6 +206,12 @@ route-planner resolve-cutscene-outer \
   --stage-resource-file room.dzr \
   --event-list-resource-file event_list.dat \
   --output gz2e01-demo07_02-outer.json
+
+route-planner compile-cutscene-corruption-hypothesis \
+  --content-identity gz2e01-content.json \
+  --runtime-configuration gz2e01-runtime-en.json \
+  --outer-event gz2e01-demo07_02-outer.json \
+  --output gz2e01-demo07_02-corruption-hypothesis.json
 ```
 
 The extraction commands reject malformed offsets, overlapping tables,
