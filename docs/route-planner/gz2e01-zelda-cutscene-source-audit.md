@@ -1,11 +1,48 @@
 # GZ2E01 post-Zelda cutscene source audit
 
-Status: exact retail topology is extracted, and the room-loader's nominal
-return-place writer is proven to be a retail no-op. The precise actor-corruption
-failure site and complete JStudio effect sequence remain unknown and must not be
-promoted to an established route.
+Status: the exact retail sequence is now split into its two real cutscenes, and
+the room-loader's nominal return-place writer is proven to be a retail no-op.
+The primary wrong-warp witness visibly fails `Demo07_01.arc` in Zelda's tower,
+not downstream `Demo07_02.arc`. The complete exceptional suffix and exact-build
+correspondence remain unknown and must not be promoted to an established route.
 
-## Exact resource chain
+## Corrected two-stage sequence
+
+The primary witness is the video `8SjZ--barD0`, mirrored by the Skybook
+`castle-town-wrong-warp` benchmark. The captured video bytes used for this audit
+have SHA-256
+`574443357d65fa3369c436596b0a8779b3e4c4baad24171582a10803efa69d16`.
+Its allocation diagnostics visibly name `Demo07_01.arc`; the later save/reload
+arrives in Castle Town. The video does not expose the precise return-place bytes,
+all event-control flags, or a trustworthy exact disc identity.
+
+The exact GZ2E01 resources establish this ordinary chain:
+
+1. R_SP107 room 3 layer 8 selects `Demo07_01` and event `demo07_01`.
+2. Its normal SCLS 2 enters R_SP301 room 0, spawn 20, layer 8. Its skip SCLS 3
+   remains in R_SP107 room 3, spawn 1.
+3. R_SP301 layer 8 selects `Demo07_02` and event `demo07_02`.
+4. Its normal SCLS 1 enters Castle Town (`F_SP116`); its skip SCLS 2 returns to
+   R_SP107 room 3, spawn 1.
+
+Consequently, `demo07_02` is useful downstream evidence, but it is not the
+archive failure seen in the wrong-warp witness.
+
+The R_SP107 room archive SHA-256 is
+`88cd34f72b7d193d82e3c564aa77a9a340e0dcb20aae681eb768af0a17bdf205`;
+its `room.dzr` and `event_list.dat` digests are respectively
+`ff9ac474c6c282be807b78c289a31a9358f752033b586ecc6888f497c0647370`
+and
+`409017e871c57cf61565ca7d1e949b49c178d330e52c0ad2ee4f77e4c187d528`.
+The canonical `demo07_01` wrapper digest is
+`6333063dc4f072cec00236061ec18046b728767631c1b83ea153e83573d407c4`.
+Its exact package and outer artifacts have SHA-256
+`9a120fb2d57250b9e239312431239903b13c05d2ff76ffbb6b228ec713cac50d`
+and
+`40a70665788d0030e6153cdef408d146ae45967dc3c0c57e3751f34f69c541f1`.
+The event finishes on `[19, -1, -1]`.
+
+## Downstream `demo07_02` resource chain
 
 The GZ2E01 room archive
 `files/res/Stage/R_SP301/R00_00.arc` has SHA-256
@@ -122,8 +159,8 @@ It proves the ordered demo/room/stage fallback, zero executed STB paragraphs,
 absence of an exact PLAY-cut EventFlag parameter, and the mode-zero PACKAGE
 completion guard.
 
-A separate `resolved-cutscene-outer-event/v1` artifact with SHA-256
-`a867ffa2abf2a7c4a07810d8b8109b96deb755b068973e1141fd8315cf7938c6`
+A separate downstream `resolved-cutscene-outer-event/v1` artifact with SHA-256
+`407d4d71d578506556f05e6b3bcea738fbf93dbf601722c2ccb749a9d818356e`
 verifies the raw stage/event-list resources and proves that PACKAGE PLAY
 advances to zero-timer WAIT, whose flag 5 satisfies the event finish condition.
 It encodes PLAY and WAIT completion as distinct transitions, then preserves the
@@ -135,13 +172,34 @@ actor-corruption producer, actual outer branch taken, and other return-place
 writers unresolved.
 
 The producer boundary is represented separately by
-`cutscene-corruption-hypothesis/v1`, whose exact GZ2E01/English artifact has
-SHA-256
-`4009349305be05f0f005095a341d417a500cb956c41415b475a22d349ec46323`.
+`cutscene-corruption-hypothesis/v1`. The corrected GZ2E01/English
+`demo07_01` hypothesis has SHA-256
+`3a3b2ad8d4469e2b6ce888e2c73e274855f420ab7f70217532a4fda570588c16`.
 The transition has unknown evidence and writes only the
 all-STB-lookups-missing field. Its required unknowns retain the actual failure
 site, proof that all STB lookups miss, and the last completed operation/prefix.
 It has no direct scene or return-place effect.
+
+## Ordinary return-place writer and reader
+
+R_SP107 room 3 contains an unlayered `Savmem` actor with raw placement
+`5361766d656d00000000ff0146a21c00459b19434525a000002d002fffffffff`.
+Its parameters are `0x0000ff01`, and its angles are `[45, 47, -1]`.
+`d_a_kytag14.cpp` decodes those values into spawn 1, room 3 (the placement's
+home room overrides parameter room `0xff`), event-label index 45 required set,
+event-label index 47 required unset, and no switch guards. `NO_TELOP` must also
+be clear. When all guards hold, the actor writes R_SP107 room 3 spawn 1 into
+the persistent player return place. The source digest is
+`57744385e319f4f6df99298ce4ebeeb48b67558e557dd8dc0d56af35b22d9283`.
+
+The ordinary savewarp reader is `dComIfGs_gameStart` in `d_com_inf_game.cpp`.
+It passes the stored return-place stage, player-status/spawn, and room directly
+to `setNextStage`; its source digest is
+`b9b37aed0b76eef2d27b35a2ece6ee077086a970f98d18936a83649303f15761`.
+Thus a Castle Town savewarp from the tower requires a Castle Town return place
+to survive. Savewarp does not infer Castle Town from the cutscene or current
+map. The remaining runtime question is why the tower `Savmem` writer does not
+replace that incoming value on the witnessed failure path.
 
 The failure must therefore still be modeled as a resource/actor failure
 predicate with an unknown exceptional suffix, never as a direct warp to
@@ -175,6 +233,12 @@ route-planner extract-cutscene-wrapper \
   --layer 8 \
   --output r-sp301-demo07_02-wrapper.json
 
+route-planner extract-cutscene-wrapper \
+  --archive files/res/Stage/R_SP107/R03_00.arc \
+  --event-name demo07_01 \
+  --layer 8 \
+  --output r-sp107-demo07_01-wrapper.json
+
 route-planner extract-function-evidence \
   --dol orig/GZ2E01/sys/main.dol \
   --symbols config/GZ2E01/symbols.txt \
@@ -207,11 +271,29 @@ route-planner resolve-cutscene-outer \
   --event-list-resource-file event_list.dat \
   --output gz2e01-demo07_02-outer.json
 
+route-planner resolve-cutscene-package \
+  --content-identity gz2e01-content.json \
+  --topology r-sp107-demo07_01-wrapper.json \
+  --semantics gz2e01-demo07_01-semantics.json \
+  --profile data/cutscene-runtime-profiles/gz2e01-demo07_01.json \
+  --output gz2e01-demo07_01-package.json
+
+route-planner resolve-cutscene-outer \
+  --content-identity gz2e01-content.json \
+  --runtime-configuration gz2e01-runtime-en.json \
+  --topology r-sp107-demo07_01-wrapper.json \
+  --package gz2e01-demo07_01-package.json \
+  --stage-resource-file room.dzr \
+  --event-list-resource-file event_list.dat \
+  --profile data/cutscene-outer-runtime-profiles/gz2e01-demo07_01.json \
+  --output gz2e01-demo07_01-outer.json
+
 route-planner compile-cutscene-corruption-hypothesis \
   --content-identity gz2e01-content.json \
   --runtime-configuration gz2e01-runtime-en.json \
-  --outer-event gz2e01-demo07_02-outer.json \
-  --output gz2e01-demo07_02-corruption-hypothesis.json
+  --outer-event gz2e01-demo07_01-outer.json \
+  --outer-profile data/cutscene-outer-runtime-profiles/gz2e01-demo07_01.json \
+  --output gz2e01-demo07_01-corruption-hypothesis.json
 ```
 
 The extraction commands reject malformed offsets, overlapping tables,

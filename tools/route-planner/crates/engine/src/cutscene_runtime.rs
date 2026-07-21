@@ -536,6 +536,16 @@ mod tests {
                 .map(|source| Digest(Sha256::digest(source).into()))
                 .collect::<Vec<_>>()
         );
+
+        let tower_profile = CutscenePackageRuntimeProfile::decode_canonical(include_bytes!(
+            "../data/cutscene-runtime-profiles/gz2e01-demo07_01.json"
+        ))
+        .unwrap();
+        assert_eq!(tower_profile.id, "gz2e01-demo07-01-package-runtime");
+        assert_eq!(
+            tower_profile.archive_request_failure,
+            ArchiveRequestFailureBehavior::ClearDemoArchiveNameAndContinue
+        );
     }
 
     #[test]

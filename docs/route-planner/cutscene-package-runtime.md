@@ -13,8 +13,10 @@ The join deliberately keeps three claims separate:
 3. A particular corruption setup actually produces that failure at a witnessed
    point.
 
-The first two are now source/data-backed for GZ2E01 `demo07_02`; the third is
-still unresolved.
+The first two are now source/data-backed for both GZ2E01 `demo07_01` and
+downstream `demo07_02`; the exact-context producer and exceptional suffix remain
+unresolved. The primary wrong-warp video names `Demo07_01.arc`, so the
+corruption hypothesis belongs to `demo07_01`, not `demo07_02`.
 
 ## Audited failure chain
 
@@ -29,13 +31,14 @@ For the exact GZ2E01 executable:
 - when all lookups miss, the shared binary parser rejects the null pointer and
   `dDemo_c::start` returns false before its demo-mode write;
 - the optional PACKAGE `EventFlag` check occurs after the start attempt; the
-  exact `demo07_02` PLAY cut has no such parameter, so no event-flag write occurs;
+  neither exact PLAY cut has such a parameter, so no event-flag write occurs;
   and
 - PACKAGE completes PLAY when demo mode is zero.
 
-Once the authored event finish condition is satisfied, the outer event manager
-has three separate outcomes for this REVT record. The exact event's finish list
-is `[5, -1, -1]`; it does not require every parallel staff path to finish:
+Once an authored event finish condition is satisfied, the outer event manager
+has three separate outcomes for its REVT record. `demo07_01` finishes on
+`[19, -1, -1]`; `demo07_02` finishes on `[5, -1, -1]`. Neither requires every
+parallel staff path to finish. For downstream `demo07_02`:
 
 - with scene-change suppression clear and skip inactive, it selects SCLS 1
   (`F_SP116`, Castle Town);
@@ -79,11 +82,20 @@ The separate `cutscene-outer-runtime-profile/v1` has SHA-256
 It binds the exact package artifact, state-field names, and audited event-data,
 event-manager, and REVT source semantics. The resulting
 `resolved-cutscene-outer-event/v1` artifact has SHA-256
-`a867ffa2abf2a7c4a07810d8b8109b96deb755b068973e1141fd8315cf7938c6`.
+`407d4d71d578506556f05e6b3bcea738fbf93dbf601722c2ccb749a9d818356e`.
 It verifies the raw stage and event-list resources, proves PACKAGE PLAY advances
 to a zero-timer WAIT whose flag 5 satisfies the event finish condition, and
 emits two ordered completion transitions followed by the three conditioned
 outer outcomes.
+
+The exact `demo07_01` wrapper, semantic program, package, and outer artifacts
+have SHA-256 values
+`6333063dc4f072cec00236061ec18046b728767631c1b83ea153e83573d407c4`,
+`4e19f0a2919d74f223a8373c2d30e98860be82092bb44b05a0a381aba769c7d6`,
+`9a120fb2d57250b9e239312431239903b13c05d2ff76ffbb6b228ec713cac50d`,
+and `40a70665788d0030e6153cdef408d146ae45967dc3c0c57e3751f34f69c541f1`.
+Its normal exit is R_SP301, where `demo07_02` begins; its skip exit remains in
+R_SP107 room 3.
 
 Together the artifacts mark archive failure behavior, lookup/parse behavior,
 PACKAGE mode-zero completion, and the outer flag-conditioned dispatch table as
@@ -98,9 +110,9 @@ Consequently the artifact cannot directly choose Castle Town or Zelda's tower,
 cannot invent a return-place write, and cannot make the later savewarp implicit.
 
 The separate `cutscene-corruption-hypothesis/v1` artifact models the remaining
-research link without promoting it. Its canonical GZ2E01/English artifact
-SHA-256 is
-`4009349305be05f0f005095a341d417a500cb956c41415b475a22d349ec46323`.
+research link without promoting it. Its corrected GZ2E01/English `demo07_01`
+artifact SHA-256 is
+`3a3b2ad8d4469e2b6ce888e2c73e274855f420ab7f70217532a4fda570588c16`.
 Its unknown-evidence producer writes only
 `package.stb_lookup_result = all_stb_lookups_missing`. It carries three explicit
 unknown requirements for the actual failure site, whether all STB lookups
@@ -127,8 +139,9 @@ route-planner resolve-cutscene-outer \
 route-planner compile-cutscene-corruption-hypothesis \
   --content-identity gz2e01-content.json \
   --runtime-configuration gz2e01-runtime-en.json \
-  --outer-event gz2e01-demo07_02-outer.json \
-  --output gz2e01-demo07_02-corruption-hypothesis.json
+  --outer-event gz2e01-demo07_01-outer.json \
+  --outer-profile data/cutscene-outer-runtime-profiles/gz2e01-demo07_01.json \
+  --output gz2e01-demo07_01-corruption-hypothesis.json
 ```
 
 An explicit `--profile` supports another audited build or a theorycraft profile,

@@ -57,11 +57,14 @@ that normal scene-change and resource-failure branches compile to distinct
 transition kinds, confirmed prefix writes remain ordered, the unaudited suffix
 is invalidated, and no return-place write is invented.
 
-The exact GZ2E01 wrapper is audited in
-`gz2e01-zelda-cutscene-source-audit.md`: `demo07_02` selects
-`Demo07_02/demo07_02.stb`, map-tool ID 4, normal SCLS exit 1 to Castle Town, and
-skip SCLS exit 2 back to Zelda's tower. The room-loader return-place call is an
-exact four-byte `blr`, so it preserves every incoming value generically.
+The exact GZ2E01 wrappers are audited in
+`gz2e01-zelda-cutscene-source-audit.md`: tower event `demo07_01` selects
+`Demo07_01/demo07_01.stb` and normally enters R_SP301; R_SP301 event
+`demo07_02` then selects `Demo07_02/demo07_02.stb` and normally enters Castle
+Town. Both have authored skip exits back to Zelda's tower. The primary
+actor-corruption witness fails `Demo07_01.arc`. The room-loader return-place
+call is an exact four-byte `blr`, so it preserves every incoming value
+generically.
 The STB's 29 object streams, 387 commands, and 817 paragraph headers are bounded
 and digest-sealed. A separate exact-GZ2E01 adaptor profile resolves all 695
 object-specific paragraphs, including actor resource-ID requests, without

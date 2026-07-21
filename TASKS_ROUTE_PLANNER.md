@@ -1896,9 +1896,10 @@ Deliverable: replayable state evidence that can validate transition rules.
         transition kinds and exact ordered effects. See
         `docs/route-planner/cutscene-phase-programs.md`.
   - [x] Add bounded planner-owned `event_list.dat`, REVT, and LBNK extraction;
-        prove the exact GZ2E01 `demo07_02` package/map-tool wrapper and its
-        normal Castle Town versus skip Zelda-tower SCLS destinations. JStudio
-        phase decoding and exceptional failure semantics remain open. See
+        prove the exact GZ2E01 two-wrapper chain: tower `demo07_01` normally
+        enters R_SP301, whose `demo07_02` normally enters Castle Town; both
+        retain authored Zelda-tower skip destinations. JStudio phase decoding
+        and exceptional failure semantics are tracked separately. See
         `docs/route-planner/gz2e01-zelda-cutscene-source-audit.md`.
   - [x] Join a named event's REVT/LBNK/SCLS records to its linked
         `event_list.dat` staff/cut/data paths in a canonical planner-owned
@@ -2591,6 +2592,14 @@ sequence.
 - [ ] Trace the post-Zelda cutscene as ordered phases, including its Castle Town
       scene change, actor/archive loads, event writes, return/restart-place
       writers, and cleanup.
+  - [x] Split the sequence at its real stage boundary. R_SP107 room 3 layer 8
+        selects `Demo07_01`; normal `demo07_01` completion enters R_SP301 room 0
+        layer 8. Only that downstream room selects `Demo07_02`, whose normal
+        completion enters Castle Town. Do not collapse these into one event.
+  - [x] Extract the exact R_SP107 `demo07_01` wrapper and package/outer behavior.
+        Its normal exit is R_SP301, its skip exit is R_SP107 room 3 spawn 1, its
+        finish flags are `[19, -1, -1]`, and the generic resolver emits its five
+        phase/dispatch transitions without `demo07_02`-specific IDs or labels.
   - [x] Extract the exact outer retail event topology: R_SP301 layer 8 selects
         `Demo07_02`; `demo07_02` runs `demo07_02.stb` plus map-tool ID 4; normal
         completion selects SCLS 1 to Castle Town and event skip selects SCLS 2
@@ -2613,6 +2622,11 @@ sequence.
 - [ ] Capture normal completion and actor-corruption/archive-load-failure paths;
       identify the last confirmed operation and every flag or writer that becomes
       skipped versus unknown.
+  - [x] Correct the witnessed failure site from `Demo07_02` to `Demo07_01`.
+        The primary video visibly reports allocation/resource failure for
+        `Demo07_01.arc`, then demonstrates a later save/reload into Castle Town.
+        The recording does not by itself prove an exact disc build, every
+        intervening flag, or the retained return-place bytes.
   - [x] Resolve the exact GZ2E01 all-STB-lookups-missing branch: archive request
         rejection clears the demo name, negative sync continues room init, STB
         lookup falls through demo/room/stage archives, parse returns before the
@@ -2628,10 +2642,21 @@ sequence.
       predicate, not as a direct Castle Town warp. The exact-context hypothesis
       transition has unknown evidence and explicit failure-site, all-STB-miss,
       and completed-prefix requirements; its only effect writes the named
-      failure predicate, never location or return place.
+      failure predicate, never location or return place. The compiler is
+      event-generic and binds this hypothesis to `demo07_01`; it must not attach
+      the witnessed failure to downstream `demo07_02`.
 - [ ] Verify whether any writer other than the proven room-loader no-op can run
       on the actor-corruption path, and that ordinary savewarp subsequently
       reads the retained value from Zelda's tower.
+  - [x] Identify the exact unlayered R_SP107 room-3 `Savmem` placement and decode
+        its ordinary writer: parameters `0x0000ff01`, event-label index 45 must
+        be set, event-label index 47 must be unset, switches are unguarded, and
+        `NO_TELOP` must be clear. When it executes, it writes R_SP107 room 3,
+        spawn 1. Whether this actor executes after the witnessed allocation
+        failure remains an explicit runtime question.
+  - [x] Source-audit the ordinary savewarp reader: `dComIfGs_gameStart` reads the
+        persistent player return-place stage, room, and player-status/spawn into
+        `setNextStage`; it does not synthesize Castle Town from the current map.
 - [ ] Vary the incoming return place across a witnessed actor-corruption trace;
       the GZ2E01 room-loader call is already proven to preserve it generically,
       but the complete failure suffix is not yet bounded.

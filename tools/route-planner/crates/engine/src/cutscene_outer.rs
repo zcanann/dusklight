@@ -341,6 +341,7 @@ impl ResolvedCutsceneOuterEvent {
                     },
                 }],
             },
+            &self.event_name,
             &self.state_binding,
             self.package_play.completion_flag,
             self.package_wait.completion_flag,
@@ -554,6 +555,7 @@ pub fn resolve_cutscene_outer_event(
     };
     let transitions = compile_dispatch_transitions(
         &scope,
+        &topology.event_name,
         &profile.state_binding,
         play.flag_id,
         wait.flag_id,
@@ -654,8 +656,10 @@ fn resolved_cut(cut: &ExtractedEventCut, has_timer_parameter: bool) -> ResolvedO
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_dispatch_transitions(
     scope: &ContextScope,
+    event_name: &str,
     binding: &CutsceneOuterStateBinding,
     play_flag: u32,
     finish_flag: u32,
@@ -665,9 +669,10 @@ fn compile_dispatch_transitions(
 ) -> Result<Vec<CandidateTransition>, PlannerContractError> {
     let normal_exit = require_exit(normal_exit, CutsceneWrapperExitKind::Normal)?;
     let skip_exit = require_exit(skip_exit, CutsceneWrapperExitKind::Skip)?;
+    let transition_prefix = format!("transition.cutscene.{event_name}");
     let mut transitions = vec![
         phase_transition(
-            "transition.cutscene.demo07_02.missing-stb.play-complete",
+            &format!("{transition_prefix}.missing-stb.play-complete"),
             "Complete PACKAGE PLAY after all STB lookups miss",
             TransitionKind::ResourceLoadFailure,
             scope,
@@ -682,7 +687,7 @@ fn compile_dispatch_transitions(
             evidence,
         )?,
         phase_transition(
-            "transition.cutscene.demo07_02.wait-complete",
+            &format!("{transition_prefix}.wait-complete"),
             "Complete zero-timer PACKAGE WAIT",
             TransitionKind::Cutscene,
             scope,
@@ -697,8 +702,11 @@ fn compile_dispatch_transitions(
             evidence,
         )?,
         dispatch_transition(
-            "transition.cutscene.demo07_02.outer.normal-exit",
-            "Dispatch completed event through the normal Castle Town exit",
+            &format!("{transition_prefix}.outer.normal-exit"),
+            &format!(
+                "Dispatch completed event through the normal exit to {}",
+                normal_exit.transition.destination_stage
+            ),
             scope,
             binding,
             finish_flag,
@@ -708,8 +716,11 @@ fn compile_dispatch_transitions(
             evidence,
         )?,
         dispatch_transition(
-            "transition.cutscene.demo07_02.outer.skip-exit",
-            "Dispatch completed event through the active skip exit",
+            &format!("{transition_prefix}.outer.skip-exit"),
+            &format!(
+                "Dispatch completed event through the active skip exit to {}",
+                skip_exit.transition.destination_stage
+            ),
             scope,
             binding,
             finish_flag,
@@ -719,7 +730,7 @@ fn compile_dispatch_transitions(
             evidence,
         )?,
         dispatch_transition(
-            "transition.cutscene.demo07_02.outer.suppressed",
+            &format!("{transition_prefix}.outer.suppressed"),
             "Close completed event with scene change suppressed",
             scope,
             binding,
@@ -1032,6 +1043,16 @@ mod tests {
                 Digest(Sha256::digest(bytes).into())
             );
         }
+
+        let tower_profile = CutsceneOuterRuntimeProfile::decode_canonical(include_bytes!(
+            "../data/cutscene-outer-runtime-profiles/gz2e01-demo07_01.json"
+        ))
+        .unwrap();
+        assert_eq!(tower_profile.id, "gz2e01-demo07-01-outer-runtime");
+        assert_eq!(
+            tower_profile.state_binding.flow_component_id,
+            "cutscene.demo07_01.runtime"
+        );
     }
 
     #[test]
@@ -1061,6 +1082,7 @@ mod tests {
         let skip_exit = fixture_exit(CutsceneWrapperExitKind::Skip, "R_SP107", 3, 1, None);
         let transitions = compile_dispatch_transitions(
             &scope,
+            "demo07_02",
             &profile.state_binding,
             3,
             5,
@@ -1079,6 +1101,27 @@ mod tests {
                         StateOperation::AdvanceFlow { .. }
                     ]
                 )
+        }));
+
+        let tower_transitions = compile_dispatch_transitions(
+            &scope,
+            "demo07_01",
+            &profile.state_binding,
+            17,
+            19,
+            Some(&fixture_exit(
+                CutsceneWrapperExitKind::Normal,
+                "R_SP301",
+                0,
+                20,
+                Some(8),
+            )),
+            Some(&skip_exit),
+            &profile.evidence,
+        )
+        .unwrap();
+        assert!(tower_transitions.iter().all(|transition| {
+            transition.id.contains("demo07_01") && !transition.label.contains("Castle Town")
         }));
 
         let steps = vec![

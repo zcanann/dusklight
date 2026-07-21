@@ -104,10 +104,12 @@ The planner CLI currently owns thirty-four operations:
 - `resolve-cutscene-outer` verifies exact stage/event-list resources, derives
   PACKAGE PLAY-to-WAIT completion flags, and emits normal, skip, and suppressed
   exact-context candidate transitions without choosing unknown runtime flags.
+  Transition identities and destination labels derive from the selected event
+  and exits; the resolver is not hard-coded to the downstream Zelda cutscene.
 - `compile-cutscene-corruption-hypothesis` emits an unknown-evidence producer
   for only the named failed-load predicate. It carries explicit failure-site,
   predicate, and prefix unknowns and cannot directly change location or return
-  place.
+  place. The producer binds to the exact outer event supplied by the caller.
 - `extract-cutscene-wrapper` joins one named REVT/LBNK/SCLS event to its exact
   `event_list.dat` staff/cut/parameter graph. Its coverage record keeps JStudio
   phases, exceptional load flow, and return-place writers unresolved until a

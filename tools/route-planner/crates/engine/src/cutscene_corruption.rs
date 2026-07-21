@@ -213,11 +213,14 @@ pub fn compile_actor_corruption_hypothesis(
         ));
     }
     let binding = &outer_profile.state_binding;
+    let event_name = &outer_event.event_name;
     let report = EvidenceRecord {
         id: "community.actor-corruption.post-zelda".into(),
         kind: EvidenceKind::CommunityReported,
         source_sha256: None,
-        note: "Actor corruption is reported to skip the post-Zelda cutscene, but the exact failed resource, completed prefix, runtime flags, and return-place suffix are not yet witnessed.".into(),
+        note: format!(
+            "Actor corruption is reported to skip {event_name}, but the exact-context failure site, completed prefix, runtime flags, and return-place suffix are not yet fully witnessed."
+        ),
     };
     let unknown = |id: &str, description: &str| UnknownRequirement {
         id: id.into(),
@@ -228,7 +231,7 @@ pub fn compile_actor_corruption_hypothesis(
         },
     };
     let producer = CandidateTransition {
-        id: "transition.cutscene.demo07_02.actor-corruption.failure-hypothesis".into(),
+        id: format!("transition.cutscene.{event_name}.actor-corruption.failure-hypothesis"),
         label: "Hypothesize actor corruption produces the all-STB-lookups-missing predicate".into(),
         scope: ContextScope {
             selectors: vec![ContextSelector::Exact {
@@ -239,7 +242,7 @@ pub fn compile_actor_corruption_hypothesis(
             }],
         },
         transition_kind: TransitionKind::ResourceLoadFailure,
-        approach_id: "cutscene.demo07_02.actor-corruption".into(),
+        approach_id: format!("cutscene.{event_name}.actor-corruption"),
         activation: ActivationContract {
             hard_guards: PredicateExpression::Compare {
                 left: ValueReference::FlowNode {
@@ -280,7 +283,7 @@ pub fn compile_actor_corruption_hypothesis(
     };
     let hypothesis = CutsceneCorruptionHypothesis {
         schema: CUTSCENE_CORRUPTION_HYPOTHESIS_SCHEMA.into(),
-        id: "gz2e01-demo07-02-actor-corruption".into(),
+        id: format!("gz2e01-{}-actor-corruption", event_name.replace('_', "-")),
         content_sha256,
         runtime_configuration_sha256,
         outer_event_sha256,
