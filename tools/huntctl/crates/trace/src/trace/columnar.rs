@@ -291,7 +291,7 @@ fn validate_channel_status(
                     | TraceChannelStatus::Absent
                     | TraceChannelStatus::Unavailable
             ),
-            (TraceChannel::PlayerBackgroundCollision, 1) => matches!(
+            (TraceChannel::PlayerBackgroundCollision, 1 | 2) => matches!(
                 status,
                 TraceChannelStatus::Present
                     | TraceChannelStatus::Absent
@@ -592,9 +592,11 @@ fn decode_v2_channel(
                 grabbed_actor,
             });
         }
-        TraceChannel::PlayerBackgroundCollision => {
-            decode_player_background_collision_v1(bytes, record)?
-        }
+        TraceChannel::PlayerBackgroundCollision => match version {
+            1 => decode_player_background_collision_v1(bytes, record)?,
+            2 => decode_player_background_collision_v2(bytes, record)?,
+            _ => unreachable!("channel version was validated"),
+        },
         TraceChannel::PlayerCollisionSurfaces => {
             decode_player_collision_surfaces_v1(bytes, record)?
         }
@@ -1144,6 +1146,103 @@ fn decode_player_background_collision_v1(
         old_position,
         resolved_frame_displacement,
         final_position,
+        solver: None,
+    });
+    Ok(())
+}
+
+fn decode_player_background_collision_v2(
+    bytes: &[u8],
+    record: &mut TraceRecord,
+) -> Result<(), TraceError> {
+    decode_player_background_collision_v1(&bytes[..128], record)?;
+    let flags = u32_at(bytes, 128);
+    if flags & !0x00f1_fffe != 0 || bytes[137] != 0 || u16_at(bytes, 138) != 0 {
+        return Err(TraceError(
+            "invalid gameplay trace collision-solver header".into(),
+        ));
+    }
+    let line_start = [f32_at(bytes, 140), f32_at(bytes, 144), f32_at(bytes, 148)];
+    let line_end = [f32_at(bytes, 152), f32_at(bytes, 156), f32_at(bytes, 160)];
+    let wall_cylinder_center = [f32_at(bytes, 164), f32_at(bytes, 168), f32_at(bytes, 172)];
+    let wall_cylinder_radius = f32_at(bytes, 176);
+    let wall_cylinder_height = f32_at(bytes, 180);
+    let ground_check_offset = f32_at(bytes, 184);
+    let roof_correction_height = f32_at(bytes, 188);
+    let water_check_offset = f32_at(bytes, 192);
+    let walls: [TraceCollisionSolverWall; 3] = (0..3)
+        .map(|index| {
+            let offset = 196 + index * 40;
+            let wall_flags = u32_at(bytes, offset);
+            if wall_flags & !0x6 != 0 || u16_at(bytes, offset + 6) != 0 {
+                return Err(TraceError(format!(
+                    "invalid gameplay trace collision-solver wall {index} header"
+                )));
+            }
+            Ok(TraceCollisionSolverWall {
+                flags: wall_flags,
+                angle_y: i16_at(bytes, offset + 4),
+                wall_radius_squared: f32_at(bytes, offset + 8),
+                wall_height: f32_at(bytes, offset + 12),
+                wall_radius: f32_at(bytes, offset + 16),
+                direct_wall_height: f32_at(bytes, offset + 20),
+                realized_center: [
+                    f32_at(bytes, offset + 24),
+                    f32_at(bytes, offset + 28),
+                    f32_at(bytes, offset + 32),
+                ],
+                realized_radius: f32_at(bytes, offset + 36),
+            })
+        })
+        .collect::<Result<Vec<_>, TraceError>>()?
+        .try_into()
+        .expect("three collision-solver wall slots");
+    if line_start
+        .iter()
+        .chain(&line_end)
+        .chain(&wall_cylinder_center)
+        .chain([
+            &wall_cylinder_radius,
+            &wall_cylinder_height,
+            &ground_check_offset,
+            &roof_correction_height,
+            &water_check_offset,
+        ])
+        .chain(walls.iter().flat_map(|wall| {
+            [
+                &wall.wall_radius_squared,
+                &wall.wall_height,
+                &wall.wall_radius,
+                &wall.direct_wall_height,
+                &wall.realized_center[0],
+                &wall.realized_center[1],
+                &wall.realized_center[2],
+                &wall.realized_radius,
+            ]
+        }))
+        .any(|value| !value.is_finite())
+    {
+        return Err(TraceError(
+            "nonfinite gameplay trace collision-solver geometry".into(),
+        ));
+    }
+    record
+        .player_background_collision
+        .as_mut()
+        .expect("v1 collision prefix decoded")
+        .solver = Some(TracePlayerCollisionSolver {
+        flags,
+        wall_table_size: u32_at(bytes, 132) as i32,
+        water_mode: bytes[136],
+        line_start,
+        line_end,
+        wall_cylinder_center,
+        wall_cylinder_radius,
+        wall_cylinder_height,
+        ground_check_offset,
+        roof_correction_height,
+        water_check_offset,
+        walls,
     });
     Ok(())
 }

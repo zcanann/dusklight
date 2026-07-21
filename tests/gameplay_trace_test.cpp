@@ -319,13 +319,26 @@ void testSceneExitAndBackgroundCollisionLayout(const std::filesystem::path& path
     collision.oldPosition = {21.0f, 22.0f, 23.0f};
     collision.resolvedFrameDisplacement = {1.0f, -2.0f, 3.0f};
     collision.finalPosition = {22.0f, 20.0f, 26.0f};
+    collision.solverFlags = 0x8;
+    collision.wallTableSize = 3;
+    collision.waterMode = 2;
+    collision.lineStart = {31.0f, 32.0f, 33.0f};
+    collision.lineEnd = {34.0f, 35.0f, 36.0f};
+    collision.wallCylinderCenter = {37.0f, 38.0f, 39.0f};
+    collision.wallCylinderRadius = 40.0f;
+    collision.wallCylinderHeight = 41.0f;
+    collision.groundCheckOffset = 42.0f;
+    collision.roofCorrectionHeight = 43.0f;
+    collision.waterCheckOffset = 44.0f;
+    collision.solverWalls[0] = {
+        0x6, -123, 45.0f, 46.0f, 47.0f, 48.0f, {49.0f, 50.0f, 51.0f}, 52.0f};
     recorder.record(value);
     recorder.stop();
 
     std::string error;
     REQUIRE(write_gameplay_trace(path, recorder, error));
     const auto bytes = readFile(path);
-    REQUIRE(bytes.size() == 571);
+    REQUIRE(bytes.size() == 759);
 
     REQUIRE(readLittle<std::uint16_t>(bytes, 192) == 5);
     REQUIRE(readLittle<std::uint16_t>(bytes, 194) == 2);
@@ -348,8 +361,8 @@ void testSceneExitAndBackgroundCollisionLayout(const std::filesystem::path& path
     REQUIRE(bytes[scene + 87] == 0);
 
     REQUIRE(readLittle<std::uint16_t>(bytes, 256) == 9);
-    REQUIRE(readLittle<std::uint16_t>(bytes, 258) == 1);
-    REQUIRE(readLittle<std::uint32_t>(bytes, 264) == 128);
+    REQUIRE(readLittle<std::uint16_t>(bytes, 258) == 2);
+    REQUIRE(readLittle<std::uint32_t>(bytes, 264) == 316);
     REQUIRE(readLittle<std::uint64_t>(bytes, 272) == 442);
     REQUIRE(readLittle<std::uint64_t>(bytes, 288) == 443);
     REQUIRE(bytes[442] == static_cast<std::uint8_t>(GameplayTraceChannelStatus::Present));
@@ -366,6 +379,16 @@ void testSceneExitAndBackgroundCollisionLayout(const std::filesystem::path& path
     REQUIRE(readFloat(bytes, collisionOffset + 92) == 21.0f);
     REQUIRE(readFloat(bytes, collisionOffset + 104) == 1.0f);
     REQUIRE(readFloat(bytes, collisionOffset + 124) == 26.0f);
+    REQUIRE(readLittle<std::uint32_t>(bytes, collisionOffset + 128) == 0x8);
+    REQUIRE(readLittle<std::int32_t>(bytes, collisionOffset + 132) == 3);
+    REQUIRE(bytes[collisionOffset + 136] == 2);
+    REQUIRE(readFloat(bytes, collisionOffset + 140) == 31.0f);
+    REQUIRE(readFloat(bytes, collisionOffset + 176) == 40.0f);
+    REQUIRE(readFloat(bytes, collisionOffset + 192) == 44.0f);
+    REQUIRE(readLittle<std::uint32_t>(bytes, collisionOffset + 196) == 0x6);
+    REQUIRE(readLittle<std::int16_t>(bytes, collisionOffset + 200) == -123);
+    REQUIRE(readFloat(bytes, collisionOffset + 204) == 45.0f);
+    REQUIRE(readFloat(bytes, collisionOffset + 232) == 52.0f);
 }
 
 void testExactV2Layout(const std::filesystem::path& path) {

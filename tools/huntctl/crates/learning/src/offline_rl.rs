@@ -795,9 +795,16 @@ fn validate_movement_trace_format_v2(
         let channel = trace_channel_named(&requirement.channel)
             .expect("built-in observation spec uses known trace channels");
         let actual = trace.channel_formats.get(&channel);
-        if actual.is_none_or(|format| {
-            format.version != requirement.version || format.stride != requirement.stride as usize
-        }) {
+        let compatible_collision_prefix = channel == TraceChannel::PlayerBackgroundCollision
+            && requirement.version == 1
+            && requirement.stride == 128
+            && actual.is_some_and(|format| format.version == 2 && format.stride == 316);
+        if !compatible_collision_prefix
+            && actual.is_none_or(|format| {
+                format.version != requirement.version
+                    || format.stride != requirement.stride as usize
+            })
+        {
             return Err(OfflineRlError::UnsupportedObservationChannelFormat {
                 channel: channel.name(),
                 expected_version: requirement.version,
@@ -1920,6 +1927,7 @@ mod tests {
                 old_position: record.position,
                 resolved_frame_displacement: [1.0, 0.0, 0.0],
                 final_position: record.position,
+                solver: None,
             });
             record.player_collision_surfaces = Some(TracePlayerCollisionSurfaces {
                 flags: 1,

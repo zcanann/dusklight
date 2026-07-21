@@ -340,6 +340,34 @@ pub struct TraceCollisionWall {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TraceCollisionSolverWall {
+    pub flags: u32,
+    pub angle_y: i16,
+    pub wall_radius_squared: f32,
+    pub wall_height: f32,
+    pub wall_radius: f32,
+    pub direct_wall_height: f32,
+    pub realized_center: [f32; 3],
+    pub realized_radius: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TracePlayerCollisionSolver {
+    pub flags: u32,
+    pub wall_table_size: i32,
+    pub water_mode: u8,
+    pub line_start: [f32; 3],
+    pub line_end: [f32; 3],
+    pub wall_cylinder_center: [f32; 3],
+    pub wall_cylinder_radius: f32,
+    pub wall_cylinder_height: f32,
+    pub ground_check_offset: f32,
+    pub roof_correction_height: f32,
+    pub water_check_offset: f32,
+    pub walls: [TraceCollisionSolverWall; 3],
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TracePlayerBackgroundCollision {
     pub flags: u32,
     pub ground_height: f32,
@@ -362,6 +390,7 @@ pub struct TracePlayerBackgroundCollision {
     pub old_position: [f32; 3],
     pub resolved_frame_displacement: [f32; 3],
     pub final_position: [f32; 3],
+    pub solver: Option<TracePlayerCollisionSolver>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -708,6 +737,7 @@ fn channel_definition(channel: TraceChannel, version: u16) -> Option<ChannelDefi
         (TraceChannel::PlayerAction, 2) => 136,
         (TraceChannel::PlayerAction, 3) => 160,
         (TraceChannel::PlayerBackgroundCollision, 1) => 128,
+        (TraceChannel::PlayerBackgroundCollision, 2) => 316,
         (TraceChannel::PlayerCollisionSurfaces, 1) => 496,
         (TraceChannel::GoalProgress, 1) => 32,
         (TraceChannel::SelectedActors, 1) => 656,

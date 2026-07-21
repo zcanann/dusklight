@@ -171,6 +171,41 @@ fn v2_decodes_player_background_collision_v1() {
     assert_eq!(collision.resolved_frame_displacement, [4.0, 5.0, 6.0]);
     assert_eq!(collision.final_position, [5.0, 7.0, 9.0]);
     assert!(collision.walls.iter().all(|wall| wall.bg_index.is_none()));
+    assert!(collision.solver.is_none());
+}
+
+#[test]
+fn v2_decodes_player_background_collision_v2_solver_state() {
+    let decoded = decode(&build_v2_trace(vec![(
+        TraceChannel::PlayerBackgroundCollision,
+        2,
+        TraceChannelStatus::Present,
+        background_collision_v2_payload(),
+    )]))
+    .unwrap();
+    assert_eq!(
+        decoded.channel_formats[&TraceChannel::PlayerBackgroundCollision],
+        TraceChannelWireFormat {
+            version: 2,
+            stride: 316
+        }
+    );
+    let solver = decoded.records[0]
+        .player_background_collision
+        .as_ref()
+        .unwrap()
+        .solver
+        .as_ref()
+        .unwrap();
+    assert_eq!(solver.flags, 0x2000);
+    assert_eq!(solver.wall_table_size, 3);
+    assert_eq!(solver.water_mode, 1);
+    assert_eq!(solver.line_start, [1.0, 2.0, 3.0]);
+    assert_eq!(solver.wall_cylinder_radius, 35.0);
+    assert_eq!(solver.ground_check_offset, 60.0);
+    assert_eq!(solver.walls[0].flags, 2);
+    assert_eq!(solver.walls[0].angle_y, 0x1200);
+    assert_eq!(solver.walls[0].realized_center, [4.0, 5.0, 6.0]);
 }
 
 #[test]
@@ -1070,6 +1105,31 @@ fn background_collision_v1_payload() -> Vec<u8> {
         .enumerate()
     {
         write_f32(&mut payload, 92 + index * 4, value);
+    }
+    payload
+}
+
+fn background_collision_v2_payload() -> Vec<u8> {
+    let mut payload = background_collision_v1_payload();
+    payload.resize(316, 0);
+    payload[128..132].copy_from_slice(&0x2000_u32.to_le_bytes());
+    payload[132..136].copy_from_slice(&3_i32.to_le_bytes());
+    payload[136] = 1;
+    for (index, value) in [1.0, 2.0, 3.0].into_iter().enumerate() {
+        write_f32(&mut payload, 140 + index * 4, value);
+    }
+    write_f32(&mut payload, 176, 35.0);
+    write_f32(&mut payload, 180, 70.0);
+    write_f32(&mut payload, 184, 60.0);
+    write_f32(&mut payload, 188, 5.0);
+    write_f32(&mut payload, 192, 1000.0);
+    payload[196..200].copy_from_slice(&2_u32.to_le_bytes());
+    payload[200..202].copy_from_slice(&0x1200_i16.to_le_bytes());
+    for (offset, value) in [1225.0, 35.0, 35.0, 30.0, 4.0, 5.0, 6.0, 35.0]
+        .into_iter()
+        .enumerate()
+    {
+        write_f32(&mut payload, 204 + offset * 4, value);
     }
     payload
 }

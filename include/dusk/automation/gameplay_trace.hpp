@@ -307,6 +307,17 @@ struct GameplayTraceCollisionWallSample {
     std::uint16_t flags = 0;
 };
 
+struct GameplayTraceCollisionSolverWallSample {
+    std::uint32_t flags = 0;
+    std::int16_t angleY = 0;
+    float wallRadiusSquared = 0.0F;
+    float wallHeight = 0.0F;
+    float wallRadius = 0.0F;
+    float directWallHeight = 0.0F;
+    std::array<float, 3> realizedCenter{};
+    float realizedRadius = 0.0F;
+};
+
 struct GameplayTracePlayerBackgroundCollisionSample {
     std::uint32_t flags = 0;
     float groundHeight = -1000000000.0f;
@@ -326,6 +337,18 @@ struct GameplayTracePlayerBackgroundCollisionSample {
     std::array<float, 3> oldPosition{};
     std::array<float, 3> resolvedFrameDisplacement{};
     std::array<float, 3> finalPosition{};
+    std::uint32_t solverFlags = 0;
+    std::int32_t wallTableSize = 0;
+    std::uint8_t waterMode = 0;
+    std::array<float, 3> lineStart{};
+    std::array<float, 3> lineEnd{};
+    std::array<float, 3> wallCylinderCenter{};
+    float wallCylinderRadius = 0.0F;
+    float wallCylinderHeight = 0.0F;
+    float groundCheckOffset = 0.0F;
+    float roofCorrectionHeight = 0.0F;
+    float waterCheckOffset = 0.0F;
+    std::array<GameplayTraceCollisionSolverWallSample, 3> solverWalls{};
 };
 
 struct GameplayTraceCollisionSurfaceSample {

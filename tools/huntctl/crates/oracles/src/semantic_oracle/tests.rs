@@ -35,6 +35,7 @@ fn collision(flags: u32) -> TracePlayerBackgroundCollision {
         old_position: [0.0; 3],
         resolved_frame_displacement: [0.0; 3],
         final_position: [0.0; 3],
+        solver: None,
     }
 }
 

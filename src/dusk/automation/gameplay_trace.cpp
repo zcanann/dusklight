@@ -36,7 +36,7 @@ constexpr std::array kChannels{
     ChannelDefinition{GameplayTraceChannel::Rng, 1, 64, false},
     ChannelDefinition{GameplayTraceChannel::Camera, 1, 48, false},
     ChannelDefinition{GameplayTraceChannel::PlayerAction, 3, 160, false},
-    ChannelDefinition{GameplayTraceChannel::PlayerBackgroundCollision, 1, 128, false},
+    ChannelDefinition{GameplayTraceChannel::PlayerBackgroundCollision, 2, 316, false},
     ChannelDefinition{GameplayTraceChannel::PlayerCollisionSurfaces, 1, 496, false},
     ChannelDefinition{GameplayTraceChannel::GoalProgress, 1, 32, false},
     ChannelDefinition{GameplayTraceChannel::SelectedActors, 1, 656, false},
@@ -192,6 +192,30 @@ void write_player_background_collision(
     write_vec3(stream, sample.oldPosition);
     write_vec3(stream, sample.resolvedFrameDisplacement);
     write_vec3(stream, sample.finalPosition);
+    write_integer(stream, sample.solverFlags);
+    write_integer(stream, sample.wallTableSize);
+    write_integer(stream, sample.waterMode);
+    write_integer<std::uint8_t>(stream, 0);
+    write_integer<std::uint16_t>(stream, 0);
+    write_vec3(stream, sample.lineStart);
+    write_vec3(stream, sample.lineEnd);
+    write_vec3(stream, sample.wallCylinderCenter);
+    write_float(stream, sample.wallCylinderRadius);
+    write_float(stream, sample.wallCylinderHeight);
+    write_float(stream, sample.groundCheckOffset);
+    write_float(stream, sample.roofCorrectionHeight);
+    write_float(stream, sample.waterCheckOffset);
+    for (const GameplayTraceCollisionSolverWallSample& wall : sample.solverWalls) {
+        write_integer(stream, wall.flags);
+        write_integer(stream, wall.angleY);
+        write_integer<std::uint16_t>(stream, 0);
+        write_float(stream, wall.wallRadiusSquared);
+        write_float(stream, wall.wallHeight);
+        write_float(stream, wall.wallRadius);
+        write_float(stream, wall.directWallHeight);
+        write_vec3(stream, wall.realizedCenter);
+        write_float(stream, wall.realizedRadius);
+    }
 }
 
 void write_collision_surface(
@@ -589,6 +613,7 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
                     GameplayTraceCollisionGroundIdentityPresent |
                     GameplayTraceCollisionRoofIdentityPresent |
                     GameplayTraceCollisionWaterIdentityPresent)) != 0 ||
+            (sample.playerBackgroundCollision.solverFlags & ~0x00f1fffeu) != 0 ||
             (sample.playerCollisionSurfaces.flags &
                 ~(GameplayTraceCollisionSurfaceCurrentRoomValid |
                     GameplayTraceCollisionSurfaceExplicitLinkExitPresent |
@@ -621,6 +646,14 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
                         GameplayTraceCollisionWallIdentityPresent)) != 0)
             {
                 error = "gameplay trace sample has unknown collision wall flags";
+                return false;
+            }
+        }
+        for (const GameplayTraceCollisionSolverWallSample& wall :
+            sample.playerBackgroundCollision.solverWalls)
+        {
+            if ((wall.flags & ~0x6u) != 0) {
+                error = "gameplay trace sample has unknown collision solver wall flags";
                 return false;
             }
         }
@@ -808,6 +841,27 @@ bool validate_trace(const GameplayTraceRecorder& recorder, std::string& error) {
                         error = "gameplay trace background-collision trajectory is incoherent";
                         return false;
                     }
+                }
+            }
+            if (!finiteFloats(collision.lineStart) || !finiteFloats(collision.lineEnd) ||
+                !finiteFloats(collision.wallCylinderCenter) ||
+                !std::isfinite(collision.wallCylinderRadius) ||
+                !std::isfinite(collision.wallCylinderHeight) ||
+                !std::isfinite(collision.groundCheckOffset) ||
+                !std::isfinite(collision.roofCorrectionHeight) ||
+                !std::isfinite(collision.waterCheckOffset))
+            {
+                error = "gameplay trace collision solver geometry is nonfinite";
+                return false;
+            }
+            for (const GameplayTraceCollisionSolverWallSample& wall : collision.solverWalls) {
+                if (!std::isfinite(wall.wallRadiusSquared) ||
+                    !std::isfinite(wall.wallHeight) || !std::isfinite(wall.wallRadius) ||
+                    !std::isfinite(wall.directWallHeight) ||
+                    !finiteFloats(wall.realizedCenter) || !std::isfinite(wall.realizedRadius))
+                {
+                    error = "gameplay trace collision solver wall geometry is nonfinite";
+                    return false;
                 }
             }
         }

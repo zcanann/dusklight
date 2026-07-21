@@ -32,12 +32,27 @@ static std::array<RawPadState, kInputPortCount> sLastConsumedPads{};
 static bool sLastConsumedPadsValid = false;
 
 struct GameplayTraceCollisionReadAdapter {
+    static constexpr u32 KnownAcchFlags = 0x00f1fffeu;
     static u32 flags(const dBgS_Acch& value) { return value.m_flags; }
     static u32 wallFlags(const dBgS_AcchCir& value) { return value.m_flags; }
     static s16 wallAngleY(const dBgS_AcchCir& value) { return value.m_wall_angle_y; }
     static float waterHeight(const dBgS_SplGrpChk& value) { return value.m_height; }
     static const cM3dGPla& groundPlane(const dBgS_Acch& value) { return value.field_0xa0; }
     static const cXyz* oldPosition(const dBgS_Acch& value) { return value.pm_old_pos; }
+    static int wallTableSize(const dBgS_Acch& value) { return value.m_tbl_size; }
+    static u8 waterMode(const dBgS_Acch& value) { return value.m_wtr_mode; }
+    static const cM3dGLin& line(const dBgS_Acch& value) { return value.m_lin; }
+    static const cM3dGCyl& wallCylinder(const dBgS_Acch& value) { return value.m_wall_cyl; }
+    static float groundCheckOffset(const dBgS_Acch& value) { return value.m_gnd_chk_offset; }
+    static float roofCorrectionHeight(const dBgS_Acch& value) {
+        return value.m_roof_crr_height;
+    }
+    static float waterCheckOffset(const dBgS_Acch& value) { return value.m_wtr_chk_offset; }
+    static float wallRadiusSquared(const dBgS_AcchCir& value) { return value.m_wall_rr; }
+    static float wallHeight(const dBgS_AcchCir& value) { return value.m_wall_h; }
+    static float wallRadius(const dBgS_AcchCir& value) { return value.m_wall_r; }
+    static float directWallHeight(const dBgS_AcchCir& value) { return value.m_wall_h_direct; }
+    static const cM3dGCir& realizedCircle(const dBgS_AcchCir& value) { return value.m_cir; }
 
     static bool copyKclSurface(const dBgWKCol& value, const std::uint16_t polygon,
         GameplayTraceCollisionSurfaceSample& output) {
@@ -936,6 +951,40 @@ bool capture_gameplay_trace_sample(const GameplayTraceCaptureContext& context,
                 output.finalPosition = {finalPosition.x, finalPosition.y, finalPosition.z};
                 output.resolvedFrameDisplacement = {finalPosition.x - oldPosition->x,
                     finalPosition.y - oldPosition->y, finalPosition.z - oldPosition->z};
+            }
+
+            output.solverFlags = flags & GameplayTraceCollisionReadAdapter::KnownAcchFlags;
+            output.wallTableSize = GameplayTraceCollisionReadAdapter::wallTableSize(acch);
+            output.waterMode = GameplayTraceCollisionReadAdapter::waterMode(acch);
+            const cM3dGLin& line = GameplayTraceCollisionReadAdapter::line(acch);
+            output.lineStart = {line.GetStart().x, line.GetStart().y, line.GetStart().z};
+            output.lineEnd = {line.GetEnd().x, line.GetEnd().y, line.GetEnd().z};
+            const cM3dGCyl& cylinder = GameplayTraceCollisionReadAdapter::wallCylinder(acch);
+            output.wallCylinderCenter = {
+                cylinder.GetC().x, cylinder.GetC().y, cylinder.GetC().z};
+            output.wallCylinderRadius = cylinder.GetR();
+            output.wallCylinderHeight = cylinder.GetH();
+            output.groundCheckOffset =
+                GameplayTraceCollisionReadAdapter::groundCheckOffset(acch);
+            output.roofCorrectionHeight =
+                GameplayTraceCollisionReadAdapter::roofCorrectionHeight(acch);
+            output.waterCheckOffset = GameplayTraceCollisionReadAdapter::waterCheckOffset(acch);
+            for (std::size_t index = 0; index < output.solverWalls.size(); ++index) {
+                const dBgS_AcchCir& source = link->mAcchCir[index];
+                auto& destination = output.solverWalls[index];
+                destination.flags = GameplayTraceCollisionReadAdapter::wallFlags(source) & 0x6u;
+                destination.angleY = GameplayTraceCollisionReadAdapter::wallAngleY(source);
+                destination.wallRadiusSquared =
+                    GameplayTraceCollisionReadAdapter::wallRadiusSquared(source);
+                destination.wallHeight = GameplayTraceCollisionReadAdapter::wallHeight(source);
+                destination.wallRadius = GameplayTraceCollisionReadAdapter::wallRadius(source);
+                destination.directWallHeight =
+                    GameplayTraceCollisionReadAdapter::directWallHeight(source);
+                const cM3dGCir& circle =
+                    GameplayTraceCollisionReadAdapter::realizedCircle(source);
+                destination.realizedCenter = {
+                    circle.GetCx(), circle.GetHeight(), circle.GetCy()};
+                destination.realizedRadius = circle.GetR();
             }
         }
     }

@@ -472,6 +472,7 @@ mod tests {
                 old_position: [0.0; 3],
                 resolved_frame_displacement: [x, 0.0, z],
                 final_position: [x, 0.0, z],
+                solver: None,
             }),
             goal_progress: Some(TraceGoalProgress {
                 configured: true,

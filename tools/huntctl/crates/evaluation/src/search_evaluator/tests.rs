@@ -523,6 +523,7 @@ fn contact_behavior_identity_is_portable_and_run_deduplicated() {
             old_position: [1.0, 2.0, 3.0],
             resolved_frame_displacement: [1.0, 0.0, 0.0],
             final_position: [2.0, 2.0, 3.0],
+            solver: None,
         };
         crate::trace::DecodedTrace {
             version: 5,
