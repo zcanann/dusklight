@@ -5,6 +5,7 @@
 //! only, and held-out results are compared with training-mean predictors.
 
 use crate::artifact::Digest;
+use crate::history_critics::Reservoir;
 use crate::native_actor_features::NativeActorFeatureView;
 use crate::native_auxiliary_dataset::{
     AuxiliarySplit, NativeAuxiliaryDataset, NativeAuxiliaryExample,
@@ -36,6 +37,9 @@ const MAX_EPOCHS: usize = 2_048;
 const MAX_PARAMETERS: usize = 16_000_000;
 const ACTION_CONTEXT_WIDTH: usize = 24;
 const LEARNED_ATTENTION_HEADS: usize = 4;
+pub const DEFAULT_HISTORY_RECURRENT_WIDTH: usize = 16;
+const MAX_HISTORY_RECURRENT_WIDTH: usize = 256;
+const HISTORY_RESERVOIR_SEED: u64 = 0x4e41_5449_5645_4801;
 type TargetNormalization = (Vec<f64>, Vec<f64>, Vec<usize>);
 
 #[derive(Clone, Debug)]
@@ -214,6 +218,16 @@ impl NativeEncoderChannelFamily {
 pub struct NativeEncoderFeatureSpec {
     pub families: Vec<NativeEncoderChannelFamily>,
     pub history_depth: usize,
+    pub history_encoding: NativeEncoderHistoryEncoding,
+    pub history_recurrent_width: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeEncoderHistoryEncoding {
+    None,
+    Stacked,
+    RecurrentReservoir,
 }
 
 impl NativeEncoderFeatureSpec {
@@ -221,6 +235,8 @@ impl NativeEncoderFeatureSpec {
         Self {
             families: NativeEncoderChannelFamily::ALL.into(),
             history_depth: 0,
+            history_encoding: NativeEncoderHistoryEncoding::None,
+            history_recurrent_width: 0,
         }
     }
 
@@ -242,6 +258,8 @@ impl NativeEncoderFeatureSpec {
         let spec = Self {
             families: families.into_iter().collect(),
             history_depth: 0,
+            history_encoding: NativeEncoderHistoryEncoding::None,
+            history_recurrent_width: 0,
         };
         spec.validate()?;
         Ok(spec)
@@ -251,6 +269,20 @@ impl NativeEncoderFeatureSpec {
         if self.families.is_empty()
             || self.families.windows(2).any(|pair| pair[0] >= pair[1])
             || self.history_depth > MAX_EPISODE_HISTORY_DEPTH
+            || !matches!(
+                (
+                    self.history_depth,
+                    self.history_encoding,
+                    self.history_recurrent_width
+                ),
+                (0, NativeEncoderHistoryEncoding::None, 0)
+                    | (1.., NativeEncoderHistoryEncoding::Stacked, 0)
+                    | (
+                        1..,
+                        NativeEncoderHistoryEncoding::RecurrentReservoir,
+                        1..=MAX_HISTORY_RECURRENT_WIDTH
+                    )
+            )
         {
             return Err(TrainableSetError::new(
                 "native encoder feature spec must be nonempty, unique, canonical, and bounded",
@@ -278,6 +310,24 @@ impl NativeEncoderFeatureSpec {
 
     pub fn with_history_depth(mut self, history_depth: usize) -> Result<Self, TrainableSetError> {
         self.history_depth = history_depth;
+        self.history_encoding = if history_depth == 0 {
+            NativeEncoderHistoryEncoding::None
+        } else {
+            NativeEncoderHistoryEncoding::Stacked
+        };
+        self.history_recurrent_width = 0;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn with_recurrent_history(
+        mut self,
+        history_depth: usize,
+        history_recurrent_width: usize,
+    ) -> Result<Self, TrainableSetError> {
+        self.history_depth = history_depth;
+        self.history_encoding = NativeEncoderHistoryEncoding::RecurrentReservoir;
+        self.history_recurrent_width = history_recurrent_width;
         self.validate()?;
         Ok(self)
     }
@@ -356,6 +406,7 @@ impl NativeMultiTaskActorCorpus {
             .then(|| NativeEpisodeHistoryView::build(shard, feature_spec.history_depth))
             .transpose()
             .map_err(|error| TrainableSetError::new(error.to_string()))?;
+        let history_reservoir = native_recurrent_history_reservoir(&feature_spec)?;
         let target_names = native_target_names();
         debug_assert_eq!(
             target_conditioning_for_names(&target_names),
@@ -435,12 +486,13 @@ impl NativeMultiTaskActorCorpus {
                 &native_base_feature_families(),
                 &feature_spec,
             );
-            append_episode_history_features(
+            append_encoded_episode_history_features(
                 &mut base,
                 &mut base_present,
                 episode,
                 &completed_history,
                 &feature_spec,
+                history_reservoir.as_ref(),
             )?;
             let (targets, target_present) = native_targets(example);
             let mut nodes = if feature_spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
@@ -469,12 +521,13 @@ impl NativeMultiTaskActorCorpus {
                 &native_base_feature_families(),
                 &feature_spec,
             );
-            append_episode_history_features(
+            append_encoded_episode_history_features(
                 &mut post_base,
                 &mut post_base_present,
                 episode,
                 &completed_history,
                 &feature_spec,
+                history_reservoir.as_ref(),
             )?;
             let mut post_nodes =
                 if feature_spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
@@ -1805,9 +1858,11 @@ fn native_actor_feature_schema(
     spec: &NativeEncoderFeatureSpec,
 ) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v8\0",
+        b"dusklight.native-direct-actor-features/v9\0",
         &(
             spec,
+            "signed-log-presence-unit-rms-reservoir/v1",
+            HISTORY_RESERVOIR_SEED,
             selected_feature_names(
                 native_base_feature_names(),
                 &native_base_feature_families(),
@@ -1834,6 +1889,20 @@ fn native_actor_feature_schema(
 }
 
 fn native_history_feature_names(spec: &NativeEncoderFeatureSpec) -> Vec<String> {
+    if spec.history_encoding == NativeEncoderHistoryEncoding::None {
+        return Vec::new();
+    }
+    if spec.history_encoding == NativeEncoderHistoryEncoding::RecurrentReservoir {
+        let mut names = vec![
+            "history_recurrent_available".into(),
+            "history_recurrent_fill".into(),
+        ];
+        names.extend(
+            (0..spec.history_recurrent_width)
+                .map(|index| format!("history_recurrent_hidden_{index}")),
+        );
+        return names;
+    }
     let core_names = selected_feature_names(
         native_base_feature_names(),
         &native_base_feature_families(),
@@ -3318,6 +3387,145 @@ fn append_episode_history_features(
     Ok(())
 }
 
+fn append_encoded_episode_history_features(
+    values: &mut Vec<f32>,
+    present: &mut Vec<bool>,
+    episode: &NativeEpisode,
+    completed: &[&EpisodeHistoryTransition],
+    spec: &NativeEncoderFeatureSpec,
+    recurrent_reservoir: Option<&Reservoir>,
+) -> Result<(), TrainableSetError> {
+    match spec.history_encoding {
+        NativeEncoderHistoryEncoding::None => {
+            if !completed.is_empty() {
+                return Err(TrainableSetError::new(
+                    "native episode history is present for a history-free feature spec",
+                ));
+            }
+            Ok(())
+        }
+        NativeEncoderHistoryEncoding::Stacked => {
+            append_episode_history_features(values, present, episode, completed, spec)
+        }
+        NativeEncoderHistoryEncoding::RecurrentReservoir => {
+            append_recurrent_episode_history_features(
+                values,
+                present,
+                episode,
+                completed,
+                spec,
+                recurrent_reservoir.ok_or_else(|| {
+                    TrainableSetError::new("native recurrent history reservoir is absent")
+                })?,
+            )
+        }
+    }
+}
+
+fn native_recurrent_history_input_width(
+    spec: &NativeEncoderFeatureSpec,
+) -> Result<usize, TrainableSetError> {
+    let core_width = selected_feature_names(
+        native_base_feature_names(),
+        &native_base_feature_families(),
+        spec,
+    )
+    .len();
+    ACTION_CONTEXT_WIDTH
+        .checked_add(core_width.checked_mul(2).ok_or_else(|| {
+            TrainableSetError::new("native recurrent history input width overflowed")
+        })?)
+        .ok_or_else(|| TrainableSetError::new("native recurrent history input width overflowed"))
+}
+
+fn native_recurrent_history_reservoir(
+    spec: &NativeEncoderFeatureSpec,
+) -> Result<Option<Reservoir>, TrainableSetError> {
+    if spec.history_encoding != NativeEncoderHistoryEncoding::RecurrentReservoir {
+        return Ok(None);
+    }
+    Ok(Some(Reservoir::new(
+        native_recurrent_history_input_width(spec)?,
+        spec.history_recurrent_width,
+        HISTORY_RESERVOIR_SEED,
+    )))
+}
+
+fn append_recurrent_episode_history_features(
+    values: &mut Vec<f32>,
+    present: &mut Vec<bool>,
+    episode: &NativeEpisode,
+    completed: &[&EpisodeHistoryTransition],
+    spec: &NativeEncoderFeatureSpec,
+    reservoir: &Reservoir,
+) -> Result<(), TrainableSetError> {
+    if completed.len() > spec.history_depth {
+        return Err(TrainableSetError::new(
+            "native episode history exceeds the declared feature depth",
+        ));
+    }
+    let core_width = selected_feature_names(
+        native_base_feature_names(),
+        &native_base_feature_families(),
+        spec,
+    )
+    .len();
+    let input_width = native_recurrent_history_input_width(spec)?;
+    let mut hidden = vec![0.0; spec.history_recurrent_width];
+    for transition in completed {
+        if transition.episode_id != episode.id {
+            return Err(TrainableSetError::new(
+                "native episode history crosses an episode boundary",
+            ));
+        }
+        let step = episode
+            .steps
+            .get(transition.step_index as usize)
+            .ok_or_else(|| TrainableSetError::new("native episode history step is absent"))?;
+        let mut input = episode_history_action_context(&transition.consumed_pad);
+        let (mut state, mut state_present) = broad_base(&step.post_simulation);
+        append_core_temporal_features(
+            &mut state,
+            &mut state_present,
+            &step.post_simulation,
+            Some(&step.pre_input),
+        );
+        retain_feature_families(
+            &mut state,
+            &mut state_present,
+            &native_base_feature_families(),
+            spec,
+        );
+        if state.len() != core_width || state_present.len() != core_width {
+            return Err(TrainableSetError::new(
+                "native recurrent history core width is inconsistent",
+            ));
+        }
+        input.extend(state.iter().zip(&state_present).map(|(value, available)| {
+            if *available {
+                (value.signum() * value.abs().ln_1p() / 32.0).clamp(-1.0, 1.0)
+            } else {
+                0.0
+            }
+        }));
+        input.extend(state_present.iter().map(|available| f32::from(*available)));
+        if input.len() != input_width {
+            return Err(TrainableSetError::new(
+                "native recurrent history observation width is inconsistent",
+            ));
+        }
+        let input_scale = (input_width as f32).sqrt().recip();
+        input.iter_mut().for_each(|value| *value *= input_scale);
+        hidden = reservoir.step(&input, &hidden);
+    }
+
+    values.push(f32::from(!completed.is_empty()));
+    values.push(completed.len() as f32 / spec.history_depth as f32);
+    values.extend(hidden.into_iter().map(|value| value as f32));
+    present.extend(std::iter::repeat_n(true, 2 + spec.history_recurrent_width));
+    Ok(())
+}
+
 fn native_targets(example: &NativeAuxiliaryExample) -> (Vec<f32>, Vec<bool>) {
     let mut targets = vec![0.0; 14];
     let mut present = vec![false; 14];
@@ -4539,11 +4747,40 @@ mod tests {
                 .with_history_depth(MAX_EPISODE_HISTORY_DEPTH + 1)
                 .is_err()
         );
+        assert!(
+            NativeEncoderFeatureSpec::all()
+                .with_recurrent_history(0, DEFAULT_HISTORY_RECURRENT_WIDTH)
+                .is_err()
+        );
+        assert!(
+            NativeEncoderFeatureSpec::all()
+                .with_recurrent_history(2, 0)
+                .is_err()
+        );
+        assert!(
+            NativeEncoderFeatureSpec::all()
+                .with_recurrent_history(2, MAX_HISTORY_RECURRENT_WIDTH + 1)
+                .is_err()
+        );
         assert_ne!(
             native_actor_feature_schema(&NativeEncoderFeatureSpec::all()).unwrap(),
             native_actor_feature_schema(
                 &NativeEncoderFeatureSpec::all()
                     .with_history_depth(2)
+                    .unwrap()
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            native_actor_feature_schema(
+                &NativeEncoderFeatureSpec::all()
+                    .with_history_depth(2)
+                    .unwrap()
+            )
+            .unwrap(),
+            native_actor_feature_schema(
+                &NativeEncoderFeatureSpec::all()
+                    .with_recurrent_history(2, DEFAULT_HISTORY_RECURRENT_WIDTH)
                     .unwrap()
             )
             .unwrap()
@@ -4555,6 +4792,8 @@ mod tests {
                     NativeEncoderChannelFamily::CorePlayerMotion,
                 ],
                 history_depth: 0,
+                history_encoding: NativeEncoderHistoryEncoding::None,
+                history_recurrent_width: 0,
             }
             .validate()
             .is_err()
@@ -4620,6 +4859,92 @@ mod tests {
             &changed_current,
             &completed,
             &spec,
+        )
+        .unwrap();
+        assert_eq!(unchanged_values, values);
+        assert_eq!(unchanged_present, present);
+    }
+
+    #[test]
+    fn recurrent_history_is_bounded_deterministic_and_past_only() {
+        let mut shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
+        ))
+        .unwrap();
+        let prototype = shard.episodes[0].steps[0].clone();
+        shard.episodes[0].steps = vec![prototype; 3];
+        let episode = &shard.episodes[0];
+        let history = NativeEpisodeHistoryView::build(&shard, 2).unwrap();
+        let spec = NativeEncoderFeatureSpec::all()
+            .with_recurrent_history(2, 4)
+            .unwrap();
+        let reservoir = native_recurrent_history_reservoir(&spec).unwrap().unwrap();
+        assert_eq!(native_history_feature_names(&spec).len(), 6);
+
+        let mut start_values = Vec::new();
+        let mut start_present = Vec::new();
+        append_encoded_episode_history_features(
+            &mut start_values,
+            &mut start_present,
+            episode,
+            &[],
+            &spec,
+            Some(&reservoir),
+        )
+        .unwrap();
+        assert_eq!(start_values, vec![0.0; 6]);
+        assert_eq!(start_present, vec![true; 6]);
+
+        let decision = &history.decisions[2];
+        let completed = decision
+            .completed_transition_indices
+            .iter()
+            .map(|index| &history.transitions[*index as usize])
+            .collect::<Vec<_>>();
+        let mut values = Vec::new();
+        let mut present = Vec::new();
+        append_encoded_episode_history_features(
+            &mut values,
+            &mut present,
+            episode,
+            &completed,
+            &spec,
+            Some(&reservoir),
+        )
+        .unwrap();
+        assert_eq!(values.len(), 6);
+        assert_eq!(values[0], 1.0);
+        assert_eq!(values[1], 1.0);
+        assert!(values[2..].iter().all(|value| value.is_finite()));
+        assert!(values[2..].iter().any(|value| *value != 0.0));
+        assert_eq!(present, vec![true; 6]);
+
+        let mut repeated_values = Vec::new();
+        let mut repeated_present = Vec::new();
+        append_encoded_episode_history_features(
+            &mut repeated_values,
+            &mut repeated_present,
+            episode,
+            &completed,
+            &spec,
+            Some(&reservoir),
+        )
+        .unwrap();
+        assert_eq!(repeated_values, values);
+        assert_eq!(repeated_present, present);
+
+        let mut changed_current = episode.clone();
+        changed_current.steps[2].consumed_pad.buttons ^= 0xffff;
+        changed_current.steps[2].post_simulation.player_position[0] += 10_000.0;
+        let mut unchanged_values = Vec::new();
+        let mut unchanged_present = Vec::new();
+        append_encoded_episode_history_features(
+            &mut unchanged_values,
+            &mut unchanged_present,
+            &changed_current,
+            &completed,
+            &spec,
+            Some(&reservoir),
         )
         .unwrap();
         assert_eq!(unchanged_values, values);

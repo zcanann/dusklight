@@ -22,8 +22,8 @@ use huntctl::learning::factorized_policy_suffix_batch::{
     FactorizedPolicyOutputSet, NativeFactorizedPolicyBatchConfig, NativeFactorizedPolicySuffixBatch,
 };
 use huntctl::learning::multitask_set_encoder::{
-    CompleteSetMultiTaskEncoder, MultiTaskSetPooling, NativeEncoderChannelFamily,
-    NativeEncoderFeatureSpec, NativeMultiTaskActorCorpus,
+    CompleteSetMultiTaskEncoder, DEFAULT_HISTORY_RECURRENT_WIDTH, MultiTaskSetPooling,
+    NativeEncoderChannelFamily, NativeEncoderFeatureSpec, NativeMultiTaskActorCorpus,
     fit_shuffled_auxiliary_control_with_pooling,
 };
 use huntctl::learning::native_auxiliary_dataset::{
@@ -934,8 +934,35 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let history_depth = usize_option(learn_args, "--history-depth", 0)?;
-            let feature_spec =
-                NativeEncoderFeatureSpec::excluding(excluded)?.with_history_depth(history_depth)?;
+            let history_encoding = option(learn_args, "--history-encoding");
+            let history_width = option(learn_args, "--history-width")
+                .map(|value| value.parse::<usize>())
+                .transpose()?;
+            let base_feature_spec = NativeEncoderFeatureSpec::excluding(excluded)?;
+            let feature_spec = match history_encoding.as_deref() {
+                None if history_width.is_none() => {
+                    base_feature_spec.with_history_depth(history_depth)?
+                }
+                Some("stacked") if history_depth > 0 && history_width.is_none() => {
+                    base_feature_spec.with_history_depth(history_depth)?
+                }
+                Some("recurrent-reservoir") if history_depth > 0 => base_feature_spec
+                    .with_recurrent_history(
+                        history_depth,
+                        history_width.unwrap_or(DEFAULT_HISTORY_RECURRENT_WIDTH),
+                    )?,
+                Some("stacked" | "recurrent-reservoir") => {
+                    return Err("native encoder history encoding requires --history-depth greater than zero".into());
+                }
+                Some(name) => {
+                    return Err(format!("unknown native encoder history encoding: {name}").into());
+                }
+                None => {
+                    return Err(
+                        "--history-width requires --history-encoding recurrent-reservoir".into(),
+                    );
+                }
+            };
             let pooling = option(learn_args, "--pooling")
                 .map(|name| {
                     MultiTaskSetPooling::parse(&name)
@@ -1000,7 +1027,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 pooling,
             )?;
             let artifact = json!({
-                "schema": "dusklight-native-multitask-encoder-artifact/v8",
+                "schema": "dusklight-native-multitask-encoder-artifact/v9",
                 "source_auxiliary_dataset_sha256": dataset.dataset_sha256,
                 "source_native_shard_sha256": source_native_shard_sha256,
                 "actor_feature_schema_sha256": corpus.actor_feature_schema_sha256,

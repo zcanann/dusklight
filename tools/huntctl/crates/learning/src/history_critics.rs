@@ -368,13 +368,13 @@ fn feature_rows(
     rows
 }
 
-struct Reservoir {
+pub(crate) struct Reservoir {
     input_weights: Vec<Vec<f64>>,
     recurrent_weights: Vec<Vec<f64>>,
 }
 
 impl Reservoir {
-    fn new(input_width: usize, hidden_width: usize, seed: u64) -> Self {
+    pub(crate) fn new(input_width: usize, hidden_width: usize, seed: u64) -> Self {
         let weight = |row: usize, column: usize, domain: u64, scale: f64| {
             let mixed = mix(seed ^ domain, (row as u64) << 32 | column as u64);
             (mixed as f64 / u64::MAX as f64 * 2.0 - 1.0) * scale
@@ -405,7 +405,7 @@ impl Reservoir {
         }
     }
 
-    fn step(&self, observation: &[f32], previous: &[f64]) -> Vec<f64> {
+    pub(crate) fn step(&self, observation: &[f32], previous: &[f64]) -> Vec<f64> {
         self.input_weights
             .iter()
             .zip(&self.recurrent_weights)
