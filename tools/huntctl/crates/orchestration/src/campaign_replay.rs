@@ -1,6 +1,7 @@
 //! Authenticated native campaign episodes projected into immutable replay generations.
 
 use crate::native_residual_campaign::NativeResidualCampaignEvaluation;
+use crate::native_suffix_worker::ValidatedNativeFrozenPolicyBatch;
 use crate::optimization_request::OptimizationRequest;
 use crate::residual_campaign::ResidualReplayCheckpoint;
 use crate::residual_campaign_runner::{artifact_reference, read_artifact, write_exact_or_new};
@@ -8,6 +9,10 @@ use dusklight_evidence::native_episode_shard::{
     NativeEpisodeShard, authored_milestone_objective_identity,
 };
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
+use dusklight_learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
+use dusklight_learning::native_goal_frozen_policy::{
+    NativeGoalFrozenPolicyAdmission, NativeGoalFrozenPolicyManifest,
+};
 use dusklight_learning::native_replay_corpus::{
     NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
@@ -23,6 +28,12 @@ struct ReplayAddition {
     checkpoint_identity: String,
     simulated_ticks: u64,
     first_hit_tick: Option<u64>,
+}
+
+pub(crate) struct PolicyReplayRollout<'a> {
+    pub batch: &'a NativeFrozenPolicySuffixBatch,
+    pub validated: &'a ValidatedNativeFrozenPolicyBatch,
+    pub shard: &'a NativeEpisodeShard,
 }
 
 /// Appends every exact native attempt in one completed residual generation to
@@ -164,6 +175,168 @@ pub(crate) fn append_residual_replay_generation(
     write_exact_or_new(&path, &bytes).map_err(replay_error)?;
     let artifact = artifact_reference(root, &path).map_err(replay_error)?;
     ResidualReplayCheckpoint::seal(artifact, &corpus).map_err(replay_error)
+}
+
+/// Appends one fully reinferred native policy generation. The trained manifest
+/// is the replay role's policy lineage; the `.dsfrozen` model, online request,
+/// exact result, and v3 shard must all agree before any episode is admitted.
+pub(crate) fn append_policy_replay_generation(
+    root: &Path,
+    campaign: &Path,
+    optimization: &OptimizationRequest,
+    previous: &ResidualReplayCheckpoint,
+    manifest: &NativeGoalFrozenPolicyManifest,
+    model_bytes: &[u8],
+    rollouts: &[PolicyReplayRollout<'_>],
+) -> Result<ResidualReplayCheckpoint, CampaignReplayError> {
+    let previous_corpus = load_corpus(root, &previous.artifact)?;
+    previous
+        .validate_corpus(&previous_corpus)
+        .map_err(replay_error)?;
+    let corpus = build_policy_replay_generation(
+        optimization,
+        &previous_corpus,
+        manifest,
+        model_bytes,
+        rollouts,
+    )?;
+    let bytes = pretty_json(&corpus)?;
+    let path = campaign.join("replay").join(format!(
+        "generation-{:08}-{}.json",
+        corpus.generation, corpus.corpus_sha256
+    ));
+    write_exact_or_new(&path, &bytes).map_err(replay_error)?;
+    let artifact = artifact_reference(root, &path).map_err(replay_error)?;
+    ResidualReplayCheckpoint::seal(artifact, &corpus).map_err(replay_error)
+}
+
+pub(crate) fn build_policy_replay_generation(
+    optimization: &OptimizationRequest,
+    previous: &NativeReplayCorpus,
+    manifest: &NativeGoalFrozenPolicyManifest,
+    model_bytes: &[u8],
+    rollouts: &[PolicyReplayRollout<'_>],
+) -> Result<NativeReplayCorpus, CampaignReplayError> {
+    previous.validate().map_err(replay_error)?;
+    manifest.validate(model_bytes).map_err(replay_error)?;
+    if rollouts.is_empty()
+        || manifest.admission != NativeGoalFrozenPolicyAdmission::FrozenPolicyCandidate
+        || manifest.source_replay_corpus_sha256 != previous.corpus_sha256
+        || manifest.objective_sha256 != optimization.terminal_predicate.definition_sha256
+        || manifest.goal_program_sha256 != optimization.terminal_predicate.program_sha256
+        || manifest.observation_schema != previous.observation_schema
+        || manifest.action_schema != previous.action_schema
+    {
+        return Err(replay_message(
+            "policy replay manifest is unadmitted or detached from its source corpus and objective",
+        ));
+    }
+    let objective_identity = authored_milestone_objective_identity(
+        &optimization.terminal_predicate.program_sha256.to_string(),
+        &optimization
+            .terminal_predicate
+            .definition_sha256
+            .to_string(),
+    )
+    .map_err(replay_error)?;
+    if manifest.goal_objective_identity != objective_identity {
+        return Err(replay_message(
+            "policy replay manifest differs from the authored objective identity",
+        ));
+    }
+
+    let mut candidate_ids = BTreeSet::new();
+    let mut checkpoint_identities = BTreeSet::new();
+    let mut sources = Vec::with_capacity(rollouts.len());
+    for rollout in rollouts {
+        rollout.batch.validate(model_bytes).map_err(replay_error)?;
+        rollout
+            .validated
+            .reinference
+            .validate()
+            .map_err(replay_error)?;
+        let candidate = rollout
+            .validated
+            .execution
+            .candidates
+            .first()
+            .filter(|_| rollout.validated.execution.candidates.len() == 1)
+            .ok_or_else(|| replay_message("policy replay rollout has no exact candidate"))?;
+        let episode = rollout
+            .shard
+            .episodes
+            .first()
+            .filter(|_| rollout.shard.episodes.len() == 1)
+            .ok_or_else(|| replay_message("policy replay shard has no exact episode"))?;
+        if rollout.batch.candidates.len() != 1
+            || rollout.batch.candidates[0].id != candidate.id
+            || candidate.id != episode.id
+            || !candidate_ids.insert(candidate.id.as_str())
+            || rollout.batch.source_frame as u64 != optimization.route.source_boundary_index
+            || rollout.batch.source_boundary_fingerprint
+                != optimization.route.native_source_boundary_fingerprint
+            || rollout.batch.maximum_ticks as u64 != optimization.budgets.exploration_horizon_ticks
+            || rollout.shard.source_frame != optimization.route.source_boundary_index
+            || u64::from(rollout.shard.maximum_ticks)
+                != optimization.budgets.exploration_horizon_ticks
+            || rollout.shard.metadata.source_boundary_fingerprint
+                != optimization.route.native_source_boundary_fingerprint
+            || rollout.shard.metadata.objective != optimization.terminal_predicate.goal
+            || rollout.shard.metadata.objective_identity != objective_identity
+            || rollout.shard.metadata.observation_schema != manifest.observation_schema
+            || rollout.shard.metadata.action_schema != manifest.action_schema
+            || rollout.validated.execution.episode_shard_path.is_empty()
+            || rollout.validated.execution.restore_identity
+                != rollout.shard.metadata.checkpoint_identity
+            || rollout.validated.execution.simulated_ticks != u64::from(episode.ticks_executed)
+            || candidate.simulated_ticks != u64::from(episode.ticks_executed)
+            || candidate.first_hit_tick
+                != episode
+                    .first_hit_tick
+                    .map(|tick| u64::from(tick).saturating_add(1))
+            || rollout.validated.reinference.shard_content_sha256 != rollout.shard.content_sha256
+            || rollout.validated.reinference.model_xxh3_128 != manifest.frozen_model_xxh3_128
+            || rollout.validated.reinference.feature_schema_sha256 != manifest.feature_schema_sha256
+            || rollout.validated.reinference.action_schema_sha256
+                != manifest.factorized_action_schema_sha256
+            || rollout.validated.reinference.objective_sha256 != manifest.objective_sha256
+            || rollout.validated.reinference.checkpoint_identity
+                != rollout.shard.metadata.checkpoint_identity
+            || rollout.validated.reinference.source_boundary_fingerprint
+                != rollout.shard.metadata.source_boundary_fingerprint
+            || rollout.validated.reinference.episode_count != 1
+            || rollout.validated.reinference.transition_count
+                != usize::try_from(episode.ticks_executed).map_err(replay_error)?
+        {
+            return Err(replay_message(
+                "policy replay rollout differs from its model, request, result, shard, or objective",
+            ));
+        }
+        checkpoint_identities.insert(rollout.shard.metadata.checkpoint_identity.as_str());
+        rollout
+            .shard
+            .verify_authored_objective(
+                &optimization.terminal_predicate.program_sha256.to_string(),
+                &optimization
+                    .terminal_predicate
+                    .definition_sha256
+                    .to_string(),
+            )
+            .map_err(replay_error)?;
+        sources.push(ReplayEpisodeSource {
+            shard: rollout.shard,
+            episode_index: 0,
+            role: ReplayExperienceRole::PolicyRollout,
+            policy_lineage_sha256: Some(manifest.manifest_sha256),
+            parent_entry_sha256: None,
+        });
+    }
+    if checkpoint_identities.len() != 1 {
+        return Err(replay_message(
+            "policy replay generation mixes native checkpoint identities",
+        ));
+    }
+    NativeReplayCorpus::build(Some(previous), &sources).map_err(replay_error)
 }
 
 pub(crate) fn load_corpus(

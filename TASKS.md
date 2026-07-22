@@ -327,9 +327,10 @@ winner is the target and remains an open framework challenge until achieved.
       alternate-terminal roles.
       Native residual random/CEM attempts now ingest automatically as authenticated
       randomized-coverage generations and are checkpointed atomically with the
-      optimizer. Demonstration, policy-rollout, and alternate-terminal producers
-      still need to invoke the same corpus contract from the unattended learning
-      loop before this item is complete.
+      optimizer. The unattended goal loop now admits independently reinferred
+      frozen-policy v3 shards as policy-rollout generations with exact manifest
+      lineage. Demonstration and alternate-terminal producers still need to invoke
+      the same corpus contract before this item is complete.
 - [ ] Train a goal-conditioned estimate of terminal reachability and time-to-go
       from complete trajectories using tick cost, real terminal outcomes, n-step
       returns, replay, target isolation, and uncertainty.
@@ -369,10 +370,19 @@ winner is the target and remains an open framework challenge until achieved.
       and crash-safe JSONL state machine now preserve prepared, executed, and
       replay-committed phases across at least three ordered generations, account
       every rollout tick, recover a torn tail, and reject artifact, parent-corpus,
-      phase, or stopping-rule tampering. The real train/execute/ingest runner and
-      command still remain before this item is complete.
-- [ ] Preserve policy, dataset, checkpoint, objective, feature, action, proposal,
-      and parent-generation lineage across the loop.
+      phase, or stopping-rule tampering. `campaign run-native-goal-learning-loop`
+      now trains from the active corpus, freezes directly, fans each generation
+      across persistent checkpoint workers, adopts valid crash leftovers,
+      independently reinfers every PAD, ingests policy-role replay, refits, and
+      materializes each consumed policy suffix as an ordinary cold-replayable
+      process-boot tape before stopping explicitly on held-out rejection or its
+      sealed limit. A real admitted campaign must still complete three generations
+      before this item and Gate 3 are proven complete.
+- [x] Preserve policy, dataset, checkpoint, objective, feature, action, proposal,
+      and parent-generation lineage across the loop. The loop request binds the
+      optimization proposal and native execution authorities; each journal phase
+      binds corpus, dataset, critic, manifest, model, batch, result, reinference,
+      checkpoint-restored shard, and next-corpus identities in order.
 - [ ] Seed optimization runs with the incumbent demonstration while allowing the
       policy to leave its trajectory.
 - [ ] Build a reverse curriculum from validated states on actual successful
@@ -389,7 +399,9 @@ winner is the target and remains an open framework challenge until achieved.
 - [ ] Detect and report policy collapse by parent diversity, action diversity,
       state/contact coverage, and success distribution.
 - [ ] Stop or fall back explicitly when held-out policy performance fails. The
-      UI and artifacts must identify which proposal source actually ran.
+      UI and artifacts must identify which proposal source actually ran. The loop
+      journal and CLI summary now stop with `retained_baseline` when reachability
+      or policy admission fails, but workbench projection of that state remains.
 
 **Gate 3:** one unattended command performs at least three real
 collect/train/freeze/native-execute/ingest generations in persistent workers,

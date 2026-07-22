@@ -1,16 +1,21 @@
 //! Authenticated harness artifacts, execution, and campaign command adapters.
 
-use crate::{flag, option, repeated_option, required_path, u32_option, usize_option};
+use crate::{flag, option, repeated_option, required_path, u32_option, u64_option, usize_option};
 use huntctl::harness::execution::execute_request;
 use huntctl::harness::inspection::inspect_objective;
+use huntctl::harness::objective_suite::ArtifactReference;
 use huntctl::harness::objective_suite::ObjectiveSuite;
 use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
+use huntctl::learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
+use huntctl::learning::native_goal_reachability::NativeGoalReachabilityConfig;
+use huntctl::learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
 use huntctl::optimization_request::OptimizationRequest;
 use huntctl::optimization_resume::{
     OptimizationResumeEvent, append_optimization_resume_event, initialize_optimization_resume,
     load_optimization_resume,
 };
 use huntctl::search_evaluator::TournamentDefinition;
+use sha2::{Digest as _, Sha256};
 use std::env;
 use std::error::Error;
 use std::fs;
@@ -18,6 +23,125 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("seal-native-goal-learning-loop") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--execution")?)?)?;
+        let initial_replay_corpus = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--initial-corpus")?,
+            "initial replay corpus",
+        )?;
+        let shard_paths = repeated_option(command_args, "--input");
+        if shard_paths.is_empty() {
+            return Err(
+                "native goal learning-loop request requires at least one --input EPISODES.dseps"
+                    .into(),
+            );
+        }
+        let initial_episode_shards = shard_paths
+            .iter()
+            .map(|path| {
+                repository_artifact(
+                    &repository_root,
+                    Path::new(path),
+                    "initial native episode shard",
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let generation_limit = u16::try_from(usize_option(command_args, "--generation-limit", 3)?)?;
+        let rollouts_per_generation = u16::try_from(usize_option(
+            command_args,
+            "--rollouts-per-generation",
+            usize::from(optimization.execution.workers),
+        )?)?;
+        let minimum_tick_budget = u64::from(generation_limit)
+            .checked_mul(u64::from(rollouts_per_generation))
+            .and_then(|count| count.checked_mul(optimization.budgets.exploration_horizon_ticks))
+            .ok_or("native goal learning-loop minimum tick budget overflowed")?;
+        let request = huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopRequest::seal(
+            &optimization,
+            &execution,
+            initial_replay_corpus,
+            initial_episode_shards,
+            generation_limit,
+            rollouts_per_generation,
+            u64_option(command_args, "--simulated-tick-budget", minimum_tick_budget)?,
+            NativeGoalTrajectoryConfig::default(),
+            NativeGoalReachabilityConfig::default(),
+            NativeGoalFrozenPolicyConfig::default(),
+            huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopResume {
+                journal_path: option(command_args, "--journal-path")
+                    .ok_or("native goal learning-loop request requires --journal-path PATH")?,
+                state_path: option(command_args, "--state-path")
+                    .ok_or("native goal learning-loop request requires --state-path PATH")?,
+                artifact_root: option(command_args, "--artifact-root")
+                    .ok_or("native goal learning-loop request requires --artifact-root PATH")?,
+            },
+        )?;
+        let report = request.validate_files(&repository_root, &optimization, &execution)?;
+        let output = required_path(command_args, "--output")?;
+        refuse_existing_output(&output, "native goal learning-loop request")?;
+        write_new_file(&output, request.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("validate-native-goal-learning-loop") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?;
+        let request: huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--loop-request")?)?)?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--execution")?)?)?;
+        let report = request.validate_files(&repository_root, &optimization, &execution)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("status-native-goal-learning-loop") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?;
+        let request: huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--loop-request")?)?)?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--execution")?)?)?;
+        let state =
+            huntctl::search_evaluator::native_goal_learning_loop::load_native_goal_learning_loop(
+                &request,
+                &repository_root,
+                &optimization,
+                &execution,
+            )?;
+        println!("{}", serde_json::to_string_pretty(&state)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("run-native-goal-learning-loop") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?;
+        let request: huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--loop-request")?)?)?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--execution")?)?)?;
+        let report = huntctl::search_evaluator::native_goal_learning_loop_runner::run_native_goal_learning_loop(
+            &huntctl::search_evaluator::native_goal_learning_loop_runner::NativeGoalLearningLoopRunConfig {
+                repository_root: &repository_root,
+                request: &request,
+                optimization: &optimization,
+                execution: &execution,
+                cancellation: None,
+            },
+        )?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("materialize-native-residual-execution") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;
@@ -401,6 +525,24 @@ fn repository_file(
         return Err(format!("{label} must be a file inside the repository").into());
     }
     Ok(resolved)
+}
+
+fn repository_artifact(
+    repository_root: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<ArtifactReference, Box<dyn Error>> {
+    let resolved = repository_file(repository_root, path, label)?;
+    let bytes = fs::read(&resolved)?;
+    let relative = resolved
+        .strip_prefix(repository_root)?
+        .to_str()
+        .ok_or_else(|| format!("{label} path is not UTF-8"))?
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    Ok(ArtifactReference {
+        path: relative,
+        sha256: huntctl::Digest(Sha256::digest(bytes).into()),
+    })
 }
 
 fn refuse_existing_output(path: &Path, label: &str) -> Result<(), Box<dyn Error>> {

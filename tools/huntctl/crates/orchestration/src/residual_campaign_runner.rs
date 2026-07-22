@@ -44,6 +44,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug)]
 pub struct ResidualCampaignRunConfig<'a> {
@@ -294,13 +295,46 @@ pub(crate) fn write_exact_or_new(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(runner_error)?;
     }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(runner_error)?
+        .as_nanos();
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| runner_message("residual artifact filename is invalid"))?;
+    let temporary =
+        path.with_file_name(format!(".{file_name}.{}.{}.tmp", std::process::id(), nonce));
     let mut output = OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(path)
+        .open(&temporary)
         .map_err(runner_error)?;
-    output.write_all(bytes).map_err(runner_error)?;
-    output.sync_all().map_err(runner_error)?;
+    let write_result = output
+        .write_all(bytes)
+        .and_then(|()| output.sync_all())
+        .map_err(runner_error);
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&temporary);
+        return Err(error);
+    }
+    if path.exists() {
+        let existing = fs::read(path).map_err(runner_error)?;
+        fs::remove_file(&temporary).map_err(runner_error)?;
+        if existing != bytes {
+            return Err(runner_message(format!(
+                "existing residual artifact differs: {}",
+                path.display()
+            )));
+        }
+        return Ok(());
+    }
+    fs::rename(&temporary, path).map_err(runner_error)?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(runner_error)?;
+    }
     Ok(())
 }
 

@@ -28,10 +28,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1: &str =
     "dusklight-native-goal-learning-loop-request/v1";
-pub const NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V1: &str =
-    "dusklight-native-goal-learning-loop-record/v1";
-pub const NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V1: &str =
-    "dusklight-native-goal-learning-loop-state/v1";
+pub const NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2: &str =
+    "dusklight-native-goal-learning-loop-record/v2";
+pub const NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V2: &str =
+    "dusklight-native-goal-learning-loop-state/v2";
 
 const MIN_GENERATIONS: u16 = 3;
 const MAX_GENERATIONS: u16 = 1_024;
@@ -101,6 +101,7 @@ pub enum NativeGoalLearningLoopEvent {
         native_results: Vec<ArtifactReference>,
         episode_shards: Vec<ArtifactReference>,
         reinference_reports: Vec<ArtifactReference>,
+        realized_tapes: Vec<ArtifactReference>,
         simulated_ticks: u64,
         successes: u16,
     },
@@ -159,6 +160,8 @@ pub struct NativeGoalLearningGenerationState {
     pub episode_shards: Option<Vec<ArtifactReference>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reinference_reports: Option<Vec<ArtifactReference>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realized_tapes: Option<Vec<ArtifactReference>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub simulated_ticks: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -410,7 +413,7 @@ pub struct NativeGoalLearningLoopValidationReport {
 
 impl NativeGoalLearningLoopState {
     pub fn validate(&self) -> Result<(), NativeGoalLearningLoopError> {
-        if self.schema != NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V1
+        if self.schema != NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V2
             || self.request_sha256 == Digest::ZERO
             || self.initial_corpus_sha256 == Digest::ZERO
             || self.journal_sha256 == Digest::ZERO
@@ -476,7 +479,7 @@ impl NativeGoalLearningLoopState {
         let mut canonical = self.clone();
         canonical.state_sha256 = Digest::ZERO;
         canonical_digest(
-            b"dusklight.native-goal-learning-loop-state/v1\0",
+            b"dusklight.native-goal-learning-loop-state/v2\0",
             &canonical,
         )
     }
@@ -539,7 +542,7 @@ pub fn append_native_goal_learning_loop_event(
     let mut preview = current.clone();
     apply_event(request, &mut preview, &event, Digest([1; 32]))?;
     let mut record = NativeGoalLearningLoopRecord {
-        schema: NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V1.into(),
+        schema: NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2.into(),
         request_sha256: request.content_sha256,
         sequence: current.next_sequence,
         previous_record_sha256: current.last_record_sha256,
@@ -585,7 +588,7 @@ fn fold_journal(
         .map_or(0, |offset| offset + 1);
     let valid = &bytes[..valid_len];
     let mut state = NativeGoalLearningLoopState {
-        schema: NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V1.into(),
+        schema: NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V2.into(),
         request_sha256: request.content_sha256,
         initial_corpus_sha256,
         journal_sha256: sha256(valid),
@@ -606,7 +609,7 @@ fn fold_journal(
     {
         let record: NativeGoalLearningLoopRecord =
             serde_json::from_slice(line).map_err(loop_error)?;
-        if record.schema != NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V1
+        if record.schema != NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2
             || record.request_sha256 != request.content_sha256
             || record.sequence != state.next_sequence
             || record.previous_record_sha256 != state.last_record_sha256
@@ -690,6 +693,7 @@ fn apply_event(
                 native_results: None,
                 episode_shards: None,
                 reinference_reports: None,
+                realized_tapes: None,
                 simulated_ticks: None,
                 successes: None,
                 executed_record_sha256: None,
@@ -706,6 +710,7 @@ fn apply_event(
             native_results,
             episode_shards,
             reinference_reports,
+            realized_tapes,
             simulated_ticks,
             successes,
         } => {
@@ -718,6 +723,7 @@ fn apply_event(
                 || native_results.len() != usize::from(request.rollouts_per_generation)
                 || episode_shards.len() != native_results.len()
                 || reinference_reports.len() != native_results.len()
+                || realized_tapes.len() != native_results.len()
                 || *simulated_ticks == 0
                 || *successes > request.rollouts_per_generation
                 || state
@@ -732,6 +738,7 @@ fn apply_event(
             current.native_results = Some(native_results.clone());
             current.episode_shards = Some(episode_shards.clone());
             current.reinference_reports = Some(reinference_reports.clone());
+            current.realized_tapes = Some(realized_tapes.clone());
             current.simulated_ticks = Some(*simulated_ticks);
             current.successes = Some(*successes);
             current.executed_record_sha256 = Some(record_sha256);
@@ -834,6 +841,7 @@ fn validate_generation_state(
         generation.native_results.is_some(),
         generation.episode_shards.is_some(),
         generation.reinference_reports.is_some(),
+        generation.realized_tapes.is_some(),
         generation.simulated_ticks.is_some(),
         generation.successes.is_some(),
     ]
@@ -883,11 +891,13 @@ fn validate_event_artifacts(
             native_results,
             episode_shards,
             reinference_reports,
+            realized_tapes,
             ..
         } => native_results
             .iter()
             .chain(episode_shards)
             .chain(reinference_reports)
+            .chain(realized_tapes)
             .collect(),
         NativeGoalLearningLoopEvent::GenerationCommitted { output_corpus, .. } => {
             vec![output_corpus]
@@ -907,7 +917,7 @@ fn record_identity(
     let mut canonical = record.clone();
     canonical.record_sha256 = Digest::ZERO;
     canonical_digest(
-        b"dusklight.native-goal-learning-loop-record/v1\0",
+        b"dusklight.native-goal-learning-loop-record/v2\0",
         &canonical,
     )
 }
@@ -1163,7 +1173,7 @@ mod tests {
     ) -> NativeGoalLearningLoopState {
         let state = fold_journal(request, root, initial_corpus_sha256).unwrap();
         let mut record = NativeGoalLearningLoopRecord {
-            schema: NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V1.into(),
+            schema: NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2.into(),
             request_sha256: request.content_sha256,
             sequence: state.next_sequence,
             previous_record_sha256: state.last_record_sha256,
@@ -1229,6 +1239,7 @@ mod tests {
             let results = generation_artifacts(&root, generation, "result", 2);
             let shards = generation_artifacts(&root, generation, "shard", 2);
             let reinference = generation_artifacts(&root, generation, "reinference", 2);
+            let realized = generation_artifacts(&root, generation, "realized", 2);
             state = append_test_event(
                 &root,
                 &request,
@@ -1239,6 +1250,7 @@ mod tests {
                     native_results: results,
                     episode_shards: shards,
                     reinference_reports: reinference,
+                    realized_tapes: realized,
                     simulated_ticks: 20,
                     successes: 1,
                 },
