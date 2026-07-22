@@ -16,8 +16,8 @@ use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V1: &str =
-    "dusklight-native-frozen-policy-reinference/v1";
+pub const NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V2: &str =
+    "dusklight-native-frozen-policy-reinference/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -46,7 +46,7 @@ pub struct NativeFrozenPolicyReinferenceReport {
 
 impl NativeFrozenPolicyReinferenceReport {
     pub fn validate(&self) -> Result<(), NativeFrozenPolicyReinferenceError> {
-        if self.schema != NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V1
+        if self.schema != NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V2
             || self.shard_content_sha256 == Digest::ZERO
             || self.shard_schema != NATIVE_EPISODE_SHARD_SCHEMA_V3
             || !is_lower_hex(&self.model_xxh3_128, 32)
@@ -78,7 +78,7 @@ impl NativeFrozenPolicyReinferenceReport {
         canonical.report_sha256 = Digest::ZERO;
         let bytes = serde_json::to_vec(&canonical).map_err(|source| error(source.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.native-frozen-policy-reinference-report/v1\0");
+        hasher.update(b"dusklight.native-frozen-policy-reinference-report/v2\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
@@ -194,7 +194,7 @@ pub fn verify_native_frozen_policy_reinference(
     }
 
     let mut report = NativeFrozenPolicyReinferenceReport {
-        schema: NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V1.into(),
+        schema: NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V2.into(),
         shard_content_sha256: shard.content_sha256,
         shard_schema: shard.metadata.shard_schema.clone(),
         model_xxh3_128,

@@ -54,9 +54,9 @@
     ]
   },
   "rust_reinference": {
-    "schema": "dusklight-native-frozen-policy-reinference/v1",
+    "schema": "dusklight-native-frozen-policy-reinference/v2",
     "verified": true,
-    "report_sha256": "785751c0b18282975273ef9f1c03e283f45d4e6ee1df95b72bffa4f5c3aefcc9",
+    "report_sha256": "39a3648d5e2d409848af9bc2745696cb71a351930c59145b5253cd6e21df1bf9",
     "feature_rows_sha256": "84b34b9dcf07a90f8bf339809c2c7eb88e2660cf1e1b65972d8cb92f9689cff2",
     "decoded_pad_sequence_sha256": "c847e64007f93403cbe7e3adb11295eb17c0ee79da3a1e0b22a56c37c7ad4c36",
     "chosen_pad_sequence_sha256": "c847e64007f93403cbe7e3adb11295eb17c0ee79da3a1e0b22a56c37c7ad4c36",
@@ -72,7 +72,7 @@
   "cold_replay": {
     "schema": "dusklight-native-frozen-policy-cold-replay/v1",
     "verified": true,
-    "report_sha256": "71ac31215d9f1b233e8bf313a9d794af8d539d04ac4430203bec101408280049",
+    "report_sha256": "f4887477044fab4e5619a641e78252abc34e65137b4d2a25d18a2fd510f6140a",
     "terminal_evidence_identical": true,
     "terminal_goal_reached": false,
     "complete_gameplay_state_identical": true,
@@ -109,9 +109,9 @@
     "gpu_submissions": 0
   },
   "artifacts": {
-    "reinference_file_sha256": "a77e11c594121862dc8867bae1a4d65eb60c36d5376965d208b89d1a8fb0337f",
+    "reinference_file_sha256": "e5c582740f7f4158386a4c8739383422b537a3186c7b079e7ed885e347c6eca0",
     "cold_milestone_result_sha256": "cd0cb2aa1551b1a165ed6192e8db4454efacac373fa31ab153be60a03cb55f4d",
-    "cold_replay_file_sha256": "8182348c37b981178a7c8bb6b292dc47f5315f091214d5008ba0f6bec2ebc676"
+    "cold_replay_file_sha256": "f2ec84f005c58b465b88284866eae47b574795923d11491572743e2a76a55695"
   },
   "limitations": [
     "The deliberately simple conformance policy does not reach the authored route goal and is not promotion eligible.",
