@@ -440,9 +440,12 @@ winner is the target and remains an open framework challenge until achieved.
       authenticates the exact successful episode in a content-addressed
       demonstration manifest, charges its simulated ticks in the crash-safe
       resume journal, and installs it as generation one of cumulative replay
-      before any candidate is proposed. Random/CEM residual proposals and frozen
-      online policies remain free to emit every factorized PAD action rather than
-      being constrained to the demonstration. Legacy pre-seed checkpoints remain
+      before any candidate is proposed. Its native request extends the ordinary
+      incumbent tape with released input through the full exploration horizon,
+      while the authenticated first terminal hit still fixes the exact charged
+      demonstration length. Random/CEM residual proposals and frozen online
+      policies remain free to emit every factorized PAD action rather than being
+      constrained to the demonstration. Legacy pre-seed checkpoints remain
       resumable, while new seeded checkpoints, later replay generations, and the
       workbench learning launch fail closed if the demonstration or its shard is
       missing or detached. The workbench identifies whether the seed exists and

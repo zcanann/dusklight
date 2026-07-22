@@ -31,6 +31,7 @@ use crate::residual_campaign_runner::{
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
+use dusklight_search::residual_action::extend_tape_with_released_input;
 use dusklight_search::residual_retention::{
     ResidualGenerationEvaluation, ResidualOutcomeArchive, rank_residual_generation,
 };
@@ -1371,29 +1372,8 @@ fn ensure_incumbent_demonstration(
     }
     ensure_not_cancelled(config)?;
     let profile = segment_profile(root, config.optimization)?;
-    let imported = Candidate::from_absolute_tape(profile, parent).map_err(native_error)?;
-    let batch = NativeSuffixBatch {
-        schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
-        source_frame: usize::try_from(config.optimization.route.source_boundary_index)
-            .map_err(native_error)?,
-        source_boundary_fingerprint: config
-            .optimization
-            .route
-            .native_source_boundary_fingerprint
-            .clone(),
-        checkpoint_validation: NativeCheckpointValidation {
-            kind: "recorded_replay_window".into(),
-            ticks: usize::try_from(config.execution.checkpoint_validation_ticks)
-                .map_err(native_error)?,
-        },
-        maximum_ticks: usize::try_from(config.optimization.budgets.exploration_horizon_ticks)
-            .map_err(native_error)?,
-        verify_state_hashes: config.execution.verify_state_hashes,
-        candidates: vec![NativeSuffixCandidate {
-            id: "incumbent-demonstration".into(),
-            actions: imported.actions,
-        }],
-    };
+    let batch =
+        incumbent_demonstration_batch(config.optimization, config.execution, profile, parent)?;
     let batch_root = campaign.join("demonstration").join("native");
     fs::create_dir_all(&batch_root).map_err(native_error)?;
     let request_path = batch_root.join("request.json");
@@ -1485,6 +1465,41 @@ fn ensure_incumbent_demonstration(
     )
     .map_err(native_error)?;
     Ok((resume, demonstration))
+}
+
+fn incumbent_demonstration_batch(
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    profile: dusklight_search::search::SegmentProfile,
+    parent: &InputTape,
+) -> Result<NativeSuffixBatch, NativeResidualCampaignRunnerError> {
+    let mut horizon_tape = parent.clone();
+    extend_tape_with_released_input(
+        &mut horizon_tape,
+        optimization.budgets.exploration_horizon_ticks,
+    )
+    .map_err(native_error)?;
+    let imported = Candidate::from_absolute_tape(profile, &horizon_tape).map_err(native_error)?;
+    Ok(NativeSuffixBatch {
+        schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
+        source_frame: usize::try_from(optimization.route.source_boundary_index)
+            .map_err(native_error)?,
+        source_boundary_fingerprint: optimization
+            .route
+            .native_source_boundary_fingerprint
+            .clone(),
+        checkpoint_validation: NativeCheckpointValidation {
+            kind: "recorded_replay_window".into(),
+            ticks: usize::try_from(execution.checkpoint_validation_ticks).map_err(native_error)?,
+        },
+        maximum_ticks: usize::try_from(optimization.budgets.exploration_horizon_ticks)
+            .map_err(native_error)?,
+        verify_state_hashes: execution.verify_state_hashes,
+        candidates: vec![NativeSuffixCandidate {
+            id: "incumbent-demonstration".into(),
+            actions: imported.actions,
+        }],
+    })
 }
 
 fn validate_checkpoint_replay(
@@ -2130,6 +2145,36 @@ mod tests {
         let proposal = cem.ask(&parent, &parent_bytes).unwrap();
         let prepared = prepare_batch(optimization, &parent, &parent_bytes, 0, proposal).unwrap();
         (parent, parent_bytes, prepared)
+    }
+
+    #[test]
+    fn incumbent_demonstration_uses_the_full_exploration_horizon() {
+        let root = repository();
+        let optimization = optimization(&root);
+        let execution = execution(&optimization);
+        let incumbent = optimization.incumbent.as_ref().unwrap();
+        let parent = InputTape::decode(&fs::read(root.join(&incumbent.tape.path)).unwrap())
+            .unwrap()
+            .tape;
+        assert_eq!(parent.frames.len(), 126);
+
+        let profile = segment_profile(&root, &optimization).unwrap();
+        let batch =
+            incumbent_demonstration_batch(&optimization, &execution, profile, &parent).unwrap();
+        assert_eq!(batch.maximum_ticks, 160);
+        assert_eq!(batch.candidates.len(), 1);
+
+        let mut expected = parent.clone();
+        extend_tape_with_released_input(
+            &mut expected,
+            optimization.budgets.exploration_horizon_ticks,
+        )
+        .unwrap();
+        assert_eq!(expected.frames.len(), 160);
+        assert_eq!(expected.frames[..parent.frames.len()], parent.frames);
+        let imported = Candidate::from_absolute_tape(profile, &expected).unwrap();
+        assert_eq!(batch.candidates[0].actions, imported.actions);
+        assert_eq!(imported.frame_count(), batch.maximum_ticks as u64);
     }
 
     #[test]
