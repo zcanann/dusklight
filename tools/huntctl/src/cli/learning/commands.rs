@@ -933,7 +933,9 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                         .ok_or_else(|| format!("unknown native encoder channel family: {name}"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let feature_spec = NativeEncoderFeatureSpec::excluding(excluded)?;
+            let history_depth = usize_option(learn_args, "--history-depth", 0)?;
+            let feature_spec =
+                NativeEncoderFeatureSpec::excluding(excluded)?.with_history_depth(history_depth)?;
             let pooling = option(learn_args, "--pooling")
                 .map(|name| {
                     MultiTaskSetPooling::parse(&name)
@@ -998,7 +1000,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 pooling,
             )?;
             let artifact = json!({
-                "schema": "dusklight-native-multitask-encoder-artifact/v7",
+                "schema": "dusklight-native-multitask-encoder-artifact/v8",
                 "source_auxiliary_dataset_sha256": dataset.dataset_sha256,
                 "source_native_shard_sha256": source_native_shard_sha256,
                 "actor_feature_schema_sha256": corpus.actor_feature_schema_sha256,

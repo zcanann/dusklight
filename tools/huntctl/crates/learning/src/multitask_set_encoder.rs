@@ -9,6 +9,10 @@ use crate::native_actor_features::NativeActorFeatureView;
 use crate::native_auxiliary_dataset::{
     AuxiliarySplit, NativeAuxiliaryDataset, NativeAuxiliaryExample,
 };
+use crate::native_episode_history::{
+    EpisodeHistoryPad, EpisodeHistoryTransition, MAX_EPISODE_HISTORY_DEPTH,
+    NativeEpisodeHistoryView,
+};
 use crate::trainable_set_encoder::{
     DeterministicRng, Dimensions, FeatureLayout, TrainableSetConfig, TrainableSetError,
     TypedSetNode, TypedSetSample, clip, dense_tanh, dot, initialized_weights, ordered_nodes,
@@ -16,7 +20,7 @@ use crate::trainable_set_encoder::{
 };
 use dusklight_evidence::native_episode_shard::{
     NativeActorObservation, NativeAttentionCandidateObservation, NativeChannelStatus,
-    NativeEpisodeShard, NativeLearningObservation,
+    NativeEpisode, NativeEpisodeShard, NativeLearningObservation,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -209,12 +213,14 @@ impl NativeEncoderChannelFamily {
 #[serde(deny_unknown_fields)]
 pub struct NativeEncoderFeatureSpec {
     pub families: Vec<NativeEncoderChannelFamily>,
+    pub history_depth: usize,
 }
 
 impl NativeEncoderFeatureSpec {
     pub fn all() -> Self {
         Self {
             families: NativeEncoderChannelFamily::ALL.into(),
+            history_depth: 0,
         }
     }
 
@@ -235,15 +241,19 @@ impl NativeEncoderFeatureSpec {
         let families = families.into_iter().collect::<BTreeSet<_>>();
         let spec = Self {
             families: families.into_iter().collect(),
+            history_depth: 0,
         };
         spec.validate()?;
         Ok(spec)
     }
 
     pub fn validate(&self) -> Result<(), TrainableSetError> {
-        if self.families.is_empty() || self.families.windows(2).any(|pair| pair[0] >= pair[1]) {
+        if self.families.is_empty()
+            || self.families.windows(2).any(|pair| pair[0] >= pair[1])
+            || self.history_depth > MAX_EPISODE_HISTORY_DEPTH
+        {
             return Err(TrainableSetError::new(
-                "native encoder feature spec must be nonempty, unique, and canonical",
+                "native encoder feature spec must be nonempty, unique, canonical, and bounded",
             ));
         }
         let has_actor_features = self
@@ -264,6 +274,12 @@ impl NativeEncoderFeatureSpec {
 
     pub fn contains(&self, family: NativeEncoderChannelFamily) -> bool {
         self.families.binary_search(&family).is_ok()
+    }
+
+    pub fn with_history_depth(mut self, history_depth: usize) -> Result<Self, TrainableSetError> {
+        self.history_depth = history_depth;
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -328,6 +344,18 @@ impl NativeMultiTaskActorCorpus {
             .iter()
             .map(|episode| (episode.id.as_str(), episode))
             .collect::<BTreeMap<_, _>>();
+        let mut episode_offsets = BTreeMap::new();
+        let mut episode_offset = 0_usize;
+        for episode in &shard.episodes {
+            episode_offsets.insert(episode.id.as_str(), episode_offset);
+            episode_offset = episode_offset
+                .checked_add(episode.steps.len())
+                .ok_or_else(|| TrainableSetError::new("native history offset overflowed"))?;
+        }
+        let history = (feature_spec.history_depth > 0)
+            .then(|| NativeEpisodeHistoryView::build(shard, feature_spec.history_depth))
+            .transpose()
+            .map_err(|error| TrainableSetError::new(error.to_string()))?;
         let target_names = native_target_names();
         debug_assert_eq!(
             target_conditioning_for_names(&target_names),
@@ -351,6 +379,36 @@ impl NativeMultiTaskActorCorpus {
                 .checked_sub(1)
                 .and_then(|index| episode.steps.get(index as usize))
                 .map(|step| &step.pre_input);
+            let completed_history = if let Some(history) = &history {
+                let decision_index = episode_offsets
+                    .get(example.episode_id.as_str())
+                    .and_then(|offset| offset.checked_add(example.step_index as usize))
+                    .ok_or_else(|| {
+                        TrainableSetError::new("native history decision index overflowed")
+                    })?;
+                let decision = history
+                    .decisions
+                    .get(decision_index)
+                    .ok_or_else(|| TrainableSetError::new("native history decision is absent"))?;
+                if decision.episode_id != example.episode_id
+                    || decision.step_index != example.step_index
+                {
+                    return Err(TrainableSetError::new(
+                        "native history decision is detached from auxiliary example",
+                    ));
+                }
+                decision
+                    .completed_transition_indices
+                    .iter()
+                    .map(|index| {
+                        history.transitions.get(*index as usize).ok_or_else(|| {
+                            TrainableSetError::new("native history transition is absent")
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?
+            } else {
+                Vec::new()
+            };
             if hex_128(step.pre_input.state_identity) != example.pre_input_state_xxh3_128
                 || hex_128(step.post_simulation.state_identity)
                     != example.post_simulation_state_xxh3_128
@@ -377,6 +435,13 @@ impl NativeMultiTaskActorCorpus {
                 &native_base_feature_families(),
                 &feature_spec,
             );
+            append_episode_history_features(
+                &mut base,
+                &mut base_present,
+                episode,
+                &completed_history,
+                &feature_spec,
+            )?;
             let (targets, target_present) = native_targets(example);
             let mut nodes = if feature_spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
                 native_actor_nodes(&step.pre_input, previous_pre_input)
@@ -404,6 +469,13 @@ impl NativeMultiTaskActorCorpus {
                 &native_base_feature_families(),
                 &feature_spec,
             );
+            append_episode_history_features(
+                &mut post_base,
+                &mut post_base_present,
+                episode,
+                &completed_history,
+                &feature_spec,
+            )?;
             let mut post_nodes =
                 if feature_spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
                     native_actor_nodes(&step.post_simulation, Some(&step.pre_input))
@@ -1733,7 +1805,7 @@ fn native_actor_feature_schema(
     spec: &NativeEncoderFeatureSpec,
 ) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v7\0",
+        b"dusklight.native-direct-actor-features/v8\0",
         &(
             spec,
             selected_feature_names(
@@ -1756,8 +1828,43 @@ fn native_actor_feature_schema(
                 &native_actor_binary_families(),
                 spec,
             ),
+            native_history_feature_names(spec),
         ),
     )
+}
+
+fn native_history_feature_names(spec: &NativeEncoderFeatureSpec) -> Vec<String> {
+    let core_names = selected_feature_names(
+        native_base_feature_names(),
+        &native_base_feature_families(),
+        spec,
+    );
+    let action_names = [
+        "stick_x",
+        "stick_y",
+        "substick_x",
+        "substick_y",
+        "trigger_left",
+        "trigger_right",
+        "analog_a",
+        "analog_b",
+    ];
+    let mut names = Vec::new();
+    for slot in 0..spec.history_depth {
+        names.push(format!("history_{slot}_present"));
+        names.extend(
+            action_names
+                .iter()
+                .map(|name| format!("history_{slot}_action_{name}")),
+        );
+        names.extend((0..16).map(|bit| format!("history_{slot}_action_button_{bit}")));
+        names.extend(
+            core_names
+                .iter()
+                .map(|name| format!("history_{slot}_state_{name}")),
+        );
+    }
+    names
 }
 
 fn native_base_feature_names() -> Vec<String> {
@@ -3094,26 +3201,121 @@ fn target_conditioning_for_names(names: &[String]) -> Vec<AuxiliaryHeadCondition
 
 fn native_action_context(example: &NativeAuxiliaryExample) -> Vec<f32> {
     let action = example.targets.inverse_action;
-    let mut context = [
+    pad_action_context(
+        action.buttons,
         action.stick_x,
         action.stick_y,
         action.substick_x,
         action.substick_y,
-    ]
-    .map(|value| f32::from(value) / 128.0)
-    .to_vec();
+        action.trigger_left,
+        action.trigger_right,
+        action.analog_a,
+        action.analog_b,
+    )
+}
+
+fn episode_history_action_context(action: &EpisodeHistoryPad) -> Vec<f32> {
+    pad_action_context(
+        action.buttons,
+        action.stick_x,
+        action.stick_y,
+        action.substick_x,
+        action.substick_y,
+        action.trigger_left,
+        action.trigger_right,
+        action.analog_a,
+        action.analog_b,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pad_action_context(
+    buttons: u16,
+    stick_x: i8,
+    stick_y: i8,
+    substick_x: i8,
+    substick_y: i8,
+    trigger_left: u8,
+    trigger_right: u8,
+    analog_a: u8,
+    analog_b: u8,
+) -> Vec<f32> {
+    let mut context = [stick_x, stick_y, substick_x, substick_y]
+        .map(|value| f32::from(value) / 128.0)
+        .to_vec();
     context.extend(
-        [
-            action.trigger_left,
-            action.trigger_right,
-            action.analog_a,
-            action.analog_b,
-        ]
-        .map(|value| f32::from(value) / 255.0),
+        [trigger_left, trigger_right, analog_a, analog_b].map(|value| f32::from(value) / 255.0),
     );
-    context.extend((0..16).map(|bit| f32::from(action.buttons & (1_u16 << bit) != 0)));
+    context.extend((0..16).map(|bit| f32::from(buttons & (1_u16 << bit) != 0)));
     debug_assert_eq!(context.len(), ACTION_CONTEXT_WIDTH);
     context
+}
+
+fn append_episode_history_features(
+    values: &mut Vec<f32>,
+    present: &mut Vec<bool>,
+    episode: &NativeEpisode,
+    completed: &[&EpisodeHistoryTransition],
+    spec: &NativeEncoderFeatureSpec,
+) -> Result<(), TrainableSetError> {
+    if completed.len() > spec.history_depth {
+        return Err(TrainableSetError::new(
+            "native episode history exceeds the declared feature depth",
+        ));
+    }
+    let core_width = selected_feature_names(
+        native_base_feature_names(),
+        &native_base_feature_families(),
+        spec,
+    )
+    .len();
+    let missing = spec.history_depth - completed.len();
+    for _ in 0..missing {
+        values.push(0.0);
+        present.push(true);
+        values.extend(std::iter::repeat_n(0.0, ACTION_CONTEXT_WIDTH + core_width));
+        present.extend(std::iter::repeat_n(
+            false,
+            ACTION_CONTEXT_WIDTH + core_width,
+        ));
+    }
+    for transition in completed {
+        if transition.episode_id != episode.id {
+            return Err(TrainableSetError::new(
+                "native episode history crosses an episode boundary",
+            ));
+        }
+        let step = episode
+            .steps
+            .get(transition.step_index as usize)
+            .ok_or_else(|| TrainableSetError::new("native episode history step is absent"))?;
+        values.push(1.0);
+        present.push(true);
+        values.extend(episode_history_action_context(&transition.consumed_pad));
+        present.extend(std::iter::repeat_n(true, ACTION_CONTEXT_WIDTH));
+
+        let (mut state, mut state_present) = broad_base(&step.post_simulation);
+        append_core_temporal_features(
+            &mut state,
+            &mut state_present,
+            &step.post_simulation,
+            Some(&step.pre_input),
+        );
+        retain_feature_families(
+            &mut state,
+            &mut state_present,
+            &native_base_feature_families(),
+            spec,
+        );
+        if state.len() != core_width || state_present.len() != core_width {
+            return Err(TrainableSetError::new(
+                "native episode history core width is inconsistent",
+            ));
+        }
+        values.extend(state);
+        present.extend(state_present);
+    }
+    Ok(())
 }
 
 fn native_targets(example: &NativeAuxiliaryExample) -> (Vec<f32>, Vec<bool>) {
@@ -4333,15 +4535,95 @@ mod tests {
             NativeEncoderFeatureSpec::new([NativeEncoderChannelFamily::CorePreviousInput]).is_ok()
         );
         assert!(
+            NativeEncoderFeatureSpec::all()
+                .with_history_depth(MAX_EPISODE_HISTORY_DEPTH + 1)
+                .is_err()
+        );
+        assert_ne!(
+            native_actor_feature_schema(&NativeEncoderFeatureSpec::all()).unwrap(),
+            native_actor_feature_schema(
+                &NativeEncoderFeatureSpec::all()
+                    .with_history_depth(2)
+                    .unwrap()
+            )
+            .unwrap()
+        );
+        assert!(
             NativeEncoderFeatureSpec {
                 families: vec![
                     NativeEncoderChannelFamily::CoreGoal,
                     NativeEncoderChannelFamily::CorePlayerMotion,
                 ],
+                history_depth: 0,
             }
             .validate()
             .is_err()
         );
+    }
+
+    #[test]
+    fn stacked_history_is_past_only_right_aligned_and_masked_at_episode_start() {
+        let mut shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
+        ))
+        .unwrap();
+        let prototype = shard.episodes[0].steps[0].clone();
+        shard.episodes[0].steps = vec![prototype; 3];
+        let episode = &shard.episodes[0];
+        let history = NativeEpisodeHistoryView::build(&shard, 2).unwrap();
+        let spec = NativeEncoderFeatureSpec::all()
+            .with_history_depth(2)
+            .unwrap();
+        let names = native_history_feature_names(&spec);
+        assert_eq!(names.len() % 2, 0);
+        let slot_width = names.len() / 2;
+
+        let mut start_values = Vec::new();
+        let mut start_present = Vec::new();
+        append_episode_history_features(&mut start_values, &mut start_present, episode, &[], &spec)
+            .unwrap();
+        assert_eq!(start_values.len(), names.len());
+        assert_eq!(start_values[0], 0.0);
+        assert_eq!(start_values[slot_width], 0.0);
+        assert!(start_present[0] && start_present[slot_width]);
+        assert!(start_present[1..slot_width].iter().all(|present| !*present));
+        assert!(
+            start_present[slot_width + 1..]
+                .iter()
+                .all(|present| !*present)
+        );
+
+        let decision = &history.decisions[2];
+        assert_eq!(decision.episode_id, episode.id);
+        assert_eq!(decision.step_index, 2);
+        let completed = decision
+            .completed_transition_indices
+            .iter()
+            .map(|index| &history.transitions[*index as usize])
+            .collect::<Vec<_>>();
+        let mut values = Vec::new();
+        let mut present = Vec::new();
+        append_episode_history_features(&mut values, &mut present, episode, &completed, &spec)
+            .unwrap();
+        assert_eq!(values[0], 1.0);
+        assert_eq!(values[slot_width], 1.0);
+        assert!(present[1..].iter().any(|present| *present));
+
+        let mut changed_current = episode.clone();
+        changed_current.steps[2].consumed_pad.buttons ^= 0xffff;
+        changed_current.steps[2].post_simulation.player_position[0] += 10_000.0;
+        let mut unchanged_values = Vec::new();
+        let mut unchanged_present = Vec::new();
+        append_episode_history_features(
+            &mut unchanged_values,
+            &mut unchanged_present,
+            &changed_current,
+            &completed,
+            &spec,
+        )
+        .unwrap();
+        assert_eq!(unchanged_values, values);
+        assert_eq!(unchanged_present, present);
     }
 
     #[test]
