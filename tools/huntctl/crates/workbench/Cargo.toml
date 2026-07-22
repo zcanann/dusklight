@@ -10,6 +10,7 @@ dusklight-automation-contracts = { path = "../contracts" }
 dusklight-control = { path = "../control" }
 dusklight-evidence = { path = "../evidence" }
 dusklight-harness-contracts = { path = "../harness-contracts" }
+dusklight-learning = { path = "../learning" }
 dusklight-objectives = { path = "../objectives" }
 dusklight-orchestration = { path = "../orchestration" }
 dusklight-routes = { path = "../routes" }

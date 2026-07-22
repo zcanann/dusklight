@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v15";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v16";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -167,6 +167,32 @@ pub struct GraphOptimizationCampaign {
     pub proposal_sources: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    pub learning: GraphGoalLearningLoop,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphGoalLearningLoop {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_sha256: Option<String>,
+    pub generation_limit: u16,
+    pub committed_generations: u16,
+    pub rollouts_per_generation: u16,
+    pub charged_simulated_ticks: u64,
+    pub simulated_tick_budget: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_corpus_sha256: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stopped_reason: Option<String>,
+    pub cold_replayable_tapes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1164,6 +1190,8 @@ mod optimization_promotion;
 use optimization_promotion::*;
 mod optimization_runtime;
 use optimization_runtime::*;
+mod goal_learning_runtime;
+use goal_learning_runtime::*;
 mod draft_store;
 use draft_store::*;
 mod playback;

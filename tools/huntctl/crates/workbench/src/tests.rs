@@ -496,7 +496,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v15");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v16");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1286,8 +1286,18 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/optimization/start",
         "/api/optimization/cancel",
         "/api/optimization/cleanup",
+        "/api/goal-learning/start",
+        "/api/goal-learning/cancel",
         "cancelOptimization(button)",
         "cleanupOptimization(button)",
+        "startGoalLearning(button)",
+        "cancelGoalLearning(button)",
+        "data-start-goal-learning",
+        "data-cancel-goal-learning",
+        "Goal learning",
+        "Proposal source",
+        "Cold-replayable tapes",
+        "Baseline retained",
         "Stop campaign",
         "Stopping workers…",
         "Clean local campaign…",
@@ -2276,6 +2286,13 @@ fn optimization_start_api_requires_explicit_world_context() {
         campaign["blocker"],
         "restart the workbench with --world-context WORLD.json"
     );
+    assert_eq!(campaign["learning"]["status"], "blocked");
+    assert!(
+        campaign["learning"]["blocker"]
+            .as_str()
+            .unwrap()
+            .contains("native execution binding")
+    );
     let response = call_http(
         &config,
         "POST",
@@ -2287,6 +2304,27 @@ fn optimization_start_api_requires_explicit_world_context() {
         String::from_utf8_lossy(&response.body)
             .contains("restart the workbench with --world-context")
     );
+
+    let learning = call_http(
+        &config,
+        "POST",
+        "/api/goal-learning/start",
+        br#"{"campaign":"ordon-q125-residual-cem-v1"}"#,
+    );
+    assert_eq!(learning.status, 400);
+    assert!(
+        String::from_utf8_lossy(&learning.body)
+            .contains("restart the workbench with --world-context")
+    );
+
+    let smuggled = call_http(
+        &config,
+        "POST",
+        "/api/goal-learning/start",
+        br#"{"campaign":"ordon-q125-residual-cem-v1","generations":1,"game":"forged"}"#,
+    );
+    assert_eq!(smuggled.status, 400);
+    assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
 }
 
 #[test]

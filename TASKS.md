@@ -398,10 +398,13 @@ winner is the target and remains an open framework challenge until achieved.
       still teach local dynamics and short-horizon reachability.
 - [ ] Detect and report policy collapse by parent diversity, action diversity,
       state/contact coverage, and success distribution.
-- [ ] Stop or fall back explicitly when held-out policy performance fails. The
+- [x] Stop or fall back explicitly when held-out policy performance fails. The
       UI and artifacts must identify which proposal source actually ran. The loop
       journal and CLI summary now stop with `retained_baseline` when reachability
-      or policy admission fails, but workbench projection of that state remains.
+      or policy admission fails. The route workbench now launches, resumes, and
+      cancels the sealed loop, projects generation/tick/corpus progress and
+      cold-replayable tape counts, and distinguishes `frozen_goal_policy` from
+      `retained_baseline` with the exact stopping reason.
 
 **Gate 3:** one unattended command performs at least three real
 collect/train/freeze/native-execute/ingest generations in persistent workers,

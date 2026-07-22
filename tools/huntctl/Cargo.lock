@@ -482,6 +482,7 @@ dependencies = [
  "dusklight-control",
  "dusklight-evidence",
  "dusklight-harness-contracts",
+ "dusklight-learning",
  "dusklight-objectives",
  "dusklight-orchestration",
  "dusklight-routes",

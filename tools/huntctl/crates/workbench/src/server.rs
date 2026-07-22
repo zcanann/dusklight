@@ -173,6 +173,39 @@ pub(super) fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/goal-learning/start") => {
+                    let result =
+                        serde_json::from_slice::<BrowserGoalLearningStartRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid goal-learning start request: {error}"
+                                ))
+                            })
+                            .and_then(|start| start_goal_learning_campaign(config, &start));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/goal-learning/cancel") => {
+                    let result = serde_json::from_slice::<BrowserGoalLearningLifecycleRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!(
+                            "invalid goal-learning cancel request: {error}"
+                        ))
+                    })
+                    .and_then(|cancel| cancel_goal_learning_campaign(config, &cancel));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/optimization/cancel") => {
                     let result = serde_json::from_slice::<BrowserOptimizationLifecycleRequest>(
                         &request.body,

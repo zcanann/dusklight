@@ -132,6 +132,11 @@ pub(super) fn start_optimization_campaign(
         ));
     }
     let request_sha256 = optimization.content_sha256.to_string();
+    if goal_learning_campaign_active(&request_sha256) {
+        return Err(WorkbenchError::new(
+            "goal learning must stop before residual optimization can resume",
+        ));
+    }
     let cancellation = Arc::new(AtomicBool::new(false));
     {
         let mut runs = optimization_runs()
@@ -312,10 +317,16 @@ pub(super) fn cleanup_optimization_campaign(
             "optimization candidate promotion must finish before cleanup",
         ));
     }
+    if goal_learning_campaign_active(&request_sha256) {
+        return Err(WorkbenchError::new(
+            "goal learning must stop before campaign cleanup",
+        ));
+    }
     let artifacts_removed = remove_optimization_campaign_artifacts(&root, &optimization)?;
     if let Ok(mut runs) = optimization_runs().lock() {
         runs.remove(&request_sha256);
     }
+    forget_goal_learning_campaign(&request_sha256);
     forget_optimization_promotions(&request_sha256);
     Ok(OptimizationLifecycleResponse {
         schema: OPTIMIZATION_LIFECYCLE_SCHEMA,
@@ -326,7 +337,7 @@ pub(super) fn cleanup_optimization_campaign(
     })
 }
 
-fn checked_optimization_request(
+pub(super) fn checked_optimization_request(
     config: &WorkbenchConfig,
     browser: &BrowserOptimizationLifecycleRequest,
 ) -> Result<(PathBuf, OptimizationRequest), WorkbenchError> {
@@ -404,7 +415,7 @@ fn remove_optimization_campaign_artifacts(
     Ok(true)
 }
 
-fn optimization_campaign_root(
+pub(super) fn optimization_campaign_root(
     root: &Path,
     optimization: &OptimizationRequest,
 ) -> Result<PathBuf, WorkbenchError> {
@@ -493,7 +504,7 @@ pub(super) fn prepare_optimization_execution(
     Ok(binding)
 }
 
-fn write_exact_or_new(path: &Path, bytes: &[u8]) -> Result<(), WorkbenchError> {
+pub(super) fn write_exact_or_new(path: &Path, bytes: &[u8]) -> Result<(), WorkbenchError> {
     if path.exists() {
         if fs::read(path).map_err(optimization_runtime_error)? != bytes {
             return Err(WorkbenchError::new(format!(

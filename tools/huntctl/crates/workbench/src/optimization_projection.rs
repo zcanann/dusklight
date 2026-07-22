@@ -109,7 +109,7 @@ pub(super) fn append_optimization_campaigns(
             .validate_files(&root)
             .err()
             .map(|error| error.to_string());
-        let mut campaign = campaign_projection(&root, relative, &request);
+        let mut campaign = campaign_projection(&root, relative, &request, runtime_config);
         if validation_error.is_some() {
             campaign.status = "invalid".into();
             campaign.error = validation_error;
@@ -538,6 +538,7 @@ fn campaign_projection(
     root: &Path,
     request_path: &Path,
     request: &OptimizationRequest,
+    runtime_config: Option<&WorkbenchConfig>,
 ) -> GraphOptimizationCampaign {
     let mut projection = GraphOptimizationCampaign {
         id: request.id.clone(),
@@ -582,6 +583,7 @@ fn campaign_projection(
         execution: None,
         blocker: None,
         error: None,
+        learning: goal_learning_projection(root, request, runtime_config),
     };
     let state_path = root.join(&request.resume.state_path);
     let mut resume_state = None;
@@ -681,7 +683,10 @@ pub(super) fn apply_retention_projection(
         .map(|success| success.first_hit_tick);
 }
 
-fn optimization_runtime_blocker(root: &Path, config: &WorkbenchConfig) -> Option<String> {
+pub(super) fn optimization_runtime_blocker(
+    root: &Path,
+    config: &WorkbenchConfig,
+) -> Option<String> {
     let Some(world_context) = config.world_context.as_ref() else {
         return Some("restart the workbench with --world-context WORLD.json".into());
     };

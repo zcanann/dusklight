@@ -980,6 +980,12 @@ fn pretty_json(value: &impl Serialize) -> Result<Vec<u8>, NativeGoalLearningLoop
 #[derive(Debug)]
 pub struct NativeGoalLearningLoopRunnerError(String);
 
+impl NativeGoalLearningLoopRunnerError {
+    pub fn is_cancelled(&self) -> bool {
+        self.0 == "native goal learning loop was cancelled"
+    }
+}
+
 fn runner_message(message: impl Into<String>) -> NativeGoalLearningLoopRunnerError {
     NativeGoalLearningLoopRunnerError(message.into())
 }

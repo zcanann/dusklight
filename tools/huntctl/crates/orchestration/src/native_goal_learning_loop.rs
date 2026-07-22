@@ -521,11 +521,25 @@ pub fn load_native_goal_learning_loop(
     optimization: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
 ) -> Result<NativeGoalLearningLoopState, NativeGoalLearningLoopError> {
-    let report = request.validate_files(repository_root, optimization, execution)?;
+    let state =
+        inspect_native_goal_learning_loop(request, repository_root, optimization, execution)?;
     let root = canonical_root(repository_root)?;
-    let state = fold_journal(request, &root, report.initial_corpus_sha256)?;
     write_state_atomically(&output_path(&root, &request.resume.state_path)?, &state)?;
     Ok(state)
+}
+
+/// Authenticates and folds the complete durable journal without rewriting the
+/// cached state projection. Read-only surfaces such as the route workbench use
+/// this to report live progress without becoming a campaign writer.
+pub fn inspect_native_goal_learning_loop(
+    request: &NativeGoalLearningLoopRequest,
+    repository_root: &Path,
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+) -> Result<NativeGoalLearningLoopState, NativeGoalLearningLoopError> {
+    let report = request.validate_files(repository_root, optimization, execution)?;
+    let root = canonical_root(repository_root)?;
+    fold_journal(request, &root, report.initial_corpus_sha256)
 }
 
 pub fn append_native_goal_learning_loop_event(
