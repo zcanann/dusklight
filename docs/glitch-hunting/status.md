@@ -546,6 +546,7 @@ reproduction work.
   placed selectors must only be reused with independently validated game data.
 - Eye Shredder's original-layout corruption can be modeled safely, but the
   console-only rendering result is not emulated or claimed.
-- The Aurora automation change is committed inside the submodule on a local
-  `dusklight-automation` branch. A public fork of Aurora must contain that commit
-  before the parent Dusklight commits can be cloned elsewhere.
+- The parent repository pins public Aurora `origin/main` commit
+  `ce4baccedb2aabddce5b552f0573674e857fb7c3`. A clean recursive checkout builds
+  the game and native automation runner without a local Aurora branch or
+  uncommitted submodule changes.

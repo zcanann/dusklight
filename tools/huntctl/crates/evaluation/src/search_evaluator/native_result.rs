@@ -691,38 +691,6 @@ pub(super) fn parse_native_milestones(
     })
 }
 
-#[cfg(test)]
-mod boundary_coordinate_tests {
-    use super::native_boundary_coordinates_match;
-
-    #[test]
-    fn phase_defines_the_absolute_tick_to_tape_relationship() {
-        assert!(native_boundary_coordinates_match(
-            "pre_input",
-            270,
-            270,
-            269
-        ));
-        assert!(native_boundary_coordinates_match("post_sim", 270, 269, 269));
-        assert!(!native_boundary_coordinates_match(
-            "pre_input",
-            270,
-            269,
-            269
-        ));
-        assert!(!native_boundary_coordinates_match(
-            "post_sim", 270, 270, 269
-        ));
-        assert!(!native_boundary_coordinates_match("unknown", 270, 270, 269));
-        assert!(!native_boundary_coordinates_match(
-            "pre_input",
-            271,
-            270,
-            269
-        ));
-    }
-}
-
 fn validate_native_boot(
     native: &NativeMilestoneResult,
     expected_boot: &TapeBoot,
@@ -847,4 +815,36 @@ fn validate_value_projections(
         }
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod boundary_coordinate_tests {
+    use super::native_boundary_coordinates_match;
+
+    #[test]
+    fn phase_defines_the_absolute_tick_to_tape_relationship() {
+        assert!(native_boundary_coordinates_match(
+            "pre_input",
+            270,
+            270,
+            269
+        ));
+        assert!(native_boundary_coordinates_match("post_sim", 270, 269, 269));
+        assert!(!native_boundary_coordinates_match(
+            "pre_input",
+            270,
+            269,
+            269
+        ));
+        assert!(!native_boundary_coordinates_match(
+            "post_sim", 270, 270, 269
+        ));
+        assert!(!native_boundary_coordinates_match("unknown", 270, 270, 269));
+        assert!(!native_boundary_coordinates_match(
+            "pre_input",
+            271,
+            270,
+            269
+        ));
+    }
 }

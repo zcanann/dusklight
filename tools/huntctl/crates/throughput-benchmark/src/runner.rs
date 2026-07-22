@@ -87,18 +87,18 @@ pub fn run_cold_process_benchmark(
             &config.repository_root.join(&request_relative),
             &config.repository_root.join(&artifact_destination),
         )?;
-        attempts.push(attempt_record(
+        attempts.push(attempt_record(AttemptRecordContext {
             attempt,
-            &request_relative,
-            &artifact_destination,
-            &result_relative,
-            &request,
-            &result,
+            request_path: &request_relative,
+            artifact_destination: &artifact_destination,
+            result_path: &result_relative,
+            request: &request,
+            result: &result,
             end_to_end_micros,
-            config.prefix_ticks,
+            prefix_ticks: config.prefix_ticks,
             artifact_file_count,
             artifact_bytes,
-        )?);
+        })?);
     }
 
     let comparison_issue = comparison_issue(&attempts);
@@ -121,18 +121,34 @@ pub fn run_cold_process_benchmark(
     Ok(report)
 }
 
-fn attempt_record(
+struct AttemptRecordContext<'a> {
     attempt: u32,
-    request_path: &str,
-    artifact_destination: &str,
-    result_path: &str,
-    request: &HarnessRunRequest,
-    result: &HarnessRunResult,
+    request_path: &'a str,
+    artifact_destination: &'a str,
+    result_path: &'a str,
+    request: &'a HarnessRunRequest,
+    result: &'a HarnessRunResult,
     end_to_end_micros: u128,
     prefix_ticks: Option<u64>,
     artifact_file_count: u64,
     artifact_bytes: u64,
+}
+
+fn attempt_record(
+    context: AttemptRecordContext<'_>,
 ) -> Result<ColdProcessBenchmarkAttempt, ColdProcessBenchmarkError> {
+    let AttemptRecordContext {
+        attempt,
+        request_path,
+        artifact_destination,
+        result_path,
+        request,
+        result,
+        end_to_end_micros,
+        prefix_ticks,
+        artifact_file_count,
+        artifact_bytes,
+    } = context;
     let native_process_micros = u128::from(result.timing.host_elapsed_millis) * 1_000;
     let native_phases = result.timing.native_phases.clone().ok_or_else(|| {
         benchmark_error(format!(

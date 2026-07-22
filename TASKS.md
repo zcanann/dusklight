@@ -106,9 +106,13 @@ current work and acceptance gates, not every completed experiment.
 
 ## 1. Restore a green native execution boundary
 
-- [ ] Build the game and native automation runner against the repository-recorded
-      Aurora revision. Remove stale claims that the runner is blocked by a dirty
-      submodule; fix any real compile or API mismatch that remains.
+- [x] Build the game and native automation runner against the repository-recorded
+      Aurora revision. A fresh macOS Debug build of `dusklight` and the suffix,
+      factorized-PAD, frozen-inference, and native-policy-feature test targets
+      succeeds against clean public Aurora commit
+      `ce4baccedb2aabddce5b552f0573674e857fb7c3`; the Rust workspace builds too.
+      No compile or API mismatch remains, and the stale local-only/dirty-submodule
+      claim has been removed.
 - [x] Fix the six-lane proposal-budget remainder calculation and add property
       tests proving every requested budget is allocated exactly for small and
       large population sizes. The allocator now derives its remainder from the
