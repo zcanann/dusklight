@@ -351,6 +351,23 @@ pub fn compile_residual_candidate(
     parent_bytes: &[u8],
     candidate: &ResidualCandidate,
 ) -> Result<CompiledResidualCandidate, ResidualActionError> {
+    compile_residual_candidate_to_horizon(
+        parent,
+        parent_bytes,
+        candidate,
+        parent.frames.len() as u64,
+    )
+}
+
+/// Compiles a residual and extends the authoritative raw-PAD tape with released
+/// input through the exploration horizon. The extension is part of the sealed
+/// realized tape, so a harness cannot silently stop at the shorter incumbent.
+pub fn compile_residual_candidate_to_horizon(
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    candidate: &ResidualCandidate,
+    exploration_horizon_ticks: u64,
+) -> Result<CompiledResidualCandidate, ResidualActionError> {
     candidate.validate()?;
     let canonical_parent = parent
         .encode()
@@ -414,6 +431,32 @@ pub fn compile_residual_candidate(
     }
     let span = exact_intervention_span(parent, &realized)
         .ok_or_else(|| action_error("residual candidate compiles to the incumbent tape"))?;
+    let horizon = usize::try_from(exploration_horizon_ticks)
+        .map_err(|_| action_error("residual exploration horizon does not fit memory"))?;
+    if horizon < realized.frames.len() {
+        return Err(action_error(
+            "residual exploration horizon cannot truncate the incumbent tape",
+        ));
+    }
+    if horizon > realized.frames.len() {
+        let mut released = realized
+            .frames
+            .last()
+            .cloned()
+            .ok_or_else(|| action_error("residual parent tape has no frames"))?;
+        released.wait_condition = WaitCondition::None;
+        released.wait_timeout_ticks = 0;
+        for pad in &mut released.pads {
+            let connected = pad.connected;
+            let error = pad.error;
+            *pad = RawPadState {
+                connected,
+                error,
+                ..RawPadState::default()
+            };
+        }
+        realized.frames.resize(horizon, released);
+    }
     let bytes = realized
         .encode()
         .map_err(|source| action_error(source.to_string()))?;
@@ -833,6 +876,49 @@ mod tests {
             }
         );
         assert_eq!(compiled.report.parent_tape_sha256, sha256(&parent_bytes));
+    }
+
+    #[test]
+    fn exploration_horizon_is_an_authoritative_released_pad_tail() {
+        let (mut parent, _) = parent_tape(40);
+        parent.frames[39].pads[0].buttons = 0x0100;
+        parent.frames[39].pads[0].stick_x = 72;
+        parent.frames[39].pads[0].connected = true;
+        let parent_bytes = parent.encode().unwrap();
+        let candidate = sealed(
+            &parent_bytes,
+            vec![analog(
+                AnalogChannel::MainY,
+                TemporalBasis::ExactFrame { frame: 3, delta: 8 },
+            )],
+            vec![],
+        );
+        let compiled =
+            compile_residual_candidate_to_horizon(&parent, &parent_bytes, &candidate, 64).unwrap();
+        assert_eq!(compiled.report.frame_count, 64);
+        assert_eq!(compiled.tape.frames.len(), 64);
+        assert_eq!(compiled.tape.frames[39].pads[0].buttons, 0x0100);
+        for frame in &compiled.tape.frames[40..] {
+            assert_eq!(frame.owned_ports, 1);
+            assert_eq!(frame.wait_condition, WaitCondition::None);
+            assert_eq!(frame.pads[0].buttons, 0);
+            assert_eq!(frame.pads[0].stick_x, 0);
+            assert!(frame.pads[0].connected);
+        }
+        assert_eq!(
+            InputTape::decode(&compiled.bytes).unwrap().tape,
+            compiled.tape
+        );
+        assert_eq!(
+            compiled.report.realized_tape_sha256,
+            sha256(&compiled.bytes)
+        );
+        assert!(
+            compile_residual_candidate_to_horizon(&parent, &parent_bytes, &candidate, 39)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot truncate")
+        );
     }
 
     #[test]

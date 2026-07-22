@@ -80,7 +80,7 @@ pub struct ResidualEvaluationEvidence {
     pub native_risk_events: Option<u64>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DeclaredResidualRisk {
     pub intervention_frames: u64,
@@ -281,6 +281,101 @@ pub struct HorizonSupportPolicy {
     pub minimum_successes: u64,
     pub minimum_behavior_classes: u64,
     pub minimum_support_millionths: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ResidualGenerationEvaluation<'a> {
+    pub compiled: &'a CompiledResidualCandidate,
+    pub evidence: &'a ResidualEvaluationEvidence,
+}
+
+/// Ranks one complete optimizer generation without consulting the bounded
+/// retention reservoir. This guarantees that every pending CEM sample receives
+/// one rank even when a failure is intentionally dropped from long-term storage.
+pub fn rank_residual_generation(
+    config: &ResidualRetentionConfig,
+    evaluations: &[ResidualGenerationEvaluation<'_>],
+) -> Result<Vec<Digest>, ResidualRetentionError> {
+    config.validate()?;
+    if evaluations.is_empty() {
+        return Err(retention_error("residual generation cannot be empty"));
+    }
+    let mut candidates = BTreeSet::new();
+    let mut tapes = BTreeSet::new();
+    let mut ranked = Vec::with_capacity(evaluations.len());
+    for evaluation in evaluations {
+        validate_evidence(config, evaluation.compiled, evaluation.evidence)?;
+        let tape = validate_compilation(config, evaluation.compiled)?;
+        if !candidates.insert(evaluation.evidence.candidate_sha256)
+            || !tapes.insert(evaluation.evidence.realized_tape_sha256)
+        {
+            return Err(retention_error(
+                "residual generation repeats a candidate or realized tape",
+            ));
+        }
+        let success = match evaluation.evidence.verdict {
+            ExactTerminalVerdict::Reached { first_hit_tick }
+                if first_hit_tick > 0 && first_hit_tick <= config.exploration_horizon_ticks =>
+            {
+                Some((
+                    first_hit_tick,
+                    tape.frames.len() as u64,
+                    tape_input_complexity(&tape),
+                    declared_risk(
+                        &evaluation.compiled.report,
+                        evaluation.evidence.native_risk_events,
+                    )?,
+                ))
+            }
+            ExactTerminalVerdict::Reached { .. } => {
+                return Err(retention_error(
+                    "terminal success lies outside the exploration horizon",
+                ));
+            }
+            ExactTerminalVerdict::Miss => None,
+        };
+        ranked.push((evaluation, success));
+    }
+    ranked.sort_by(|(left, left_success), (right, right_success)| {
+        match (left_success, right_success) {
+            (Some(left_score), Some(right_score)) => left_score
+                .cmp(right_score)
+                .then_with(|| {
+                    left.evidence
+                        .behavior_sha256
+                        .cmp(&right.evidence.behavior_sha256)
+                })
+                .then_with(|| {
+                    left.evidence
+                        .realized_tape_sha256
+                        .cmp(&right.evidence.realized_tape_sha256)
+                })
+                .then_with(|| {
+                    left.evidence
+                        .candidate_sha256
+                        .cmp(&right.evidence.candidate_sha256)
+                }),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => left
+                .evidence
+                .behavior_sha256
+                .cmp(&right.evidence.behavior_sha256)
+                .then_with(|| {
+                    failure_priority(left.compiled, left.evidence)
+                        .cmp(&failure_priority(right.compiled, right.evidence))
+                })
+                .then_with(|| {
+                    left.evidence
+                        .candidate_sha256
+                        .cmp(&right.evidence.candidate_sha256)
+                }),
+        }
+    });
+    Ok(ranked
+        .into_iter()
+        .map(|(evaluation, _)| evaluation.evidence.candidate_sha256)
+        .collect())
 }
 
 #[derive(Clone, Debug)]
@@ -1077,6 +1172,62 @@ mod tests {
         assert_eq!(archive.successes().len(), 2);
         assert_eq!(archive.successes()[0].first_hit_tick, 124);
         assert_eq!(archive.successes()[1].first_hit_tick, 150);
+    }
+
+    #[test]
+    fn generation_rank_keeps_every_pending_failure_outside_the_reservoir() {
+        let (parent, bytes) = parent();
+        let slow = compiled(&parent, &bytes, 2, 3);
+        let miss_a = compiled(&parent, &bytes, 3, 4);
+        let fast = compiled(&parent, &bytes, 4, 5);
+        let miss_b = compiled(&parent, &bytes, 5, 6);
+        let slow_evidence = evidence(
+            &slow,
+            40,
+            9,
+            ExactTerminalVerdict::Reached {
+                first_hit_tick: 150,
+            },
+            i64::MAX,
+        );
+        let miss_a_evidence = evidence(&miss_a, 41, 5, ExactTerminalVerdict::Miss, i64::MAX);
+        let fast_evidence = evidence(
+            &fast,
+            42,
+            8,
+            ExactTerminalVerdict::Reached {
+                first_hit_tick: 120,
+            },
+            i64::MIN,
+        );
+        let miss_b_evidence = evidence(&miss_b, 43, 6, ExactTerminalVerdict::Miss, i64::MIN);
+        let ranked = rank_residual_generation(
+            &config(&bytes, 1),
+            &[
+                ResidualGenerationEvaluation {
+                    compiled: &slow,
+                    evidence: &slow_evidence,
+                },
+                ResidualGenerationEvaluation {
+                    compiled: &miss_a,
+                    evidence: &miss_a_evidence,
+                },
+                ResidualGenerationEvaluation {
+                    compiled: &fast,
+                    evidence: &fast_evidence,
+                },
+                ResidualGenerationEvaluation {
+                    compiled: &miss_b,
+                    evidence: &miss_b_evidence,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(ranked.len(), 4);
+        assert_eq!(ranked[0], fast.report.candidate_sha256);
+        assert_eq!(ranked[1], slow.report.candidate_sha256);
+        assert!(ranked.contains(&miss_a.report.candidate_sha256));
+        assert!(ranked.contains(&miss_b.report.candidate_sha256));
     }
 
     #[test]

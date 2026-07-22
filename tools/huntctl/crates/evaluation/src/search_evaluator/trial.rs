@@ -124,6 +124,7 @@ pub(super) fn build_anchored_trials(
     output_root: &Path,
     repetitions: u32,
     objective: &PreparedAnchoredEvaluator,
+    suffix_horizon_ticks: Option<u64>,
 ) -> Result<Vec<Trial>, EvaluateError> {
     let mut trials = Vec::with_capacity(manifest.members.len() * repetitions as usize);
     for member in &manifest.members {
@@ -169,11 +170,35 @@ pub(super) fn build_anchored_trials(
                 member.candidate_id
             )));
         }
-        let chained = concatenate(vec![
+        let mut chained = concatenate(vec![
             ChainSegment::all(objective.prefix.clone()),
             ChainSegment::all(suffix),
         ])
         .map_err(|error| EvaluateError::InvalidManifest(error.to_string()))?;
+        if let Some(horizon) = suffix_horizon_ticks {
+            if horizon == 0 || horizon < member.frame_count {
+                return Err(EvaluateError::InvalidConfig(format!(
+                    "suffix exploration horizon {horizon} cannot truncate candidate {} with {} frames",
+                    member.candidate_id, member.frame_count
+                )));
+            }
+            let extension = horizon - member.frame_count;
+            let final_frame = chained.tape.frames.last().cloned().ok_or_else(|| {
+                EvaluateError::InvalidManifest(format!(
+                    "candidate {} produced an empty anchored execution tape",
+                    member.candidate_id
+                ))
+            })?;
+            let extension = usize::try_from(extension).map_err(|_| {
+                EvaluateError::InvalidConfig(
+                    "suffix exploration horizon does not fit memory".into(),
+                )
+            })?;
+            chained
+                .tape
+                .frames
+                .extend(std::iter::repeat_n(final_frame, extension));
+        }
         let logical_tick_budget = u64::try_from(chained.tape.frames.len()).map_err(|_| {
             EvaluateError::InvalidManifest(format!(
                 "candidate {} chained tape length does not fit u64",

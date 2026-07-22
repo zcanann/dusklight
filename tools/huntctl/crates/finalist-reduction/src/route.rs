@@ -1164,6 +1164,7 @@ fn evaluate_route_batch(
                 harness: config.harness.clone(),
             },
             objective: config.objective.clone(),
+            suffix_horizon_ticks: None,
         },
         prepared,
     )?;

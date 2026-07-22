@@ -535,6 +535,7 @@ pub fn run_proposer_tournament(
             &AnchoredEvaluateConfig {
                 evaluation,
                 objective: objective.clone(),
+                suffix_horizon_ticks: None,
             },
             prepared_anchored.as_ref().expect("prepared above"),
         )?;

@@ -309,6 +309,7 @@ milestone tunnel_crawl_start {
         &root.join("attempts"),
         1,
         &prepared,
+        None,
     )
     .unwrap();
     let full = InputTape::decode(&fs::read(&trials[0].tape).unwrap())
@@ -322,6 +323,33 @@ milestone tunnel_crawl_start {
     assert_eq!(
         &full.frames[prefix.frames.len()..],
         suffix.frames.as_slice()
+    );
+    let horizon = suffix.frames.len() as u64 + 17;
+    let horizon_trials = build_anchored_trials(
+        &manifest,
+        &fs::canonicalize(&population_root).unwrap(),
+        &root.join("horizon-attempts"),
+        1,
+        &prepared,
+        Some(horizon),
+    )
+    .unwrap();
+    let held = InputTape::decode(&fs::read(&horizon_trials[0].tape).unwrap())
+        .unwrap()
+        .tape;
+    assert_eq!(held.frames.len(), prefix.frames.len() + horizon as usize);
+    assert_eq!(
+        &held.frames[prefix.frames.len()..prefix.frames.len() + suffix.frames.len()],
+        suffix.frames.as_slice()
+    );
+    assert!(
+        held.frames[prefix.frames.len() + suffix.frames.len()..]
+            .iter()
+            .all(|frame| frame == suffix.frames.last().unwrap())
+    );
+    assert_eq!(
+        horizon_trials[0].logical_tick_budget,
+        held.frames.len() as u64
     );
     bind_population_objective(&population_root, &prepared.identity).unwrap();
     bind_population_objective(&population_root, &prepared.identity).unwrap();
@@ -340,6 +368,7 @@ milestone tunnel_crawl_start {
             &root.join("tampered-attempts"),
             1,
             &prepared,
+            None,
         )
         .is_err()
     );
@@ -369,6 +398,7 @@ milestone tunnel_crawl_start {
                 harness: None,
             },
             objective: mismatched_objective,
+            suffix_horizon_ticks: None,
         },
         &prepared,
     );

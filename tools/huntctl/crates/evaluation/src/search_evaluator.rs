@@ -82,6 +82,10 @@ pub struct AnchoredObjectiveConfig {
 pub struct AnchoredEvaluateConfig {
     pub evaluation: EvaluateConfig,
     pub objective: AnchoredObjectiveConfig,
+    /// When present, continue holding the suffix's final PAD until this many
+    /// post-source ticks have been simulated. The authoritative candidate tape
+    /// remains unchanged; only the native execution envelope is extended.
+    pub suffix_horizon_ticks: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -154,12 +158,14 @@ pub fn derive_candidate_request(
     }
 
     let mut request = template.clone();
+    let tape_sha256 = ArtifactDigest(Sha256::digest(&bytes).into());
     request.input = ObjectiveSeed::Tape {
         artifact: ArtifactReference {
             path,
-            sha256: ArtifactDigest(Sha256::digest(&bytes).into()),
+            sha256: tape_sha256,
         },
     };
+    request.identity.content_digest = tape_sha256;
     request.rng_seed = rng_seed;
     request.artifact_destination = artifact_destination.into();
     request.content_sha256 = ArtifactDigest::ZERO;
@@ -803,6 +809,7 @@ fn evaluate_anchored_population_internal(
         &base.output_root,
         base.repetitions,
         &objective,
+        config.suffix_horizon_ticks,
     )?;
     write_json(
         &base.output_root.join("plan.json"),

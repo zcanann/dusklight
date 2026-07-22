@@ -76,10 +76,14 @@ pub struct OptimizationResumeState {
 #[serde(deny_unknown_fields)]
 pub struct OptimizationResumeCandidate {
     pub id: String,
+    pub candidate: ArtifactReference,
     pub candidate_sha256: Digest,
+    pub compiled_tape: ArtifactReference,
     pub compiled_tape_sha256: Digest,
     pub generation: u64,
     pub proposer_seed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<ArtifactReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_sha256: Option<Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -91,6 +95,7 @@ pub struct OptimizationResumeCandidate {
 pub struct OptimizationCheckpointState {
     pub generation: u64,
     pub completed_candidates: u64,
+    pub artifact: ArtifactReference,
     pub artifact_sha256: Digest,
 }
 
@@ -120,6 +125,19 @@ impl OptimizationResumeState {
             || self.state_sha256 != self.compute_identity()?
         {
             return Err(resume_error("optimization resume state or seal is invalid"));
+        }
+        if self.candidates.iter().any(|candidate| {
+            candidate.candidate.sha256 != candidate.candidate_sha256
+                || candidate.compiled_tape.sha256 != candidate.compiled_tape_sha256
+                || candidate.result.as_ref().map(|result| result.sha256) != candidate.result_sha256
+        }) || self
+            .latest_optimizer_checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.artifact.sha256 != checkpoint.artifact_sha256)
+        {
+            return Err(resume_error(
+                "optimization resume artifact references differ from their folded identities",
+            ));
         }
         let checkpointed = self
             .latest_optimizer_checkpoint
@@ -301,10 +319,13 @@ fn fold_journal(
                     candidate_id.clone(),
                     OptimizationResumeCandidate {
                         id: candidate_id.clone(),
+                        candidate: candidate.clone(),
                         candidate_sha256: candidate.sha256,
+                        compiled_tape: compiled_tape.clone(),
                         compiled_tape_sha256: compiled_tape.sha256,
                         generation: *generation,
                         proposer_seed: *proposer_seed,
+                        result: None,
                         result_sha256: None,
                         simulated_ticks: None,
                     },
@@ -335,6 +356,7 @@ fn fold_journal(
                         "optimization journal exceeds the sealed simulated-tick budget",
                     ));
                 }
+                candidate.result = Some(result.clone());
                 candidate.result_sha256 = Some(result.sha256);
                 candidate.simulated_ticks = Some(*simulated_ticks);
             }
@@ -362,6 +384,7 @@ fn fold_journal(
                 latest_checkpoint = Some(OptimizationCheckpointState {
                     generation: *generation,
                     completed_candidates: *completed_candidates,
+                    artifact: state.clone(),
                     artifact_sha256: state.sha256,
                 });
             }

@@ -2,8 +2,10 @@
 
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
-use dusklight_harness_contracts::objective_suite::{ArtifactReference, SchemaIdentity};
-use dusklight_harness_contracts::run_contract::HarnessFidelityMode;
+use dusklight_harness_contracts::objective_suite::{
+    ArtifactReference, ObjectiveSeed, SchemaIdentity,
+};
+use dusklight_harness_contracts::run_contract::{HarnessFidelityMode, HarnessRunRequest};
 use dusklight_learning::factorized_pad_action::ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256;
 use dusklight_routes::timeline::{ArtifactSource, Timeline};
 use dusklight_search::residual_action::{
@@ -156,6 +158,18 @@ pub struct OptimizationRequestValidationReport {
     pub search_space_sha256: Digest,
     pub workers: u16,
     pub repetitions: u16,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptimizationHarnessBindingReport {
+    pub schema: &'static str,
+    pub optimization_request_sha256: Digest,
+    pub harness_template_sha256: Digest,
+    pub terminal_goal: String,
+    pub incumbent_tape_sha256: Digest,
+    pub exploration_horizon_ticks: u64,
+    pub fidelity: HarnessFidelityMode,
 }
 
 impl OptimizationRequest {
@@ -485,6 +499,52 @@ impl OptimizationRequest {
             .validate()
             .map_err(|source| request_error(source.to_string()))?;
         Ok(config)
+    }
+
+    /// Verifies that a separately sealed native harness template is an exact
+    /// execution authority for this optimization request. Candidate tape,
+    /// deterministic seed, and artifact destination are the only fields the
+    /// evaluator may subsequently specialize.
+    pub fn validate_harness_template(
+        &self,
+        repository_root: &Path,
+        template: &HarnessRunRequest,
+    ) -> Result<OptimizationHarnessBindingReport, OptimizationRequestError> {
+        self.validate_files(repository_root)?;
+        template
+            .validate_files(repository_root)
+            .map_err(|source| request_error(format!("invalid harness template: {source}")))?;
+        let incumbent = self
+            .incumbent
+            .as_ref()
+            .ok_or_else(|| request_error("residual execution requires an incumbent tape"))?;
+        let ObjectiveSeed::Tape { artifact } = &template.input else {
+            return Err(request_error(
+                "residual harness template input must be the incumbent tape",
+            ));
+        };
+        if artifact != &incumbent.tape
+            || template.identity.content_digest != incumbent.tape.sha256
+            || template.objective.goal != self.terminal_predicate.goal
+            || template.objective.source != self.terminal_predicate.source
+            || template.objective.program_sha256 != self.terminal_predicate.program_sha256
+            || template.action_schema != self.proposal.action_schema
+            || template.logical_tick_budget != self.budgets.exploration_horizon_ticks
+            || template.fidelity != self.execution.fidelity
+        {
+            return Err(request_error(
+                "harness template differs from the optimization incumbent, terminal predicate, action schema, horizon, or fidelity",
+            ));
+        }
+        Ok(OptimizationHarnessBindingReport {
+            schema: "dusklight-optimization-harness-binding/v1",
+            optimization_request_sha256: self.content_sha256,
+            harness_template_sha256: template.content_sha256,
+            terminal_goal: self.terminal_predicate.goal.clone(),
+            incumbent_tape_sha256: incumbent.tape.sha256,
+            exploration_horizon_ticks: self.budgets.exploration_horizon_ticks,
+            fidelity: self.execution.fidelity,
+        })
     }
 
     pub fn to_pretty_json(&self) -> Result<Vec<u8>, OptimizationRequestError> {

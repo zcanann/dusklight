@@ -223,6 +223,7 @@ pub fn run_anchored_search(
                     harness: search.harness.clone(),
                 },
                 objective: config.objective.clone(),
+                suffix_horizon_ticks: None,
             },
             &prepared,
         )?;
