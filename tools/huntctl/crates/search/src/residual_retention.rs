@@ -284,6 +284,27 @@ pub struct HorizonSupportPolicy {
     pub minimum_support_millionths: u32,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReverseCurriculumEvidence {
+    pub current_start_frame: u64,
+    pub proposed_start_frame: u64,
+    pub evaluated_tapes: u64,
+    pub successful_tapes: u64,
+    pub successful_behavior_classes: u64,
+    pub success_millionths: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReverseCurriculumSupportPolicy {
+    pub initial_tail_ticks: u64,
+    pub expansion_step_ticks: u64,
+    pub minimum_successes: u64,
+    pub minimum_behavior_classes: u64,
+    pub minimum_success_millionths: u32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct ResidualGenerationEvaluation<'a> {
     pub compiled: &'a CompiledResidualCandidate,
@@ -581,6 +602,73 @@ impl ResidualOutcomeArchive {
             supporting_successes: supporting.len() as u64,
             supporting_behavior_classes: behaviors,
             support_millionths: support,
+        })
+    }
+
+    /// Admits one deterministic backward curriculum expansion only after the
+    /// current terminal window has several exact successful continuations.
+    /// Every count comes from the authenticated unique-tape archive; shaped
+    /// progress and coordinates have no authority here.
+    pub fn reverse_curriculum_evidence(
+        &self,
+        parent: &InputTape,
+        parent_bytes: &[u8],
+        current_start_frame: u64,
+        proposed_start_frame: u64,
+        policy: ReverseCurriculumSupportPolicy,
+    ) -> Result<ReverseCurriculumEvidence, ResidualRetentionError> {
+        if proposed_start_frame >= current_start_frame
+            || policy.initial_tail_ticks < 32
+            || policy.expansion_step_ticks == 0
+            || policy.minimum_successes < 2
+            || policy.minimum_behavior_classes < 2
+            || policy.minimum_behavior_classes > policy.minimum_successes
+            || policy.minimum_success_millionths == 0
+            || policy.minimum_success_millionths > 1_000_000
+            || self.evaluated_tapes.is_empty()
+            || parent.encode().ok().as_deref() != Some(parent_bytes)
+            || sha256(parent_bytes) != self.config.parent_tape_sha256
+            || current_start_frame > parent.frames.len() as u64
+        {
+            return Err(retention_error(
+                "reverse curriculum proposal or support policy is invalid",
+            ));
+        }
+        let prefix_len = current_start_frame as usize;
+        let supported = self
+            .successes
+            .iter()
+            .filter(|success| {
+                InputTape::decode(&success.realized_tape).is_ok_and(|decoded| {
+                    decoded.tape.frames.len() >= prefix_len
+                        && decoded.tape.frames[..prefix_len] == parent.frames[..prefix_len]
+                })
+            })
+            .collect::<Vec<_>>();
+        let successful_tapes = supported.len() as u64;
+        let successful_behavior_classes = supported
+            .iter()
+            .map(|success| success.behavior_sha256)
+            .collect::<BTreeSet<_>>()
+            .len() as u64;
+        let evaluated_tapes = self.evaluated_tapes.len() as u64;
+        let success_millionths =
+            (successful_tapes.saturating_mul(1_000_000) / evaluated_tapes) as u32;
+        if successful_tapes < policy.minimum_successes
+            || successful_behavior_classes < policy.minimum_behavior_classes
+            || success_millionths < policy.minimum_success_millionths
+        {
+            return Err(retention_error(
+                "exact successful continuations do not support curriculum expansion",
+            ));
+        }
+        Ok(ReverseCurriculumEvidence {
+            current_start_frame,
+            proposed_start_frame,
+            evaluated_tapes,
+            successful_tapes,
+            successful_behavior_classes,
+            success_millionths,
         })
     }
 
@@ -1313,6 +1401,76 @@ mod tests {
             )
             .unwrap();
         assert_eq!(supported.supporting_successes, 3);
+        let mut curriculum_archive = ResidualOutcomeArchive::new(config(&bytes, 8)).unwrap();
+        for (index, behavior) in [50_u8, 51, 52, 53].into_iter().enumerate() {
+            let candidate = compiled(&parent, &bytes, 20 + index as u64, index as i16 + 1);
+            curriculum_archive
+                .record(
+                    &candidate,
+                    evidence(
+                        &candidate,
+                        60 + index as u8,
+                        behavior,
+                        ExactTerminalVerdict::Reached {
+                            first_hit_tick: 130 + index as u64,
+                        },
+                        0,
+                    ),
+                )
+                .unwrap();
+        }
+        let off_frontier = compiled(&parent, &bytes, 4, 9);
+        curriculum_archive
+            .record(
+                &off_frontier,
+                evidence(
+                    &off_frontier,
+                    70,
+                    54,
+                    ExactTerminalVerdict::Reached {
+                        first_hit_tick: 134,
+                    },
+                    0,
+                ),
+            )
+            .unwrap();
+        let curriculum = curriculum_archive
+            .reverse_curriculum_evidence(
+                &parent,
+                &bytes,
+                16,
+                8,
+                ReverseCurriculumSupportPolicy {
+                    initial_tail_ticks: 64,
+                    expansion_step_ticks: 16,
+                    minimum_successes: 3,
+                    minimum_behavior_classes: 3,
+                    minimum_success_millionths: 800_000,
+                },
+            )
+            .unwrap();
+        assert_eq!(curriculum.evaluated_tapes, 5);
+        assert_eq!(curriculum.successful_tapes, 4);
+        assert_eq!(curriculum.successful_behavior_classes, 4);
+        assert_eq!(curriculum.success_millionths, 800_000);
+        assert_eq!(curriculum.proposed_start_frame, 8);
+        assert!(
+            curriculum_archive
+                .reverse_curriculum_evidence(
+                    &parent,
+                    &bytes,
+                    8,
+                    16,
+                    ReverseCurriculumSupportPolicy {
+                        initial_tail_ticks: 64,
+                        expansion_step_ticks: 16,
+                        minimum_successes: 2,
+                        minimum_behavior_classes: 2,
+                        minimum_success_millionths: 1,
+                    },
+                )
+                .is_err()
+        );
     }
 
     #[test]

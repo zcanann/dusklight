@@ -45,6 +45,7 @@ pub fn tighten_residual_horizon_request(
     child.budgets.simulated_tick_budget = tightened_tick_budget(parent, proposed_horizon_ticks)?;
     child.resume.state_path = format!("build/campaigns/{new_id}/state.json");
     child.resume.journal_path = format!("build/campaigns/{new_id}/journal.jsonl");
+    child.reverse_curriculum = None;
     child.horizon_tightening = Some(OptimizationHorizonTightening {
         source_request,
         source_execution,

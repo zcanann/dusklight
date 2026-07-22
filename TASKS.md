@@ -449,6 +449,16 @@ winner is the target and remains an open framework challenge until achieved.
   - Expand backward only after held-out rollouts reconnect the new frontier to a
     terminal success.
   - Never replace reachability with a hand-authored coordinate corridor.
+      `campaign seed-residual-reverse-curriculum` now derives a narrow terminal
+      action window from the exact route-proved incumbent prefix; no coordinate
+      or synthetic-state corridor enters the request. Each child is sealed to
+      its source request and owns fresh resume paths. `campaign
+      expand-residual-reverse-curriculum` moves that window backward by exactly
+      one policy step only after a digest-bound native checkpoint contains the
+      configured number, behavior diversity, and rate of exact successful
+      continuations. Recursive file validation rebuilds every seed/expansion and
+      rejects any other request delta. Real held-out curriculum campaigns must
+      still populate and expand this lineage before the item closes.
 - [ ] Use residual search for continuous trajectory proposals and the learned
       critic for state-conditioned ranking. Keep exact simulation as authority.
 - [x] Preserve achieved goals and alternate terminals so failed main-goal runs

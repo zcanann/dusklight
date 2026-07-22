@@ -16,7 +16,7 @@ use dusklight_search::residual_action::{
 use dusklight_search::residual_optimizer::ResidualSearchSpace;
 use dusklight_search::residual_retention::{
     FailureRetentionPolicy, HorizonSupportPolicy, HorizonTighteningEvidence,
-    ResidualRetentionConfig,
+    ResidualRetentionConfig, ReverseCurriculumEvidence, ReverseCurriculumSupportPolicy,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -48,6 +48,8 @@ pub struct OptimizationRequest {
     pub retention: OptimizationRetention,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub horizon_tightening: Option<OptimizationHorizonTightening>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse_curriculum: Option<OptimizationReverseCurriculum>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -170,6 +172,22 @@ pub struct OptimizationHorizonTightening {
     pub evidence: HorizonTighteningEvidence,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptimizationReverseCurriculum {
+    pub source_request: ArtifactReference,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_execution: Option<ArtifactReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_checkpoint: Option<ArtifactReference>,
+    pub generation: u32,
+    pub root_start_frame: u64,
+    pub terminal_end_frame_exclusive: u64,
+    pub policy: ReverseCurriculumSupportPolicy,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<ReverseCurriculumEvidence>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptimizationRequestValidationReport {
@@ -194,6 +212,10 @@ pub struct OptimizationRequestValidationReport {
     pub alternate_terminal_goals: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub horizon_tightened_from: Option<Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse_curriculum_generation: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reverse_curriculum_start_frame: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -353,6 +375,11 @@ impl OptimizationRequest {
             }
             _ => {}
         }
+        if self.horizon_tightening.is_some() && self.reverse_curriculum.is_some() {
+            return Err(request_error(
+                "optimization requests must expose exactly one active derivation edge",
+            ));
+        }
         if let Some(tightening) = &self.horizon_tightening {
             validate_artifact_shape("horizon source request", &tightening.source_request)?;
             validate_artifact_shape("horizon source execution", &tightening.source_execution)?;
@@ -375,6 +402,82 @@ impl OptimizationRequest {
                 return Err(request_error(
                     "optimization horizon-tightening binding is structurally invalid",
                 ));
+            }
+        }
+        if let Some(curriculum) = &self.reverse_curriculum {
+            validate_artifact_shape("curriculum source request", &curriculum.source_request)?;
+            let expansion_sources = match (
+                &curriculum.source_execution,
+                &curriculum.source_checkpoint,
+                &curriculum.evidence,
+            ) {
+                (None, None, None) => false,
+                (Some(execution), Some(checkpoint), Some(_)) => {
+                    validate_artifact_shape("curriculum source execution", execution)?;
+                    validate_artifact_shape("curriculum source checkpoint", checkpoint)?;
+                    true
+                }
+                _ => {
+                    return Err(request_error(
+                        "reverse curriculum expansion sources are incomplete",
+                    ));
+                }
+            };
+            let policy = curriculum.policy;
+            let root_width = curriculum
+                .terminal_end_frame_exclusive
+                .checked_sub(curriculum.root_start_frame);
+            if root_width.is_none_or(|width| width < 32)
+                || policy.initial_tail_ticks < 32
+                || policy.initial_tail_ticks >= root_width.unwrap_or_default()
+                || policy.expansion_step_ticks == 0
+                || policy.expansion_step_ticks > root_width.unwrap_or_default()
+                || policy.minimum_successes < 2
+                || policy.minimum_behavior_classes < 2
+                || policy.minimum_behavior_classes > policy.minimum_successes
+                || policy.minimum_success_millionths == 0
+                || policy.minimum_success_millionths > 1_000_000
+                || curriculum.terminal_end_frame_exclusive
+                    != self.proposal.search_space.end_frame_exclusive
+                || self.proposal.search_space.start_frame < curriculum.root_start_frame
+                || self.proposal.search_space.start_frame >= curriculum.terminal_end_frame_exclusive
+                || (curriculum.generation == 0) == expansion_sources
+            {
+                return Err(request_error(
+                    "reverse curriculum policy, bounds, or generation is invalid",
+                ));
+            }
+            if curriculum.generation == 0 {
+                if self.proposal.search_space.start_frame
+                    != curriculum.terminal_end_frame_exclusive - policy.initial_tail_ticks
+                {
+                    return Err(request_error(
+                        "reverse curriculum seed is not the derived terminal window",
+                    ));
+                }
+            } else {
+                let evidence = curriculum.evidence.as_ref().expect("expansion evidence");
+                let expected_start = evidence
+                    .current_start_frame
+                    .saturating_sub(policy.expansion_step_ticks)
+                    .max(curriculum.root_start_frame);
+                if evidence.current_start_frame <= evidence.proposed_start_frame
+                    || evidence.proposed_start_frame != expected_start
+                    || evidence.proposed_start_frame != self.proposal.search_space.start_frame
+                    || evidence.evaluated_tapes == 0
+                    || evidence.successful_tapes < policy.minimum_successes
+                    || evidence.successful_tapes > evidence.evaluated_tapes
+                    || evidence.successful_behavior_classes < policy.minimum_behavior_classes
+                    || evidence.successful_behavior_classes > evidence.successful_tapes
+                    || evidence.success_millionths < policy.minimum_success_millionths
+                    || evidence.success_millionths
+                        != (evidence.successful_tapes.saturating_mul(1_000_000)
+                            / evidence.evaluated_tapes) as u32
+                {
+                    return Err(request_error(
+                        "reverse curriculum expansion evidence is invalid or detached",
+                    ));
+                }
             }
         }
         if self.content_sha256 == Digest::ZERO
@@ -401,7 +504,7 @@ impl OptimizationRequest {
     ) -> Result<OptimizationRequestValidationReport, OptimizationRequestError> {
         if tightening_depth > 16 {
             return Err(request_error(
-                "optimization horizon-tightening lineage exceeds 16 ancestors",
+                "optimization request lineage exceeds 16 ancestors",
             ));
         }
         self.validate()?;
@@ -552,6 +655,14 @@ impl OptimizationRequest {
             )
             .map_err(request_error)?;
         }
+        if self.reverse_curriculum.is_some() {
+            crate::residual_reverse_curriculum::validate_reverse_curriculum_files(
+                &root,
+                self,
+                tightening_depth,
+            )
+            .map_err(request_error)?;
+        }
 
         Ok(OptimizationRequestValidationReport {
             schema: OPTIMIZATION_REQUEST_SCHEMA_V2,
@@ -587,6 +698,14 @@ impl OptimizationRequest {
                 .horizon_tightening
                 .as_ref()
                 .map(|tightening| tightening.source_request.sha256),
+            reverse_curriculum_generation: self
+                .reverse_curriculum
+                .as_ref()
+                .map(|curriculum| curriculum.generation),
+            reverse_curriculum_start_frame: self
+                .reverse_curriculum
+                .as_ref()
+                .map(|_| self.proposal.search_space.start_frame),
         })
     }
 

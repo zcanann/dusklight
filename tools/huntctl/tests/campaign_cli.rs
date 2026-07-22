@@ -226,6 +226,93 @@ fn validates_and_seals_the_ordon_optimization_request() {
 }
 
 #[test]
+fn seeds_a_digest_bound_reverse_curriculum_terminal_window() {
+    let repository = repository();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let relative_root = format!(
+        "build/harness/reverse-curriculum-test-{}-{nonce}",
+        std::process::id()
+    );
+    let absolute_root = repository.join(&relative_root);
+    fs::create_dir_all(&absolute_root).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .current_dir(&repository)
+        .args([
+            "campaign",
+            "seed-residual-reverse-curriculum",
+            "--request",
+            "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+            "--id",
+            "ordon-q125-reverse-curriculum-cli-rejected",
+            "--initial-tail-ticks",
+            "64",
+            "--expansion-step-ticks",
+            "16",
+            "--minimum-successes",
+            "3",
+            "--minimum-behavior-classes",
+            "3",
+            "--minimum-success-millionths",
+            "500000",
+            "--output",
+            "artifacts/reverse-curriculum.request.json",
+            "--repository-root",
+        ])
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("repository-relative build/ path"));
+    let output = format!("{relative_root}/seed.request.json");
+    let seeded = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .current_dir(&repository)
+        .args([
+            "campaign",
+            "seed-residual-reverse-curriculum",
+            "--request",
+            "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+            "--id",
+            "ordon-q125-reverse-curriculum-cli-g0",
+            "--initial-tail-ticks",
+            "64",
+            "--expansion-step-ticks",
+            "16",
+            "--minimum-successes",
+            "3",
+            "--minimum-behavior-classes",
+            "3",
+            "--minimum-success-millionths",
+            "500000",
+            "--output",
+            &output,
+            "--repository-root",
+        ])
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        seeded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&seeded.stderr)
+    );
+    let report: Value = serde_json::from_slice(&seeded.stdout).unwrap();
+    assert_eq!(report["reverse_curriculum_generation"], 0);
+    assert_eq!(report["reverse_curriculum_start_frame"], 62);
+    let request: Value =
+        serde_json::from_slice(&fs::read(repository.join(&output)).unwrap()).unwrap();
+    assert_eq!(request["proposal"]["search_space"]["start_frame"], 62);
+    assert_eq!(request["reverse_curriculum"]["generation"], 0);
+    assert_eq!(
+        request["reverse_curriculum"]["source_request"]["path"],
+        "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json"
+    );
+    fs::remove_dir_all(absolute_root).unwrap();
+}
+
+#[test]
 fn materializes_a_native_ordon_execution_binding_from_the_checked_route() {
     let repository = repository();
     let nonce = SystemTime::now()

@@ -101,6 +101,100 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         println!("{}", serde_json::to_string_pretty(&summary)?);
         return Ok(());
     }
+    if args.first().map(String::as_str) == Some("seed-residual-reverse-curriculum") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let source_request = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "reverse curriculum source optimization request",
+        )?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_request.path))?)?;
+        let required_u64 = |name: &str| -> Result<u64, Box<dyn Error>> {
+            Ok(option(command_args, name)
+                .ok_or_else(|| format!("reverse curriculum seed requires {name} N"))?
+                .parse()?)
+        };
+        let child = huntctl::search_evaluator::residual_reverse_curriculum::seed_residual_reverse_curriculum_request(
+            &optimization,
+            source_request,
+            option(command_args, "--id")
+                .ok_or("reverse curriculum seed requires --id NEW_ID")?,
+            huntctl::search_evaluator::residual_reverse_curriculum::ReverseCurriculumSupportPolicy {
+                initial_tail_ticks: required_u64("--initial-tail-ticks")?,
+                expansion_step_ticks: required_u64("--expansion-step-ticks")?,
+                minimum_successes: required_u64("--minimum-successes")?,
+                minimum_behavior_classes: required_u64("--minimum-behavior-classes")?,
+                minimum_success_millionths: u32::try_from(required_u64(
+                    "--minimum-success-millionths",
+                )?)?,
+            },
+        )?;
+        let report = child.validate_files(&repository_root)?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "reverse curriculum seed request",
+        )?;
+        refuse_existing_output(&output, "reverse curriculum seed request")?;
+        write_new_file(&output, child.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("expand-residual-reverse-curriculum") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let source_request = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "reverse curriculum source optimization request",
+        )?;
+        let source_execution = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--execution")?,
+            "reverse curriculum source execution binding",
+        )?;
+        let source_checkpoint = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--checkpoint")?,
+            "reverse curriculum source checkpoint",
+        )?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_request.path))?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_execution.path))?)?;
+        execution.validate_files(&repository_root, &optimization)?;
+        let checkpoint: huntctl::search_evaluator::residual_campaign::ResidualCampaignCheckpoint =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_checkpoint.path))?)?;
+        let incumbent = optimization
+            .incumbent
+            .as_ref()
+            .ok_or("reverse curriculum source requires an incumbent")?;
+        let incumbent_bytes = fs::read(repository_root.join(&incumbent.tape.path))?;
+        let incumbent_tape = huntctl::tape::InputTape::decode(&incumbent_bytes)?.tape;
+        let child = huntctl::search_evaluator::residual_reverse_curriculum::expand_residual_reverse_curriculum_request(
+            &optimization,
+            source_request,
+            source_execution,
+            source_checkpoint,
+            &checkpoint,
+            &incumbent_tape,
+            &incumbent_bytes,
+            option(command_args, "--id")
+                .ok_or("reverse curriculum expansion requires --id NEW_ID")?,
+        )?;
+        let report = child.validate_files(&repository_root)?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "expanded reverse curriculum request",
+        )?;
+        refuse_existing_output(&output, "expanded reverse curriculum request")?;
+        write_new_file(&output, child.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("tighten-residual-horizon") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;
@@ -678,6 +772,22 @@ fn repository_artifact(
         path: relative,
         sha256: huntctl::Digest(Sha256::digest(bytes).into()),
     })
+}
+
+fn repository_build_output(
+    repository_root: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<PathBuf, Box<dyn Error>> {
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || !path.starts_with("build")
+    {
+        return Err(format!("{label} output must be a repository-relative build/ path").into());
+    }
+    Ok(repository_root.join(path))
 }
 
 fn refuse_existing_output(path: &Path, label: &str) -> Result<(), Box<dyn Error>> {
