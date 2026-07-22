@@ -217,6 +217,9 @@ fn print_usage() {
     eprintln!(
         "  huntctl learn factorized-policy-batch --input OUTPUTS.json --output BATCH.json --source-boundary-fingerprint VALUE [--source-frame N] [--maximum-ticks N] [--checkpoint-validation-ticks N] [--verify-state-hashes]"
     );
+    eprintln!(
+        "  huntctl learn frozen-policy-batch --model MODEL.dsfrozen --objective-sha256 SHA256 --output BATCH.json --source-boundary-fingerprint VALUE [--candidate-id ID] [--source-frame N] [--maximum-ticks N] [--checkpoint-validation-ticks N] [--verify-state-hashes]"
+    );
     eprintln!("  huntctl learn inspect-episode --input IMMUTABLE-EPISODE.json");
     eprintln!(
         "  huntctl learn native-replay (--source SOURCE.json [--source MORE.json] | --input EPISODES.dseps [--input MORE.dseps] --role demonstration|policy_rollout|randomized_coverage|alternate_terminal [--policy-lineage-sha256 SHA256]) --output CORPUS.json [--previous CORPUS.json] [--artifact-store ROOT]"

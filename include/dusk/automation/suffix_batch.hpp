@@ -6,6 +6,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -14,7 +15,9 @@ namespace dusk::automation {
 
 inline constexpr std::string_view LegacySuffixBatchSchema = "dusklight-suffix-batch/v2";
 inline constexpr std::string_view PreviousSuffixBatchSchema = "dusklight-suffix-batch/v3";
-inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v4";
+inline constexpr std::string_view FactorizedSuffixBatchSchema = "dusklight-suffix-batch/v4";
+inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v5";
+inline constexpr std::string_view FrozenPolicySchema = "dusklight-native-frozen-policy/v1";
 inline constexpr std::size_t SuffixBatchMaximumBytes = 64 * 1024 * 1024;
 inline constexpr std::size_t SuffixBatchMaximumCandidates = 16384;
 inline constexpr std::size_t SuffixBatchMaximumTicks = 4096;
@@ -30,6 +33,7 @@ struct SuffixBatchCandidate {
     std::string id;
     bool tapePassthrough = false;
     bool factorizedPolicy = false;
+    bool frozenPolicy = false;
     FactorizedPadPolicyHeadConfig policyHead{};
     std::vector<std::array<float, kFactorizedPadPolicyHeadWidth>> policyOutputs;
     // One bounded index per expanded tick; the native boundary decodes the
@@ -40,6 +44,12 @@ struct SuffixBatchCandidate {
     std::vector<RawPadState> pads;
 };
 
+struct SuffixBatchFrozenPolicy {
+    std::string modelPath;
+    std::string modelXxh3_128;
+    FactorizedPadPolicyHeadConfig policyHead{};
+};
+
 struct SuffixBatchDefinition {
     std::size_t sourceFrame = 0;
     std::string sourceBoundaryFingerprint;
@@ -48,6 +58,7 @@ struct SuffixBatchDefinition {
     std::size_t validationTicks = 0;
     std::size_t maximumTicks = 0;
     bool verifyStateHashes = false;
+    std::optional<SuffixBatchFrozenPolicy> frozenPolicy;
     std::vector<SuffixBatchCandidate> candidates;
 };
 

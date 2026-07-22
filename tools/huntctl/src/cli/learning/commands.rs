@@ -29,6 +29,7 @@ use huntctl::learning::multitask_set_encoder::{
 use huntctl::learning::native_auxiliary_dataset::{
     AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V2, NativeAuxiliaryDataset,
 };
+use huntctl::learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
@@ -298,6 +299,61 @@ fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
 
 pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("frozen-policy-batch") => {
+            let learn_args = &args[1..];
+            let model = required_path(learn_args, "--model")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "frozen policy batch output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let maximum_ticks = usize_option(learn_args, "--maximum-ticks", 125)?;
+            let objective = option(learn_args, "--objective-sha256")
+                .ok_or("missing required --objective-sha256 SHA256")?
+                .parse::<Digest>()?;
+            let canonical_model = fs::canonicalize(&model)?;
+            let batch = NativeFrozenPolicySuffixBatch::build(
+                &fs::read(&canonical_model)?,
+                canonical_model.to_string_lossy().into_owned(),
+                objective,
+                option(learn_args, "--candidate-id").unwrap_or_else(|| "native-policy".into()),
+                NativeFactorizedPolicyBatchConfig {
+                    source_frame: usize_option(learn_args, "--source-frame", 440)?,
+                    source_boundary_fingerprint: option(
+                        learn_args,
+                        "--source-boundary-fingerprint",
+                    )
+                    .ok_or("missing required --source-boundary-fingerprint VALUE")?,
+                    checkpoint_validation_ticks: usize_option(
+                        learn_args,
+                        "--checkpoint-validation-ticks",
+                        maximum_ticks.min(8),
+                    )?,
+                    maximum_ticks,
+                    verify_state_hashes: learn_args
+                        .iter()
+                        .any(|argument| argument == "--verify-state-hashes"),
+                },
+            )?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut encoded = serde_json::to_vec_pretty(&batch)?;
+            encoded.push(b'\n');
+            fs::write(&output, encoded)?;
+            println!(
+                "wrote native frozen policy batch ({} ticks) to {}",
+                batch.maximum_ticks,
+                output.display()
+            );
+            Ok(())
+        }
         Some("factorized-policy-batch") => {
             let learn_args = &args[1..];
             let input = required_path(learn_args, "--input")?;

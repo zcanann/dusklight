@@ -1,10 +1,12 @@
 #pragma once
 
 #include "dusk/automation/game_state_observer.hpp"
+#include "dusk/automation/frozen_inference.hpp"
 #include "dusk/automation/learning_episode.hpp"
 #include "dusk/automation/milestones.hpp"
 #include "dusk/automation/state_checkpoint.hpp"
 #include "dusk/automation/suffix_batch.hpp"
+#include "dusk/automation/native_policy_features.hpp"
 
 #include <array>
 #include <chrono>
@@ -138,6 +140,8 @@ private:
         std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& output,
         std::string& error);
     bool captureEpisodePreInput(std::uint64_t simulationTick, std::string& error);
+    bool loadFrozenPolicy(const SuffixBatchDefinition& definition,
+        FrozenInferenceModel& output, std::string& error) const;
     bool appendEpisodePostSimulation(const MilestoneObservation& observation,
         const RawPadState& chosenPad, std::uint64_t simulationTick, bool terminal,
         std::string& error);
@@ -157,6 +161,7 @@ private:
         ProfileClock::time_point cpuRendererStart{};
         std::uint64_t batchWallMicros = 0;
         std::uint64_t policyHeadDecodeNanos = 0;
+        std::uint64_t policyInferenceNanos = 0;
         std::uint64_t policyApplicationNanos = 0;
         std::uint64_t simulationMicros = 0;
         std::uint64_t observationCaptureMicros = 0;
@@ -165,6 +170,7 @@ private:
         std::uint64_t cpuDrawTraversalMicros = 0;
         std::uint64_t cpuRendererSubmissionMicros = 0;
         std::uint64_t policyHeadDecodeSamples = 0;
+        std::uint64_t policyInferenceSamples = 0;
         std::uint64_t policyApplicationSamples = 0;
         std::uint64_t simulationSamples = 0;
         std::uint64_t observationCaptureSamples = 0;
@@ -209,6 +215,12 @@ private:
     std::vector<RawPadState> mConsumedPads;
     std::vector<std::uint8_t> mCurrentEpisode;
     bool mEpisodePreInputCaptured = false;
+    bool mPolicyFeatureRowReady = false;
+    bool mCandidateChosenPadReady = false;
+    NativePolicyFeatureRow mPolicyFeatureRow{};
+    std::array<float, kFactorizedPadPolicyHeadWidth> mPolicyOutput{};
+    RawPadState mCandidateChosenPad{};
+    FrozenInferenceModel mFrozenPolicyModel;
     LearningEpisodeShardWriter mEpisodeShard;
     std::string mStateDigestMaterial;
     std::vector<CandidateResult> mResults;

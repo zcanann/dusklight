@@ -85,6 +85,17 @@ std::string xxh3_128_hex(const std::string_view value) {
     return output;
 }
 
+std::string digest_hex(const std::span<const std::uint8_t> bytes) {
+    constexpr char Hex[] = "0123456789abcdef";
+    std::string output;
+    output.reserve(bytes.size() * 2);
+    for (const std::uint8_t byte : bytes) {
+        output.push_back(Hex[byte >> 4]);
+        output.push_back(Hex[byte & 0xf]);
+    }
+    return output;
+}
+
 nlohmann::json pad_json(const RawPadState& pad) {
     return {
         {"buttons", pad.buttons},
@@ -133,6 +144,56 @@ bool write_atomic(const std::filesystem::path& path, const std::string_view byte
 
 }  // namespace
 
+bool SuffixBatchRunner::loadFrozenPolicy(const SuffixBatchDefinition& definition,
+    FrozenInferenceModel& output, std::string& error) const {
+    output = {};
+    if (!definition.frozenPolicy.has_value()) return true;
+    constexpr std::uintmax_t MaximumFrozenPolicyBytes = 70 * 1024 * 1024;
+    const auto& policy = *definition.frozenPolicy;
+    std::error_code filesystemError;
+    const std::filesystem::path path(policy.modelPath);
+    const std::uintmax_t size = std::filesystem::file_size(path, filesystemError);
+    if (filesystemError || size == 0 || size > MaximumFrozenPolicyBytes) {
+        error = "frozen policy model is missing, empty, or exceeds 70 MiB";
+        return false;
+    }
+    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
+    std::ifstream stream(path, std::ios::binary);
+    if (!stream || !stream.read(reinterpret_cast<char*>(bytes.data()),
+                       static_cast<std::streamsize>(bytes.size())))
+    {
+        error = "frozen policy model could not be read completely";
+        return false;
+    }
+    const std::string_view byteView(
+        reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    if (xxh3_128_hex(byteView) != policy.modelXxh3_128) {
+        error = "frozen policy model content identity differs from the batch";
+        return false;
+    }
+    FrozenInferenceModel parsed;
+    if (!parsed.decode(bytes, error)) {
+        error = "frozen policy model is invalid: " + error;
+        return false;
+    }
+    if (parsed.inputWidth() != kNativePolicyFeatureWidth ||
+        parsed.featureSchemaSha256() != kNativePolicyFeatureSchemaDigest ||
+        parsed.actionSchemaSha256() != kOnlineFactorizedPadActionSchemaDigest ||
+        parsed.actions().size() != kFactorizedPadPolicyHeadWidth)
+    {
+        error = "frozen policy model feature or action schema is incompatible";
+        return false;
+    }
+    for (std::size_t index = 0; index < parsed.actions().size(); ++index) {
+        if (parsed.actions()[index] != index) {
+            error = "frozen policy model action IDs are not the canonical output coordinates";
+            return false;
+        }
+    }
+    output = std::move(parsed);
+    return true;
+}
+
 bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
     std::filesystem::path resultPath, std::filesystem::path winnerTapePath,
     std::string gameDataSha256, std::string worldContextSha256, std::string& error) {
@@ -149,8 +210,11 @@ bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
         error = "suffix batch runner configuration is empty or already installed";
         return false;
     }
+    FrozenInferenceModel frozenPolicy;
+    if (!loadFrozenPolicy(definition, frozenPolicy, error)) return false;
     mEnabled = true;
     mDefinition = std::move(definition);
+    mFrozenPolicyModel = std::move(frozenPolicy);
     mResultPath = std::move(resultPath);
     mWinnerTapePath = std::move(winnerTapePath);
     mGameDataSha256 = std::move(gameDataSha256);
@@ -182,7 +246,10 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
         return false;
     }
 
+    FrozenInferenceModel frozenPolicy;
+    if (!loadFrozenPolicy(definition, frozenPolicy, error)) return false;
     mDefinition = std::move(definition);
+    mFrozenPolicyModel = std::move(frozenPolicy);
     mResultPath = std::move(resultPath);
     mWinnerTapePath = std::move(winnerTapePath);
     mEpisodeShardPath = mResultPath;
@@ -204,6 +271,8 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mRestoreMicros.reserve(mDefinition.candidates.size());
     mConsumedCaptureFailed = false;
     mEpisodePreInputCaptured = false;
+    mPolicyFeatureRowReady = false;
+    mCandidateChosenPadReady = false;
     resetBatchProfile(true);
     mError.clear();
     mCompleted = false;
@@ -319,6 +388,20 @@ bool SuffixBatchRunner::captureSource(const std::uint64_t simulationTick,
         if (!mGoalTracker.configure(goal, MilestoneId::ExitFSp103ToFSp104, error)) return false;
     }
     mGoalTracker.setBootOrigin(input_tape_player().tape().boot);
+
+    if (mFrozenPolicyModel.loaded()) {
+        const auto goalName = mGoalTracker.goalName();
+        const auto authored = goalName.has_value()
+            ? std::ranges::find(mGoalTracker.authoredHits(), *goalName,
+                  &AuthoredMilestoneHit::id)
+            : mGoalTracker.authoredHits().end();
+        if (mGoalTracker.goal().has_value() || authored == mGoalTracker.authoredHits().end() ||
+            digest_hex(mFrozenPolicyModel.objectiveSha256()) != authored->definitionDigest)
+        {
+            error = "frozen policy objective is not the exact authored goal definition";
+            return false;
+        }
+    }
 
     return true;
 }
@@ -516,6 +599,8 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         error = "learning episode pre-input boundary was captured twice or out of range";
         return false;
     }
+    mPolicyFeatureRowReady = false;
+    mCandidateChosenPadReady = false;
     if (mCandidateTick == 0) {
         AccumulateMicros encoding(mProfile.corpusEncodingMicros);
         begin_learning_episode(mCurrentEpisode);
@@ -556,6 +641,54 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         previousInput = mConsumedPads.back();
     } else if (mSource.pad.active[0]) {
         previousInput = raw_pad_state_from_pad_status(mSource.pad.status[0]);
+    }
+    if (mDefinition.candidates[mCandidateIndex].frozenPolicy) {
+        const NativePolicyFeatureInput policyInput{
+            .playerPresent = observation.playerPresent,
+            .playerIsLink = observation.playerIsLink,
+            .playerPosition = {observation.playerPositionX, observation.playerPositionY,
+                observation.playerPositionZ},
+            .playerVelocity = {observation.playerVelocityX, observation.playerVelocityY,
+                observation.playerVelocityZ},
+            .playerForwardSpeed = observation.playerForwardSpeed,
+            .playerCurrentYaw = observation.playerCurrentAngleY,
+            .playerShapeYaw = observation.playerShapeAngleY,
+            .playerGroundContact = observation.playerGroundContact,
+            .playerWallContact = observation.playerWallContact,
+            .playerRoofContact = observation.playerRoofContact,
+            .playerWaterContact = observation.playerWaterContact,
+            .playerWaterIn = observation.playerWaterIn,
+            .playerGroundHeightPresent = observation.playerGroundHeightPresent,
+            .playerGroundHeight = observation.playerGroundHeight,
+            .playerRoofHeightPresent = observation.playerRoofHeightPresent,
+            .playerRoofHeight = observation.playerRoofHeight,
+            .eventRunning = observation.eventRunning,
+            .eventMode = observation.eventMode,
+            .eventStatus = observation.eventStatus,
+            .eventMapToolId = observation.eventMapToolId,
+            .nextStageEnabled = observation.nextStageEnabled,
+            .cameraPresent = controller.cameraPresent,
+            .cameraYawRadians = controller.cameraYawRadians,
+            .collisionCorrectionPresent = collision.present,
+            .collisionCorrectionX = collision.x,
+            .collisionCorrectionZ = collision.z,
+            .remainingTicks = static_cast<std::uint32_t>(
+                mDefinition.maximumTicks - mCandidateTick),
+            .previousInput = previousInput,
+            .playerDamageWaitTimer = observation.playerDamageWaitTimer,
+            .playerIceDamageWaitTimer = observation.playerIceDamageWaitTimer,
+            .playerSwordChangeWaitTimer = observation.playerSwordChangeWaitTimer,
+            .playerDoStatus = observation.playerDoStatus,
+            .stageName = controller.stageName,
+            .room = observation.room,
+            .layer = observation.layer,
+            .point = observation.point,
+            .playerProcedure = observation.playerProcId,
+            .playerModeFlags = observation.playerModeFlags,
+        };
+        if (!encode_native_policy_features(policyInput, mPolicyFeatureRow, error))
+            return false;
+        mPolicyFeatureRowReady = true;
     }
     const LearningObservationContext context{
         .phase = LearningObservationPhase::PreInput,
@@ -653,7 +786,40 @@ void SuffixBatchRunner::applyCandidateInput() {
         ++mProfile.policyApplicationSamples;
         return;
     }
-    RawPadState chosen = candidate.pads[mCandidateTick];
+    RawPadState chosen{};
+    if (candidate.frozenPolicy) {
+        if (!mPolicyFeatureRowReady || !mDefinition.frozenPolicy.has_value() ||
+            !mFrozenPolicyModel.loaded())
+        {
+            fail("frozen policy lacks its phase-correct pre-input feature row or model");
+            return;
+        }
+        std::string inferenceError;
+        {
+            AccumulateNanos inference(mProfile.policyInferenceNanos);
+            ++mProfile.policyInferenceSamples;
+            if (!mFrozenPolicyModel.infer(mPolicyFeatureRow, mPolicyOutput, inferenceError)) {
+                fail("frozen model inference failed at the native input boundary: " +
+                     inferenceError);
+                return;
+            }
+        }
+        FactorizedPadPolicyDecision decision;
+        {
+            AccumulateNanos decode(mProfile.policyHeadDecodeNanos);
+            ++mProfile.policyHeadDecodeSamples;
+            if (!decode_factorized_pad_policy(mDefinition.frozenPolicy->policyHead,
+                    mPolicyOutput, decision, inferenceError))
+            {
+                fail("frozen model PAD output failed at the native input boundary: " +
+                     inferenceError);
+                return;
+            }
+        }
+        chosen = decision.pad;
+    } else {
+        chosen = candidate.pads[mCandidateTick];
+    }
     if (candidate.factorizedPolicy) {
         const std::uint32_t outputIndex = candidate.policyOutputIndexByTick[mCandidateTick];
         FactorizedPadPolicyDecision decision;
@@ -678,6 +844,8 @@ void SuffixBatchRunner::applyCandidateInput() {
     }
     AccumulateNanos policy(mProfile.policyApplicationNanos);
     ++mProfile.policyApplicationSamples;
+    mCandidateChosenPad = chosen;
+    mCandidateChosenPadReady = true;
     const PADStatus status = raw_pad_state_to_pad_status(chosen);
     PADSetAutomationStatus(0, &status);
 }
@@ -948,9 +1116,20 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     }
     finishSimulationProfile();
     const auto& candidate = mDefinition.candidates[mCandidateIndex];
-    const RawPadState& expectedPad = candidate.tapePassthrough
-        ? input_tape_player().tape().frames[mDefinition.sourceFrame + mCandidateTick].pads[0]
-        : candidate.pads[mCandidateTick];
+    RawPadState expectedPad{};
+    if (candidate.tapePassthrough) {
+        expectedPad =
+            input_tape_player().tape().frames[mDefinition.sourceFrame + mCandidateTick].pads[0];
+    } else if (candidate.frozenPolicy) {
+        if (!mCandidateChosenPadReady) {
+            error = "frozen policy did not produce a PAD for the current tick";
+            fail(error);
+            return true;
+        }
+        expectedPad = mCandidateChosenPad;
+    } else {
+        expectedPad = candidate.pads[mCandidateTick];
+    }
     if (mConsumedCaptureFailed || mConsumedPads.size() != mCandidateTick + 1 ||
         mConsumedPads.back() != expectedPad)
     {
@@ -985,6 +1164,8 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         fail(error);
         return true;
     }
+    mPolicyFeatureRowReady = false;
+    mCandidateChosenPadReady = false;
     if (!success && !exhausted) {
         ++mCandidateTick;
         return false;
@@ -1068,9 +1249,13 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
             return total + candidate.ticksExecuted;
         });
     std::uint64_t expectedPolicyHeadDecodeSamples = 0;
+    std::uint64_t expectedPolicyInferenceSamples = 0;
     for (std::size_t index = 0; index < mResults.size(); ++index) {
-        if (mDefinition.candidates[index].factorizedPolicy)
+        if (mDefinition.candidates[index].factorizedPolicy ||
+            mDefinition.candidates[index].frozenPolicy)
             expectedPolicyHeadDecodeSamples += mResults[index].ticksExecuted;
+        if (mDefinition.candidates[index].frozenPolicy)
+            expectedPolicyInferenceSamples += mResults[index].ticksExecuted;
     }
     const std::size_t expectedRestores =
         mDefinition.candidates.size() - 1 + (mProfile.sourceCheckpointReused ? 1 : 0) +
@@ -1081,6 +1266,7 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
     const bool profileVerified =
         mProfile.complete && mProfile.policyApplicationSamples == candidateTicks &&
         mProfile.policyHeadDecodeSamples == expectedPolicyHeadDecodeSamples &&
+        mProfile.policyInferenceSamples == expectedPolicyInferenceSamples &&
         mProfile.simulationSamples == candidateTicks &&
         mProfile.observationCaptureSamples == candidateTicks * 2 &&
         mProfile.cpuDrawTraversalSamples == candidateTicks &&
@@ -1111,7 +1297,9 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
     const bool gpuQueueOperationsAbsent = renderer->submittedCommandBufferCount == 0 &&
                                           renderer->directQueueWriteCount == 0;
     const nlohmann::json timing{
-        {"schema", "dusklight-suffix-batch-timing/v1"},
+        {"schema", mDefinition.frozenPolicy.has_value() ?
+                       "dusklight-suffix-batch-timing/v2" :
+                       "dusklight-suffix-batch-timing/v1"},
         {"batch_wall_micros", mProfile.complete ? nlohmann::json(mProfile.batchWallMicros) :
                                                   nlohmann::json(nullptr)},
         {"candidate_ticks", candidateTicks},
@@ -1147,7 +1335,15 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                 {"session_micros", mValidationMicros},
                 {"samples", mValidationSamples},
             }},
-            {"policy_inference", {{"status", "not_present"}, {"micros", nullptr}}},
+            {"policy_inference", expectedPolicyInferenceSamples == 0
+                ? nlohmann::json{{"status", "not_present"}, {"micros", nullptr}}
+                : nlohmann::json{{"status", "measured"},
+                      {"schema", "dusklight-frozen-inference/v1"},
+                      {"feature_schema_sha256", kNativePolicyFeatureSchemaSha256},
+                      {"micros", mProfile.policyInferenceNanos / 1'000},
+                      {"nanoseconds", mProfile.policyInferenceNanos},
+                      {"samples", mProfile.policyInferenceSamples},
+                      {"placement", "native_pre_input"}}},
             {"policy_head_decode", expectedPolicyHeadDecodeSamples == 0
                 ? nlohmann::json{{"status", "not_present"}, {"micros", nullptr}}
                 : nlohmann::json{{"status", "measured"},
@@ -1155,7 +1351,9 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                       {"micros", mProfile.policyHeadDecodeNanos / 1'000},
                       {"nanoseconds", mProfile.policyHeadDecodeNanos},
                       {"samples", mProfile.policyHeadDecodeSamples},
-                      {"input", "precomputed continuous policy-output row"}}},
+                      {"input", expectedPolicyInferenceSamples == 0 ?
+                          "precomputed continuous policy-output row" :
+                          "frozen model output at phase-correct pre-input boundary"}}},
             {"policy_application", {
                 {"status", "measured"},
                 {"micros", mProfile.policyApplicationNanos / 1'000},
@@ -1200,11 +1398,23 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         }},
     };
     nlohmann::json result{
-        {"schema", "dusklight-suffix-batch-result/v4"},
+        {"schema", mDefinition.frozenPolicy.has_value() ?
+                       "dusklight-suffix-batch-result/v5" :
+                       "dusklight-suffix-batch-result/v4"},
         {"status", mCompleted ? "passed" :
                    mFailed    ? "failed" :
                                 "incomplete"},
         {"source_frame", mDefinition.sourceFrame},
+        {"policy_model", mDefinition.frozenPolicy.has_value()
+            ? nlohmann::json{{"schema", FrozenPolicySchema},
+                  {"model_xxh3_128", mDefinition.frozenPolicy->modelXxh3_128},
+                  {"feature_schema_sha256", digest_hex(
+                      mFrozenPolicyModel.featureSchemaSha256())},
+                  {"action_schema_sha256", digest_hex(
+                      mFrozenPolicyModel.actionSchemaSha256())},
+                  {"objective_sha256", digest_hex(mFrozenPolicyModel.objectiveSha256())},
+                  {"parameter_count", mFrozenPolicyModel.parameterCount()}}
+            : nlohmann::json(nullptr)},
         {"source_boundary",
             {
                 {"milestone", mDefinition.checkpointValidation ==

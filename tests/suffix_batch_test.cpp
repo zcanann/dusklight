@@ -146,6 +146,56 @@ void test_factorized_policy_rows_expand_to_an_online_native_program() {
     REQUIRE(error.find("instead of maximum_ticks") != std::string::npos);
 }
 
+std::string frozen_policy_batch() {
+    return R"({
+        "schema":"dusklight-suffix-batch/v5","source_frame":500,
+        "source_boundary_fingerprint":"1f849e432274771426236d60fbf7d72f",
+        "checkpoint_validation":{"kind":"recorded_replay_window","ticks":2},
+        "maximum_ticks":3,"verify_state_hashes":false,
+        "frozen_policy":{
+          "schema":"dusklight-native-frozen-policy/v1",
+          "model_path":"build/learning/policy.dsfrozen",
+          "model_xxh3_128":"0123456789abcdef0123456789abcdef",
+          "policy_head":{"schema":"dusklight-factorized-pad-policy-head/v1",
+            "maximum_duration_ticks":1,"button_logit_threshold":0.0}},
+        "candidates":[{"id":"native-policy","source":"frozen_policy"}]
+    })";
+}
+
+void test_frozen_policy_is_content_bound_and_one_tick() {
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(frozen_policy_batch(), batch, error));
+    REQUIRE(error.empty());
+    REQUIRE(batch.frozenPolicy.has_value());
+    REQUIRE(batch.frozenPolicy->modelPath == "build/learning/policy.dsfrozen");
+    REQUIRE(batch.frozenPolicy->modelXxh3_128 == "0123456789abcdef0123456789abcdef");
+    REQUIRE(batch.frozenPolicy->policyHead.maximumDurationTicks == 1);
+    REQUIRE(batch.candidates.size() == 1);
+    REQUIRE(batch.candidates[0].frozenPolicy);
+    REQUIRE(batch.candidates[0].pads.empty());
+
+    std::string detached = frozen_policy_batch();
+    const std::size_t hash = detached.find("0123456789abcdef0123456789abcdef");
+    REQUIRE(hash != std::string::npos);
+    detached[hash] = 'A';
+    REQUIRE(!parse_suffix_batch(detached, batch, error));
+
+    std::string duration = frozen_policy_batch();
+    const std::size_t durationValue = duration.find("\"maximum_duration_ticks\":1");
+    REQUIRE(durationValue != std::string::npos);
+    duration.replace(durationValue, std::string("\"maximum_duration_ticks\":1").size(),
+        "\"maximum_duration_ticks\":2");
+    REQUIRE(!parse_suffix_batch(duration, batch, error));
+
+    std::string noConsumer = frozen_policy_batch();
+    const std::size_t source = noConsumer.find("\"source\":\"frozen_policy\"");
+    REQUIRE(source != std::string::npos);
+    noConsumer.replace(source, std::string("\"source\":\"frozen_policy\"").size(),
+        "\"source\":\"tape\"");
+    REQUIRE(!parse_suffix_batch(noConsumer, batch, error));
+}
+
 void test_invalid_batches_fail_closed() {
     SuffixBatchDefinition batch;
     std::string error;
@@ -210,6 +260,7 @@ int main() {
     test_tape_passthrough_candidate();
     test_legacy_fixed_milestone_batch_remains_distinct();
     test_factorized_policy_rows_expand_to_an_online_native_program();
+    test_frozen_policy_is_content_bound_and_one_tick();
     test_invalid_batches_fail_closed();
     std::cout << "suffix batch tests passed\n";
     return 0;

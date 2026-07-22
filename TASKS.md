@@ -172,6 +172,20 @@ without demonstration-relative features.
   already reached the same load at frame 567 in two fresh cold replays without
   a controller, model, or checkpoint, producing the identical v6 boundary
   fingerprint `545c3127...ca155`.
+- Frozen-inference v1 now has one bounded little-endian dense format, exact
+  Rust/C++ decoding and a shared bitwise golden fixture. Native policy-feature
+  v1 defines a 120-value, pointer-free pre-input core row with explicit
+  missingness and one shared schema digest; the Rust adapter derives the same
+  row from authenticated episode observations. Suffix-batch v5 content-binds
+  one frozen model, rejects detached feature/action/objective identities,
+  evaluates it synchronously at the native PAD boundary, records the realized
+  chosen and consumed PAD, and accounts inference separately from head decode.
+  The Rust builder and CLI emit only that validated envelope. All 230 learning
+  tests, strict Clippy and the three focused native executables pass. The full
+  runner translation unit remains blocked in this checkout by the pre-existing
+  dirty-Aurora API mismatch (`AuroraStats` lacks the render counters already
+  consumed by the profiler), so neither a successful game build nor a live
+  model-driven episode and timing/cold-replay proof is claimed.
 
 ## 0. Audit whether a learner can see enough of the game
 
@@ -1400,8 +1414,11 @@ PAD and gameplay sequence as ordinary playback.
     golden fixture, including neutral output, asymmetric signed-byte rounding,
     saturation, analog rounding, button thresholds and duration. The suffix
     runner invokes that decoder on precomputed rows at the native input
-    boundary. Loading a bound model and invoking it on phase-correct native
-    observations remains open.
+    boundary. Suffix-batch v5 now loads a content-bound dense model and invokes
+    it over the shared phase-correct native core row with a stateless one-tick
+    head. This is compile- and contract-tested only: a live episode, measured
+    inference profile, exact Rust re-inference comparison and cold replay of
+    the realized PAD remain open.
 - [ ] Let a policy invoke bounded stateful tactics through the same native
   episode boundary. Tactics may query read-only world state, but their exact
   consumed PAD and every intermediate transition must be recorded.

@@ -3,6 +3,7 @@
 #include "dusk/automation/input_tape.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,14 @@ inline constexpr const char* kFactorizedPadPolicyHeadSchema =
     "dusklight-factorized-pad-policy-head/v1";
 inline constexpr std::size_t kFactorizedPadPolicyHeadWidth = 25;
 inline constexpr std::uint32_t kMaximumFactorizedPadDuration = 4096;
+// SHA-256 of the v1 head with width 25, one-tick duration and a zero button
+// threshold. Native online inference admits exactly this stateless decoder.
+inline constexpr std::array<std::uint8_t, 32> kOnlineFactorizedPadActionSchemaDigest{
+    0x48, 0x39, 0x53, 0xb6, 0x63, 0xe3, 0x27, 0xc6,
+    0xd8, 0x39, 0xd8, 0x8b, 0x72, 0xce, 0x65, 0x2c,
+    0xfc, 0xc5, 0xd0, 0xae, 0xb4, 0x20, 0x57, 0x0e,
+    0x0c, 0x07, 0x6a, 0x4c, 0x62, 0xe3, 0xab, 0x7c,
+};
 
 struct FactorizedPadPolicyHeadConfig {
     std::uint32_t maximumDurationTicks = 1;

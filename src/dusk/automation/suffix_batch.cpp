@@ -156,6 +156,25 @@ bool parse_policy_head(const json& value, FactorizedPadPolicyHeadConfig& output)
     return true;
 }
 
+bool parse_frozen_policy(const json& value, SuffixBatchFrozenPolicy& output) {
+    constexpr std::array Keys{std::string_view{"schema"}, std::string_view{"model_path"},
+        std::string_view{"model_xxh3_128"}, std::string_view{"policy_head"}};
+    if (!has_exact_keys(value, Keys) || !value["schema"].is_string() ||
+        value["schema"].get_ref<const std::string&>() != FrozenPolicySchema ||
+        !value["model_path"].is_string() || !valid_boundary_fingerprint(value["model_xxh3_128"]))
+        return false;
+    SuffixBatchFrozenPolicy parsed;
+    parsed.modelPath = value["model_path"].get<std::string>();
+    if (parsed.modelPath.empty() || parsed.modelPath.size() > 4096 ||
+        parsed.modelPath.find('\0') != std::string::npos ||
+        !parse_policy_head(value["policy_head"], parsed.policyHead) ||
+        parsed.policyHead.maximumDurationTicks != 1 || parsed.policyHead.buttonLogitThreshold != 0.0F)
+        return false;
+    parsed.modelXxh3_128 = value["model_xxh3_128"].get<std::string>();
+    output = std::move(parsed);
+    return true;
+}
+
 bool parse_policy_output(const json& value,
     std::array<float, kFactorizedPadPolicyHeadWidth>& output) {
     if (!value.is_array() || value.size() != output.size()) return false;
@@ -171,7 +190,8 @@ bool parse_policy_output(const json& value,
 }
 
 bool parse_candidate(const json& value, const std::size_t maximumTicks,
-    const bool allowFactorizedPolicy, SuffixBatchCandidate& output, std::string& error) {
+    const bool allowFactorizedPolicy, const bool allowFrozenPolicy,
+    SuffixBatchCandidate& output, std::string& error) {
     constexpr std::array ActionKeys{
         std::string_view{"id"}, std::string_view{"actions"}};
     constexpr std::array TapeKeys{
@@ -179,9 +199,9 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
     constexpr std::array PolicyKeys{std::string_view{"id"},
         std::string_view{"policy_head"}, std::string_view{"policy_outputs"}};
     const bool actionCandidate = has_exact_keys(value, ActionKeys);
-    const bool tapeCandidate = has_exact_keys(value, TapeKeys);
+    const bool sourceCandidate = has_exact_keys(value, TapeKeys);
     const bool policyCandidate = has_exact_keys(value, PolicyKeys);
-    if ((!actionCandidate && !tapeCandidate && !policyCandidate) ||
+    if ((!actionCandidate && !sourceCandidate && !policyCandidate) ||
         (policyCandidate && !allowFactorizedPolicy) || !value["id"].is_string())
     {
         error = "candidate must contain id plus actions, source, or v4 factorized policy outputs";
@@ -198,14 +218,20 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
             return false;
         }
     }
-    if (tapeCandidate) {
-        if (!value["source"].is_string() ||
-            value["source"].get_ref<const std::string&>() != "tape")
-        {
-            error = "candidate source must be tape";
+    if (sourceCandidate) {
+        if (!value["source"].is_string()) {
+            error = "candidate source must be a string";
             return false;
         }
-        output = {.id = id, .tapePassthrough = true};
+        const auto& source = value["source"].get_ref<const std::string&>();
+        if (source == "tape") {
+            output = {.id = id, .tapePassthrough = true};
+        } else if (source == "frozen_policy" && allowFrozenPolicy) {
+            output = {.id = id, .frozenPolicy = true};
+        } else {
+            error = "candidate source must be tape or a v5 frozen_policy";
+            return false;
+        }
         return true;
     }
     if (policyCandidate) {
@@ -320,6 +346,16 @@ bool parse_suffix_batch(
         std::string_view{"verify_state_hashes"},
         std::string_view{"candidates"},
     };
+    constexpr std::array FrozenRootKeys{
+        std::string_view{"schema"},
+        std::string_view{"source_frame"},
+        std::string_view{"source_boundary_fingerprint"},
+        std::string_view{"checkpoint_validation"},
+        std::string_view{"maximum_ticks"},
+        std::string_view{"verify_state_hashes"},
+        std::string_view{"frozen_policy"},
+        std::string_view{"candidates"},
+    };
     if (root.is_discarded() || !root.is_object() || !root.contains("schema") ||
         !root["schema"].is_string())
     {
@@ -329,8 +365,11 @@ bool parse_suffix_batch(
     const auto& schema = root["schema"].get_ref<const std::string&>();
     const bool legacy = schema == LegacySuffixBatchSchema;
     const bool previous = schema == PreviousSuffixBatchSchema;
-    if ((!legacy && !previous && schema != SuffixBatchSchema) ||
-        !(legacy ? has_exact_keys(root, LegacyRootKeys) : has_exact_keys(root, RootKeys)) ||
+    const bool factorized = schema == FactorizedSuffixBatchSchema;
+    const bool frozen = schema == SuffixBatchSchema;
+    if ((!legacy && !previous && !factorized && !frozen) ||
+        !(legacy ? has_exact_keys(root, LegacyRootKeys) :
+                   frozen ? has_exact_keys(root, FrozenRootKeys) : has_exact_keys(root, RootKeys)) ||
         !valid_boundary_fingerprint(root["source_boundary_fingerprint"]) ||
         !root["verify_state_hashes"].is_boolean() || !root["candidates"].is_array())
     {
@@ -353,6 +392,14 @@ bool parse_suffix_batch(
         return false;
     }
     parsed.verifyStateHashes = root["verify_state_hashes"].get<bool>();
+    if (frozen) {
+        SuffixBatchFrozenPolicy frozenPolicy;
+        if (!parse_frozen_policy(root["frozen_policy"], frozenPolicy)) {
+            error = "suffix batch frozen policy is invalid";
+            return false;
+        }
+        parsed.frozenPolicy = std::move(frozenPolicy);
+    }
     const json& candidates = root["candidates"];
     if (candidates.empty() || candidates.size() > SuffixBatchMaximumCandidates) {
         error = "candidate count is empty or exceeds the bounded maximum";
@@ -368,7 +415,7 @@ bool parse_suffix_batch(
     for (std::size_t index = 0; index < candidates.size(); ++index) {
         SuffixBatchCandidate candidate;
         if (!parse_candidate(candidates[index], parsed.maximumTicks,
-                schema == SuffixBatchSchema, candidate, error)) {
+                factorized || frozen, frozen, candidate, error)) {
             error = "candidate " + std::to_string(index) + ": " + error;
             return false;
         }
@@ -377,6 +424,12 @@ bool parse_suffix_batch(
             return false;
         }
         parsed.candidates.push_back(std::move(candidate));
+    }
+    const bool hasFrozenCandidate = std::ranges::any_of(parsed.candidates,
+        [](const SuffixBatchCandidate& candidate) { return candidate.frozenPolicy; });
+    if (hasFrozenCandidate != parsed.frozenPolicy.has_value()) {
+        error = "suffix batch frozen policy and candidate sources disagree";
+        return false;
     }
     output = std::move(parsed);
     return true;

@@ -16,6 +16,10 @@ pub const FACTORIZED_PAD_FEATURE_SCHEMA_V1: &str = "dusklight-factorized-pad-fea
 pub const FACTORIZED_PAD_FEATURE_WIDTH: usize = 33;
 pub const FACTORIZED_PAD_POLICY_HEAD_SCHEMA_V1: &str = "dusklight-factorized-pad-policy-head/v1";
 pub const FACTORIZED_PAD_POLICY_HEAD_WIDTH: usize = 25;
+pub const ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256: [u8; 32] = [
+    0x48, 0x39, 0x53, 0xb6, 0x63, 0xe3, 0x27, 0xc6, 0xd8, 0x39, 0xd8, 0x8b, 0x72, 0xce, 0x65, 0x2c,
+    0xfc, 0xc5, 0xd0, 0xae, 0xb4, 0x20, 0x57, 0x0e, 0x0c, 0x07, 0x6a, 0x4c, 0x62, 0xe3, 0xab, 0x7c,
+];
 pub const MAX_FACTORIZED_PAD_DURATION: u32 = 4096;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -488,6 +492,14 @@ mod tests {
         assert_eq!(
             head.decode(&output),
             Err(FactorizedPadActionError::InvalidPolicyOutput)
+        );
+    }
+
+    #[test]
+    fn one_tick_online_head_matches_the_native_action_schema_identity() {
+        assert_eq!(
+            FactorizedPadPolicyHead::default().schema_sha256().unwrap(),
+            ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256
         );
     }
 
