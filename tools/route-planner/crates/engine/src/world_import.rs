@@ -1035,7 +1035,7 @@ fn import_gz2e01_keyed_mboss_door(
         placement,
         &base_token,
         &evidence,
-        "Confirm resources, keyhole, the selected retail event cuts, collision release, CHG_SCENE, and restart handling complete without interruption.",
+        "Confirm resources, keyhole when present, the selected retail event cuts, collision release, CHG_SCENE, restart handling, and an uncontended queued key-delta commit complete without interruption.",
         "Reach the authored front side inside |x| <= 130 and |z| <= 110 with the required facing; wolf attention/current-position checks remain part of the physical witness.",
     );
     let location_guard = placement_location_guard(inventory, placement, room);
@@ -1065,11 +1065,44 @@ fn import_gz2e01_keyed_mboss_door(
                 location_guard.clone(),
                 memory_switch_guard(switch_id, false),
                 small_key_guard(ComparisonOperator::GreaterThan, 0),
+                small_key_guard(ComparisonOperator::LessThanOrEqual, 100),
             ],
         },
         vec![
             memory_switch_write(switch_id),
             small_key_adjust(-1),
+            StateOperation::SetLocation {
+                location: destination.clone(),
+            },
+        ],
+        &obligation_ids,
+        &evidence,
+    );
+    let first_open_high_key = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "first-open-high-key-clamp",
+        &format!(
+            "{} {} room {} first keyed opening from a high raw key count to {} room {} point {}",
+            inventory.stage,
+            placement.name,
+            room,
+            destination.stage,
+            destination.room,
+            destination.spawn
+        ),
+        TransitionKind::Door,
+        PredicateExpression::All {
+            terms: vec![
+                location_guard.clone(),
+                memory_switch_guard(switch_id, false),
+                small_key_guard(ComparisonOperator::GreaterThan, 100),
+            ],
+        },
+        vec![
+            memory_switch_write(switch_id),
+            small_key_write(99),
             StateOperation::SetLocation {
                 location: destination.clone(),
             },
@@ -1103,7 +1136,7 @@ fn import_gz2e01_keyed_mboss_door(
     );
     Ok(Some(ImportedKeyedActorActions {
         exit_record_id: Some(exit.stable_id.clone()),
-        transitions: vec![first_open, reopen],
+        transitions: vec![first_open, first_open_high_key, reopen],
         obligations,
     }))
 }
@@ -1177,7 +1210,7 @@ fn import_gz2e01_key_shutter(
         placement,
         &base_token,
         &evidence,
-        "Confirm resources, keyhole, accepted event, UNLOCK/OPEN cuts, and collision release complete without interruption.",
+        "Confirm resources, keyhole when present, accepted event, UNLOCK/OPEN cuts, collision release, and an uncontended queued key-delta commit complete without interruption.",
         "Reach the actor's bounded interaction area with the required facing; retain the human/wolf event choice as part of the witness.",
     );
     let location_guard = placement_location_guard(inventory, placement, room);
@@ -1199,9 +1232,32 @@ fn import_gz2e01_key_shutter(
                     memory_switch_guard(switch_id, false),
                     boss_key_guard(),
                     small_key_guard(ComparisonOperator::GreaterThan, 0),
+                    small_key_guard(ComparisonOperator::LessThanOrEqual, 100),
                 ],
             },
             vec![memory_switch_write(switch_id), small_key_adjust(-1)],
+            &obligation_ids,
+            &evidence,
+        ));
+        transitions.push(keyed_actor_candidate(
+            scope,
+            placement,
+            family,
+            "open-with-high-small-key-clamp",
+            &format!(
+                "{} {} room {} boss-key opening with high raw small keys clamped to 99",
+                inventory.stage, placement.name, room
+            ),
+            TransitionKind::ActorDriven,
+            PredicateExpression::All {
+                terms: vec![
+                    location_guard.clone(),
+                    memory_switch_guard(switch_id, false),
+                    boss_key_guard(),
+                    small_key_guard(ComparisonOperator::GreaterThan, 100),
+                ],
+            },
+            vec![memory_switch_write(switch_id), small_key_write(99)],
             &obligation_ids,
             &evidence,
         ));
@@ -1243,9 +1299,31 @@ fn import_gz2e01_key_shutter(
                     location_guard,
                     memory_switch_guard(switch_id, false),
                     small_key_guard(ComparisonOperator::GreaterThan, 0),
+                    small_key_guard(ComparisonOperator::LessThanOrEqual, 100),
                 ],
             },
             vec![memory_switch_write(switch_id), small_key_adjust(-1)],
+            &obligation_ids,
+            &evidence,
+        ));
+        transitions.push(keyed_actor_candidate(
+            scope,
+            placement,
+            family,
+            "unlock-high-key-clamp",
+            &format!(
+                "{} {} room {} keyed shutter unlock with high raw keys clamped to 99",
+                inventory.stage, placement.name, room
+            ),
+            TransitionKind::ActorDriven,
+            PredicateExpression::All {
+                terms: vec![
+                    placement_location_guard(inventory, placement, room),
+                    memory_switch_guard(switch_id, false),
+                    small_key_guard(ComparisonOperator::GreaterThan, 100),
+                ],
+            },
+            vec![memory_switch_write(switch_id), small_key_write(99)],
             &obligation_ids,
             &evidence,
         ));
@@ -1296,7 +1374,7 @@ fn import_gz2e01_koki_gate(
         placement,
         &base_token,
         &evidence,
-        "Confirm resources, accepted door command, event cuts, and the unlocked gate's physical push-open behavior complete without interruption.",
+        "Confirm resources, accepted door command, event cuts, an uncontended queued key-delta commit, and the unlocked gate's physical open/push behavior complete without interruption.",
         "Reach local x in [-100, 100], z in [0, 100], with the actor/player facing delta required by checkOpen().",
     );
     let transition = keyed_actor_candidate(
@@ -1314,15 +1392,37 @@ fn import_gz2e01_koki_gate(
                 placement_location_guard(inventory, placement, room),
                 memory_switch_guard(switch_id, false),
                 small_key_guard(ComparisonOperator::GreaterThan, 0),
+                small_key_guard(ComparisonOperator::LessThanOrEqual, 100),
             ],
         },
         vec![small_key_adjust(-1), memory_switch_write(switch_id)],
         &obligation_ids,
         &evidence,
     );
+    let high_key_transition = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "unlock-high-key-clamp",
+        &format!(
+            "{} {} room {} keyed gate unlock with high raw keys clamped to 99",
+            inventory.stage, placement.name, room
+        ),
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                placement_location_guard(inventory, placement, room),
+                memory_switch_guard(switch_id, false),
+                small_key_guard(ComparisonOperator::GreaterThan, 100),
+            ],
+        },
+        vec![small_key_write(99), memory_switch_write(switch_id)],
+        &obligation_ids,
+        &evidence,
+    );
     Ok(Some(ImportedKeyedActorActions {
         exit_record_id: None,
-        transitions: vec![transition],
+        transitions: vec![transition, high_key_transition],
         obligations,
     }))
 }
@@ -1415,6 +1515,16 @@ fn small_key_adjust(delta: i64) -> StateOperation {
         byte_offset: 0x1c,
         byte_width: 1,
         delta,
+    }
+}
+
+fn small_key_write(value: u8) -> StateOperation {
+    StateOperation::WriteBoundRaw {
+        component_kind: ComponentKind::DungeonMemory,
+        binding: ComponentBindingReference::CurrentStage,
+        byte_offset: 0x1c,
+        mask: vec![0xff],
+        value: vec![value],
     }
 }
 
@@ -2254,6 +2364,48 @@ mod tests {
         )
     }
 
+    fn has_small_key_comparison(
+        transition: &CandidateTransition,
+        expected_operator: ComparisonOperator,
+        expected_value: u64,
+    ) -> bool {
+        let PredicateExpression::All { terms } = &transition.activation.hard_guards else {
+            return false;
+        };
+        terms.iter().any(|term| {
+            matches!(
+                term,
+                PredicateExpression::Compare {
+                    left: ValueReference::BoundRawBits {
+                        byte_offset: 0x1c,
+                        byte_width: 1,
+                        mask: 0xff,
+                        ..
+                    },
+                    operator,
+                    right: ValueReference::Literal {
+                        value: StateValue::Unsigned(value),
+                    },
+                } if *operator == expected_operator && *value == expected_value
+            )
+        })
+    }
+
+    fn writes_small_key(transition: &CandidateTransition, expected_value: u8) -> bool {
+        transition.activation.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                StateOperation::WriteBoundRaw {
+                    component_kind: ComponentKind::DungeonMemory,
+                    binding: ComponentBindingReference::CurrentStage,
+                    byte_offset: 0x1c,
+                    mask,
+                    value,
+                } if mask == &[0xff] && value == &[expected_value]
+            )
+        })
+    }
+
     fn world_context(game_data_sha256: Digest, inventory: &WorldInventory) -> WorldContext {
         let context = WorldContext {
             schema: crate::world_data::WORLD_CONTEXT_SCHEMA.into(),
@@ -2494,15 +2646,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(facts.schema, EXTRACTED_WORLD_FACTS_SCHEMA);
-        assert_eq!(facts.mechanics.transitions.len(), 2);
+        assert_eq!(facts.mechanics.transitions.len(), 3);
         assert_eq!(facts.mechanics.obligations.len(), 2);
-        assert_eq!(facts.encoded_exits[0].candidate_transition_ids.len(), 2);
-        let first_open = facts
-            .mechanics
-            .transitions
-            .iter()
-            .find(|transition| transition.activation.effects.len() == 3)
-            .expect("first keyed opening branch");
+        assert_eq!(facts.encoded_exits[0].candidate_transition_ids.len(), 3);
+        let first_open =
+            facts
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| {
+                    transition.activation.effects.iter().any(|effect| {
+                        matches!(effect, StateOperation::AdjustBoundRawUnsigned { .. })
+                    })
+                })
+                .expect("first keyed opening branch");
         assert_eq!(first_open.transition_kind, TransitionKind::Door);
         assert!(matches!(
             first_open.activation.effects.as_slice(),
@@ -2545,6 +2702,11 @@ mod tests {
                 },
             }
         )));
+        assert!(has_small_key_comparison(
+            first_open,
+            ComparisonOperator::LessThanOrEqual,
+            100,
+        ));
         let reopen = facts
             .mechanics
             .transitions
@@ -2555,6 +2717,17 @@ mod tests {
             reopen.activation.effects.as_slice(),
             [StateOperation::SetLocation { location }]
                 if location.stage == "D_MN06B" && location.room == 51
+        ));
+        let high = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| writes_small_key(transition, 99))
+            .expect("high raw key-count clamp branch");
+        assert!(has_small_key_comparison(
+            high,
+            ComparisonOperator::GreaterThan,
+            100,
         ));
     }
 
@@ -2573,9 +2746,19 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(facts.mechanics.transitions.len(), 1);
+        assert_eq!(facts.mechanics.transitions.len(), 2);
         assert_eq!(facts.mechanics.obligations.len(), 2);
-        let transition = &facts.mechanics.transitions[0];
+        let transition =
+            facts
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| {
+                    transition.activation.effects.iter().any(|effect| {
+                        matches!(effect, StateOperation::AdjustBoundRawUnsigned { .. })
+                    })
+                })
+                .expect("ordinary key decrement branch");
         assert_eq!(transition.transition_kind, TransitionKind::ActorDriven);
         assert!(matches!(
             transition.activation.effects.as_slice(),
@@ -2594,16 +2777,32 @@ mod tests {
                 },
             ] if mask == &[0x08] && value == &[0x08]
         ));
+        assert!(has_small_key_comparison(
+            transition,
+            ComparisonOperator::LessThanOrEqual,
+            100,
+        ));
         assert!(transition.evidence.records.iter().any(|record| {
             record.source_sha256
                 == Some(static_digest(
                     "3bff3ce52a0c1660d5ccf0bdcae24b672e50013317b3469698c51e32336c159a",
                 ))
         }));
+        let high = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| writes_small_key(transition, 99))
+            .expect("high raw key-count clamp branch");
+        assert!(has_small_key_comparison(
+            high,
+            ComparisonOperator::GreaterThan,
+            100,
+        ));
     }
 
     #[test]
-    fn imports_lakebed_boss_shutter_zero_and_positive_small_key_outcomes() {
+    fn imports_lakebed_boss_shutter_zero_normal_and_high_small_key_outcomes() {
         let content = audited_content();
         let runtime = runtime(&content);
         let inventory = lakebed_boss_key_shutter_inventory();
@@ -2617,14 +2816,19 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(facts.mechanics.transitions.len(), 2);
+        assert_eq!(facts.mechanics.transitions.len(), 3);
         assert_eq!(facts.mechanics.obligations.len(), 2);
-        let positive = facts
-            .mechanics
-            .transitions
-            .iter()
-            .find(|transition| transition.activation.effects.len() == 2)
-            .expect("boss-key opening with a small key");
+        let positive =
+            facts
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| {
+                    transition.activation.effects.iter().any(|effect| {
+                        matches!(effect, StateOperation::AdjustBoundRawUnsigned { .. })
+                    })
+                })
+                .expect("boss-key opening with a small key");
         assert!(matches!(
             positive.activation.effects.as_slice(),
             [
@@ -2641,6 +2845,11 @@ mod tests {
                     ..
                 },
             ] if mask == &[0x20] && value == &[0x20]
+        ));
+        assert!(has_small_key_comparison(
+            positive,
+            ComparisonOperator::LessThanOrEqual,
+            100,
         ));
         let zero = facts
             .mechanics
@@ -2665,6 +2874,17 @@ mod tests {
                 ..
             }
         )));
+        let high = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| writes_small_key(transition, 99))
+            .expect("high raw key-count clamp branch");
+        assert!(has_small_key_comparison(
+            high,
+            ComparisonOperator::GreaterThan,
+            100,
+        ));
         assert!(terms.iter().any(|term| matches!(
             term,
             PredicateExpression::Compare {
@@ -2696,12 +2916,20 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(facts.mechanics.transitions.len(), 1);
+        assert_eq!(facts.mechanics.transitions.len(), 2);
+        let ordinary =
+            facts
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| {
+                    transition.activation.effects.iter().any(|effect| {
+                        matches!(effect, StateOperation::AdjustBoundRawUnsigned { .. })
+                    })
+                })
+                .expect("ordinary key decrement branch");
         assert!(matches!(
-            facts.mechanics.transitions[0]
-                .activation
-                .effects
-                .as_slice(),
+            ordinary.activation.effects.as_slice(),
             [
                 StateOperation::AdjustBoundRawUnsigned {
                     byte_offset: 0x1c,
@@ -2717,9 +2945,12 @@ mod tests {
                 },
             ] if mask == &[0x10] && value == &[0x10]
         ));
-        let PredicateExpression::All { terms } =
-            &facts.mechanics.transitions[0].activation.hard_guards
-        else {
+        assert!(has_small_key_comparison(
+            ordinary,
+            ComparisonOperator::LessThanOrEqual,
+            100,
+        ));
+        let PredicateExpression::All { terms } = &ordinary.activation.hard_guards else {
             panic!("gate must retain location, switch, and key guards")
         };
         assert!(terms.iter().any(|term| matches!(
@@ -2736,6 +2967,17 @@ mod tests {
                     }
                 ))
         )));
+        let high = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| writes_small_key(transition, 99))
+            .expect("high raw key-count clamp branch");
+        assert!(has_small_key_comparison(
+            high,
+            ComparisonOperator::GreaterThan,
+            100,
+        ));
 
         let absent_switch_inventory = koki_gate_inventory(0xff);
         absent_switch_inventory.validate().unwrap();
@@ -2752,6 +2994,69 @@ mod tests {
         .unwrap();
         assert!(absent_switch.mechanics.transitions.is_empty());
         assert!(absent_switch.mechanics.obligations.is_empty());
+    }
+
+    #[test]
+    fn imports_wrapped_type_zero_shutter_and_each_mboss_event_resource() {
+        let scope = ContextScope {
+            selectors: vec![ContextSelector::Exact {
+                context: ExactContext {
+                    content_sha256: Digest([0x11; 32]),
+                    runtime_configuration_sha256: Digest([0x22; 32]),
+                },
+            }],
+        };
+        let inventory = regular_key_shutter_inventory();
+        let mut shutter = inventory.placements[0].clone();
+        shutter.parameters = 0x80ff_ff2b;
+        let imported =
+            import_gz2e01_keyed_actor_actions(&inventory, &shutter, &scope, Digest([0x33; 32]))
+                .unwrap()
+                .expect("authored 0xff wraps to the supported runtime type zero");
+        assert_eq!(imported.transitions.len(), 2);
+        assert!(
+            imported.transitions[0]
+                .evidence
+                .records
+                .iter()
+                .any(|record| {
+                    record.source_sha256
+                        == Some(static_digest(
+                            "8676effbd561ba65f8e4a8b9493aa6b60072d40f72a8e240b2ffa9c5550b40fa",
+                        ))
+                })
+        );
+
+        let inventory = keyed_mboss_inventory();
+        for (name, event_sha256) in [
+            (
+                "L7door",
+                "7de6bfac10e3ca6c3f6bc88a83815972d3397fd3488b067398cdd8cb0ea0cce4",
+            ),
+            (
+                "L8Mdoor",
+                "b079b8b284208582d9a37b50bd94f13400530abca75db0771147a646a8d83627",
+            ),
+        ] {
+            let mut placement = inventory.placements[0].clone();
+            placement.name = name.into();
+            let imported = import_gz2e01_keyed_actor_actions(
+                &inventory,
+                &placement,
+                &scope,
+                Digest([0x33; 32]),
+            )
+            .unwrap()
+            .expect("audited keyed mini-boss alias");
+            assert_eq!(imported.transitions.len(), 3);
+            assert!(
+                imported.transitions[0]
+                    .evidence
+                    .records
+                    .iter()
+                    .any(|record| record.source_sha256 == Some(static_digest(event_sha256)))
+            );
+        }
     }
 
     #[test]

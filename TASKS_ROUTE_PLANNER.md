@@ -1863,7 +1863,7 @@ Deliverable: replayable state evidence that can validate transition rules.
         remain explicit obligations.
   - [x] Import exact-GZ2E01 front-side keyed mini-boss first-open/reopen door
         branches, internally checked key-shutter actions, the Lakebed boss
-        shutter's positive/zero-small-key outcomes, and layer-sensitive type-0
+        shutter's zero/normal/high-small-key outcomes, and layer-sensitive type-0
         Koki-gate unlock actions. V9 requires encoded-map/door transitions to
         reference exactly one SCLS record and forbids actor-driven actions from
         fabricating one. Rider/caravan/external-switch families remain explicit

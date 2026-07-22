@@ -51,7 +51,15 @@ queues a HUD/gameplay delta. `dMeter2_c::moveKey()` later adds the delta to the
 current count, clamps the result to `[0, 99]`, writes the stage-memory byte, and
 clears the pending delta. This timing matters for the Lakebed boss shutter: its
 hard guard checks only the boss key, yet its `UNLOCK` cut still queues a small-
-key decrement. A positive count loses one; zero clamps back to zero.
+key decrement. Counts 1 through 100 lose one, zero clamps back to zero, and a
+raw count above 100 clamps to 99.
+
+The v9 candidate effect is the ordinary eventual committed-count equivalent,
+not a claim that the transient queue and raw byte change simultaneously. Its
+actor-state obligation includes an uncontended pending delta. V9 splits zero,
+normal-range, and high-raw-count outcomes so the final committed byte remains
+exact; overlapping pickup/unlock deltas still require a later transient queue
+model rather than an invented ordering.
 
 Memory-switch IDs below `0x80` map to the four 32-bit words at `0x08..0x17`.
 IDs `0x80` and above are not imported as memory switches. An absent `0xff`
@@ -119,9 +127,9 @@ switch `0x14` placement. Type 0 requires a key, facing, local X in
 writes the switch. On the live instance, the switch-set branch permits
 player/horse/coach contact to drive the two leaves. A type-0 instance created
 with its switch already set, or with switch `0xff`, instead initializes at the
-authored fully open angles and disables further gate action. The source also has
-type 1 bomb deletion and type 2 rider behavior, but this census contains no
-exact retail placement of either.
+fully open plus/minus 80-degree angles and disables further gate action. The
+source also has type 1 bomb deletion and type 2 rider behavior, but this census
+contains no exact retail placement of either.
 
 `R_Gate` has 14 layered copies in F_SP109 room 0 using switch `0x6b`, plus
 F_SP121 room 3 switch `0x82` and room 15 switch `0x81`. Its ordinary keyed path
@@ -165,8 +173,8 @@ For exact GZ2E01 content, `extracted-world-facts/v9` imports:
 
 - the six front-side option-2 mini-boss placements as distinct first-open and
   already-unlocked `Door` branches joined to their unique SCLS destinations;
-- all five internally checked retail key shutters, including separate positive-
-  and zero-small-key Lakebed boss-shutter outcomes; and
+- all five internally checked retail key shutters, including separate zero,
+  normal-range, and high-raw-count Lakebed boss-shutter outcomes; and
 - the three layer-sensitive, memory-switch-backed type-0 Koki-gate placements.
 
 The hard predicates resolve the source stage/room/layer, current-stage switch,
