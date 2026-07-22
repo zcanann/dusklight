@@ -4,10 +4,9 @@
 
 mod anchored_search;
 pub mod harness;
+pub mod native_suffix_result;
 pub mod optimization_request;
 pub mod optimization_resume;
-pub mod residual_campaign;
-pub mod residual_campaign_runner;
 pub mod stage_actor_coverage;
 pub mod stage_observation_coverage;
 pub mod stage_survey;
