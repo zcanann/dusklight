@@ -1600,9 +1600,19 @@ and geometry set sizes without schema changes.
     was 2.34-2.47% over 47-48 actors (`6bc19c05...a416`; mean/max
     `5c92ad48...d2c8`). That treatment is rejected rather than promoted on its
     aggregate score. V7 removes a redundant square-root scale from already
-    variance-scaled query initialization; equal-budget revalidation remains
-    required, and task/goal-conditioned queries are the next alternative if
-    global queries still fail to specialize.
+    variance-scaled query initialization. The exact current-schema,
+    equal-budget revalidation still rejects global queries: calibrated
+    attention reached 83.826% untouched-test improvement versus 83.816% for
+    mean/max, with the same 22/30 contact recall, one false positive and 0/15
+    actor-disappearance recall. Its queries did become less uniform (mean
+    maximum weights 3.22-7.97%, normalized entropy 0.974-0.995), but neither
+    rare-event behavior nor aggregate error justifies the extra parameters;
+    both independently shuffled controls remained negative. Reports
+    `0f167b53...b864439` and `26674d09...fbf5b1` bind the same frozen split,
+    seed, eight epochs and 92,000 optimizer steps. Global attention remains a
+    rejected treatment; task-conditioned queries are the next falsifiable
+    alternative so lifecycle, contact and motion heads need not share one
+    actor-selection policy.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
