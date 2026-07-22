@@ -26,7 +26,7 @@ name might suggest.
 | `message-flow-entry-contract-set/v4` and `compiled-message-flow-entry-set/v4` | Exact compiled-flow schema/digest, stage/message resource joins, optional raw actor placement identity, resolved flow label, authored guards, obligations, unknowns, speaker context, source-pinned presentation requests, resolved generic item backings, and deterministic entry mechanics | Unauthored callers, presentation-actor execution, inferred interaction geometry, actor behavior not established by placement, or equivalence across builds/languages |
 | `dusklight-world-context/v1` | One game-data digest and sorted stage-to-inventory/spatial-index digests | Product/revision identity, runtime configuration, the inventory or spatial records themselves |
 | `dusklight-world-inventory/v1` | Source records; chunk directory; actor/scaled/door/treasure/player placements; SCLS; KCL prisms and decoded PLC words; inferred same-room collision/SCLS joins | Actor-specific guards and lifecycle, dynamic collision, paths/rails/volumes, source-confirmed activation behavior |
-| `extracted-world-facts/v8` | Exact context; source digests; static objects; player spawns; encoded exits; collision-join candidates; exact-GZ2E01 L1-family and L5 boss-door guards, backing-sensitive memory-switch writes, and unresolved physical/actor-phase obligations | Collision triangles, navigation/connectivity, unjoined SCLS activation, other actor-driven exits, item/NPC/event producers, other door families, live actor reconstruction |
+| `extracted-world-facts/v9` | Exact context; source digests; static objects; player spawns; encoded exits; collision-join candidates; exact-GZ2E01 L1/L5 boss doors, keyed mini-boss doors, key shutters, Lakebed boss shutter, and memory-switch-backed type-0 Koki gates; backing-sensitive key/boss-key guards, switch writes and key adjustments; kind-sensitive exit association; unresolved physical/actor-phase obligations | Collision triangles, navigation/connectivity, unjoined SCLS activation, unaudited actor-driven exits, item/NPC/event producers, rider/caravan/external-switch gate semantics, and live actor reconstruction |
 | `orig-bundle-diff/v1` | Exact input-bundle/content digests; raw-versus-decoded stage/message/ignored-candidate differences; explicit one-sided locale coverage | Semantic comparison for domains not decoded into the input bundles |
 | `fact-pack/v1` plus immutable cache | Exact content, extractor, source, coverage, payload, and manifest identities; verified reuse without `orig/` | Any implication that a partial coverage declaration is complete |
 
@@ -106,8 +106,11 @@ semantics and does not decode any actor-specific placement parameters.
 - Import actor-driven map changes, doors, portals, elevators, warps, event
   transitions, cutscene scene changes, restart/savewarp, void, death, and title
   transitions as distinct classes.
-- Decode the guard, consumption, persistence, and reconstruction behavior for
-  keyed doors and other route-critical actor families.
+- Continue importing the audited rider/caravan/external-switch boundaries only
+  after their event-bit, switch-domain, paired/transient, and destructive state
+  can be represented. The exact GZ2E01 keyed-family census and current v9 import
+  boundary are recorded in
+  `docs/route-planner/gz2e01-keyed-door-gate-family-audit.md`.
 - Preserve source-room/layer activation rules separately from destination
   fields. Layer placement alone is not an activation predicate.
 

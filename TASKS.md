@@ -1025,9 +1025,23 @@ human-authored successful setup.
       reports typed temporal changes without selecting a door. Cross-language
       fixture `41332b30...61e8c` is 4,960 bytes and passes exact,
       legacy-missingness and recompressed-tamper tests. The existing GZ2E01
-      Forest Temple audit proves one small-key placement, but other DOOR20
-      kinds/configurations, other door families and live temporal variation
-      remain open.
+      Forest Temple audit proves one small-key placement. The exact-GZ2E01
+      gameplay key-read/decrement census now separately covers mini-boss doors,
+      key shutters, Koki gates, rider gates, caravan gates, the guard-only
+      Lakebed bridge demo, and the zero-placement generic boss-door family.
+      `extracted-world-facts/v9` executes the decidable mini-boss, shutter, and
+      type-0 Koki-gate guards/effects while retaining rider/caravan/external-
+      switch bypasses as explicit boundaries. Other DOOR20 configurations and
+      live temporal variation remain open.
+      - [x] Complete the remaining exact-build keyed door/gate source and retail
+        placement census without treating unrelated profiles as `DOOR20`.
+        Strict inventories covered 78 of 79 stage directories; placement-only
+        recovery for collision-invalid `D_MN09` completed the 79-stage actor
+        census without weakening collision validation. The audit distinguishes
+        key/boss-key guards, queued decrements, memory/zone switches, event-bit
+        and destructive bypasses, transient paired state, external activation,
+        persistent reconstruction and zero-placement families. See
+        `docs/route-planner/gz2e01-keyed-door-gate-family-audit.md`.
       - [x] Promote the profile-bound component without generalizing it to
         other door families. Native actor view v9 preserves typed action,
         side and stopper enums, independently reconstructs every authored

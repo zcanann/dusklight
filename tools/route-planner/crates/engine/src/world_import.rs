@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v8";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v9";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -266,6 +266,30 @@ impl ExtractedWorldFacts {
                     obligations.extend(imported.obligations);
                     transitions.push(imported.transition);
                 }
+                for placement in &inventory.placements {
+                    let Some(imported) = import_gz2e01_keyed_actor_actions(
+                        inventory,
+                        placement,
+                        &scope,
+                        inventory_sha256,
+                    )?
+                    else {
+                        continue;
+                    };
+                    if let Some(exit_record_id) = imported.exit_record_id {
+                        transition_ids_by_exit
+                            .entry(exit_record_id)
+                            .or_default()
+                            .extend(
+                                imported
+                                    .transitions
+                                    .iter()
+                                    .map(|transition| transition.id.clone()),
+                            );
+                    }
+                    obligations.extend(imported.obligations);
+                    transitions.extend(imported.transitions);
+                }
             }
 
             for exit in &inventory.exits {
@@ -422,10 +446,22 @@ impl ExtractedWorldFacts {
                 ));
             }
         }
-        if referenced_transition_ids != transition_ids {
+        let exit_transition_ids = self
+            .mechanics
+            .transitions
+            .iter()
+            .filter(|transition| {
+                matches!(
+                    transition.transition_kind,
+                    TransitionKind::EncodedMapExit | TransitionKind::Door
+                )
+            })
+            .map(|transition| transition.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if referenced_transition_ids != exit_transition_ids {
             return Err(PlannerContractError::new(
                 "mechanics.transitions",
-                "must be referenced exactly once by an encoded exit",
+                "encoded-map and door transitions must be referenced exactly once by an encoded exit, while other transition kinds must not be referenced by one",
             ));
         }
         let expected_scope = ContextScope {
@@ -899,6 +935,640 @@ fn gz2e01_boss_door_evidence(
                 ),
             },
         ],
+    }
+}
+
+struct ImportedKeyedActorActions {
+    exit_record_id: Option<String>,
+    transitions: Vec<CandidateTransition>,
+    obligations: Vec<FeasibilityObligation>,
+}
+
+fn import_gz2e01_keyed_actor_actions(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedKeyedActorActions>, PlannerContractError> {
+    if !matches!(
+        placement.kind,
+        PlacementKind::Actor | PlacementKind::ScaledActor
+    ) {
+        return Ok(None);
+    }
+    match placement.name.as_str() {
+        "L6Mdoor" | "L7door" | "L8Mdoor" => {
+            import_gz2e01_keyed_mboss_door(inventory, placement, scope, inventory_sha256)
+        }
+        "kshtr00" | "L3Bdoor" => {
+            import_gz2e01_key_shutter(inventory, placement, scope, inventory_sha256)
+        }
+        "K_Gate" => import_gz2e01_koki_gate(inventory, placement, scope, inventory_sha256),
+        _ => Ok(None),
+    }
+}
+
+fn import_gz2e01_keyed_mboss_door(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedKeyedActorActions>, PlannerContractError> {
+    let Some(room) = placement.scope.room else {
+        return Ok(None);
+    };
+    let front_option = ((placement.parameters >> 8) & 0x03) as u8;
+    let front_room = ((placement.parameters >> 13) & 0x3f) as u8;
+    if front_option != 2 || room == 51 || room == 52 || front_room != room as u8 {
+        return Ok(None);
+    }
+    let switch_id = placement.angle[2] as u16 as u8;
+    if switch_id >= 0x80 {
+        return Ok(None);
+    }
+    let exit_index = ((placement.parameters >> 25) & 0x3f) as usize;
+    let matching_exits = inventory
+        .exits
+        .iter()
+        .filter(|exit| exit.record_index == exit_index && exit.scope.room == Some(room))
+        .collect::<Vec<_>>();
+    let [exit] = matching_exits.as_slice() else {
+        return Ok(None);
+    };
+    let (event_sha256, event_note) = match placement.name.as_str() {
+        "L6Mdoor" => (
+            "fd5570eca9bd29ee1b433236a10945872930fbf52c2508af9ff2c3f7ea9386fe",
+            "L3MBdoor/event_list.dat: DEFAULT_MBS_SHUTTER_L3_F reaches UNLOCK before OPEN and CHG_SCENE.",
+        ),
+        "L7door" => (
+            "7de6bfac10e3ca6c3f6bc88a83815972d3397fd3488b067398cdd8cb0ea0cce4",
+            "L7MBdoor/event_list.dat: DEFAULT_MBS_SHUTTER_L7_F reaches UNLOCK before OPEN and CHG_SCENE.",
+        ),
+        "L8Mdoor" => (
+            "b079b8b284208582d9a37b50bd94f13400530abca75db0771147a646a8d83627",
+            "L8MBdoor/event_list.dat: DEFAULT_MBS_SHUTTER_L8_F reaches UNLOCK before OPEN and CHG_SCENE.",
+        ),
+        _ => return Ok(None),
+    };
+    let family = "keyed-mboss-door";
+    let base_token = stable_token(
+        "keyed",
+        &[
+            family.as_bytes(),
+            inventory.stage.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    let evidence = keyed_actor_evidence(
+        family,
+        inventory_sha256,
+        placement,
+        "94b00ab791e96a5738a0c2ef94945461c4e930b6128fc5a16d13630da9d1dff2",
+        "d_a_door_mbossL1.cpp: front-side option-2 key guard, one-time switch write/key decrement, event/collision phases, and scene change.",
+        event_sha256,
+        event_note,
+        true,
+        &base_token,
+    );
+    let (obligations, obligation_ids) = keyed_actor_obligations(
+        scope,
+        placement,
+        &base_token,
+        &evidence,
+        "Confirm resources, keyhole, the selected retail event cuts, collision release, CHG_SCENE, and restart handling complete without interruption.",
+        "Reach the authored front side inside |x| <= 130 and |z| <= 110 with the required facing; wolf attention/current-position checks remain part of the physical witness.",
+    );
+    let location_guard = placement_location_guard(inventory, placement, room);
+    let destination = SceneLocation {
+        stage: exit.destination_stage.clone(),
+        room: exit.destination_room,
+        layer: exit.destination_layer,
+        spawn: exit.destination_point,
+    };
+    let first_open = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "first-open",
+        &format!(
+            "{} {} room {} first keyed opening to {} room {} point {}",
+            inventory.stage,
+            placement.name,
+            room,
+            destination.stage,
+            destination.room,
+            destination.spawn
+        ),
+        TransitionKind::Door,
+        PredicateExpression::All {
+            terms: vec![
+                location_guard.clone(),
+                memory_switch_guard(switch_id, false),
+                small_key_guard(ComparisonOperator::GreaterThan, 0),
+            ],
+        },
+        vec![
+            memory_switch_write(switch_id),
+            small_key_adjust(-1),
+            StateOperation::SetLocation {
+                location: destination.clone(),
+            },
+        ],
+        &obligation_ids,
+        &evidence,
+    );
+    let reopen = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "reopen",
+        &format!(
+            "{} {} room {} already-unlocked opening to {} room {} point {}",
+            inventory.stage,
+            placement.name,
+            room,
+            destination.stage,
+            destination.room,
+            destination.spawn
+        ),
+        TransitionKind::Door,
+        PredicateExpression::All {
+            terms: vec![location_guard, memory_switch_guard(switch_id, true)],
+        },
+        vec![StateOperation::SetLocation {
+            location: destination,
+        }],
+        &obligation_ids,
+        &evidence,
+    );
+    Ok(Some(ImportedKeyedActorActions {
+        exit_record_id: Some(exit.stable_id.clone()),
+        transitions: vec![first_open, reopen],
+        obligations,
+    }))
+}
+
+fn import_gz2e01_key_shutter(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedKeyedActorActions>, PlannerContractError> {
+    let Some(room) = placement.scope.room else {
+        return Ok(None);
+    };
+    let checks_key = placement.parameters >> 31 != 0;
+    let authored_type = ((placement.parameters >> 8) & 0xff) as u8;
+    let runtime_type = authored_type.wrapping_add(1);
+    let supported_type = match (placement.name.as_str(), runtime_type) {
+        ("kshtr00", 0) => Some((
+            false,
+            "8676effbd561ba65f8e4a8b9493aa6b60072d40f72a8e240b2ffa9c5550b40fa",
+            "S_shut00/event_list.dat: KEY_JAIL_00 and its wolf variant both contain UNLOCK before OPEN.",
+        )),
+        ("kshtr00", 2) => Some((
+            false,
+            "3bff3ce52a0c1660d5ccf0bdcae24b672e50013317b3469698c51e32336c159a",
+            "Lv3shut00/event_list.dat: KEY_JAIL_01 and its wolf variant both contain UNLOCK before OPEN.",
+        )),
+        ("L3Bdoor", 3) => Some((
+            true,
+            "2184efba5db7b458f01c50534e29ba072fcb58be5e3b6df8f92e35b758726440",
+            "K_l3bdoor/event_list.dat: DEFAULT_BS_SHUTTER_L3_F contains UNLOCK before OPEN.",
+        )),
+        _ => None,
+    };
+    let Some((uses_boss_key, event_sha256, event_note)) = supported_type else {
+        return Ok(None);
+    };
+    if !checks_key {
+        return Ok(None);
+    }
+    let switch_id = placement.parameters as u8;
+    if switch_id >= 0x80 {
+        return Ok(None);
+    }
+    let family = if uses_boss_key {
+        "lakebed-boss-key-shutter"
+    } else {
+        "key-shutter"
+    };
+    let base_token = stable_token(
+        "keyed",
+        &[
+            family.as_bytes(),
+            inventory.stage.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    let evidence = keyed_actor_evidence(
+        family,
+        inventory_sha256,
+        placement,
+        "dca04961403031ef232059f5f9f8997d2f0a3965b111e97d9d72604e0014d14b",
+        "d_a_obj_kshutter.cpp: type/check-key decoder, small-key or boss-key offer guard, acceptance switch write, UNLOCK key delta, and collision/open phases.",
+        event_sha256,
+        event_note,
+        false,
+        &base_token,
+    );
+    let (obligations, obligation_ids) = keyed_actor_obligations(
+        scope,
+        placement,
+        &base_token,
+        &evidence,
+        "Confirm resources, keyhole, accepted event, UNLOCK/OPEN cuts, and collision release complete without interruption.",
+        "Reach the actor's bounded interaction area with the required facing; retain the human/wolf event choice as part of the witness.",
+    );
+    let location_guard = placement_location_guard(inventory, placement, room);
+    let mut transitions = Vec::new();
+    if uses_boss_key {
+        transitions.push(keyed_actor_candidate(
+            scope,
+            placement,
+            family,
+            "open-with-small-key",
+            &format!(
+                "{} {} room {} boss-key opening with incidental small-key decrement",
+                inventory.stage, placement.name, room
+            ),
+            TransitionKind::ActorDriven,
+            PredicateExpression::All {
+                terms: vec![
+                    location_guard.clone(),
+                    memory_switch_guard(switch_id, false),
+                    boss_key_guard(),
+                    small_key_guard(ComparisonOperator::GreaterThan, 0),
+                ],
+            },
+            vec![memory_switch_write(switch_id), small_key_adjust(-1)],
+            &obligation_ids,
+            &evidence,
+        ));
+        transitions.push(keyed_actor_candidate(
+            scope,
+            placement,
+            family,
+            "open-with-zero-small-keys",
+            &format!(
+                "{} {} room {} boss-key opening with clamped zero small keys",
+                inventory.stage, placement.name, room
+            ),
+            TransitionKind::ActorDriven,
+            PredicateExpression::All {
+                terms: vec![
+                    location_guard,
+                    memory_switch_guard(switch_id, false),
+                    boss_key_guard(),
+                    small_key_guard(ComparisonOperator::Equal, 0),
+                ],
+            },
+            vec![memory_switch_write(switch_id)],
+            &obligation_ids,
+            &evidence,
+        ));
+    } else {
+        transitions.push(keyed_actor_candidate(
+            scope,
+            placement,
+            family,
+            "unlock",
+            &format!(
+                "{} {} room {} keyed shutter unlock",
+                inventory.stage, placement.name, room
+            ),
+            TransitionKind::ActorDriven,
+            PredicateExpression::All {
+                terms: vec![
+                    location_guard,
+                    memory_switch_guard(switch_id, false),
+                    small_key_guard(ComparisonOperator::GreaterThan, 0),
+                ],
+            },
+            vec![memory_switch_write(switch_id), small_key_adjust(-1)],
+            &obligation_ids,
+            &evidence,
+        ));
+    }
+    Ok(Some(ImportedKeyedActorActions {
+        exit_record_id: None,
+        transitions,
+        obligations,
+    }))
+}
+
+fn import_gz2e01_koki_gate(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedKeyedActorActions>, PlannerContractError> {
+    let Some(room) = placement.scope.room else {
+        return Ok(None);
+    };
+    let name_argument = ((placement.parameters >> 16) & 0x0f) as u8;
+    let switch_id = placement.parameters as u8;
+    if name_argument != 0 || switch_id >= 0x80 {
+        return Ok(None);
+    }
+    let family = "koki-gate";
+    let base_token = stable_token(
+        "keyed",
+        &[
+            family.as_bytes(),
+            inventory.stage.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    let evidence = keyed_actor_evidence(
+        family,
+        inventory_sha256,
+        placement,
+        "55696f32a444f9fde4b446442211cc3bed8b2872c8b05d7646001bd3659879e8",
+        "d_a_obj_kgate.cpp: type-0 switch/key offer guard, accepted-door key delta and switch write, live push/open behavior, and set-switch reload reconstruction.",
+        "c8684156665423d1a133dc0b102098d8ec3be838dd6abe117dbafedf0144ab83",
+        "D_KGate00/event_list.dat: KOKI_GATE_OPEN00 contains UNLOCK before OPEN.",
+        false,
+        &base_token,
+    );
+    let (obligations, obligation_ids) = keyed_actor_obligations(
+        scope,
+        placement,
+        &base_token,
+        &evidence,
+        "Confirm resources, accepted door command, event cuts, and the unlocked gate's physical push-open behavior complete without interruption.",
+        "Reach local x in [-100, 100], z in [0, 100], with the actor/player facing delta required by checkOpen().",
+    );
+    let transition = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "unlock",
+        &format!(
+            "{} {} room {} keyed gate unlock",
+            inventory.stage, placement.name, room
+        ),
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                placement_location_guard(inventory, placement, room),
+                memory_switch_guard(switch_id, false),
+                small_key_guard(ComparisonOperator::GreaterThan, 0),
+            ],
+        },
+        vec![small_key_adjust(-1), memory_switch_write(switch_id)],
+        &obligation_ids,
+        &evidence,
+    );
+    Ok(Some(ImportedKeyedActorActions {
+        exit_record_id: None,
+        transitions: vec![transition],
+        obligations,
+    }))
+}
+
+fn placement_location_guard(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    room: i8,
+) -> PredicateExpression {
+    let PredicateExpression::All { mut terms } = source_location_guard(&inventory.stage, room)
+    else {
+        unreachable!("source_location_guard always returns an all predicate")
+    };
+    if let Some(layer) = placement.layer {
+        terms.push(PredicateExpression::Compare {
+            left: ValueReference::LocationLayer,
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Signed(layer.into()),
+            },
+        });
+    }
+    PredicateExpression::All { terms }
+}
+
+fn small_key_guard(operator: ComparisonOperator, value: u64) -> PredicateExpression {
+    PredicateExpression::Compare {
+        left: ValueReference::BoundRawBits {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBindingReference::CurrentStage,
+            byte_offset: 0x1c,
+            byte_width: 1,
+            mask: 0xff,
+        },
+        operator,
+        right: ValueReference::Literal {
+            value: StateValue::Unsigned(value),
+        },
+    }
+}
+
+fn boss_key_guard() -> PredicateExpression {
+    PredicateExpression::Compare {
+        left: ValueReference::BoundRawBits {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBindingReference::CurrentStage,
+            byte_offset: 0x1d,
+            byte_width: 1,
+            mask: 0x04,
+        },
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Unsigned(0x04),
+        },
+    }
+}
+
+fn memory_switch_guard(switch_id: u8, set: bool) -> PredicateExpression {
+    let (byte_offset, mask) = memory_switch_raw_location(switch_id);
+    PredicateExpression::Compare {
+        left: ValueReference::BoundRawBits {
+            component_kind: ComponentKind::DungeonMemory,
+            binding: ComponentBindingReference::CurrentStage,
+            byte_offset,
+            byte_width: 1,
+            mask: u64::from(mask),
+        },
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Unsigned(if set { u64::from(mask) } else { 0 }),
+        },
+    }
+}
+
+fn memory_switch_write(switch_id: u8) -> StateOperation {
+    let (byte_offset, mask) = memory_switch_raw_location(switch_id);
+    StateOperation::WriteBoundRaw {
+        component_kind: ComponentKind::DungeonMemory,
+        binding: ComponentBindingReference::CurrentStage,
+        byte_offset,
+        mask: vec![mask],
+        value: vec![mask],
+    }
+}
+
+fn small_key_adjust(delta: i64) -> StateOperation {
+    StateOperation::AdjustBoundRawUnsigned {
+        component_kind: ComponentKind::DungeonMemory,
+        binding: ComponentBindingReference::CurrentStage,
+        byte_offset: 0x1c,
+        byte_width: 1,
+        delta,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn keyed_actor_candidate(
+    scope: &ContextScope,
+    placement: &PlacementRecord,
+    family: &str,
+    branch: &str,
+    label: &str,
+    transition_kind: TransitionKind,
+    hard_guards: PredicateExpression,
+    effects: Vec<StateOperation>,
+    obligation_ids: &[String],
+    evidence: &RuleEvidence,
+) -> CandidateTransition {
+    let token = stable_token(
+        "keyed",
+        &[
+            family.as_bytes(),
+            branch.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    CandidateTransition {
+        id: format!("transition.{token}"),
+        label: label.into(),
+        scope: scope.clone(),
+        transition_kind,
+        approach_id: format!("approach.{token}"),
+        activation: ActivationContract {
+            hard_guards,
+            physical_obligation_ids: obligation_ids.to_vec(),
+            effects,
+            unknown_requirements: Vec::new(),
+        },
+        evidence: evidence.clone(),
+    }
+}
+
+fn keyed_actor_obligations(
+    scope: &ContextScope,
+    placement: &PlacementRecord,
+    token: &str,
+    evidence: &RuleEvidence,
+    actor_question: &str,
+    interaction_question: &str,
+) -> (Vec<FeasibilityObligation>, Vec<String>) {
+    let actor_id = format!("obligation.actor-state.{token}");
+    let interaction_id = format!("obligation.interaction.{token}");
+    let unknown_evidence = RuleEvidence {
+        truth: TruthStatus::Unknown,
+        records: evidence.records.clone(),
+    };
+    (
+        vec![
+            FeasibilityObligation {
+                id: actor_id.clone(),
+                label: format!("Run the loaded {} unlock/open phases", placement.name),
+                scope: scope.clone(),
+                obligation_kind: ObligationKind::ActorState,
+                detail: ObligationDetail::Unresolved {
+                    research_question: actor_question.into(),
+                },
+                evidence: unknown_evidence.clone(),
+            },
+            FeasibilityObligation {
+                id: interaction_id.clone(),
+                label: format!("Reach and activate {}", placement.name),
+                scope: scope.clone(),
+                obligation_kind: ObligationKind::Interaction,
+                detail: ObligationDetail::Unresolved {
+                    research_question: interaction_question.into(),
+                },
+                evidence: unknown_evidence,
+            },
+        ],
+        vec![actor_id, interaction_id],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn keyed_actor_evidence(
+    family: &str,
+    inventory_sha256: Digest,
+    placement: &PlacementRecord,
+    actor_sha256: &str,
+    actor_note: &str,
+    event_sha256: &str,
+    event_note: &str,
+    include_mboss_parameters: bool,
+    token: &str,
+) -> RuleEvidence {
+    let mut records = vec![
+            EvidenceRecord {
+                id: format!("evidence.source.actor.{family}.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(actor_sha256)),
+                note: actor_note.into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.source.event.{family}.{token}"),
+                kind: EvidenceKind::Extracted,
+                source_sha256: Some(static_digest(event_sha256)),
+                note: event_note.into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.source.name-map.{family}.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(
+                    "5c46ffc79e891b59b02455b837d9966d05c147d8d95c91c65cc845dd848d32ad",
+                )),
+                note: "d_stage.cpp: exact placement names map to their distinct actor process families and mini-boss level arguments.".into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.source.key-commit.{family}.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(
+                    "b58ed135700865df0f0cb9ce0e4115de6ec1f9f6dbb8fff8cc1ff99b437d5569",
+                )),
+                note: "d_meter2.cpp: queued key deltas clamp to [0, 99], update dSv_memBit_c::mKeyNum, and clear the pending delta.".into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.source.save-layout.{family}.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(
+                    "74a211e5d2ee2c0fe4ce259905fe1f479f373d5b2459d654871cbbd2f61e8756",
+                )),
+                note: "d_save.h: dSv_memBit_c memory switches, key count byte 0x1c, and dungeon-item byte 0x1d share the active stage bank.".into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.world.inventory.{family}.{token}"),
+                kind: EvidenceKind::Extracted,
+                source_sha256: Some(inventory_sha256),
+                note: format!(
+                    "Authenticated world inventory placement {} from resource {}.",
+                    placement.stable_id, placement.source_sha256
+                ),
+            },
+        ];
+    if include_mboss_parameters {
+        records.push(EvidenceRecord {
+            id: format!("evidence.source.parameters.{family}.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "b0dacfc4b9c46786d73a840e55385e535364b9fee7de66cd0e2af18f25d1ca78",
+            )),
+            note: "d_door_param2.cpp: mini-boss-door front/back room, exit number, option, and unlock-switch parameter decoding.".into(),
+        });
+        records.sort_by(|left, right| left.id.cmp(&right.id));
+    }
+    RuleEvidence {
+        truth: TruthStatus::Established,
+        records,
     }
 }
 
@@ -1416,6 +2086,174 @@ mod tests {
         inventory
     }
 
+    fn replace_room_actor(
+        mut inventory: WorldInventory,
+        stage: &str,
+        room: i8,
+        placement: PlacementRecord,
+        keep_exit: bool,
+    ) -> WorldInventory {
+        inventory.stage = stage.into();
+        inventory.sources[1].scope.room = Some(room);
+        inventory.sources[1].stage_data_sha256 = placement.source_sha256;
+        inventory.placements = vec![placement];
+        if keep_exit {
+            inventory.exits[0].scope.room = Some(room);
+            inventory.exits[0].source_sha256 = inventory.sources[1].stage_data_sha256;
+        } else {
+            inventory.exits.clear();
+        }
+        inventory
+    }
+
+    fn keyed_mboss_inventory() -> WorldInventory {
+        let source =
+            static_digest("2756f041cd797b24e2794983d3c6e0b370aa1dd50a57a08a2e437585688a268c");
+        let mut inventory = replace_room_actor(
+            boss_door_inventory(7),
+            "D_MN06",
+            7,
+            PlacementRecord {
+                stable_id: format!("dzr-sha256:{source}/chunk/Door/record/0"),
+                source_sha256: source,
+                scope: SourceScope {
+                    kind: SourceKind::Room,
+                    room: Some(7),
+                },
+                chunk_tag: "Door".into(),
+                record_index: 0,
+                layer: None,
+                kind: PlacementKind::ScaledActor,
+                name: "L6Mdoor".into(),
+                parameters: 0x01b0_e600,
+                position: Vec3 {
+                    x: 1580.0,
+                    y: 8250.0,
+                    z: 700.0,
+                },
+                angle: [-1, 0x4000, -227],
+                set_id: 0xff,
+                scale_raw: Some([10, 10, 10]),
+                raw_hex: "4c364d646f6f720001b0e60044c580004600e800442f0000ffff4000ff1d00ff0a0a0aff"
+                    .into(),
+            },
+            true,
+        );
+        let exit = &mut inventory.exits[0];
+        exit.stable_id = format!("dzr-sha256:{source}/chunk/SCLS/record/0");
+        exit.destination_stage = "D_MN06B".into();
+        exit.destination_room = 51;
+        exit.destination_layer = -1;
+        exit.destination_point = 0;
+        inventory
+    }
+
+    fn regular_key_shutter_inventory() -> WorldInventory {
+        let source =
+            static_digest("f4a05b52105afd1dacb6b5b4b8e51706a922be24ea1b15fc198b47fd8aefb578");
+        replace_room_actor(
+            boss_door_inventory(9),
+            "D_MN01",
+            9,
+            PlacementRecord {
+                stable_id: format!("dzr-sha256:{source}/chunk/ACTR/record/4"),
+                source_sha256: source,
+                scope: SourceScope {
+                    kind: SourceKind::Room,
+                    room: Some(9),
+                },
+                chunk_tag: "ACTR".into(),
+                record_index: 4,
+                layer: None,
+                kind: PlacementKind::Actor,
+                name: "kshtr00".into(),
+                parameters: 0x80ff_0123,
+                position: Vec3 {
+                    x: 15185.0,
+                    y: -50.0,
+                    z: -570.0,
+                },
+                angle: [0, -5461, 255],
+                set_id: 0xffff,
+                scale_raw: None,
+                raw_hex: "6b7368747230300080ff0123466d4400c2480000c40e80000000eaab00ffffff".into(),
+            },
+            false,
+        )
+    }
+
+    fn lakebed_boss_key_shutter_inventory() -> WorldInventory {
+        let source =
+            static_digest("9336aabaee513b635d6d0d3db3f5f3b67f5c6bd6643581ebd1a8f7b779fa8e7a");
+        replace_room_actor(
+            boss_door_inventory(3),
+            "D_MN01",
+            3,
+            PlacementRecord {
+                stable_id: format!("dzr-sha256:{source}/chunk/Door/record/0"),
+                source_sha256: source,
+                scope: SourceScope {
+                    kind: SourceKind::Room,
+                    room: Some(3),
+                },
+                chunk_tag: "Door".into(),
+                record_index: 0,
+                layer: None,
+                kind: PlacementKind::ScaledActor,
+                name: "L3Bdoor".into(),
+                parameters: 0x80ff_0255,
+                position: Vec3 {
+                    x: 0.0,
+                    y: -320.0,
+                    z: 325.31067,
+                },
+                angle: [0, 0, 0],
+                set_id: 0xff,
+                scale_raw: Some([10, 10, 10]),
+                raw_hex: "4c3342646f6f720080ff025500000000c3a0000043a2a7c400000000000000ff0a0a0aff"
+                    .into(),
+            },
+            false,
+        )
+    }
+
+    fn koki_gate_inventory(switch_id: u8) -> WorldInventory {
+        let source =
+            static_digest("5c2208b4088c8ac55dabca200f7bd7eedac3cf2c93364eb49fcfae2216513e21");
+        let parameters = 0x0ff0_ff00 | u32::from(switch_id);
+        let mut raw = "4b5f4761746500000ff0ff0cc688e00043480000c62eec00000026660000ffff".to_owned();
+        raw.replace_range(22..24, &format!("{switch_id:02x}"));
+        replace_room_actor(
+            boss_door_inventory(3),
+            "F_SP108",
+            3,
+            PlacementRecord {
+                stable_id: format!("dzr-sha256:{source}/chunk/ACT0/record/36"),
+                source_sha256: source,
+                scope: SourceScope {
+                    kind: SourceKind::Room,
+                    room: Some(3),
+                },
+                chunk_tag: "ACT0".into(),
+                record_index: 36,
+                layer: Some(0),
+                kind: PlacementKind::Actor,
+                name: "K_Gate".into(),
+                parameters,
+                position: Vec3 {
+                    x: -17520.0,
+                    y: 200.0,
+                    z: -11195.0,
+                },
+                angle: [0, 9830, 0],
+                set_id: 0xffff,
+                scale_raw: None,
+                raw_hex: raw,
+            },
+            false,
+        )
+    }
+
     fn world_context(game_data_sha256: Digest, inventory: &WorldInventory) -> WorldContext {
         let context = WorldContext {
             schema: crate::world_data::WORLD_CONTEXT_SCHEMA.into(),
@@ -1638,6 +2476,367 @@ mod tests {
                     && location.layer == 2
                     && location.spawn == 11
         ));
+    }
+
+    #[test]
+    fn imports_keyed_mboss_first_open_and_reopen_as_distinct_branches() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let inventory = keyed_mboss_inventory();
+        inventory.validate().unwrap();
+        let context = world_context(content.fingerprint.game_data_sha256, &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+
+        assert_eq!(facts.schema, EXTRACTED_WORLD_FACTS_SCHEMA);
+        assert_eq!(facts.mechanics.transitions.len(), 2);
+        assert_eq!(facts.mechanics.obligations.len(), 2);
+        assert_eq!(facts.encoded_exits[0].candidate_transition_ids.len(), 2);
+        let first_open = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.activation.effects.len() == 3)
+            .expect("first keyed opening branch");
+        assert_eq!(first_open.transition_kind, TransitionKind::Door);
+        assert!(matches!(
+            first_open.activation.effects.as_slice(),
+            [
+                StateOperation::WriteBoundRaw {
+                    component_kind: ComponentKind::DungeonMemory,
+                    binding: ComponentBindingReference::CurrentStage,
+                    byte_offset: 0x08,
+                    mask,
+                    value,
+                },
+                StateOperation::AdjustBoundRawUnsigned {
+                    component_kind: ComponentKind::DungeonMemory,
+                    binding: ComponentBindingReference::CurrentStage,
+                    byte_offset: 0x1c,
+                    byte_width: 1,
+                    delta: -1,
+                },
+                StateOperation::SetLocation { location },
+            ] if mask == &[0x20]
+                && value == &[0x20]
+                && location.stage == "D_MN06B"
+                && location.room == 51
+        ));
+        let PredicateExpression::All { terms } = &first_open.activation.hard_guards else {
+            panic!("first opening must retain location, switch, and key guards")
+        };
+        assert!(terms.iter().any(|term| matches!(
+            term,
+            PredicateExpression::Compare {
+                left: ValueReference::BoundRawBits {
+                    byte_offset: 0x1c,
+                    byte_width: 1,
+                    mask: 0xff,
+                    ..
+                },
+                operator: ComparisonOperator::GreaterThan,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(0),
+                },
+            }
+        )));
+        let reopen = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.activation.effects.len() == 1)
+            .expect("already-unlocked reopening branch");
+        assert!(matches!(
+            reopen.activation.effects.as_slice(),
+            [StateOperation::SetLocation { location }]
+                if location.stage == "D_MN06B" && location.room == 51
+        ));
+    }
+
+    #[test]
+    fn imports_regular_key_shutter_switch_and_small_key_mutation() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let inventory = regular_key_shutter_inventory();
+        inventory.validate().unwrap();
+        let context = world_context(content.fingerprint.game_data_sha256, &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+
+        assert_eq!(facts.mechanics.transitions.len(), 1);
+        assert_eq!(facts.mechanics.obligations.len(), 2);
+        let transition = &facts.mechanics.transitions[0];
+        assert_eq!(transition.transition_kind, TransitionKind::ActorDriven);
+        assert!(matches!(
+            transition.activation.effects.as_slice(),
+            [
+                StateOperation::WriteBoundRaw {
+                    byte_offset: 0x0f,
+                    mask,
+                    value,
+                    ..
+                },
+                StateOperation::AdjustBoundRawUnsigned {
+                    byte_offset: 0x1c,
+                    byte_width: 1,
+                    delta: -1,
+                    ..
+                },
+            ] if mask == &[0x08] && value == &[0x08]
+        ));
+        assert!(transition.evidence.records.iter().any(|record| {
+            record.source_sha256
+                == Some(static_digest(
+                    "3bff3ce52a0c1660d5ccf0bdcae24b672e50013317b3469698c51e32336c159a",
+                ))
+        }));
+    }
+
+    #[test]
+    fn imports_lakebed_boss_shutter_zero_and_positive_small_key_outcomes() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let inventory = lakebed_boss_key_shutter_inventory();
+        inventory.validate().unwrap();
+        let context = world_context(content.fingerprint.game_data_sha256, &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+
+        assert_eq!(facts.mechanics.transitions.len(), 2);
+        assert_eq!(facts.mechanics.obligations.len(), 2);
+        let positive = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.activation.effects.len() == 2)
+            .expect("boss-key opening with a small key");
+        assert!(matches!(
+            positive.activation.effects.as_slice(),
+            [
+                StateOperation::WriteBoundRaw {
+                    byte_offset: 0x11,
+                    mask,
+                    value,
+                    ..
+                },
+                StateOperation::AdjustBoundRawUnsigned {
+                    byte_offset: 0x1c,
+                    byte_width: 1,
+                    delta: -1,
+                    ..
+                },
+            ] if mask == &[0x20] && value == &[0x20]
+        ));
+        let zero = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.activation.effects.len() == 1)
+            .expect("boss-key opening with zero small keys");
+        let PredicateExpression::All { terms } = &zero.activation.hard_guards else {
+            panic!("zero-key branch must retain boss-key and zero-key guards")
+        };
+        assert!(terms.iter().any(|term| matches!(
+            term,
+            PredicateExpression::Compare {
+                left: ValueReference::BoundRawBits {
+                    byte_offset: 0x1d,
+                    mask: 0x04,
+                    ..
+                },
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(0x04),
+                },
+                ..
+            }
+        )));
+        assert!(terms.iter().any(|term| matches!(
+            term,
+            PredicateExpression::Compare {
+                left: ValueReference::BoundRawBits {
+                    byte_offset: 0x1c,
+                    mask: 0xff,
+                    ..
+                },
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(0),
+                },
+            }
+        )));
+    }
+
+    #[test]
+    fn imports_only_memory_switch_backed_type_zero_koki_gate_unlocks() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let inventory = koki_gate_inventory(0x0c);
+        inventory.validate().unwrap();
+        let context = world_context(content.fingerprint.game_data_sha256, &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+
+        assert_eq!(facts.mechanics.transitions.len(), 1);
+        assert!(matches!(
+            facts.mechanics.transitions[0]
+                .activation
+                .effects
+                .as_slice(),
+            [
+                StateOperation::AdjustBoundRawUnsigned {
+                    byte_offset: 0x1c,
+                    byte_width: 1,
+                    delta: -1,
+                    ..
+                },
+                StateOperation::WriteBoundRaw {
+                    byte_offset: 0x0a,
+                    mask,
+                    value,
+                    ..
+                },
+            ] if mask == &[0x10] && value == &[0x10]
+        ));
+        let PredicateExpression::All { terms } =
+            &facts.mechanics.transitions[0].activation.hard_guards
+        else {
+            panic!("gate must retain location, switch, and key guards")
+        };
+        assert!(terms.iter().any(|term| matches!(
+            term,
+            PredicateExpression::All { terms }
+                if terms.iter().any(|nested| matches!(
+                    nested,
+                    PredicateExpression::Compare {
+                        left: ValueReference::LocationLayer,
+                        right: ValueReference::Literal {
+                            value: StateValue::Signed(0),
+                        },
+                        ..
+                    }
+                ))
+        )));
+
+        let absent_switch_inventory = koki_gate_inventory(0xff);
+        absent_switch_inventory.validate().unwrap();
+        let context = world_context(
+            content.fingerprint.game_data_sha256,
+            &absent_switch_inventory,
+        );
+        let absent_switch = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&absent_switch_inventory),
+        )
+        .unwrap();
+        assert!(absent_switch.mechanics.transitions.is_empty());
+        assert!(absent_switch.mechanics.obligations.is_empty());
+    }
+
+    #[test]
+    fn excludes_unaudited_keyed_family_bypasses_and_non_memory_switches() {
+        let scope = ContextScope {
+            selectors: vec![ContextSelector::Exact {
+                context: ExactContext {
+                    content_sha256: Digest([0x11; 32]),
+                    runtime_configuration_sha256: Digest([0x22; 32]),
+                },
+            }],
+        };
+        let inventory = regular_key_shutter_inventory();
+        let mut placement = inventory.placements[0].clone();
+        for name in ["R_Gate", "CrvGate", "vshuter"] {
+            placement.name = name.into();
+            assert!(
+                import_gz2e01_keyed_actor_actions(
+                    &inventory,
+                    &placement,
+                    &scope,
+                    Digest([0x33; 32]),
+                )
+                .unwrap()
+                .is_none()
+            );
+        }
+
+        placement = inventory.placements[0].clone();
+        placement.parameters &= 0x7fff_ffff;
+        assert!(
+            import_gz2e01_keyed_actor_actions(&inventory, &placement, &scope, Digest([0x33; 32]),)
+                .unwrap()
+                .is_none()
+        );
+
+        let gate_inventory = koki_gate_inventory(0x82);
+        let mut gate = gate_inventory.placements[0].clone();
+        assert!(
+            import_gz2e01_keyed_actor_actions(&gate_inventory, &gate, &scope, Digest([0x33; 32]),)
+                .unwrap()
+                .is_none()
+        );
+        gate.parameters = (gate.parameters & !(0x0f << 16)) | (1 << 16);
+        assert!(
+            import_gz2e01_keyed_actor_actions(&gate_inventory, &gate, &scope, Digest([0x33; 32]),)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn encoded_exits_reference_only_map_and_door_transitions() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+
+        let gate_inventory = koki_gate_inventory(0x0c);
+        let context = world_context(content.fingerprint.game_data_sha256, &gate_inventory);
+        let mut actor_facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&gate_inventory),
+        )
+        .unwrap();
+        actor_facts.mechanics.transitions[0].transition_kind = TransitionKind::Door;
+        assert_eq!(
+            actor_facts.validate().unwrap_err().field(),
+            "mechanics.transitions"
+        );
+
+        let door_inventory = keyed_mboss_inventory();
+        let context = world_context(content.fingerprint.game_data_sha256, &door_inventory);
+        let mut door_facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&door_inventory),
+        )
+        .unwrap();
+        door_facts.mechanics.transitions[0].transition_kind = TransitionKind::ActorDriven;
+        assert_eq!(
+            door_facts.validate().unwrap_err().field(),
+            "mechanics.transitions"
+        );
     }
 
     #[test]

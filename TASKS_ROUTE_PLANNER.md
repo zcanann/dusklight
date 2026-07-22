@@ -1728,8 +1728,13 @@ evidenced overlays over the generated base rather than silent edits to it.
       bits, normal/abnormal cleanup, and item/event handoffs.
 - [ ] Audit interaction/attention volumes, forced cutscene triggers, player-control
       gates, and temporal windows for representative NPC setups.
-- [ ] Audit keyed door/gate actor families, their key/boss-key guards, consumption,
+- [x] Audit keyed door/gate actor families, their key/boss-key guards, consumption,
       persistent unlock writes, and alternate activation paths.
+  - [x] Audit the exact-GZ2E01 `DOOR20` Forest Temple small-key representative,
+        including the front-side key guard, accepted-event switch write, queued
+        key decrement/commit, keyhole, collision, scene change, reload
+        reconstruction, and OOB non-mutation boundary. See
+        `docs/route-planner/gz2e01-forest-temple-small-key-door-audit.md`.
   - [x] Audit the GZ2E01 `fpcNm_L1BOSS_DOOR_e` family, including its actor-name
         aliases, boss-key and usable-side hard guards, parameter decoder,
         interaction bounds, unlock switch, event/collision/scene-change phases,
@@ -1738,8 +1743,15 @@ evidenced overlays over the generated base rather than silent edits to it.
   - [x] Audit the exact-GZ2E01 `fpcNm_L5BOSS_DOOR_e` family, including its
         human-form and boss-key guards, positive-local-Z usable side,
         interaction bounds, stage-type-dependent keyhole/switch behavior, and
-        both retail placements. Other door families remain open. See
+        both retail placements. See
         `docs/route-planner/gz2e01-l5-boss-door-audit.md`.
+  - [x] Complete the exact gameplay key-read/decrement source census and
+        79-stage placement census for mini-boss doors, key shutters, Koki gates,
+        rider gates, caravan gates, the guard-only Lakebed bridge demo, and the
+        zero-placement generic `bdoor` family. Record memory/zone/event-bit,
+        transient-pair, destructive, external-switch, and `STAFF_SHUTTER`
+        alternate paths without generalizing them into one door rule. See
+        `docs/route-planner/gz2e01-keyed-door-gate-family-audit.md`.
 - [ ] Inventory static placement, persistent control, and transient instance state
       for representative actor families.
 - [ ] Audit SavMem placements, guards, and all return/restart-place writers.
@@ -1849,6 +1861,13 @@ Deliverable: replayable state evidence that can validate transition rules.
         human-form guard and distinct dungeon-side versus stage-type-3 boss-room
         unlock effects. Interaction geometry and actor/event/restart phases
         remain explicit obligations.
+  - [x] Import exact-GZ2E01 front-side keyed mini-boss first-open/reopen door
+        branches, internally checked key-shutter actions, the Lakebed boss
+        shutter's positive/zero-small-key outcomes, and layer-sensitive type-0
+        Koki-gate unlock actions. V9 requires encoded-map/door transitions to
+        reference exactly one SCLS record and forbids actor-driven actions from
+        fabricating one. Rider/caravan/external-switch families remain explicit
+        audited boundaries pending their missing state domains.
 - [ ] Model ordinary item/NPC/event producers.
 - [x] Implement normal bank commit/load and binding changes.
   - [x] Execute typed serialize/restore/bind/rebind operations against independent
@@ -1893,6 +1912,12 @@ Deliverable: replayable state evidence that can validate transition rules.
         memory-switch write while retaining its usable-side geometry and
         keyhole/event/collision/restart phases as separate unresolved
         obligations.
+  - [x] Import exact-GZ2E01 current-stage small-key, boss-key, memory-switch,
+        source-room/layer, first-open/reopen, switch-write, and key-adjustment
+        semantics for the audited mini-boss, key-shutter, Lakebed boss-shutter,
+        and Koki-gate placements. Preserve event, geometry, keyhole, collision,
+        pushing, and restart work as named obligations, and exclude non-memory,
+        transient, destructive, bypassed, external-switch, and unaudited types.
 - [ ] Import message-flow graph nodes, temporary-bit reads/writes, branch
       predicates, normal cleanup, and item/event handoffs from the selected
       language resources where decidable.
@@ -2984,8 +3009,9 @@ These should remain explicit unknowns until evidence closes them:
 - Whether any existing technique can preserve/rebind live stage memory across a
   context that normally replaces it.
 - Complete semantic mapping for stage, zone, dungeon, and temporary flag banks.
-- Complete small-key consumption and persistent-unlock behavior across all
-  door/gate actor families and exceptional stages.
+- Executable rider/caravan/external-switch gate modeling after their audited
+  event-bit, switch-domain, paired/transient, and destructive state is added;
+  cross-build keyed-family equivalence also remains unproved.
 - Exact Fanadi/Ooccoo glitch sequence, `NO_TELOP` lifetime, clear conditions, and
   build support.
 - All return-place writers encountered on paths to Fanadi.
