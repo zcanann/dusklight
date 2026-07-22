@@ -74,10 +74,7 @@ pub(crate) fn append_incumbent_demonstration_replay(
         || shard.metadata.objective_identity != objective_identity
         || shard.metadata.policy_model.is_some()
         || !episode.success
-        || episode
-            .first_hit_tick
-            .map(|tick| u64::from(tick).saturating_add(1))
-            != Some(incumbent.first_hit_tick)
+        || episode.first_hit_tick.map(u64::from) != Some(incumbent.first_hit_tick)
     {
         return Err(replay_message(
             "incumbent demonstration differs from its route, objective, or exact terminal proof",
@@ -301,9 +298,7 @@ pub(crate) fn append_residual_replay_generation(
                     replay_message("residual replay episode is absent from its native shard")
                 })?;
             let episode = &shard.episodes[episode_index];
-            let exact_first_hit = episode
-                .first_hit_tick
-                .map(|tick| u64::from(tick).saturating_add(1));
+            let exact_first_hit = episode.first_hit_tick.map(u64::from);
             if shard.metadata.checkpoint_identity != addition.checkpoint_identity
                 || u64::from(episode.ticks_executed) != addition.simulated_ticks
                 || exact_first_hit != addition.first_hit_tick
@@ -445,10 +440,7 @@ pub(crate) fn build_policy_replay_generation(
                 != rollout.shard.metadata.checkpoint_identity
             || rollout.validated.execution.simulated_ticks != u64::from(episode.ticks_executed)
             || candidate.simulated_ticks != u64::from(episode.ticks_executed)
-            || candidate.first_hit_tick
-                != episode
-                    .first_hit_tick
-                    .map(|tick| u64::from(tick).saturating_add(1))
+            || candidate.first_hit_tick != episode.first_hit_tick.map(u64::from)
             || rollout.validated.reinference.shard_content_sha256 != rollout.shard.content_sha256
             || rollout.validated.reinference.model_xxh3_128 != manifest.frozen_model_xxh3_128
             || rollout.validated.reinference.feature_schema_sha256 != manifest.feature_schema_sha256
@@ -528,13 +520,9 @@ pub(crate) fn validate_residual_corpus_scope(
         .as_ref()
         .map(|incumbent| incumbent.first_hit_tick);
     if demonstrations.len() > 1
-        || demonstrations.iter().any(|entry| {
-            !entry.success
-                || entry
-                    .first_hit_tick
-                    .map(|tick| u64::from(tick).saturating_add(1))
-                    != incumbent_tick
-        })
+        || demonstrations
+            .iter()
+            .any(|entry| !entry.success || entry.first_hit_tick.map(u64::from) != incumbent_tick)
         || corpus.entries.iter().any(|entry| {
             let objective_valid = match entry.role {
                 ReplayExperienceRole::Demonstration | ReplayExperienceRole::RandomizedCoverage => {
@@ -666,9 +654,7 @@ mod tests {
         episode_index: usize,
     ) -> NativeResidualCampaignEvaluation {
         let episode = &shard.episodes[episode_index];
-        let first_hit_tick = episode
-            .first_hit_tick
-            .map(|tick| u64::from(tick).saturating_add(1));
+        let first_hit_tick = episode.first_hit_tick.map(u64::from);
         NativeResidualCampaignEvaluation {
             schema: "test-native-evaluation".into(),
             content_sha256: Digest([1; 32]),
@@ -802,7 +788,7 @@ mod tests {
         let mut optimization = optimization(&shard);
         optimization.incumbent.as_mut().unwrap().first_hit_tick = shard.episodes[success]
             .first_hit_tick
-            .map(|tick| u64::from(tick).saturating_add(1))
+            .map(u64::from)
             .unwrap();
         let demonstration = NativeReplayCorpus::build(
             None,

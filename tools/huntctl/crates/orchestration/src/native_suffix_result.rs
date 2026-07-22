@@ -458,9 +458,11 @@ impl NativeSuffixCandidateResult {
         Ok(ValidatedNativeSuffixCandidate {
             id: self.id.clone(),
             simulated_ticks: self.ticks_executed,
-            // The native suffix wire format records a zero-based candidate
-            // index; route scores and retention use one-based elapsed ticks.
-            first_hit_tick: self.first_hit_tick.map(|tick| tick + 1),
+            // Route scores and the native wire format both use the zero-based
+            // terminal boundary index. `simulated_ticks` separately counts the
+            // sampled source-adjacent boundary, so a hit at tick N executes
+            // N + 1 samples.
+            first_hit_tick: self.first_hit_tick,
             state_sequence_digest: state_sequence_digest.map(str::to_owned),
             terminal_boundary_fingerprint: self.terminal_boundary_fingerprint.clone(),
             behavior_sha256: behavior_digest(self)?,
@@ -818,7 +820,7 @@ mod tests {
             .validate_against(&request(false), &terminal())
             .unwrap();
         assert_eq!(success.simulated_ticks, 1);
-        assert_eq!(success.candidates[0].first_hit_tick, Some(1));
+        assert_eq!(success.candidates[0].first_hit_tick, Some(0));
     }
 
     #[test]
