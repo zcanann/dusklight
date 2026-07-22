@@ -365,8 +365,12 @@ winner is the target and remains an open framework challenge until achieved.
       policy v5 batches as well as residual batches, pins every refit to the same
       checkpoint and authored terminal, validates v6 model/timing/episode
       identities, requires policy-tagged v3 shards, and independently reinfers
-      every emitted PAD in Rust before admission. The resumable multi-generation
-      execute/ingest/refit journal still remains before this item is complete.
+      every emitted PAD in Rust before admission. A sealed learning-loop request
+      and crash-safe JSONL state machine now preserve prepared, executed, and
+      replay-committed phases across at least three ordered generations, account
+      every rollout tick, recover a torn tail, and reject artifact, parent-corpus,
+      phase, or stopping-rule tampering. The real train/execute/ingest runner and
+      command still remain before this item is complete.
 - [ ] Preserve policy, dataset, checkpoint, objective, feature, action, proposal,
       and parent-generation lineage across the loop.
 - [ ] Seed optimization runs with the incumbent demonstration while allowing the

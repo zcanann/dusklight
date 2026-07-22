@@ -76,7 +76,8 @@ impl Default for NativeGoalReachabilityConfig {
 }
 
 impl NativeGoalReachabilityConfig {
-    fn validate(self) -> Result<(), NativeGoalReachabilityError> {
+    /// Validates the bounded ensemble configuration before training begins.
+    pub fn validate(self) -> Result<(), NativeGoalReachabilityError> {
         if usize::from(self.members) < 2
             || usize::from(self.members) > MAX_MEMBERS
             || self.epochs == 0

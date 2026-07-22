@@ -64,7 +64,8 @@ impl Default for NativeGoalFrozenPolicyConfig {
 }
 
 impl NativeGoalFrozenPolicyConfig {
-    fn validate(self) -> Result<(), NativeGoalFrozenPolicyError> {
+    /// Validates the bounded policy-training configuration before export.
+    pub fn validate(self) -> Result<(), NativeGoalFrozenPolicyError> {
         if self.epochs == 0
             || usize::from(self.epochs) > MAX_EPOCHS
             || self.hidden_width == 0

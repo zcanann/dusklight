@@ -52,7 +52,11 @@ impl Default for NativeGoalTrajectoryConfig {
 }
 
 impl NativeGoalTrajectoryConfig {
-    fn validate(self) -> Result<(), NativeGoalTrajectoryError> {
+    /// Validates the bounded, deterministic trajectory-target configuration.
+    ///
+    /// Orchestrators call this before sealing unattended learning-loop requests,
+    /// so an invalid configuration cannot become durable campaign authority.
+    pub fn validate(self) -> Result<(), NativeGoalTrajectoryError> {
         if self.n_step == 0
             || self.n_step > MAX_N_STEP
             || self.discount_millionths == 0
