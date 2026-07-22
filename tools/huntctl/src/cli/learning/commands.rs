@@ -29,8 +29,10 @@ use huntctl::learning::multitask_set_encoder::{
 use huntctl::learning::native_auxiliary_dataset::{
     AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V2, NativeAuxiliaryDataset,
 };
+use huntctl::learning::native_frozen_policy_cold_replay::verify_native_frozen_policy_cold_replay;
 use huntctl::learning::native_frozen_policy_reinference::{
-    realize_native_frozen_policy_tape, verify_native_frozen_policy_reinference,
+    NativeFrozenPolicyReinferenceReport, realize_native_frozen_policy_tape,
+    verify_native_frozen_policy_reinference,
 };
 use huntctl::learning::native_frozen_policy_suffix_batch::{
     NativeFrozenPolicySuffixBatch, native_frozen_policy_probe_model,
@@ -304,6 +306,66 @@ fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
 
 pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("verify-frozen-policy-cold-replay") => {
+            let learn_args = &args[1..];
+            let batch_path = required_path(learn_args, "--result")?;
+            let reinference_path = required_path(learn_args, "--reinference")?;
+            let source_tape_path = required_path(learn_args, "--source-tape")?;
+            let realized_tape_path = required_path(learn_args, "--realized-tape")?;
+            let shard_path = required_path(learn_args, "--input")?;
+            let live_trace_path = required_path(learn_args, "--live-trace")?;
+            let cold_trace_path = required_path(learn_args, "--cold-trace")?;
+            let cold_milestone_path = required_path(learn_args, "--cold-milestone")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "frozen policy cold replay verification output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let episode_id =
+                option(learn_args, "--episode-id").ok_or("missing required --episode-id ID")?;
+            let batch_bytes = fs::read(batch_path)?;
+            let reinference: NativeFrozenPolicyReinferenceReport =
+                serde_json::from_slice(&fs::read(reinference_path)?)?;
+            let source_tape_bytes = fs::read(source_tape_path)?;
+            let source_tape = InputTape::decode(&source_tape_bytes)?.tape;
+            let realized_tape_bytes = fs::read(realized_tape_path)?;
+            let realized_tape = InputTape::decode(&realized_tape_bytes)?.tape;
+            let shard = NativeEpisodeShard::read(shard_path)?;
+            let live_trace_bytes = fs::read(live_trace_path)?;
+            let live_trace = huntctl::trace::decode(&live_trace_bytes)?;
+            let cold_trace_bytes = fs::read(cold_trace_path)?;
+            let cold_trace = huntctl::trace::decode(&cold_trace_bytes)?;
+            let cold_milestone_bytes = fs::read(cold_milestone_path)?;
+            let report = verify_native_frozen_policy_cold_replay(
+                &batch_bytes,
+                &reinference,
+                &source_tape,
+                &source_tape_bytes,
+                &realized_tape,
+                &realized_tape_bytes,
+                &shard,
+                &live_trace,
+                &live_trace_bytes,
+                &cold_trace,
+                &cold_trace_bytes,
+                &cold_milestone_bytes,
+                &episode_id,
+            )?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut bytes = serde_json::to_vec_pretty(&report)?;
+            bytes.push(b'\n');
+            fs::write(&output, bytes)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
         Some("export-frozen-policy-tape") => {
             let learn_args = &args[1..];
             let source_path = required_path(learn_args, "--source-tape")?;

@@ -224,6 +224,9 @@ fn print_usage() {
         "  huntctl learn verify-frozen-policy --model MODEL.dsfrozen --input EPISODES.dseps --objective-sha256 SHA256 --checkpoint-identity VALUE --source-boundary-fingerprint VALUE --output REPORT.json"
     );
     eprintln!(
+        "  huntctl learn verify-frozen-policy-cold-replay --result RESULT.json --reinference REINFERENCE.json --source-tape SOURCE.tape --realized-tape REALIZED.tape --input EPISODES.dseps --live-trace LIVE.trace --cold-trace COLD.trace --cold-milestone RESULT.json --episode-id ID --output REPORT.json"
+    );
+    eprintln!(
         "  huntctl learn export-frozen-policy-tape --source-tape SOURCE.tape --input EPISODES.dseps --episode-id ID --output REALIZED.tape"
     );
     eprintln!(

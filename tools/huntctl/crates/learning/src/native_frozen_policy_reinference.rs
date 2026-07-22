@@ -11,7 +11,7 @@ use crate::tape::{InputTape, RawPadState as TapeRawPadState};
 use dusklight_evidence::native_episode_shard::{
     NATIVE_EPISODE_SHARD_SCHEMA_V3, NativeEpisodeShard, NativeRawPad,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
@@ -19,7 +19,7 @@ use std::fmt;
 pub const NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V1: &str =
     "dusklight-native-frozen-policy-reinference/v1";
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeFrozenPolicyReinferenceReport {
     pub schema: String,
@@ -41,6 +41,55 @@ pub struct NativeFrozenPolicyReinferenceReport {
     pub decoded_matches_chosen: bool,
     pub chosen_matches_consumed: bool,
     pub verified: bool,
+    pub report_sha256: Digest,
+}
+
+impl NativeFrozenPolicyReinferenceReport {
+    pub fn validate(&self) -> Result<(), NativeFrozenPolicyReinferenceError> {
+        if self.schema != NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V1
+            || self.shard_content_sha256 == Digest::ZERO
+            || self.shard_schema != NATIVE_EPISODE_SHARD_SCHEMA_V3
+            || !is_lower_hex(&self.model_xxh3_128, 32)
+            || self.feature_schema_sha256 == Digest::ZERO
+            || self.action_schema_sha256 == Digest::ZERO
+            || self.objective_sha256 == Digest::ZERO
+            || !is_lower_hex(&self.checkpoint_identity, 32)
+            || !is_lower_hex(&self.source_boundary_fingerprint, 32)
+            || self.feature_width != NATIVE_POLICY_FEATURE_WIDTH
+            || self.episode_count == 0
+            || self.transition_count == 0
+            || self.feature_rows_sha256 == Digest::ZERO
+            || !self.decoded_matches_chosen
+            || !self.chosen_matches_consumed
+            || !self.verified
+            || self.decoded_pad_sequence_sha256 != self.chosen_pad_sequence_sha256
+            || self.chosen_pad_sequence_sha256 != self.consumed_pad_sequence_sha256
+            || self.report_sha256 != self.compute_identity()?
+        {
+            return Err(error(
+                "native frozen policy reinference report envelope or seal is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    fn compute_identity(&self) -> Result<Digest, NativeFrozenPolicyReinferenceError> {
+        let mut canonical = self.clone();
+        canonical.report_sha256 = Digest::ZERO;
+        let bytes = serde_json::to_vec(&canonical).map_err(|source| error(source.to_string()))?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"dusklight.native-frozen-policy-reinference-report/v1\0");
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+        Ok(Digest(hasher.finalize().into()))
+    }
+}
+
+fn is_lower_hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 pub fn verify_native_frozen_policy_reinference(
@@ -144,7 +193,7 @@ pub fn verify_native_frozen_policy_reinference(
         return Err(error("native frozen policy shard contains no transitions"));
     }
 
-    Ok(NativeFrozenPolicyReinferenceReport {
+    let mut report = NativeFrozenPolicyReinferenceReport {
         schema: NATIVE_FROZEN_POLICY_REINFERENCE_SCHEMA_V1.into(),
         shard_content_sha256: shard.content_sha256,
         shard_schema: shard.metadata.shard_schema.clone(),
@@ -164,7 +213,11 @@ pub fn verify_native_frozen_policy_reinference(
         decoded_matches_chosen: true,
         chosen_matches_consumed: true,
         verified: true,
-    })
+        report_sha256: Digest::ZERO,
+    };
+    report.report_sha256 = report.compute_identity()?;
+    report.validate()?;
+    Ok(report)
 }
 
 /// Materialize one retained policy episode as an ordinary absolute boot tape.
@@ -293,7 +346,7 @@ mod tests {
     #[test]
     fn reproduces_every_native_pad_from_pre_input_rows() {
         let (bytes, shard, objective, checkpoint, boundary) = fixture();
-        let report = verify_native_frozen_policy_reinference(
+        let mut report = verify_native_frozen_policy_reinference(
             &bytes,
             &shard,
             objective,
@@ -318,6 +371,8 @@ mod tests {
             report.chosen_pad_sequence_sha256,
             report.consumed_pad_sequence_sha256
         );
+        report.transition_count += 1;
+        assert!(report.validate().is_err());
     }
 
     #[test]

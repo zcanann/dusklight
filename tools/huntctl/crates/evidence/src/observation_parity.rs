@@ -59,10 +59,16 @@ impl ObservationParityReport {
             ));
         }
 
-        let off_pads = raw_pad_series(observation_off)?;
-        let on_pads = raw_pad_series(observation_on)?;
-        let off_states = state_series(observation_off)?;
-        let on_states = state_series(observation_on)?;
+        // Ordinary cold playback contains the complete boot prefix, whereas a
+        // suffix-batch trace deliberately records only candidate ticks. Join
+        // the cold records to that exact boundary sequence instead of treating
+        // the unrelated prefix as a divergence.
+        let off_records = matching_cold_records(observation_off, observation_on)?;
+        let on_records = observation_on.records.iter().collect::<Vec<_>>();
+        let off_pads = raw_pad_series(&off_records)?;
+        let on_pads = raw_pad_series(&on_records)?;
+        let off_states = state_series(&off_records)?;
+        let on_states = state_series(&on_records)?;
         let episode = &learning_shard.episodes[0];
         let learning_pads = episode
             .steps
@@ -92,8 +98,8 @@ impl ObservationParityReport {
             .collect::<Result<Vec<_>, _>>()?;
 
         let mut first_divergence = trace_divergence(
-            observation_off,
-            observation_on,
+            &off_records,
+            &on_records,
             &off_pads,
             &on_pads,
             &off_states,
@@ -138,7 +144,7 @@ impl ObservationParityReport {
             trace_version: observation_off.version,
             requested_channels,
             source_frame: learning_shard.source_frame,
-            compared_boundaries: observation_off.records.len() as u64,
+            compared_boundaries: on_records.len() as u64,
             compared_learning_steps: episode.steps.len() as u64,
             observation_off_raw_pad_series_sha256: canonical_digest(
                 b"dusklight.observation-parity.raw-pad-series/v1\0",
@@ -253,21 +259,47 @@ fn validate_trace_pair(
     Ok(())
 }
 
-fn trace_divergence(
-    observation_off: &DecodedTrace,
+fn matching_cold_records<'a>(
+    observation_off: &'a DecodedTrace,
     observation_on: &DecodedTrace,
+) -> Result<Vec<&'a TraceRecord>, ObservationParityError> {
+    let mut selected = Vec::with_capacity(observation_on.records.len());
+    for live in &observation_on.records {
+        let mut matches = observation_off.records.iter().filter(|cold| {
+            cold.boundary_index == live.boundary_index
+                && cold.simulation_tick == live.simulation_tick
+                && cold.tape_frame == live.tape_frame
+                && cold.observation_phase == live.observation_phase
+        });
+        let record = matches.next().ok_or_else(|| {
+            ObservationParityError::new(format!(
+                "cold trace lacks live boundary {} at simulation tick {} and tape frame {:?}",
+                live.boundary_index, live.simulation_tick, live.tape_frame
+            ))
+        })?;
+        if matches.next().is_some() {
+            return Err(ObservationParityError::new(format!(
+                "cold trace repeats live boundary {} at simulation tick {} and tape frame {:?}",
+                live.boundary_index, live.simulation_tick, live.tape_frame
+            )));
+        }
+        selected.push(record);
+    }
+    Ok(selected)
+}
+
+fn trace_divergence(
+    observation_off: &[&TraceRecord],
+    observation_on: &[&TraceRecord],
     off_pads: &[TraceAppliedPads],
     on_pads: &[TraceAppliedPads],
     off_states: &[Value],
     on_states: &[Value],
 ) -> Option<ObservationParityDivergence> {
-    let count = observation_off
-        .records
-        .len()
-        .max(observation_on.records.len());
+    let count = observation_off.len().max(observation_on.len());
     for index in 0..count {
-        let off = observation_off.records.get(index);
-        let on = observation_on.records.get(index);
+        let off = observation_off.get(index).copied();
+        let on = observation_on.get(index).copied();
         let boundary_index = off
             .or(on)
             .map_or(index as u64, |record| record.boundary_index);
@@ -302,9 +334,10 @@ fn trace_divergence(
     None
 }
 
-fn raw_pad_series(trace: &DecodedTrace) -> Result<Vec<TraceAppliedPads>, ObservationParityError> {
-    trace
-        .records
+fn raw_pad_series(
+    records: &[&TraceRecord],
+) -> Result<Vec<TraceAppliedPads>, ObservationParityError> {
+    records
         .iter()
         .map(|record| {
             record.applied_pads.clone().ok_or_else(|| {
@@ -333,9 +366,8 @@ fn trace_port_zero(record: &TraceRecord) -> Result<RawPadState, ObservationParit
     Ok(pads.pads[0])
 }
 
-fn state_series(trace: &DecodedTrace) -> Result<Vec<Value>, ObservationParityError> {
-    trace
-        .records
+fn state_series(records: &[&TraceRecord]) -> Result<Vec<Value>, ObservationParityError> {
+    records
         .iter()
         .map(|record| {
             let mut value = serde_json::to_value(record)
@@ -475,6 +507,31 @@ mod tests {
         assert_eq!(report.compared_boundaries, 1);
         assert_eq!(report.compared_learning_steps, 1);
         report.validate().unwrap();
+    }
+
+    #[test]
+    fn joins_a_complete_cold_boot_prefix_to_the_suffix_only_live_trace() {
+        let shard = golden_v4();
+        let live = trace_for(&shard);
+        let mut cold = live.clone();
+        let mut prefix = cold.records[0].clone();
+        prefix.boundary_index = prefix.boundary_index.saturating_sub(1);
+        prefix.simulation_tick = prefix.simulation_tick.saturating_sub(1);
+        prefix.tape_frame = prefix.tape_frame.map(|frame| frame.saturating_sub(1));
+        prefix.position[0] = 99.0;
+        cold.records.insert(0, prefix);
+
+        let report = ObservationParityReport::build(&cold, b"cold", &live, b"live", &shard)
+            .expect("unrelated cold prefix is joined away");
+        assert!(report.verified);
+        assert_eq!(report.compared_boundaries, 1);
+        assert_eq!(
+            report.observation_off_state_series_sha256,
+            report.observation_on_state_series_sha256
+        );
+
+        cold.records.push(live.records[0].clone());
+        assert!(ObservationParityReport::build(&cold, b"cold", &live, b"live", &shard).is_err());
     }
 
     #[test]

@@ -38,13 +38,12 @@ Working foundations:
   sticks, analog channels, buttons, edges, and duration.
 - A bounded frozen dense-model format and allocation-free native inference path
   are compile- and contract-tested.
+- A real state-reactive frozen policy now completes live native execution,
+  byte-exact Rust reinference, ordinary-tape realization, and model-free cold
+  replay with identical full-channel gameplay state across all 508 boundaries.
 
 Not yet working:
 
-- A real frozen policy now completes a live native episode and exact Rust PAD
-  reinference. Its realized tape preserves the cold terminal verdict, but the
-  complete gameplay-state sequence diverges at the first tick, so Gate 1 is
-  still open.
 - There is no closed `collect -> train -> freeze -> execute -> ingest -> refit`
   campaign.
 - The 125-tick Ordon incumbent remains unbeaten.
@@ -66,8 +65,8 @@ Known reasons the earlier Ordon search produced no improvement:
   banks, discarding the fine analog control required for route golf.
 - The inspected Q corpus was too small and sparse to support counterfactual
   action values.
-- The six-lane learned-proposal budget allocator uses a five-way remainder and
-  can silently underfill requested batches.
+- The six-lane learned-proposal allocator defect is fixed; proposal quality and
+  coordinated downstream repair remain the measured limitations.
 
 Primary evidence remains in:
 
@@ -130,12 +129,14 @@ current work and acceptance gates, not every completed experiment.
     chosen-PAD, and consumed-PAD identities.
 - [x] Recompute every policy output in Rust from the captured feature rows and
       require byte-identical decoded PAD.
-- [ ] Cold-replay the realized tape without loading the model and require the
+- [x] Cold-replay the realized tape without loading the model and require the
       same terminal verdict and complete gameplay-state sequence.
-      The first live attempt preserves the same false terminal verdict and all
-      eight decoded/chosen/consumed PAD frames, but its machine-state digest
-      differs from cold replay starting at tick zero. Gate 1 therefore remains
-      open; see `frozen-policy-gate1-20260721.json`.
+      The ordinary 508-frame realized tape was launched from a fresh process
+      without a model or checkpoint. Its complete 13-channel pointer-free trace
+      is byte-identical to the live policy trace across all 508 boundaries; all
+      eight policy PADs and the full authored terminal predicate artifact match.
+      The sealed verifier rejects tape, state, terminal, shard, reinference, or
+      identity divergence; see `frozen-policy-gate1-20260721.json`.
 - [x] Publish inference, head-decode, observation, simulation, restore, and
       episode-encoding costs from that live run.
 - [x] Fail closed when the model, feature schema, action schema, objective,

@@ -1,7 +1,7 @@
 {
   "schema": "dusklight-frozen-policy-gate1-report/v1",
   "recorded_date": "2026-07-21",
-  "gate_verified": false,
+  "gate_verified": true,
   "build": {
     "dusklight_commit": "8629356d2192b415ad1a9ea568ef6a3d51021e70",
     "aurora_commit": "ce4baccedb2aabddce5b552f0573674e857fb7c3",
@@ -10,11 +10,15 @@
   },
   "source": {
     "input_tape_sha256": "fad64d9c0610ef954a9f18c348d663dd249ae14d54a164471e766a2d38107f6f",
+    "game_data_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "world_context_sha256": "194cbb4b0a68e525e92fddf93a387fd72b6d6277d269f485a8e3f5d8656e3b71",
+    "card_fixture_identity": "card-fixture:xxh3-128:d0c6cd61d18650758ef64ab5c0c27c5b",
     "source_frame": 500,
-    "source_boundary_fingerprint": "522cc8e73ec1c45dac831dd8fa3a6df1",
-    "checkpoint_identity": "eb1af215d6c4e8882bf556f87ea2fb84",
+    "source_boundary_fingerprint": "14b1a70e0372c6b31a00498a4e084bde",
+    "checkpoint_identity": "3b212a8b2d6ee3c8e9a77c08509bdcf7",
     "checkpoint_validation_ticks": 8,
-    "checkpoint_validation_samples": 16
+    "checkpoint_fresh_sequence_digest": "bc7d8e930a0ecf2eb3d35f592cc19cd5",
+    "checkpoint_restored_sequence_digest": "bc7d8e930a0ecf2eb3d35f592cc19cd5"
   },
   "policy": {
     "schema": "dusklight-native-frozen-policy/v1",
@@ -24,82 +28,94 @@
     "action_schema_sha256": "483953b663e327c6d839d88b72ce652cfcc5d0aeb420570e0c076a4c62e3ab7c",
     "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
     "feature_width": 120,
-    "parameter_count": 3025
+    "parameter_count": 3025,
+    "state_reactive": true
   },
   "native_episode": {
     "batch_schema": "dusklight-suffix-batch-result/v5",
     "batch_status": "passed",
+    "batch_sha256": "af9104abc5d23af9c22b6419f668ca2fd3b43181d9dd489a3b3d5403a221eaae",
     "episode_shard_schema": "dusklight-native-episode-shard/v3",
-    "episode_shard_content_sha256": "3948aaf51542513d54b00ecace870de1b15c68967e5cf8522464be86f87b6816",
+    "episode_shard_content_sha256": "e8d0f5a090e5ab329fe9644bc014a99c50dfc4b23546579ec8834fa4a53403dd",
     "episode_count": 1,
     "transition_count": 8,
     "terminal_goal_reached": false,
-    "state_sequence_digest": "8de00a9035619833f9803f92b5dc7fa1",
+    "chosen_consumed_pad_mismatches": 0,
+    "state_sequence_digest": "4b5a1b2a6934d4bc993485ae25dfcb1a",
     "state_tick_digests": [
-      "453e8d0462350cc0d1c269ec5a099d72",
-      "dc2aa995a81816ba35819e5256a41407",
-      "eeaef271984c005fb71ef5cab539b4a0",
-      "21b2b002477773f29484c9ab87fcd859",
-      "398ec495e5faf80ec97ebe20badd7f20",
-      "203a42b6f5075ab1066b74a9e734e1b1",
-      "69e5fcb0423ecf922d0541db612901e0",
-      "79375be4ca1daf888a0bcf7ceb1143d4"
+      "055ec05b87c6f1428183baf34013692d",
+      "e9260025b6be0712883c1383b511698a",
+      "916f7d3f4a17eb22f3f93af43dbe09e7",
+      "7c03bbd6717af628fcc9a73c49b16400",
+      "7163bf20e5e2a9766a3c71bd53549551",
+      "7fa37b95f8d4cf2d3e37eed719de783a",
+      "e9cdf9b354d072fbadb18e08f052dc7c",
+      "cc45ef47e8167c38f810d6e88d0b43ed"
     ]
   },
   "rust_reinference": {
     "schema": "dusklight-native-frozen-policy-reinference/v1",
     "verified": true,
-    "feature_rows_sha256": "175c9e55597904022b79d15b365469d21bdaa8df84e7066ce81b13478f28519e",
-    "decoded_pad_sequence_sha256": "f5d2da86fd27c888f133d53ba039f455a6294ddf3a252b6df05c3d678b381c50",
-    "chosen_pad_sequence_sha256": "f5d2da86fd27c888f133d53ba039f455a6294ddf3a252b6df05c3d678b381c50",
-    "consumed_pad_sequence_sha256": "f5d2da86fd27c888f133d53ba039f455a6294ddf3a252b6df05c3d678b381c50"
+    "report_sha256": "785751c0b18282975273ef9f1c03e283f45d4e6ee1df95b72bffa4f5c3aefcc9",
+    "feature_rows_sha256": "84b34b9dcf07a90f8bf339809c2c7eb88e2660cf1e1b65972d8cb92f9689cff2",
+    "decoded_pad_sequence_sha256": "c847e64007f93403cbe7e3adb11295eb17c0ee79da3a1e0b22a56c37c7ad4c36",
+    "chosen_pad_sequence_sha256": "c847e64007f93403cbe7e3adb11295eb17c0ee79da3a1e0b22a56c37c7ad4c36",
+    "consumed_pad_sequence_sha256": "c847e64007f93403cbe7e3adb11295eb17c0ee79da3a1e0b22a56c37c7ad4c36"
   },
   "realized_tape": {
     "frame_count": 508,
-    "sha256": "6d8d53ffb611f8e65d85663ae9d710f32cad23d292d8b65340c7c72f68be3c9f",
-    "model_in_loop": false
+    "sha256": "e3d67fe0200dd18253f42806a6bef516c52b39641bfc24234b765e5c9b398256",
+    "exact_consumed_suffix": true,
+    "model_loaded_by_cold_run": false,
+    "checkpoint_loaded_by_cold_run": false
   },
   "cold_replay": {
+    "schema": "dusklight-native-frozen-policy-cold-replay/v1",
+    "verified": true,
+    "report_sha256": "71ac31215d9f1b233e8bf313a9d794af8d539d04ac4430203bec101408280049",
     "terminal_evidence_identical": true,
     "terminal_goal_reached": false,
-    "checkpoint_probe_status": "passed",
-    "repeat_attempts": 2,
-    "state_sequence_digest": "788e8341a7333bf5a3a84a361f287f3b",
-    "state_tick_digests": [
-      "6c8637c0f2f22ded361e409c5d988797",
-      "c10558fb5fd22bfac1b4301eeb67a89e",
-      "701788dc1d7fab41d01ee32f40843e0b",
-      "aff0edbf1d3e9e3abf48bfb3cbbec4ba",
-      "d8665cde244256f04be09bd1fdae05ad",
-      "e3ccba8340cca0525b9eb5f330223a2a",
-      "da4d7417906b010d36cb85fa7e3e7558",
-      "2fa1062098b0a971ec9167661109718d"
-    ],
-    "state_sequence_identical": false,
-    "first_state_divergence_tick": 0
+    "complete_gameplay_state_identical": true,
+    "exact_pad_sequence": true,
+    "compared_boundaries": 508,
+    "compared_policy_steps": 8,
+    "live_trace_sha256": "a5a0cf29018fa449f01357a7ea18538649c375ed5d4fbd897a5c3249e97d8ad2",
+    "cold_trace_sha256": "a5a0cf29018fa449f01357a7ea18538649c375ed5d4fbd897a5c3249e97d8ad2",
+    "gameplay_state_series_sha256": "cb17ecbb7493de7eb2f217b985f5846ad8772bbca8080b247ae39c8d4be1c880",
+    "full_raw_pad_series_sha256": "b2fcab5e026599fcc4d81208200fe75fc96579d6b7cc8d9a91eb9f33cfedec5e",
+    "policy_pad_series_sha256": "c52ef88a58013680f7f9b056e708b7188b0acaf39fd30c8871cc35cf8388bb40",
+    "parity_report_sha256": "2b378a01f99c568e62de3a13ce536f3e308be1870c23e69cd4935b7004edf5b1"
   },
   "timing": {
-    "batch_wall_micros": 14494910,
-    "checkpoint_capture_micros": 1871055,
-    "checkpoint_restore_micros": 31552,
+    "batch_wall_micros": 14297561,
+    "checkpoint_capture_micros": 1855846,
+    "checkpoint_restore_micros": 20070,
     "checkpoint_restore_samples": 2,
-    "checkpoint_validation_micros": 7374544,
-    "policy_inference_nanoseconds": 82793,
+    "checkpoint_validation_micros": 7276678,
+    "checkpoint_validation_samples": 16,
+    "policy_inference_nanoseconds": 83209,
     "policy_inference_samples": 8,
-    "policy_head_decode_nanoseconds": 6166,
+    "policy_head_decode_nanoseconds": 5876,
     "policy_head_decode_samples": 8,
-    "observation_capture_micros": 1434,
+    "policy_application_nanoseconds": 207,
+    "policy_application_samples": 8,
+    "observation_capture_micros": 1433,
     "observation_capture_samples": 16,
-    "simulation_micros": 13650,
+    "simulation_micros": 15243,
     "simulation_samples": 8,
-    "episode_encoding_micros": 8627,
+    "state_validation_micros": 3623823,
+    "state_validation_samples": 8,
+    "episode_encoding_micros": 8741,
     "gpu_submissions": 0
   },
-  "conclusion": {
-    "native_policy_episode_complete": true,
-    "rust_pad_reinference_exact": true,
-    "cold_terminal_evidence_exact": true,
-    "cold_gameplay_state_exact": false,
-    "next_question": "Does phase-correct policy observation mutate checkpointed machine state, or does the semantic digest still include runner-only state?"
-  }
+  "artifacts": {
+    "reinference_file_sha256": "a77e11c594121862dc8867bae1a4d65eb60c36d5376965d208b89d1a8fb0337f",
+    "cold_milestone_result_sha256": "cd0cb2aa1551b1a165ed6192e8db4454efacac373fa31ab153be60a03cb55f4d",
+    "cold_replay_file_sha256": "8182348c37b981178a7c8bb6b292dc47f5315f091214d5008ba0f6bec2ebc676"
+  },
+  "limitations": [
+    "The deliberately simple conformance policy does not reach the authored route goal and is not promotion eligible.",
+    "Same-process checkpoint digests retain pointer-bearing native regions and are not cross-process identities; cold equivalence is proven by the complete pointer-free gameplay trace and exact raw-PAD series.",
+    "This closes execution conformance Gate 1, not the collect-train-refit campaign loop or the sub-125 Ordon optimization target."
+  ]
 }
