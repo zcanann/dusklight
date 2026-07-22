@@ -1292,6 +1292,10 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "Stopping workers…",
         "Clean local campaign…",
         "Any native batch already executing will finish as recoverable evidence",
+        "/api/optimization/candidate-detail",
+        "loadOptimizationCandidateDetail(button)",
+        "Load authenticated detail",
+        "full authenticated attempt evidence loads only on request",
         "/api/optimization/promote",
         "promoteOptimizationCandidate(button)",
         "Verify & promote",
@@ -2179,7 +2183,7 @@ fn completed_optimization_candidate_projects_as_a_playable_ephemeral_sibling() {
         OptimizationResumeEvent::EvaluationCompleted {
             candidate_id: candidate.id.clone(),
             candidate_sha256: candidate_reference.sha256,
-            result: evaluation_reference,
+            result: evaluation_reference.clone(),
             simulated_ticks: evaluation.simulated_ticks,
         },
     )
@@ -2208,6 +2212,27 @@ fn completed_optimization_candidate_projects_as_a_playable_ephemeral_sibling() {
     assert_eq!(promotion.status, "ready");
     assert!(promotion.segment.is_none());
     assert!(promotion.error.is_none());
+    let detail = optimization_candidate_detail_for_request(
+        &repository,
+        &timeline_path,
+        &request,
+        &BrowserOptimizationCandidateDetailRequest {
+            candidate: projection.segment.id.clone(),
+            request_sha256: request.content_sha256.to_string(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        detail.schema,
+        "dusklight.route-workbench.optimization-candidate-detail.v1"
+    );
+    assert_eq!(detail.candidate_id, candidate.id);
+    assert_eq!(detail.generation, 7);
+    assert_eq!(detail.first_hit_tick, Some(100));
+    assert!(detail.promotion_eligible);
+    assert_eq!(detail.attempts, evaluation.attempts);
+    assert_eq!(detail.candidate_artifact, candidate_reference);
+    assert_eq!(detail.evaluation_artifact, evaluation_reference);
 
     fs::remove_file(&tape_path).unwrap();
     assert!(project_request_candidates(&repository, &timeline_path, &request).is_empty());
@@ -2287,6 +2312,32 @@ fn optimization_promotion_api_rejects_unknown_candidates_and_smuggled_authority(
     );
     assert_eq!(smuggled.status, 400);
     assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
+
+    let unknown_detail = call_http(
+        &config,
+        "POST",
+        "/api/optimization/candidate-detail",
+        format!(
+            "{{\"candidate\":\"optimization-missing\",\"request_sha256\":\"{}\"}}",
+            "0".repeat(64)
+        )
+        .as_bytes(),
+    );
+    assert_eq!(unknown_detail.status, 400);
+    assert!(String::from_utf8_lossy(&unknown_detail.body).contains("unknown, deleted, or expired"));
+
+    let smuggled_detail = call_http(
+        &config,
+        "POST",
+        "/api/optimization/candidate-detail",
+        format!(
+            "{{\"candidate\":\"optimization-missing\",\"request_sha256\":\"{}\",\"evaluation\":\"../forged.json\"}}",
+            "0".repeat(64)
+        )
+        .as_bytes(),
+    );
+    assert_eq!(smuggled_detail.status, 400);
+    assert!(String::from_utf8_lossy(&smuggled_detail.body).contains("unknown field"));
 }
 
 #[test]

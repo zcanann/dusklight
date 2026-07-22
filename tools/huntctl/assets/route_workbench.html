@@ -351,6 +351,7 @@
     let workspaceNodeSelection = {kind:'folder',id:WORKSPACE_ROOT};
     let projectCollapsed = new Set();
     let occurrenceIndex = new Map();
+    const optimizationCandidateDetails = new Map();
     const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
     const RECORDING_SPEED_STORAGE_KEY='dusklight.route-workbench.recording-speed-percent';
     const PLAYBACK_SPEED_STORAGE_KEY='dusklight.route-workbench.playback-speed-percent';
@@ -927,7 +928,13 @@
     }
     function generatedDetail(segment) {
       const generated=segment.generated;if(!generated)return '';
-      const promotion=generated.promotion;return `<div class="detail-section"><h3>Generated candidate</h3><div class="fields">${field('Kind',label(generated.kind))}${field('Status',label(generated.status))}${field('Generation',generated.generation)}${field('Candidate',generated.candidate_id,true)}${field('Proof attempts',generated.proof_attempts)}${field('Goal',label(generated.goal_predicate))}${promotion?field('Promotion',promotion.eligible?label(promotion.status):'Outside promotion threshold'):''}${promotion?.segment?field('Promoted segment',promotion.segment,true):''}${field('Run',generated.run,true)}${field('Candidate artifact',generated.candidate,true)}${field('Tape artifact',generated.tape,true)}</div>${promotion?.error?`<div class="error-note">Promotion failed: ${escapeHtml(promotion.error)}</div>`:''}<div class="empty">Ephemeral campaign evidence; refreshing removes this node if its authenticated artifacts are deleted.</div></div>`;
+      const promotion=generated.promotion,optimization=generated.kind==='optimization_candidate',detail=optimizationCandidateDetails.get(segment.id);
+      const summary=`${field('Kind',label(generated.kind))}${field('Status',label(generated.status))}${field('Generation',generated.generation)}${field('Candidate',generated.candidate_id,true)}${field('Goal',label(generated.goal_predicate))}${promotion?field('Promotion',promotion.eligible?label(promotion.status):'Outside promotion threshold'):''}${promotion?.segment?field('Promoted segment',promotion.segment,true):''}`;
+      const loaded=detail?`${field('Proof attempts',detail.attempts?.length??0)}${field('Proposer seed',detail.proposer_seed)}${field('Execution SHA-256',detail.execution_sha256,true)}${field('Candidate envelope',detail.candidate_envelope_sha256,true)}${field('Residual candidate',detail.residual_candidate_sha256,true)}${field('Evaluation SHA-256',detail.evaluation_sha256,true)}${field('Candidate artifact',detail.candidate_artifact?.path,true)}${field('Tape artifact',detail.compiled_tape?.path,true)}${field('Evaluation artifact',detail.evaluation_artifact?.path,true)}${field('Terminal boundary',detail.terminal_boundary_fingerprint,true)}`:'';
+      const attemptDetail=detail?`<details class="advanced"><summary>Authenticated native attempts (${detail.attempts?.length??0})</summary><div class="predicate">${escapeHtml(JSON.stringify(detail.attempts||[],null,2))}</div></details>`:'';
+      const detailAction=optimization&&!detail?`<div class="actions"><button class="reveal" type="button" data-load-candidate-detail="${escapeHtml(segment.id)}">Load authenticated detail</button></div>`:'';
+      const legacy=!optimization?`${field('Proof attempts',generated.proof_attempts)}${field('Run',generated.run,true)}${field('Candidate artifact',generated.candidate,true)}${field('Tape artifact',generated.tape,true)}`:'';
+      return `<div class="detail-section"><h3>Generated candidate</h3><div class="fields">${summary}${legacy}${loaded}</div>${detailAction}${attemptDetail}${promotion?.error?`<div class="error-note">Promotion failed: ${escapeHtml(promotion.error)}</div>`:''}<div class="empty">${optimization?'Summary stays bounded in the route graph; full authenticated attempt evidence loads only on request.':'Ephemeral campaign evidence; refreshing removes this node if its authenticated artifacts are deleted.'}</div></div>`;
     }
     function renderDetail() {
       let html='';
@@ -976,6 +983,7 @@
       root.querySelectorAll('[data-cancel-campaign]').forEach(button=>button.addEventListener('click',()=>cancelOptimization(button)));
       root.querySelectorAll('[data-cleanup-campaign]').forEach(button=>button.addEventListener('click',()=>cleanupOptimization(button)));
       root.querySelectorAll('[data-promote-candidate]').forEach(button=>button.addEventListener('click',()=>promoteOptimizationCandidate(button)));
+      root.querySelectorAll('[data-load-candidate-detail]').forEach(button=>button.addEventListener('click',()=>loadOptimizationCandidateDetail(button)));
       root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
       root.querySelectorAll('[data-open-subgraph-detail]').forEach(button=>button.addEventListener('click',()=>openSubgraph(button.dataset.openSubgraphDetail)));
       root.querySelectorAll('[data-rename-subgraph]').forEach(button=>button.addEventListener('click',()=>renameSelectedSubgraph(button.dataset.renameSubgraph)));
@@ -1488,6 +1496,16 @@
         $('status').textContent='Campaign cleaned';$('status').className='status ok';toast(body.artifacts_removed?'Local campaign evidence was removed. The sealed request is ready for a fresh run.':'No local campaign evidence remained.');await load();
       } catch(error) { $('status').textContent='Cleanup failed';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent='Clean local campaign…'; }
     }
+    async function loadOptimizationCandidateDetail(button) {
+      const segment=graph.segments.find(item=>item.id===button.dataset.loadCandidateDetail),generated=segment?.generated;if(!segment||generated?.kind!=='optimization_candidate')return;
+      button.disabled=true;button.textContent='Authenticating…';
+      try {
+        const response=await fetch('/api/optimization/candidate-detail',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({candidate:segment.id,request_sha256:generated.objective_sha256})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        if(body.candidate!==segment.id||body.candidate_id!==generated.candidate_id||body.request_sha256!==generated.objective_sha256)throw new Error('Candidate detail response differs from the selected summary');
+        optimizationCandidateDetails.set(segment.id,body);renderDetail();toast(`Loaded ${body.attempts?.length??0} authenticated native attempt${body.attempts?.length===1?'':'s'}.`);
+      } catch(error) { toast(error.message,true);button.disabled=false;button.textContent='Load authenticated detail'; }
+    }
     async function promoteOptimizationCandidate(button) {
       const candidate=graph.segments.find(item=>item.id===button.dataset.promoteCandidate),generated=candidate?.generated;if(!candidate||!generated?.promotion?.eligible)return;
       const suffix=generated.candidate_id.slice(-8).replace(/[^a-z0-9]/g,'');const defaultId=`optimized_${generated.goal_predicate}_${suffix}`.toLowerCase().replace(/[^a-z0-9_.-]/g,'_').slice(0,80);
@@ -1507,7 +1525,7 @@
         const response=await fetch('/api/graph',{cache:'no-store'});
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
-        graph=normalize(body); if(activeSubgraph&&!subgraphById(activeSubgraph)){activeSubgraph=null;groupedSelection=new Set();selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};} if(!workspaceSelection||!graph.projects.entries.some(item=>item.id===workspaceSelection)){workspaceSelection=graph.projects.entries.find(item=>item.active)?.id||graph.projects.entries.find(item=>item.kind==='timeline')?.id||graph.projects.entries[0]?.id||null;} render(); $('status').textContent='Ready'; $('status').className='status ok';
+        graph=normalize(body);for(const [id,detail] of optimizationCandidateDetails){const segment=graph.segments.find(item=>item.id===id);if(!segment||segment.generated?.objective_sha256!==detail.request_sha256)optimizationCandidateDetails.delete(id);} if(activeSubgraph&&!subgraphById(activeSubgraph)){activeSubgraph=null;groupedSelection=new Set();selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};} if(!workspaceSelection||!graph.projects.entries.some(item=>item.id===workspaceSelection)){workspaceSelection=graph.projects.entries.find(item=>item.active)?.id||graph.projects.entries.find(item=>item.kind==='timeline')?.id||graph.projects.entries[0]?.id||null;} render(); $('status').textContent='Ready'; $('status').className='status ok';
         clearTimeout(load.poll); if(graph.drafts.some(draft=>['preparing','recording','orphaned'].includes(draft.status))||graph.campaigns.some(campaign=>['preparing','running','cancelling'].includes(campaign.status))||graph.segments.some(segment=>['verifying','installing'].includes(segment.generated?.promotion?.status)))load.poll=setTimeout(load,2500);
       } catch(error) {
         $('timelineName').textContent='Could not load timeline'; $('status').textContent='Disconnected'; $('status').className='status error';

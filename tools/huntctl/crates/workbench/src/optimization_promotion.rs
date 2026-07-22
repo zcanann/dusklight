@@ -590,7 +590,7 @@ fn prepare_optimization_promotion(
     })
 }
 
-fn load_optimization_request(
+pub(super) fn load_optimization_request(
     root: &Path,
     timeline_path: &Path,
     request_sha256: &str,

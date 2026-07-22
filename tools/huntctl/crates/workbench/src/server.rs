@@ -205,6 +205,30 @@ pub(super) fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/optimization/candidate-detail") => {
+                    let result =
+                        serde_json::from_slice::<BrowserOptimizationCandidateDetailRequest>(
+                            &request.body,
+                        )
+                        .map_err(|error| {
+                            WorkbenchError::new(format!(
+                                "invalid optimization candidate-detail request: {error}"
+                            ))
+                        })
+                        .and_then(|detail| {
+                            optimization_candidate_detail(
+                                &config.repository_root,
+                                &config.timeline_path,
+                                &detail,
+                            )
+                        });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/optimization/promote") => {
                     let result =
                         serde_json::from_slice::<BrowserOptimizationPromoteRequest>(&request.body)

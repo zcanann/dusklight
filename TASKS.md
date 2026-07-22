@@ -88,6 +88,13 @@ Working foundations:
   stale-bound cleanup removes only the selected physical `build/campaigns/`
   root, rejects symlink escapes and active promotion, and cannot race start,
   cancellation, or promotion registration.
+- Workbench campaign polling remains summary-first and projects at most eight
+  ranked successes plus the newest completed rows, capped at sixteen ordinary
+  sibling nodes even with ten thousand candidates. Full execution, candidate,
+  residual, evaluation, artifact, terminal-boundary, and per-attempt native
+  evidence is served by a stale-bound authenticated endpoint and loaded only
+  when the selected candidate asks for detail; deleted candidates evict cached
+  browser detail on refresh.
 
 Not yet working:
 
@@ -395,7 +402,7 @@ continuous optimizer, and appropriate negative controls remove the advantage.
       candidates remain outside source control.
 - [x] Support cancel, resume, and cleanup without leaving native workers, hidden
       windows, locks, or orphaned artifacts.
-- [ ] Keep the workbench responsive while thousands of candidates are generated;
+- [x] Keep the workbench responsive while thousands of candidates are generated;
       summarize campaigns and load candidate detail on demand.
 
 **Gate 5:** from one selected route segment, a user or agent can start, observe,
