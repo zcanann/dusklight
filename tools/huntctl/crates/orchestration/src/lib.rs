@@ -5,6 +5,7 @@
 mod anchored_search;
 pub mod harness;
 pub mod native_suffix_result;
+pub mod native_suffix_worker;
 pub mod optimization_request;
 pub mod optimization_resume;
 pub mod residual_campaign;
