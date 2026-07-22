@@ -59,6 +59,11 @@ Working foundations:
   run, dispatches exact horizon-extended residual tapes as native suffix
   batches, adopts completed crash-window artifacts, and checkpoints native
   evidence plus optimizer/archive state without relaunching per generation.
+- The Route Workbench now projects checked optimization requests on their owning
+  segments and exposes an explicit typed run/resume action. Rust validates and
+  materializes immutable native execution authority, runs the persistent
+  campaign off the HTTP thread, and reports ready, running, resumable,
+  completed, invalid, or failed state without launching a hidden default job.
 
 Not yet working:
 
@@ -348,10 +353,10 @@ continuous optimizer, and appropriate negative controls remove the advantage.
 
 ## 5. Make the loop usable from the Route Workbench
 
-- [ ] Expose one optimization action for a selected segment/goal. The browser
+- [x] Expose one optimization action for a selected segment/goal. The browser
       submits a typed request; Rust remains the execution and validation
       authority.
-- [ ] Provide sensible defaults so ordinary operation does not require choosing
+- [x] Provide sensible defaults so ordinary operation does not require choosing
       an algorithm or editing a generated request.
 - [ ] Show campaign state: queued/running/completed candidates, generations,
       simulated ticks, successes, current best, proposal sources, workers, and

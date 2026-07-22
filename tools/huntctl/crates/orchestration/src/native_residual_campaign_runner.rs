@@ -55,10 +55,10 @@ struct WorkerLane {
 
 struct WorkerPool<'a> {
     root: &'a Path,
-    campaign: &'a Path,
     optimization: &'a OptimizationRequest,
     execution: &'a NativeResidualExecutionBinding,
     terminal: NativeTerminalBinding,
+    card_fixture_root: PathBuf,
     lanes: Vec<WorkerLane>,
 }
 
@@ -104,9 +104,11 @@ impl<'a> WorkerPool<'a> {
             .collect();
         Ok(Self {
             root,
-            campaign,
             optimization,
             execution,
+            card_fixture_root: execution
+                .card_fixture_root(root, optimization)
+                .map_err(native_error)?,
             terminal: NativeTerminalBinding {
                 goal: optimization.terminal_predicate.goal.clone(),
                 program_sha256: optimization.terminal_predicate.program_sha256,
@@ -128,10 +130,10 @@ impl<'a> WorkerPool<'a> {
             .map(|job| (job.lane, job))
             .collect::<BTreeMap<_, _>>();
         let root = self.root;
-        let campaign = self.campaign;
         let optimization = self.optimization;
         let execution = self.execution;
         let terminal = &self.terminal;
+        let card_fixture_root = &self.card_fixture_root;
         let outputs = std::thread::scope(|scope| {
             let mut handles = Vec::new();
             for lane in &mut self.lanes {
@@ -139,7 +141,15 @@ impl<'a> WorkerPool<'a> {
                     continue;
                 };
                 handles.push(scope.spawn(move || {
-                    run_lane_job(root, campaign, optimization, execution, terminal, lane, job)
+                    run_lane_job(
+                        root,
+                        optimization,
+                        execution,
+                        terminal,
+                        card_fixture_root,
+                        lane,
+                        job,
+                    )
                 }));
             }
             handles
@@ -202,10 +212,10 @@ impl<'a> WorkerPool<'a> {
 
 fn run_lane_job(
     root: &Path,
-    _campaign: &Path,
     optimization: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
     terminal: &NativeTerminalBinding,
+    card_fixture_root: &Path,
     lane: &mut WorkerLane,
     job: BatchJob,
 ) -> Result<BatchOutput, NativeResidualCampaignRunnerError> {
@@ -224,6 +234,8 @@ fn run_lane_job(
             game_data: root.join(&execution.game_data.path),
             input_tape: root.join(&execution.process_boot_tape.path),
             milestone_program: root.join(&execution.milestone_program.path),
+            card_fixture: card_fixture_root.to_path_buf(),
+            card_fixture_sha256: execution.card_fixture_manifest.sha256,
             working_directory: root.to_path_buf(),
             state_root: lane.state_root.clone(),
             world_context_sha256: execution.world_context.sha256,
@@ -237,10 +249,11 @@ fn run_lane_job(
         let identity = session.identity();
         if identity.source_frame != optimization.route.source_boundary_index
             || identity.source_boundary_fingerprint
-                != optimization.route.source_boundary_fingerprint
+                != optimization.route.native_source_boundary_fingerprint
             || identity.maximum_ticks != optimization.budgets.exploration_horizon_ticks
             || identity.checkpoint_validation_ticks != execution.checkpoint_validation_ticks
             || identity.world_context_sha256 != execution.world_context.sha256
+            || identity.card_fixture_sha256 != execution.card_fixture_manifest.sha256
             || identity.terminal != *terminal
         {
             return Err(native_message(
@@ -280,7 +293,10 @@ fn native_batch(
         schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: usize::try_from(optimization.route.source_boundary_index)
             .map_err(native_error)?,
-        source_boundary_fingerprint: optimization.route.source_boundary_fingerprint.clone(),
+        source_boundary_fingerprint: optimization
+            .route
+            .native_source_boundary_fingerprint
+            .clone(),
         checkpoint_validation: NativeCheckpointValidation {
             kind: "recorded_replay_window".into(),
             ticks: usize::try_from(execution.checkpoint_validation_ticks).map_err(native_error)?,
@@ -1074,6 +1090,7 @@ mod tests {
             process_boot_tape: placeholder("build/test/process.tape", 3),
             milestone_program: placeholder("build/test/terminal.dmsp", 4),
             world_context: placeholder("build/test/world.context.json", 5),
+            card_fixture_manifest: placeholder("build/test/card-fixture.json", 6),
             checkpoint_validation_ticks: 8,
             verify_state_hashes: false,
         }
@@ -1112,6 +1129,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(batch.source_frame, 440);
+        assert_eq!(
+            batch.source_boundary_fingerprint,
+            optimization.route.native_source_boundary_fingerprint
+        );
         assert_eq!(batch.maximum_ticks, 160);
         assert_eq!(batch.checkpoint_validation.ticks, 8);
         assert_eq!(batch.candidates.len(), selected.len());

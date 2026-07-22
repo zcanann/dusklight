@@ -233,6 +233,7 @@ pub fn graph_from_timeline(
             schema: PROJECT_CATALOG_SCHEMA.into(),
             ..GraphProjectCatalog::default()
         },
+        campaigns: Vec::new(),
         draft_graph_revision: None,
         predicate_program,
     })

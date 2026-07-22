@@ -483,6 +483,7 @@ dependencies = [
  "dusklight-evidence",
  "dusklight-harness-contracts",
  "dusklight-objectives",
+ "dusklight-orchestration",
  "dusklight-routes",
  "dusklight-search",
  "serde",

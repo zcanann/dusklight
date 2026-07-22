@@ -23,6 +23,8 @@ pub struct NativeSuffixWorkerLaunch {
     pub game_data: PathBuf,
     pub input_tape: PathBuf,
     pub milestone_program: PathBuf,
+    pub card_fixture: PathBuf,
+    pub card_fixture_sha256: Digest,
     pub working_directory: PathBuf,
     pub state_root: PathBuf,
     pub world_context_sha256: Digest,
@@ -39,6 +41,7 @@ pub struct NativeSuffixWorkerIdentity {
     pub game_data_sha256: Digest,
     pub input_tape_sha256: Digest,
     pub milestone_program_sha256: Digest,
+    pub card_fixture_sha256: Digest,
     pub world_context_sha256: Digest,
     pub source_frame: u64,
     pub source_boundary_fingerprint: String,
@@ -145,6 +148,7 @@ fn prepare_launch(
     config: &NativeSuffixWorkerLaunch,
 ) -> Result<PreparedLaunch, NativeSuffixWorkerError> {
     if config.world_context_sha256 == Digest::ZERO
+        || config.card_fixture_sha256 == Digest::ZERO
         || config.terminal.program_sha256 == Digest::ZERO
         || config.terminal.definition_sha256 == Digest::ZERO
         || config.terminal.goal.is_empty()
@@ -157,6 +161,7 @@ fn prepare_launch(
     let game_data = canonical_file(&config.game_data, "game data")?;
     let input_tape = canonical_file(&config.input_tape, "input tape")?;
     let milestone_program = canonical_file(&config.milestone_program, "milestone program")?;
+    let card_fixture = canonical_directory(&config.card_fixture, "card fixture")?;
     let working_directory = canonical_directory(&config.working_directory, "working directory")?;
     let batch_path = canonical_file(&config.initial_batch, "initial suffix batch")?;
     let batch_bytes = fs::read(&batch_path).map_err(worker_error)?;
@@ -217,6 +222,7 @@ fn prepare_launch(
         game_data_sha256,
         input_tape_sha256: sha256(&tape_bytes),
         milestone_program_sha256: sha256(&program_bytes),
+        card_fixture_sha256: config.card_fixture_sha256,
         world_context_sha256: config.world_context_sha256,
         source_frame: batch.source_frame as u64,
         source_boundary_fingerprint: batch.source_boundary_fingerprint.clone(),
@@ -236,6 +242,8 @@ fn prepare_launch(
         "release".into(),
         "--automation-data-root".into(),
         path_text(&state_root, "state root")?.into(),
+        "--automation-card-fixture".into(),
+        path_text(&card_fixture, "card fixture")?.into(),
         "--renderer-cache-root".into(),
         path_text(&renderer_cache, "renderer cache")?.into(),
         "--suffix-batch".into(),
@@ -508,10 +516,12 @@ mod tests {
         let input_tape = root.0.join("full.tape");
         let milestone_program = root.0.join("goal.dmsp");
         let working_directory = root.0.join("cwd");
+        let card_fixture = root.0.join("card-fixture");
         let initial_batch = root.0.join("batch.json");
         fs::write(&executable, b"executable").unwrap();
         fs::write(&game_data, b"game-data").unwrap();
         fs::create_dir(&working_directory).unwrap();
+        fs::create_dir(&card_fixture).unwrap();
 
         let tape = InputTape {
             frames: vec![InputFrame::default(); 3],
@@ -547,6 +557,8 @@ mod tests {
             game_data,
             input_tape,
             milestone_program,
+            card_fixture,
+            card_fixture_sha256: Digest([5; 32]),
             working_directory,
             state_root: root.0.join("state"),
             world_context_sha256: Digest([4; 32]),
@@ -579,6 +591,7 @@ mod tests {
             "--headless",
             "--suffix-batch",
             "--automation-game-data-sha256",
+            "--automation-card-fixture",
             "--automation-world-context-sha256",
             "--milestone-program",
             "--milestone-goal",

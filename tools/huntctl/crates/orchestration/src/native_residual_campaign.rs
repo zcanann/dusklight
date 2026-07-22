@@ -32,6 +32,7 @@ pub struct NativeResidualExecutionBinding {
     pub process_boot_tape: ArtifactReference,
     pub milestone_program: ArtifactReference,
     pub world_context: ArtifactReference,
+    pub card_fixture_manifest: ArtifactReference,
     pub checkpoint_validation_ticks: u64,
     pub verify_state_hashes: bool,
 }
@@ -60,6 +61,7 @@ impl NativeResidualExecutionBinding {
         process_boot_tape: &Path,
         milestone_program: &Path,
         world_context: &Path,
+        card_fixture_manifest: &Path,
         checkpoint_validation_ticks: u64,
         verify_state_hashes: bool,
     ) -> Result<Self, NativeResidualCampaignError> {
@@ -73,6 +75,7 @@ impl NativeResidualExecutionBinding {
             process_boot_tape: artifact_reference(&root, process_boot_tape)?,
             milestone_program: artifact_reference(&root, milestone_program)?,
             world_context: artifact_reference(&root, world_context)?,
+            card_fixture_manifest: artifact_reference(&root, card_fixture_manifest)?,
             checkpoint_validation_ticks,
             verify_state_hashes,
         };
@@ -105,6 +108,9 @@ impl NativeResidualExecutionBinding {
         let tape_path = validate_artifact(&root, "process boot tape", &self.process_boot_tape)?;
         let program_path = validate_artifact(&root, "milestone program", &self.milestone_program)?;
         let world_context_path = validate_artifact(&root, "world context", &self.world_context)?;
+        let card_fixture_manifest =
+            validate_artifact(&root, "card fixture manifest", &self.card_fixture_manifest)?;
+        validate_card_fixture(&root, optimization, &card_fixture_manifest)?;
         let world_context: serde_json::Value =
             serde_json::from_slice(&fs::read(world_context_path).map_err(native_error)?)
                 .map_err(native_error)?;
@@ -192,11 +198,98 @@ impl NativeResidualExecutionBinding {
         pretty_json(self)
     }
 
+    pub fn card_fixture_root(
+        &self,
+        repository_root: &Path,
+        optimization: &OptimizationRequest,
+    ) -> Result<PathBuf, NativeResidualCampaignError> {
+        let root = repository_root.canonicalize().map_err(native_error)?;
+        let manifest =
+            validate_artifact(&root, "card fixture manifest", &self.card_fixture_manifest)?;
+        validate_card_fixture(&root, optimization, &manifest)
+    }
+
     fn identity(&self) -> Result<Digest, NativeResidualCampaignError> {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
         canonical_digest(b"dusklight.native-residual-execution/v1\0", &canonical)
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CardFixtureManifest {
+    schema: String,
+    name: String,
+    root: String,
+    files: Vec<CardFixtureFile>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CardFixtureFile {
+    path: String,
+    sha256: Digest,
+}
+
+fn validate_card_fixture(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    manifest_path: &Path,
+) -> Result<PathBuf, NativeResidualCampaignError> {
+    let manifest: CardFixtureManifest =
+        serde_json::from_slice(&fs::read(manifest_path).map_err(native_error)?)
+            .map_err(native_error)?;
+    let timeline_path = root.join(&optimization.route.timeline.path);
+    let timeline = Timeline::parse(&fs::read_to_string(timeline_path).map_err(native_error)?)
+        .map_err(native_error)?;
+    let declared = timeline
+        .origin
+        .as_ref()
+        .and_then(|origin| origin.card_fixture.as_deref())
+        .ok_or_else(|| native_message("native process route has no card fixture authority"))?;
+    if manifest.schema != "dusklight-automation-card-fixture/v1"
+        || manifest.name.trim().is_empty()
+        || Path::new(&manifest.root) != declared
+        || manifest.files.is_empty()
+    {
+        return Err(native_message(
+            "native residual card fixture manifest differs from the timeline origin",
+        ));
+    }
+    let fixture_root = root
+        .join(&manifest.root)
+        .canonicalize()
+        .map_err(native_error)?;
+    if !fixture_root.starts_with(root) || !fixture_root.is_dir() {
+        return Err(native_message(
+            "native residual card fixture root is absent",
+        ));
+    }
+    for file in &manifest.files {
+        let relative = Path::new(&file.path);
+        if relative.as_os_str().is_empty()
+            || relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(native_message(
+                "native residual card fixture contains a noncanonical path",
+            ));
+        }
+        let path = fixture_root
+            .join(relative)
+            .canonicalize()
+            .map_err(native_error)?;
+        if !path.starts_with(&fixture_root) || !path.is_file() || sha256_file(&path)? != file.sha256
+        {
+            return Err(native_message(
+                "native residual card fixture file is absent or digest-mismatched",
+            ));
+        }
+    }
+    Ok(fixture_root)
 }
 
 /// Materializes the checked route and appends an authoritative released-PAD
@@ -474,8 +567,14 @@ fn artifact_reference(
     root: &Path,
     path: &Path,
 ) -> Result<ArtifactReference, NativeResidualCampaignError> {
-    let path = path.canonicalize().map_err(native_error)?;
-    if !path.is_file() {
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    }
+    .canonicalize()
+    .map_err(native_error)?;
+    if !path.starts_with(root) || !path.is_file() {
         return Err(native_message("native residual artifact is not a file"));
     }
     let relative = repository_relative(root, &path)?;
@@ -702,6 +801,7 @@ mod tests {
             &tape,
             &program,
             &world_context,
+            &root.join("routes/Glitch Exhibition/intro/benchmarks/process_boot.fixture.json"),
             8,
             false,
         )

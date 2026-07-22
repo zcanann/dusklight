@@ -113,6 +113,7 @@ fn command_timeline_workbench(args: &[String]) -> Result<(), Box<dyn Error>> {
         .map(PathBuf::from)
         .map(Ok)
         .unwrap_or_else(configured_dvd_path)?;
+    let world_context = option(args, "--world-context").map(PathBuf::from);
     let state_root = option(args, "--state-root")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("build/automation-state/route-workbench"));
@@ -140,6 +141,7 @@ fn command_timeline_workbench(args: &[String]) -> Result<(), Box<dyn Error>> {
             working_directory,
             game,
             dvd,
+            world_context,
             state_root,
         },
     )?;

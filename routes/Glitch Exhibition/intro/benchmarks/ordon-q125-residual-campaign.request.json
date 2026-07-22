@@ -1,6 +1,6 @@
 {
-  "schema": "dusklight-optimization-request/v1",
-  "content_sha256": "64f7c0f26c1c166536fb6782a26312e540ee0886190124ed95b20c8e908e721c",
+  "schema": "dusklight-optimization-request/v2",
+  "content_sha256": "1e61e6fe5bc88446ed719a9d81f6d7b2ada20d28fd53837731bccdc6312c75aa",
   "id": "ordon-q125-residual-cem-v1",
   "route": {
     "timeline": {
@@ -10,7 +10,8 @@
     "lineage": "main",
     "segment": "to_ordon_spring_q125",
     "source_boundary_index": 440,
-    "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc"
+    "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "native_source_boundary_fingerprint": "7806f51228c7100f03501f6c2e6d8f23"
   },
   "terminal_predicate": {
     "goal": "ordon_spring_load_committed",

@@ -171,7 +171,7 @@ fn print_usage() {
         "\nRun identity:\n  huntctl identity compare --mode replay|trace-merge|model-training|checkpoint-restore|cross-build-comparison|cross-fidelity-comparison --expected EXPECTED.json --actual ACTUAL.json"
     );
     eprintln!(
-        "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--state-root DIR] [--port N] [--no-open]"
+        "\nRoute workbench:\n  huntctl timeline workbench --timeline FILE --game PATH [--dvd PATH] [--world-context WORLD.json] [--state-root DIR] [--port N] [--no-open]"
     );
     eprintln!(
         "  huntctl timeline prune-thumbnails --timeline FILE --state-root DIR [--repository-root DIR] [--apply]"

@@ -10,6 +10,7 @@ pub enum BrowserRevealTarget {
     Project { id: String },
     Folder { id: String },
     Draft { id: String },
+    Campaign { id: String },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -157,6 +158,29 @@ pub(super) fn resolve_reveal_target(
             Ok(NativeRevealTarget {
                 kind: NativeRevealKind::Folder,
                 path: validated_draft_directory(&root, id)?,
+            })
+        }
+        BrowserRevealTarget::Campaign { id } => {
+            let timeline = load_authoritative_timeline(&config.timeline_path)?;
+            let artifact_root = configured_artifact_root(config)?;
+            let mut graph = graph_from_timeline(&timeline, &artifact_root)?;
+            append_optimization_campaigns(
+                &mut graph,
+                &config.repository_root,
+                &config.timeline_path,
+            )?;
+            let campaign = graph
+                .campaigns
+                .iter()
+                .find(|campaign| campaign.id == *id)
+                .ok_or_else(|| WorkbenchError::new(format!("unknown campaign {id:?}")))?;
+            Ok(NativeRevealTarget {
+                kind: NativeRevealKind::File,
+                path: checked_repository_file(
+                    &config.repository_root,
+                    &config.repository_root.join(&campaign.request),
+                    "optimization request",
+                )?,
             })
         }
     }

@@ -21,7 +21,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-pub const OPTIMIZATION_REQUEST_SCHEMA_V1: &str = "dusklight-optimization-request/v1";
+pub const OPTIMIZATION_REQUEST_SCHEMA_V2: &str = "dusklight-optimization-request/v2";
 const MAX_EXPLORATION_HORIZON_TICKS: u64 = 10_000_000;
 const MAX_CANDIDATES: u64 = 10_000_000;
 const MAX_SIMULATED_TICKS: u64 = 1_000_000_000_000;
@@ -52,6 +52,10 @@ pub struct RouteOptimizationBinding {
     pub segment: String,
     pub source_boundary_index: u64,
     pub source_boundary_fingerprint: String,
+    /// Engine-authored semantic fingerprint observed at the exact pre-input
+    /// checkpoint. This is deliberately distinct from the timeline's
+    /// structural lineage fingerprint above.
+    pub native_source_boundary_fingerprint: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -150,6 +154,7 @@ pub struct OptimizationRequestValidationReport {
     pub segment: String,
     pub source_boundary_index: u64,
     pub source_boundary_fingerprint: String,
+    pub native_source_boundary_fingerprint: String,
     pub terminal_goal: String,
     pub incumbent_first_hit_tick: Option<u64>,
     pub exploration_horizon_ticks: u64,
@@ -175,7 +180,7 @@ pub struct OptimizationHarnessBindingReport {
 
 impl OptimizationRequest {
     pub fn validate(&self) -> Result<(), OptimizationRequestError> {
-        if self.schema != OPTIMIZATION_REQUEST_SCHEMA_V1 {
+        if self.schema != OPTIMIZATION_REQUEST_SCHEMA_V2 {
             return Err(request_error("unsupported optimization-request schema"));
         }
         validate_id("request id", &self.id)?;
@@ -191,6 +196,7 @@ impl OptimizationRequest {
             }
         }
         if !is_lower_hex(&self.route.source_boundary_fingerprint, 32)
+            || !is_lower_hex(&self.route.native_source_boundary_fingerprint, 32)
             || self.terminal_predicate.program_sha256 == Digest::ZERO
             || self.terminal_predicate.definition_sha256 == Digest::ZERO
         {
@@ -450,7 +456,7 @@ impl OptimizationRequest {
         }
 
         Ok(OptimizationRequestValidationReport {
-            schema: OPTIMIZATION_REQUEST_SCHEMA_V1,
+            schema: OPTIMIZATION_REQUEST_SCHEMA_V2,
             request_id: self.id.clone(),
             request_sha256: self.content_sha256,
             timeline_sha256: self.route.timeline.sha256,
@@ -458,6 +464,10 @@ impl OptimizationRequest {
             segment: self.route.segment.clone(),
             source_boundary_index: self.route.source_boundary_index,
             source_boundary_fingerprint: self.route.source_boundary_fingerprint.clone(),
+            native_source_boundary_fingerprint: self
+                .route
+                .native_source_boundary_fingerprint
+                .clone(),
             terminal_goal: self.terminal_predicate.goal.clone(),
             incumbent_first_hit_tick: self.incumbent.as_ref().map(|value| value.first_hit_tick),
             exploration_horizon_ticks: self.budgets.exploration_horizon_ticks,
@@ -576,7 +586,7 @@ impl OptimizationRequest {
         let bytes =
             serde_json::to_vec(&canonical).map_err(|source| request_error(source.to_string()))?;
         let mut hasher = Sha256::new();
-        hasher.update(b"dusklight.optimization-request/v1\0");
+        hasher.update(b"dusklight.optimization-request/v2\0");
         hasher.update((bytes.len() as u64).to_le_bytes());
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))

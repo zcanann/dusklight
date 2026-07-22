@@ -59,6 +59,10 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         let tape_path = output.join("process-route.tape");
         let program_path = output.join("terminal.dmsp");
         let binding_path = output.join("execution.json");
+        let card_fixture_manifest = repository_root
+            .join(&optimization.route.timeline.path)
+            .with_extension("")
+            .join("benchmarks/process_boot.fixture.json");
         let tape = huntctl::search_evaluator::native_residual_campaign::materialize_native_residual_process_tape(
             &repository_root,
             &optimization,
@@ -76,6 +80,7 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             &tape_path,
             &program_path,
             &world_context,
+            &card_fixture_manifest,
             u64::try_from(usize_option(command_args, "--checkpoint-validation-ticks", 8)?)?,
             flag(command_args, "--verify-state-hashes"),
         )?;

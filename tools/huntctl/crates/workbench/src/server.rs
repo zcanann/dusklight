@@ -89,6 +89,11 @@ pub(super) fn handle_http(
                             &config.repository_root.join("build/search"),
                             &config.state_root,
                         )?;
+                        append_optimization_campaigns(
+                            &mut graph,
+                            &config.repository_root,
+                            &config.timeline_path,
+                        )?;
                         decorate_graph_thumbnails(&mut graph, config)?;
                         Ok(graph)
                     })
@@ -142,6 +147,24 @@ pub(super) fn handle_http(
                             };
                             Ok(response)
                         });
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/optimization/start") => {
+                    let result =
+                        serde_json::from_slice::<BrowserOptimizationStartRequest>(&request.body)
+                            .map_err(|error| {
+                                WorkbenchError::new(format!(
+                                    "invalid optimization start request: {error}"
+                                ))
+                            })
+                            .and_then(|start_request| {
+                                start_optimization_campaign(config, &start_request)
+                            });
                     match result {
                         Ok(response) => json_response(&response).unwrap_or_else(|error| {
                             json_error(500, "Internal Server Error", &error.to_string())

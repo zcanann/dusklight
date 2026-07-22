@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v11";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v12";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -124,10 +124,36 @@ pub struct WorkbenchGraph {
     pub goals: Vec<GraphGoal>,
     pub drafts: Vec<GraphDraft>,
     pub projects: GraphProjectCatalog,
+    pub campaigns: Vec<GraphOptimizationCampaign>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub draft_graph_revision: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub predicate_program: Option<GraphPredicateProgram>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphOptimizationCampaign {
+    pub id: String,
+    pub request: String,
+    pub request_sha256: String,
+    pub segment: String,
+    pub goal: String,
+    pub optimizer: String,
+    pub status: String,
+    pub exploration_horizon_ticks: u64,
+    pub promotion_before_tick: u64,
+    pub candidate_budget: u64,
+    pub simulated_tick_budget: u64,
+    pub workers: u16,
+    pub sealed_candidates: u64,
+    pub completed_candidates: u64,
+    pub pending_candidates: u64,
+    pub charged_simulated_ticks: u64,
+    pub generation: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1079,6 +1105,7 @@ pub struct WorkbenchConfig {
     pub working_directory: PathBuf,
     pub game: PathBuf,
     pub dvd: PathBuf,
+    pub world_context: Option<PathBuf>,
     /// Parent directory only. Cold playback always gets a fresh child.
     pub state_root: PathBuf,
 }
@@ -1102,6 +1129,10 @@ impl Error for WorkbenchError {}
 
 mod milestone_program;
 pub use milestone_program::*;
+mod optimization_projection;
+use optimization_projection::*;
+mod optimization_runtime;
+use optimization_runtime::*;
 mod draft_store;
 use draft_store::*;
 mod playback;

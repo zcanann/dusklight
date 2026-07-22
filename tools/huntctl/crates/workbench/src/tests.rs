@@ -470,7 +470,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v11");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v12");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -758,6 +758,7 @@ fn forged_record_request_cannot_bypass_stale_predicate_proof() {
         working_directory: root.clone(),
         game: root.join("game"),
         dvd: root.join("disc"),
+        world_context: None,
         state_root: root.join("state"),
     };
     let error = record_continuation(
@@ -853,6 +854,7 @@ fn milestone_program_http_api_has_no_path_and_returns_conflict_for_stale_edits()
         working_directory: root.clone(),
         game: root.join("unused-game"),
         dvd: root.join("unused-dvd"),
+        world_context: None,
         state_root: root.join("state"),
     };
     let initial_revision = source_revision(MILESTONE_SOURCE.as_bytes());
@@ -1013,6 +1015,7 @@ subgraph_member menu segment first
         working_directory: root.to_path_buf(),
         game: root.join("game"),
         dvd: root.join("dvd"),
+        world_context: None,
         state_root: root.join("state"),
     }
 }
@@ -1202,6 +1205,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "data-reveal-kind=\"subgraph\"",
         "data-reveal-kind=\"draft\"",
         "data-reveal-kind=\"project\"",
+        "data-reveal-kind=\"campaign\"",
         "revealWorkspaceSelection",
         "id=\"bootEditor\"",
         "/api/workspace/boot",
@@ -1244,6 +1248,14 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "selection:{kind,id}",
         "const stop=segment?{kind:'segment',segment:id}",
         "goalDetail(segment.id",
+        "optimizationDetail(segment.id)",
+        "View campaign request",
+        "Run optimization",
+        "Resume optimization",
+        "data-start-campaign",
+        "startOptimization(button)",
+        "/api/optimization/start",
+        "campaign.completed_candidates",
         "segment.goal_proofs",
         "segment.option_visualization",
         "optionVisualization(segment)",
@@ -1311,6 +1323,7 @@ fn thumbnail_cache_is_content_addressed_validated_and_path_safe() {
         working_directory: root.clone(),
         game: game.clone(),
         dvd: root.join("disc.iso"),
+        world_context: None,
         state_root: state_root.clone(),
     };
 
@@ -1747,6 +1760,7 @@ continue main with first after root@clean
         working_directory: root.clone(),
         game: root.join("unused-game"),
         dvd: root.join("unused-dvd"),
+        world_context: None,
         state_root: root.join("state"),
     };
     let source = "milestones 1.3\nmilestone first_reached { phase post_sim when player.exists }\n";
@@ -1824,7 +1838,21 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
         .unwrap();
     let timeline_path = checked_intro_timeline(&repository);
     let route = load_authoritative_timeline(&timeline_path).unwrap();
-    let graph = graph_from_timeline(&route, timeline_path.parent().unwrap()).unwrap();
+    let mut graph = graph_from_timeline(&route, timeline_path.parent().unwrap()).unwrap();
+    append_optimization_campaigns(&mut graph, &repository, &timeline_path).unwrap();
+    let campaign = graph
+        .campaigns
+        .iter()
+        .find(|campaign| campaign.id == "ordon-q125-residual-cem-v1")
+        .unwrap();
+    assert_eq!(campaign.segment, "to_ordon_spring_q125");
+    assert_eq!(campaign.goal, "ordon_spring_load_committed");
+    assert_eq!(campaign.optimizer, "cem");
+    assert_eq!(campaign.status, "ready");
+    assert_eq!(campaign.exploration_horizon_ticks, 160);
+    assert_eq!(campaign.promotion_before_tick, 125);
+    assert_eq!(campaign.candidate_budget, 4096);
+    assert_eq!(campaign.workers, 4);
     assert!(graph.predicate_program.is_none());
     assert_eq!(graph.goals.len(), 12);
     assert!(graph.goals.iter().all(|goal| {
@@ -1937,6 +1965,34 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let boot = graph.origin.as_ref().unwrap();
     assert!(boot.recordable_from_boot);
     assert_eq!(boot.id, "boot");
+}
+
+#[test]
+fn optimization_start_api_requires_explicit_world_context() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../..")
+        .canonicalize()
+        .unwrap();
+    let config = WorkbenchConfig {
+        timeline_path: checked_intro_timeline(&repository),
+        repository_root: repository.clone(),
+        working_directory: repository.clone(),
+        game: repository.join("build/unused-game"),
+        dvd: repository.join("build/unused-dvd"),
+        world_context: None,
+        state_root: repository.join("build/automation-state/route-workbench-test"),
+    };
+    let response = call_http(
+        &config,
+        "POST",
+        "/api/optimization/start",
+        br#"{"campaign":"ordon-q125-residual-cem-v1"}"#,
+    );
+    assert_eq!(response.status, 400);
+    assert!(
+        String::from_utf8_lossy(&response.body)
+            .contains("restart the workbench with --world-context")
+    );
 }
 
 #[test]
@@ -2284,6 +2340,7 @@ fn successful_human_recording_installs_its_terminal_thumbnail_once() {
         working_directory: root.clone(),
         game: game.clone(),
         dvd: root.join("disc.iso"),
+        world_context: None,
         state_root: state.clone(),
     };
 
@@ -2981,6 +3038,7 @@ fn segment_rename_http_rejects_identity_and_path_smuggling() {
         working_directory: root.clone(),
         game: root.join("unused-game"),
         dvd: root.join("unused-dvd"),
+        world_context: None,
         state_root: root.join("state"),
     };
     let smuggled = serde_json::json!({
@@ -3372,6 +3430,7 @@ fn sibling_delete_rejects_roots_lonely_segments_stale_tokens_and_smuggled_fields
         working_directory: root.clone(),
         game: root.join("unused-game"),
         dvd: root.join("unused-dvd"),
+        world_context: None,
         state_root: state,
     };
     let response = call_http(
@@ -3530,6 +3589,7 @@ fn draft_rename_http_api_rejects_paths_and_returns_stale_conflict() {
         working_directory: root.clone(),
         game: root.join("unused-game"),
         dvd: root.join("unused-dvd"),
+        world_context: None,
         state_root: state.clone(),
     };
     let smuggled = serde_json::json!({
