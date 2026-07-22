@@ -1,6 +1,6 @@
 use crate::transport::Transport;
 pub use dusklight_automation_contracts::engine_session::{
-    SessionReuseAudit, SessionReuseBlocker, ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1,
+    ENGINE_SESSION_REUSE_AUDIT_SCHEMA_V1, SessionReuseAudit, SessionReuseBlocker,
 };
 use serde::Deserialize;
 use serde_json::json;

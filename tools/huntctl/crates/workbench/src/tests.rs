@@ -449,8 +449,8 @@ goal review on first predicate review source goal.milestones
 
     append_authored_milestone_args(&route, &root, &state, &mut command, None).unwrap();
 
-    let decoded = milestone_dsl::decode(&fs::read(state.join("route-milestones.dmsp")).unwrap())
-        .unwrap();
+    let decoded =
+        milestone_dsl::decode(&fs::read(state.join("route-milestones.dmsp")).unwrap()).unwrap();
     assert_eq!(decoded.program.version.major, 1);
     assert_eq!(decoded.program.version.minor, 7);
     assert_eq!(
