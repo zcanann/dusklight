@@ -3,7 +3,11 @@
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_harness_contracts::objective_suite::{ArtifactReference, SchemaIdentity};
 use dusklight_harness_contracts::run_contract::HarnessFidelityMode;
+use dusklight_learning::factorized_pad_action::ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256;
 use dusklight_routes::timeline::{ArtifactSource, Timeline};
+use dusklight_search::residual_action::{
+    RESIDUAL_PROPOSAL_SCHEMA_ID_V1, residual_proposal_schema_sha256,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
@@ -206,6 +210,16 @@ impl OptimizationRequest {
         }
         validate_schema("action", &self.proposal.action_schema)?;
         validate_schema("proposal", &self.proposal.proposal_schema)?;
+        if self.proposal.action_schema.id != "dusklight-raw-pad-action/v2"
+            || self.proposal.action_schema.sha256
+                != Digest(ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256)
+            || self.proposal.proposal_schema.id != RESIDUAL_PROPOSAL_SCHEMA_ID_V1
+            || self.proposal.proposal_schema.sha256 != residual_proposal_schema_sha256()
+        {
+            return Err(request_error(
+                "optimization action or residual proposal schema is detached from the implemented raw-PAD compiler",
+            ));
+        }
         match self.proposal.optimizer {
             ResidualOptimizerConfig::Random { samples }
                 if samples == 0 || samples > self.budgets.candidate_budget =>

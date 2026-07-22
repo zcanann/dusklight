@@ -186,20 +186,27 @@ goal-only discovery.
 
 ### 2.2 Residual action surface
 
-- [ ] Represent a candidate as the incumbent raw tape plus bounded additive
+- [x] Represent a candidate as the incumbent raw tape plus bounded additive
       residuals, then compile it losslessly to raw PAD before execution.
-- [ ] Cover main stick and camera stick direction and magnitude without heading
+- [x] Cover main stick and camera stick direction and magnitude without heading
       quantization. Clamp only at the authentic PAD boundary.
-- [ ] Represent button presses as edge/hold edits and allow roll edges to shift,
+- [x] Represent button presses as edge/hold edits and allow roll edges to shift,
       appear, or disappear without replacing the entire button schedule.
-- [ ] Supply deterministic temporal bases at several scales, initially exact
+- [x] Supply deterministic temporal bases at several scales, initially exact
       frame, 2/4/8/16/32-frame windows, piecewise-linear ramps, and a small
       control-point curve.
-- [ ] Permit several simultaneous residuals so an early trajectory change can be
+- [x] Permit several simultaneous residuals so an early trajectory change can be
       accompanied by downstream repair in the same candidate.
-- [ ] Deduplicate on the compiled raw tape, not on optimizer parameters.
-- [ ] Record the exact intervention span and parent tape for attribution while
+- [x] Deduplicate on the compiled raw tape, not on optimizer parameters.
+- [x] Record the exact intervention span and parent tape for attribution while
       keeping the realized tape authoritative.
+      `dusklight-search::residual_action` now seals bounded candidates to the
+      incumbent tape, composes analog and button edits deterministically, checks
+      lossless raw-tape round trips, and deduplicates by realized tape digest.
+      Compilation reports retain the parent/candidate/realized identities plus
+      both the declared and exact realized intervention spans. The sealed Ordon
+      request accepts only this implemented proposal schema and the implemented
+      factorized raw-PAD action schema.
 
 ### 2.3 Search and retention
 

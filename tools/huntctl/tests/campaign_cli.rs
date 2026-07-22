@@ -233,6 +233,14 @@ fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
             ("/route/timeline/sha256", Value::String("1".repeat(64))),
             "timeline content digest differs",
         ),
+        (
+            "proposal-schema",
+            (
+                "/proposal/proposal_schema/sha256",
+                Value::String("2".repeat(64)),
+            ),
+            "detached from the implemented raw-PAD compiler",
+        ),
     ] {
         let mut changed = request.clone();
         *changed.pointer_mut(mutation.0).unwrap() = mutation.1;
