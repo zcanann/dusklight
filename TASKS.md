@@ -183,8 +183,9 @@ goal-only discovery.
 - [ ] Make campaigns resumable after cancellation, worker crash, or UI closure
       without repeating sealed candidates or losing optimizer state.
       The journal/state contract and CLI lifecycle are complete; this remains
-      open until the residual campaign runner records dispatch, result, and
-      optimizer-update boundaries through that contract automatically.
+      open until the checked Ordon runner owns persistent native workers and
+      records dispatch, result, and optimizer-update boundaries through that
+      contract automatically.
 
 ### 2.2 Residual action surface
 
@@ -240,8 +241,8 @@ goal-only discovery.
       diversity reservoir, supported horizon-tightening evidence, and
       replay-authoritative post-discovery minimization. Its complete history
       round-trips through a sealed resume snapshot. These items remain open
-      until the campaign runner records every native result through the archive
-      and checkpoints it automatically.
+      until the persistent native campaign runner records every native result
+      through the archive and checkpoints it automatically.
 
 ### 2.4 Baseline proof
 
