@@ -915,7 +915,7 @@
     }
     function segmentActions(segment) {
       const plays=segment.playable?`<button class="play" type="button" data-play-kind="segment" data-play-mode="playback" data-id="${escapeHtml(segment.id)}">Playback</button><button class="play" type="button" data-play-kind="segment" data-play-mode="resume_accelerated" data-id="${escapeHtml(segment.id)}">Resume (accelerated)</button>`:'';
-      if(segment.generated){const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${capture}</div>`;}
+      if(segment.generated){const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;const promotion=segment.generated.promotion;let promote='';if(promotion){if(['verifying','installing'].includes(promotion.status))promote=`<button class="record" type="button" disabled>${promotion.status==='verifying'?'Cold replaying 5×…':'Installing promotion…'}</button>`;else if(promotion.status==='promoted')promote=`<button class="record" type="button" disabled>Promoted as ${escapeHtml(promotion.segment||'segment')}</button>`;else if(promotion.eligible)promote=`<button class="record" type="button" data-promote-candidate="${escapeHtml(segment.id)}">${promotion.status==='failed'?'Retry promotion':'Verify & promote…'}</button>`;}return `<div class="actions">${plays||'<button class="play" type="button" disabled>Playback unavailable</button>'}${capture}${promote}</div>`;}
       const anchor=(segment.record_anchors||[])[0];
       const records=anchor?`<button class="record" type="button" data-record-kind="segment" data-id="${escapeHtml(segment.id)}" data-terminal-goal="${escapeHtml(anchor.goal||'')}">Record child</button>`:'';
       const capture=`<button class="capture" type="button" data-capture-kind="segment" data-id="${escapeHtml(segment.id)}" ${segment.playable?'':'disabled'}>${segment.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button>`;
@@ -925,7 +925,7 @@
     }
     function generatedDetail(segment) {
       const generated=segment.generated;if(!generated)return '';
-      return `<div class="detail-section"><h3>Generated candidate</h3><div class="fields">${field('Kind',label(generated.kind))}${field('Status',label(generated.status))}${field('Generation',generated.generation)}${field('Candidate',generated.candidate_id,true)}${field('Proof attempts',generated.proof_attempts)}${field('Goal',label(generated.goal_predicate))}${field('Run',generated.run,true)}${field('Candidate artifact',generated.candidate,true)}${field('Tape artifact',generated.tape,true)}</div><div class="empty">Ephemeral campaign evidence; refreshing removes this node if its authenticated artifacts are deleted.</div></div>`;
+      const promotion=generated.promotion;return `<div class="detail-section"><h3>Generated candidate</h3><div class="fields">${field('Kind',label(generated.kind))}${field('Status',label(generated.status))}${field('Generation',generated.generation)}${field('Candidate',generated.candidate_id,true)}${field('Proof attempts',generated.proof_attempts)}${field('Goal',label(generated.goal_predicate))}${promotion?field('Promotion',promotion.eligible?label(promotion.status):'Outside promotion threshold'):''}${promotion?.segment?field('Promoted segment',promotion.segment,true):''}${field('Run',generated.run,true)}${field('Candidate artifact',generated.candidate,true)}${field('Tape artifact',generated.tape,true)}</div>${promotion?.error?`<div class="error-note">Promotion failed: ${escapeHtml(promotion.error)}</div>`:''}<div class="empty">Ephemeral campaign evidence; refreshing removes this node if its authenticated artifacts are deleted.</div></div>`;
     }
     function renderDetail() {
       let html='';
@@ -971,6 +971,7 @@
       root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       root.querySelectorAll('[data-start-campaign]').forEach(button=>button.addEventListener('click',()=>startOptimization(button)));
+      root.querySelectorAll('[data-promote-candidate]').forEach(button=>button.addEventListener('click',()=>promoteOptimizationCandidate(button)));
       root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
       root.querySelectorAll('[data-open-subgraph-detail]').forEach(button=>button.addEventListener('click',()=>openSubgraph(button.dataset.openSubgraphDetail)));
       root.querySelectorAll('[data-rename-subgraph]').forEach(button=>button.addEventListener('click',()=>renameSelectedSubgraph(button.dataset.renameSubgraph)));
@@ -1463,6 +1464,19 @@
         $('status').textContent='Optimization running';$('status').className='status ok';toast(`Optimization ${campaign.id} is running. Progress will refresh automatically.`);await load();
       } catch(error) { $('status').textContent='Optimization failed to start';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent=original; }
     }
+    async function promoteOptimizationCandidate(button) {
+      const candidate=graph.segments.find(item=>item.id===button.dataset.promoteCandidate),generated=candidate?.generated;if(!candidate||!generated?.promotion?.eligible)return;
+      const suffix=generated.candidate_id.slice(-8).replace(/[^a-z0-9]/g,'');const defaultId=`optimized_${generated.goal_predicate}_${suffix}`.toLowerCase().replace(/[^a-z0-9_.-]/g,'_').slice(0,80);
+      const segmentId=window.prompt('Git-owned segment ID',defaultId);if(segmentId===null)return;
+      const defaultLabel=`${label(generated.goal_predicate)} · ${candidate.first_hit_tick}f optimized`;const promotedLabel=window.prompt('Segment label',defaultLabel);if(promotedLabel===null)return;
+      if(!window.confirm(`Verify and promote ${generated.candidate_id}?\n\nDusklight will cold-replay the exact boot-rooted tape five times, headless and unpaced. Promotion occurs only if all five runs reach the same exact terminal boundary. The compact tape, sealed proof, parent boundary, and a new lineage will then be written as Git-owned route artifacts.`))return;
+      const original=button.textContent;button.disabled=true;button.textContent='Starting cold replays…';
+      try {
+        const response=await fetch('/api/optimization/promote',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({candidate:candidate.id,segment_id:segmentId.trim(),label:promotedLabel.trim()})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        $('status').textContent='Promotion cold replay running';$('status').className='status ok';toast(`Verifying ${body.segment} with ${body.repetitions} exact cold replays. The route will change only after every replay agrees.`);await load();
+      } catch(error) { $('status').textContent='Promotion failed to start';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent=original; }
+    }
     async function load() {
       $('status').textContent='Loading…'; $('status').className='status'; $('projects').innerHTML='<div class="empty">Loading projects...</div>'; $('tree').innerHTML='<div class="empty">Loading route…</div>'; $('detail').innerHTML='<div class="empty">Loading selection…</div>';
       try {
@@ -1470,7 +1484,7 @@
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         graph=normalize(body); if(activeSubgraph&&!subgraphById(activeSubgraph)){activeSubgraph=null;groupedSelection=new Set();selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};} if(!workspaceSelection||!graph.projects.entries.some(item=>item.id===workspaceSelection)){workspaceSelection=graph.projects.entries.find(item=>item.active)?.id||graph.projects.entries.find(item=>item.kind==='timeline')?.id||graph.projects.entries[0]?.id||null;} render(); $('status').textContent='Ready'; $('status').className='status ok';
-        clearTimeout(load.poll); if(graph.drafts.some(draft=>['preparing','recording','orphaned'].includes(draft.status))||graph.campaigns.some(campaign=>['preparing','running'].includes(campaign.status)))load.poll=setTimeout(load,2500);
+        clearTimeout(load.poll); if(graph.drafts.some(draft=>['preparing','recording','orphaned'].includes(draft.status))||graph.campaigns.some(campaign=>['preparing','running'].includes(campaign.status))||graph.segments.some(segment=>['verifying','installing'].includes(segment.generated?.promotion?.status)))load.poll=setTimeout(load,2500);
       } catch(error) {
         $('timelineName').textContent='Could not load timeline'; $('status').textContent='Disconnected'; $('status').className='status error';
         $('tree').innerHTML=`<div class="empty">${escapeHtml(error.message)}<br><br>Start this page through the Route Workbench launch configuration.</div>`;

@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v13";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v14";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -566,6 +566,18 @@ pub struct GraphGeneratedSegment {
     pub source_predicate: String,
     pub goal_predicate: String,
     pub proof_attempts: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub promotion: Option<GraphCandidatePromotion>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphCandidatePromotion {
+    pub eligible: bool,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1139,6 +1151,8 @@ mod milestone_program;
 pub use milestone_program::*;
 mod optimization_projection;
 use optimization_projection::*;
+mod optimization_promotion;
+use optimization_promotion::*;
 mod optimization_runtime;
 use optimization_runtime::*;
 mod draft_store;

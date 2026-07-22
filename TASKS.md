@@ -52,6 +52,13 @@ Working foundations:
   misses as ephemeral Workbench siblings. Those candidates use ordinary
   playback and thumbnail capture, and disappear on refresh when their campaign
   artifacts are removed.
+- Eligible exact successes can now be promoted explicitly from the Workbench.
+  Promotion trims the compact realized tape to the authenticated hit, performs
+  five fresh headless cold replays from boot against the sealed execution
+  binding, requires an identical exact terminal boundary on every run, then
+  installs the tape, sealed proof, parent boundary, goal, and a new continuation
+  lineage as one stale-checked Git-owned timeline edit. Failed verification and
+  discarded candidates remain outside source control.
 - Optimization resume state now has a synced append-only hash-chain journal for
   sealed candidates, completed evaluations, and optimizer checkpoints. It
   recovers a torn final record, rejects complete-record tampering and duplicate
@@ -376,7 +383,7 @@ continuous optimizer, and appropriate negative controls remove the advantage.
       deleted campaign artifacts.
 - [x] Let any candidate play through the normal playback path and acquire a
       thumbnail without a separate search workflow.
-- [ ] Make promotion an explicit Git-owned operation that stores the compact tape,
+- [x] Make promotion an explicit Git-owned operation that stores the compact tape,
       exact proof, parent boundary, and lineage. Generated failures and discarded
       candidates remain outside source control.
 - [ ] Support cancel, resume, and cleanup without leaving native workers, hidden

@@ -358,6 +358,12 @@ pub(super) fn project_request_candidates(
                         source_predicate: request.route.native_source_boundary_fingerprint.clone(),
                         goal_predicate: request.terminal_predicate.goal.clone(),
                         proof_attempts: u32::try_from(evaluation.attempts.len()).ok()?,
+                        promotion: optimization_candidate_promotion(
+                            &request.content_sha256.to_string(),
+                            &candidate.id,
+                            first_hit_tick
+                                .is_some_and(|tick| tick < request.budgets.promotion_before_tick),
+                        ),
                     }),
                     thumbnail: None,
                     error: None,
@@ -536,14 +542,14 @@ fn optimization_runtime_blocker(root: &Path, config: &WorkbenchConfig) -> Option
     None
 }
 
-fn bound_artifact_json<T: for<'de> Deserialize<'de>>(
+pub(super) fn bound_artifact_json<T: for<'de> Deserialize<'de>>(
     root: &Path,
     reference: &ArtifactReference,
 ) -> Option<T> {
     serde_json::from_slice(&bound_artifact_bytes(root, reference)?).ok()
 }
 
-fn bound_artifact_bytes(root: &Path, reference: &ArtifactReference) -> Option<Vec<u8>> {
+pub(super) fn bound_artifact_bytes(root: &Path, reference: &ArtifactReference) -> Option<Vec<u8>> {
     let relative = Path::new(&reference.path);
     if relative.as_os_str().is_empty()
         || relative.is_absolute()

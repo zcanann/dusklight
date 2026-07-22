@@ -496,7 +496,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v13");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v14");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1284,6 +1284,11 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "data-start-campaign",
         "startOptimization(button)",
         "/api/optimization/start",
+        "/api/optimization/promote",
+        "promoteOptimizationCandidate(button)",
+        "Verify & promote",
+        "Cold replaying 5×",
+        "five times, headless and unpaced",
         "campaign.completed_candidates",
         "Proposal sources",
         "Current best",
@@ -2190,6 +2195,11 @@ fn completed_optimization_candidate_projects_as_a_playable_ephemeral_sibling() {
     assert_eq!(generated.status, "success");
     assert_eq!(generated.generation, 7);
     assert_eq!(generated.proof_attempts, 1);
+    let promotion = generated.promotion.as_ref().unwrap();
+    assert!(promotion.eligible);
+    assert_eq!(promotion.status, "ready");
+    assert!(promotion.segment.is_none());
+    assert!(promotion.error.is_none());
 
     fs::remove_file(&tape_path).unwrap();
     assert!(project_request_candidates(&repository, &timeline_path, &request).is_empty());
@@ -2235,6 +2245,40 @@ fn optimization_start_api_requires_explicit_world_context() {
         String::from_utf8_lossy(&response.body)
             .contains("restart the workbench with --world-context")
     );
+}
+
+#[test]
+fn optimization_promotion_api_rejects_unknown_candidates_and_smuggled_authority() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../..")
+        .canonicalize()
+        .unwrap();
+    let config = WorkbenchConfig {
+        timeline_path: checked_intro_timeline(&repository),
+        repository_root: repository.clone(),
+        working_directory: repository.clone(),
+        game: repository.join("build/unused-game"),
+        dvd: repository.join("build/unused-dvd"),
+        world_context: None,
+        state_root: repository.join("build/automation-state/route-workbench-test"),
+    };
+    let unknown = call_http(
+        &config,
+        "POST",
+        "/api/optimization/promote",
+        br#"{"candidate":"optimization-missing","segment_id":"optimized_missing","label":"Missing"}"#,
+    );
+    assert_eq!(unknown.status, 400);
+    assert!(String::from_utf8_lossy(&unknown.body).contains("unknown, deleted, or expired"));
+
+    let smuggled = call_http(
+        &config,
+        "POST",
+        "/api/optimization/promote",
+        br#"{"candidate":"optimization-missing","segment_id":"optimized_missing","label":"Missing","proof":"../forged.json","repetitions":1}"#,
+    );
+    assert_eq!(smuggled.status, 400);
+    assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
 }
 
 #[test]

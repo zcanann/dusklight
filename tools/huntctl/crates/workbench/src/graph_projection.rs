@@ -544,6 +544,7 @@ pub(super) fn generated_search_projections(
                         source_predicate: objective.source_milestone.clone(),
                         goal_predicate: objective.goal_milestone.clone(),
                         proof_attempts: result.attempts,
+                        promotion: None,
                     }),
                     thumbnail: None,
                     error: None,
