@@ -2389,11 +2389,21 @@ Deliverable: researchers can extend the model without editing core code.
   - Backward expansion retains every matching producer and terminates through
     causal cycles. Forward search evaluates nested predicates and preserves
     exact writer, gate, and consuming-reader order in the reached proof.
-- [ ] Implement state hashing, dominance, cycles, and continuation-safe merging.
+- [x] Implement state hashing, dominance, cycles, and continuation-safe merging.
   - [x] Add semantic search-state hashing that includes backing stores, bindings,
         gates, preservation, and pending cleanup while excluding snapshot labels
         and proof-only provenance; use it for cycle/duplicate suppression.
-  - [ ] Add resource dominance and continuation-safe merge proofs.
+  - [x] Add resource dominance and continuation-safe merge proofs.
+        Forward search now maintains a Pareto frontier over action depth and
+        every accumulated route-cost axis for each exact continuation identity.
+        The identity includes semantic live state, required-action completion,
+        required/banned/preferred method cursors, satisfied preferences, and
+        unknown route-condition state, so a cheaper label cannot erase a
+        continuation-distinct route. Each strict prune retains a validated
+        `ContinuationMergeProof` with the shared identity and both resource
+        labels; incomparable cost vectors remain independently explorable, zero
+        axes are canonicalized away, and proof retention is bounded by the
+        declared state limit rather than becoming an unbounded side channel.
 - [ ] Support exact content/language, evidence, technique, runtime-file, and path
       constraints; validate portable plans independently over every selected
       context using only appropriately scoped/equivalent rules.

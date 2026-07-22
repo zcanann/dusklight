@@ -12,7 +12,7 @@ use crate::logic::{FactCatalog, PredicateExpression, RuleEvidence, TruthStatus};
 use crate::relevance::BackwardRelevance;
 use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
 use crate::transition::{CandidateTransition, MechanicsCatalog, PathConstraint};
-use crate::{PlannerContractError, artifact::Digest};
+use crate::{PlannerContractError, artifact::Digest, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
@@ -482,6 +482,132 @@ pub struct SearchResult {
     pub execution_error_ids: Vec<String>,
     pub blocked_transition_witnesses: Vec<BlockedTransitionWitness>,
     pub blocked_writer_witnesses: Vec<BlockedWriterWitness>,
+    pub continuation_merge_proofs: Vec<ContinuationMergeProof>,
+}
+
+/// Everything that can change whether an otherwise identical live state may
+/// continue through the remainder of one solve. Resource totals and elapsed
+/// search depth are deliberately separate so a Pareto-better label can safely
+/// dominate a worse route to this exact continuation.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContinuationIdentity {
+    pub state_sha256: Digest,
+    pub satisfied_required_actions: Vec<RouteActionRef>,
+    pub required_sequence_progress: Vec<usize>,
+    pub banned_sequence_progress: Vec<usize>,
+    pub preferred_sequence_progress: Vec<usize>,
+    pub satisfied_preference_ids: Vec<String>,
+    pub route_condition_unknown: bool,
+}
+
+impl ContinuationIdentity {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.state_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "solver.continuation_identity.state_sha256",
+                "must be nonzero",
+            ));
+        }
+        let mut prior_action = None;
+        for action in &self.satisfied_required_actions {
+            if prior_action.is_some_and(|prior| prior >= action) {
+                return Err(PlannerContractError::new(
+                    "solver.continuation_identity.satisfied_required_actions",
+                    "must be unique and sorted",
+                ));
+            }
+            validate_route_action_ref(action)?;
+            prior_action = Some(action);
+        }
+        let mut prior_preference = None;
+        for preference in &self.satisfied_preference_ids {
+            if prior_preference.is_some_and(|prior: &String| prior >= preference) {
+                return Err(PlannerContractError::new(
+                    "solver.continuation_identity.satisfied_preference_ids",
+                    "must be unique and sorted",
+                ));
+            }
+            validate_stable_id(
+                "solver.continuation_identity.satisfied_preference_ids",
+                preference,
+            )?;
+            prior_preference = Some(preference);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchResourceLabel {
+    pub depth: usize,
+    pub route_costs: BTreeMap<String, u64>,
+}
+
+impl SearchResourceLabel {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        for (axis, value) in &self.route_costs {
+            validate_stable_id("solver.resource_label.route_costs.axis", axis)?;
+            if *value == 0 {
+                return Err(PlannerContractError::new(
+                    "solver.resource_label.route_costs",
+                    "must omit zero-valued axes",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Proof that one queued state was merged into an already explored state with
+/// the exact same continuation identity and no worse depth or cost on any axis.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContinuationMergeProof {
+    pub continuation: ContinuationIdentity,
+    pub dominating: SearchResourceLabel,
+    pub dominated: SearchResourceLabel,
+}
+
+impl ContinuationMergeProof {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        self.continuation.validate()?;
+        self.dominating.validate()?;
+        self.dominated.validate()?;
+        if !strictly_dominates(&self.dominating, &self.dominated) {
+            return Err(PlannerContractError::new(
+                "solver.continuation_merge_proof",
+                "requires an exact nonzero continuation identity and a strictly Pareto-better resource label",
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn validate_route_action_ref(action: &RouteActionRef) -> Result<(), PlannerContractError> {
+    let (field, id) = match action {
+        RouteActionRef::Transition { transition_id } => (
+            "solver.continuation_identity.action.transition_id",
+            transition_id,
+        ),
+        RouteActionRef::Technique { technique_id } => (
+            "solver.continuation_identity.action.technique_id",
+            technique_id,
+        ),
+        RouteActionRef::Resolver { resolver_id } => (
+            "solver.continuation_identity.action.resolver_id",
+            resolver_id,
+        ),
+        RouteActionRef::Writer { writer_id } => {
+            ("solver.continuation_identity.action.writer_id", writer_id)
+        }
+        RouteActionRef::Microtrace { microtrace_id } => (
+            "solver.continuation_identity.action.microtrace_id",
+            microtrace_id,
+        ),
+    };
+    validate_stable_id(field, id)
 }
 
 struct SearchNode {
@@ -538,14 +664,52 @@ impl Ord for QueueEntry {
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
 struct SearchIdentity {
-    state_sha256: Digest,
-    satisfied_required_actions: Vec<RouteActionRef>,
-    required_sequence_progress: Vec<usize>,
-    banned_sequence_progress: Vec<usize>,
-    preferred_sequence_progress: Vec<usize>,
-    satisfied_preference_ids: Vec<String>,
-    route_condition_unknown: bool,
+    continuation: ContinuationIdentity,
     route_costs: BTreeMap<String, u64>,
+}
+
+fn continuation_identity(node: &SearchNode, state_sha256: Digest) -> ContinuationIdentity {
+    ContinuationIdentity {
+        state_sha256,
+        satisfied_required_actions: node.satisfied_required_actions.iter().cloned().collect(),
+        required_sequence_progress: node.required_sequence_progress.clone(),
+        banned_sequence_progress: node.banned_sequence_progress.clone(),
+        preferred_sequence_progress: node.preferred_sequence_progress.clone(),
+        satisfied_preference_ids: node.satisfied_preference_ids.iter().cloned().collect(),
+        route_condition_unknown: node.route_condition_unknown,
+    }
+}
+
+fn resource_label(depth: usize, route_costs: &BTreeMap<String, u64>) -> SearchResourceLabel {
+    SearchResourceLabel {
+        depth,
+        route_costs: route_costs
+            .iter()
+            .filter(|(_, value)| **value != 0)
+            .map(|(axis, value)| (axis.clone(), *value))
+            .collect(),
+    }
+}
+
+fn strictly_dominates(left: &SearchResourceLabel, right: &SearchResourceLabel) -> bool {
+    if left.depth > right.depth {
+        return false;
+    }
+    let mut strict = left.depth < right.depth;
+    for axis in left
+        .route_costs
+        .keys()
+        .chain(right.route_costs.keys())
+        .collect::<BTreeSet<_>>()
+    {
+        let left_cost = left.route_costs.get(axis).copied().unwrap_or(0);
+        let right_cost = right.route_costs.get(axis).copied().unwrap_or(0);
+        if left_cost > right_cost {
+            return false;
+        }
+        strict |= left_cost < right_cost;
+    }
+    strict
 }
 
 struct RouteSearchPolicy {
@@ -774,6 +938,9 @@ impl<'a> ForwardSolver<'a> {
             insertion_order: 0,
         }]);
         let mut visited = BTreeSet::new();
+        let mut resource_frontier =
+            BTreeMap::<ContinuationIdentity, Vec<SearchResourceLabel>>::new();
+        let mut continuation_merge_proofs = Vec::new();
         let mut unknown_transition_ids = BTreeSet::new();
         let mut unknown_writer_ids = BTreeSet::new();
         let mut execution_error_ids = BTreeSet::new();
@@ -785,20 +952,34 @@ impl<'a> ForwardSolver<'a> {
 
         while let Some(QueueEntry { node, .. }) = queue.pop() {
             let state_identity = node.state.semantic_digest()?;
+            let continuation = continuation_identity(&node, state_identity);
             let search_identity = SearchIdentity {
-                state_sha256: state_identity,
-                satisfied_required_actions: node
-                    .satisfied_required_actions
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-                required_sequence_progress: node.required_sequence_progress.clone(),
-                banned_sequence_progress: node.banned_sequence_progress.clone(),
-                preferred_sequence_progress: node.preferred_sequence_progress.clone(),
-                satisfied_preference_ids: node.satisfied_preference_ids.iter().cloned().collect(),
-                route_condition_unknown: node.route_condition_unknown,
+                continuation: continuation.clone(),
                 route_costs: node.route_costs.clone(),
             };
+            let candidate_resources = resource_label(node.depth, &node.route_costs);
+            if let Some(dominating) = resource_frontier
+                .get(&continuation)
+                .and_then(|labels| {
+                    labels
+                        .iter()
+                        .find(|label| strictly_dominates(label, &candidate_resources))
+                })
+                .cloned()
+            {
+                if continuation_merge_proofs.len() == self.options.max_states {
+                    hit_search_limit = true;
+                    break;
+                }
+                let proof = ContinuationMergeProof {
+                    continuation,
+                    dominating,
+                    dominated: candidate_resources,
+                };
+                proof.validate()?;
+                continuation_merge_proofs.push(proof);
+                continue;
+            }
             if visited.contains(&search_identity) {
                 continue;
             }
@@ -807,6 +988,9 @@ impl<'a> ForwardSolver<'a> {
                 break;
             }
             visited.insert(search_identity);
+            let labels = resource_frontier.entry(continuation).or_default();
+            labels.retain(|label| !strictly_dominates(&candidate_resources, label));
+            labels.push(candidate_resources);
             if let Some(recorder) = authorization.as_deref_mut() {
                 recorder.observe_state(
                     state_identity,
@@ -889,6 +1073,7 @@ impl<'a> ForwardSolver<'a> {
                         execution_error_ids: execution_error_ids.into_iter().collect(),
                         blocked_transition_witnesses: Vec::new(),
                         blocked_writer_witnesses: Vec::new(),
+                        continuation_merge_proofs,
                     });
                 }
                 EvaluatedTruth::True => {
@@ -1544,6 +1729,7 @@ impl<'a> ForwardSolver<'a> {
             execution_error_ids: execution_error_ids.into_iter().collect(),
             blocked_transition_witnesses: blocked_transition_witnesses.into_values().collect(),
             blocked_writer_witnesses: blocked_writer_witnesses.into_values().collect(),
+            continuation_merge_proofs,
         })
     }
 
@@ -1586,6 +1772,9 @@ impl<'a> ForwardSolver<'a> {
                     )
                 })?;
             for (axis, increment) in &technique.cost.axes {
+                if *increment == 0 {
+                    continue;
+                }
                 let total = route_costs.entry(axis.clone()).or_default();
                 *total = total.checked_add(*increment).ok_or_else(|| {
                     PlannerContractError::new("solver.cost", format!("axis {axis} overflowed u64"))
@@ -1658,17 +1847,17 @@ impl<'a> ForwardSolver<'a> {
                 return Ok(saw_unknown_condition);
             }
         }
-        let search_identity = SearchIdentity {
+        let continuation = ContinuationIdentity {
             state_sha256: result,
-            satisfied_required_actions: satisfied_required_actions
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>(),
+            satisfied_required_actions: satisfied_required_actions.iter().cloned().collect(),
             required_sequence_progress: required_sequence_progress.clone(),
             banned_sequence_progress: banned_sequence_progress.clone(),
             preferred_sequence_progress: preferred_sequence_progress.clone(),
             satisfied_preference_ids: satisfied_preference_ids.iter().cloned().collect(),
             route_condition_unknown,
+        };
+        let search_identity = SearchIdentity {
+            continuation,
             route_costs: route_costs.clone(),
         };
         step.result_state_sha256 = result;
@@ -2446,6 +2635,37 @@ mod tests {
             techniques: Vec::new(),
             microtraces: Vec::new(),
             goals: Vec::new(),
+        }
+    }
+
+    fn location_technique(
+        snapshot: &StateSnapshot,
+        id: &str,
+        destination: &str,
+        costs: &[(&str, u64)],
+    ) -> Technique {
+        Technique {
+            id: id.into(),
+            label: format!("Reach {destination}"),
+            scope: scope(snapshot),
+            prerequisites: PredicateExpression::True,
+            operations: vec![StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: destination.into(),
+                    room: 0,
+                    layer: 0,
+                    spawn: 0,
+                },
+            }],
+            discharged_obligation_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            cost: RouteCost {
+                axes: costs
+                    .iter()
+                    .map(|(axis, value)| ((*axis).into(), *value))
+                    .collect(),
+            },
+            evidence: evidence(TruthStatus::Established),
         }
     }
 
@@ -4258,6 +4478,144 @@ mod tests {
             admitted.route_costs,
             BTreeMap::from([("difficulty".into(), 2)])
         );
+    }
+
+    #[test]
+    fn resource_dominance_merges_only_an_exact_continuation_with_a_proof() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![transition(
+            &snapshot,
+            "transition.b-to-g",
+            "STAGE_B",
+            "STAGE_G",
+            Vec::new(),
+        )]);
+        mechanics.techniques = vec![
+            location_technique(
+                &snapshot,
+                "technique.cheap-to-b",
+                "STAGE_B",
+                &[("difficulty", 1)],
+            ),
+            location_technique(
+                &snapshot,
+                "technique.expensive-to-b",
+                "STAGE_B",
+                &[("difficulty", 3)],
+            ),
+        ];
+        mechanics.goals = vec![goal("goal.g", "STAGE_G")];
+        let result = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_G"),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert_eq!(result.explored_states, 3);
+        assert_eq!(
+            result
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["technique.cheap-to-b", "transition.b-to-g"]
+        );
+        for proof in &result.continuation_merge_proofs {
+            proof.validate().unwrap();
+        }
+        let proof = result
+            .continuation_merge_proofs
+            .iter()
+            .find(|proof| proof.dominating.depth == 1 && proof.dominated.depth == 1)
+            .unwrap();
+        assert_eq!(proof.dominating.depth, 1);
+        assert_eq!(proof.dominated.depth, 1);
+        assert_eq!(
+            proof.dominating.route_costs,
+            BTreeMap::from([("difficulty".into(), 1)])
+        );
+        assert_eq!(
+            proof.dominated.route_costs,
+            BTreeMap::from([("difficulty".into(), 3)])
+        );
+        let mut detached = proof.clone();
+        detached
+            .dominating
+            .route_costs
+            .insert("difficulty".into(), 4);
+        assert!(detached.validate().is_err());
+        ContinuationMergeProof {
+            continuation: proof.continuation.clone(),
+            dominating: SearchResourceLabel {
+                depth: 1,
+                route_costs: BTreeMap::new(),
+            },
+            dominated: SearchResourceLabel {
+                depth: 2,
+                route_costs: BTreeMap::new(),
+            },
+        }
+        .validate()
+        .unwrap();
+    }
+
+    #[test]
+    fn incomparable_resource_labels_remain_separate_continuations() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![transition(
+            &snapshot,
+            "transition.b-to-g",
+            "STAGE_B",
+            "STAGE_G",
+            Vec::new(),
+        )]);
+        mechanics.techniques = vec![
+            location_technique(
+                &snapshot,
+                "technique.low-difficulty-to-b",
+                "STAGE_B",
+                &[("difficulty", 1), ("time", 3)],
+            ),
+            location_technique(
+                &snapshot,
+                "technique.low-time-to-b",
+                "STAGE_B",
+                &[("difficulty", 3), ("time", 1)],
+            ),
+        ];
+        mechanics.goals = vec![goal("goal.g", "STAGE_G")];
+        let result = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_G"),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert_eq!(result.explored_states, 4);
+        assert!(
+            result
+                .continuation_merge_proofs
+                .iter()
+                .all(|proof| proof.dominated.depth > 1)
+        );
+        for proof in &result.continuation_merge_proofs {
+            proof.validate().unwrap();
+        }
+        assert!(!strictly_dominates(
+            &SearchResourceLabel {
+                depth: 1,
+                route_costs: BTreeMap::from([("difficulty".into(), 1), ("time".into(), 3),]),
+            },
+            &SearchResourceLabel {
+                depth: 1,
+                route_costs: BTreeMap::from([("difficulty".into(), 3), ("time".into(), 1),]),
+            },
+        ));
     }
 
     #[test]
