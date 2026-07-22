@@ -10,6 +10,7 @@ use dusklight_search::residual_action::{
     RESIDUAL_PROPOSAL_SCHEMA_ID_V1, residual_proposal_schema_sha256,
 };
 use dusklight_search::residual_optimizer::ResidualSearchSpace;
+use dusklight_search::residual_retention::{FailureRetentionPolicy, ResidualRetentionConfig};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
@@ -241,16 +242,17 @@ impl OptimizationRequest {
                 elites,
                 generations,
                 smoothing_millionths,
-            } if population < 2
+            } if !(2..=16_384).contains(&population)
                 || elites == 0
                 || elites >= population
                 || generations == 0
+                || smoothing_millionths == 0
                 || smoothing_millionths > 1_000_000
                 || u64::from(population) * u64::from(generations)
                     > self.budgets.candidate_budget =>
             {
                 return Err(request_error(
-                    "CEM population, elites, generations, and smoothing must be bounded by the candidate budget",
+                    "CEM population, elites, generations, and smoothing must fit the implemented optimizer and candidate budget",
                 ));
             }
             _ => {}
@@ -277,11 +279,11 @@ impl OptimizationRequest {
             self.retention.failed_episodes,
             self.retention.failed_episode_limit,
         ) {
-            (FailedEpisodeRetention::None, Some(_))
+            (FailedEpisodeRetention::None, _)
             | (FailedEpisodeRetention::All, Some(_))
             | (FailedEpisodeRetention::DiversityReservoir, None | Some(0)) => {
                 return Err(request_error(
-                    "failed-episode retention limit is valid only as a positive diversity reservoir bound",
+                    "failures must be retained either completely or in a positive diversity reservoir",
                 ));
             }
             _ => {}
@@ -446,6 +448,43 @@ impl OptimizationRequest {
         self.content_sha256 = Digest::ZERO;
         self.content_sha256 = self.compute_content_sha256()?;
         Ok(())
+    }
+
+    pub fn residual_retention_config(
+        &self,
+    ) -> Result<ResidualRetentionConfig, OptimizationRequestError> {
+        self.validate()?;
+        let incumbent = self
+            .incumbent
+            .as_ref()
+            .ok_or_else(|| request_error("residual retention requires an incumbent parent tape"))?;
+        let failures = match (
+            self.retention.failed_episodes,
+            self.retention.failed_episode_limit,
+        ) {
+            (FailedEpisodeRetention::DiversityReservoir, Some(capacity)) => {
+                FailureRetentionPolicy::DiversityReservoir { capacity }
+            }
+            (FailedEpisodeRetention::All, None) => FailureRetentionPolicy::All,
+            _ => {
+                return Err(request_error(
+                    "optimization failure retention cannot map to residual retention",
+                ));
+            }
+        };
+        let config = ResidualRetentionConfig {
+            parent_tape_sha256: incumbent.tape.sha256,
+            terminal_program_sha256: self.terminal_predicate.program_sha256,
+            terminal_definition_sha256: self.terminal_predicate.definition_sha256,
+            exploration_horizon_ticks: self.budgets.exploration_horizon_ticks,
+            promotion_before_tick: self.budgets.promotion_before_tick,
+            maximum_candidates: self.budgets.candidate_budget,
+            failures,
+        };
+        config
+            .validate()
+            .map_err(|source| request_error(source.to_string()))?;
+        Ok(config)
     }
 
     pub fn to_pretty_json(&self) -> Result<Vec<u8>, OptimizationRequestError> {

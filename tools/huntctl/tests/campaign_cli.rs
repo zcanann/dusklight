@@ -180,6 +180,10 @@ fn validates_and_seals_the_ordon_optimization_request() {
     assert_eq!(report["incumbent_first_hit_tick"], 125);
     assert_eq!(report["exploration_horizon_ticks"], 160);
     assert_eq!(report["promotion_before_tick"], 125);
+    assert_eq!(
+        report["search_space_sha256"],
+        "a19105c390e4a32232e50da81d290994ee035ca614c1dc0181d5784bd7dd1879"
+    );
 
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -240,6 +244,19 @@ fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
                 Value::String("2".repeat(64)),
             ),
             "detached from the implemented raw-PAD compiler",
+        ),
+        (
+            "residual-space",
+            (
+                "/proposal/search_space/end_frame_exclusive",
+                Value::from(127),
+            ),
+            "exceeds the incumbent tape",
+        ),
+        (
+            "failure-retention",
+            ("/retention/failed_episodes", Value::String("none".into())),
+            "failures must be retained",
         ),
     ] {
         let mut changed = request.clone();

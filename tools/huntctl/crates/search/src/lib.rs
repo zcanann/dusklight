@@ -10,6 +10,7 @@ pub mod motion_path_golf;
 pub mod option_golf;
 pub mod residual_action;
 pub mod residual_optimizer;
+pub mod residual_retention;
 pub mod search;
 pub mod suffix_batch;
 

@@ -317,7 +317,10 @@ impl ResidualRandomSampler {
         Ok(snapshot)
     }
 
-    fn validate_parent_bytes(&self, parent_tape_bytes: &[u8]) -> Result<(), ResidualOptimizerError> {
+    fn validate_parent_bytes(
+        &self,
+        parent_tape_bytes: &[u8],
+    ) -> Result<(), ResidualOptimizerError> {
         if sha256_bytes(parent_tape_bytes) != self.parent_tape_sha256 {
             return Err(optimizer_error(
                 "random residual sampler is detached from its parent tape",
@@ -567,7 +570,9 @@ pub struct PendingResidualCemSample {
 #[serde(deny_unknown_fields)]
 pub struct ResidualCemSnapshot {
     pub schema: String,
+    pub content_sha256: Digest,
     pub search_space_sha256: Digest,
+    pub parent_tape_sha256: Digest,
     pub config: ResidualCemConfig,
     pub generation: u32,
     pub rng_state: u64,
@@ -580,6 +585,7 @@ pub struct ResidualCemSnapshot {
 #[derive(Clone, Debug)]
 pub struct ResidualCemOptimizer {
     space: ResidualSearchSpace,
+    parent_tape_sha256: Digest,
     config: ResidualCemConfig,
     generation: u32,
     rng: DeterministicRng,
@@ -592,6 +598,7 @@ pub struct ResidualCemOptimizer {
 impl ResidualCemOptimizer {
     pub fn new(
         space: ResidualSearchSpace,
+        parent_tape_bytes: &[u8],
         config: ResidualCemConfig,
     ) -> Result<Self, ResidualOptimizerError> {
         space.validate()?;
@@ -601,9 +608,10 @@ impl ResidualCemOptimizer {
                 .map(|_| ResidualGeneDistribution::uniform(&space))
                 .collect(),
             space,
+            parent_tape_sha256: sha256_bytes(parent_tape_bytes),
             config,
             generation: 0,
-            rng: DeterministicRng::new(config.seed),
+            rng: DeterministicRng::new(config.seed ^ 0x6365_6d5f_7265_7369),
             attempted_genomes: 0,
             seen_tape_sha256: BTreeSet::new(),
             pending: BTreeMap::new(),
@@ -624,7 +632,10 @@ impl ResidualCemOptimizer {
             .map(|sample| (sample.candidate_sha256, sample.clone()))
             .collect::<BTreeMap<_, _>>();
         if snapshot.schema != RESIDUAL_CEM_SNAPSHOT_SCHEMA_V1
+            || snapshot.content_sha256 == Digest::ZERO
+            || snapshot.content_sha256 != snapshot.compute_identity()?
             || snapshot.search_space_sha256 != space.sha256()?
+            || snapshot.parent_tape_sha256 != sha256_bytes(parent_tape_bytes)
             || snapshot.config != config
             || snapshot.distributions.len() != usize::from(space.candidate_slots)
             || snapshot
@@ -650,6 +661,7 @@ impl ResidualCemOptimizer {
         }
         Ok(Self {
             space,
+            parent_tape_sha256: snapshot.parent_tape_sha256,
             config,
             generation: snapshot.generation,
             rng: DeterministicRng {
@@ -673,7 +685,7 @@ impl ResidualCemOptimizer {
             ));
         }
         self.space.validate_parent(parent)?;
-        let distributions = self.distributions.clone();
+        self.validate_parent_bytes(parent_tape_bytes)?;
         let mut produced = 0_u64;
         let mut batch = sample_unique(
             &self.space,
@@ -685,7 +697,7 @@ impl ResidualCemOptimizer {
             &mut self.attempted_genomes,
             &mut produced,
             &mut self.seen_tape_sha256,
-            Some(&distributions),
+            Some(&self.distributions),
         )?;
         for proposal in &batch.proposals {
             self.pending.insert(
@@ -745,9 +757,11 @@ impl ResidualCemOptimizer {
     }
 
     pub fn snapshot(&self) -> Result<ResidualCemSnapshot, ResidualOptimizerError> {
-        Ok(ResidualCemSnapshot {
+        let mut snapshot = ResidualCemSnapshot {
             schema: RESIDUAL_CEM_SNAPSHOT_SCHEMA_V1.into(),
+            content_sha256: Digest::ZERO,
             search_space_sha256: self.space.sha256()?,
+            parent_tape_sha256: self.parent_tape_sha256,
             config: self.config,
             generation: self.generation,
             rng_state: self.rng.state,
@@ -755,7 +769,29 @@ impl ResidualCemOptimizer {
             distributions: self.distributions.clone(),
             seen_tape_sha256: self.seen_tape_sha256.iter().copied().collect(),
             pending: self.pending.values().cloned().collect(),
-        })
+        };
+        snapshot.content_sha256 = snapshot.compute_identity()?;
+        Ok(snapshot)
+    }
+
+    fn validate_parent_bytes(
+        &self,
+        parent_tape_bytes: &[u8],
+    ) -> Result<(), ResidualOptimizerError> {
+        if sha256_bytes(parent_tape_bytes) != self.parent_tape_sha256 {
+            return Err(optimizer_error(
+                "residual CEM is detached from its parent tape",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl ResidualCemSnapshot {
+    fn compute_identity(&self) -> Result<Digest, ResidualOptimizerError> {
+        let mut canonical = self.clone();
+        canonical.content_sha256 = Digest::ZERO;
+        canonical_digest(b"dusklight.residual-cem-snapshot/v1\0", &canonical)
     }
 }
 
@@ -1008,7 +1044,7 @@ fn normalize_probability(raw: Vec<u64>) -> Vec<u32> {
 fn validate_batch_count(count: usize) -> Result<(), ResidualOptimizerError> {
     if count == 0 || count > MAX_PROPOSALS_PER_BATCH {
         return Err(optimizer_error(
-            "residual proposal batch must contain 1..=100000 candidates",
+            "residual proposal batch must contain 1..=16384 candidates",
         ));
     }
     Ok(())
@@ -1043,6 +1079,10 @@ fn canonical_digest(
     hasher.update((bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
     Ok(Digest(hasher.finalize().into()))
+}
+
+fn sha256_bytes(bytes: &[u8]) -> Digest {
+    Digest(Sha256::digest(bytes).into())
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1137,8 +1177,8 @@ mod tests {
     #[test]
     fn random_sampler_is_seeded_independent_and_compiles_unique_raw_tapes() {
         let (parent, bytes) = parent(96);
-        let mut first = ResidualRandomSampler::new(space(), 104_729).unwrap();
-        let mut second = ResidualRandomSampler::new(space(), 104_729).unwrap();
+        let mut first = ResidualRandomSampler::new(space(), &bytes, 104_729).unwrap();
+        let mut second = ResidualRandomSampler::new(space(), &bytes, 104_729).unwrap();
         let left = first.sample(&parent, &bytes, 64).unwrap();
         let right = second.sample(&parent, &bytes, 64).unwrap();
         assert_eq!(
@@ -1172,13 +1212,13 @@ mod tests {
     #[test]
     fn random_snapshot_resumes_without_repeating_or_skipping() {
         let (parent, bytes) = parent(96);
-        let mut uninterrupted = ResidualRandomSampler::new(space(), 17).unwrap();
+        let mut uninterrupted = ResidualRandomSampler::new(space(), &bytes, 17).unwrap();
         let all = uninterrupted.sample(&parent, &bytes, 24).unwrap();
 
-        let mut interrupted = ResidualRandomSampler::new(space(), 17).unwrap();
+        let mut interrupted = ResidualRandomSampler::new(space(), &bytes, 17).unwrap();
         let prefix = interrupted.sample(&parent, &bytes, 9).unwrap();
         let snapshot = interrupted.snapshot().unwrap();
-        let mut resumed = ResidualRandomSampler::restore(space(), snapshot).unwrap();
+        let mut resumed = ResidualRandomSampler::restore(space(), &bytes, snapshot).unwrap();
         let suffix = resumed.sample(&parent, &bytes, 15).unwrap();
         let joined = prefix
             .proposals
@@ -1204,7 +1244,7 @@ mod tests {
             smoothing_millionths: 250_000,
             seed: 31,
         };
-        let mut optimizer = ResidualCemOptimizer::new(space(), config).unwrap();
+        let mut optimizer = ResidualCemOptimizer::new(space(), &bytes, config).unwrap();
         let first = optimizer.ask(&parent, &bytes).unwrap();
         assert_eq!(first.proposals.len(), 12);
         assert!(optimizer.ask(&parent, &bytes).is_err());
@@ -1299,11 +1339,12 @@ mod tests {
         invalid.analog_delta_values.push(0);
         assert!(invalid.validate().is_err());
 
-        let mut sampler = ResidualRandomSampler::new(space(), 1).unwrap();
+        let mut sampler = ResidualRandomSampler::new(space(), &bytes, 1).unwrap();
         sampler.sample(&parent, &bytes, 2).unwrap();
         let mut snapshot = sampler.snapshot().unwrap();
         snapshot.search_space_sha256 = Digest([9; 32]);
-        assert!(ResidualRandomSampler::restore(space(), snapshot).is_err());
+        snapshot.content_sha256 = snapshot.compute_identity().unwrap();
+        assert!(ResidualRandomSampler::restore(space(), &bytes, snapshot).is_err());
 
         let mut short_parent = parent.clone();
         short_parent.frames.truncate(40);
@@ -1315,7 +1356,7 @@ mod tests {
             smoothing_millionths: 250_000,
             seed: 9,
         };
-        let mut cem = ResidualCemOptimizer::new(space(), config).unwrap();
+        let mut cem = ResidualCemOptimizer::new(space(), &bytes, config).unwrap();
         cem.ask(&parent, &bytes).unwrap();
         let cem_snapshot = cem.snapshot().unwrap();
         let different_config = ResidualCemConfig {
@@ -1328,6 +1369,7 @@ mod tests {
         );
         let mut detached_pending = cem_snapshot;
         detached_pending.pending[0].candidate_sha256 = Digest([8; 32]);
+        detached_pending.content_sha256 = detached_pending.compute_identity().unwrap();
         assert!(ResidualCemOptimizer::restore(space(), config, &bytes, detached_pending).is_err());
     }
 

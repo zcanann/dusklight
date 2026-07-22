@@ -232,6 +232,14 @@ goal-only discovery.
       supports it.
 - [ ] Minimize a winner only after discovery, using exact terminal replay as the
       acceptance authority.
+      The sealed `residual_retention` archive now implements these policies,
+      including candidate/tape-bound exact evidence, deterministic
+      first-hit/simplicity/risk ordering, diverse success elites, a failure
+      diversity reservoir, supported horizon-tightening evidence, and
+      replay-authoritative post-discovery minimization. Its complete history
+      round-trips through a sealed resume snapshot. These items remain open
+      until the campaign runner records every native result through the archive
+      and checkpoints it automatically.
 
 ### 2.4 Baseline proof
 
