@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V7: &str =
-    "dusklight-multitask-set-encoder-report/v7";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V8: &str =
+    "dusklight-multitask-set-encoder-report/v8";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -55,6 +55,7 @@ pub enum AuxiliaryHeadConditioning {
 pub enum MultiTaskSetPooling {
     MeanMax,
     MeanMaxLearnedAttention,
+    MeanMaxTaskAttention,
 }
 
 impl MultiTaskSetPooling {
@@ -62,15 +63,32 @@ impl MultiTaskSetPooling {
         match name {
             "mean-max" => Some(Self::MeanMax),
             "mean-max-learned-attention" => Some(Self::MeanMaxLearnedAttention),
+            "mean-max-task-attention" => Some(Self::MeanMaxTaskAttention),
             _ => None,
         }
     }
 
-    fn attention_heads(self) -> usize {
+    fn global_attention_heads(self) -> usize {
         match self {
             Self::MeanMax => 0,
             Self::MeanMaxLearnedAttention => LEARNED_ATTENTION_HEADS,
+            Self::MeanMaxTaskAttention => 0,
         }
+    }
+
+    fn task_attention_heads(self, target_count: usize) -> usize {
+        match self {
+            Self::MeanMaxTaskAttention => target_count,
+            Self::MeanMax | Self::MeanMaxLearnedAttention => 0,
+        }
+    }
+
+    fn attention_heads(self, target_count: usize) -> usize {
+        self.global_attention_heads() + self.task_attention_heads(target_count)
+    }
+
+    fn uses_task_attention(self) -> bool {
+        self == Self::MeanMaxTaskAttention
     }
 }
 
@@ -633,6 +651,9 @@ pub struct RareEventMetrics {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AttentionHeadDiagnostics {
     pub head: usize,
+    pub target: Option<String>,
+    pub conditioning: Option<AuxiliaryHeadConditioning>,
+    pub observation_support: usize,
     pub query_l2_norm: f64,
     pub mean_normalized_entropy: f64,
     pub mean_maximum_weight: f64,
@@ -805,7 +826,7 @@ impl CompleteSetMultiTaskEncoder {
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let held_out_attention = model.attention_diagnostics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V7,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V8,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
@@ -854,16 +875,20 @@ impl CompleteSetMultiTaskEncoder {
         target_inverse_stddev: Vec<f64>,
         pooling: MultiTaskSetPooling,
     ) -> Result<Self, TrainableSetError> {
-        let attention_heads = pooling.attention_heads();
-        let state_input_width =
-            layout.base_input_width + 2 + config.node_hidden_width * (2 + attention_heads);
         let target_width = target_names.len();
+        let global_attention_heads = pooling.global_attention_heads();
+        let attention_heads = pooling.attention_heads(target_width);
+        let state_input_width =
+            layout.base_input_width + 2 + config.node_hidden_width * (2 + global_attention_heads);
         if target_conditioning.len() != target_width {
             return Err(TrainableSetError::new(
                 "multitask target conditioning width is invalid",
             ));
         }
-        let head_input_width = config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
+        let task_attention_width =
+            usize::from(pooling.uses_task_attention()) * config.node_hidden_width * 2;
+        let head_input_width =
+            config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH + task_attention_width;
         let parameter_count = config
             .node_hidden_width
             .checked_mul(layout.node_input_width + 1)
@@ -933,7 +958,17 @@ impl CompleteSetMultiTaskEncoder {
     }
 
     pub fn model_sha256(&self) -> Result<Digest, TrainableSetError> {
-        canonical_digest(b"dusklight.complete-set-multitask-encoder/v5\0", self)
+        canonical_digest(b"dusklight.complete-set-multitask-encoder/v6\0", self)
+    }
+
+    fn attention_head_count(&self) -> usize {
+        self.pooling.attention_heads(self.target_names.len())
+    }
+
+    fn head_input_width(&self) -> usize {
+        self.config.head_hidden_width * 2
+            + ACTION_CONTEXT_WIDTH
+            + usize::from(self.pooling.uses_task_attention()) * self.config.node_hidden_width * 2
     }
 
     pub fn parameter_count(&self) -> usize {
@@ -1045,7 +1080,7 @@ impl CompleteSetMultiTaskEncoder {
         &self,
         samples: &[MultiTaskSetSample],
     ) -> Result<Vec<AttentionHeadDiagnostics>, TrainableSetError> {
-        let heads = self.pooling.attention_heads();
+        let heads = self.attention_head_count();
         if heads == 0 {
             return Ok(Vec::new());
         }
@@ -1054,28 +1089,34 @@ impl CompleteSetMultiTaskEncoder {
         let mut support = vec![0_usize; heads];
         for sample in samples {
             self.validate_transition(sample)?;
-            let forward = self.state_forward(&sample.input);
-            for (head, weights) in forward.attention_weights.iter().enumerate() {
-                if weights.is_empty() {
+            let pre = self.state_forward(&sample.input);
+            let post = self
+                .pooling
+                .uses_task_attention()
+                .then(|| self.state_forward(&sample.post_input));
+            for head in 0..heads {
+                if self.pooling.uses_task_attention() && !sample.target_present[head] {
                     continue;
                 }
-                let entropy = -weights
-                    .iter()
-                    .filter(|weight| **weight > 0.0)
-                    .map(|weight| weight * weight.ln())
-                    .sum::<f64>();
-                let maximum_entropy = (weights.len() as f64).ln();
-                entropy_sum[head] += if maximum_entropy > 0.0 {
-                    entropy / maximum_entropy
-                } else {
-                    0.0
-                };
-                maximum_sum[head] += weights
-                    .iter()
-                    .copied()
-                    .max_by(f64::total_cmp)
-                    .unwrap_or(0.0);
-                support[head] += 1;
+                accumulate_attention_distribution(
+                    &pre.attention_weights[head],
+                    &mut entropy_sum[head],
+                    &mut maximum_sum[head],
+                    &mut support[head],
+                );
+                if self.pooling.uses_task_attention()
+                    && self.target_conditioning[head] == AuxiliaryHeadConditioning::PreAndPostState
+                {
+                    accumulate_attention_distribution(
+                        &post
+                            .as_ref()
+                            .expect("task attention computes post state")
+                            .attention_weights[head],
+                        &mut entropy_sum[head],
+                        &mut maximum_sum[head],
+                        &mut support[head],
+                    );
+                }
             }
         }
         (0..heads)
@@ -1089,6 +1130,15 @@ impl CompleteSetMultiTaskEncoder {
                     ..(head + 1) * self.config.node_hidden_width];
                 Ok(AttentionHeadDiagnostics {
                     head,
+                    target: self
+                        .pooling
+                        .uses_task_attention()
+                        .then(|| self.target_names[head].clone()),
+                    conditioning: self
+                        .pooling
+                        .uses_task_attention()
+                        .then(|| self.target_conditioning[head]),
+                    observation_support: support[head],
                     query_l2_norm: query.iter().map(|value| value * value).sum::<f64>().sqrt(),
                     mean_normalized_entropy: entropy_sum[head] / support[head] as f64,
                     mean_maximum_weight: maximum_sum[head] / support[head] as f64,
@@ -1154,7 +1204,7 @@ impl CompleteSetMultiTaskEncoder {
                 *value /= node_hidden.len() as f64;
             }
         }
-        let attention_heads = self.pooling.attention_heads();
+        let attention_heads = self.attention_head_count();
         let mut attention_weights = Vec::with_capacity(attention_heads);
         let mut attention_pools = Vec::with_capacity(attention_heads);
         for head in 0..attention_heads {
@@ -1192,7 +1242,12 @@ impl CompleteSetMultiTaskEncoder {
         state_input.push((sample.nodes.len() as f64).ln_1p() / (u16::MAX as f64).ln_1p());
         state_input.extend(mean_pool);
         state_input.extend(max_pool);
-        state_input.extend(attention_pools.iter().flatten().copied());
+        state_input.extend(
+            attention_pools[..self.pooling.global_attention_heads()]
+                .iter()
+                .flatten()
+                .copied(),
+        );
         let state_hidden = dense_tanh(
             &state_input,
             &self.state_weights,
@@ -1213,11 +1268,12 @@ impl CompleteSetMultiTaskEncoder {
     fn conditioned_forward(&self, sample: &MultiTaskSetSample) -> ConditionedForward {
         let pre = self.state_forward(&sample.input);
         let post = self.state_forward(&sample.post_input);
-        let head_input_width = self.config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
+        let head_input_width = self.head_input_width();
         let head_inputs = self
             .target_conditioning
             .iter()
-            .map(|conditioning| {
+            .enumerate()
+            .map(|(target, conditioning)| {
                 let mut input = Vec::with_capacity(head_input_width);
                 input.extend(&pre.state_hidden);
                 match conditioning {
@@ -1228,6 +1284,17 @@ impl CompleteSetMultiTaskEncoder {
                     AuxiliaryHeadConditioning::PreAndPostState => {
                         input.extend(&post.state_hidden);
                         input.extend(std::iter::repeat_n(0.0, ACTION_CONTEXT_WIDTH));
+                    }
+                }
+                if self.pooling.uses_task_attention() {
+                    input.extend(&pre.attention_pools[target]);
+                    match conditioning {
+                        AuxiliaryHeadConditioning::PreStateAndAction => {
+                            input.extend(std::iter::repeat_n(0.0, self.config.node_hidden_width))
+                        }
+                        AuxiliaryHeadConditioning::PreAndPostState => {
+                            input.extend(&post.attention_pools[target]);
+                        }
                     }
                 }
                 input
@@ -1258,7 +1325,7 @@ impl CompleteSetMultiTaskEncoder {
         let output_before = self.output_weights.clone();
         let state_before = self.state_weights.clone();
         let attention_before = self.attention_queries.clone();
-        let head_input_width = self.config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
+        let head_input_width = self.head_input_width();
         let present_count = sample
             .target_present
             .iter()
@@ -1286,6 +1353,10 @@ impl CompleteSetMultiTaskEncoder {
         }
         let mut d_pre_hidden = vec![0.0; self.config.head_hidden_width];
         let mut d_post_hidden = vec![0.0; self.config.head_hidden_width];
+        let mut d_pre_attention =
+            vec![vec![0.0; self.config.node_hidden_width]; self.attention_head_count()];
+        let mut d_post_attention =
+            vec![vec![0.0; self.config.node_hidden_width]; self.attention_head_count()];
         for hidden in 0..self.config.head_hidden_width {
             for target in 0..self.target_names.len() {
                 d_pre_hidden[hidden] +=
@@ -1294,6 +1365,22 @@ impl CompleteSetMultiTaskEncoder {
                     d_post_hidden[hidden] += d_outputs[target]
                         * output_before
                             [target * head_input_width + self.config.head_hidden_width + hidden];
+                }
+            }
+        }
+        if self.pooling.uses_task_attention() {
+            let pre_offset = self.config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
+            let post_offset = pre_offset + self.config.node_hidden_width;
+            for target in 0..self.target_names.len() {
+                for hidden in 0..self.config.node_hidden_width {
+                    d_pre_attention[target][hidden] += d_outputs[target]
+                        * output_before[target * head_input_width + pre_offset + hidden];
+                    if self.target_conditioning[target]
+                        == AuxiliaryHeadConditioning::PreAndPostState
+                    {
+                        d_post_attention[target][hidden] += d_outputs[target]
+                            * output_before[target * head_input_width + post_offset + hidden];
+                    }
                 }
             }
         }
@@ -1307,6 +1394,7 @@ impl CompleteSetMultiTaskEncoder {
         self.accumulate_encoder_gradients(
             &forward.pre,
             &d_pre_hidden,
+            &d_pre_attention,
             &state_before,
             &attention_before,
             &mut gradients,
@@ -1314,6 +1402,7 @@ impl CompleteSetMultiTaskEncoder {
         self.accumulate_encoder_gradients(
             &forward.post,
             &d_post_hidden,
+            &d_post_attention,
             &state_before,
             &attention_before,
             &mut gradients,
@@ -1363,6 +1452,7 @@ impl CompleteSetMultiTaskEncoder {
         &self,
         forward: &StateForward,
         d_hidden: &[f64],
+        direct_attention: &[Vec<f64>],
         state_before: &[f64],
         attention_before: &[f64],
         gradients: &mut EncoderGradients,
@@ -1386,6 +1476,23 @@ impl CompleteSetMultiTaskEncoder {
         let d_max = &d_state_input[pool_offset + self.config.node_hidden_width
             ..pool_offset + self.config.node_hidden_width * 2];
         let attention_offset = pool_offset + self.config.node_hidden_width * 2;
+        let attention_heads = self.attention_head_count();
+        let mut d_attention = vec![vec![0.0; self.config.node_hidden_width]; attention_heads];
+        for (head, d_pool) in d_attention
+            .iter_mut()
+            .take(self.pooling.global_attention_heads())
+            .enumerate()
+        {
+            d_pool.copy_from_slice(
+                &d_state_input[attention_offset + head * self.config.node_hidden_width
+                    ..attention_offset + (head + 1) * self.config.node_hidden_width],
+            );
+        }
+        for (d_pool, direct) in d_attention.iter_mut().zip(direct_attention) {
+            for (gradient, additional) in d_pool.iter_mut().zip(direct) {
+                *gradient += additional;
+            }
+        }
         let node_count = forward.node_hidden.len();
         for node_index in 0..node_count {
             for hidden in 0..self.config.node_hidden_width {
@@ -1393,10 +1500,7 @@ impl CompleteSetMultiTaskEncoder {
                 if forward.max_indices[hidden] == Some(node_index) {
                     gradient += d_max[hidden];
                 }
-                for head in 0..self.pooling.attention_heads() {
-                    let d_pool = &d_state_input[attention_offset
-                        + head * self.config.node_hidden_width
-                        ..attention_offset + (head + 1) * self.config.node_hidden_width];
+                for (head, d_pool) in d_attention.iter().enumerate() {
                     let weight = forward.attention_weights[head][node_index];
                     let score_gradient = weight
                         * d_pool
@@ -1512,6 +1616,34 @@ impl CompleteSetMultiTaskEncoder {
             })
             .collect())
     }
+}
+
+fn accumulate_attention_distribution(
+    weights: &[f64],
+    entropy_sum: &mut f64,
+    maximum_sum: &mut f64,
+    support: &mut usize,
+) {
+    if weights.is_empty() {
+        return;
+    }
+    let entropy = -weights
+        .iter()
+        .filter(|weight| **weight > 0.0)
+        .map(|weight| weight * weight.ln())
+        .sum::<f64>();
+    let maximum_entropy = (weights.len() as f64).ln();
+    *entropy_sum += if maximum_entropy > 0.0 {
+        entropy / maximum_entropy
+    } else {
+        0.0
+    };
+    *maximum_sum += weights
+        .iter()
+        .copied()
+        .max_by(f64::total_cmp)
+        .unwrap_or(0.0);
+    *support += 1;
 }
 
 #[derive(Clone, Default)]
@@ -3664,7 +3796,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v7\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v8\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -4184,6 +4316,10 @@ mod tests {
             MultiTaskSetPooling::parse("mean-max-learned-attention"),
             Some(MultiTaskSetPooling::MeanMaxLearnedAttention)
         );
+        assert_eq!(
+            MultiTaskSetPooling::parse("mean-max-task-attention"),
+            Some(MultiTaskSetPooling::MeanMaxTaskAttention)
+        );
         assert_eq!(MultiTaskSetPooling::parse("nearest-actor"), None);
         for family in NativeEncoderChannelFamily::ALL {
             assert_eq!(
@@ -4420,6 +4556,9 @@ mod tests {
             repeated.model_sha256().unwrap()
         );
         for head in &report.held_out_attention {
+            assert_eq!(head.target, None);
+            assert_eq!(head.conditioning, None);
+            assert_eq!(head.observation_support, held_out.len());
             assert!(head.query_l2_norm.is_finite() && head.query_l2_norm > 0.0);
             assert!((0.0..=1.0).contains(&head.mean_normalized_entropy));
             assert!((0.0..=1.0).contains(&head.mean_maximum_weight));
@@ -4430,6 +4569,70 @@ mod tests {
         permuted.input.nodes.reverse();
         permuted.post_input.nodes.reverse();
         assert_eq!(baseline, model.predict(&permuted).unwrap());
+
+        let queries_before = model.attention_queries.clone();
+        model.train_one(&training[0]).unwrap();
+        assert_ne!(queries_before, model.attention_queries);
+    }
+
+    #[test]
+    fn task_attention_is_target_bound_phase_correct_and_permutation_invariant() {
+        let training = corpus(1, 48);
+        let held_out = corpus(100, 16);
+        let config = TrainableSetConfig {
+            epochs: 4,
+            node_hidden_width: 8,
+            head_hidden_width: 8,
+            ..TrainableSetConfig::default()
+        };
+        let fit = || {
+            CompleteSetMultiTaskEncoder::fit_with_pooling(
+                Digest([7; 32]),
+                Digest([8; 32]),
+                Digest([9; 32]),
+                vec!["forward_sum".into(), "inverse_difference".into()],
+                &training,
+                &held_out,
+                config,
+                MultiTaskSetPooling::MeanMaxTaskAttention,
+            )
+            .unwrap()
+        };
+        let (report, mut model) = fit();
+        let (_, repeated) = fit();
+        assert_eq!(report.pooling, MultiTaskSetPooling::MeanMaxTaskAttention);
+        assert_eq!(report.held_out_attention.len(), 2);
+        assert_eq!(
+            model.model_sha256().unwrap(),
+            repeated.model_sha256().unwrap()
+        );
+        for (target, head) in report.held_out_attention.iter().enumerate() {
+            assert_eq!(
+                head.target.as_deref(),
+                Some(report.target_names[target].as_str())
+            );
+            assert_eq!(head.conditioning, Some(report.target_conditioning[target]));
+            let phase_multiplier = usize::from(
+                report.target_conditioning[target] == AuxiliaryHeadConditioning::PreAndPostState,
+            ) + 1;
+            assert_eq!(
+                head.observation_support,
+                report.target_support_held_out[target] * phase_multiplier
+            );
+        }
+
+        let baseline = model.predict(&held_out[0]).unwrap();
+        let mut permuted = held_out[0].clone();
+        permuted.input.nodes.reverse();
+        permuted.post_input.nodes.reverse();
+        assert_eq!(baseline, model.predict(&permuted).unwrap());
+
+        let mut changed_post = held_out[0].clone();
+        changed_post.post_input.nodes[0].continuous[0] += 1000.0;
+        assert_eq!(baseline[0], model.predict(&changed_post).unwrap()[0]);
+        let mut changed_action = held_out[0].clone();
+        changed_action.action_context.fill(0.75);
+        assert_eq!(baseline[1], model.predict(&changed_action).unwrap()[1]);
 
         let queries_before = model.attention_queries.clone();
         model.train_one(&training[0]).unwrap();
