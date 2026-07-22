@@ -54,6 +54,7 @@ pub mod native_geometry_view;
 pub mod native_goal_frozen_policy;
 pub mod native_goal_reachability;
 pub mod native_goal_trajectory;
+pub mod native_policy_collapse;
 pub mod native_policy_features;
 pub mod native_replay_corpus;
 pub mod native_resource_load_view;

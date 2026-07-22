@@ -15,6 +15,7 @@ use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
 use dusklight_learning::native_goal_reachability::NativeGoalReachabilityConfig;
 use dusklight_learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
+use dusklight_learning::native_policy_collapse::NativePolicyCollapseReport;
 use dusklight_learning::native_replay_corpus::NativeReplayCorpus;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -30,8 +31,10 @@ pub const NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1: &str =
     "dusklight-native-goal-learning-loop-request/v1";
 pub const NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2: &str =
     "dusklight-native-goal-learning-loop-record/v2";
-pub const NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V2: &str =
-    "dusklight-native-goal-learning-loop-state/v2";
+pub const NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3: &str =
+    "dusklight-native-goal-learning-loop-record/v3";
+pub const NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V3: &str =
+    "dusklight-native-goal-learning-loop-state/v3";
 
 const MIN_GENERATIONS: u16 = 3;
 const MAX_GENERATIONS: u16 = 1_024;
@@ -110,6 +113,8 @@ pub enum NativeGoalLearningLoopEvent {
         executed_record_sha256: Digest,
         output_corpus_sha256: Digest,
         output_corpus: ArtifactReference,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        collapse_diagnostics: Option<ArtifactReference>,
         entries: u64,
         transitions: u64,
     },
@@ -172,6 +177,8 @@ pub struct NativeGoalLearningGenerationState {
     pub output_corpus_sha256: Option<Digest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_corpus: Option<ArtifactReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collapse_diagnostics: Option<ArtifactReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_entries: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -413,7 +420,7 @@ pub struct NativeGoalLearningLoopValidationReport {
 
 impl NativeGoalLearningLoopState {
     pub fn validate(&self) -> Result<(), NativeGoalLearningLoopError> {
-        if self.schema != NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V2
+        if self.schema != NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V3
             || self.request_sha256 == Digest::ZERO
             || self.initial_corpus_sha256 == Digest::ZERO
             || self.journal_sha256 == Digest::ZERO
@@ -479,7 +486,7 @@ impl NativeGoalLearningLoopState {
         let mut canonical = self.clone();
         canonical.state_sha256 = Digest::ZERO;
         canonical_digest(
-            b"dusklight.native-goal-learning-loop-state/v2\0",
+            b"dusklight.native-goal-learning-loop-state/v3\0",
             &canonical,
         )
     }
@@ -554,9 +561,16 @@ pub fn append_native_goal_learning_loop_event(
     let root = canonical_root(repository_root)?;
     validate_event_artifacts(&root, &event)?;
     let mut preview = current.clone();
-    apply_event(request, &mut preview, &event, Digest([1; 32]))?;
+    apply_event(
+        request,
+        &root,
+        &mut preview,
+        NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3,
+        &event,
+        Digest([1; 32]),
+    )?;
     let mut record = NativeGoalLearningLoopRecord {
-        schema: NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2.into(),
+        schema: NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3.into(),
         request_sha256: request.content_sha256,
         sequence: current.next_sequence,
         previous_record_sha256: current.last_record_sha256,
@@ -602,7 +616,7 @@ fn fold_journal(
         .map_or(0, |offset| offset + 1);
     let valid = &bytes[..valid_len];
     let mut state = NativeGoalLearningLoopState {
-        schema: NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V2.into(),
+        schema: NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V3.into(),
         request_sha256: request.content_sha256,
         initial_corpus_sha256,
         journal_sha256: sha256(valid),
@@ -623,8 +637,10 @@ fn fold_journal(
     {
         let record: NativeGoalLearningLoopRecord =
             serde_json::from_slice(line).map_err(loop_error)?;
-        if record.schema != NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2
-            || record.request_sha256 != request.content_sha256
+        if !matches!(
+            record.schema.as_str(),
+            NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2 | NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3
+        ) || record.request_sha256 != request.content_sha256
             || record.sequence != state.next_sequence
             || record.previous_record_sha256 != state.last_record_sha256
             || record.record_sha256 == Digest::ZERO
@@ -635,7 +651,14 @@ fn fold_journal(
             ));
         }
         validate_event_artifacts(root, &record.event)?;
-        apply_event(request, &mut state, &record.event, record.record_sha256)?;
+        apply_event(
+            request,
+            root,
+            &mut state,
+            &record.schema,
+            &record.event,
+            record.record_sha256,
+        )?;
         state.record_count += 1;
         state.last_record_sha256 = record.record_sha256;
         state.next_sequence += 1;
@@ -647,7 +670,9 @@ fn fold_journal(
 
 fn apply_event(
     request: &NativeGoalLearningLoopRequest,
+    root: &Path,
     state: &mut NativeGoalLearningLoopState,
+    record_schema: &str,
     event: &NativeGoalLearningLoopEvent,
     record_sha256: Digest,
 ) -> Result<(), NativeGoalLearningLoopError> {
@@ -713,6 +738,7 @@ fn apply_event(
                 executed_record_sha256: None,
                 output_corpus_sha256: None,
                 output_corpus: None,
+                collapse_diagnostics: None,
                 output_entries: None,
                 output_transitions: None,
                 committed_record_sha256: None,
@@ -763,6 +789,7 @@ fn apply_event(
             executed_record_sha256,
             output_corpus_sha256,
             output_corpus,
+            collapse_diagnostics,
             entries,
             transitions,
         } => {
@@ -782,8 +809,30 @@ fn apply_event(
                     "learning-loop committed generation is invalid or detached",
                 ));
             }
+            if record_schema == NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3
+                && collapse_diagnostics.is_none()
+            {
+                return Err(loop_message(
+                    "v3 learning-loop commit lacks collapse diagnostics",
+                ));
+            }
+            if let Some(collapse_diagnostics) = collapse_diagnostics {
+                validate_collapse_diagnostics(
+                    root,
+                    *generation,
+                    collapse_diagnostics,
+                    current
+                        .episode_shards
+                        .as_deref()
+                        .ok_or_else(|| loop_message("committed generation lacks episode shards"))?,
+                    current.successes.ok_or_else(|| {
+                        loop_message("committed generation lacks an executed success count")
+                    })?,
+                )?;
+            }
             current.output_corpus_sha256 = Some(*output_corpus_sha256);
             current.output_corpus = Some(output_corpus.clone());
+            current.collapse_diagnostics = collapse_diagnostics.clone();
             current.output_entries = Some(*entries);
             current.output_transitions = Some(*transitions);
             current.committed_record_sha256 = Some(record_sha256);
@@ -913,8 +962,14 @@ fn validate_event_artifacts(
             .chain(reinference_reports)
             .chain(realized_tapes)
             .collect(),
-        NativeGoalLearningLoopEvent::GenerationCommitted { output_corpus, .. } => {
-            vec![output_corpus]
+        NativeGoalLearningLoopEvent::GenerationCommitted {
+            output_corpus,
+            collapse_diagnostics,
+            ..
+        } => {
+            let mut references = vec![output_corpus];
+            references.extend(collapse_diagnostics);
+            references
         }
         NativeGoalLearningLoopEvent::LoopStopped { evidence, .. } => evidence.iter().collect(),
     };
@@ -925,15 +980,54 @@ fn validate_event_artifacts(
     Ok(())
 }
 
+fn validate_collapse_diagnostics(
+    root: &Path,
+    generation: u16,
+    diagnostics: &ArtifactReference,
+    shard_references: &[ArtifactReference],
+    executed_successes: u16,
+) -> Result<(), NativeGoalLearningLoopError> {
+    let report: NativePolicyCollapseReport =
+        serde_json::from_slice(&read_reference(root, diagnostics)?).map_err(loop_error)?;
+    let shards = shard_references
+        .iter()
+        .map(|reference| {
+            let shard =
+                NativeEpisodeShard::read(referenced_path(root, reference)?).map_err(loop_error)?;
+            if shard.content_sha256 != reference.sha256 {
+                return Err(loop_message(
+                    "collapse-diagnostic shard differs from its artifact identity",
+                ));
+            }
+            Ok(shard)
+        })
+        .collect::<Result<Vec<_>, NativeGoalLearningLoopError>>()?;
+    report
+        .validate_against(generation, &shards)
+        .map_err(loop_error)?;
+    if report.source_shards.len() != shard_references.len()
+        || report.rollouts < shard_references.len() as u64
+        || report.successes != u64::from(executed_successes)
+    {
+        return Err(loop_message(
+            "collapse diagnostics differ from executed rollout outcomes",
+        ));
+    }
+    Ok(())
+}
+
 fn record_identity(
     record: &NativeGoalLearningLoopRecord,
 ) -> Result<Digest, NativeGoalLearningLoopError> {
     let mut canonical = record.clone();
     canonical.record_sha256 = Digest::ZERO;
-    canonical_digest(
-        b"dusklight.native-goal-learning-loop-record/v2\0",
-        &canonical,
-    )
+    let domain = match record.schema.as_str() {
+        NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2 => {
+            b"dusklight.native-goal-learning-loop-record/v2\0".as_slice()
+        }
+        _ => b"dusklight.native-goal-learning-loop-record/v3\0".as_slice(),
+    };
+    canonical_digest(domain, &canonical)
 }
 
 fn record_bytes(
@@ -1185,9 +1279,25 @@ mod tests {
         initial_corpus_sha256: Digest,
         event: NativeGoalLearningLoopEvent,
     ) -> NativeGoalLearningLoopState {
+        append_test_event_with_schema(
+            root,
+            request,
+            initial_corpus_sha256,
+            NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3,
+            event,
+        )
+    }
+
+    fn append_test_event_with_schema(
+        root: &Path,
+        request: &NativeGoalLearningLoopRequest,
+        initial_corpus_sha256: Digest,
+        schema: &str,
+        event: NativeGoalLearningLoopEvent,
+    ) -> NativeGoalLearningLoopState {
         let state = fold_journal(request, root, initial_corpus_sha256).unwrap();
         let mut record = NativeGoalLearningLoopRecord {
-            schema: NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2.into(),
+            schema: schema.into(),
             request_sha256: request.content_sha256,
             sequence: state.next_sequence,
             previous_record_sha256: state.last_record_sha256,
@@ -1216,6 +1326,42 @@ mod tests {
                 artifact(root, &name, name.as_bytes())
             })
             .collect()
+    }
+
+    fn generation_policy_evidence(
+        root: &Path,
+        generation: u16,
+    ) -> (Vec<ArtifactReference>, ArtifactReference, u16) {
+        let mut shards = Vec::new();
+        let mut references = Vec::new();
+        for version in [26, 27] {
+            let bytes = fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+                "../../../../tests/fixtures/automation/native_episode_v{version}.dseps"
+            )))
+            .unwrap();
+            let reference = artifact(
+                root,
+                &format!("generation-{generation}-shard-v{version}.dseps"),
+                &bytes,
+            );
+            let shard = NativeEpisodeShard::decode(&bytes).unwrap();
+            assert_eq!(shard.content_sha256, reference.sha256);
+            references.push(reference);
+            shards.push(shard);
+        }
+        let successes = shards
+            .iter()
+            .flat_map(|shard| &shard.episodes)
+            .filter(|episode| episode.success)
+            .count() as u16;
+        assert!(successes <= 2);
+        let report = NativePolicyCollapseReport::build(generation, &shards).unwrap();
+        let diagnostics = artifact(
+            root,
+            &format!("generation-{generation}-collapse.json"),
+            &pretty_json(&report).unwrap(),
+        );
+        (references, diagnostics, successes)
     }
 
     #[test]
@@ -1251,7 +1397,8 @@ mod tests {
             );
             let prepared_record_sha256 = state.generations.last().unwrap().prepared_record_sha256;
             let results = generation_artifacts(&root, generation, "result", 2);
-            let shards = generation_artifacts(&root, generation, "shard", 2);
+            let (shards, collapse_diagnostics, successes) =
+                generation_policy_evidence(&root, generation);
             let reinference = generation_artifacts(&root, generation, "reinference", 2);
             let realized = generation_artifacts(&root, generation, "realized", 2);
             state = append_test_event(
@@ -1266,7 +1413,7 @@ mod tests {
                     reinference_reports: reinference,
                     realized_tapes: realized,
                     simulated_ticks: 20,
-                    successes: 1,
+                    successes,
                 },
             );
             let executed_record_sha256 = state
@@ -1290,6 +1437,7 @@ mod tests {
                     executed_record_sha256,
                     output_corpus_sha256: active,
                     output_corpus: corpus,
+                    collapse_diagnostics: Some(collapse_diagnostics),
                     entries: u64::from(generation) + 4,
                     transitions: u64::from(generation) * 20,
                 },
@@ -1373,6 +1521,93 @@ mod tests {
     }
 
     #[test]
+    fn collapse_diagnostics_are_recomputed_from_journaled_native_shards() {
+        let root = test_root();
+        let (references, diagnostics, successes) = generation_policy_evidence(&root, 1);
+        validate_collapse_diagnostics(&root, 1, &diagnostics, &references, successes).unwrap();
+
+        let shards = references
+            .iter()
+            .map(|reference| NativeEpisodeShard::read(root.join(&reference.path)).unwrap())
+            .collect::<Vec<_>>();
+        let detached = NativePolicyCollapseReport::build(2, &shards).unwrap();
+        let detached_reference = artifact(
+            &root,
+            "detached-collapse.json",
+            &pretty_json(&detached).unwrap(),
+        );
+        assert!(
+            validate_collapse_diagnostics(&root, 1, &detached_reference, &references, successes)
+                .unwrap_err()
+                .to_string()
+                .contains("differs from its realized native shards")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn v2_journal_resumes_with_a_diagnostic_v3_commit() {
+        let root = test_root();
+        let request = request(&root);
+        initialize_journal(&root, &request);
+        let initial = Digest([3; 32]);
+        let prepared = generation_artifacts(&root, 1, "prepared", 5);
+        let batches = generation_artifacts(&root, 1, "batch", 2);
+        let mut state = append_test_event_with_schema(
+            &root,
+            &request,
+            initial,
+            NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V2,
+            NativeGoalLearningLoopEvent::GenerationPrepared {
+                generation: 1,
+                input_corpus_sha256: initial,
+                dataset_sha256: Digest([11; 32]),
+                reachability_model_sha256: Digest([21; 32]),
+                policy_manifest_sha256: Digest([31; 32]),
+                frozen_model_xxh3_128: "1".repeat(32),
+                dataset: prepared[0].clone(),
+                reachability_model: prepared[1].clone(),
+                policy_manifest: prepared[2].clone(),
+                frozen_model: prepared[3].clone(),
+                native_batches: batches,
+            },
+        );
+        let (shards, collapse_diagnostics, successes) = generation_policy_evidence(&root, 1);
+        state = append_test_event(
+            &root,
+            &request,
+            initial,
+            NativeGoalLearningLoopEvent::GenerationExecuted {
+                generation: 1,
+                prepared_record_sha256: state.generations[0].prepared_record_sha256,
+                native_results: generation_artifacts(&root, 1, "result", 2),
+                episode_shards: shards,
+                reinference_reports: generation_artifacts(&root, 1, "reinference", 2),
+                realized_tapes: generation_artifacts(&root, 1, "realized", 2),
+                simulated_ticks: 20,
+                successes,
+            },
+        );
+        state = append_test_event(
+            &root,
+            &request,
+            initial,
+            NativeGoalLearningLoopEvent::GenerationCommitted {
+                generation: 1,
+                executed_record_sha256: state.generations[0].executed_record_sha256.unwrap(),
+                output_corpus_sha256: Digest([41; 32]),
+                output_corpus: artifact(&root, "generation-1-corpus.json", b"corpus"),
+                collapse_diagnostics: Some(collapse_diagnostics),
+                entries: 5,
+                transitions: 20,
+            },
+        );
+        assert_eq!(state.committed_generations, 1);
+        assert!(state.generations[0].collapse_diagnostics.is_some());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn reducer_rejects_skips_partial_execution_and_premature_stop() {
         let root = test_root();
         let request = request(&root);
@@ -1394,7 +1629,17 @@ mod tests {
             frozen_model: prepared[3].clone(),
             native_batches: batches,
         };
-        assert!(apply_event(&request, &mut state, &skipped, Digest([9; 32])).is_err());
+        assert!(
+            apply_event(
+                &request,
+                &root,
+                &mut state,
+                NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3,
+                &skipped,
+                Digest([9; 32])
+            )
+            .is_err()
+        );
         let premature = NativeGoalLearningLoopEvent::LoopStopped {
             next_generation: 1,
             reason: NativeGoalLearningStopReason::GenerationLimitReached,
@@ -1402,7 +1647,17 @@ mod tests {
             evidence: None,
             proposal_source: NativeGoalLearningProposalSource::FrozenGoalPolicy,
         };
-        assert!(apply_event(&request, &mut state, &premature, Digest([9; 32])).is_err());
+        assert!(
+            apply_event(
+                &request,
+                &root,
+                &mut state,
+                NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3,
+                &premature,
+                Digest([9; 32])
+            )
+            .is_err()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

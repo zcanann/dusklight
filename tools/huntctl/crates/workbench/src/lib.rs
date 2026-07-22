@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v16";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v17";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -194,9 +194,29 @@ pub struct GraphGoalLearningLoop {
     pub stopped_reason: Option<String>,
     pub cold_replayable_tapes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub collapse: Option<GraphGoalLearningCollapse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphGoalLearningCollapse {
+    pub generation: u16,
+    pub collapse_detected: bool,
+    pub warnings: Vec<String>,
+    pub rollouts: u64,
+    pub unique_parent_states: u64,
+    pub unique_consumed_actions: u64,
+    pub unique_action_trajectories: u64,
+    pub unique_state_identities: u64,
+    pub contact_observations: u64,
+    pub unique_contact_signatures: u64,
+    pub successes: u64,
+    pub failures: u64,
+    pub unique_success_ticks: u64,
+    pub artifact: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

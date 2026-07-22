@@ -31,6 +31,9 @@ use dusklight_learning::native_goal_reachability::{
     NativeGoalReachabilityAdmission, NativeGoalReachabilityModel,
 };
 use dusklight_learning::native_goal_trajectory::NativeGoalTrajectoryDataset;
+use dusklight_learning::native_policy_collapse::{
+    NativePolicyCollapseReport, NativePolicyCollapseWarning,
+};
 use dusklight_learning::native_replay_corpus::NativeReplayCorpus;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -63,6 +66,8 @@ pub struct NativeGoalLearningLoopRunSummary {
     pub active_corpus_sha256: Digest,
     pub stopped_reason: NativeGoalLearningStopReason,
     pub proposal_source: NativeGoalLearningProposalSource,
+    pub collapse_warning_generations: u16,
+    pub latest_collapse_warnings: Vec<NativePolicyCollapseWarning>,
     pub journal_sha256: Digest,
     pub state_sha256: Digest,
 }
@@ -819,6 +824,16 @@ fn ingest_executed_generation(
     )
     .map_err(runner_error)?;
     let corpus = load_corpus(root, &replay.artifact).map_err(runner_error)?;
+    let realized_shards = loaded
+        .iter()
+        .map(|rollout| rollout.shard.clone())
+        .collect::<Vec<_>>();
+    let collapse = NativePolicyCollapseReport::build(current.generation, &realized_shards)
+        .map_err(runner_error)?;
+    let collapse_path = generation_root(campaign, current.generation)
+        .join(format!("collapse-{}.json", collapse.report_sha256));
+    write_exact_or_new(&collapse_path, &pretty_json(&collapse)?).map_err(runner_error)?;
+    let collapse_diagnostics = artifact_reference(root, &collapse_path).map_err(runner_error)?;
     append_native_goal_learning_loop_event(
         config.request,
         root,
@@ -831,6 +846,7 @@ fn ingest_executed_generation(
                 .ok_or_else(|| runner_message("executed record identity is absent"))?,
             output_corpus_sha256: corpus.corpus_sha256,
             output_corpus: replay.artifact,
+            collapse_diagnostics: Some(collapse_diagnostics),
             entries: corpus.report.entries as u64,
             transitions: corpus.report.transitions,
         },
@@ -945,6 +961,32 @@ fn summary(
         .stopped
         .as_ref()
         .ok_or_else(|| runner_message("completed learning loop has no stopping state"))?;
+    let root = config
+        .repository_root
+        .canonicalize()
+        .map_err(runner_error)?;
+    let collapse_reports = state
+        .generations
+        .iter()
+        .filter_map(|generation| generation.collapse_diagnostics.as_ref())
+        .map(|reference| {
+            serde_json::from_slice::<NativePolicyCollapseReport>(
+                &read_artifact(&root, reference).map_err(runner_error)?,
+            )
+            .map_err(runner_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let collapse_warning_generations = u16::try_from(
+        collapse_reports
+            .iter()
+            .filter(|report| report.collapse_detected)
+            .count(),
+    )
+    .map_err(runner_error)?;
+    let latest_collapse_warnings = collapse_reports
+        .last()
+        .map(|report| report.warnings.clone())
+        .unwrap_or_default();
     Ok(NativeGoalLearningLoopRunSummary {
         request_sha256: config.request.content_sha256,
         optimization_request_sha256: config.optimization.content_sha256,
@@ -954,6 +996,8 @@ fn summary(
         active_corpus_sha256: state.active_corpus_sha256,
         stopped_reason: stopped.reason,
         proposal_source: stopped.proposal_source,
+        collapse_warning_generations,
+        latest_collapse_warnings,
         journal_sha256: state.journal_sha256,
         state_sha256: state.state_sha256,
     })

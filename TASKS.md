@@ -396,8 +396,15 @@ winner is the target and remains an open framework challenge until achieved.
       critic for state-conditioned ranking. Keep exact simulation as authority.
 - [ ] Preserve achieved goals and alternate terminals so failed main-goal runs
       still teach local dynamics and short-horizon reachability.
-- [ ] Detect and report policy collapse by parent diversity, action diversity,
-      state/contact coverage, and success distribution.
+- [x] Detect and report policy collapse by parent diversity, action diversity,
+      state/contact coverage, and success distribution. Every committed online
+      generation now writes a content-sealed collapse report over its realized
+      native shards. Journal replay independently recomputes parent-state,
+      consumed-action/trajectory, state-identity, contact-signature, and exact
+      terminal-outcome diversity and rejects detached reports or success counts.
+      CLI completion summaries identify warning generations and the latest
+      warning set; the route workbench shows the exact counts, warnings, and
+      report artifact without treating the diagnostics as simulation authority.
 - [x] Stop or fall back explicitly when held-out policy performance fails. The
       UI and artifacts must identify which proposal source actually ran. The loop
       journal and CLI summary now stop with `retained_baseline` when reachability

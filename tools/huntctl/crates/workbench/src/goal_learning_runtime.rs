@@ -5,6 +5,9 @@ use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
 use dusklight_learning::native_goal_reachability::NativeGoalReachabilityConfig;
 use dusklight_learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
+use dusklight_learning::native_policy_collapse::{
+    NativePolicyCollapseReport, NativePolicyCollapseWarning,
+};
 use dusklight_learning::native_replay_corpus::NativeReplayCorpus;
 use dusklight_orchestration::native_goal_learning_loop::{
     NativeGoalLearningLoopRequest, NativeGoalLearningLoopResume, NativeGoalLearningProposalSource,
@@ -122,6 +125,7 @@ pub(super) fn goal_learning_projection(
         proposal_source: None,
         stopped_reason: None,
         cold_replayable_tapes: 0,
+        collapse: None,
         blocker: None,
         error: None,
     };
@@ -188,6 +192,32 @@ pub(super) fn goal_learning_projection(
                         .filter_map(|generation| generation.realized_tapes.as_ref())
                         .map(|tapes| tapes.len() as u64)
                         .sum();
+                    projection.collapse = state.generations.iter().rev().find_map(|generation| {
+                        let reference = generation.collapse_diagnostics.as_ref()?;
+                        let report: NativePolicyCollapseReport =
+                            bound_artifact_json(root, reference)?;
+                        report.validate().ok()?;
+                        Some(GraphGoalLearningCollapse {
+                            generation: report.generation,
+                            collapse_detected: report.collapse_detected,
+                            warnings: report
+                                .warnings
+                                .iter()
+                                .map(|warning| collapse_warning_name(*warning).into())
+                                .collect(),
+                            rollouts: report.rollouts,
+                            unique_parent_states: report.unique_parent_states,
+                            unique_consumed_actions: report.unique_consumed_actions,
+                            unique_action_trajectories: report.unique_action_trajectories,
+                            unique_state_identities: report.unique_state_identities,
+                            contact_observations: report.contact_observations,
+                            unique_contact_signatures: report.unique_contact_signatures,
+                            successes: report.successes,
+                            failures: report.failures,
+                            unique_success_ticks: report.unique_success_ticks,
+                            artifact: reference.path.clone(),
+                        })
+                    });
                     if let Some(stopped) = state.stopped {
                         projection.proposal_source =
                             Some(proposal_source_name(stopped.proposal_source).into());
@@ -588,6 +618,18 @@ fn stop_reason_name(reason: NativeGoalLearningStopReason) -> &'static str {
             "held_out_reachability_rejected"
         }
         NativeGoalLearningStopReason::HeldOutPolicyRejected => "held_out_policy_rejected",
+    }
+}
+
+fn collapse_warning_name(warning: NativePolicyCollapseWarning) -> &'static str {
+    match warning {
+        NativePolicyCollapseWarning::InsufficientRollouts => "insufficient_rollouts",
+        NativePolicyCollapseWarning::SingleParentState => "single_parent_state",
+        NativePolicyCollapseWarning::SingleConsumedAction => "single_consumed_action",
+        NativePolicyCollapseWarning::SingleActionTrajectory => "single_action_trajectory",
+        NativePolicyCollapseWarning::SingleStateIdentity => "single_state_identity",
+        NativePolicyCollapseWarning::SingleContactSignature => "single_contact_signature",
+        NativePolicyCollapseWarning::NoTerminalSuccess => "no_terminal_success",
     }
 }
 

@@ -496,7 +496,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v16");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v17");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1297,6 +1297,12 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "Goal learning",
         "Proposal source",
         "Cold-replayable tapes",
+        "Collapse status",
+        "Parent states",
+        "Consumed actions",
+        "State / contact coverage",
+        "Outcome distribution",
+        "Collapse warnings:",
         "Baseline retained",
         "Stop campaign",
         "Stopping workers…",
