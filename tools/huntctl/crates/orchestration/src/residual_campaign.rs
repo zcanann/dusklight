@@ -3,7 +3,9 @@
 use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
-use dusklight_harness_contracts::run_contract::HarnessRunRequest;
+use dusklight_harness_contracts::run_contract::{
+    HarnessRunRequest, HarnessRunResult, HarnessTerminalReason,
+};
 use dusklight_search::residual_action::{
     CompiledResidualCandidate, ResidualCandidate, ResidualCompilationReport,
 };
@@ -12,7 +14,8 @@ use dusklight_search::residual_optimizer::{
     ResidualRandomSampler, ResidualRandomSnapshot,
 };
 use dusklight_search::residual_retention::{
-    ResidualEvaluationEvidence, ResidualOutcomeArchive, ResidualRetentionSnapshot,
+    ExactTerminalVerdict, ResidualEvaluationEvidence, ResidualOutcomeArchive,
+    ResidualRetentionSnapshot,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -123,6 +126,88 @@ pub struct ResidualCampaignEvaluation {
 }
 
 impl ResidualCampaignEvaluation {
+    pub fn from_native(
+        optimization: &OptimizationRequest,
+        template: &HarnessRunRequest,
+        candidate: &ResidualCampaignCandidate,
+        attempts: Vec<(ResidualNativeAttempt, HarnessRunRequest, HarnessRunResult)>,
+    ) -> Result<Self, ResidualCampaignError> {
+        if attempts.len() != usize::from(optimization.execution.repetitions) {
+            return Err(campaign_error(
+                "residual evaluation does not contain every repetition",
+            ));
+        }
+        let mut verdict = None;
+        let mut simulated_ticks = 0_u64;
+        let mut request_digests = Vec::with_capacity(attempts.len());
+        let mut result_digests = Vec::with_capacity(attempts.len());
+        let mut behavior = Vec::with_capacity(attempts.len());
+        for (index, (attempt, request, result)) in attempts.iter().enumerate() {
+            let repetition = u16::try_from(index + 1)
+                .map_err(|_| campaign_error("residual repetition index overflowed"))?;
+            result
+                .validate_against(request)
+                .map_err(|error| campaign_error(error.to_string()))?;
+            if attempt.repetition != repetition
+                || attempt.rng_seed != request.rng_seed
+                || attempt.request_content_sha256 != request.content_sha256
+                || attempt.result_content_sha256 != result.content_sha256
+                || attempt.request.sha256 == Digest::ZERO
+                || attempt.result.sha256 == Digest::ZERO
+                || !result.artifacts.complete
+            {
+                return Err(campaign_error(
+                    "native residual attempt differs from its sealed request or result",
+                ));
+            }
+            let current = exact_verdict(result)?;
+            if verdict.is_some_and(|prior| prior != current) {
+                return Err(campaign_error(
+                    "native residual repetitions disagree on exact terminal outcome",
+                ));
+            }
+            verdict = Some(current);
+            simulated_ticks = simulated_ticks
+                .checked_add(result.timing.logical_ticks)
+                .ok_or_else(|| campaign_error("residual simulated tick charge overflowed"))?;
+            request_digests.push(request.content_sha256);
+            result_digests.push(result.content_sha256);
+            behavior.push(behavior_part(result)?);
+        }
+        let evidence = ResidualEvaluationEvidence {
+            candidate_sha256: candidate.candidate.content_sha256,
+            realized_tape_sha256: candidate.compilation.realized_tape_sha256,
+            terminal_program_sha256: optimization.terminal_predicate.program_sha256,
+            terminal_definition_sha256: optimization.terminal_predicate.definition_sha256,
+            evaluation_sha256: canonical_digest(
+                b"dusklight.residual-native-evaluation/v1\0",
+                &(request_digests, &result_digests),
+            )?,
+            episode_sha256: canonical_digest(
+                b"dusklight.residual-native-episode/v1\0",
+                &result_digests,
+            )?,
+            behavior_sha256: canonical_digest(
+                b"dusklight.residual-native-behavior/v1\0",
+                &behavior,
+            )?,
+            verdict: verdict.ok_or_else(|| campaign_error("residual evaluation is empty"))?,
+            shaped_progress_millionths: None,
+            native_risk_events: None,
+        };
+        Self::seal(
+            optimization,
+            template,
+            candidate,
+            attempts
+                .into_iter()
+                .map(|(attempt, _, _)| attempt)
+                .collect(),
+            simulated_ticks,
+            evidence,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn seal(
         optimization: &OptimizationRequest,
@@ -195,6 +280,58 @@ impl ResidualCampaignEvaluation {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
         canonical_digest(b"dusklight.residual-campaign-evaluation/v1\0", &canonical)
+    }
+}
+
+fn exact_verdict(result: &HarnessRunResult) -> Result<ExactTerminalVerdict, ResidualCampaignError> {
+    match (
+        result.terminal,
+        result.objective.reached,
+        result.objective.first_hit_tick,
+    ) {
+        (HarnessTerminalReason::Reached, true, Some(first_hit_tick)) if first_hit_tick > 0 => {
+            Ok(ExactTerminalVerdict::Reached { first_hit_tick })
+        }
+        (HarnessTerminalReason::Exhausted, false, None) => Ok(ExactTerminalVerdict::Miss),
+        _ => Err(campaign_error(
+            "native attempt is neither an exact success nor an exact horizon miss",
+        )),
+    }
+}
+
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum NativeBehaviorPart<'a> {
+    Reached {
+        first_hit_tick: u64,
+        boundary_fingerprint: &'a str,
+    },
+    Miss {
+        gameplay_trace_sha256: Digest,
+    },
+}
+
+fn behavior_part(
+    result: &HarnessRunResult,
+) -> Result<NativeBehaviorPart<'_>, ResidualCampaignError> {
+    match exact_verdict(result)? {
+        ExactTerminalVerdict::Reached { first_hit_tick } => Ok(NativeBehaviorPart::Reached {
+            first_hit_tick,
+            boundary_fingerprint: &result
+                .objective
+                .boundary_fingerprint
+                .as_ref()
+                .ok_or_else(|| campaign_error("exact success lacks a boundary fingerprint"))?
+                .digest,
+        }),
+        ExactTerminalVerdict::Miss => Ok(NativeBehaviorPart::Miss {
+            gameplay_trace_sha256: result
+                .artifacts
+                .gameplay_trace
+                .as_ref()
+                .ok_or_else(|| campaign_error("exact miss lacks a gameplay trace"))?
+                .sha256,
+        }),
     }
 }
 
@@ -410,3 +547,74 @@ impl fmt::Display for ResidualCampaignError {
 }
 
 impl Error for ResidualCampaignError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dusklight_automation_contracts::tape::{InputFrame, InputTape};
+    use dusklight_search::residual_action::{
+        AnalogChannel, AnalogResidual, TemporalBasis, compile_residual_candidate_to_horizon,
+    };
+    use dusklight_search::residual_optimizer::{
+        ResidualGene, ResidualGeneButtonMode, ResidualGeneKind,
+    };
+
+    #[test]
+    fn candidate_envelope_binds_genome_candidate_and_horizon_tape() {
+        let parent = InputTape {
+            frames: vec![
+                InputFrame {
+                    owned_ports: 1,
+                    ..InputFrame::default()
+                };
+                40
+            ],
+            ..InputTape::default()
+        };
+        let parent_bytes = parent.encode().unwrap();
+        let candidate = ResidualCandidate::seal(
+            &parent_bytes,
+            vec![AnalogResidual {
+                port: 0,
+                channel: AnalogChannel::MainX,
+                basis: TemporalBasis::ExactFrame { frame: 4, delta: 8 },
+            }],
+            vec![],
+        )
+        .unwrap();
+        let compiled =
+            compile_residual_candidate_to_horizon(&parent, &parent_bytes, &candidate, 64).unwrap();
+        let genome = ResidualGenome {
+            genes: vec![ResidualGene {
+                enabled: true,
+                kind: ResidualGeneKind::Analog,
+                port_index: 0,
+                channel_index: 0,
+                basis_index: 0,
+                start_index: 4,
+                duration_index: 0,
+                delta_indices: [0; 4],
+                button_index: 0,
+                button_mode: ResidualGeneButtonMode::Press,
+            }],
+        };
+        let envelope = ResidualCampaignCandidate::seal(
+            "g000000-s00000-candidate".into(),
+            0,
+            0,
+            17,
+            genome,
+            candidate,
+            &compiled,
+        )
+        .unwrap();
+        assert_eq!(envelope.compilation.frame_count, 64);
+        assert_eq!(
+            envelope.compilation.realized_tape_sha256,
+            Digest(Sha256::digest(&compiled.bytes).into())
+        );
+        let mut tampered = envelope.clone();
+        tampered.compilation.frame_count = 63;
+        assert!(tampered.validate().is_err());
+    }
+}
