@@ -470,7 +470,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v12");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v13");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1256,6 +1256,12 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "startOptimization(button)",
         "/api/optimization/start",
         "campaign.completed_candidates",
+        "Proposal sources",
+        "Current best",
+        "Retained failures",
+        "Awaiting checkpoint",
+        "Campaign blocked",
+        "Blocked:",
         "segment.goal_proofs",
         "segment.option_visualization",
         "optionVisualization(segment)",
@@ -1839,7 +1845,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let timeline_path = checked_intro_timeline(&repository);
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let mut graph = graph_from_timeline(&route, timeline_path.parent().unwrap()).unwrap();
-    append_optimization_campaigns(&mut graph, &repository, &timeline_path).unwrap();
+    append_optimization_campaigns(&mut graph, &repository, &timeline_path, None).unwrap();
     let campaign = graph
         .campaigns
         .iter()
@@ -1853,6 +1859,11 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     assert_eq!(campaign.promotion_before_tick, 125);
     assert_eq!(campaign.candidate_budget, 4096);
     assert_eq!(campaign.workers, 4);
+    assert_eq!(campaign.retained_successes, 0);
+    assert_eq!(campaign.retained_failures, 0);
+    assert_eq!(campaign.best_first_hit_tick, None);
+    assert_eq!(campaign.proposal_sources, ["cem"]);
+    assert!(campaign.blocker.is_none());
     assert!(graph.predicate_program.is_none());
     assert_eq!(graph.goals.len(), 12);
     assert!(graph.goals.iter().all(|goal| {
@@ -1982,6 +1993,19 @@ fn optimization_start_api_requires_explicit_world_context() {
         world_context: None,
         state_root: repository.join("build/automation-state/route-workbench-test"),
     };
+    let graph_response = call_http(&config, "GET", "/api/graph", &[]);
+    assert_eq!(graph_response.status, 200);
+    let graph: serde_json::Value = serde_json::from_slice(&graph_response.body).unwrap();
+    let campaign = graph["campaigns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|campaign| campaign["id"] == "ordon-q125-residual-cem-v1")
+        .unwrap();
+    assert_eq!(
+        campaign["blocker"],
+        "restart the workbench with --world-context WORLD.json"
+    );
     let response = call_http(
         &config,
         "POST",

@@ -63,7 +63,7 @@ pub(super) fn start_optimization_campaign(
     let timeline = load_authoritative_timeline(&config.timeline_path)?;
     let artifact_root = configured_artifact_root(config)?;
     let mut graph = graph_with_drafts(&timeline, &artifact_root, &config.state_root)?;
-    append_optimization_campaigns(&mut graph, &root, &config.timeline_path)?;
+    append_optimization_campaigns(&mut graph, &root, &config.timeline_path, Some(config))?;
     let campaign = graph
         .campaigns
         .iter()
@@ -81,6 +81,9 @@ pub(super) fn start_optimization_campaign(
         return Err(WorkbenchError::new(
             "optimization campaign is already complete",
         ));
+    }
+    if let Some(blocker) = &campaign.blocker {
+        return Err(WorkbenchError::new(blocker));
     }
 
     let request_path = root.join(&campaign.request);

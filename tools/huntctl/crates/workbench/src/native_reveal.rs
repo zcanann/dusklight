@@ -168,6 +168,7 @@ pub(super) fn resolve_reveal_target(
                 &mut graph,
                 &config.repository_root,
                 &config.timeline_path,
+                None,
             )?;
             let campaign = graph
                 .campaigns

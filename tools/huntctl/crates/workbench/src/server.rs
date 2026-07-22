@@ -93,6 +93,7 @@ pub(super) fn handle_http(
                             &mut graph,
                             &config.repository_root,
                             &config.timeline_path,
+                            Some(config),
                         )?;
                         decorate_graph_thumbnails(&mut graph, config)?;
                         Ok(graph)

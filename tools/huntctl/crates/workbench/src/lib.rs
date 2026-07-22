@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v12";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v13";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -150,8 +150,16 @@ pub struct GraphOptimizationCampaign {
     pub pending_candidates: u64,
     pub charged_simulated_ticks: u64,
     pub generation: u64,
+    pub retained_successes: u64,
+    pub retained_failures: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub best_first_hit_tick: Option<u64>,
+    pub uncheckpointed_completions: u64,
+    pub proposal_sources: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub execution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocker: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

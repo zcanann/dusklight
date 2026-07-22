@@ -64,6 +64,11 @@ Working foundations:
   materializes immutable native execution authority, runs the persistent
   campaign off the HTTP thread, and reports ready, running, resumable,
   completed, invalid, or failed state without launching a hidden default job.
+- Campaign cards read bounded authenticated resume/checkpoint summaries rather
+  than rescanning candidate directories. They expose queued and completed work,
+  generations, charged ticks, exact successes, current best, retained failures,
+  proposal source, workers, uncheckpointed completions, and explicit runtime or
+  artifact blockers while remaining cheap to poll.
 
 Not yet working:
 
@@ -358,7 +363,7 @@ continuous optimizer, and appropriate negative controls remove the advantage.
       authority.
 - [x] Provide sensible defaults so ordinary operation does not require choosing
       an algorithm or editing a generated request.
-- [ ] Show campaign state: queued/running/completed candidates, generations,
+- [x] Show campaign state: queued/running/completed candidates, generations,
       simulated ticks, successes, current best, proposal sources, workers, and
       explicit blockers.
 - [ ] Project generated candidates as ordinary ephemeral sibling segments while
