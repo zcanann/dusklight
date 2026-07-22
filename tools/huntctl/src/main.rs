@@ -242,6 +242,10 @@ fn print_usage() {
     eprintln!(
         "  huntctl learn goal-trajectory-dataset --corpus CORPUS.json --input EPISODES.dseps [--input MORE.dseps] --milestones PROGRAM.dmsp --milestone-goal NAME --output DATASET.json [--n-step N] [--discount-millionths N] [--training-basis-points N] [--validation-basis-points N] [--seed N] [--artifact-store ROOT]"
     );
+    eprintln!(
+        "  huntctl learn fit-goal-reachability --dataset DATASET.json [--dataset MORE.json] --input EPISODES.dseps [--input MORE.dseps] --output MODEL.json [--members N] [--epochs N] [--hidden-width N] [--learning-rate R] [--l2-penalty R] [--gradient-clip R] [--minimum-validation-improvement R] [--maximum-validation-reachability-stddev R] [--seed N] [--artifact-store ROOT]"
+    );
+    eprintln!("  huntctl learn inspect-goal-reachability --input MODEL.json");
     eprintln!("  huntctl learn inspect-auxiliary --input DATASET.json");
     eprintln!(
         "  huntctl learn pretrain-native-encoder --dataset DATASET.json --input EPISODES.dseps --output MODEL.json [--exclude-family FAMILY ...] [--history-depth N] [--history-encoding stacked|recurrent-reservoir|trainable-gru] [--history-width N] [--pooling mean-max|mean-max-learned-attention|mean-max-task-attention] [--epochs N] [--node-hidden-width N] [--state-width N] [--learning-rate R] [--seed N] [--artifact-store ROOT]"

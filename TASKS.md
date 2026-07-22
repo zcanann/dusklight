@@ -339,8 +339,16 @@ winner is the target and remains an open framework challenge until achieved.
       and materializes time-to-goal, fixed-point tick cost, Monte Carlo outcome,
       and linked n-step bootstrap targets. `huntctl learn goal-trajectory-dataset`
       writes the content-addressed artifact without copying observations. The
-      actual reachability/time fitter, uncertainty estimate, and held-out policy
-      admission gate remain before this item is complete.
+      Rust-native `fit-goal-reachability` ensemble now joins those rows back to
+      authenticated pre-input observations, conditions on a digest-free semantic
+      goal graph embedding, fits training-only normalization, replays whole
+      episode bootstraps, and uses frozen epoch targets for return and tick cost.
+      Validation—not test—gates all four real-outcome, time, return, and cost
+      heads against training-mean baselines plus an uncertainty ceiling; test is
+      reported only after that decision. The sealed model preserves dataset,
+      replay, goal, observation, feature, and action lineage and has no promotion
+      authority. A real campaign corpus still needs to satisfy the split gate and
+      produce an admitted model before this item is complete.
 - [ ] Export the trained policy into the native frozen format without a manual
       translation step.
 - [ ] Execute the frozen policy online from pre-input state, ingest its realized
