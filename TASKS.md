@@ -1683,6 +1683,40 @@ and geometry set sizes without schema changes.
     lifecycle solution; the next controlled treatment should type rare binary
     objectives and distinguish representation failure from an inappropriate
     shared regression loss or uncalibrated decision rule.
+    That controlled treatment identifies the loss and decision contract as the
+    dominant lifecycle failure. Report/model v12/v9 split actor disappearance
+    into a class-balanced Bernoulli occurrence head and a normalized count
+    head; contact, procedure, mode and inverse-button events use the same typed
+    binary objective. Class weights are fitted on training rows only, binary
+    labels fail closed outside `{0,1}`, and the report compares weighted loss
+    with the objective-optimal no-feature constant. An initial implementation
+    compared balanced loss with raw prevalence and falsely gave the shuffled
+    control a 34.63% test win; that result was invalidated, the report schema
+    changed, and a regression proves a zero-logit balanced classifier has zero
+    improvement. Inference now removes the class-weight prior shift before
+    treating a score as a probability. Each binary decision threshold is then
+    selected on validation rows only by maximum F1, balanced accuracy and the
+    highest tied threshold, stored in the model/report identity, and applied
+    unchanged to untouched test episodes. Both validation classes are required.
+    On the same frozen Ordon split, seed and 92,000-step budget, the 14,831-
+    parameter single-frame model reached 84.469% aggregate test improvement;
+    its independently shuffled control reached -2.586%. It detected 14/15
+    actor-disappearance events with zero false positives (F1 0.9655, Brier
+    0.00477), versus the prior regression head's 0/15, and detected 22/30
+    contacts with zero false positives. Report/model
+    `5a7cad43...fc9c0` / `c94fa776...c7c30` bind that result. The equal-budget
+    17,807-parameter depth-eight GRU reached 85.333% aggregate improvement and
+    a -2.212% shuffled control, but classified the same 14/15 disappearances
+    with zero false positives; it only reduced disappearance Brier to 0.00449
+    and count loss from 0.7298 to 0.7104. It also traded contact quality to
+    25/30 with 12 false positives. Report/model `7443e0dd...c042f` /
+    `38ff8c3d...b4512` bind that arm. The complete main/control CLI pairs took
+    154.5 and 743.3 seconds, respectively. Current-state representation was
+    therefore already sufficient for this lifecycle signal once the objective
+    and decision rule were correct; history remains useful general capacity,
+    but it is not the supported explanation or default solution for this head.
+    Cross-seed confirmation remains required before promoting the typed binary
+    contract beyond this frozen-corpus treatment.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
