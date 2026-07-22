@@ -16,6 +16,7 @@ pub mod optimization_resume;
 pub mod residual_campaign;
 pub mod residual_campaign_audit;
 pub mod residual_campaign_runner;
+pub mod residual_horizon_tightening;
 pub mod stage_actor_coverage;
 pub mod stage_observation_coverage;
 pub mod stage_survey;

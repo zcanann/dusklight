@@ -23,6 +23,63 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("tighten-residual-horizon") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let request_path = required_path(command_args, "--request")?;
+        let execution_path = required_path(command_args, "--execution")?;
+        let checkpoint_path = required_path(command_args, "--checkpoint")?;
+        let source_request = repository_artifact(
+            &repository_root,
+            &request_path,
+            "horizon source optimization request",
+        )?;
+        let source_execution = repository_artifact(
+            &repository_root,
+            &execution_path,
+            "horizon source execution binding",
+        )?;
+        let source_checkpoint = repository_artifact(
+            &repository_root,
+            &checkpoint_path,
+            "horizon source checkpoint",
+        )?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_request.path))?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_execution.path))?)?;
+        execution.validate_files(&repository_root, &optimization)?;
+        let checkpoint: huntctl::search_evaluator::residual_campaign::ResidualCampaignCheckpoint =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_checkpoint.path))?)?;
+        let required_u64 = |name: &str| -> Result<u64, Box<dyn Error>> {
+            Ok(option(command_args, name)
+                .ok_or_else(|| format!("horizon tightening requires {name} N"))?
+                .parse()?)
+        };
+        let minimum_support_millionths =
+            u32::try_from(required_u64("--minimum-support-millionths")?)?;
+        let child = huntctl::search_evaluator::residual_horizon_tightening::tighten_residual_horizon_request(
+            &optimization,
+            source_request,
+            source_execution,
+            source_checkpoint,
+            &checkpoint,
+            option(command_args, "--id")
+                .ok_or("horizon tightening requires --id NEW_ID")?,
+            required_u64("--proposed-horizon")?,
+            huntctl::search_evaluator::residual_horizon_tightening::HorizonSupportPolicy {
+                minimum_successes: required_u64("--minimum-successes")?,
+                minimum_behavior_classes: required_u64("--minimum-behavior-classes")?,
+                minimum_support_millionths,
+            },
+        )?;
+        let report = child.validate_files(&repository_root)?;
+        let output = required_path(command_args, "--output")?;
+        refuse_existing_output(&output, "tightened optimization request")?;
+        write_new_file(&output, child.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("seal-native-goal-learning-loop") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;

@@ -181,6 +181,7 @@ fn validates_and_seals_the_ordon_optimization_request() {
     assert_eq!(report["incumbent_first_hit_tick"], 125);
     assert_eq!(report["exploration_horizon_ticks"], 160);
     assert_eq!(report["promotion_before_tick"], 125);
+    assert!(report.get("horizon_tightened_from").is_none());
     assert_eq!(
         report["alternate_terminal_goals"],
         serde_json::json!(["ordon_spring_exit_approach"])

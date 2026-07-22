@@ -281,8 +281,16 @@ goal-only discovery.
       Euclidean distance to the exit is terminal success or universal progress.
 - [x] Maintain successful trajectory diversity long enough for coordinated
       alternatives to survive; do not collapse immediately to one greedy elite.
-- [ ] Tighten the exploration horizon only after the retained successful basin
+- [x] Tighten the exploration horizon only after the retained successful basin
       supports it.
+      `campaign tighten-residual-horizon` now derives a child optimization
+      request from the retained exact-success archive under an explicit minimum
+      success, behavior-class, and support-fraction policy. The child binds the
+      source request, native execution, and checkpoint by digest; recursively
+      revalidates that lineage; recomputes the basin evidence; and permits only
+      a fresh request ID, the supported lower horizon, its conservative derived
+      tick budget, fresh resume paths, and the sealed lineage record to change.
+      A resealed request with any other delta fails file validation.
 - [ ] Minimize a winner only after discovery, using exact terminal replay as the
       acceptance authority.
       The sealed `residual_retention` archive now implements these policies,

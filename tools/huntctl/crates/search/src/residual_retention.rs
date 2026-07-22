@@ -265,7 +265,7 @@ impl ResidualRetentionSnapshot {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HorizonTighteningEvidence {
     pub current_horizon_ticks: u64,
@@ -276,7 +276,8 @@ pub struct HorizonTighteningEvidence {
     pub support_millionths: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct HorizonSupportPolicy {
     pub minimum_successes: u64,
     pub minimum_behavior_classes: u64,

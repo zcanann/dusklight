@@ -14,7 +14,10 @@ use dusklight_search::residual_action::{
     RESIDUAL_PROPOSAL_SCHEMA_ID_V1, residual_proposal_schema_sha256,
 };
 use dusklight_search::residual_optimizer::ResidualSearchSpace;
-use dusklight_search::residual_retention::{FailureRetentionPolicy, ResidualRetentionConfig};
+use dusklight_search::residual_retention::{
+    FailureRetentionPolicy, HorizonSupportPolicy, HorizonTighteningEvidence,
+    ResidualRetentionConfig,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
@@ -43,6 +46,8 @@ pub struct OptimizationRequest {
     pub proposal: OptimizationProposal,
     pub resume: OptimizationResume,
     pub retention: OptimizationRetention,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizon_tightening: Option<OptimizationHorizonTightening>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -155,6 +160,16 @@ pub struct OptimizationRetention {
     pub retain_gameplay_traces: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptimizationHorizonTightening {
+    pub source_request: ArtifactReference,
+    pub source_execution: ArtifactReference,
+    pub source_checkpoint: ArtifactReference,
+    pub policy: HorizonSupportPolicy,
+    pub evidence: HorizonTighteningEvidence,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptimizationRequestValidationReport {
@@ -177,6 +192,8 @@ pub struct OptimizationRequestValidationReport {
     pub workers: u16,
     pub repetitions: u16,
     pub alternate_terminal_goals: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub horizon_tightened_from: Option<Digest>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -336,6 +353,30 @@ impl OptimizationRequest {
             }
             _ => {}
         }
+        if let Some(tightening) = &self.horizon_tightening {
+            validate_artifact_shape("horizon source request", &tightening.source_request)?;
+            validate_artifact_shape("horizon source execution", &tightening.source_execution)?;
+            validate_artifact_shape("horizon source checkpoint", &tightening.source_checkpoint)?;
+            if tightening.policy.minimum_successes == 0
+                || tightening.policy.minimum_behavior_classes == 0
+                || tightening.policy.minimum_support_millionths > 1_000_000
+                || tightening.evidence.current_horizon_ticks
+                    <= tightening.evidence.proposed_horizon_ticks
+                || tightening.evidence.proposed_horizon_ticks
+                    != self.budgets.exploration_horizon_ticks
+                || tightening.evidence.proposed_horizon_ticks <= self.budgets.promotion_before_tick
+                || tightening.evidence.retained_successes == 0
+                || tightening.evidence.supporting_successes < tightening.policy.minimum_successes
+                || tightening.evidence.supporting_behavior_classes
+                    < tightening.policy.minimum_behavior_classes
+                || tightening.evidence.support_millionths
+                    < tightening.policy.minimum_support_millionths
+            {
+                return Err(request_error(
+                    "optimization horizon-tightening binding is structurally invalid",
+                ));
+            }
+        }
         if self.content_sha256 == Digest::ZERO
             || self.content_sha256 != self.compute_content_sha256()?
         {
@@ -350,6 +391,19 @@ impl OptimizationRequest {
         &self,
         repository_root: &Path,
     ) -> Result<OptimizationRequestValidationReport, OptimizationRequestError> {
+        self.validate_files_with_depth(repository_root, 0)
+    }
+
+    pub(crate) fn validate_files_with_depth(
+        &self,
+        repository_root: &Path,
+        tightening_depth: usize,
+    ) -> Result<OptimizationRequestValidationReport, OptimizationRequestError> {
+        if tightening_depth > 16 {
+            return Err(request_error(
+                "optimization horizon-tightening lineage exceeds 16 ancestors",
+            ));
+        }
         self.validate()?;
         let root = repository_root.canonicalize().map_err(|source| {
             request_error(format!(
@@ -490,6 +544,15 @@ impl OptimizationRequest {
             &self.execution.alternate_terminal_goals,
         )?;
 
+        if self.horizon_tightening.is_some() {
+            crate::residual_horizon_tightening::validate_horizon_tightening_files(
+                &root,
+                self,
+                tightening_depth,
+            )
+            .map_err(request_error)?;
+        }
+
         Ok(OptimizationRequestValidationReport {
             schema: OPTIMIZATION_REQUEST_SCHEMA_V2,
             request_id: self.id.clone(),
@@ -520,6 +583,10 @@ impl OptimizationRequest {
                 .into_iter()
                 .map(|terminal| terminal.goal)
                 .collect(),
+            horizon_tightened_from: self
+                .horizon_tightening
+                .as_ref()
+                .map(|tightening| tightening.source_request.sha256),
         })
     }
 
