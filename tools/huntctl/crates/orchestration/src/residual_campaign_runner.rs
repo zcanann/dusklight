@@ -184,6 +184,181 @@ fn write_exact_or_new(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn append_checkpoint(
+    root: &Path,
+    campaign: &Path,
+    optimization: &OptimizationRequest,
+    template: &HarnessRunRequest,
+    resume: &OptimizationResumeState,
+    generation: u64,
+    optimizer: &ResidualCampaignOptimizer,
+    archive: &ResidualOutcomeArchive,
+) -> Result<OptimizationResumeState, ResidualCampaignRunnerError> {
+    let checkpoint = ResidualCampaignCheckpoint::seal(
+        optimization,
+        template,
+        generation,
+        resume.completed_candidates,
+        optimizer.snapshot()?,
+        archive,
+    )?;
+    let path = campaign
+        .join("checkpoints")
+        .join(format!("checkpoint-{:08}.json", resume.next_sequence));
+    write_exact_or_new(&path, &checkpoint.to_pretty_json()?)?;
+    append_optimization_resume_event(
+        optimization,
+        root,
+        OptimizationResumeEvent::OptimizerCheckpoint {
+            generation,
+            completed_candidates: resume.completed_candidates,
+            state: artifact_reference(root, &path)?,
+        },
+    )
+    .map_err(runner_error)
+}
+
+fn load_checkpoint(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    template: &HarnessRunRequest,
+    resume: &OptimizationResumeState,
+) -> Result<ResidualCampaignCheckpoint, ResidualCampaignRunnerError> {
+    let reference = &resume
+        .latest_optimizer_checkpoint
+        .as_ref()
+        .ok_or_else(|| runner_message("residual campaign has no checkpoint"))?
+        .artifact;
+    let checkpoint: ResidualCampaignCheckpoint =
+        serde_json::from_slice(&read_artifact(root, reference)?).map_err(runner_error)?;
+    checkpoint.validate(optimization, template)?;
+    Ok(checkpoint)
+}
+
+fn prepare_candidate(
+    optimization: &OptimizationRequest,
+    generation: u64,
+    sample_index: u32,
+    genome: dusklight_search::residual_optimizer::ResidualGenome,
+    candidate: dusklight_search::residual_action::ResidualCandidate,
+    compiled: CompiledResidualCandidate,
+) -> Result<PreparedCandidate, ResidualCampaignRunnerError> {
+    let digest = candidate.content_sha256.to_string();
+    let id = format!("g{generation:06}-s{sample_index:05}-{}", &digest[..12]);
+    let proposer_seed = optimization.execution.deterministic_seeds
+        [sample_index as usize % optimization.execution.deterministic_seeds.len()];
+    let envelope = ResidualCampaignCandidate::seal(
+        id,
+        generation,
+        sample_index,
+        proposer_seed,
+        genome,
+        candidate,
+        &compiled,
+    )?;
+    Ok(PreparedCandidate { envelope, compiled })
+}
+
+fn seal_candidate_batch(
+    root: &Path,
+    campaign: &Path,
+    optimization: &OptimizationRequest,
+    resume: &OptimizationResumeState,
+    prepared: &[PreparedCandidate],
+) -> Result<OptimizationResumeState, ResidualCampaignRunnerError> {
+    let mut events = Vec::new();
+    for candidate in prepared {
+        if let Some(existing) = resume
+            .candidates
+            .iter()
+            .find(|row| row.id == candidate.envelope.id)
+        {
+            let loaded: ResidualCampaignCandidate =
+                serde_json::from_slice(&read_artifact(root, &existing.candidate)?)
+                    .map_err(runner_error)?;
+            loaded.validate()?;
+            if loaded != candidate.envelope
+                || existing.compiled_tape_sha256
+                    != candidate.compiled.report.realized_tape_sha256
+            {
+                return Err(runner_message(
+                    "journaled candidate differs from deterministic reproposal",
+                ));
+            }
+            continue;
+        }
+        let json_path = campaign
+            .join("candidates")
+            .join(format!("{}.json", candidate.envelope.id));
+        let tape_path = campaign
+            .join("candidates")
+            .join(format!("{}.tape", candidate.envelope.id));
+        write_exact_or_new(&json_path, &candidate.envelope.to_pretty_json()?)?;
+        write_exact_or_new(&tape_path, &candidate.compiled.bytes)?;
+        events.push(OptimizationResumeEvent::CandidateSealed {
+            candidate_id: candidate.envelope.id.clone(),
+            candidate: artifact_reference(root, &json_path)?,
+            compiled_tape: artifact_reference(root, &tape_path)?,
+            parent_tape_sha256: Some(candidate.envelope.candidate.parent_tape_sha256),
+            generation: candidate.envelope.generation,
+            proposer_seed: candidate.envelope.proposer_seed,
+        });
+    }
+    if events.is_empty() {
+        return Ok(resume.clone());
+    }
+    append_optimization_resume_events(optimization, root, events).map_err(runner_error)
+}
+
+fn load_candidate(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    row: &OptimizationResumeCandidate,
+) -> Result<PreparedCandidate, ResidualCampaignRunnerError> {
+    let envelope: ResidualCampaignCandidate =
+        serde_json::from_slice(&read_artifact(root, &row.candidate)?).map_err(runner_error)?;
+    envelope.validate()?;
+    let compiled = compile_residual_candidate_to_horizon(
+        parent,
+        parent_bytes,
+        &envelope.candidate,
+        optimization.budgets.exploration_horizon_ticks,
+    )
+    .map_err(runner_error)?;
+    if envelope.id != row.id
+        || envelope.generation != row.generation
+        || envelope.proposer_seed != row.proposer_seed
+        || envelope.compilation != compiled.report
+        || compiled.bytes != read_artifact(root, &row.compiled_tape)?
+    {
+        return Err(runner_message(
+            "residual candidate differs from its journaled artifacts",
+        ));
+    }
+    Ok(PreparedCandidate { envelope, compiled })
+}
+
+fn load_generation(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    resume: &OptimizationResumeState,
+    generation: u64,
+) -> Result<Vec<PreparedCandidate>, ResidualCampaignRunnerError> {
+    let mut values = resume
+        .candidates
+        .iter()
+        .filter(|row| row.generation == generation)
+        .map(|row| load_candidate(root, optimization, parent, parent_bytes, row))
+        .collect::<Result<Vec<_>, _>>()?;
+    values.sort_by_key(|candidate| candidate.envelope.sample_index);
+    Ok(values)
+}
+
 fn sha256(bytes: &[u8]) -> Digest {
     Digest(Sha256::digest(bytes).into())
 }
