@@ -28,6 +28,10 @@ struct ReplayAddition {
     checkpoint_identity: String,
     simulated_ticks: u64,
     first_hit_tick: Option<u64>,
+    role: ReplayExperienceRole,
+    terminal_goal: String,
+    terminal_program_sha256: dusklight_automation_contracts::artifact::Digest,
+    terminal_definition_sha256: dusklight_automation_contracts::artifact::Digest,
 }
 
 pub(crate) struct PolicyReplayRollout<'a> {
@@ -113,8 +117,9 @@ pub(crate) fn append_incumbent_demonstration_replay(
 /// Appends every exact native attempt in one completed residual generation to
 /// a cumulative immutable replay corpus. Residual proposals are randomized
 /// coverage experience: terminal success remains an outcome, not a role
-/// reclassification. Policy, demonstration, and alternate-terminal producers
-/// use the same corpus contract through their own collection authorities.
+/// reclassification. Main-goal misses are independently evaluated against each
+/// sealed alternate terminal; exact alternate hits are preserved under their
+/// own objective and role without acquiring promotion authority.
 pub(crate) fn append_residual_replay_generation(
     root: &Path,
     campaign: &Path,
@@ -137,6 +142,16 @@ pub(crate) fn append_residual_replay_generation(
     if let Some(previous) = &previous {
         validate_residual_corpus_scope(optimization, previous)?;
     }
+    let alternate_bindings = if optimization.execution.alternate_terminal_goals.is_empty() {
+        BTreeMap::new()
+    } else {
+        optimization
+            .alternate_terminal_predicates(root)
+            .map_err(replay_error)?
+            .into_iter()
+            .map(|binding| (binding.goal.clone(), binding))
+            .collect::<BTreeMap<_, _>>()
+    };
     let mut additions = Vec::new();
     let mut shard_references = BTreeMap::new();
     let mut episode_keys = BTreeSet::new();
@@ -173,13 +188,82 @@ pub(crate) fn append_residual_replay_generation(
                 checkpoint_identity: attempt.restore_identity.clone(),
                 simulated_ticks: attempt.simulated_ticks,
                 first_hit_tick: attempt.first_hit_tick,
+                role: ReplayExperienceRole::RandomizedCoverage,
+                terminal_goal: optimization.terminal_predicate.goal.clone(),
+                terminal_program_sha256: optimization.terminal_predicate.program_sha256,
+                terminal_definition_sha256: optimization.terminal_predicate.definition_sha256,
             });
+        }
+        for alternate in &evaluation.alternate_terminals {
+            let binding = alternate_bindings
+                .get(&alternate.terminal.goal)
+                .filter(|binding| {
+                    binding.program_sha256 == alternate.terminal.program_sha256
+                        && binding.definition_sha256 == alternate.terminal.definition_sha256
+                })
+                .ok_or_else(|| {
+                    replay_message(
+                        "residual replay alternate terminal differs from the sealed request",
+                    )
+                })?;
+            for attempt in alternate
+                .attempts
+                .iter()
+                .filter(|attempt| attempt.first_hit_tick.is_some())
+            {
+                let prior = shard_references.insert(
+                    attempt.episode_shard.path.clone(),
+                    attempt.episode_shard.clone(),
+                );
+                if prior
+                    .as_ref()
+                    .is_some_and(|prior| prior != &attempt.episode_shard)
+                {
+                    return Err(replay_message(
+                        "residual replay shard path has conflicting artifact identities",
+                    ));
+                }
+                if !episode_keys.insert((
+                    attempt.episode_shard.sha256,
+                    attempt.wire_candidate_id.clone(),
+                )) {
+                    return Err(replay_message(
+                        "residual replay generation repeats an authenticated episode",
+                    ));
+                }
+                additions.push(ReplayAddition {
+                    shard_path: attempt.episode_shard.path.clone(),
+                    episode_id: attempt.wire_candidate_id.clone(),
+                    checkpoint_identity: attempt.restore_identity.clone(),
+                    simulated_ticks: attempt.simulated_ticks,
+                    first_hit_tick: attempt.first_hit_tick,
+                    role: ReplayExperienceRole::AlternateTerminal,
+                    terminal_goal: binding.goal.clone(),
+                    terminal_program_sha256: binding.program_sha256,
+                    terminal_definition_sha256: binding.definition_sha256,
+                });
+            }
         }
     }
 
     let shards = shard_references
         .into_iter()
         .map(|(path, reference)| {
+            let terminal = additions
+                .iter()
+                .find(|addition| addition.shard_path == path)
+                .ok_or_else(|| replay_message("residual replay shard has no terminal binding"))?;
+            if additions.iter().any(|addition| {
+                addition.shard_path == path
+                    && (addition.terminal_goal != terminal.terminal_goal
+                        || addition.terminal_program_sha256 != terminal.terminal_program_sha256
+                        || addition.terminal_definition_sha256
+                            != terminal.terminal_definition_sha256)
+            }) {
+                return Err(replay_message(
+                    "residual replay shard mixes terminal bindings",
+                ));
+            }
             let bytes = read_artifact(root, &reference).map_err(replay_error)?;
             let shard = NativeEpisodeShard::decode(&bytes).map_err(replay_error)?;
             if shard.content_sha256 != reference.sha256
@@ -187,7 +271,7 @@ pub(crate) fn append_residual_replay_generation(
                 || u64::from(shard.maximum_ticks) != optimization.budgets.exploration_horizon_ticks
                 || shard.metadata.source_boundary_fingerprint
                     != optimization.route.native_source_boundary_fingerprint
-                || shard.metadata.objective != optimization.terminal_predicate.goal
+                || shard.metadata.objective != terminal.terminal_goal
                 || shard.metadata.policy_model.is_some()
             {
                 return Err(replay_message(
@@ -196,11 +280,8 @@ pub(crate) fn append_residual_replay_generation(
             }
             shard
                 .verify_authored_objective(
-                    &optimization.terminal_predicate.program_sha256.to_string(),
-                    &optimization
-                        .terminal_predicate
-                        .definition_sha256
-                        .to_string(),
+                    &terminal.terminal_program_sha256.to_string(),
+                    &terminal.terminal_definition_sha256.to_string(),
                 )
                 .map_err(replay_error)?;
             Ok((path, shard))
@@ -234,7 +315,7 @@ pub(crate) fn append_residual_replay_generation(
             Ok(ReplayEpisodeSource {
                 shard,
                 episode_index,
-                role: ReplayExperienceRole::RandomizedCoverage,
+                role: addition.role,
                 policy_lineage_sha256: None,
                 parent_entry_sha256: None,
             })
@@ -455,16 +536,28 @@ pub(crate) fn validate_residual_corpus_scope(
                     != incumbent_tick
         })
         || corpus.entries.iter().any(|entry| {
-            !matches!(
-                entry.role,
-                ReplayExperienceRole::Demonstration | ReplayExperienceRole::RandomizedCoverage
-            ) || entry.policy_lineage_sha256.is_some()
+            let objective_valid = match entry.role {
+                ReplayExperienceRole::Demonstration | ReplayExperienceRole::RandomizedCoverage => {
+                    entry.objective == optimization.terminal_predicate.goal
+                        && entry.objective_identity == objective_identity
+                }
+                ReplayExperienceRole::AlternateTerminal => {
+                    entry.success
+                        && entry.objective != optimization.terminal_predicate.goal
+                        && entry.objective_identity.len() == 32
+                        && entry
+                            .objective_identity
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                }
+                ReplayExperienceRole::PolicyRollout => false,
+            };
+            !objective_valid
+                || entry.policy_lineage_sha256.is_some()
                 || entry.parent_entry_sha256.is_some()
                 || entry.source_frame != optimization.route.source_boundary_index
                 || entry.source_boundary_fingerprint
                     != optimization.route.native_source_boundary_fingerprint
-                || entry.objective != optimization.terminal_predicate.goal
-                || entry.objective_identity != objective_identity
         })
     {
         return Err(replay_message(
@@ -547,6 +640,7 @@ mod tests {
         optimization.terminal_predicate.goal = shard.metadata.objective.clone();
         optimization.terminal_predicate.program_sha256 = PROGRAM_SHA256.parse().unwrap();
         optimization.terminal_predicate.definition_sha256 = DEFINITION_SHA256.parse().unwrap();
+        optimization.execution.alternate_terminal_goals.clear();
         optimization
     }
 
@@ -603,6 +697,7 @@ mod tests {
                 terminal_boundary_fingerprint: "7".repeat(32),
                 behavior_sha256: Digest([8; 32]),
             }],
+            alternate_terminals: Vec::new(),
             simulated_ticks: u64::from(episode.ticks_executed),
             terminal_boundary_fingerprint: "7".repeat(32),
             evidence: ResidualEvaluationEvidence {
@@ -742,6 +837,29 @@ mod tests {
                 .filter(|entry| entry.role == ReplayExperienceRole::Demonstration)
                 .count(),
             1
+        );
+        let mut alternate_shard = shard.clone();
+        alternate_shard.content_sha256 = Digest([77; 32]);
+        alternate_shard.metadata.objective = "alternate_goal".into();
+        alternate_shard.metadata.objective_identity = "7".repeat(32);
+        let with_alternate = NativeReplayCorpus::build(
+            Some(&cumulative),
+            &[ReplayEpisodeSource {
+                shard: &alternate_shard,
+                episode_index: success,
+                role: ReplayExperienceRole::AlternateTerminal,
+                policy_lineage_sha256: None,
+                parent_entry_sha256: None,
+            }],
+        )
+        .unwrap();
+        validate_residual_corpus_scope(&optimization, &with_alternate).unwrap();
+        assert_eq!(
+            with_alternate
+                .report
+                .roles
+                .get(&ReplayExperienceRole::AlternateTerminal),
+            Some(&1)
         );
         fs::remove_dir_all(root).unwrap();
     }

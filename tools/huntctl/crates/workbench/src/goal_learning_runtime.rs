@@ -556,7 +556,13 @@ fn goal_learning_initial_inputs(
         else {
             continue;
         };
-        for attempt in evaluation.attempts {
+        let attempts = evaluation.attempts.into_iter().chain(
+            evaluation
+                .alternate_terminals
+                .into_iter()
+                .flat_map(|alternate| alternate.attempts),
+        );
+        for attempt in attempts {
             if required.contains(&attempt.episode_shard.sha256)
                 && let Some(previous) =
                     shards.insert(attempt.episode_shard.sha256, attempt.episode_shard.clone())

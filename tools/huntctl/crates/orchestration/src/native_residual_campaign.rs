@@ -1,5 +1,6 @@
 //! Sealed execution and evidence artifacts for persistent native residual campaigns.
 
+use crate::native_suffix_result::NativeTerminalBinding;
 use crate::optimization_request::OptimizationRequest;
 use crate::residual_campaign::ResidualReplayCheckpoint;
 use crate::residual_campaign::{ResidualCampaignCandidate, ResidualCampaignError};
@@ -509,9 +510,18 @@ pub struct NativeResidualCampaignEvaluation {
     pub candidate_sha256: Digest,
     pub realized_tape_sha256: Digest,
     pub attempts: Vec<NativeResidualAttempt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternate_terminals: Vec<NativeAlternateTerminalEvaluation>,
     pub simulated_ticks: u64,
     pub terminal_boundary_fingerprint: String,
     pub evidence: ResidualEvaluationEvidence,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeAlternateTerminalEvaluation {
+    pub terminal: NativeTerminalBinding,
+    pub attempts: Vec<NativeResidualAttempt>,
 }
 
 impl NativeResidualCampaignEvaluation {
@@ -520,6 +530,22 @@ impl NativeResidualCampaignEvaluation {
         execution: &NativeResidualExecutionBinding,
         candidate: &ResidualCampaignCandidate,
         attempts: Vec<NativeResidualAttempt>,
+    ) -> Result<Self, NativeResidualCampaignError> {
+        Self::seal_with_alternate_terminals(
+            optimization,
+            execution,
+            candidate,
+            attempts,
+            Vec::new(),
+        )
+    }
+
+    pub fn seal_with_alternate_terminals(
+        optimization: &OptimizationRequest,
+        execution: &NativeResidualExecutionBinding,
+        candidate: &ResidualCampaignCandidate,
+        attempts: Vec<NativeResidualAttempt>,
+        alternate_terminals: Vec<NativeAlternateTerminalEvaluation>,
     ) -> Result<Self, NativeResidualCampaignError> {
         if attempts.is_empty() {
             return Err(native_message("native residual evaluation is empty"));
@@ -534,11 +560,18 @@ impl NativeResidualCampaignEvaluation {
                 "native residual repetitions disagree on the exact terminal verdict or boundary",
             ));
         }
-        let simulated_ticks = attempts.iter().try_fold(0_u64, |total, attempt| {
-            total
-                .checked_add(attempt.simulated_ticks)
-                .ok_or_else(|| native_message("native residual simulated ticks overflowed"))
-        })?;
+        let simulated_ticks = attempts
+            .iter()
+            .chain(
+                alternate_terminals
+                    .iter()
+                    .flat_map(|alternate| alternate.attempts.iter()),
+            )
+            .try_fold(0_u64, |total, attempt| {
+                total
+                    .checked_add(attempt.simulated_ticks)
+                    .ok_or_else(|| native_message("native residual simulated ticks overflowed"))
+            })?;
         let evidence = ResidualEvaluationEvidence {
             candidate_sha256: candidate.candidate.content_sha256,
             realized_tape_sha256: candidate.compilation.realized_tape_sha256,
@@ -577,6 +610,7 @@ impl NativeResidualCampaignEvaluation {
             candidate_sha256: candidate.candidate.content_sha256,
             realized_tape_sha256: candidate.compilation.realized_tape_sha256,
             attempts,
+            alternate_terminals,
             simulated_ticks,
             terminal_boundary_fingerprint,
             evidence,
@@ -597,7 +631,10 @@ impl NativeResidualCampaignEvaluation {
             .attempts
             .first()
             .and_then(|attempt| attempt.first_hit_tick);
-        let attempts_valid = self.attempts.iter().enumerate().all(|(index, attempt)| {
+        let valid_attempt = |index: usize,
+                             attempt: &NativeResidualAttempt,
+                             expected_tick: Option<u64>,
+                             expected_boundary: &str| {
             attempt.repetition as usize == index + 1
                 && optimization
                     .execution
@@ -614,14 +651,58 @@ impl NativeResidualCampaignEvaluation {
                 && attempt
                     .first_hit_tick
                     .is_none_or(|tick| tick > 0 && tick == attempt.simulated_ticks)
-                && attempt.first_hit_tick == verdict_tick
+                && attempt.first_hit_tick == expected_tick
                 && lower_hex(&attempt.terminal_boundary_fingerprint, 32)
-                && attempt.terminal_boundary_fingerprint == self.terminal_boundary_fingerprint
+                && attempt.terminal_boundary_fingerprint == expected_boundary
                 && attempt.behavior_sha256 != Digest::ZERO
+        };
+        let attempts_valid = self.attempts.iter().enumerate().all(|(index, attempt)| {
+            valid_attempt(
+                index,
+                attempt,
+                verdict_tick,
+                &self.terminal_boundary_fingerprint,
+            )
         });
-        let charged = self.attempts.iter().try_fold(0_u64, |total, attempt| {
-            total.checked_add(attempt.simulated_ticks)
-        });
+        let alternate_terminals_valid = verdict_tick.is_none()
+            && self
+                .alternate_terminals
+                .windows(2)
+                .all(|pair| pair[0].terminal.goal < pair[1].terminal.goal)
+            && self.alternate_terminals.iter().all(|alternate| {
+                let alternate_tick = alternate
+                    .attempts
+                    .first()
+                    .and_then(|attempt| attempt.first_hit_tick);
+                let alternate_boundary = alternate
+                    .attempts
+                    .first()
+                    .map(|attempt| attempt.terminal_boundary_fingerprint.as_str())
+                    .unwrap_or_default();
+                !alternate.terminal.goal.is_empty()
+                    && alternate.terminal.goal != optimization.terminal_predicate.goal
+                    && alternate.terminal.program_sha256 != Digest::ZERO
+                    && alternate.terminal.definition_sha256 != Digest::ZERO
+                    && alternate.attempts.len() == expected_attempts
+                    && alternate
+                        .attempts
+                        .iter()
+                        .enumerate()
+                        .all(|(index, attempt)| {
+                            valid_attempt(index, attempt, alternate_tick, alternate_boundary)
+                        })
+            });
+        let charged = self
+            .attempts
+            .iter()
+            .chain(
+                self.alternate_terminals
+                    .iter()
+                    .flat_map(|alternate| alternate.attempts.iter()),
+            )
+            .try_fold(0_u64, |total, attempt| {
+                total.checked_add(attempt.simulated_ticks)
+            });
         let expected_verdict = verdict_tick.map_or(ExactTerminalVerdict::Miss, |first_hit_tick| {
             ExactTerminalVerdict::Reached { first_hit_tick }
         });
@@ -633,6 +714,7 @@ impl NativeResidualCampaignEvaluation {
             || self.realized_tape_sha256 != candidate.compilation.realized_tape_sha256
             || self.attempts.len() != expected_attempts
             || !attempts_valid
+            || (!self.alternate_terminals.is_empty() && !alternate_terminals_valid)
             || charged != Some(self.simulated_ticks)
             || !lower_hex(&self.terminal_boundary_fingerprint, 32)
             || self.evidence.candidate_sha256 != self.candidate_sha256

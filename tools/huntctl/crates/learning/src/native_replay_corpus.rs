@@ -54,9 +54,13 @@ impl NativeReplayEntry {
             .episodes
             .get(source.episode_index)
             .ok_or_else(|| NativeReplayCorpusError::new("replay episode index is invalid"))?;
-        if source.role == ReplayExperienceRole::Demonstration && !episode.success {
+        if matches!(
+            source.role,
+            ReplayExperienceRole::Demonstration | ReplayExperienceRole::AlternateTerminal
+        ) && !episode.success
+        {
             return Err(NativeReplayCorpusError::new(
-                "demonstration replay entry is not a successful episode",
+                "terminal replay entry is not a successful episode",
             ));
         }
         if (source.role == ReplayExperienceRole::PolicyRollout)
@@ -106,7 +110,10 @@ impl NativeReplayEntry {
             || self.checkpoint_identity.is_empty()
             || self.objective.is_empty()
             || self.objective_identity.is_empty()
-            || (self.role == ReplayExperienceRole::Demonstration && !self.success)
+            || (matches!(
+                self.role,
+                ReplayExperienceRole::Demonstration | ReplayExperienceRole::AlternateTerminal
+            ) && !self.success)
             || ((self.role == ReplayExperienceRole::PolicyRollout)
                 != self.policy_lineage_sha256.is_some())
             || self.entry_sha256 != self.digest()?
@@ -469,6 +476,19 @@ mod tests {
                     &shard,
                     failure,
                     ReplayExperienceRole::RandomizedCoverage,
+                    None,
+                    None,
+                )],
+            )
+            .is_err()
+        );
+        assert!(
+            NativeReplayCorpus::build(
+                None,
+                &[source(
+                    &shard,
+                    failure,
+                    ReplayExperienceRole::AlternateTerminal,
                     None,
                     None,
                 )],

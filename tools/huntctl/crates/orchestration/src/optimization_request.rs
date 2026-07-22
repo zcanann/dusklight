@@ -7,6 +7,7 @@ use dusklight_harness_contracts::objective_suite::{
 };
 use dusklight_harness_contracts::run_contract::{HarnessFidelityMode, HarnessRunRequest};
 use dusklight_learning::factorized_pad_action::ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256;
+use dusklight_learning::hindsight::HindsightRelabelDecision;
 use dusklight_routes::timeline::{ArtifactSource, Timeline};
 use dusklight_routes::timeline_materialization::materialize_segment_chain;
 use dusklight_search::residual_action::{
@@ -90,6 +91,17 @@ pub struct OptimizationExecution {
     pub deterministic_seeds: Vec<u64>,
     pub repetitions: u16,
     pub fidelity: HarnessFidelityMode,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub alternate_terminal_goals: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlternateTerminalPredicateBinding {
+    pub goal: String,
+    pub source: ArtifactReference,
+    pub program_sha256: Digest,
+    pub definition_sha256: Digest,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -164,6 +176,7 @@ pub struct OptimizationRequestValidationReport {
     pub search_space_sha256: Digest,
     pub workers: u16,
     pub repetitions: u16,
+    pub alternate_terminal_goals: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -232,6 +245,20 @@ impl OptimizationRequest {
         {
             return Err(request_error(
                 "execution requires 1..=100 repetitions and one unique sorted deterministic seed per worker",
+            ));
+        }
+        if !self
+            .execution
+            .alternate_terminal_goals
+            .windows(2)
+            .all(|pair| pair[0] < pair[1])
+            || self.execution.alternate_terminal_goals.iter().any(|goal| {
+                validate_id("alternate terminal goal", goal).is_err()
+                    || goal == &self.terminal_predicate.goal
+            })
+        {
+            return Err(request_error(
+                "alternate terminal goals must be unique, sorted, valid, and distinct from the promotion terminal",
             ));
         }
         validate_schema("action", &self.proposal.action_schema)?;
@@ -455,6 +482,14 @@ impl OptimizationRequest {
                 .map_err(|source| request_error(source.to_string()))?;
         }
 
+        let alternate_terminals = resolve_alternate_terminal_predicates(
+            &root,
+            &timeline_path,
+            &timeline,
+            &self.route.segment,
+            &self.execution.alternate_terminal_goals,
+        )?;
+
         Ok(OptimizationRequestValidationReport {
             schema: OPTIMIZATION_REQUEST_SCHEMA_V2,
             request_id: self.id.clone(),
@@ -481,7 +516,37 @@ impl OptimizationRequest {
                 .map_err(|source| request_error(source.to_string()))?,
             workers: self.execution.workers,
             repetitions: self.execution.repetitions,
+            alternate_terminal_goals: alternate_terminals
+                .into_iter()
+                .map(|terminal| terminal.goal)
+                .collect(),
         })
+    }
+
+    pub fn alternate_terminal_predicates(
+        &self,
+        repository_root: &Path,
+    ) -> Result<Vec<AlternateTerminalPredicateBinding>, OptimizationRequestError> {
+        self.validate_files(repository_root)?;
+        let root = repository_root.canonicalize().map_err(|source| {
+            request_error(format!(
+                "cannot resolve repository root {}: {source}",
+                repository_root.display()
+            ))
+        })?;
+        let timeline_path = validate_artifact_file(&root, "timeline", &self.route.timeline)?;
+        let timeline = Timeline::parse(
+            &fs::read_to_string(&timeline_path)
+                .map_err(|source| request_error(format!("cannot read timeline: {source}")))?,
+        )
+        .map_err(|source| request_error(format!("invalid timeline: {source}")))?;
+        resolve_alternate_terminal_predicates(
+            &root,
+            &timeline_path,
+            &timeline,
+            &self.route.segment,
+            &self.execution.alternate_terminal_goals,
+        )
     }
 
     pub fn refresh_content_sha256(&mut self) -> Result<(), OptimizationRequestError> {
@@ -591,6 +656,121 @@ impl OptimizationRequest {
         hasher.update(bytes);
         Ok(Digest(hasher.finalize().into()))
     }
+}
+
+fn resolve_alternate_terminal_predicates(
+    root: &Path,
+    timeline_path: &Path,
+    timeline: &Timeline,
+    segment: &str,
+    goals: &[String],
+) -> Result<Vec<AlternateTerminalPredicateBinding>, OptimizationRequestError> {
+    let mut bindings = Vec::with_capacity(goals.len());
+    for goal_id in goals {
+        let goal = timeline
+            .goals
+            .get(goal_id)
+            .filter(|goal| goal.segment == segment)
+            .ok_or_else(|| {
+                request_error(format!(
+                    "alternate terminal {goal_id} is absent from the optimization segment"
+                ))
+            })?;
+        let source = goal.predicate_source.as_ref().ok_or_else(|| {
+            request_error(format!(
+                "alternate terminal {goal_id} does not own a predicate source"
+            ))
+        })?;
+        let source_path = timeline_path
+            .parent()
+            .unwrap_or(root)
+            .join(source)
+            .canonicalize()
+            .map_err(|error| {
+                request_error(format!(
+                    "cannot resolve alternate terminal {goal_id} source: {error}"
+                ))
+            })?;
+        if !source_path.starts_with(root) || !source_path.is_file() {
+            return Err(request_error(format!(
+                "alternate terminal {goal_id} source is outside the repository"
+            )));
+        }
+        let source_bytes = fs::read(&source_path).map_err(|error| {
+            request_error(format!(
+                "cannot read alternate terminal {goal_id} source: {error}"
+            ))
+        })?;
+        let source_text = std::str::from_utf8(&source_bytes).map_err(|error| {
+            request_error(format!(
+                "alternate terminal {goal_id} source is not UTF-8: {error}"
+            ))
+        })?;
+        let program = dusklight_objectives::milestone_dsl::parse(source_text).map_err(|error| {
+            request_error(format!(
+                "alternate terminal {goal_id} source is invalid: {error}"
+            ))
+        })?;
+        let compiled = dusklight_objectives::milestone_dsl::compile(&program).map_err(|error| {
+            request_error(format!(
+                "alternate terminal {goal_id} cannot compile: {error}"
+            ))
+        })?;
+        let definition_index = program
+            .definitions
+            .iter()
+            .position(|definition| definition.name == *goal_id)
+            .ok_or_else(|| {
+                request_error(format!(
+                    "alternate terminal source does not define {goal_id}"
+                ))
+            })?;
+        HindsightRelabelDecision::evaluate(&compiled, definition_index)
+            .and_then(HindsightRelabelDecision::admit)
+            .map_err(|error| {
+                request_error(format!(
+                    "alternate terminal {goal_id} is not a history-free achieved goal: {error}"
+                ))
+            })?;
+        let proof = timeline
+            .proofs
+            .iter()
+            .find(|proof| proof.segment == segment && proof.goal == *goal_id)
+            .ok_or_else(|| {
+                request_error(format!(
+                    "alternate terminal {goal_id} has no proof on the optimization segment"
+                ))
+            })?;
+        let program_sha256 = Digest(compiled.program_sha256);
+        let definition_sha256 = Digest(compiled.definitions[definition_index].sha256);
+        if proof.predicate_program_sha256 != program_sha256.to_string()
+            || proof.predicate_definition_sha256 != definition_sha256.to_string()
+        {
+            return Err(request_error(format!(
+                "alternate terminal {goal_id} identities differ from its route proof"
+            )));
+        }
+        let relative = source_path.strip_prefix(root).map_err(|_| {
+            request_error(format!(
+                "alternate terminal {goal_id} source is outside the repository"
+            ))
+        })?;
+        let relative = relative
+            .components()
+            .map(|component| component.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        bindings.push(AlternateTerminalPredicateBinding {
+            goal: goal_id.clone(),
+            source: ArtifactReference {
+                path: relative,
+                sha256: sha256(&source_bytes),
+            },
+            program_sha256,
+            definition_sha256,
+        });
+    }
+    Ok(bindings)
 }
 
 fn validate_artifact_shape(

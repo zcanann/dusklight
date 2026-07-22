@@ -182,6 +182,10 @@ fn validates_and_seals_the_ordon_optimization_request() {
     assert_eq!(report["exploration_horizon_ticks"], 160);
     assert_eq!(report["promotion_before_tick"], 125);
     assert_eq!(
+        report["alternate_terminal_goals"],
+        serde_json::json!(["ordon_spring_exit_approach"])
+    );
+    assert_eq!(
         report["search_space_sha256"],
         "a19105c390e4a32232e50da81d290994ee035ca614c1dc0181d5784bd7dd1879"
     );
@@ -341,6 +345,14 @@ fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
             ("/retention/failed_episodes", Value::String("none".into())),
             "failures must be retained",
         ),
+        (
+            "alternate-terminal",
+            (
+                "/execution/alternate_terminal_goals/0",
+                Value::String("ordon_spring_load_committed".into()),
+            ),
+            "distinct from the promotion terminal",
+        ),
     ] {
         let mut changed = request.clone();
         *changed.pointer_mut(mutation.0).unwrap() = mutation.1;
@@ -478,7 +490,7 @@ fn optimization_resume_recovers_a_partial_tail_without_repeating_candidates() {
         "candidate_id": "candidate-0001",
         "candidate_sha256": request_digest.clone(),
         "result": {"path": result_artifact, "sha256": result_digest.clone()},
-        "simulated_ticks": 161
+        "simulated_ticks": 321
     }));
     assert!(!oversized_evaluation.status.success());
     assert!(

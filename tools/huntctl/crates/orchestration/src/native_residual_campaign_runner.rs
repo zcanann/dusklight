@@ -5,8 +5,8 @@ use crate::campaign_replay::{
     validate_residual_corpus_scope,
 };
 use crate::native_residual_campaign::{
-    NativeIncumbentDemonstration, NativeResidualAttempt, NativeResidualCampaignEvaluation,
-    NativeResidualExecutionBinding,
+    NativeAlternateTerminalEvaluation, NativeIncumbentDemonstration, NativeResidualAttempt,
+    NativeResidualCampaignEvaluation, NativeResidualExecutionBinding,
 };
 use crate::native_suffix_result::{
     NativeTerminalBinding, ValidatedNativeSuffixBatch, ValidatedNativeSuffixCandidate,
@@ -72,6 +72,7 @@ struct WorkerPool<'a> {
     optimization: &'a OptimizationRequest,
     execution: &'a NativeResidualExecutionBinding,
     terminal: NativeTerminalBinding,
+    milestone_program: PathBuf,
     card_fixture_root: PathBuf,
     session_root: PathBuf,
     lanes: Vec<WorkerLane>,
@@ -98,12 +99,38 @@ impl<'a> WorkerPool<'a> {
         optimization: &'a OptimizationRequest,
         execution: &'a NativeResidualExecutionBinding,
     ) -> Result<Self, NativeResidualCampaignRunnerError> {
+        Self::new_for_terminal(
+            root,
+            campaign,
+            optimization,
+            execution,
+            NativeTerminalBinding {
+                goal: optimization.terminal_predicate.goal.clone(),
+                program_sha256: optimization.terminal_predicate.program_sha256,
+                definition_sha256: optimization.terminal_predicate.definition_sha256,
+            },
+            root.join(&execution.milestone_program.path),
+            "promotion",
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_for_terminal(
+        root: &'a Path,
+        campaign: &'a Path,
+        optimization: &'a OptimizationRequest,
+        execution: &'a NativeResidualExecutionBinding,
+        terminal: NativeTerminalBinding,
+        milestone_program: PathBuf,
+        namespace: &str,
+    ) -> Result<Self, NativeResidualCampaignRunnerError> {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(native_error)?
             .as_nanos();
         let session_root = campaign
             .join("native-sessions")
+            .join(namespace)
             .join(format!("run-{}-{nonce}", std::process::id()));
         let lanes = optimization
             .execution
@@ -124,11 +151,8 @@ impl<'a> WorkerPool<'a> {
             card_fixture_root: execution
                 .card_fixture_root(root, optimization)
                 .map_err(native_error)?,
-            terminal: NativeTerminalBinding {
-                goal: optimization.terminal_predicate.goal.clone(),
-                program_sha256: optimization.terminal_predicate.program_sha256,
-                definition_sha256: optimization.terminal_predicate.definition_sha256,
-            },
+            terminal,
+            milestone_program,
             session_root,
             lanes,
         })
@@ -149,6 +173,7 @@ impl<'a> WorkerPool<'a> {
         let optimization = self.optimization;
         let execution = self.execution;
         let terminal = &self.terminal;
+        let milestone_program = &self.milestone_program;
         let card_fixture_root = &self.card_fixture_root;
         let outputs = std::thread::scope(|scope| {
             let mut handles = Vec::new();
@@ -162,6 +187,7 @@ impl<'a> WorkerPool<'a> {
                         optimization,
                         execution,
                         terminal,
+                        milestone_program,
                         card_fixture_root,
                         lane,
                         job,
@@ -244,11 +270,59 @@ impl Drop for WorkerPool<'_> {
     }
 }
 
+fn alternate_worker_pools<'a>(
+    root: &'a Path,
+    campaign: &'a Path,
+    optimization: &'a OptimizationRequest,
+    execution: &'a NativeResidualExecutionBinding,
+) -> Result<Vec<WorkerPool<'a>>, NativeResidualCampaignRunnerError> {
+    optimization
+        .alternate_terminal_predicates(root)
+        .map_err(native_error)?
+        .into_iter()
+        .enumerate()
+        .map(|(index, binding)| {
+            let source =
+                fs::read_to_string(root.join(&binding.source.path)).map_err(native_error)?;
+            let program =
+                dusklight_objectives::milestone_dsl::parse(&source).map_err(native_error)?;
+            let program =
+                dusklight_objectives::milestone_dsl::compile(&program).map_err(native_error)?;
+            if Digest(program.program_sha256) != binding.program_sha256 {
+                return Err(native_message(format!(
+                    "alternate terminal {} compiled identity changed after request validation",
+                    binding.goal
+                )));
+            }
+            let program_path = campaign
+                .join("alternate-terminals")
+                .join(format!("{index:03}-{}", binding.goal))
+                .join(format!("program-{}.dmsp", binding.program_sha256));
+            write_exact_or_new(&program_path, &program.bytes).map_err(native_error)?;
+            WorkerPool::new_for_terminal(
+                root,
+                campaign,
+                optimization,
+                execution,
+                NativeTerminalBinding {
+                    goal: binding.goal,
+                    program_sha256: binding.program_sha256,
+                    definition_sha256: binding.definition_sha256,
+                },
+                program_path,
+                &format!("alternate-{index:03}"),
+            )
+        })
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_lane_job(
     root: &Path,
     optimization: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
     terminal: &NativeTerminalBinding,
+    milestone_program: &Path,
     card_fixture_root: &Path,
     lane: &mut WorkerLane,
     job: BatchJob,
@@ -267,7 +341,7 @@ fn run_lane_job(
             executable: root.join(&execution.executable.path),
             game_data: root.join(&execution.game_data.path),
             input_tape: root.join(&execution.process_boot_tape.path),
-            milestone_program: root.join(&execution.milestone_program.path),
+            milestone_program: milestone_program.to_path_buf(),
             card_fixture: card_fixture_root.to_path_buf(),
             card_fixture_sha256: execution.card_fixture_manifest.sha256,
             working_directory: root.to_path_buf(),
@@ -393,36 +467,78 @@ fn validate_evaluation_artifacts(
         definition_sha256: optimization.terminal_predicate.definition_sha256,
     };
     for attempt in &evaluation.attempts {
-        let batch: NativeSuffixBatch = serde_json::from_slice(
-            &read_artifact(root, &attempt.batch_request).map_err(native_error)?,
-        )
-        .map_err(native_error)?;
-        let result_path = root.join(&attempt.batch_result.path);
-        if artifact_reference(root, &result_path).map_err(native_error)? != attempt.batch_result {
-            return Err(native_message(
-                "native residual batch result artifact digest differs",
-            ));
+        validate_attempt_artifacts(root, &terminal, attempt)?;
+    }
+    let expected = optimization
+        .alternate_terminal_predicates(root)
+        .map_err(native_error)?
+        .into_iter()
+        .map(|binding| NativeTerminalBinding {
+            goal: binding.goal,
+            program_sha256: binding.program_sha256,
+            definition_sha256: binding.definition_sha256,
+        })
+        .collect::<Vec<_>>();
+    let expected = if evaluation
+        .attempts
+        .first()
+        .is_some_and(|attempt| attempt.first_hit_tick.is_none())
+    {
+        expected
+    } else {
+        Vec::new()
+    };
+    if evaluation
+        .alternate_terminals
+        .iter()
+        .map(|alternate| &alternate.terminal)
+        .ne(expected.iter())
+    {
+        return Err(native_message(
+            "native residual alternate terminals differ from the sealed optimization request",
+        ));
+    }
+    for alternate in &evaluation.alternate_terminals {
+        for attempt in &alternate.attempts {
+            validate_attempt_artifacts(root, &alternate.terminal, attempt)?;
         }
-        let validated = validate_native_suffix_artifacts(&batch, &result_path, &terminal)
+    }
+    Ok(())
+}
+
+fn validate_attempt_artifacts(
+    root: &Path,
+    terminal: &NativeTerminalBinding,
+    attempt: &NativeResidualAttempt,
+) -> Result<(), NativeResidualCampaignRunnerError> {
+    let batch: NativeSuffixBatch =
+        serde_json::from_slice(&read_artifact(root, &attempt.batch_request).map_err(native_error)?)
             .map_err(native_error)?;
-        let candidate = validated
-            .candidates
-            .iter()
-            .find(|candidate| candidate.id == attempt.wire_candidate_id)
-            .ok_or_else(|| native_message("native residual attempt is absent from its batch"))?;
-        let episode = artifact_reference(root, Path::new(&validated.episode_shard_path))
-            .map_err(native_error)?;
-        if episode != attempt.episode_shard
-            || validated.restore_identity != attempt.restore_identity
-            || validated.checkpoint_bytes != attempt.checkpoint_bytes
-            || candidate.simulated_ticks != attempt.simulated_ticks
-            || candidate.first_hit_tick != attempt.first_hit_tick
-            || candidate.behavior_sha256 != attempt.behavior_sha256
-        {
-            return Err(native_message(
-                "native residual attempt differs from its validated batch artifacts",
-            ));
-        }
+    let result_path = root.join(&attempt.batch_result.path);
+    if artifact_reference(root, &result_path).map_err(native_error)? != attempt.batch_result {
+        return Err(native_message(
+            "native residual batch result artifact digest differs",
+        ));
+    }
+    let validated =
+        validate_native_suffix_artifacts(&batch, &result_path, terminal).map_err(native_error)?;
+    let candidate = validated
+        .candidates
+        .iter()
+        .find(|candidate| candidate.id == attempt.wire_candidate_id)
+        .ok_or_else(|| native_message("native residual attempt is absent from its batch"))?;
+    let episode =
+        artifact_reference(root, Path::new(&validated.episode_shard_path)).map_err(native_error)?;
+    if episode != attempt.episode_shard
+        || validated.restore_identity != attempt.restore_identity
+        || validated.checkpoint_bytes != attempt.checkpoint_bytes
+        || candidate.simulated_ticks != attempt.simulated_ticks
+        || candidate.first_hit_tick != attempt.first_hit_tick
+        || candidate.behavior_sha256 != attempt.behavior_sha256
+    {
+        return Err(native_message(
+            "native residual attempt differs from its validated batch artifacts",
+        ));
     }
     Ok(())
 }
@@ -506,6 +622,104 @@ fn select_result_path(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn execute_native_attempts(
+    root: &Path,
+    campaign: &Path,
+    config: &NativeResidualCampaignRunConfig<'_>,
+    profile: dusklight_search::search::SegmentProfile,
+    candidates: &[&PreparedCandidate],
+    pool: &mut WorkerPool<'_>,
+    generation: u64,
+    alternate_namespace: Option<&str>,
+) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError> {
+    let lane_count = pool.lanes.len();
+    let mut attempts = candidates
+        .iter()
+        .map(|candidate| (candidate.envelope.id.clone(), Vec::new()))
+        .collect::<BTreeMap<_, _>>();
+    for repetition in 1..=config.optimization.execution.repetitions {
+        ensure_not_cancelled(config)?;
+        let mut groups = vec![Vec::new(); lane_count];
+        for (index, candidate) in candidates.iter().enumerate() {
+            groups[index % lane_count].push(*candidate);
+        }
+        let mut jobs = Vec::new();
+        let mut adopted = Vec::new();
+        for (lane, group) in groups.iter().enumerate() {
+            if group.is_empty() {
+                continue;
+            }
+            let batch = native_batch(
+                config.optimization,
+                config.execution,
+                profile,
+                group,
+                repetition,
+            )?;
+            let batch_root = alternate_namespace.map_or_else(
+                || campaign.join("native-batches"),
+                |namespace| campaign.join("alternate-native-batches").join(namespace),
+            );
+            let batch_root = batch_root
+                .join(format!("generation-{generation:06}"))
+                .join(format!("repetition-{repetition:03}"))
+                .join(format!("worker-{lane:03}"))
+                .join(format!("batch-{}", batch_group_id(&batch)));
+            fs::create_dir_all(&batch_root).map_err(native_error)?;
+            let request_path = batch_root.join("request.json");
+            write_exact_or_new(&request_path, &pretty_json(&batch).map_err(native_error)?)
+                .map_err(native_error)?;
+            let (result_path, validated) = select_result_path(&batch_root, &batch, &pool.terminal)?;
+            if let Some(validated) = validated {
+                adopted.push(BatchOutput {
+                    lane,
+                    request_path,
+                    result_path,
+                    validated,
+                });
+            } else {
+                jobs.push(BatchJob {
+                    lane,
+                    request_path,
+                    result_path,
+                    batch,
+                });
+            }
+        }
+        ensure_not_cancelled(config)?;
+        let mut outputs = pool.run_jobs(jobs)?;
+        ensure_not_cancelled(config)?;
+        outputs.extend(adopted);
+        outputs.sort_by_key(|output| output.lane);
+        for output in outputs {
+            let request = artifact_reference(root, &output.request_path).map_err(native_error)?;
+            let result = artifact_reference(root, &output.result_path).map_err(native_error)?;
+            let episode = artifact_reference(root, Path::new(&output.validated.episode_shard_path))
+                .map_err(native_error)?;
+            for actual in &output.validated.candidates {
+                let candidate_id = actual
+                    .id
+                    .strip_suffix(&format!("-r{repetition:03}"))
+                    .ok_or_else(|| native_message("native wire candidate ID is malformed"))?;
+                let rows = attempts.get_mut(candidate_id).ok_or_else(|| {
+                    native_message("native result names an unsealed residual candidate")
+                })?;
+                rows.push(native_attempt(
+                    repetition,
+                    pool.lanes[output.lane].seed,
+                    actual,
+                    request.clone(),
+                    result.clone(),
+                    episode.clone(),
+                    &output.validated,
+                ));
+            }
+        }
+    }
+    Ok(attempts)
+}
+
+#[allow(clippy::too_many_arguments)]
 fn evaluate_generation(
     root: &Path,
     campaign: &Path,
@@ -515,6 +729,7 @@ fn evaluate_generation(
     resume: &mut OptimizationResumeState,
     archive: &mut ResidualOutcomeArchive,
     pool: &mut WorkerPool<'_>,
+    alternate_pools: &mut [WorkerPool<'_>],
     generation: u64,
 ) -> Result<(), NativeResidualCampaignRunnerError> {
     ensure_not_cancelled(config)?;
@@ -562,99 +777,62 @@ fn evaluate_generation(
 
     if !dispatch.is_empty() {
         let profile = segment_profile(root, config.optimization)?;
-        let lane_count = pool.lanes.len();
-        let mut attempts = dispatch
+        let mut attempts = execute_native_attempts(
+            root, campaign, config, profile, &dispatch, pool, generation, None,
+        )?;
+        let missed = dispatch
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                attempts
+                    .get(&candidate.envelope.id)
+                    .is_some_and(|rows| rows.iter().all(|attempt| attempt.first_hit_tick.is_none()))
+            })
+            .collect::<Vec<_>>();
+        let mut alternate_attempts = dispatch
             .iter()
             .map(|candidate| (candidate.envelope.id.clone(), Vec::new()))
-            .collect::<BTreeMap<_, _>>();
-        for repetition in 1..=config.optimization.execution.repetitions {
-            ensure_not_cancelled(config)?;
-            let mut groups = vec![Vec::new(); lane_count];
-            for (index, candidate) in dispatch.iter().enumerate() {
-                groups[index % lane_count].push(*candidate);
-            }
-            let mut jobs = Vec::new();
-            let mut adopted = Vec::new();
-            for (lane, group) in groups.iter().enumerate() {
-                if group.is_empty() {
-                    continue;
-                }
-                let batch = native_batch(
-                    config.optimization,
-                    config.execution,
+            .collect::<BTreeMap<_, Vec<NativeAlternateTerminalEvaluation>>>();
+        if !missed.is_empty() {
+            for (index, alternate_pool) in alternate_pools.iter_mut().enumerate() {
+                let terminal = alternate_pool.terminal.clone();
+                let mut rows = execute_native_attempts(
+                    root,
+                    campaign,
+                    config,
                     profile,
-                    group,
-                    repetition,
+                    &missed,
+                    alternate_pool,
+                    generation,
+                    Some(&format!("{index:03}-{}", terminal.goal)),
                 )?;
-                let batch_root = campaign
-                    .join("native-batches")
-                    .join(format!("generation-{generation:06}"))
-                    .join(format!("repetition-{repetition:03}"))
-                    .join(format!("worker-{lane:03}"))
-                    .join(format!("batch-{}", batch_group_id(&batch)));
-                fs::create_dir_all(&batch_root).map_err(native_error)?;
-                let request_path = batch_root.join("request.json");
-                write_exact_or_new(&request_path, &pretty_json(&batch).map_err(native_error)?)
-                    .map_err(native_error)?;
-                let (result_path, validated) =
-                    select_result_path(&batch_root, &batch, &pool.terminal)?;
-                if let Some(validated) = validated {
-                    adopted.push(BatchOutput {
-                        lane,
-                        request_path,
-                        result_path,
-                        validated,
-                    });
-                } else {
-                    jobs.push(BatchJob {
-                        lane,
-                        request_path,
-                        result_path,
-                        batch,
-                    });
-                }
-            }
-            ensure_not_cancelled(config)?;
-            let mut outputs = pool.run_jobs(jobs)?;
-            ensure_not_cancelled(config)?;
-            outputs.extend(adopted);
-            outputs.sort_by_key(|output| output.lane);
-            for output in outputs {
-                let request =
-                    artifact_reference(root, &output.request_path).map_err(native_error)?;
-                let result = artifact_reference(root, &output.result_path).map_err(native_error)?;
-                let episode =
-                    artifact_reference(root, Path::new(&output.validated.episode_shard_path))
-                        .map_err(native_error)?;
-                for actual in &output.validated.candidates {
-                    let candidate_id = actual
-                        .id
-                        .strip_suffix(&format!("-r{repetition:03}"))
-                        .ok_or_else(|| native_message("native wire candidate ID is malformed"))?;
-                    let rows = attempts.get_mut(candidate_id).ok_or_else(|| {
-                        native_message("native result names an unsealed residual candidate")
-                    })?;
-                    rows.push(native_attempt(
-                        repetition,
-                        pool.lanes[output.lane].seed,
-                        actual,
-                        request.clone(),
-                        result.clone(),
-                        episode.clone(),
-                        &output.validated,
-                    ));
+                for candidate in &missed {
+                    alternate_attempts
+                        .get_mut(&candidate.envelope.id)
+                        .expect("dispatch establishes alternate attempt row")
+                        .push(NativeAlternateTerminalEvaluation {
+                            terminal: terminal.clone(),
+                            attempts: rows.remove(&candidate.envelope.id).ok_or_else(|| {
+                                native_message(
+                                    "alternate terminal lacks completed candidate repetitions",
+                                )
+                            })?,
+                        });
                 }
             }
         }
         for candidate in dispatch {
             ensure_not_cancelled(config)?;
-            let evaluation = NativeResidualCampaignEvaluation::seal(
+            let evaluation = NativeResidualCampaignEvaluation::seal_with_alternate_terminals(
                 config.optimization,
                 config.execution,
                 &candidate.envelope,
                 attempts.remove(&candidate.envelope.id).ok_or_else(|| {
                     native_message("native candidate lacks completed repetitions")
                 })?,
+                alternate_attempts
+                    .remove(&candidate.envelope.id)
+                    .expect("dispatch establishes alternate evaluation row"),
             )
             .map_err(native_error)?;
             let path = campaign
@@ -1059,6 +1237,9 @@ fn ensure_incumbent_demonstration(
 fn validate_checkpoint_replay(
     root: &Path,
     optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    parent: &InputTape,
+    parent_bytes: &[u8],
     resume: &OptimizationResumeState,
     checkpoint: &ResidualCampaignCheckpoint,
 ) -> Result<(), NativeResidualCampaignRunnerError> {
@@ -1075,10 +1256,9 @@ fn validate_checkpoint_replay(
     let corpus = load_corpus(root, &replay.artifact).map_err(native_error)?;
     replay.validate_corpus(&corpus).map_err(native_error)?;
     validate_residual_corpus_scope(optimization, &corpus).map_err(native_error)?;
-    let expected_entries = checkpoint
+    let expected_randomized = checkpoint
         .completed_candidates
         .checked_mul(u64::from(optimization.execution.repetitions))
-        .and_then(|entries| entries.checked_add(u64::from(resume.demonstration.is_some())))
         .ok_or_else(|| native_message("residual replay checkpoint entry count overflowed"))?;
     let demonstration_entries = corpus
         .entries
@@ -1088,8 +1268,53 @@ fn validate_checkpoint_replay(
                 == dusklight_learning::native_replay_corpus::ReplayExperienceRole::Demonstration
         })
         .count() as u64;
-    if replay.entries != expected_entries
+    let randomized_entries = corpus
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.role
+                == dusklight_learning::native_replay_corpus::ReplayExperienceRole::RandomizedCoverage
+        })
+        .count() as u64;
+    let alternate_entries = corpus
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.role
+                == dusklight_learning::native_replay_corpus::ReplayExperienceRole::AlternateTerminal
+        })
+        .map(|entry| {
+            (
+                entry.shard_sha256,
+                entry.episode_id.clone(),
+                entry.objective.clone(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let mut authenticated_alternates = BTreeSet::new();
+    for row in resume.candidates.iter().filter(|row| row.result.is_some()) {
+        let candidate =
+            load_candidate(root, optimization, parent, parent_bytes, row).map_err(native_error)?;
+        let evaluation = load_native_evaluation(root, optimization, execution, row, &candidate)?;
+        for alternate in &evaluation.alternate_terminals {
+            for attempt in alternate
+                .attempts
+                .iter()
+                .filter(|attempt| attempt.first_hit_tick.is_some())
+            {
+                authenticated_alternates.insert((
+                    attempt.episode_shard.sha256,
+                    attempt.wire_candidate_id.clone(),
+                    alternate.terminal.goal.clone(),
+                ));
+            }
+        }
+    }
+    if randomized_entries != expected_randomized
         || demonstration_entries != u64::from(resume.demonstration.is_some())
+        || !alternate_entries.is_subset(&authenticated_alternates)
+        || (checkpoint.completed_candidates == resume.completed_candidates
+            && alternate_entries != authenticated_alternates)
     {
         return Err(native_message(
             "residual replay corpus does not cover every checkpointed native attempt",
@@ -1120,8 +1345,31 @@ pub fn run_native_residual_campaign(
     let campaign = campaign_root(&root, config.optimization).map_err(native_error)?;
     fs::create_dir_all(&campaign).map_err(native_error)?;
     let mut pool = WorkerPool::new(&root, &campaign, config.optimization, config.execution)?;
-    let result = run_campaign_loop(config, &root, &campaign, &parent, &parent_bytes, &mut pool);
-    let shutdown = pool.shutdown();
+    let mut alternate_pools =
+        alternate_worker_pools(&root, &campaign, config.optimization, config.execution)?;
+    let result = run_campaign_loop(
+        config,
+        &root,
+        &campaign,
+        &parent,
+        &parent_bytes,
+        &mut pool,
+        &mut alternate_pools,
+    );
+    let mut shutdown_failures = Vec::new();
+    if let Err(error) = pool.shutdown() {
+        shutdown_failures.push(error.to_string());
+    }
+    for alternate in &mut alternate_pools {
+        if let Err(error) = alternate.shutdown() {
+            shutdown_failures.push(error.to_string());
+        }
+    }
+    let shutdown = if shutdown_failures.is_empty() {
+        Ok(())
+    } else {
+        Err(native_message(shutdown_failures.join("; ")))
+    };
     match (result, shutdown) {
         (Ok(summary), Ok(())) => Ok(summary),
         (Err(error), Ok(())) => Err(error),
@@ -1139,6 +1387,7 @@ fn run_campaign_loop(
     parent: &InputTape,
     parent_bytes: &[u8],
     pool: &mut WorkerPool<'_>,
+    alternate_pools: &mut [WorkerPool<'_>],
 ) -> Result<ResidualCampaignRunSummary, NativeResidualCampaignRunnerError> {
     ensure_not_cancelled(config)?;
     let mut resume = if root.join(&config.optimization.resume.journal_path).exists() {
@@ -1183,7 +1432,15 @@ fn run_campaign_loop(
             &resume,
         )
         .map_err(native_error)?;
-        validate_checkpoint_replay(root, config.optimization, &resume, &checkpoint)?;
+        validate_checkpoint_replay(
+            root,
+            config.optimization,
+            config.execution,
+            parent,
+            parent_bytes,
+            &resume,
+            &checkpoint,
+        )?;
         let optimizer = checkpoint
             .restore_optimizer(config.optimization, parent_bytes)
             .map_err(native_error)?;
@@ -1302,6 +1559,7 @@ fn run_campaign_loop(
                     &mut resume,
                     &mut archive,
                     pool,
+                    alternate_pools,
                     generation,
                 )?;
                 ensure_not_cancelled(config)?;
@@ -1419,6 +1677,7 @@ fn run_campaign_loop(
                     &mut resume,
                     &mut archive,
                     pool,
+                    alternate_pools,
                     generation,
                 )?;
                 ensure_not_cancelled(config)?;
@@ -1641,6 +1900,59 @@ mod tests {
     }
 
     #[test]
+    fn residual_evaluation_charges_and_binds_alternate_terminal_attempts() {
+        let root = repository();
+        let optimization = optimization(&root);
+        let execution = execution(&optimization);
+        let (_parent, _parent_bytes, prepared) = prepared_generation(&root, &optimization);
+        let alternate = optimization
+            .alternate_terminal_predicates(&root)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let attempt = |first_hit_tick: Option<u64>, byte: u8| NativeResidualAttempt {
+            repetition: 1,
+            worker_seed: optimization.execution.deterministic_seeds[0],
+            wire_candidate_id: wire_candidate_id(&prepared[0].envelope.id, 1),
+            batch_request: placeholder("build/test/request.json", byte),
+            batch_result: placeholder("build/test/result.json", byte.saturating_add(1)),
+            episode_shard: placeholder("build/test/episodes.dseps", byte.saturating_add(2)),
+            restore_identity: "7".repeat(32),
+            checkpoint_bytes: 1,
+            simulated_ticks: first_hit_tick.unwrap_or(160),
+            first_hit_tick,
+            terminal_boundary_fingerprint: "8".repeat(32),
+            behavior_sha256: Digest([byte.saturating_add(3); 32]),
+        };
+        let evaluation = NativeResidualCampaignEvaluation::seal_with_alternate_terminals(
+            &optimization,
+            &execution,
+            &prepared[0].envelope,
+            vec![attempt(None, 10)],
+            vec![NativeAlternateTerminalEvaluation {
+                terminal: NativeTerminalBinding {
+                    goal: alternate.goal,
+                    program_sha256: alternate.program_sha256,
+                    definition_sha256: alternate.definition_sha256,
+                },
+                attempts: vec![attempt(Some(113), 20)],
+            }],
+        )
+        .unwrap();
+
+        assert_eq!(evaluation.simulated_ticks, 273);
+        assert_eq!(evaluation.alternate_terminals.len(), 1);
+        assert_eq!(
+            evaluation.alternate_terminals[0].attempts[0].first_hit_tick,
+            Some(113)
+        );
+        evaluation
+            .validate(&optimization, &execution, &prepared[0].envelope)
+            .unwrap();
+    }
+
+    #[test]
     fn crash_recovery_never_reuses_a_partial_native_result_path() {
         let root = repository();
         let optimization = optimization(&root);
@@ -1723,6 +2035,7 @@ mod tests {
                     program_sha256: optimization.terminal_predicate.program_sha256,
                     definition_sha256: optimization.terminal_predicate.definition_sha256,
                 },
+                milestone_program: root.join(&execution.milestone_program.path),
                 card_fixture_root: root.clone(),
                 session_root: session_root.clone(),
                 lanes: Vec::new(),

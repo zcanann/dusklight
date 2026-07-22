@@ -2,6 +2,7 @@
 
 use super::*;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
+use dusklight_learning::native_replay_corpus::{NativeReplayCorpus, ReplayExperienceRole};
 use dusklight_orchestration::native_residual_campaign::{
     NativeResidualAttempt, NativeResidualCampaignEvaluation, NativeResidualExecutionBinding,
 };
@@ -557,6 +558,7 @@ fn campaign_projection(
         candidate_budget: request.budgets.candidate_budget,
         simulated_tick_budget: request.budgets.simulated_tick_budget,
         workers: request.execution.workers,
+        alternate_terminal_goals: request.execution.alternate_terminal_goals.clone(),
         sealed_candidates: 0,
         completed_candidates: 0,
         pending_candidates: 0,
@@ -572,6 +574,7 @@ fn campaign_projection(
         replay_transitions: 0,
         replay_successes: 0,
         replay_failures: 0,
+        replay_alternate_terminals: 0,
         replay_corpus: None,
         uncheckpointed_completions: 0,
         artifacts_present: optimization_campaign_artifacts_present(root, request),
@@ -650,7 +653,19 @@ fn campaign_projection(
                         projection.replay_transitions = replay.transitions;
                         projection.replay_successes = replay.successes;
                         projection.replay_failures = replay.failures;
-                        projection.replay_corpus = Some(replay.artifact.path);
+                        projection.replay_corpus = Some(replay.artifact.path.clone());
+                        if let Some(corpus) =
+                            bound_artifact_json::<NativeReplayCorpus>(root, &replay.artifact)
+                                .filter(|corpus| replay.validate_corpus(corpus).is_ok())
+                        {
+                            projection.replay_alternate_terminals = corpus
+                                .report
+                                .roles
+                                .get(&ReplayExperienceRole::AlternateTerminal)
+                                .copied()
+                                .unwrap_or(0)
+                                as u64;
+                        }
                     }
                 }
                 None => {

@@ -145,6 +145,7 @@ pub struct GraphOptimizationCampaign {
     pub candidate_budget: u64,
     pub simulated_tick_budget: u64,
     pub workers: u16,
+    pub alternate_terminal_goals: Vec<String>,
     pub sealed_candidates: u64,
     pub completed_candidates: u64,
     pub pending_candidates: u64,
@@ -162,6 +163,7 @@ pub struct GraphOptimizationCampaign {
     pub replay_transitions: u64,
     pub replay_successes: u64,
     pub replay_failures: u64,
+    pub replay_alternate_terminals: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay_corpus: Option<String>,
     pub uncheckpointed_completions: u64,

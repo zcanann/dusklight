@@ -322,7 +322,7 @@ winner is the target and remains an open framework challenge until achieved.
       one persistent native checkpoint session per sealed worker lane, reuses it
       across every generation, verifies pool build identity, and shuts all
       sessions down on success or error.
-- [ ] Automatically ingest all eligible native episodes into immutable replay
+- [x] Automatically ingest all eligible native episodes into immutable replay
       generations with demonstration, policy-rollout, randomized-coverage, and
       alternate-terminal roles.
       Native residual random/CEM attempts now ingest automatically as authenticated
@@ -331,8 +331,15 @@ winner is the target and remains an open framework challenge until achieved.
       frozen-policy v3 shards as policy-rollout generations with exact manifest
       lineage. Fresh optimization runs now authenticate the incumbent's exact
       native success as a demonstration generation before proposing candidates.
-      The alternate-terminal producer still needs to invoke the same corpus
-      contract before this item is complete.
+      Optimization requests now also seal a sorted set of same-segment,
+      route-proved, history-free post-simulation alternate goals. Every failed
+      main-terminal candidate is rerun against those authored predicates through
+      dedicated persistent checkpoint pools; all rerun ticks are journaled, and
+      exact alternate hits enter the same cumulative corpus under their own
+      objective and `alternate_terminal` role. Main-terminal successes retain
+      their authoritative outcome rather than being reclassified. Replay
+      checkpoints authenticate every role back to its native shard and reject
+      missing, extra, failed, or request-detached terminal experience.
 - [ ] Train a goal-conditioned estimate of terminal reachability and time-to-go
       from complete trajectories using tick cost, real terminal outcomes, n-step
       returns, replay, target isolation, and uncertainty.
@@ -407,8 +414,17 @@ winner is the target and remains an open framework challenge until achieved.
   - Never replace reachability with a hand-authored coordinate corridor.
 - [ ] Use residual search for continuous trajectory proposals and the learned
       critic for state-conditioned ranking. Keep exact simulation as authority.
-- [ ] Preserve achieved goals and alternate terminals so failed main-goal runs
-      still teach local dynamics and short-horizon reachability.
+- [x] Preserve achieved goals and alternate terminals so failed main-goal runs
+      still teach local dynamics and short-horizon reachability. The checked
+      Ordon campaign now binds `ordon_spring_exit_approach` as an alternate to
+      the committed-load promotion terminal and reserves the full exact-simulation
+      budget for both evaluations. Mixed-objective replay retains each authored
+      objective identity and successful short horizon, while one
+      goal-conditioned dataset selects only entries matching its compiled goal;
+      alternate experience remains available for sibling goal datasets and has
+      no promotion authority. The workbench shows configured alternate goals and
+      the authenticated alternate-hit count and resolves their shards for the
+      unattended learning loop.
 - [x] Detect and report policy collapse by parent diversity, action diversity,
       state/contact coverage, and success distribution. Every committed online
       generation now writes a content-sealed collapse report over its realized

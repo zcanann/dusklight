@@ -362,9 +362,11 @@ impl NativeGoalTrajectoryDataset {
             if entry.objective != graph.definition_name
                 || entry.objective_identity != objective_identity
             {
-                return Err(NativeGoalTrajectoryError::new(
-                    "replay objective does not match the compiled goal",
-                ));
+                // A campaign corpus may preserve independently authenticated
+                // alternate-terminal experience. One goal-conditioned dataset
+                // consumes only entries for its exact compiled objective; other
+                // objectives remain available to build sibling datasets.
+                continue;
             }
             let shard = shard_by_digest.get(&entry.shard_sha256).ok_or_else(|| {
                 NativeGoalTrajectoryError::new(format!(
@@ -820,6 +822,47 @@ milestone test_goal {
         let failed = dataset.rows.iter().find(|row| !row.success).unwrap();
         assert_eq!(failed.ticks_to_goal, None);
         assert_eq!(failed.realized_return_millionths, 0);
+    }
+
+    #[test]
+    fn mixed_objective_replay_builds_one_exact_goal_dataset() {
+        let (shard, graph, corpus) = sources();
+        let mut alternate_shard = shard.clone();
+        alternate_shard.content_sha256 = Digest([77; 32]);
+        alternate_shard.metadata.objective = "alternate_goal".into();
+        alternate_shard.metadata.objective_identity = "7".repeat(32);
+        let success = alternate_shard
+            .episodes
+            .iter()
+            .position(|episode| episode.success)
+            .unwrap();
+        let mixed = NativeReplayCorpus::build(
+            Some(&corpus),
+            &[ReplayEpisodeSource {
+                shard: &alternate_shard,
+                episode_index: success,
+                role: ReplayExperienceRole::AlternateTerminal,
+                policy_lineage_sha256: None,
+                parent_entry_sha256: None,
+            }],
+        )
+        .unwrap();
+
+        let dataset = NativeGoalTrajectoryDataset::build(
+            &mixed,
+            std::slice::from_ref(&shard),
+            &graph,
+            NativeGoalTrajectoryConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(dataset.report.episodes, corpus.entries.len());
+        assert_eq!(mixed.report.objectives, 2);
+        assert!(
+            !dataset
+                .rows
+                .iter()
+                .any(|row| row.shard_sha256 == alternate_shard.content_sha256)
+        );
     }
 
     #[test]

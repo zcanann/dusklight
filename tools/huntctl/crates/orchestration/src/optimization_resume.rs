@@ -523,6 +523,7 @@ fn fold_journal(
                 if candidate.candidate_sha256 != *candidate_sha256
                     || candidate.result_sha256.is_some()
                     || *simulated_ticks == 0
+                    || *simulated_ticks > maximum_candidate_ticks(request)?
                 {
                     return Err(resume_error(
                         "optimization evaluation is detached, duplicate, or uncharged",
@@ -670,11 +671,7 @@ fn validate_next_event(
             simulated_ticks,
             ..
         } => {
-            let maximum_candidate_ticks = request
-                .budgets
-                .exploration_horizon_ticks
-                .checked_mul(u64::from(request.execution.repetitions))
-                .ok_or_else(|| resume_error("candidate tick bound overflowed"))?;
+            let maximum_candidate_ticks = maximum_candidate_ticks(request)?;
             if *simulated_ticks > maximum_candidate_ticks {
                 return Err(resume_error(
                     "evaluation exceeds its per-candidate exploration tick bound",
@@ -719,6 +716,18 @@ fn validate_next_event(
         }
     }
     Ok(())
+}
+
+fn maximum_candidate_ticks(request: &OptimizationRequest) -> Result<u64, OptimizationResumeError> {
+    let terminal_runs = 1_u64
+        .checked_add(request.execution.alternate_terminal_goals.len() as u64)
+        .ok_or_else(|| resume_error("candidate terminal-run count overflowed"))?;
+    request
+        .budgets
+        .exploration_horizon_ticks
+        .checked_mul(u64::from(request.execution.repetitions))
+        .and_then(|ticks| ticks.checked_mul(terminal_runs))
+        .ok_or_else(|| resume_error("candidate tick bound overflowed"))
 }
 
 fn validate_event_artifacts(
@@ -1095,6 +1104,55 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn alternate_terminal_run_expands_only_the_sealed_candidate_tick_bound() {
+        let (root, request) = fixture(2);
+        initialize_optimization_resume(&request, &root.0).unwrap();
+        let candidate = artifact(&root.0, "build/artifacts/alternate.json", b"candidate");
+        let candidate_sha256 = candidate.sha256;
+        let tape = artifact(&root.0, "build/artifacts/alternate.tape", b"tape");
+        let result = artifact(&root.0, "build/artifacts/alternate-result.json", b"result");
+        let state = append_optimization_resume_events(
+            &request,
+            &root.0,
+            vec![
+                candidate_event(&request, "g0-alternate", candidate, tape),
+                OptimizationResumeEvent::EvaluationCompleted {
+                    candidate_id: "g0-alternate".into(),
+                    candidate_sha256,
+                    result,
+                    simulated_ticks: request.budgets.exploration_horizon_ticks * 2,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(state.charged_simulated_ticks, 320);
+
+        let (root, mut request) = fixture(2);
+        request.execution.alternate_terminal_goals.clear();
+        request.refresh_content_sha256().unwrap();
+        initialize_optimization_resume(&request, &root.0).unwrap();
+        let candidate = artifact(&root.0, "build/artifacts/main-only.json", b"candidate");
+        let candidate_sha256 = candidate.sha256;
+        let tape = artifact(&root.0, "build/artifacts/main-only.tape", b"tape");
+        let result = artifact(&root.0, "build/artifacts/main-only-result.json", b"result");
+        let error = append_optimization_resume_events(
+            &request,
+            &root.0,
+            vec![
+                candidate_event(&request, "g0-main-only", candidate, tape),
+                OptimizationResumeEvent::EvaluationCompleted {
+                    candidate_id: "g0-main-only".into(),
+                    candidate_sha256,
+                    result,
+                    simulated_ticks: request.budgets.exploration_horizon_ticks * 2,
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("per-candidate"));
     }
 
     #[test]
