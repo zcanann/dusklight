@@ -1627,6 +1627,19 @@ and geometry set sizes without schema changes.
     lifecycle miss; the next treatment should consume the existing bounded,
     past-only episode-history contract and compare single-frame, stacked and
     recurrent temporal state without exposing the current post-state.
+    The first depth-eight stack proves both signal and architectural failure.
+    It right-aligns only completed episode-local transitions, masks absent
+    slots, and carries past typed core state, temporal deltas and exact consumed
+    PAD; it contains no episode index or current post-state. Under the same
+    frozen split and 92,000-step budget it recovered all 15/15 held-out actor
+    disappearances with no false positives, while its shuffled control stayed
+    negative. But flattening the stack expanded the model from 14,774 to
+    84,662 parameters, reduced aggregate test improvement from 83.816% to
+    74.625%, and collapsed contact recall from 22/30 to 0/30. Reports
+    `30c6a18a...e902cd` and `119ddb1f...419e8` therefore reject flat stacking
+    while proving that past state contains the missing lifecycle signal. The
+    next treatment must preserve the strong single-frame path and compress
+    history through a bounded recurrent branch before fusion.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
