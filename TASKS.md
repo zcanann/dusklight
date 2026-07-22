@@ -71,6 +71,11 @@ Working foundations:
   run, dispatches exact horizon-extended residual tapes as native suffix
   batches, adopts completed crash-window artifacts, and checkpoints native
   evidence plus optimizer/archive state without relaunching per generation.
+  Fresh materialization also preserves the normal ignored repository-relative
+  disc-image symlink, authenticates its external target bytes through the shared
+  large-artifact digest cache, and rejects direct external paths or any
+  intermediate-directory symlink escape. The checked Ordon request can once
+  again seal a current execution binding against that local layout.
 - The Route Workbench now projects checked optimization requests on their owning
   segments and exposes an explicit typed run/resume action. Rust validates and
   materializes immutable native execution authority, runs the persistent

@@ -9,6 +9,7 @@ use dusklight_automation_contracts::tape::{
     InputFrame, InputTape, RawPadState, TapeBoot, WaitCondition,
 };
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
+use dusklight_harness_contracts::run_contract::sha256_artifact_file;
 use dusklight_routes::timeline::Timeline;
 use dusklight_routes::timeline_materialization::materialize_segment_chain;
 use dusklight_search::residual_retention::{ExactTerminalVerdict, ResidualEvaluationEvidence};
@@ -74,12 +75,12 @@ impl NativeResidualExecutionBinding {
             schema: NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: optimization.content_sha256,
-            executable: artifact_reference(&root, executable)?,
-            game_data: artifact_reference(&root, game_data)?,
-            process_boot_tape: artifact_reference(&root, process_boot_tape)?,
-            milestone_program: artifact_reference(&root, milestone_program)?,
-            world_context: artifact_reference(&root, world_context)?,
-            card_fixture_manifest: artifact_reference(&root, card_fixture_manifest)?,
+            executable: artifact_reference(&root, executable, false)?,
+            game_data: artifact_reference(&root, game_data, true)?,
+            process_boot_tape: artifact_reference(&root, process_boot_tape, false)?,
+            milestone_program: artifact_reference(&root, milestone_program, false)?,
+            world_context: artifact_reference(&root, world_context, false)?,
+            card_fixture_manifest: artifact_reference(&root, card_fixture_manifest, false)?,
             checkpoint_validation_ticks,
             verify_state_hashes,
         };
@@ -107,13 +108,24 @@ impl NativeResidualExecutionBinding {
                 "native residual execution binding is invalid or detached",
             ));
         }
-        let _executable = validate_artifact(&root, "executable", &self.executable)?;
-        let _game_data = validate_artifact(&root, "game data", &self.game_data)?;
-        let tape_path = validate_artifact(&root, "process boot tape", &self.process_boot_tape)?;
-        let program_path = validate_artifact(&root, "milestone program", &self.milestone_program)?;
-        let world_context_path = validate_artifact(&root, "world context", &self.world_context)?;
-        let card_fixture_manifest =
-            validate_artifact(&root, "card fixture manifest", &self.card_fixture_manifest)?;
+        let _executable = validate_artifact(&root, "executable", &self.executable, false)?;
+        // Development disc images are commonly ignored repository-relative
+        // symlinks to an external immutable image. Preserve the repository
+        // path in the binding and authenticate the target bytes, while keeping
+        // every other execution artifact confined to the repository.
+        let _game_data = validate_artifact(&root, "game data", &self.game_data, true)?;
+        let tape_path =
+            validate_artifact(&root, "process boot tape", &self.process_boot_tape, false)?;
+        let program_path =
+            validate_artifact(&root, "milestone program", &self.milestone_program, false)?;
+        let world_context_path =
+            validate_artifact(&root, "world context", &self.world_context, false)?;
+        let card_fixture_manifest = validate_artifact(
+            &root,
+            "card fixture manifest",
+            &self.card_fixture_manifest,
+            false,
+        )?;
         validate_card_fixture(&root, optimization, &card_fixture_manifest)?;
         let world_context: serde_json::Value =
             serde_json::from_slice(&fs::read(world_context_path).map_err(native_error)?)
@@ -208,8 +220,12 @@ impl NativeResidualExecutionBinding {
         optimization: &OptimizationRequest,
     ) -> Result<PathBuf, NativeResidualCampaignError> {
         let root = repository_root.canonicalize().map_err(native_error)?;
-        let manifest =
-            validate_artifact(&root, "card fixture manifest", &self.card_fixture_manifest)?;
+        let manifest = validate_artifact(
+            &root,
+            "card fixture manifest",
+            &self.card_fixture_manifest,
+            false,
+        )?;
         validate_card_fixture(&root, optimization, &manifest)
     }
 
@@ -748,57 +764,14 @@ impl NativeResidualCampaignEvaluation {
 fn artifact_reference(
     root: &Path,
     path: &Path,
+    allow_external_symlink: bool,
 ) -> Result<ArtifactReference, NativeResidualCampaignError> {
-    let path = if path.is_absolute() {
+    let unresolved = if path.is_absolute() {
         path.to_path_buf()
     } else {
         root.join(path)
-    }
-    .canonicalize()
-    .map_err(native_error)?;
-    if !path.starts_with(root) || !path.is_file() {
-        return Err(native_message("native residual artifact is not a file"));
-    }
-    let relative = repository_relative(root, &path)?;
-    Ok(ArtifactReference {
-        path: relative,
-        sha256: sha256_file(&path)?,
-    })
-}
-
-fn validate_artifact(
-    root: &Path,
-    label: &str,
-    reference: &ArtifactReference,
-) -> Result<PathBuf, NativeResidualCampaignError> {
-    if !valid_reference(reference) {
-        return Err(native_message(format!(
-            "invalid {label} artifact reference"
-        )));
-    }
-    let path = root
-        .join(&reference.path)
-        .canonicalize()
-        .map_err(native_error)?;
-    if !path.starts_with(root) || !path.is_file() || sha256_file(&path)? != reference.sha256 {
-        return Err(native_message(format!(
-            "{label} artifact is missing, outside the repository, or digest-mismatched"
-        )));
-    }
-    Ok(path)
-}
-
-fn valid_reference(reference: &ArtifactReference) -> bool {
-    reference.sha256 != Digest::ZERO
-        && !reference.path.is_empty()
-        && !Path::new(&reference.path).is_absolute()
-        && Path::new(&reference.path)
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-}
-
-fn repository_relative(root: &Path, path: &Path) -> Result<String, NativeResidualCampaignError> {
-    let relative = path
+    };
+    let relative = unresolved
         .strip_prefix(root)
         .map_err(|_| native_message("native residual artifact is outside the repository"))?;
     if relative.as_os_str().is_empty()
@@ -810,10 +783,88 @@ fn repository_relative(root: &Path, path: &Path) -> Result<String, NativeResidua
             "native residual artifact path is not canonical",
         ));
     }
-    relative
-        .to_str()
-        .map(|value| value.replace(std::path::MAIN_SEPARATOR, "/"))
-        .ok_or_else(|| native_message("native residual artifact path is not UTF-8"))
+    let entry = fs::symlink_metadata(&unresolved).map_err(native_error)?;
+    let canonical = unresolved.canonicalize().map_err(native_error)?;
+    let external = !canonical.starts_with(root);
+    if !canonical.is_file()
+        || (external
+            && (!allow_external_symlink
+                || !entry.file_type().is_symlink()
+                || has_symlinked_parent(root, relative)?))
+    {
+        return Err(native_message("native residual artifact is not a file"));
+    }
+    Ok(ArtifactReference {
+        path: relative
+            .to_str()
+            .ok_or_else(|| native_message("native residual artifact path is not UTF-8"))?
+            .replace(std::path::MAIN_SEPARATOR, "/"),
+        sha256: if allow_external_symlink {
+            sha256_artifact_file(&canonical).map_err(native_error)?
+        } else {
+            sha256_file(&canonical)?
+        },
+    })
+}
+
+fn validate_artifact(
+    root: &Path,
+    label: &str,
+    reference: &ArtifactReference,
+    allow_external_symlink: bool,
+) -> Result<PathBuf, NativeResidualCampaignError> {
+    if !valid_reference(reference) {
+        return Err(native_message(format!(
+            "invalid {label} artifact reference"
+        )));
+    }
+    let unresolved = root.join(&reference.path);
+    let entry = fs::symlink_metadata(&unresolved).map_err(native_error)?;
+    let path = unresolved.canonicalize().map_err(native_error)?;
+    let external = !path.starts_with(root);
+    if !path.is_file()
+        || (external
+            && (!allow_external_symlink
+                || !entry.file_type().is_symlink()
+                || has_symlinked_parent(root, Path::new(&reference.path))?))
+        || if allow_external_symlink {
+            sha256_artifact_file(&path).map_err(native_error)?
+        } else {
+            sha256_file(&path)?
+        } != reference.sha256
+    {
+        return Err(native_message(format!(
+            "{label} artifact is missing, outside the repository, or digest-mismatched"
+        )));
+    }
+    Ok(path)
+}
+
+fn has_symlinked_parent(root: &Path, relative: &Path) -> Result<bool, NativeResidualCampaignError> {
+    let mut current = root.to_path_buf();
+    let Some(parent) = relative.parent() else {
+        return Ok(false);
+    };
+    for component in parent.components() {
+        current.push(component.as_os_str());
+        if fs::symlink_metadata(&current)
+            .map_err(native_error)?
+            .file_type()
+            .is_symlink()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn valid_reference(reference: &ArtifactReference) -> bool {
+    reference.sha256 != Digest::ZERO
+        && !reference.path.is_empty()
+        && !Path::new(&reference.path).is_absolute()
+        && Path::new(&reference.path)
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
 }
 
 fn sha256_file(path: &Path) -> Result<Digest, NativeResidualCampaignError> {
@@ -997,6 +1048,83 @@ mod tests {
 
         fs::write(&program, b"tampered").unwrap();
         assert!(binding.validate_files(&root, &optimization).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn execution_binding_authenticates_only_a_final_external_game_data_symlink() {
+        let (root, _artifacts, optimization, executable, game_data, tape, program, world_context) =
+            fixture();
+        let external = std::env::temp_dir().join(format!(
+            "dusklight-native-residual-game-data-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&external).unwrap();
+        let external_game = external.join("game.iso");
+        fs::write(&external_game, b"game-data").unwrap();
+        fs::remove_file(&game_data).unwrap();
+        std::os::unix::fs::symlink(&external_game, &game_data).unwrap();
+
+        let binding = NativeResidualExecutionBinding::seal(
+            &root,
+            &optimization,
+            &executable,
+            &game_data,
+            &tape,
+            &program,
+            &world_context,
+            &root.join("routes/Glitch Exhibition/intro/benchmarks/process_boot.fixture.json"),
+            8,
+            false,
+        )
+        .unwrap();
+        assert!(binding.game_data.path.starts_with("build/"));
+        binding.validate_files(&root, &optimization).unwrap();
+
+        fs::write(&external_game, b"changed").unwrap();
+        assert!(binding.validate_files(&root, &optimization).is_err());
+        fs::write(&external_game, b"game-data").unwrap();
+
+        let external_directory_link = game_data.with_file_name("external-game-directory");
+        std::os::unix::fs::symlink(&external, &external_directory_link).unwrap();
+        assert!(
+            NativeResidualExecutionBinding::seal(
+                &root,
+                &optimization,
+                &executable,
+                &external_directory_link.join("game.iso"),
+                &tape,
+                &program,
+                &world_context,
+                &root.join("routes/Glitch Exhibition/intro/benchmarks/process_boot.fixture.json"),
+                8,
+                false,
+            )
+            .is_err()
+        );
+        let nested_final_link = external.join("nested-game.iso");
+        std::os::unix::fs::symlink(&external_game, &nested_final_link).unwrap();
+        assert!(
+            NativeResidualExecutionBinding::seal(
+                &root,
+                &optimization,
+                &executable,
+                &external_directory_link.join("nested-game.iso"),
+                &tape,
+                &program,
+                &world_context,
+                &root.join("routes/Glitch Exhibition/intro/benchmarks/process_boot.fixture.json"),
+                8,
+                false,
+            )
+            .is_err()
+        );
+
+        fs::remove_dir_all(external).unwrap();
     }
 
     #[test]

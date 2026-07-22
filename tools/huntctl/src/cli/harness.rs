@@ -391,11 +391,8 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             &required_path(command_args, "--game")?,
             "game executable",
         )?;
-        let game_data = repository_file(
-            &repository_root,
-            &required_path(command_args, "--dvd")?,
-            "game data",
-        )?;
+        let game_data =
+            repository_game_data(&repository_root, &required_path(command_args, "--dvd")?)?;
         let world_context = repository_file(
             &repository_root,
             &required_path(command_args, "--world-context")?,
@@ -754,6 +751,53 @@ fn repository_file(
         return Err(format!("{label} must be a file inside the repository").into());
     }
     Ok(resolved)
+}
+
+fn repository_game_data(repository_root: &Path, path: &Path) -> Result<PathBuf, Box<dyn Error>> {
+    let unresolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repository_root.join(path)
+    };
+    let relative = unresolved
+        .strip_prefix(repository_root)
+        .map_err(|_| "game data must use a repository-relative path")?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("game data must use a canonical repository-relative path".into());
+    }
+    let entry = fs::symlink_metadata(&unresolved)?;
+    let resolved = unresolved.canonicalize()?;
+    if !resolved.is_file()
+        || (!resolved.starts_with(repository_root)
+            && (!entry.file_type().is_symlink()
+                || repository_path_has_symlinked_parent(repository_root, relative)?))
+    {
+        return Err(
+            "game data must be a repository file or a final repository-relative symlink".into(),
+        );
+    }
+    Ok(unresolved)
+}
+
+fn repository_path_has_symlinked_parent(
+    repository_root: &Path,
+    relative: &Path,
+) -> Result<bool, Box<dyn Error>> {
+    let mut current = repository_root.to_path_buf();
+    let Some(parent) = relative.parent() else {
+        return Ok(false);
+    };
+    for component in parent.components() {
+        current.push(component.as_os_str());
+        if fs::symlink_metadata(&current)?.file_type().is_symlink() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn repository_artifact(

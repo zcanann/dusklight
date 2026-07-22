@@ -329,7 +329,21 @@ fn materializes_a_native_ordon_execution_binding_from_the_checked_route() {
     let game_data = absolute_root.join("game.iso");
     let world_context = absolute_root.join("world.context.json");
     fs::write(&executable, b"test executable").unwrap();
-    fs::write(&game_data, b"test game data").unwrap();
+    #[cfg(unix)]
+    let external_game_data = {
+        let path = std::env::temp_dir().join(format!(
+            "dusklight-native-residual-cli-game-data-{}-{nonce}.iso",
+            std::process::id()
+        ));
+        fs::write(&path, b"test game data").unwrap();
+        std::os::unix::fs::symlink(&path, &game_data).unwrap();
+        Some(path)
+    };
+    #[cfg(not(unix))]
+    let external_game_data: Option<std::path::PathBuf> = {
+        fs::write(&game_data, b"test game data").unwrap();
+        None
+    };
     fs::write(
         &world_context,
         serde_json::to_vec(&serde_json::json!({
@@ -380,6 +394,10 @@ fn materializes_a_native_ordon_execution_binding_from_the_checked_route() {
         execution["process_boot_tape"]["path"],
         format!("{output}/process-route.tape")
     );
+    assert_eq!(
+        execution["game_data"]["path"],
+        format!("{relative_root}/game.iso")
+    );
     let tape = huntctl::tape::InputTape::decode(
         &fs::read(absolute_root.join("execution/process-route.tape")).unwrap(),
     )
@@ -387,6 +405,9 @@ fn materializes_a_native_ordon_execution_binding_from_the_checked_route() {
     .tape;
     assert_eq!(tape.frames.len(), 600);
     fs::remove_dir_all(absolute_root).unwrap();
+    if let Some(path) = external_game_data {
+        fs::remove_file(path).unwrap();
+    }
 }
 
 #[test]
