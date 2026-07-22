@@ -24,6 +24,13 @@ The planner must scale in both directions:
 This is a causal state-transition model, not a checklist of tricks and not a
 hand-authored list of opportunities that each trick loses.
 
+The first useful product is deliberately narrower than a complete game solver:
+an author can assemble known transition providers, see the exact state after
+every step, and receive a precise missing producer or obstruction resolution
+when two steps do not compose. Full-game route books, exhaustive extraction,
+and broad visual polish are later benchmarks, not prerequisites for making this
+core loop useful.
+
 The primary result of a query is one of:
 
 1. `reachable`: the active model contains a complete feasible route.
@@ -239,6 +246,36 @@ route; it does not consume a hand-authored `french_cannon_skip` Boolean. Any
 timing, positioning, or interruption requirement that data alone cannot prove is
 still an explicit obstruction or unknown obligation.
 
+### 2.12 Recursive transition composition
+
+Given a state at a known place, the author can insert any transition provider
+whose entry contract is satisfied there. Providers include physical travel,
+doors and loading zones, cutscene/event changes, savewarp, game over, void-out,
+Ooccoo warp, wolf warp, title/file operations, and evidenced or hypothetical
+techniques. Applying one produces a new typed state; it never merely draws a line
+between place names.
+
+Selecting any node in an active query or authored plan shows the complete state
+at that point and its diff from the preceding node. If the next desired provider
+does not apply, the attempted join remains invalid and exposes one or more of:
+
+- an unsatisfied state prerequisite and the known transitions that can produce it;
+- an active physical/interaction obstruction and its known resolvers;
+- an unknown activation obligation requiring evidence or a refinement; or
+- an exact-context mismatch for which no valid provider exists.
+
+The author connects the route by inserting a real producer, resolver, or explicit
+hypothetical refinement. The editor must not offer an untyped force-connect edge.
+
+Composite plans are recursive. `Beat Lakebed Temple` may contain one-trip and
+multiple-trip alternatives; those may contain room circuits; those may contain
+individual interactions and movements. A composite exposes a checked summary
+relation from accepted entry states to every continuation-distinct exit state,
+including costs, side effects, evidence, and unresolved obligations. It can then
+be reused as a transition provider wherever its entry contract holds. Partial
+composites such as `Complete east Lakebed circuit` are equally valid reusable
+building blocks.
+
 ---
 
 ## 3. Core semantic laws
@@ -407,6 +444,25 @@ established across a declared set of exact identities. Observing one build leave
 the others unsupported, not implicitly equal. Implementations may store common
 bases plus regional, revision, and language deltas, but queries always resolve a
 complete exact context before search.
+
+### 3.17 Connections are state transformations, not topology annotations
+
+A place is context in a state, not a node that can be connected freely to another
+place. Every graph edge is an executable primitive or composite transition with
+an entry predicate and typed effects. Location-changing providers include normal
+movement and loading zones as well as savewarp, game over, void-out, Ooccoo,
+wolf, event, cutscene, title, and technique-defined transitions.
+
+When consecutive providers do not compose, the gap is data. A missing hard
+prerequisite requires a state-producing transition; an active obstruction
+requires a scoped resolver or alternate approach; an unknown obligation requires
+evidence or an explicitly hypothetical refinement. None may be repaired by an
+unvalidated visual edge.
+
+The state before and after every primitive edge is immutable and inspectable.
+Composite edges retain the same property through their expanded proof and may be
+collapsed only to a summary relation that preserves all continuation-relevant
+exit states.
 
 ---
 
@@ -1131,6 +1187,17 @@ Maintain three graph projections:
 A transition can therefore be `feasible`, `obstructed`, or
 `feasibility_unknown` without corrupting its logical authorization.
 
+The interactive graph is a materialized chain/frontier of these evaluations,
+not a place-to-place sketch. Inserting a provider evaluates it against the exact
+selected-node state and either:
+
+1. creates the resulting immutable state node and typed state diff; or
+2. creates a rejected-join diagnostic naming missing producers, active
+   obstructions/resolvers, unknown obligations, and context mismatches.
+
+Every accepted node remains selectable while the graph is being edited or solved.
+Inspection is backed by the solver snapshot/proof, not reconstructed from labels.
+
 ### 5.10 Candidate transitions
 
 Candidate producers include:
@@ -1433,7 +1500,7 @@ Fishing Rod unreachable under this model
 
 That is more useful than `fishing_rod_opportunity = false`.
 
-### 5.16 Route books and fractal plan regions
+### 5.16 Route books and recursive composite transitions
 
 A route book is a curated preference over the causal graph, not a second mechanics
 database. Ship or support books such as:
@@ -1446,7 +1513,10 @@ database. Ship or support books such as:
 - HD cross-file/item-transfer routes.
 - Hypothetical/theorycraft showcases.
 
-Plan regions are nested, single-entry/single-exit proof regions when possible:
+Plan regions are nested proof regions and reusable composite-transition
+definitions. Single-entry/single-exit is a convenient presentation case, not a
+semantic restriction: one entry contract may retain multiple
+continuation-distinct exits.
 
 ```text
 Obtain Fishing Rod
@@ -1454,6 +1524,31 @@ Obtain Fishing Rod
   alternatives: ordinary cradle quest, glitched cradle carry, Auru recent-item
   grant through a build-feasible or hypothetical activation route
 ```
+
+```text
+Beat Lakebed Temple
+  entry: exact location plus inventory/flags/resources predicate
+  method: one trip
+    route: entrance -> east circuit -> west circuit -> boss
+  method: multiple trips
+    route: partial circuit -> leave -> outside work -> return -> boss
+  exits: every distinct resulting state that affects later continuation
+```
+
+A composite definition contains:
+
+- an entry-state predicate rather than a hard-coded predecessor;
+- one or more internal AND/OR plan graphs;
+- a solver-derived summary relation over reachable exit states;
+- preserved state diffs, costs, reliability, evidence, and assumptions;
+- stable identity/versioning so route books can pin or fork an implementation;
+- expansion back to the complete primitive proof at any time.
+
+The same composite can be proposed anywhere its entry predicate matches. Reuse
+does not assert that all invocations have identical concrete states; the solver
+reevaluates the internal graph from the actual incoming state and caches only by
+complete semantic input identity. A proof recorded for one incoming state is
+evidence, not universal authorization for another.
 
 The view offers:
 
@@ -2322,6 +2417,20 @@ Deliverable: researchers can extend the model without editing core code.
         selected exact context, requiring one start state per expanded context
         and returning per-context proofs plus a fail-closed aggregate status.
 - [ ] Add multi-objective cost and K-alternative plan search.
+- [ ] Make primitive and composite transition providers interchangeable to the
+      solver.
+  - [ ] Define a versioned composite-provider contract with an entry predicate,
+        nested AND/OR graph, continuation-distinct exits, cost/evidence summary,
+        and complete expanded proof references.
+  - [ ] Derive the composite summary from solved internal paths; never allow an
+        author to assert effects that the expanded graph does not produce.
+  - [ ] Re-evaluate a reusable composite from each actual incoming state and cache
+        only by complete semantic state, exact context, packs, constraints, and
+        composite version.
+  - [ ] Support recursive composition and terminate recursive/cyclic proposals
+        without forbidding legitimate leave-and-return routes.
+  - [ ] Preserve every continuation-relevant exit rather than reducing a
+        composite to one friendly success Boolean.
 - [x] Return reachable, unreachable-under-model, or unknown.
   - [x] Expose canonical fact/mechanics/execution-state artifacts through a
         standalone planner runtime boundary, isolated from huntctl's TAS CLI and
@@ -2406,6 +2515,25 @@ Deliverable: every route and failure is inspectable rather than magical.
         directives, steps, methods, regions, selections, collapse policies, and
         annotations.
   - [ ] Add the browser interactions.
+- [ ] Make transition insertion the primary authoring operation.
+  - [ ] From a selected state node, list applicable physical, event, warp,
+        reload, title/file, technique, and composite providers.
+  - [ ] Permit searching providers by desired destination or postcondition while
+        retaining the actual entry contract and effects.
+  - [ ] Reject invalid joins and show the missing state producers, active
+        obstruction resolvers, unknown obligations, or exact-context mismatch.
+        Do not implement a force-connect operation.
+  - [ ] Allow an author to insert a suggested producer/resolver chain or create
+        an explicitly hypothetical refinement from the rejection.
+- [ ] Add recursive composite authoring and browsing.
+  - [ ] Group a selected plan region into a named reusable composite without
+        losing its expanded primitive proof.
+  - [ ] Enter/exit nested graphs with breadcrumbs and show alternative internal
+        methods such as one-trip versus multiple-trip dungeon routes.
+  - [ ] Expose entry requirements and all continuation-distinct exits before a
+        composite is inserted into another graph.
+  - [ ] Support version, fork, replace, and usage inspection for saved composites;
+        defer arbitrary visual rewiring until transition-safe edits exist.
 - [ ] Add inventory/flag/component state inspector with before/after diff.
   - [x] Add a planner-owned headless state-inspection projection for live and
         serialized stores, raw/structured payloads, bindings, provenance, and
@@ -2414,6 +2542,8 @@ Deliverable: every route and failure is inspectable rather than magical.
         owner/file identity, payload digest, component manifest, and source
         runtime, alongside active/ended runtime and physical-slot deltas.
   - [ ] Add the visual inspector and before/after route-step diff interaction.
+  - [ ] Keep it available on every accepted node and closest rejected-join
+        witness in the active graph, including nodes inside expanded composites.
 - [ ] Add raw flag catalogue search and friendly aliases.
 - [ ] Add obstruction and requirement inspectors.
 - [ ] Add theorycraft component-transfer and bypass editor.
@@ -2442,7 +2572,11 @@ timeline assumptions.
 
 Deliverable: route confidence is mechanically explainable.
 
-### Phase 11 — Vertical slices
+### Phase 11 — Validation catalogue
+
+These are incremental regression targets and research examples, not a demand to
+finish every named route before the transition composer is useful. Promote a
+slice into release criteria only when it exercises a missing core semantic law.
 
 #### 11A. Fishing Rod
 
@@ -2946,6 +3080,10 @@ facts.
 | GCN rod after BiT | All enabled rod producers fail causally; no authored loss marker exists. |
 | Rod via Auru recent-item state | Shared grant semantics exist independently of whether the active build has a feasible Auru setup. |
 | Rod route collapse | Alternative proofs collapse only when residual differences are safe. |
+| Lakebed recursive composition | One-trip and leave/return methods are alternative internal graphs with checked entry requirements and continuation-distinct exits. |
+| Composite reuse | Reusing a composite from a different incoming state reruns its contracts and does not inherit a prior invocation's authority. |
+| Invalid join | The planner rejects a non-composing transition pair and identifies a missing producer, obstruction resolver, unknown obligation, or context mismatch; no force-connect edge exists. |
+| Live state inspection | Every accepted step and closest rejected witness exposes its exact state, provenance, and before/after diff, including inside a composite. |
 | EMS upper bound | Logical authorization appears before geometry is supplied. |
 | EMS obstruction | Physical blocker removes route only from feasible projection. |
 | Epona OOB | Route is rejected while twilight/mount predicate fails. |
@@ -3043,52 +3181,37 @@ These should remain explicit unknowns until evidence closes them:
 
 ## 9. Definition of done
 
-The first serious release is complete when:
+The first useful release is complete when:
 
-- Reachability is derived from transitions and state, never authored loss lists.
-- Slotless file 0, its persistent-domain contents, physical slots, save
-  projection/reattachment, and cross-file provenance are represented accurately.
-- Raw storage, bindings, friendly flag interpretations, and component lifetimes
-  are independently inspectable.
-- Wrong-state respawns and hypothetical local-flag transfers use generic typed
-  component operations.
-- Fanadi save locking emerges from writers, a `NO_TELOP` gate, the held value, and
-  a savewarp reader.
-- Authorization, physical obstruction, known bypass, and witnessed execution are
-  distinct layers.
-- Encoded destinations remain inert until hard guards and physical activation
-  obligations are satisfied; dungeon keys derive from their bound backing store.
-- Static placements, persisted actor-control state, and transient actor instances
-  are modeled separately across load/unload boundaries.
-- Session recent-item state, message-flow nodes, shared text-progress bits,
-  scheduled cleanup, and frame-exact interruption edges are independently modeled.
-- Auru's causal grant mechanism is separated from HD/SD spatial feasibility, and
-  hypothetical SD resolvers compose without changing the grant rule.
-- Goron Mines Text Displacement derives from raw bit producers and the actual NPC
-  flow consumer before resolving the remaining world obstructions.
-- Users can author versioned refinement packs and ephemeral what-if scenarios
-  without mutating base data.
-- Exact content is digest-verified; language/configuration is an independent
-  runtime dimension; deterministic derived fact packs support normal use without
-  requiring `orig/` and never silently substitute an unverified build.
-- Shared semantic names retain exact per-context raw bindings, and portable routes
-  contain only facts proven equivalent across their selected contexts.
-- The solver supports alternative producers, ordered setups, exact
-  content/language contexts, path constraints, costs, and honest unknowns.
-- The UI scales from a collapsed milestone route to raw flags, component history,
-  and full proof graphs.
-- The visual editor is recognizably a sibling of the TAS Route Workbench, while
-  its independent Rust schemas and graph projection preserve planner-specific
-  causal semantics.
-- Fishing Rod, BiT/file 0, EMS/obstructions, local-bank rebind, Fanadi locking, and
-  Faron-twilight return research all pass their vertical-slice fixtures.
-- Lanayru spirit appearance, interaction, and Vessel grant are modeled as
-  separately testable transitions with raw and friendly requirements.
-- A complete glitchless story route and versioned glitchless 100% contract replay
-  coherently through the fact system, including Forest Temple monkeys and balanced
-  dungeon-key/door state.
-- A standard Any% graph composes known sequence breaks without duplicating
-  mechanics, and suspiciously early states produce auditable proofs for bug versus
-  discovery triage.
-- Every displayed route can explain why it works, every rejected route can explain
-  what blocks it, and every hypothetical route names its assumptions.
+- A route is assembled exclusively from typed primitive or recursive composite
+  transitions applied to exact states; reachability is never an authored loss
+  list or an unvalidated visual connection.
+- The provider catalogue includes representative physical travel, encoded
+  loading-zone/door, event/cutscene, savewarp, game-over/void, and technique
+  transitions. Unsupported providers remain explicit gaps rather than blocking
+  the entire release.
+- Selecting any accepted node or closest rejected-join witness shows its exact
+  location, inventory, relevant flags/components, bindings, provenance, and diff
+  from the prior state.
+- An invalid join names the missing state producer, active obstruction and known
+  resolvers, unknown obligation, or exact-context mismatch. The only escape hatch
+  is an explicit evidenced or hypothetical refinement, never force-connect.
+- A solved region can be saved as a recursive composite with checked entry
+  requirements, all continuation-distinct exits, cost/evidence metadata, and an
+  expandable primitive proof.
+- The same composite can be reused from another valid state and is reevaluated
+  there. One-trip, leave-and-return, and partial-dungeon composites can coexist as
+  alternatives without being flattened into one success flag.
+- Authorization, physical obstruction, known bypass, witnessed execution, and
+  unknown coverage remain distinct and visible.
+- Exact content identity and active fact/refinement packs are sealed into the
+  query and proof; unsupported contexts never inherit neighboring facts silently.
+- The headless solver and authoring UI round-trip the same graph, state, rejection,
+  and proof identities deterministically.
+- At least one ordinary multi-room route and one obstruction/resolver or
+  leave-and-return fixture demonstrate the complete compose, inspect, collapse,
+  reuse, and re-expand loop.
+
+Complete glitchless story, 100%, Any%, every dungeon, and every named glitch are
+validation-catalogue growth targets. They are not release gates for the core
+transition composer.
