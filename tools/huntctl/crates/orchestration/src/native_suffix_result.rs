@@ -13,7 +13,8 @@ pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V4: &str = "dusklight-suffix-batch-r
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V2: &str = "dusklight-native-episode-shard/v2";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeTerminalBinding {
     pub goal: String,
     pub program_sha256: Digest,

@@ -374,10 +374,7 @@ fn prepare_new_output(path: &Path, label: &str) -> Result<PathBuf, NativeSuffixW
     Ok(parent.join(name))
 }
 
-fn prepare_new_result_output(
-    path: &Path,
-    label: &str,
-) -> Result<PathBuf, NativeSuffixWorkerError> {
+fn prepare_new_result_output(path: &Path, label: &str) -> Result<PathBuf, NativeSuffixWorkerError> {
     let output = prepare_new_output(path, label)?;
     let mut episode_name = output.as_os_str().to_os_string();
     episode_name.push(".episodes.dseps");
