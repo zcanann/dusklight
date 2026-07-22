@@ -50,8 +50,10 @@ Working foundations:
 - Optimization resume state now has a synced append-only hash-chain journal for
   sealed candidates, completed evaluations, and optimizer checkpoints. It
   recovers a torn final record, rejects complete-record tampering and duplicate
-  compiled tapes, and preserves uncheckpointed results for deterministic
-  replay into the last optimizer snapshot.
+  compiled tapes, preserves uncheckpointed results for deterministic replay
+  into the last optimizer snapshot, and validates ordered event batches in
+  memory before one durable append/refold so large generations do not require
+  one full journal pass per candidate.
 
 Not yet working:
 

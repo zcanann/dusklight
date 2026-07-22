@@ -215,20 +215,47 @@ pub fn append_optimization_resume_event(
     repository_root: &Path,
     event: OptimizationResumeEvent,
 ) -> Result<OptimizationResumeState, OptimizationResumeError> {
+    append_optimization_resume_events(request, repository_root, vec![event])
+}
+
+/// Appends one validated batch of journal events with a single durable
+/// write and refold. Every event is previewed in order, so batching cannot
+/// bypass candidate, tick, checkpoint, or artifact constraints.
+pub fn append_optimization_resume_events(
+    request: &OptimizationRequest,
+    repository_root: &Path,
+    events: Vec<OptimizationResumeEvent>,
+) -> Result<OptimizationResumeState, OptimizationResumeError> {
+    if events.is_empty() {
+        return Err(resume_error(
+            "optimization resume batch must contain at least one event",
+        ));
+    }
     let current = load_optimization_resume(request, repository_root)?;
     let root = canonical_root(repository_root)?;
-    validate_event_artifacts(request, &root, &event)?;
-    validate_next_event(request, &current, &event)?;
-    let mut record = OptimizationResumeRecord {
-        schema: OPTIMIZATION_RESUME_RECORD_SCHEMA_V1.into(),
-        request_sha256: request.content_sha256,
-        sequence: current.next_sequence,
-        previous_record_sha256: current.last_record_sha256,
-        event,
-        record_sha256: Digest::ZERO,
-    };
-    record.record_sha256 = record_identity(&record)?;
-    let bytes = record_bytes(&record)?;
+    let mut preview = current.clone();
+    let mut sequence = current.next_sequence;
+    let mut previous = current.last_record_sha256;
+    let mut bytes = Vec::new();
+    for event in events {
+        validate_event_artifacts(request, &root, &event)?;
+        validate_next_event(request, &preview, &event)?;
+        apply_preview_event(&mut preview, &event)?;
+        let mut record = OptimizationResumeRecord {
+            schema: OPTIMIZATION_RESUME_RECORD_SCHEMA_V1.into(),
+            request_sha256: request.content_sha256,
+            sequence,
+            previous_record_sha256: previous,
+            event,
+            record_sha256: Digest::ZERO,
+        };
+        record.record_sha256 = record_identity(&record)?;
+        bytes.extend(record_bytes(&record)?);
+        previous = record.record_sha256;
+        sequence = sequence
+            .checked_add(1)
+            .ok_or_else(|| resume_error("optimization journal sequence overflowed"))?;
+    }
     let journal_path = output_path(&root, &request.resume.journal_path)?;
     let mut journal = OpenOptions::new()
         .append(true)
@@ -240,6 +267,88 @@ pub fn append_optimization_resume_event(
     journal.sync_all().map_err(OptimizationResumeError::io)?;
     drop(journal);
     load_optimization_resume(request, repository_root)
+}
+
+fn apply_preview_event(
+    state: &mut OptimizationResumeState,
+    event: &OptimizationResumeEvent,
+) -> Result<(), OptimizationResumeError> {
+    match event {
+        OptimizationResumeEvent::CandidateSealed {
+            candidate_id,
+            candidate,
+            compiled_tape,
+            generation,
+            proposer_seed,
+            ..
+        } => {
+            state.candidates.push(OptimizationResumeCandidate {
+                id: candidate_id.clone(),
+                candidate: candidate.clone(),
+                candidate_sha256: candidate.sha256,
+                compiled_tape: compiled_tape.clone(),
+                compiled_tape_sha256: compiled_tape.sha256,
+                generation: *generation,
+                proposer_seed: *proposer_seed,
+                result: None,
+                result_sha256: None,
+                simulated_ticks: None,
+            });
+            state
+                .candidates
+                .sort_by(|left, right| left.id.cmp(&right.id));
+            state.pending_candidate_ids = state
+                .candidates
+                .iter()
+                .filter(|candidate| candidate.result.is_none())
+                .map(|candidate| candidate.id.clone())
+                .collect();
+        }
+        OptimizationResumeEvent::EvaluationCompleted {
+            candidate_id,
+            result,
+            simulated_ticks,
+            ..
+        } => {
+            let candidate = state
+                .candidates
+                .iter_mut()
+                .find(|candidate| candidate.id == *candidate_id)
+                .ok_or_else(|| resume_error("evaluation candidate is not sealed"))?;
+            candidate.result = Some(result.clone());
+            candidate.result_sha256 = Some(result.sha256);
+            candidate.simulated_ticks = Some(*simulated_ticks);
+            state.completed_candidates = state
+                .completed_candidates
+                .checked_add(1)
+                .ok_or_else(|| resume_error("completed candidate count overflowed"))?;
+            state.charged_simulated_ticks = state
+                .charged_simulated_ticks
+                .checked_add(*simulated_ticks)
+                .ok_or_else(|| resume_error("simulated-tick charge overflowed"))?;
+            state.uncheckpointed_completions = state
+                .uncheckpointed_completions
+                .checked_add(1)
+                .ok_or_else(|| resume_error("uncheckpointed completion count overflowed"))?;
+            state
+                .pending_candidate_ids
+                .retain(|pending| pending != candidate_id);
+        }
+        OptimizationResumeEvent::OptimizerCheckpoint {
+            generation,
+            completed_candidates,
+            state: artifact,
+        } => {
+            state.latest_optimizer_checkpoint = Some(OptimizationCheckpointState {
+                generation: *generation,
+                completed_candidates: *completed_candidates,
+                artifact: artifact.clone(),
+                artifact_sha256: artifact.sha256,
+            });
+            state.uncheckpointed_completions = 0;
+        }
+    }
+    Ok(())
 }
 
 fn fold_journal(
@@ -738,3 +847,228 @@ impl fmt::Display for OptimizationResumeError {
 }
 
 impl Error for OptimizationResumeError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new() -> Self {
+            let serial = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "dusklight-optimization-resume-{}-{serial}",
+                std::process::id()
+            ));
+            if path.exists() {
+                fs::remove_dir_all(&path).unwrap();
+            }
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn source_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(4)
+            .unwrap()
+            .to_path_buf()
+    }
+
+    fn copy_repository_file(source: &Path, destination_root: &Path, relative: &str) {
+        let destination = destination_root.join(relative);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::copy(source.join(relative), destination).unwrap();
+    }
+
+    fn copy_tree(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).unwrap();
+        for entry in fs::read_dir(source).unwrap() {
+            let entry = entry.unwrap();
+            let target = destination.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
+    fn fixture(checkpoint_every_candidates: u64) -> (TestRoot, OptimizationRequest) {
+        let root = TestRoot::new();
+        let source = source_root();
+        let request_path =
+            "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json";
+        let mut request: OptimizationRequest =
+            serde_json::from_slice(&fs::read(source.join(request_path)).unwrap()).unwrap();
+        copy_repository_file(&source, &root.0, "routes/Glitch Exhibition/intro.timeline");
+        copy_tree(
+            &source.join("routes/Glitch Exhibition/intro"),
+            &root.0.join("routes/Glitch Exhibition/intro"),
+        );
+        let suffix = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+        request.resume.state_path = format!("build/test-{suffix}/state.json");
+        request.resume.journal_path = format!("build/test-{suffix}/journal.jsonl");
+        request.resume.checkpoint_every_candidates = checkpoint_every_candidates;
+        request.refresh_content_sha256().unwrap();
+        request.validate_files(&root.0).unwrap();
+        (root, request)
+    }
+
+    fn artifact(root: &Path, relative: &str, bytes: &[u8]) -> ArtifactReference {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, bytes).unwrap();
+        ArtifactReference {
+            path: relative.into(),
+            sha256: sha256(bytes),
+        }
+    }
+
+    fn candidate_event(
+        request: &OptimizationRequest,
+        id: &str,
+        candidate: ArtifactReference,
+        compiled_tape: ArtifactReference,
+    ) -> OptimizationResumeEvent {
+        OptimizationResumeEvent::CandidateSealed {
+            candidate_id: id.into(),
+            candidate,
+            compiled_tape,
+            parent_tape_sha256: Some(request.incumbent.as_ref().unwrap().tape.sha256),
+            generation: 0,
+            proposer_seed: 7,
+        }
+    }
+
+    #[test]
+    fn batch_previews_candidate_evaluation_and_checkpoint_in_order() {
+        let (root, request) = fixture(1);
+        let initial = initialize_optimization_resume(&request, &root.0).unwrap();
+        let candidate = artifact(&root.0, "build/artifacts/candidate.json", b"candidate");
+        let candidate_sha256 = candidate.sha256;
+        let tape = artifact(&root.0, "build/artifacts/candidate.tape", b"tape");
+        let result = artifact(&root.0, "build/artifacts/result.json", b"result");
+        let checkpoint = artifact(&root.0, "build/artifacts/checkpoint.json", b"checkpoint");
+
+        let state = append_optimization_resume_events(
+            &request,
+            &root.0,
+            vec![
+                candidate_event(&request, "g0-c0", candidate, tape),
+                OptimizationResumeEvent::EvaluationCompleted {
+                    candidate_id: "g0-c0".into(),
+                    candidate_sha256,
+                    result,
+                    simulated_ticks: request.budgets.exploration_horizon_ticks,
+                },
+                OptimizationResumeEvent::OptimizerCheckpoint {
+                    generation: 1,
+                    completed_candidates: 1,
+                    state: checkpoint,
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(state.record_count, 3);
+        assert_eq!(state.next_sequence, 4);
+        assert_eq!(state.completed_candidates, 1);
+        assert_eq!(state.charged_simulated_ticks, 160);
+        assert!(state.pending_candidate_ids.is_empty());
+        assert_eq!(state.uncheckpointed_completions, 0);
+        assert_eq!(
+            state
+                .latest_optimizer_checkpoint
+                .as_ref()
+                .unwrap()
+                .generation,
+            1
+        );
+        assert_ne!(state.last_record_sha256, initial.last_record_sha256);
+        assert_eq!(load_optimization_resume(&request, &root.0).unwrap(), state);
+    }
+
+    #[test]
+    fn invalid_later_event_rejects_the_whole_batch_before_append() {
+        let (root, request) = fixture(2);
+        let initial = initialize_optimization_resume(&request, &root.0).unwrap();
+        let first_candidate = artifact(&root.0, "build/artifacts/first.json", b"first");
+        let second_candidate = artifact(&root.0, "build/artifacts/second.json", b"second");
+        let shared_tape = artifact(&root.0, "build/artifacts/shared.tape", b"shared");
+
+        let error = append_optimization_resume_events(
+            &request,
+            &root.0,
+            vec![
+                candidate_event(&request, "g0-c0", first_candidate, shared_tape.clone()),
+                candidate_event(&request, "g0-c1", second_candidate, shared_tape),
+            ],
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("duplicate"));
+        assert_eq!(
+            load_optimization_resume(&request, &root.0).unwrap(),
+            initial
+        );
+    }
+
+    #[test]
+    fn batch_cannot_cross_the_checkpoint_boundary() {
+        let (root, request) = fixture(1);
+        let initial = initialize_optimization_resume(&request, &root.0).unwrap();
+        let first_candidate = artifact(&root.0, "build/artifacts/first.json", b"first");
+        let first_candidate_sha256 = first_candidate.sha256;
+        let first_tape = artifact(&root.0, "build/artifacts/first.tape", b"first-tape");
+        let result = artifact(&root.0, "build/artifacts/result.json", b"result");
+        let second_candidate = artifact(&root.0, "build/artifacts/second.json", b"second");
+        let second_tape = artifact(&root.0, "build/artifacts/second.tape", b"second-tape");
+
+        let error = append_optimization_resume_events(
+            &request,
+            &root.0,
+            vec![
+                candidate_event(&request, "g0-c0", first_candidate, first_tape),
+                OptimizationResumeEvent::EvaluationCompleted {
+                    candidate_id: "g0-c0".into(),
+                    candidate_sha256: first_candidate_sha256,
+                    result,
+                    simulated_ticks: 160,
+                },
+                candidate_event(&request, "g0-c1", second_candidate, second_tape),
+            ],
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("checkpoint is required"));
+        assert_eq!(
+            load_optimization_resume(&request, &root.0).unwrap(),
+            initial
+        );
+    }
+
+    #[test]
+    fn empty_batch_is_rejected_without_changing_the_journal() {
+        let (root, request) = fixture(1);
+        let initial = initialize_optimization_resume(&request, &root.0).unwrap();
+        let error = append_optimization_resume_events(&request, &root.0, Vec::new()).unwrap_err();
+
+        assert!(error.to_string().contains("at least one event"));
+        assert_eq!(
+            load_optimization_resume(&request, &root.0).unwrap(),
+            initial
+        );
+    }
+}
