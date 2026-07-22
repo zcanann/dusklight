@@ -47,6 +47,11 @@ Working foundations:
   location, and retention policy. The first Ordon q125 CEM request validates
   against the checked-in route and uses 160 ticks for exploration while keeping
   promotion strictly sub-125.
+- Optimization resume state now has a synced append-only hash-chain journal for
+  sealed candidates, completed evaluations, and optimizer checkpoints. It
+  recovers a torn final record, rejects complete-record tampering and duplicate
+  compiled tapes, and preserves uncheckpointed results for deterministic
+  replay into the last optimizer snapshot.
 
 Not yet working:
 
@@ -175,6 +180,9 @@ goal-only discovery.
       `promotion_before_tick = 125` as separate authenticated fields.
 - [ ] Make campaigns resumable after cancellation, worker crash, or UI closure
       without repeating sealed candidates or losing optimizer state.
+      The journal/state contract and CLI lifecycle are complete; this remains
+      open until the residual campaign runner records dispatch, result, and
+      optimizer-update boundaries through that contract automatically.
 
 ### 2.2 Residual action surface
 

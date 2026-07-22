@@ -6,6 +6,10 @@ use huntctl::harness::inspection::inspect_objective;
 use huntctl::harness::objective_suite::ObjectiveSuite;
 use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
 use huntctl::optimization_request::OptimizationRequest;
+use huntctl::optimization_resume::{
+    OptimizationResumeEvent, append_optimization_resume_event, initialize_optimization_resume,
+    load_optimization_resume,
+};
 use huntctl::search_evaluator::TournamentDefinition;
 use std::env;
 use std::error::Error;
@@ -14,6 +18,33 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("init-optimization-resume") {
+        let command_args = &args[1..];
+        let request: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let state = initialize_optimization_resume(&request, &repository_root(command_args)?)?;
+        println!("{}", serde_json::to_string_pretty(&state)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("status-optimization-resume") {
+        let command_args = &args[1..];
+        let request: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let state = load_optimization_resume(&request, &repository_root(command_args)?)?;
+        println!("{}", serde_json::to_string_pretty(&state)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("append-optimization-resume") {
+        let command_args = &args[1..];
+        let request: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let event: OptimizationResumeEvent =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--event")?)?)?;
+        let state =
+            append_optimization_resume_event(&request, &repository_root(command_args)?, event)?;
+        println!("{}", serde_json::to_string_pretty(&state)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("seal-optimization-request") {
         let command_args = &args[1..];
         let input = required_path(command_args, "--input")?;

@@ -5,6 +5,7 @@
 mod anchored_search;
 pub mod harness;
 pub mod optimization_request;
+pub mod optimization_resume;
 pub mod stage_actor_coverage;
 pub mod stage_observation_coverage;
 pub mod stage_survey;

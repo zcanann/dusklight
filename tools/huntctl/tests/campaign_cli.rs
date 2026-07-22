@@ -1,5 +1,8 @@
 use serde_json::Value;
+use sha2::{Digest as _, Sha256};
 use std::fs;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,6 +23,14 @@ fn unique_output() -> String {
         "build/harness/campaign-dry-run-{}-{nanos}",
         std::process::id()
     )
+}
+
+fn sha256(path: impl AsRef<std::path::Path>) -> String {
+    let bytes = fs::read(path).unwrap();
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[test]
@@ -251,4 +262,177 @@ fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
         assert!(!output_path.exists());
         fs::remove_file(path).unwrap();
     }
+}
+
+#[test]
+fn optimization_resume_recovers_a_partial_tail_without_repeating_candidates() {
+    let repository = repository();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let relative_root = format!(
+        "build/harness/optimization-resume-test-{}-{nonce}",
+        std::process::id()
+    );
+    let absolute_root = repository.join(&relative_root);
+    let temporary = std::env::temp_dir();
+    let draft_path = temporary.join(format!("dusklight-resume-draft-{nonce}.json"));
+    let request_path = temporary.join(format!("dusklight-resume-request-{nonce}.json"));
+    let event_path = temporary.join(format!("dusklight-resume-event-{nonce}.json"));
+    let checked_request = repository.join(
+        "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+    );
+    let mut draft: Value = serde_json::from_slice(&fs::read(&checked_request).unwrap()).unwrap();
+    draft["content_sha256"] = Value::String("0".repeat(64));
+    draft["resume"]["state_path"] = Value::String(format!("{relative_root}/state.json"));
+    draft["resume"]["journal_path"] = Value::String(format!("{relative_root}/journal.jsonl"));
+    fs::write(&draft_path, serde_json::to_vec_pretty(&draft).unwrap()).unwrap();
+
+    let seal = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .current_dir(&repository)
+        .args(["campaign", "seal-optimization-request", "--input"])
+        .arg(&draft_path)
+        .arg("--output")
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        seal.status.success(),
+        "{}",
+        String::from_utf8_lossy(&seal.stderr)
+    );
+    let init = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .current_dir(&repository)
+        .args(["campaign", "init-optimization-resume", "--request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&init.stdout).unwrap()["record_count"],
+        0
+    );
+
+    let request_artifact =
+        "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json";
+    let tape_artifact = "routes/Glitch Exhibition/intro/segments/to_ordon_spring_q125.tape";
+    let result_artifact =
+        "routes/Glitch Exhibition/intro/benchmarks/ordon_spring_load_committed.observation.json";
+    let request_digest = sha256(repository.join(request_artifact));
+    let tape_digest = sha256(repository.join(tape_artifact));
+    let result_digest = sha256(repository.join(result_artifact));
+    let append = |event: Value| {
+        fs::write(&event_path, serde_json::to_vec(&event).unwrap()).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_huntctl"))
+            .current_dir(&repository)
+            .args(["campaign", "append-optimization-resume", "--request"])
+            .arg(&request_path)
+            .arg("--event")
+            .arg(&event_path)
+            .arg("--repository-root")
+            .arg(&repository)
+            .output()
+            .unwrap()
+    };
+    let candidate = serde_json::json!({
+        "kind": "candidate_sealed",
+        "candidate_id": "candidate-0001",
+        "candidate": {"path": request_artifact, "sha256": request_digest.clone()},
+        "compiled_tape": {"path": tape_artifact, "sha256": tape_digest.clone()},
+        "parent_tape_sha256": tape_digest.clone(),
+        "generation": 0,
+        "proposer_seed": 104729
+    });
+    let candidate_result = append(candidate.clone());
+    assert!(
+        candidate_result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&candidate_result.stderr)
+    );
+    let candidate_state: Value = serde_json::from_slice(&candidate_result.stdout).unwrap();
+    assert_eq!(
+        candidate_state["pending_candidate_ids"],
+        serde_json::json!(["candidate-0001"])
+    );
+
+    let evaluation_result = append(serde_json::json!({
+        "kind": "evaluation_completed",
+        "candidate_id": "candidate-0001",
+        "candidate_sha256": request_digest.clone(),
+        "result": {"path": result_artifact, "sha256": result_digest},
+        "simulated_ticks": 125
+    }));
+    assert!(evaluation_result.status.success());
+    let evaluation_state: Value = serde_json::from_slice(&evaluation_result.stdout).unwrap();
+    assert_eq!(evaluation_state["completed_candidates"], 1);
+    assert_eq!(evaluation_state["uncheckpointed_completions"], 1);
+
+    let checkpoint_result = append(serde_json::json!({
+        "kind": "optimizer_checkpoint",
+        "generation": 0,
+        "completed_candidates": 1,
+        "state": {"path": request_artifact, "sha256": request_digest.clone()}
+    }));
+    assert!(checkpoint_result.status.success());
+    let checkpoint_state: Value = serde_json::from_slice(&checkpoint_result.stdout).unwrap();
+    assert_eq!(checkpoint_state["record_count"], 3);
+    assert_eq!(checkpoint_state["uncheckpointed_completions"], 0);
+
+    let journal_path = absolute_root.join("journal.jsonl");
+    let valid_length = fs::metadata(&journal_path).unwrap().len();
+    let mut journal = OpenOptions::new().append(true).open(&journal_path).unwrap();
+    journal.write_all(br#"{"partial":"#).unwrap();
+    journal.sync_all().unwrap();
+    drop(journal);
+    let status = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .current_dir(&repository)
+        .args(["campaign", "status-optimization-resume", "--request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    assert_eq!(fs::metadata(&journal_path).unwrap().len(), valid_length);
+    assert_eq!(
+        serde_json::from_slice::<Value>(&status.stdout).unwrap()["record_count"],
+        3
+    );
+
+    let duplicate = append(candidate);
+    assert!(!duplicate.status.success());
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("duplicate"));
+
+    let mut corrupt = fs::read(&journal_path).unwrap();
+    let marker = b"candidate-0001";
+    let offset = corrupt
+        .windows(marker.len())
+        .position(|window| window == marker)
+        .unwrap();
+    corrupt[offset + marker.len() - 1] = b'2';
+    fs::write(&journal_path, corrupt).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .current_dir(&repository)
+        .args(["campaign", "status-optimization-resume", "--request"])
+        .arg(&request_path)
+        .arg("--repository-root")
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("corrupt"));
+
+    fs::remove_dir_all(absolute_root).unwrap();
+    fs::remove_file(draft_path).unwrap();
+    fs::remove_file(request_path).unwrap();
+    fs::remove_file(event_path).unwrap();
 }

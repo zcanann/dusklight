@@ -24,6 +24,7 @@ pub use dusklight_oracles::{comparison_oracle, oracle_pipeline, semantic_oracle}
 pub use dusklight_orchestration as search_evaluator;
 pub use dusklight_orchestration::harness;
 pub use dusklight_orchestration::optimization_request;
+pub use dusklight_orchestration::optimization_resume;
 pub use dusklight_orchestration::stage_actor_coverage;
 pub use dusklight_orchestration::stage_observation_coverage;
 pub use dusklight_orchestration::stage_survey;
