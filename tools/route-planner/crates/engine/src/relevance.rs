@@ -816,7 +816,7 @@ impl RelevanceBuilder {
     }
 }
 
-fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
+pub(crate) fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
     match operation {
         StateOperation::Write { target, .. }
         | StateOperation::WriteBytesField { target, .. }
@@ -1027,7 +1027,7 @@ fn operation_outputs(operation: &StateOperation) -> Vec<StateDependency> {
     }
 }
 
-fn dependencies_overlap(left: &StateDependency, right: &StateDependency) -> bool {
+pub(crate) fn dependencies_overlap(left: &StateDependency, right: &StateDependency) -> bool {
     use StateDependency as D;
     match (left, right) {
         (D::AnyState, _) | (_, D::AnyState) => true,

@@ -2440,6 +2440,15 @@ Deliverable: researchers can extend the model without editing core code.
         truth, active/unknown obstructions, selected setup, discharged and
         outstanding obligations, unknown requirements, and source-state digest.
   - [ ] Compute minimal failed-producer cuts across multiple upstream actions.
+        Exhaustive bounded solves now emit validated `FailedProducerCut` records
+        for concrete state dependencies when every catalog producer is a
+        transition or writer, none executed, and each owns a retained blocked
+        witness. A cut keeps all alternative producer actions, their typed
+        failure classifications, and exact source-state identities; two-way OR
+        producers are covered, while any executed technique/resolver/
+        reconstruction producer or a hit search limit suppresses the claim.
+        Extending the cut algebra through those unsupported producer families
+        and nested goal boolean structure remains open.
 - [ ] Add bounded suspicious-state queries and retain complete proof objects for
       model-bug versus research-lead triage.
 
