@@ -5,6 +5,7 @@
 //! only, and held-out results are compared with training-mean predictors.
 
 use crate::artifact::Digest;
+use crate::gated_recurrent::{GatedRecurrent, GatedRecurrentStep};
 use crate::history_critics::Reservoir;
 use crate::native_actor_features::NativeActorFeatureView;
 use crate::native_auxiliary_dataset::{
@@ -26,9 +27,10 @@ use dusklight_evidence::native_episode_shard::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V8: &str =
-    "dusklight-multitask-set-encoder-report/v8";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V9: &str =
+    "dusklight-multitask-set-encoder-report/v9";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -46,9 +48,17 @@ type TargetNormalization = (Vec<f64>, Vec<f64>, Vec<usize>);
 pub struct MultiTaskSetSample {
     pub input: TypedSetSample,
     pub post_input: TypedSetSample,
+    pub history: Vec<MultiTaskHistoryStep>,
     pub action_context: Vec<f32>,
     pub targets: Vec<f32>,
     pub target_present: Vec<bool>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MultiTaskHistoryStep {
+    pub transition_sha256: Digest,
+    pub state: Arc<TypedSetSample>,
+    pub action_context: Vec<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -228,6 +238,57 @@ pub enum NativeEncoderHistoryEncoding {
     None,
     Stacked,
     RecurrentReservoir,
+    TrainableGru,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MultiTaskTemporalConfig {
+    pub encoding: MultiTaskTemporalEncoding,
+    pub history_depth: usize,
+    pub hidden_width: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MultiTaskTemporalEncoding {
+    None,
+    GatedRecurrent,
+}
+
+impl MultiTaskTemporalConfig {
+    pub fn none() -> Self {
+        Self {
+            encoding: MultiTaskTemporalEncoding::None,
+            history_depth: 0,
+            hidden_width: 0,
+        }
+    }
+
+    pub fn gated_recurrent(history_depth: usize, hidden_width: usize) -> Self {
+        Self {
+            encoding: MultiTaskTemporalEncoding::GatedRecurrent,
+            history_depth,
+            hidden_width,
+        }
+    }
+
+    fn validate(self) -> Result<(), TrainableSetError> {
+        if !matches!(
+            (self.encoding, self.history_depth, self.hidden_width),
+            (MultiTaskTemporalEncoding::None, 0, 0)
+                | (
+                    MultiTaskTemporalEncoding::GatedRecurrent,
+                    1..=MAX_EPISODE_HISTORY_DEPTH,
+                    1..=MAX_HISTORY_RECURRENT_WIDTH
+                )
+        ) {
+            return Err(TrainableSetError::new(
+                "multitask temporal configuration is invalid",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl NativeEncoderFeatureSpec {
@@ -282,6 +343,11 @@ impl NativeEncoderFeatureSpec {
                         NativeEncoderHistoryEncoding::RecurrentReservoir,
                         1..=MAX_HISTORY_RECURRENT_WIDTH
                     )
+                    | (
+                        1..,
+                        NativeEncoderHistoryEncoding::TrainableGru,
+                        1..=MAX_HISTORY_RECURRENT_WIDTH
+                    )
             )
         {
             return Err(TrainableSetError::new(
@@ -330,6 +396,29 @@ impl NativeEncoderFeatureSpec {
         self.history_recurrent_width = history_recurrent_width;
         self.validate()?;
         Ok(self)
+    }
+
+    pub fn with_trainable_history(
+        mut self,
+        history_depth: usize,
+        history_hidden_width: usize,
+    ) -> Result<Self, TrainableSetError> {
+        self.history_depth = history_depth;
+        self.history_encoding = NativeEncoderHistoryEncoding::TrainableGru;
+        self.history_recurrent_width = history_hidden_width;
+        self.validate()?;
+        Ok(self)
+    }
+
+    pub fn temporal_config(&self) -> MultiTaskTemporalConfig {
+        if self.history_encoding == NativeEncoderHistoryEncoding::TrainableGru {
+            MultiTaskTemporalConfig::gated_recurrent(
+                self.history_depth,
+                self.history_recurrent_width,
+            )
+        } else {
+            MultiTaskTemporalConfig::none()
+        }
     }
 }
 
@@ -415,6 +504,7 @@ impl NativeMultiTaskActorCorpus {
         let mut training = Vec::new();
         let mut validation = Vec::new();
         let mut test = Vec::new();
+        let mut trainable_history_states = BTreeMap::new();
         for example in &dataset.examples {
             let episode = episodes.get(example.episode_id.as_str()).ok_or_else(|| {
                 TrainableSetError::new("native multitask episode is absent from shard")
@@ -473,6 +563,13 @@ impl NativeMultiTaskActorCorpus {
                     "native multitask pre/post actor observations must be complete",
                 ));
             }
+            let sample_history = trainable_episode_history_steps(
+                episode,
+                &completed_history,
+                &feature_spec,
+                actor_feature_schema_sha256,
+                &mut trainable_history_states,
+            )?;
             let (mut base, mut base_present) = broad_base(&step.pre_input);
             append_core_temporal_features(
                 &mut base,
@@ -562,6 +659,7 @@ impl NativeMultiTaskActorCorpus {
                     nodes: post_nodes,
                     target: 0.0,
                 },
+                history: sample_history,
                 action_context: native_action_context(example),
                 targets,
                 target_present,
@@ -631,6 +729,7 @@ impl MultiTaskSetSample {
                 post_base_present,
                 0.0,
             )?,
+            history: Vec::new(),
             action_context,
             targets,
             target_present,
@@ -663,12 +762,37 @@ pub fn fit_shuffled_auxiliary_control(
 pub fn fit_shuffled_auxiliary_control_with_pooling(
     actor_feature_schema_sha256: Digest,
     target_names: Vec<String>,
+    training: Vec<MultiTaskSetSample>,
+    validation_dataset_sha256: Digest,
+    validation: &[MultiTaskSetSample],
+    test: &[MultiTaskSetSample],
+    config: TrainableSetConfig,
+    pooling: MultiTaskSetPooling,
+) -> Result<ShuffledAuxiliaryControl, TrainableSetError> {
+    fit_shuffled_auxiliary_control_with_pooling_and_temporal(
+        actor_feature_schema_sha256,
+        target_names,
+        training,
+        validation_dataset_sha256,
+        validation,
+        test,
+        config,
+        pooling,
+        MultiTaskTemporalConfig::none(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn fit_shuffled_auxiliary_control_with_pooling_and_temporal(
+    actor_feature_schema_sha256: Digest,
+    target_names: Vec<String>,
     mut training: Vec<MultiTaskSetSample>,
     validation_dataset_sha256: Digest,
     validation: &[MultiTaskSetSample],
     test: &[MultiTaskSetSample],
     config: TrainableSetConfig,
     pooling: MultiTaskSetPooling,
+    temporal: MultiTaskTemporalConfig,
 ) -> Result<ShuffledAuxiliaryControl, TrainableSetError> {
     if training.is_empty() || target_names.is_empty() {
         return Err(TrainableSetError::new(
@@ -693,7 +817,7 @@ pub fn fit_shuffled_auxiliary_control_with_pooling(
         }
     }
     let shuffled_training_dataset_sha256 = sample_manifest_digest(&training)?;
-    let (report, model) = CompleteSetMultiTaskEncoder::fit_with_pooling(
+    let (report, model) = CompleteSetMultiTaskEncoder::fit_with_pooling_and_temporal(
         actor_feature_schema_sha256,
         shuffled_training_dataset_sha256,
         validation_dataset_sha256,
@@ -702,6 +826,7 @@ pub fn fit_shuffled_auxiliary_control_with_pooling(
         validation,
         config,
         pooling,
+        temporal,
     )?;
     let test_evaluation = model.evaluate(test)?;
     Ok(ShuffledAuxiliaryControl {
@@ -792,6 +917,7 @@ pub struct MultiTaskSetEncoderReport {
     pub held_out_dataset_sha256: Digest,
     pub config: TrainableSetConfig,
     pub pooling: MultiTaskSetPooling,
+    pub temporal: MultiTaskTemporalConfig,
     pub target_names: Vec<String>,
     pub target_conditioning: Vec<AuxiliaryHeadConditioning>,
     pub target_support_training: Vec<usize>,
@@ -819,6 +945,7 @@ pub struct CompleteSetMultiTaskEncoder {
     layout: FeatureLayout,
     config: TrainableSetConfig,
     pooling: MultiTaskSetPooling,
+    temporal: MultiTaskTemporalConfig,
     target_names: Vec<String>,
     target_conditioning: Vec<AuxiliaryHeadConditioning>,
     target_mean: Vec<f64>,
@@ -826,6 +953,7 @@ pub struct CompleteSetMultiTaskEncoder {
     node_weights: Vec<f64>,
     node_bias: Vec<f64>,
     attention_queries: Vec<f64>,
+    history_gru: Option<GatedRecurrent>,
     state_weights: Vec<f64>,
     state_bias: Vec<f64>,
     output_weights: Vec<f64>,
@@ -846,8 +974,15 @@ struct StateForward {
 struct ConditionedForward {
     pre: StateForward,
     post: StateForward,
+    history: HistoryForward,
     head_inputs: Vec<Vec<f64>>,
     predictions: Vec<f64>,
+}
+
+struct HistoryForward {
+    states: Vec<StateForward>,
+    recurrent_steps: Vec<GatedRecurrentStep>,
+    hidden: Vec<f64>,
 }
 
 struct EncoderGradients {
@@ -892,6 +1027,31 @@ impl CompleteSetMultiTaskEncoder {
         config: TrainableSetConfig,
         pooling: MultiTaskSetPooling,
     ) -> Result<(MultiTaskSetEncoderReport, Self), TrainableSetError> {
+        Self::fit_with_pooling_and_temporal(
+            actor_feature_schema_sha256,
+            training_dataset_sha256,
+            held_out_dataset_sha256,
+            target_names,
+            training,
+            held_out,
+            config,
+            pooling,
+            MultiTaskTemporalConfig::none(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn fit_with_pooling_and_temporal(
+        actor_feature_schema_sha256: Digest,
+        training_dataset_sha256: Digest,
+        held_out_dataset_sha256: Digest,
+        target_names: Vec<String>,
+        training: &[MultiTaskSetSample],
+        held_out: &[MultiTaskSetSample],
+        config: TrainableSetConfig,
+        pooling: MultiTaskSetPooling,
+        temporal: MultiTaskTemporalConfig,
+    ) -> Result<(MultiTaskSetEncoderReport, Self), TrainableSetError> {
         let dimensions = validate_samples(
             actor_feature_schema_sha256,
             training_dataset_sha256,
@@ -900,13 +1060,9 @@ impl CompleteSetMultiTaskEncoder {
             training,
             held_out,
             config,
+            temporal,
         )?;
-        let layout = FeatureLayout::fit(
-            training
-                .iter()
-                .flat_map(|sample| [&sample.input, &sample.post_input]),
-            dimensions,
-        )?;
+        let layout = FeatureLayout::fit(training.iter().flat_map(sample_model_states), dimensions)?;
         let target_conditioning = target_conditioning_for_names(&target_names);
         let (target_mean, target_inverse_stddev, target_support_training) =
             target_normalization(training, target_names.len())?;
@@ -925,6 +1081,7 @@ impl CompleteSetMultiTaskEncoder {
             target_mean,
             target_inverse_stddev,
             pooling,
+            temporal,
         )?;
         let mut order = (0..training.len()).collect::<Vec<_>>();
         let mut rng = DeterministicRng::new(config.seed ^ 0x4d55_4c54_4954_4153);
@@ -951,24 +1108,27 @@ impl CompleteSetMultiTaskEncoder {
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let held_out_attention = model.attention_diagnostics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V8,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V9,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
             config,
             pooling,
+            temporal,
             target_names,
             target_conditioning,
             target_support_training,
             target_support_held_out,
             maximum_training_nodes: training
                 .iter()
-                .flat_map(|sample| [sample.input.nodes.len(), sample.post_input.nodes.len()])
+                .flat_map(sample_model_states)
+                .map(|state| state.nodes.len())
                 .max()
                 .unwrap_or(0),
             maximum_held_out_nodes: held_out
                 .iter()
-                .flat_map(|sample| [sample.input.nodes.len(), sample.post_input.nodes.len()])
+                .flat_map(sample_model_states)
+                .map(|state| state.nodes.len())
                 .max()
                 .unwrap_or(0),
             parameter_count: model.parameter_count(),
@@ -999,7 +1159,9 @@ impl CompleteSetMultiTaskEncoder {
         target_mean: Vec<f64>,
         target_inverse_stddev: Vec<f64>,
         pooling: MultiTaskSetPooling,
+        temporal: MultiTaskTemporalConfig,
     ) -> Result<Self, TrainableSetError> {
+        temporal.validate()?;
         let target_width = target_names.len();
         let global_attention_heads = pooling.global_attention_heads();
         let attention_heads = pooling.attention_heads(target_width);
@@ -1012,13 +1174,28 @@ impl CompleteSetMultiTaskEncoder {
         }
         let task_attention_width =
             usize::from(pooling.uses_task_attention()) * config.node_hidden_width * 2;
-        let head_input_width =
-            config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH + task_attention_width;
+        let head_input_width = config.head_hidden_width * 2
+            + ACTION_CONTEXT_WIDTH
+            + temporal.hidden_width
+            + task_attention_width;
+        let recurrent_parameter_count = match temporal.encoding {
+            MultiTaskTemporalEncoding::None => 0,
+            MultiTaskTemporalEncoding::GatedRecurrent => temporal
+                .hidden_width
+                .checked_mul(3)
+                .and_then(|value| {
+                    value.checked_mul(
+                        config.head_hidden_width + ACTION_CONTEXT_WIDTH + temporal.hidden_width + 1,
+                    )
+                })
+                .ok_or_else(|| TrainableSetError::new("multitask parameter count overflowed"))?,
+        };
         let parameter_count = config
             .node_hidden_width
             .checked_mul(layout.node_input_width + 1)
             .and_then(|value| value.checked_add(attention_heads * config.node_hidden_width))
             .and_then(|value| value.checked_add(config.head_hidden_width * (state_input_width + 1)))
+            .and_then(|value| value.checked_add(recurrent_parameter_count))
             .and_then(|value| value.checked_add(target_width * (head_input_width + 1)))
             .ok_or_else(|| TrainableSetError::new("multitask parameter count overflowed"))?;
         if parameter_count > MAX_PARAMETERS {
@@ -1027,27 +1204,32 @@ impl CompleteSetMultiTaskEncoder {
             ));
         }
         let mut rng = DeterministicRng::new(config.seed ^ 0x5348_4152_4544_0001);
-        Ok(Self {
+        let node_weights =
+            initialized_weights(config.node_hidden_width, layout.node_input_width, &mut rng);
+        let attention_queries =
+            initialized_weights(attention_heads, config.node_hidden_width, &mut rng);
+        let state_weights =
+            initialized_weights(config.head_hidden_width, state_input_width, &mut rng);
+        let output_weights = initialized_weights(target_width, head_input_width, &mut rng);
+        let history_gru = match temporal.encoding {
+            MultiTaskTemporalEncoding::None => None,
+            MultiTaskTemporalEncoding::GatedRecurrent => Some(GatedRecurrent::initialized(
+                config.head_hidden_width + ACTION_CONTEXT_WIDTH,
+                temporal.hidden_width,
+                &mut rng,
+            )?),
+        };
+        let model = Self {
             actor_feature_schema_sha256,
             pooling,
-            node_weights: initialized_weights(
-                config.node_hidden_width,
-                layout.node_input_width,
-                &mut rng,
-            ),
+            temporal,
+            node_weights,
             node_bias: vec![0.0; config.node_hidden_width],
-            attention_queries: initialized_weights(
-                attention_heads,
-                config.node_hidden_width,
-                &mut rng,
-            ),
-            state_weights: initialized_weights(
-                config.head_hidden_width,
-                state_input_width,
-                &mut rng,
-            ),
+            attention_queries,
+            history_gru,
+            state_weights,
             state_bias: vec![0.0; config.head_hidden_width],
-            output_weights: initialized_weights(target_width, head_input_width, &mut rng),
+            output_weights,
             output_bias: vec![0.0; target_width],
             layout,
             config,
@@ -1056,7 +1238,9 @@ impl CompleteSetMultiTaskEncoder {
             target_mean,
             target_inverse_stddev,
             optimizer_steps: 0,
-        })
+        };
+        debug_assert_eq!(model.parameter_count(), parameter_count);
+        Ok(model)
     }
 
     pub fn encode(&self, sample: &TypedSetSample) -> Result<Vec<f32>, TrainableSetError> {
@@ -1072,7 +1256,7 @@ impl CompleteSetMultiTaskEncoder {
     pub fn predict(&self, sample: &MultiTaskSetSample) -> Result<Vec<f32>, TrainableSetError> {
         self.validate_transition(sample)?;
         Ok(self
-            .conditioned_forward(sample)
+            .conditioned_forward(sample)?
             .predictions
             .iter()
             .enumerate()
@@ -1083,7 +1267,7 @@ impl CompleteSetMultiTaskEncoder {
     }
 
     pub fn model_sha256(&self) -> Result<Digest, TrainableSetError> {
-        canonical_digest(b"dusklight.complete-set-multitask-encoder/v6\0", self)
+        canonical_digest(b"dusklight.complete-set-multitask-encoder/v7\0", self)
     }
 
     fn attention_head_count(&self) -> usize {
@@ -1093,6 +1277,7 @@ impl CompleteSetMultiTaskEncoder {
     fn head_input_width(&self) -> usize {
         self.config.head_hidden_width * 2
             + ACTION_CONTEXT_WIDTH
+            + self.temporal.hidden_width
             + usize::from(self.pooling.uses_task_attention()) * self.config.node_hidden_width * 2
     }
 
@@ -1100,6 +1285,10 @@ impl CompleteSetMultiTaskEncoder {
         self.node_weights.len()
             + self.node_bias.len()
             + self.attention_queries.len()
+            + self
+                .history_gru
+                .as_ref()
+                .map_or(0, GatedRecurrent::parameter_count)
             + self.state_weights.len()
             + self.state_bias.len()
             + self.output_weights.len()
@@ -1291,6 +1480,30 @@ impl CompleteSetMultiTaskEncoder {
                 "multitask action context is invalid",
             ));
         }
+        let history_valid = match self.temporal.encoding {
+            MultiTaskTemporalEncoding::None => sample.history.is_empty(),
+            MultiTaskTemporalEncoding::GatedRecurrent => {
+                sample.history.len() <= self.temporal.history_depth
+            }
+        };
+        let mut history_identities = BTreeSet::new();
+        if !history_valid {
+            return Err(TrainableSetError::new(
+                "multitask history does not match the temporal model",
+            ));
+        }
+        for step in &sample.history {
+            if step.transition_sha256 == Digest::ZERO
+                || !history_identities.insert(step.transition_sha256)
+                || step.action_context.len() != ACTION_CONTEXT_WIDTH
+                || step.action_context.iter().any(|value| !value.is_finite())
+            {
+                return Err(TrainableSetError::new(
+                    "multitask history identity or action is invalid",
+                ));
+            }
+            self.validate_input(&step.state)?;
+        }
         Ok(())
     }
 
@@ -1390,9 +1603,51 @@ impl CompleteSetMultiTaskEncoder {
         }
     }
 
-    fn conditioned_forward(&self, sample: &MultiTaskSetSample) -> ConditionedForward {
+    fn history_forward(
+        &self,
+        sample: &MultiTaskSetSample,
+    ) -> Result<HistoryForward, TrainableSetError> {
+        let Some(recurrent) = &self.history_gru else {
+            return Ok(HistoryForward {
+                states: Vec::new(),
+                recurrent_steps: Vec::new(),
+                hidden: Vec::new(),
+            });
+        };
+        let states = sample
+            .history
+            .iter()
+            .map(|step| self.state_forward(&step.state))
+            .collect::<Vec<_>>();
+        let inputs = states
+            .iter()
+            .zip(&sample.history)
+            .map(|(state, step)| {
+                let mut input = Vec::with_capacity(recurrent.input_width());
+                input.extend(&state.state_hidden);
+                input.extend(step.action_context.iter().map(|value| f64::from(*value)));
+                input
+            })
+            .collect::<Vec<_>>();
+        let recurrent_steps = recurrent.forward_sequence(&inputs)?;
+        let hidden = recurrent_steps.last().map_or_else(
+            || vec![0.0; recurrent.hidden_width()],
+            |step| step.hidden.clone(),
+        );
+        Ok(HistoryForward {
+            states,
+            recurrent_steps,
+            hidden,
+        })
+    }
+
+    fn conditioned_forward(
+        &self,
+        sample: &MultiTaskSetSample,
+    ) -> Result<ConditionedForward, TrainableSetError> {
         let pre = self.state_forward(&sample.input);
         let post = self.state_forward(&sample.post_input);
+        let history = self.history_forward(sample)?;
         let head_input_width = self.head_input_width();
         let head_inputs = self
             .target_conditioning
@@ -1411,6 +1666,7 @@ impl CompleteSetMultiTaskEncoder {
                         input.extend(std::iter::repeat_n(0.0, ACTION_CONTEXT_WIDTH));
                     }
                 }
+                input.extend(&history.hidden);
                 if self.pooling.uses_task_attention() {
                     input.extend(&pre.attention_pools[target]);
                     match conditioning {
@@ -1436,17 +1692,18 @@ impl CompleteSetMultiTaskEncoder {
                 ) + self.output_bias[target]
             })
             .collect();
-        ConditionedForward {
+        Ok(ConditionedForward {
             pre,
             post,
+            history,
             head_inputs,
             predictions,
-        }
+        })
     }
 
     fn train_one(&mut self, sample: &MultiTaskSetSample) -> Result<(), TrainableSetError> {
         self.validate_transition(sample)?;
-        let forward = self.conditioned_forward(sample);
+        let forward = self.conditioned_forward(sample)?;
         let output_before = self.output_weights.clone();
         let state_before = self.state_weights.clone();
         let attention_before = self.attention_queries.clone();
@@ -1478,6 +1735,7 @@ impl CompleteSetMultiTaskEncoder {
         }
         let mut d_pre_hidden = vec![0.0; self.config.head_hidden_width];
         let mut d_post_hidden = vec![0.0; self.config.head_hidden_width];
+        let mut d_history_hidden = vec![0.0; self.temporal.hidden_width];
         let mut d_pre_attention =
             vec![vec![0.0; self.config.node_hidden_width]; self.attention_head_count()];
         let mut d_post_attention =
@@ -1493,8 +1751,15 @@ impl CompleteSetMultiTaskEncoder {
                 }
             }
         }
+        let history_offset = self.config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
+        for (hidden, gradient) in d_history_hidden.iter_mut().enumerate() {
+            for target in 0..self.target_names.len() {
+                *gradient += d_outputs[target]
+                    * output_before[target * head_input_width + history_offset + hidden];
+            }
+        }
         if self.pooling.uses_task_attention() {
-            let pre_offset = self.config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
+            let pre_offset = history_offset + self.temporal.hidden_width;
             let post_offset = pre_offset + self.config.node_hidden_width;
             for target in 0..self.target_names.len() {
                 for hidden in 0..self.config.node_hidden_width {
@@ -1524,6 +1789,32 @@ impl CompleteSetMultiTaskEncoder {
             &attention_before,
             &mut gradients,
         );
+        let recurrent_gradients = if let Some(recurrent) = &self.history_gru {
+            let (recurrent_gradients, history_input_gradients) =
+                recurrent.backward_sequence(&forward.history.recurrent_steps, &d_history_hidden)?;
+            if history_input_gradients.len() != forward.history.states.len() {
+                return Err(TrainableSetError::new(
+                    "multitask recurrent history gradient count is invalid",
+                ));
+            }
+            let no_direct_attention =
+                vec![vec![0.0; self.config.node_hidden_width]; self.attention_head_count()];
+            for (state, input_gradient) in
+                forward.history.states.iter().zip(&history_input_gradients)
+            {
+                self.accumulate_encoder_gradients(
+                    state,
+                    &input_gradient[..self.config.head_hidden_width],
+                    &no_direct_attention,
+                    &state_before,
+                    &attention_before,
+                    &mut gradients,
+                );
+            }
+            Some(recurrent_gradients)
+        } else {
+            None
+        };
         self.accumulate_encoder_gradients(
             &forward.post,
             &d_post_hidden,
@@ -1554,6 +1845,16 @@ impl CompleteSetMultiTaskEncoder {
             let gradient = gradient + self.config.l2_penalty * *weight;
             *weight -= self.config.learning_rate * clip(gradient, self.config.gradient_clip);
         }
+        if let (Some(recurrent), Some(recurrent_gradients)) =
+            (&mut self.history_gru, recurrent_gradients)
+        {
+            recurrent.apply_gradients(
+                recurrent_gradients,
+                self.config.learning_rate,
+                self.config.l2_penalty,
+                self.config.gradient_clip,
+            );
+        }
         self.optimizer_steps += 1;
         if self
             .node_weights
@@ -1565,6 +1866,10 @@ impl CompleteSetMultiTaskEncoder {
             .chain(&self.output_weights)
             .chain(&self.output_bias)
             .any(|value| !value.is_finite())
+            || self
+                .history_gru
+                .as_ref()
+                .is_some_and(|recurrent| !recurrent.all_finite())
         {
             return Err(TrainableSetError::new(
                 "multitask set encoder parameters became non-finite",
@@ -1658,7 +1963,7 @@ impl CompleteSetMultiTaskEncoder {
         let mut count = 0_usize;
         for sample in samples {
             self.validate_transition(sample)?;
-            let prediction = self.conditioned_forward(sample).predictions;
+            let prediction = self.conditioned_forward(sample)?.predictions;
             for (target, predicted) in prediction.iter().enumerate() {
                 if sample.target_present[target] {
                     let expected = (f64::from(sample.targets[target]) - self.target_mean[target])
@@ -1858,7 +2163,7 @@ fn native_actor_feature_schema(
     spec: &NativeEncoderFeatureSpec,
 ) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-direct-actor-features/v9\0",
+        b"dusklight.native-direct-actor-features/v10\0",
         &(
             spec,
             "signed-log-presence-unit-rms-reservoir/v1",
@@ -1889,7 +2194,10 @@ fn native_actor_feature_schema(
 }
 
 fn native_history_feature_names(spec: &NativeEncoderFeatureSpec) -> Vec<String> {
-    if spec.history_encoding == NativeEncoderHistoryEncoding::None {
+    if matches!(
+        spec.history_encoding,
+        NativeEncoderHistoryEncoding::None | NativeEncoderHistoryEncoding::TrainableGru
+    ) {
         return Vec::new();
     }
     if spec.history_encoding == NativeEncoderHistoryEncoding::RecurrentReservoir {
@@ -3387,6 +3695,97 @@ fn append_episode_history_features(
     Ok(())
 }
 
+fn trainable_episode_history_steps(
+    episode: &NativeEpisode,
+    completed: &[&EpisodeHistoryTransition],
+    spec: &NativeEncoderFeatureSpec,
+    actor_feature_schema_sha256: Digest,
+    states: &mut BTreeMap<(String, u32), Arc<TypedSetSample>>,
+) -> Result<Vec<MultiTaskHistoryStep>, TrainableSetError> {
+    if spec.history_encoding != NativeEncoderHistoryEncoding::TrainableGru {
+        return Ok(Vec::new());
+    }
+    if completed.len() > spec.history_depth {
+        return Err(TrainableSetError::new(
+            "native trainable history exceeds the declared feature depth",
+        ));
+    }
+    completed
+        .iter()
+        .map(|transition| {
+            if transition.episode_id != episode.id {
+                return Err(TrainableSetError::new(
+                    "native trainable history crosses an episode boundary",
+                ));
+            }
+            let transition_sha256 = canonical_digest(
+                b"dusklight.native-trainable-history-transition/v1\0",
+                transition,
+            )?;
+            let key = (transition.episode_id.clone(), transition.step_index);
+            let state = if let Some(state) = states.get(&key) {
+                Arc::clone(state)
+            } else {
+                let step = episode
+                    .steps
+                    .get(transition.step_index as usize)
+                    .ok_or_else(|| {
+                        TrainableSetError::new("native trainable history step is absent")
+                    })?;
+                let (mut base, mut base_present) = broad_base(&step.post_simulation);
+                append_core_temporal_features(
+                    &mut base,
+                    &mut base_present,
+                    &step.post_simulation,
+                    Some(&step.pre_input),
+                );
+                suppress_base_family(
+                    &mut base,
+                    &mut base_present,
+                    NativeEncoderChannelFamily::CorePreviousInput,
+                );
+                retain_feature_families(
+                    &mut base,
+                    &mut base_present,
+                    &native_base_feature_families(),
+                    spec,
+                );
+                let mut nodes = if spec.contains(NativeEncoderChannelFamily::ActorPopulation) {
+                    native_actor_nodes(&step.post_simulation, Some(&step.pre_input))
+                } else {
+                    Vec::new()
+                };
+                for node in &mut nodes {
+                    retain_node_feature_families(node, spec);
+                }
+                let sample_sha256 = canonical_digest(
+                    b"dusklight.native-trainable-history-state/v1\0",
+                    &(
+                        transition_sha256,
+                        hex_128(step.post_simulation.state_identity),
+                        actor_feature_schema_sha256,
+                    ),
+                )?;
+                let state = Arc::new(TypedSetSample {
+                    sample_sha256,
+                    actor_feature_schema_sha256,
+                    base,
+                    base_present,
+                    nodes,
+                    target: 0.0,
+                });
+                states.insert(key, Arc::clone(&state));
+                state
+            };
+            Ok(MultiTaskHistoryStep {
+                transition_sha256,
+                state,
+                action_context: episode_history_action_context(&transition.consumed_pad),
+            })
+        })
+        .collect()
+}
+
 fn append_encoded_episode_history_features(
     values: &mut Vec<f32>,
     present: &mut Vec<bool>,
@@ -3419,6 +3818,7 @@ fn append_encoded_episode_history_features(
                 })?,
             )
         }
+        NativeEncoderHistoryEncoding::TrainableGru => Ok(()),
     }
 }
 
@@ -4040,13 +4440,24 @@ fn append_core_temporal_features(
 
 fn sample_manifest_digest(samples: &[MultiTaskSetSample]) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-multitask-sample-dataset/v3\0",
+        b"dusklight.native-multitask-sample-dataset/v4\0",
         &samples
             .iter()
             .map(|sample| {
                 (
                     sample.input.sample_sha256,
                     sample.post_input.sample_sha256,
+                    sample
+                        .history
+                        .iter()
+                        .map(|step| {
+                            (
+                                step.transition_sha256,
+                                step.state.sample_sha256,
+                                &step.action_context,
+                            )
+                        })
+                        .collect::<Vec<_>>(),
                     &sample.action_context,
                     &sample.targets,
                     &sample.target_present,
@@ -4054,6 +4465,12 @@ fn sample_manifest_digest(samples: &[MultiTaskSetSample]) -> Result<Digest, Trai
             })
             .collect::<Vec<_>>(),
     )
+}
+
+fn sample_model_states(sample: &MultiTaskSetSample) -> impl Iterator<Item = &TypedSetSample> {
+    std::iter::once(&sample.input)
+        .chain(std::iter::once(&sample.post_input))
+        .chain(sample.history.iter().map(|step| step.state.as_ref()))
 }
 
 fn hex_128(value: [u8; 16]) -> String {
@@ -4069,7 +4486,9 @@ fn validate_samples(
     training: &[MultiTaskSetSample],
     held_out: &[MultiTaskSetSample],
     config: TrainableSetConfig,
+    temporal: MultiTaskTemporalConfig,
 ) -> Result<Dimensions, TrainableSetError> {
+    temporal.validate()?;
     if actor_feature_schema_sha256 == Digest::ZERO
         || training_dataset_sha256 == Digest::ZERO
         || held_out_dataset_sha256 == Digest::ZERO
@@ -4104,7 +4523,7 @@ fn validate_samples(
     let first_node = training
         .iter()
         .chain(held_out)
-        .flat_map(|sample| [&sample.input, &sample.post_input])
+        .flat_map(sample_model_states)
         .find_map(|input| input.nodes.first());
     let dimensions = Dimensions {
         categorical: first_node.map_or(0, |node| node.categorical.len()),
@@ -4113,6 +4532,7 @@ fn validate_samples(
         base: training[0].input.base.len(),
     };
     let mut identities = BTreeSet::new();
+    let mut history_steps = 0_usize;
     for sample in training.iter().chain(held_out) {
         if sample.input.sample_sha256 == Digest::ZERO
             || !identities.insert(sample.input.sample_sha256)
@@ -4135,8 +4555,40 @@ fn validate_samples(
                 "multitask sample identity, schema, target, or mask is invalid",
             ));
         }
-        validate_sample_dimensions(&sample.input, dimensions)?;
-        validate_sample_dimensions(&sample.post_input, dimensions)?;
+        let history_valid = match temporal.encoding {
+            MultiTaskTemporalEncoding::None => sample.history.is_empty(),
+            MultiTaskTemporalEncoding::GatedRecurrent => {
+                sample.history.len() <= temporal.history_depth
+            }
+        };
+        let mut transition_identities = BTreeSet::new();
+        if !history_valid {
+            return Err(TrainableSetError::new(
+                "multitask sample history does not match temporal configuration",
+            ));
+        }
+        for step in &sample.history {
+            if step.transition_sha256 == Digest::ZERO
+                || !transition_identities.insert(step.transition_sha256)
+                || step.state.sample_sha256 == Digest::ZERO
+                || step.state.actor_feature_schema_sha256 != actor_feature_schema_sha256
+                || step.action_context.len() != ACTION_CONTEXT_WIDTH
+                || step.action_context.iter().any(|value| !value.is_finite())
+            {
+                return Err(TrainableSetError::new(
+                    "multitask sample history identity, schema, or action is invalid",
+                ));
+            }
+            history_steps += 1;
+        }
+        for state in sample_model_states(sample) {
+            validate_sample_dimensions(state, dimensions)?;
+        }
+    }
+    if temporal.encoding == MultiTaskTemporalEncoding::GatedRecurrent && history_steps == 0 {
+        return Err(TrainableSetError::new(
+            "multitask recurrent corpus contains no history",
+        ));
     }
     if target_support(training, target_names.len()).contains(&0) {
         return Err(TrainableSetError::new(
@@ -4206,7 +4658,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v8\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v9\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -4275,6 +4727,7 @@ mod tests {
                 nodes: post_nodes,
                 target: 0.0,
             },
+            history: Vec::new(),
             action_context,
             targets: vec![
                 first + second,
@@ -4762,11 +5215,30 @@ mod tests {
                 .with_recurrent_history(2, MAX_HISTORY_RECURRENT_WIDTH + 1)
                 .is_err()
         );
+        assert!(
+            NativeEncoderFeatureSpec::all()
+                .with_trainable_history(0, DEFAULT_HISTORY_RECURRENT_WIDTH)
+                .is_err()
+        );
         assert_ne!(
             native_actor_feature_schema(&NativeEncoderFeatureSpec::all()).unwrap(),
             native_actor_feature_schema(
                 &NativeEncoderFeatureSpec::all()
                     .with_history_depth(2)
+                    .unwrap()
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            native_actor_feature_schema(
+                &NativeEncoderFeatureSpec::all()
+                    .with_recurrent_history(2, DEFAULT_HISTORY_RECURRENT_WIDTH)
+                    .unwrap()
+            )
+            .unwrap(),
+            native_actor_feature_schema(
+                &NativeEncoderFeatureSpec::all()
+                    .with_trainable_history(2, DEFAULT_HISTORY_RECURRENT_WIDTH)
                     .unwrap()
             )
             .unwrap()
@@ -4949,6 +5421,206 @@ mod tests {
         .unwrap();
         assert_eq!(unchanged_values, values);
         assert_eq!(unchanged_present, present);
+    }
+
+    #[test]
+    fn trainable_history_shares_complete_states_and_excludes_the_current_transition() {
+        let mut shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
+        ))
+        .unwrap();
+        let prototype = shard.episodes[0].steps[0].clone();
+        shard.episodes[0].steps = vec![prototype; 3];
+        let episode = &shard.episodes[0];
+        let history = NativeEpisodeHistoryView::build(&shard, 2).unwrap();
+        let spec = NativeEncoderFeatureSpec::all()
+            .with_trainable_history(2, 4)
+            .unwrap();
+        let schema = native_actor_feature_schema(&spec).unwrap();
+        let mut states = BTreeMap::new();
+
+        let first_decision = &history.decisions[1];
+        let first_completed = first_decision
+            .completed_transition_indices
+            .iter()
+            .map(|index| &history.transitions[*index as usize])
+            .collect::<Vec<_>>();
+        let first =
+            trainable_episode_history_steps(episode, &first_completed, &spec, schema, &mut states)
+                .unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(!first[0].state.nodes.is_empty());
+
+        let decision = &history.decisions[2];
+        let completed = decision
+            .completed_transition_indices
+            .iter()
+            .map(|index| &history.transitions[*index as usize])
+            .collect::<Vec<_>>();
+        let second =
+            trainable_episode_history_steps(episode, &completed, &spec, schema, &mut states)
+                .unwrap();
+        assert_eq!(second.len(), 2);
+        assert!(Arc::ptr_eq(&first[0].state, &second[0].state));
+        assert_eq!(states.len(), 2);
+
+        let mut changed_current = episode.clone();
+        changed_current.steps[2].consumed_pad.buttons ^= 0xffff;
+        changed_current.steps[2].post_simulation.player_position[0] += 10_000.0;
+        let mut changed_states = BTreeMap::new();
+        let unchanged = trainable_episode_history_steps(
+            &changed_current,
+            &completed,
+            &spec,
+            schema,
+            &mut changed_states,
+        )
+        .unwrap();
+        assert_eq!(
+            unchanged
+                .iter()
+                .map(|step| (step.transition_sha256, step.state.sample_sha256))
+                .collect::<Vec<_>>(),
+            second
+                .iter()
+                .map(|step| (step.transition_sha256, step.state.sample_sha256))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            unchanged
+                .iter()
+                .map(|step| &step.action_context)
+                .collect::<Vec<_>>(),
+            second
+                .iter()
+                .map(|step| &step.action_context)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn historical_actor_state_receives_gradient_through_the_gru() {
+        let mut sample = sample(201, 1.25, -0.5, false);
+        let mut history_state = sample.input.clone();
+        history_state.sample_sha256 = Digest([202; 32]);
+        sample.input.nodes.clear();
+        sample.post_input.nodes.clear();
+        sample.history = vec![MultiTaskHistoryStep {
+            transition_sha256: Digest([203; 32]),
+            state: Arc::new(history_state),
+            action_context: vec![0.0; ACTION_CONTEXT_WIDTH],
+        }];
+        sample.targets = vec![1.0, 0.0];
+        sample.target_present = vec![true, false];
+        let dimensions = Dimensions {
+            categorical: 1,
+            continuous: 1,
+            binary: 1,
+            base: 1,
+        };
+        let layout = FeatureLayout::fit(sample_model_states(&sample), dimensions).unwrap();
+        let config = TrainableSetConfig {
+            epochs: 1,
+            node_hidden_width: 4,
+            head_hidden_width: 4,
+            l2_penalty: 0.0,
+            ..TrainableSetConfig::default()
+        };
+        let temporal = MultiTaskTemporalConfig::gated_recurrent(2, 4);
+        let mut model = CompleteSetMultiTaskEncoder::initialized(
+            Digest([7; 32]),
+            layout,
+            config,
+            vec!["actor_disappearance_count".into(), "inverse_stick_x".into()],
+            vec![
+                AuxiliaryHeadConditioning::PreStateAndAction,
+                AuxiliaryHeadConditioning::PreAndPostState,
+            ],
+            vec![0.0; 2],
+            vec![1.0; 2],
+            MultiTaskSetPooling::MeanMax,
+            temporal,
+        )
+        .unwrap();
+        model.output_weights.fill(0.0);
+        let history_offset = config.head_hidden_width * 2 + ACTION_CONTEXT_WIDTH;
+        model.output_weights[history_offset] = 1.0;
+        let before = model.node_weights.clone();
+        model.train_one(&sample).unwrap();
+        let gradient_l1 = model
+            .node_weights
+            .iter()
+            .zip(before)
+            .map(|(after, before)| (after - before).abs())
+            .sum::<f64>();
+        assert!(gradient_l1 > 0.0);
+    }
+
+    #[test]
+    fn trainable_history_refits_and_actor_permutations_are_exact() {
+        let attach_history = |samples: &mut [MultiTaskSetSample]| {
+            for sample in samples {
+                let mut state = sample.input.clone();
+                state.sample_sha256 = canonical_digest(
+                    b"dusklight.synthetic-history-state/v1\0",
+                    &sample.input.sample_sha256,
+                )
+                .unwrap();
+                sample.history = vec![MultiTaskHistoryStep {
+                    transition_sha256: canonical_digest(
+                        b"dusklight.synthetic-history-transition/v1\0",
+                        &sample.input.sample_sha256,
+                    )
+                    .unwrap(),
+                    state: Arc::new(state),
+                    action_context: sample.action_context.clone(),
+                }];
+            }
+        };
+        let mut training = corpus(1, 48);
+        let mut held_out = corpus(101, 16);
+        attach_history(&mut training);
+        attach_history(&mut held_out);
+        let training_digest = sample_manifest_digest(&training).unwrap();
+        let held_out_digest = sample_manifest_digest(&held_out).unwrap();
+        let config = TrainableSetConfig {
+            epochs: 4,
+            node_hidden_width: 4,
+            head_hidden_width: 4,
+            ..TrainableSetConfig::default()
+        };
+        let temporal = MultiTaskTemporalConfig::gated_recurrent(2, 4);
+        let fit = || {
+            CompleteSetMultiTaskEncoder::fit_with_pooling_and_temporal(
+                Digest([7; 32]),
+                training_digest,
+                held_out_digest,
+                vec!["sum".into(), "inverse_difference".into()],
+                &training,
+                &held_out,
+                config,
+                MultiTaskSetPooling::MeanMax,
+                temporal,
+            )
+            .unwrap()
+        };
+        let (first_report, first) = fit();
+        let (second_report, second) = fit();
+        assert_eq!(first_report.temporal, temporal);
+        assert_eq!(first_report.report_sha256, second_report.report_sha256);
+        assert_eq!(
+            first.model_sha256().unwrap(),
+            second.model_sha256().unwrap()
+        );
+
+        let original = first.predict(&held_out[0]).unwrap();
+        let mut permuted = held_out[0].clone();
+        permuted.input.nodes.reverse();
+        permuted.post_input.nodes.reverse();
+        let mut history_state = (*permuted.history[0].state).clone();
+        history_state.nodes.reverse();
+        permuted.history[0].state = Arc::new(history_state);
+        assert_eq!(first.predict(&permuted).unwrap(), original);
     }
 
     #[test]

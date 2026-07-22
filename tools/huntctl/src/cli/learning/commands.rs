@@ -24,7 +24,7 @@ use huntctl::learning::factorized_policy_suffix_batch::{
 use huntctl::learning::multitask_set_encoder::{
     CompleteSetMultiTaskEncoder, DEFAULT_HISTORY_RECURRENT_WIDTH, MultiTaskSetPooling,
     NativeEncoderChannelFamily, NativeEncoderFeatureSpec, NativeMultiTaskActorCorpus,
-    fit_shuffled_auxiliary_control_with_pooling,
+    fit_shuffled_auxiliary_control_with_pooling_and_temporal,
 };
 use huntctl::learning::native_auxiliary_dataset::{
     AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V2, NativeAuxiliaryDataset,
@@ -951,7 +951,12 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                         history_depth,
                         history_width.unwrap_or(DEFAULT_HISTORY_RECURRENT_WIDTH),
                     )?,
-                Some("stacked" | "recurrent-reservoir") => {
+                Some("trainable-gru") if history_depth > 0 => base_feature_spec
+                    .with_trainable_history(
+                        history_depth,
+                        history_width.unwrap_or(DEFAULT_HISTORY_RECURRENT_WIDTH),
+                    )?,
+                Some("stacked" | "recurrent-reservoir" | "trainable-gru") => {
                     return Err("native encoder history encoding requires --history-depth greater than zero".into());
                 }
                 Some(name) => {
@@ -959,7 +964,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 }
                 None => {
                     return Err(
-                        "--history-width requires --history-encoding recurrent-reservoir".into(),
+                        "--history-width requires --history-encoding recurrent-reservoir or trainable-gru".into(),
                     );
                 }
             };
@@ -972,6 +977,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .unwrap_or(MultiTaskSetPooling::MeanMax);
             let corpus =
                 NativeMultiTaskActorCorpus::build_with_spec(&dataset, &shard, feature_spec)?;
+            let temporal = corpus.feature_spec.temporal_config();
             drop(shard);
             let defaults = TrainableSetConfig::default();
             let config = TrainableSetConfig {
@@ -1005,7 +1011,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 seed: u64_option(learn_args, "--seed", defaults.seed)?,
                 fixed_slot_count: defaults.fixed_slot_count,
             };
-            let (report, model) = CompleteSetMultiTaskEncoder::fit_with_pooling(
+            let (report, model) = CompleteSetMultiTaskEncoder::fit_with_pooling_and_temporal(
                 corpus.actor_feature_schema_sha256,
                 corpus.training_dataset_sha256,
                 corpus.validation_dataset_sha256,
@@ -1014,9 +1020,10 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 &corpus.validation,
                 config,
                 pooling,
+                temporal,
             )?;
             let test_evaluation = model.evaluate(&corpus.test)?;
-            let shuffled_target_control = fit_shuffled_auxiliary_control_with_pooling(
+            let shuffled_target_control = fit_shuffled_auxiliary_control_with_pooling_and_temporal(
                 corpus.actor_feature_schema_sha256,
                 corpus.target_names.clone(),
                 corpus.training,
@@ -1025,9 +1032,10 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 &corpus.test,
                 config,
                 pooling,
+                temporal,
             )?;
             let artifact = json!({
-                "schema": "dusklight-native-multitask-encoder-artifact/v9",
+                "schema": "dusklight-native-multitask-encoder-artifact/v10",
                 "source_auxiliary_dataset_sha256": dataset.dataset_sha256,
                 "source_native_shard_sha256": source_native_shard_sha256,
                 "actor_feature_schema_sha256": corpus.actor_feature_schema_sha256,

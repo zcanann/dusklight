@@ -27,6 +27,7 @@ pub mod factorized_pad_action;
 pub mod factorized_policy_suffix_batch;
 pub mod fqi;
 pub mod frozen_inference;
+mod gated_recurrent;
 pub mod goal_conditioning;
 pub mod graph_representation;
 pub mod hindsight;
