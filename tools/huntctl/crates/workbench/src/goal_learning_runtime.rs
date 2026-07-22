@@ -17,7 +17,7 @@ use dusklight_orchestration::native_goal_learning_loop_runner::{
     NativeGoalLearningLoopRunConfig, run_native_goal_learning_loop,
 };
 use dusklight_orchestration::native_residual_campaign::{
-    NativeResidualCampaignEvaluation, NativeResidualExecutionBinding,
+    NativeIncumbentDemonstration, NativeResidualCampaignEvaluation, NativeResidualExecutionBinding,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use dusklight_orchestration::optimization_resume::OptimizationResumeState;
@@ -535,6 +535,17 @@ fn goal_learning_initial_inputs(
         .map(|entry| entry.shard_sha256)
         .collect::<BTreeSet<_>>();
     let mut shards = BTreeMap::new();
+    if let Some(reference) = &state.demonstration {
+        let demonstration: NativeIncumbentDemonstration = bound_artifact_json(root, reference)
+            .filter(|demonstration: &NativeIncumbentDemonstration| {
+                demonstration.validate(optimization, execution).is_ok()
+            })
+            .ok_or_else(|| WorkbenchError::new("incumbent demonstration is invalid or detached"))?;
+        let shard = demonstration.attempt.episode_shard;
+        if required.contains(&shard.sha256) {
+            shards.insert(shard.sha256, shard);
+        }
+    }
     for result in state
         .candidates
         .iter()

@@ -149,6 +149,8 @@ pub struct GraphOptimizationCampaign {
     pub completed_candidates: u64,
     pub pending_candidates: u64,
     pub charged_simulated_ticks: u64,
+    pub demonstration_seeded: bool,
+    pub demonstration_simulated_ticks: u64,
     pub generation: u64,
     pub retained_successes: u64,
     pub retained_failures: u64,

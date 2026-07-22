@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-optimization-request/v2",
-  "content_sha256": "1e61e6fe5bc88446ed719a9d81f6d7b2ada20d28fd53837731bccdc6312c75aa",
+  "content_sha256": "9af1a7961ba900120038b3dc5874ba95cf3903d1a518af25772c2a1a013cf17a",
   "id": "ordon-q125-residual-cem-v1",
   "route": {
     "timeline": {
@@ -33,7 +33,7 @@
     "exploration_horizon_ticks": 160,
     "promotion_before_tick": 125,
     "candidate_budget": 4096,
-    "simulated_tick_budget": 655360
+    "simulated_tick_budget": 655485
   },
   "execution": {
     "workers": 4,

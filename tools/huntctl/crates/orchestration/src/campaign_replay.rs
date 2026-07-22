@@ -36,6 +36,80 @@ pub(crate) struct PolicyReplayRollout<'a> {
     pub shard: &'a NativeEpisodeShard,
 }
 
+pub(crate) fn append_incumbent_demonstration_replay(
+    root: &Path,
+    campaign: &Path,
+    optimization: &OptimizationRequest,
+    shard: &NativeEpisodeShard,
+    episode_id: &str,
+) -> Result<ResidualReplayCheckpoint, CampaignReplayError> {
+    let incumbent = optimization
+        .incumbent
+        .as_ref()
+        .ok_or_else(|| replay_message("demonstration replay requires an incumbent"))?;
+    let episode_index = shard
+        .episodes
+        .iter()
+        .position(|episode| episode.id == episode_id)
+        .ok_or_else(|| replay_message("incumbent demonstration episode is absent"))?;
+    let episode = &shard.episodes[episode_index];
+    let objective_identity = authored_milestone_objective_identity(
+        &optimization.terminal_predicate.program_sha256.to_string(),
+        &optimization
+            .terminal_predicate
+            .definition_sha256
+            .to_string(),
+    )
+    .map_err(replay_error)?;
+    if shard.episodes.len() != 1
+        || shard.source_frame != optimization.route.source_boundary_index
+        || u64::from(shard.maximum_ticks) != optimization.budgets.exploration_horizon_ticks
+        || shard.metadata.source_boundary_fingerprint
+            != optimization.route.native_source_boundary_fingerprint
+        || shard.metadata.objective != optimization.terminal_predicate.goal
+        || shard.metadata.objective_identity != objective_identity
+        || shard.metadata.policy_model.is_some()
+        || !episode.success
+        || episode
+            .first_hit_tick
+            .map(|tick| u64::from(tick).saturating_add(1))
+            != Some(incumbent.first_hit_tick)
+    {
+        return Err(replay_message(
+            "incumbent demonstration differs from its route, objective, or exact terminal proof",
+        ));
+    }
+    shard
+        .verify_authored_objective(
+            &optimization.terminal_predicate.program_sha256.to_string(),
+            &optimization
+                .terminal_predicate
+                .definition_sha256
+                .to_string(),
+        )
+        .map_err(replay_error)?;
+    let corpus = NativeReplayCorpus::build(
+        None,
+        &[ReplayEpisodeSource {
+            shard,
+            episode_index,
+            role: ReplayExperienceRole::Demonstration,
+            policy_lineage_sha256: None,
+            parent_entry_sha256: None,
+        }],
+    )
+    .map_err(replay_error)?;
+    validate_residual_corpus_scope(optimization, &corpus)?;
+    let bytes = pretty_json(&corpus)?;
+    let path = campaign.join("replay").join(format!(
+        "generation-{:08}-{}.json",
+        corpus.generation, corpus.corpus_sha256
+    ));
+    write_exact_or_new(&path, &bytes).map_err(replay_error)?;
+    let artifact = artifact_reference(root, &path).map_err(replay_error)?;
+    ResidualReplayCheckpoint::seal(artifact, &corpus).map_err(replay_error)
+}
+
 /// Appends every exact native attempt in one completed residual generation to
 /// a cumulative immutable replay corpus. Residual proposals are randomized
 /// coverage experience: terminal success remains an outcome, not a role
@@ -363,16 +437,36 @@ pub(crate) fn validate_residual_corpus_scope(
             .to_string(),
     )
     .map_err(replay_error)?;
-    if corpus.entries.iter().any(|entry| {
-        entry.role != ReplayExperienceRole::RandomizedCoverage
-            || entry.policy_lineage_sha256.is_some()
-            || entry.parent_entry_sha256.is_some()
-            || entry.source_frame != optimization.route.source_boundary_index
-            || entry.source_boundary_fingerprint
-                != optimization.route.native_source_boundary_fingerprint
-            || entry.objective != optimization.terminal_predicate.goal
-            || entry.objective_identity != objective_identity
-    }) {
+    let demonstrations = corpus
+        .entries
+        .iter()
+        .filter(|entry| entry.role == ReplayExperienceRole::Demonstration)
+        .collect::<Vec<_>>();
+    let incumbent_tick = optimization
+        .incumbent
+        .as_ref()
+        .map(|incumbent| incumbent.first_hit_tick);
+    if demonstrations.len() > 1
+        || demonstrations.iter().any(|entry| {
+            !entry.success
+                || entry
+                    .first_hit_tick
+                    .map(|tick| u64::from(tick).saturating_add(1))
+                    != incumbent_tick
+        })
+        || corpus.entries.iter().any(|entry| {
+            !matches!(
+                entry.role,
+                ReplayExperienceRole::Demonstration | ReplayExperienceRole::RandomizedCoverage
+            ) || entry.policy_lineage_sha256.is_some()
+                || entry.parent_entry_sha256.is_some()
+                || entry.source_frame != optimization.route.source_boundary_index
+                || entry.source_boundary_fingerprint
+                    != optimization.route.native_source_boundary_fingerprint
+                || entry.objective != optimization.terminal_predicate.goal
+                || entry.objective_identity != objective_identity
+        })
+    {
         return Err(replay_message(
             "residual replay corpus contains experience outside its campaign scope",
         ));
@@ -592,6 +686,63 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("exact native evaluation"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn incumbent_demonstration_remains_one_seed_in_cumulative_residual_replay() {
+        let root = test_root();
+        let campaign = root.join("build/campaigns/replay-test");
+        let shard_path = campaign.join("episodes.dseps");
+        install_authored_fixture(&shard_path);
+        let shard = NativeEpisodeShard::read(&shard_path).unwrap();
+        let success = shard
+            .episodes
+            .iter()
+            .position(|episode| episode.success)
+            .unwrap();
+        let residual = (0..shard.episodes.len())
+            .find(|index| *index != success)
+            .unwrap();
+        let mut optimization = optimization(&shard);
+        optimization.incumbent.as_mut().unwrap().first_hit_tick = shard.episodes[success]
+            .first_hit_tick
+            .map(|tick| u64::from(tick).saturating_add(1))
+            .unwrap();
+        let demonstration = NativeReplayCorpus::build(
+            None,
+            &[ReplayEpisodeSource {
+                shard: &shard,
+                episode_index: success,
+                role: ReplayExperienceRole::Demonstration,
+                policy_lineage_sha256: None,
+                parent_entry_sha256: None,
+            }],
+        )
+        .unwrap();
+        validate_residual_corpus_scope(&optimization, &demonstration).unwrap();
+
+        let cumulative = NativeReplayCorpus::build(
+            Some(&demonstration),
+            &[ReplayEpisodeSource {
+                shard: &shard,
+                episode_index: residual,
+                role: ReplayExperienceRole::RandomizedCoverage,
+                policy_lineage_sha256: None,
+                parent_entry_sha256: None,
+            }],
+        )
+        .unwrap();
+        validate_residual_corpus_scope(&optimization, &cumulative).unwrap();
+        assert_eq!(cumulative.entries.len(), 2);
+        assert_eq!(
+            cumulative
+                .entries
+                .iter()
+                .filter(|entry| entry.role == ReplayExperienceRole::Demonstration)
+                .count(),
+            1
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

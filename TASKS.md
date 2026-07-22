@@ -329,8 +329,10 @@ winner is the target and remains an open framework challenge until achieved.
       randomized-coverage generations and are checkpointed atomically with the
       optimizer. The unattended goal loop now admits independently reinferred
       frozen-policy v3 shards as policy-rollout generations with exact manifest
-      lineage. Demonstration and alternate-terminal producers still need to invoke
-      the same corpus contract before this item is complete.
+      lineage. Fresh optimization runs now authenticate the incumbent's exact
+      native success as a demonstration generation before proposing candidates.
+      The alternate-terminal producer still needs to invoke the same corpus
+      contract before this item is complete.
 - [ ] Train a goal-conditioned estimate of terminal reachability and time-to-go
       from complete trajectories using tick cost, real terminal outcomes, n-step
       returns, replay, target isolation, and uncertainty.
@@ -383,8 +385,19 @@ winner is the target and remains an open framework challenge until achieved.
       optimization proposal and native execution authorities; each journal phase
       binds corpus, dataset, critic, manifest, model, batch, result, reinference,
       checkpoint-restored shard, and next-corpus identities in order.
-- [ ] Seed optimization runs with the incumbent demonstration while allowing the
-      policy to leave its trajectory.
+- [x] Seed optimization runs with the incumbent demonstration while allowing the
+      policy to leave its trajectory. A fresh native campaign now reproduces the
+      sealed incumbent once through its ordinary persistent checkpoint worker,
+      authenticates the exact successful episode in a content-addressed
+      demonstration manifest, charges its simulated ticks in the crash-safe
+      resume journal, and installs it as generation one of cumulative replay
+      before any candidate is proposed. Random/CEM residual proposals and frozen
+      online policies remain free to emit every factorized PAD action rather than
+      being constrained to the demonstration. Legacy pre-seed checkpoints remain
+      resumable, while new seeded checkpoints, later replay generations, and the
+      workbench learning launch fail closed if the demonstration or its shard is
+      missing or detached. The workbench identifies whether the seed exists and
+      shows its exact tick charge.
 - [ ] Build a reverse curriculum from validated states on actual successful
       trajectories.
   - Begin close enough to the terminal predicate to observe several viable

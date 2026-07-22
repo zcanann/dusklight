@@ -561,6 +561,8 @@ fn campaign_projection(
         completed_candidates: 0,
         pending_candidates: 0,
         charged_simulated_ticks: 0,
+        demonstration_seeded: false,
+        demonstration_simulated_ticks: 0,
         generation: 0,
         retained_successes: 0,
         retained_failures: 0,
@@ -596,6 +598,8 @@ fn campaign_projection(
                 projection.completed_candidates = state.completed_candidates;
                 projection.pending_candidates = state.pending_candidate_ids.len() as u64;
                 projection.charged_simulated_ticks = state.charged_simulated_ticks;
+                projection.demonstration_seeded = state.demonstration.is_some();
+                projection.demonstration_simulated_ticks = state.demonstration_simulated_ticks;
                 projection.generation = state
                     .latest_optimizer_checkpoint
                     .as_ref()
@@ -808,6 +812,8 @@ mod tests {
             record_count: 0,
             last_record_sha256: Digest([4; 32]),
             next_sequence: 1,
+            demonstration: None,
+            demonstration_simulated_ticks: 0,
             candidates,
             completed_candidates: 10_000,
             charged_simulated_ticks: 10_000,

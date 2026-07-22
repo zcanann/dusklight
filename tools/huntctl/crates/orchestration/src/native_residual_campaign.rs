@@ -1,6 +1,7 @@
 //! Sealed execution and evidence artifacts for persistent native residual campaigns.
 
 use crate::optimization_request::OptimizationRequest;
+use crate::residual_campaign::ResidualReplayCheckpoint;
 use crate::residual_campaign::{ResidualCampaignCandidate, ResidualCampaignError};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{
@@ -20,6 +21,8 @@ use std::path::{Component, Path, PathBuf};
 
 pub const NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1: &str = "dusklight-native-residual-execution/v1";
 pub const NATIVE_RESIDUAL_EVALUATION_SCHEMA_V2: &str = "dusklight-native-residual-evaluation/v2";
+pub const NATIVE_INCUMBENT_DEMONSTRATION_SCHEMA_V1: &str =
+    "dusklight-native-incumbent-demonstration/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -403,6 +406,96 @@ pub struct NativeResidualAttempt {
     pub first_hit_tick: Option<u64>,
     pub terminal_boundary_fingerprint: String,
     pub behavior_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeIncumbentDemonstration {
+    pub schema: String,
+    pub content_sha256: Digest,
+    pub optimization_request_sha256: Digest,
+    pub execution_binding_sha256: Digest,
+    pub incumbent_tape_sha256: Digest,
+    pub attempt: NativeResidualAttempt,
+    pub replay: ResidualReplayCheckpoint,
+}
+
+impl NativeIncumbentDemonstration {
+    pub fn seal(
+        optimization: &OptimizationRequest,
+        execution: &NativeResidualExecutionBinding,
+        attempt: NativeResidualAttempt,
+        replay: ResidualReplayCheckpoint,
+    ) -> Result<Self, NativeResidualCampaignError> {
+        let incumbent = optimization
+            .incumbent
+            .as_ref()
+            .ok_or_else(|| native_message("native demonstration requires an incumbent"))?;
+        let mut value = Self {
+            schema: NATIVE_INCUMBENT_DEMONSTRATION_SCHEMA_V1.into(),
+            content_sha256: Digest::ZERO,
+            optimization_request_sha256: optimization.content_sha256,
+            execution_binding_sha256: execution.content_sha256,
+            incumbent_tape_sha256: incumbent.tape.sha256,
+            attempt,
+            replay,
+        };
+        value.content_sha256 = value.identity()?;
+        value.validate(optimization, execution)?;
+        Ok(value)
+    }
+
+    pub fn validate(
+        &self,
+        optimization: &OptimizationRequest,
+        execution: &NativeResidualExecutionBinding,
+    ) -> Result<(), NativeResidualCampaignError> {
+        let incumbent = optimization
+            .incumbent
+            .as_ref()
+            .ok_or_else(|| native_message("native demonstration requires an incumbent"))?;
+        if self.schema != NATIVE_INCUMBENT_DEMONSTRATION_SCHEMA_V1
+            || self.optimization_request_sha256 != optimization.content_sha256
+            || self.execution_binding_sha256 != execution.content_sha256
+            || self.incumbent_tape_sha256 != incumbent.tape.sha256
+            || self.attempt.repetition != 1
+            || optimization.execution.deterministic_seeds.first().copied()
+                != Some(self.attempt.worker_seed)
+            || self.attempt.wire_candidate_id != "incumbent-demonstration"
+            || !valid_reference(&self.attempt.batch_request)
+            || !valid_reference(&self.attempt.batch_result)
+            || !valid_reference(&self.attempt.episode_shard)
+            || !lower_hex(&self.attempt.restore_identity, 32)
+            || self.attempt.checkpoint_bytes == 0
+            || self.attempt.simulated_ticks != incumbent.first_hit_tick
+            || self.attempt.first_hit_tick != Some(incumbent.first_hit_tick)
+            || !lower_hex(&self.attempt.terminal_boundary_fingerprint, 32)
+            || self.attempt.behavior_sha256 == Digest::ZERO
+            || self.replay.generation != 1
+            || self.replay.entries != 1
+            || self.replay.transitions != incumbent.first_hit_tick
+            || self.replay.successes != 1
+            || self.replay.failures != 0
+            || !valid_reference(&self.replay.artifact)
+            || self.content_sha256 == Digest::ZERO
+            || self.content_sha256 != self.identity()?
+        {
+            return Err(native_message(
+                "native incumbent demonstration is invalid or detached",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn to_pretty_json(&self) -> Result<Vec<u8>, NativeResidualCampaignError> {
+        pretty_json(self)
+    }
+
+    fn identity(&self) -> Result<Digest, NativeResidualCampaignError> {
+        let mut canonical = self.clone();
+        canonical.content_sha256 = Digest::ZERO;
+        canonical_digest(b"dusklight.native-incumbent-demonstration/v1\0", &canonical)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

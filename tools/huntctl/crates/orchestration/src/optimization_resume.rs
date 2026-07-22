@@ -14,7 +14,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const OPTIMIZATION_RESUME_RECORD_SCHEMA_V1: &str = "dusklight-optimization-resume-record/v1";
-pub const OPTIMIZATION_RESUME_STATE_SCHEMA_V1: &str = "dusklight-optimization-resume-state/v1";
+pub const OPTIMIZATION_RESUME_RECORD_SCHEMA_V2: &str = "dusklight-optimization-resume-record/v2";
+pub const OPTIMIZATION_RESUME_STATE_SCHEMA_V2: &str = "dusklight-optimization-resume-state/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +31,10 @@ pub struct OptimizationResumeRecord {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OptimizationResumeEvent {
+    DemonstrationSeeded {
+        demonstration: ArtifactReference,
+        simulated_ticks: u64,
+    },
     CandidateSealed {
         candidate_id: String,
         candidate: ArtifactReference,
@@ -62,6 +67,10 @@ pub struct OptimizationResumeState {
     pub record_count: u64,
     pub last_record_sha256: Digest,
     pub next_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub demonstration: Option<ArtifactReference>,
+    #[serde(default)]
+    pub demonstration_simulated_ticks: u64,
     pub candidates: Vec<OptimizationResumeCandidate>,
     pub completed_candidates: u64,
     pub charged_simulated_ticks: u64,
@@ -101,7 +110,7 @@ pub struct OptimizationCheckpointState {
 
 impl OptimizationResumeState {
     pub fn validate(&self) -> Result<(), OptimizationResumeError> {
-        if self.schema != OPTIMIZATION_RESUME_STATE_SCHEMA_V1
+        if self.schema != OPTIMIZATION_RESUME_STATE_SCHEMA_V2
             || self.request_sha256 == Digest::ZERO
             || self.journal_sha256 == Digest::ZERO
             || self.next_sequence != self.record_count.saturating_add(1)
@@ -131,12 +140,28 @@ impl OptimizationResumeState {
                 || candidate.compiled_tape.sha256 != candidate.compiled_tape_sha256
                 || candidate.result.as_ref().map(|result| result.sha256) != candidate.result_sha256
         }) || self
-            .latest_optimizer_checkpoint
+            .demonstration
             .as_ref()
-            .is_some_and(|checkpoint| checkpoint.artifact.sha256 != checkpoint.artifact_sha256)
+            .is_some_and(|demonstration| demonstration.sha256 == Digest::ZERO)
+            || self.demonstration.is_some() != (self.demonstration_simulated_ticks > 0)
+            || self
+                .latest_optimizer_checkpoint
+                .as_ref()
+                .is_some_and(|checkpoint| checkpoint.artifact.sha256 != checkpoint.artifact_sha256)
         {
             return Err(resume_error(
                 "optimization resume artifact references differ from their folded identities",
+            ));
+        }
+        let charged = self
+            .candidates
+            .iter()
+            .try_fold(self.demonstration_simulated_ticks, |total, candidate| {
+                total.checked_add(candidate.simulated_ticks.unwrap_or(0))
+            });
+        if charged != Some(self.charged_simulated_ticks) {
+            return Err(resume_error(
+                "optimization resume state does not charge all native simulation",
             ));
         }
         let checkpointed = self
@@ -163,7 +188,7 @@ impl OptimizationResumeState {
     fn compute_identity(&self) -> Result<Digest, OptimizationResumeError> {
         let mut canonical = self.clone();
         canonical.state_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.optimization-resume-state/v1\0", &canonical)
+        canonical_digest(b"dusklight.optimization-resume-state/v2\0", &canonical)
     }
 }
 
@@ -242,7 +267,7 @@ pub fn append_optimization_resume_events(
         validate_next_event(request, &preview, &event)?;
         apply_preview_event(&mut preview, &event)?;
         let mut record = OptimizationResumeRecord {
-            schema: OPTIMIZATION_RESUME_RECORD_SCHEMA_V1.into(),
+            schema: OPTIMIZATION_RESUME_RECORD_SCHEMA_V2.into(),
             request_sha256: request.content_sha256,
             sequence,
             previous_record_sha256: previous,
@@ -274,6 +299,17 @@ fn apply_preview_event(
     event: &OptimizationResumeEvent,
 ) -> Result<(), OptimizationResumeError> {
     match event {
+        OptimizationResumeEvent::DemonstrationSeeded {
+            demonstration,
+            simulated_ticks,
+        } => {
+            state.demonstration = Some(demonstration.clone());
+            state.demonstration_simulated_ticks = *simulated_ticks;
+            state.charged_simulated_ticks = state
+                .charged_simulated_ticks
+                .checked_add(*simulated_ticks)
+                .ok_or_else(|| resume_error("simulated-tick charge overflowed"))?;
+        }
         OptimizationResumeEvent::CandidateSealed {
             candidate_id,
             candidate,
@@ -388,7 +424,15 @@ fn fold_journal(
                 ))
             })?;
         if record_bytes(&record)? != line
-            || record.schema != OPTIMIZATION_RESUME_RECORD_SCHEMA_V1
+            || !matches!(
+                record.schema.as_str(),
+                OPTIMIZATION_RESUME_RECORD_SCHEMA_V1 | OPTIMIZATION_RESUME_RECORD_SCHEMA_V2
+            )
+            || (record.schema == OPTIMIZATION_RESUME_RECORD_SCHEMA_V1
+                && matches!(
+                    &record.event,
+                    OptimizationResumeEvent::DemonstrationSeeded { .. }
+                ))
             || record.request_sha256 != request.content_sha256
             || record.sequence != index as u64 + 1
             || record.previous_record_sha256 != previous
@@ -406,9 +450,36 @@ fn fold_journal(
     let mut candidates = BTreeMap::<String, OptimizationResumeCandidate>::new();
     let mut compiled_tapes = BTreeSet::new();
     let mut charged_ticks = 0_u64;
+    let mut demonstration = None;
+    let mut demonstration_simulated_ticks = 0_u64;
     let mut latest_checkpoint = None;
     for record in &records {
         match &record.event {
+            OptimizationResumeEvent::DemonstrationSeeded {
+                demonstration: artifact,
+                simulated_ticks,
+            } => {
+                if demonstration.is_some()
+                    || !candidates.is_empty()
+                    || latest_checkpoint.is_some()
+                    || *simulated_ticks == 0
+                    || *simulated_ticks > request.budgets.exploration_horizon_ticks
+                {
+                    return Err(resume_error(
+                        "optimization demonstration seed is duplicate, late, or overlong",
+                    ));
+                }
+                demonstration = Some(artifact.clone());
+                demonstration_simulated_ticks = *simulated_ticks;
+                charged_ticks = charged_ticks
+                    .checked_add(*simulated_ticks)
+                    .ok_or_else(|| resume_error("optimization simulated-tick charge overflowed"))?;
+                if charged_ticks > request.budgets.simulated_tick_budget {
+                    return Err(resume_error(
+                        "optimization demonstration exceeds the sealed simulated-tick budget",
+                    ));
+                }
+            }
             OptimizationResumeEvent::CandidateSealed {
                 candidate_id,
                 candidate,
@@ -518,13 +589,15 @@ fn fold_journal(
         .as_ref()
         .map_or(0, |checkpoint| checkpoint.completed_candidates);
     let mut state = OptimizationResumeState {
-        schema: OPTIMIZATION_RESUME_STATE_SCHEMA_V1.into(),
+        schema: OPTIMIZATION_RESUME_STATE_SCHEMA_V2.into(),
         request_sha256: request.content_sha256,
         journal_sha256: sha256(committed),
         valid_journal_bytes: valid_bytes as u64,
         record_count: records.len() as u64,
         last_record_sha256: previous,
         next_sequence: records.len() as u64 + 1,
+        demonstration,
+        demonstration_simulated_ticks,
         candidates: candidate_rows,
         completed_candidates,
         charged_simulated_ticks: charged_ticks,
@@ -544,6 +617,25 @@ fn validate_next_event(
     event: &OptimizationResumeEvent,
 ) -> Result<(), OptimizationResumeError> {
     match event {
+        OptimizationResumeEvent::DemonstrationSeeded {
+            demonstration: _,
+            simulated_ticks,
+        } => {
+            if state.demonstration.is_some()
+                || !state.candidates.is_empty()
+                || state.latest_optimizer_checkpoint.is_some()
+                || *simulated_ticks == 0
+                || *simulated_ticks > request.budgets.exploration_horizon_ticks
+                || state
+                    .charged_simulated_ticks
+                    .checked_add(*simulated_ticks)
+                    .is_none_or(|ticks| ticks > request.budgets.simulated_tick_budget)
+            {
+                return Err(resume_error(
+                    "optimization demonstration seed is duplicate, late, or exceeds its budget",
+                ));
+            }
+        }
         OptimizationResumeEvent::CandidateSealed {
             candidate_id,
             compiled_tape,
@@ -635,6 +727,17 @@ fn validate_event_artifacts(
     event: &OptimizationResumeEvent,
 ) -> Result<(), OptimizationResumeError> {
     match event {
+        OptimizationResumeEvent::DemonstrationSeeded {
+            demonstration,
+            simulated_ticks,
+        } => {
+            if *simulated_ticks == 0 {
+                return Err(resume_error(
+                    "optimization demonstration has no simulated-tick charge",
+                ));
+            }
+            validate_artifact(root, "incumbent demonstration", demonstration)?;
+        }
         OptimizationResumeEvent::CandidateSealed {
             candidate_id,
             candidate,
@@ -731,7 +834,13 @@ fn validate_id(value: &str) -> Result<(), OptimizationResumeError> {
 fn record_identity(record: &OptimizationResumeRecord) -> Result<Digest, OptimizationResumeError> {
     let mut canonical = record.clone();
     canonical.record_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.optimization-resume-record/v1\0", &canonical)
+    let domain = match record.schema.as_str() {
+        OPTIMIZATION_RESUME_RECORD_SCHEMA_V1 => {
+            b"dusklight.optimization-resume-record/v1\0".as_slice()
+        }
+        _ => b"dusklight.optimization-resume-record/v2\0".as_slice(),
+    };
+    canonical_digest(domain, &canonical)
 }
 
 fn record_bytes(record: &OptimizationResumeRecord) -> Result<Vec<u8>, OptimizationResumeError> {
@@ -950,6 +1059,81 @@ mod tests {
             generation: 0,
             proposer_seed: 7,
         }
+    }
+
+    #[test]
+    fn incumbent_demonstration_is_first_unique_and_charged() {
+        let (root, request) = fixture(1);
+        initialize_optimization_resume(&request, &root.0).unwrap();
+        let demonstration = artifact(
+            &root.0,
+            "build/artifacts/incumbent-demonstration.json",
+            b"demonstration",
+        );
+        let state = append_optimization_resume_event(
+            &request,
+            &root.0,
+            OptimizationResumeEvent::DemonstrationSeeded {
+                demonstration: demonstration.clone(),
+                simulated_ticks: request.incumbent.as_ref().unwrap().first_hit_tick,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(state.demonstration, Some(demonstration.clone()));
+        assert_eq!(state.demonstration_simulated_ticks, 125);
+        assert_eq!(state.charged_simulated_ticks, 125);
+        assert_eq!(state.record_count, 1);
+
+        let error = append_optimization_resume_event(
+            &request,
+            &root.0,
+            OptimizationResumeEvent::DemonstrationSeeded {
+                demonstration,
+                simulated_ticks: 125,
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("duplicate"));
+    }
+
+    #[test]
+    fn v1_candidate_journal_resumes_without_a_late_demonstration() {
+        let (root, request) = fixture(1);
+        initialize_optimization_resume(&request, &root.0).unwrap();
+        let candidate = artifact(&root.0, "build/artifacts/legacy.json", b"legacy");
+        let tape = artifact(&root.0, "build/artifacts/legacy.tape", b"legacy-tape");
+        let mut record = OptimizationResumeRecord {
+            schema: OPTIMIZATION_RESUME_RECORD_SCHEMA_V1.into(),
+            request_sha256: request.content_sha256,
+            sequence: 1,
+            previous_record_sha256: Digest::ZERO,
+            event: candidate_event(&request, "legacy-g0-c0", candidate, tape),
+            record_sha256: Digest::ZERO,
+        };
+        record.record_sha256 = record_identity(&record).unwrap();
+        fs::write(
+            root.0.join(&request.resume.journal_path),
+            record_bytes(&record).unwrap(),
+        )
+        .unwrap();
+
+        let state = load_optimization_resume(&request, &root.0).unwrap();
+        assert_eq!(state.schema, OPTIMIZATION_RESUME_STATE_SCHEMA_V2);
+        assert!(state.demonstration.is_none());
+        assert_eq!(state.candidates.len(), 1);
+
+        let demonstration = artifact(&root.0, "build/artifacts/late-demonstration.json", b"late");
+        let error = append_optimization_resume_event(
+            &request,
+            &root.0,
+            OptimizationResumeEvent::DemonstrationSeeded {
+                demonstration,
+                simulated_ticks: 125,
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("late"));
     }
 
     #[test]
