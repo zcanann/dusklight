@@ -522,6 +522,7 @@ target_sources(dusklight PRIVATE src/dusk/automation/typed_facts.cpp)
 target_sources(dusklight PRIVATE
     src/dusk/automation/actor_profile_catalog.cpp
     src/dusk/automation/frozen_inference.cpp
+    src/dusk/automation/native_policy_features.cpp
     src/dusk/automation/learning_episode.cpp
     src/dusk/automation/suffix_batch.cpp
     src/dusk/automation/suffix_batch_runner.cpp
@@ -616,6 +617,16 @@ target_compile_definitions(dusk_frozen_inference_test PRIVATE
     DUSK_FROZEN_INFERENCE_GOLDEN_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/automation/frozen_inference_v1.hex"
 )
 set_target_properties(dusk_frozen_inference_test PROPERTIES FOLDER "Tests")
+
+add_executable(dusk_native_policy_features_test EXCLUDE_FROM_ALL
+    tests/native_policy_features_test.cpp
+    src/dusk/automation/native_policy_features.cpp
+)
+target_include_directories(dusk_native_policy_features_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_definitions(dusk_native_policy_features_test PRIVATE
+    DUSK_NATIVE_POLICY_FEATURE_SCHEMA_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/automation/native_policy_features_v1.schema"
+)
+set_target_properties(dusk_native_policy_features_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_learning_episode_test EXCLUDE_FROM_ALL
     tests/learning_episode_test.cpp
