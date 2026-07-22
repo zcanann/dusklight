@@ -1434,8 +1434,10 @@ PAD and gameplay sequence as ordinary playback.
     cardinality, episode, step, phase, boundary, state, stage or room mismatch,
     and tests cover episode reset and rejection of a detached authenticated
     shard. This is generic learner input plumbing, not an attempted or encoded
-    technique. Held-out single-frame/stack/recurrent comparison remains open
-    before the parent item can close.
+    technique. The held-out single-frame, flat-stack and fixed-reservoir
+    comparisons are now complete; a trainable gated recurrent treatment and
+    an encoder that uses its result online remain open before the parent item
+    can close.
 
 **Gate 3:** the same model-facing contracts execute raw input, precise
 continuous adjustments and stateful tactics; every execution exports an
@@ -1640,6 +1642,24 @@ and geometry set sizes without schema changes.
     while proving that past state contains the missing lifecycle signal. The
     next treatment must preserve the strong single-frame path and compress
     history through a bounded recurrent branch before fusion.
+    A compact deterministic reservoir is now rejected as that branch. Native
+    encoder feature schema v9 feeds only completed episode-local transitions'
+    exact PAD and selected typed core state through a signed-log, explicit-mask,
+    unit-RMS random projection, then appends a 16-value recurrent summary to
+    the unchanged single-frame path. It adds only 576 parameters (15,350 total
+    versus 14,774) and, under the same frozen split, seed, eight epochs and
+    92,000 optimizer steps, raised untouched-test aggregate improvement from
+    83.816% to 84.265%. Its independently shuffled control remained negative
+    at -0.872%. However, contact merely held at 22/30 with one false positive
+    and actor disappearance remained 0/15; the branch discarded the exact
+    rare lifecycle signal that the flat stack had exposed. Recurrent report
+    `8b751dd0...6ac51` and v9 single-frame report
+    `b3e40fb9...b6398` bind the comparison. No cross-seed promotion sweep is
+    warranted for a treatment that misses its target. The next temporal model
+    should retain the strong current-state path but train a gated sequence
+    encoder end to end, with explicit tests that lifecycle gradients reach the
+    historical actor/set representation rather than only a fixed global
+    projection.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
