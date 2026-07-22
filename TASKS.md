@@ -1613,6 +1613,20 @@ and geometry set sizes without schema changes.
     rejected treatment; task-conditioned queries are the next falsifiable
     alternative so lifecycle, contact and motion heads need not share one
     actor-selection policy.
+    That alternative is now also rejected on the same frozen corpus and
+    92,000-step budget. Report/model v8 gives every auxiliary target its own
+    query, keeps forward queries on pre-state actors, permits inverse queries
+    to use pre/post actors, and reports target-bound support and concentration.
+    The treatment reached only 83.264% untouched-test improvement versus
+    83.816% for current mean/max; contact remained 22/30 with one false
+    positive and actor disappearance remained 0/15. The disappearance query
+    stayed effectively uniform (2.99% mean maximum weight, 0.9983 normalized
+    entropy), while its independently shuffled control was negative. Reports
+    `fb255abe...f681a3` and `894ad7f7...f5933c` prove the comparison. Static
+    actor selection is therefore not the supported next explanation for the
+    lifecycle miss; the next treatment should consume the existing bounded,
+    past-only episode-history contract and compare single-frame, stacked and
+    recurrent temporal state without exposing the current post-state.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
