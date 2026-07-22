@@ -10,6 +10,7 @@
                 "timeline", "workbench",
                 "--timeline", "${workspaceFolder}/routes/Glitch Exhibition/intro.timeline",
                 "--game", "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
+                "--world-context", "${workspaceFolder}/build/world/ordon.context.json",
                 "--state-root", "${workspaceFolder}/build/automation-state/route-workbench"
             ],
             "cwd": "${workspaceFolder}",
@@ -38,6 +39,7 @@
                 "--timeline", "${workspaceFolder}/routes/Glitch Exhibition/intro.timeline",
                 "--game", "${workspaceFolder}/build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight",
                 "--dvd", "${workspaceFolder}/orig/GZ2E01/GZ2E01.iso",
+                "--world-context", "${workspaceFolder}/build/world/ordon.context.json",
                 "--state-root", "${workspaceFolder}/build/automation-state/route-workbench"
             ],
             "cwd": "${workspaceFolder}",
