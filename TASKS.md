@@ -1434,10 +1434,10 @@ PAD and gameplay sequence as ordinary playback.
     cardinality, episode, step, phase, boundary, state, stage or room mismatch,
     and tests cover episode reset and rejection of a detached authenticated
     shard. This is generic learner input plumbing, not an attempted or encoded
-    technique. The held-out single-frame, flat-stack and fixed-reservoir
-    comparisons are now complete; a trainable gated recurrent treatment and
-    an encoder that uses its result online remain open before the parent item
-    can close.
+    technique. The held-out single-frame, flat-stack, fixed-reservoir and
+    trainable gated-recurrent comparisons are now complete. Qualifying the
+    rare lifecycle objective and using temporal state in online inference
+    remain open before the parent item can close.
 
 **Gate 3:** the same model-facing contracts execute raw input, precise
 continuous adjustments and stateful tactics; every execution exports an
@@ -1660,6 +1660,29 @@ and geometry set sizes without schema changes.
     encoder end to end, with explicit tests that lifecycle gradients reach the
     historical actor/set representation rather than only a fixed global
     projection.
+    That trainable treatment now exists and is retained, but it does not yet
+    close the lifecycle miss. Feature/model schema v10 keeps each completed
+    historical post-state as a shared complete actor set, reuses the current
+    typed state encoder, feeds its latent plus exact prior PAD through a
+    16-value GRU, and backpropagates through all eight bounded steps into the
+    historical actor transform. Finite-difference tests verify the GRU's BPTT;
+    an isolation test empties current pre/post actor sets and proves node
+    weights still receive a history-only gradient; seeded refits and actor
+    permutations are exact. Under the same frozen split, seed, eight epochs
+    and 92,000 optimizer steps, the 17,734-parameter treatment raised
+    untouched-test aggregate improvement from 83.816% to 84.998%, held contact
+    at 22/30 with one false positive, and improved the actor-disappearance
+    head from 21.54% to 32.92% relative error reduction (Brier 0.00617 to
+    0.00527). It still classified 0/15 disappearance positives at the semantic
+    0.5 threshold; the equally trained shuffled control remained negative at
+    -1.058%. Reports `d9cce752...59eda` and `c5d1e594...d6fb3` bind the
+    comparison. The paired real/control CLI run took 723.4 seconds and the
+    temporal process stabilized near a 5.6 GB working set, exposing a separate
+    need for batched/shared sequence encoding before continual refresh. The
+    architecture has useful held-out temporal signal, but is not promoted as a
+    lifecycle solution; the next controlled treatment should type rare binary
+    objectives and distinguish representation failure from an inappropriate
+    shared regression loss or uncalibrated decision rule.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
