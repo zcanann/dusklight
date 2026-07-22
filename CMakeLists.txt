@@ -521,6 +521,7 @@ endif ()
 target_sources(dusklight PRIVATE src/dusk/automation/typed_facts.cpp)
 target_sources(dusklight PRIVATE
     src/dusk/automation/actor_profile_catalog.cpp
+    src/dusk/automation/frozen_inference.cpp
     src/dusk/automation/learning_episode.cpp
     src/dusk/automation/suffix_batch.cpp
     src/dusk/automation/suffix_batch_runner.cpp
@@ -605,6 +606,16 @@ target_compile_definitions(dusk_factorized_pad_policy_test PRIVATE
     DUSK_FACTORIZED_PAD_POLICY_GOLDEN_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/automation/factorized_pad_policy_v1.json"
 )
 set_target_properties(dusk_factorized_pad_policy_test PROPERTIES FOLDER "Tests")
+
+add_executable(dusk_frozen_inference_test EXCLUDE_FROM_ALL
+    tests/frozen_inference_test.cpp
+    src/dusk/automation/frozen_inference.cpp
+)
+target_include_directories(dusk_frozen_inference_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_compile_definitions(dusk_frozen_inference_test PRIVATE
+    DUSK_FROZEN_INFERENCE_GOLDEN_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/automation/frozen_inference_v1.hex"
+)
+set_target_properties(dusk_frozen_inference_test PROPERTIES FOLDER "Tests")
 
 add_executable(dusk_learning_episode_test EXCLUDE_FROM_ALL
     tests/learning_episode_test.cpp

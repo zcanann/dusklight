@@ -397,6 +397,26 @@ impl Error for FrozenInferenceError {}
 mod tests {
     use super::*;
 
+    fn decode_hex(source: &str) -> Vec<u8> {
+        let digits = source
+            .bytes()
+            .filter(|byte| byte.is_ascii_hexdigit())
+            .collect::<Vec<_>>();
+        assert_eq!(digits.len() % 2, 0);
+        digits
+            .chunks_exact(2)
+            .map(|pair| {
+                let nibble = |value: u8| match value {
+                    b'0'..=b'9' => value - b'0',
+                    b'a'..=b'f' => value - b'a' + 10,
+                    b'A'..=b'F' => value - b'A' + 10,
+                    _ => unreachable!(),
+                };
+                nibble(pair[0]) << 4 | nibble(pair[1])
+            })
+            .collect()
+    }
+
     fn model() -> FrozenInferenceModel {
         FrozenInferenceModel::new(
             Digest([1; 32]),
@@ -434,6 +454,42 @@ mod tests {
                 .infer_batch(&[vec![3.0, 1.0], vec![-4.0, 2.0]])
                 .unwrap(),
             vec![vec![4.25, -2.5], vec![0.25, 0.5]]
+        );
+    }
+
+    #[test]
+    fn shared_native_golden_fixture_matches_bytes_and_inference_exactly() {
+        let fixture = decode_hex(include_str!(
+            "../../../../../tests/fixtures/automation/frozen_inference_v1.hex"
+        ));
+        let expected = FrozenInferenceModel::new(
+            Digest([0x11; 32]),
+            Digest([0x22; 32]),
+            Digest([0x33; 32]),
+            2,
+            vec![7, 9],
+            vec![
+                FrozenDenseLayer {
+                    output_width: 2,
+                    activation: FrozenActivation::Relu,
+                    weights: vec![1.0, -2.0, 0.5, 0.25],
+                    biases: vec![0.5, -0.5],
+                },
+                FrozenDenseLayer {
+                    output_width: 2,
+                    activation: FrozenActivation::Linear,
+                    weights: vec![2.0, -1.0, -0.25, 4.0],
+                    biases: vec![0.125, -0.25],
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(expected.to_bytes().unwrap(), fixture);
+        let decoded = FrozenInferenceModel::from_bytes(&fixture).unwrap();
+        assert_eq!(decoded, expected);
+        assert_eq!(
+            decoded.infer_batch(&[vec![1.5, -0.5]]).unwrap(),
+            vec![vec![6.0, -0.5]]
         );
     }
 
