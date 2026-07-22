@@ -109,9 +109,12 @@ current work and acceptance gates, not every completed experiment.
 - [ ] Build the game and native automation runner against the repository-recorded
       Aurora revision. Remove stale claims that the runner is blocked by a dirty
       submodule; fix any real compile or API mismatch that remains.
-- [ ] Fix the six-lane proposal-budget remainder calculation and add property
+- [x] Fix the six-lane proposal-budget remainder calculation and add property
       tests proving every requested budget is allocated exactly for small and
-      large population sizes.
+      large population sizes. The allocator now derives its remainder from the
+      six-lane array itself; exhaustive totals through 512 and representative
+      populations through 10,000,003 prove exact, balanced allocation under
+      every lane rotation.
 - [ ] Run one deliberately simple frozen policy through suffix-batch v5 from a
       validated checkpoint.
   - The native runner must capture the exact pre-input feature row.

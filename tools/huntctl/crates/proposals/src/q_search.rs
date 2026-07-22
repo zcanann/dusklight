@@ -1043,7 +1043,7 @@ fn validate_episode_alignment(
 
 fn split_proposer_budget(total: usize, cycle_offset: usize) -> [usize; 6] {
     let mut budgets = [total / 6; 6];
-    for offset in 0..total % 5 {
+    for offset in 0..total % budgets.len() {
         budgets[(cycle_offset + offset) % budgets.len()] += 1;
     }
     budgets
@@ -2134,6 +2134,37 @@ mod tests {
         assert_eq!(split_sparse_action_budget(3), [0, 0, 0, 1, 1, 1]);
         assert_eq!(split_sparse_action_budget(10), [1, 1, 0, 3, 2, 3]);
         assert_eq!(split_sparse_action_budget(12), [1, 1, 1, 3, 3, 3]);
+    }
+
+    #[test]
+    fn proposer_budget_allocator_exactly_fills_small_and_large_populations() {
+        let assert_exact_allocation = |total: usize, cycle_offset: usize| {
+            let budgets = split_proposer_budget(total, cycle_offset);
+            assert_eq!(budgets.iter().sum::<usize>(), total);
+
+            let base = total / budgets.len();
+            let remainder = total % budgets.len();
+            assert!(
+                budgets
+                    .iter()
+                    .all(|budget| *budget == base || *budget == base + 1)
+            );
+            assert_eq!(
+                budgets.iter().filter(|budget| **budget == base + 1).count(),
+                remainder
+            );
+        };
+
+        for total in 0..=512 {
+            for cycle_offset in 0..6 {
+                assert_exact_allocation(total, cycle_offset);
+            }
+        }
+        for total in [1_000, 16_384, 1_000_000, 10_000_003] {
+            for cycle_offset in 0..6 {
+                assert_exact_allocation(total, cycle_offset);
+            }
+        }
     }
 
     #[test]
