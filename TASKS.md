@@ -232,7 +232,11 @@ goal-only discovery.
       slack to retain perturbed successes. Promotion remains strictly sub-125.
       The sealed `ordon-q125-residual-campaign.request.json` explores through
       tick 160 while retaining the incumbent first-hit tick and strict
-      `promotion_before_tick = 125` as separate authenticated fields.
+      `promotion_before_tick = 125` as separate authenticated fields. Its v2
+      source now includes the console-faithful TV calibration screen, binds the
+      Link-control checkpoint at frame 506 to native fingerprint
+      `e7ac8251329f22a5df682bbe5eb2a2ba`, and passes an exact 8-tick checkpoint
+      restore plus the incumbent's tick-125 F_SP104 load commit.
 - [x] Make campaigns resumable after cancellation, worker crash, or UI closure
       without repeating sealed candidates or losing optimizer state.
       `native_residual_campaign_runner` now journals candidate batches before
@@ -240,7 +244,7 @@ goal-only discovery.
       allocates a fresh result path around partial artifacts, records every
       evaluation before the optimizer update, and restores the exact pending
       CEM generation. Focused tests cover deterministic residual-to-native
-      conversion at frame 440 and non-overwriting crash-window recovery.
+      conversion at frame 506 and non-overwriting crash-window recovery.
 
 ### 2.2 Residual action surface
 

@@ -177,7 +177,7 @@ fn validates_and_seals_the_ordon_optimization_request() {
     );
     let report: Value = serde_json::from_slice(&validated.stdout).unwrap();
     assert_eq!(report["segment"], "to_ordon_spring_q125");
-    assert_eq!(report["source_boundary_index"], 440);
+    assert_eq!(report["source_boundary_index"], 506);
     assert_eq!(report["incumbent_first_hit_tick"], 125);
     assert_eq!(report["exploration_horizon_ticks"], 160);
     assert_eq!(report["promotion_before_tick"], 125);
@@ -379,9 +379,9 @@ fn materializes_a_native_ordon_execution_binding_from_the_checked_route() {
         String::from_utf8_lossy(&materialized.stderr)
     );
     let report: Value = serde_json::from_slice(&materialized.stdout).unwrap();
-    assert_eq!(report["source_frame"], 440);
-    assert_eq!(report["materialized_route_frames"], 566);
-    assert_eq!(report["process_boot_tape_frames"], 600);
+    assert_eq!(report["source_frame"], 506);
+    assert_eq!(report["materialized_route_frames"], 632);
+    assert_eq!(report["process_boot_tape_frames"], 666);
     assert_eq!(report["workers"], 4);
     let execution: Value =
         serde_json::from_slice(&fs::read(absolute_root.join("execution/execution.json")).unwrap())
@@ -403,7 +403,7 @@ fn materializes_a_native_ordon_execution_binding_from_the_checked_route() {
     )
     .unwrap()
     .tape;
-    assert_eq!(tape.frames.len(), 600);
+    assert_eq!(tape.frames.len(), 666);
     fs::remove_dir_all(absolute_root).unwrap();
     if let Some(path) = external_game_data {
         fs::remove_file(path).unwrap();

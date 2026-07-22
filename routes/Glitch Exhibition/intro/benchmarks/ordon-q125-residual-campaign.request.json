@@ -1,17 +1,17 @@
 {
   "schema": "dusklight-optimization-request/v2",
-  "content_sha256": "cb7fde643666f05a98d88449c1571c822f2eb409185360a75ee56454e5a245ae",
-  "id": "ordon-q125-residual-cem-v1",
+  "content_sha256": "510ac68e45927e177d85131705137eefe54688a60828863757f7385020550cd7",
+  "id": "ordon-q125-residual-cem-v2",
   "route": {
     "timeline": {
       "path": "routes/Glitch Exhibition/intro.timeline",
-      "sha256": "c6c3ede64f1b40c4cdc7135bde439e3bad2845444a96167f7dec75b36465686c"
+      "sha256": "afb6043fd92827fea741c427375b3c056e8669241898163a0429b8a0a2e55c49"
     },
     "lineage": "main",
     "segment": "to_ordon_spring_q125",
-    "source_boundary_index": 440,
+    "source_boundary_index": 506,
     "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
-    "native_source_boundary_fingerprint": "7806f51228c7100f03501f6c2e6d8f23"
+    "native_source_boundary_fingerprint": "e7ac8251329f22a5df682bbe5eb2a2ba"
   },
   "terminal_predicate": {
     "goal": "ordon_spring_load_committed",
@@ -116,8 +116,8 @@
     }
   },
   "resume": {
-    "state_path": "build/campaigns/ordon-q125-residual-cem/state.json",
-    "journal_path": "build/campaigns/ordon-q125-residual-cem/journal.jsonl",
+    "state_path": "build/campaigns/ordon-q125-residual-cem-v2/state.json",
+    "journal_path": "build/campaigns/ordon-q125-residual-cem-v2/journal.jsonl",
     "checkpoint_every_candidates": 64
   },
   "retention": {

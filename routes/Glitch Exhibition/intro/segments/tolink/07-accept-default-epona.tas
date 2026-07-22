@@ -4,6 +4,8 @@ ports 0x0f
 
 state neutral {}
 state accept { p0 buttons A }
+state start { p0 buttons START }
 
 frame accept
-frame neutral
+repeat 66 neutral
+frame start
