@@ -228,14 +228,17 @@ fn inspect_native_build(
             .parse()
             .map_err(|error| request_error(format!("invalid feature digest: {error}")))?,
         game_digest,
-        dirty_digest: hello
-            .build
-            .dirty_digest
-            .map(|value| value.parse())
-            .transpose()
-            .map_err(|error| request_error(format!("invalid dirty digest: {error}")))?,
+        dirty_digest: parse_native_dirty_digest(hello.build.dirty_digest)?,
         fidelity_profile: hello.build.fidelity_profile,
     })
+}
+
+fn parse_native_dirty_digest(value: Option<String>) -> Result<Option<Digest>, NativeRequestError> {
+    value
+        .filter(|value| !value.is_empty())
+        .map(|value| value.parse())
+        .transpose()
+        .map_err(|error| request_error(format!("invalid dirty digest: {error}")))
 }
 
 fn resolve_repository_file(
@@ -329,4 +332,28 @@ impl Error for NativeRequestError {}
 
 fn request_error(message: impl Into<String>) -> NativeRequestError {
     NativeRequestError(message.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_clean_build_accepts_an_empty_dirty_digest() {
+        assert_eq!(
+            parse_native_dirty_digest(Some(String::new())).unwrap(),
+            None
+        );
+        assert_eq!(parse_native_dirty_digest(None).unwrap(), None);
+    }
+
+    #[test]
+    fn native_dirty_build_requires_a_valid_digest() {
+        let digest = "11".repeat(32);
+        assert_eq!(
+            parse_native_dirty_digest(Some(digest.clone())).unwrap(),
+            Some(digest.parse().unwrap())
+        );
+        assert!(parse_native_dirty_digest(Some("dirty".into())).is_err());
+    }
 }
