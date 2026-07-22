@@ -41,8 +41,10 @@ Working foundations:
 
 Not yet working:
 
-- No real frozen policy has completed a live native episode followed by exact
-  Rust reinference and cold replay.
+- A real frozen policy now completes a live native episode and exact Rust PAD
+  reinference. Its realized tape preserves the cold terminal verdict, but the
+  complete gameplay-state sequence diverges at the first tick, so Gate 1 is
+  still open.
 - There is no closed `collect -> train -> freeze -> execute -> ingest -> refit`
   campaign.
 - The 125-tick Ordon incumbent remains unbeaten.
@@ -73,6 +75,7 @@ Primary evidence remains in:
 - `docs/glitch-hunting/benchmarks/intro-route.md`
 - `docs/glitch-hunting/benchmarks/intermediate-checkpoint-validation-20260721.json`
 - `docs/glitch-hunting/benchmarks/factorized-policy-online-20260721.json`
+- `docs/glitch-hunting/benchmarks/frozen-policy-gate1-20260721.json`
 - `docs/glitch-hunting/benchmarks/macos-worker-scaling-20260721.json`
 
 Historical implementation detail remains available in Git. This file records
@@ -119,19 +122,23 @@ current work and acceptance gates, not every completed experiment.
       six-lane array itself; exhaustive totals through 512 and representative
       populations through 10,000,003 prove exact, balanced allocation under
       every lane rotation.
-- [ ] Run one deliberately simple frozen policy through suffix-batch v5 from a
+- [x] Run one deliberately simple frozen policy through suffix-batch v5 from a
       validated checkpoint.
   - The native runner must capture the exact pre-input feature row.
   - Native inference must emit and consume one factorized PAD frame per tick.
   - The episode shard must retain model, feature, action, objective, checkpoint,
     chosen-PAD, and consumed-PAD identities.
-- [ ] Recompute every policy output in Rust from the captured feature rows and
+- [x] Recompute every policy output in Rust from the captured feature rows and
       require byte-identical decoded PAD.
 - [ ] Cold-replay the realized tape without loading the model and require the
       same terminal verdict and complete gameplay-state sequence.
-- [ ] Publish inference, head-decode, observation, simulation, restore, and
+      The first live attempt preserves the same false terminal verdict and all
+      eight decoded/chosen/consumed PAD frames, but its machine-state digest
+      differs from cold replay starting at tick zero. Gate 1 therefore remains
+      open; see `frozen-policy-gate1-20260721.json`.
+- [x] Publish inference, head-decode, observation, simulation, restore, and
       episode-encoding costs from that live run.
-- [ ] Fail closed when the model, feature schema, action schema, objective,
+- [x] Fail closed when the model, feature schema, action schema, objective,
       checkpoint, or captured feature width differs.
 
 **Gate 1:** a real state-reactive native policy produces an ordinary tape whose

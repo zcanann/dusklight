@@ -17,12 +17,15 @@
 namespace dusk::automation {
 
 inline constexpr std::uint16_t LearningEpisodeShardVersion = 2;
+inline constexpr std::uint16_t LearningEpisodePolicyShardVersion = 3;
 inline constexpr std::uint16_t LearningObservationVersion = 27;
 inline constexpr std::uint16_t LearningActionVersion = 2;
 inline constexpr std::uint32_t LearningEpisodeMaximumTicks = 4096;
 inline constexpr std::string_view LearningObservationSchema = "dusklight-learning-observation/v27";
 inline constexpr std::string_view LearningActionSchema = "dusklight-raw-pad-action/v2";
 inline constexpr std::string_view LearningEpisodeShardSchema = "dusklight-native-episode-shard/v2";
+inline constexpr std::string_view LearningEpisodePolicyShardSchema =
+    "dusklight-native-episode-shard/v3";
 
 enum class LearningObservationPhase : std::uint8_t {
     PreInput = 1,
@@ -115,6 +118,13 @@ struct LearningEpisodeShardMetadata {
     std::string actorProfileCatalogIdentity;
     // Canonical multi-stage WorldContext artifact selected for this shard.
     std::string worldContextSha256;
+    // Present as one complete group only for online frozen-policy episodes.
+    std::string policyModelSchema;
+    std::string policyModelXxh3_128;
+    std::string policyFeatureSchemaSha256;
+    std::string policyActionSchemaSha256;
+    std::string policyObjectiveSha256;
+    std::uint32_t policyFeatureWidth = 0;
 };
 
 struct LearningEpisodeDescriptor {
@@ -149,6 +159,7 @@ public:
     [[nodiscard]] std::uint64_t compressedBytes() const { return mCompressedBytes; }
     [[nodiscard]] std::uint64_t uncompressedBytes() const { return mUncompressedBytes; }
     [[nodiscard]] const std::filesystem::path& path() const { return mPath; }
+    [[nodiscard]] std::string_view schema() const { return mSchema; }
 
 private:
     std::filesystem::path mPath;
@@ -159,6 +170,7 @@ private:
     std::uint64_t mUncompressedBytes = 0;
     std::uint64_t mMetadataBytes = 0;
     std::uint32_t mMaximumTicks = 0;
+    std::string_view mSchema = LearningEpisodeShardSchema;
 };
 
 }  // namespace dusk::automation

@@ -9,7 +9,7 @@ use crate::factorized_policy_suffix_batch::{
     NATIVE_RECORDED_REPLAY_WINDOW_KIND, NativeCheckpointValidation,
     NativeFactorizedPolicyBatchConfig, NativeFactorizedPolicyHead,
 };
-use crate::frozen_inference::FrozenInferenceModel;
+use crate::frozen_inference::{FrozenActivation, FrozenDenseLayer, FrozenInferenceModel};
 use crate::native_policy_features::{
     NATIVE_POLICY_FEATURE_SCHEMA_SHA256, NATIVE_POLICY_FEATURE_WIDTH,
 };
@@ -19,6 +19,43 @@ use std::fmt;
 
 pub const NATIVE_FROZEN_POLICY_SCHEMA_V1: &str = "dusklight-native-frozen-policy/v1";
 pub const NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V5: &str = "dusklight-suffix-batch/v5";
+
+/// Build a tiny deterministic policy for exercising the complete native online
+/// inference boundary. It drives forward only while a player is present and
+/// adds a bounded steering response to the player's current yaw. This is a
+/// conformance probe, not a trained or promotion-eligible policy.
+pub fn native_frozen_policy_probe_model(
+    objective_sha256: Digest,
+) -> Result<FrozenInferenceModel, NativeFrozenPolicyBatchError> {
+    if objective_sha256 == Digest::ZERO {
+        return Err(NativeFrozenPolicyBatchError::new(
+            "native frozen policy probe objective identity is invalid",
+        ));
+    }
+    let head = FactorizedPadPolicyHead::default();
+    let mut weights = vec![0.0; NATIVE_POLICY_FEATURE_WIDTH * FACTORIZED_PAD_POLICY_HEAD_WIDTH];
+    // Output 0 (main-stick X) reacts to normalized current yaw at feature 9.
+    weights[9] = 0.25;
+    // Output 1 (main-stick Y) is forward only when player-present feature 0 is set.
+    weights[NATIVE_POLICY_FEATURE_WIDTH] = 0.5;
+    FrozenInferenceModel::new(
+        Digest(NATIVE_POLICY_FEATURE_SCHEMA_SHA256),
+        Digest(
+            head.schema_sha256()
+                .map_err(|error| NativeFrozenPolicyBatchError::new(error.to_string()))?,
+        ),
+        objective_sha256,
+        NATIVE_POLICY_FEATURE_WIDTH,
+        (0..FACTORIZED_PAD_POLICY_HEAD_WIDTH as u32).collect(),
+        vec![FrozenDenseLayer {
+            output_width: FACTORIZED_PAD_POLICY_HEAD_WIDTH,
+            activation: FrozenActivation::Linear,
+            weights,
+            biases: vec![0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH],
+        }],
+    )
+    .map_err(|error| NativeFrozenPolicyBatchError::new(error.to_string()))
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -155,8 +192,6 @@ impl Error for NativeFrozenPolicyBatchError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frozen_inference::{FrozenActivation, FrozenDenseLayer};
-
     fn model(objective: Digest) -> FrozenInferenceModel {
         FrozenInferenceModel::new(
             Digest(NATIVE_POLICY_FEATURE_SCHEMA_SHA256),
@@ -172,6 +207,37 @@ mod tests {
             }],
         )
         .unwrap()
+    }
+
+    #[test]
+    fn probe_model_is_content_bound_and_state_reactive() {
+        let objective = Digest([0x43; 32]);
+        let model = native_frozen_policy_probe_model(objective).unwrap();
+        assert_eq!(model.objective_sha256, objective);
+        assert_eq!(model.input_width, NATIVE_POLICY_FEATURE_WIDTH);
+        assert_eq!(
+            model.actions,
+            (0..FACTORIZED_PAD_POLICY_HEAD_WIDTH as u32).collect::<Vec<_>>()
+        );
+
+        let absent = vec![0.0; NATIVE_POLICY_FEATURE_WIDTH];
+        let mut present = absent.clone();
+        present[0] = 1.0;
+        present[9] = -0.5;
+        let outputs = model.infer_batch(&[absent, present]).unwrap();
+        assert_eq!(outputs[0], vec![0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH]);
+        assert_eq!(outputs[1][0], -0.125);
+        assert_eq!(outputs[1][1], 0.5);
+        assert!(outputs[1][2..].iter().all(|value| *value == 0.0));
+
+        let head = FactorizedPadPolicyHead::default();
+        let absent_pad = head.decode(&outputs[0]).unwrap().realized_pad().unwrap();
+        let present_pad = head.decode(&outputs[1]).unwrap().realized_pad().unwrap();
+        assert_eq!((absent_pad.stick_x, absent_pad.stick_y), (0, 0));
+        assert_eq!((present_pad.stick_x, present_pad.stick_y), (-16, 64));
+
+        let bytes = model.to_bytes().unwrap();
+        assert_eq!(FrozenInferenceModel::from_bytes(&bytes).unwrap(), model);
     }
 
     fn config() -> NativeFactorizedPolicyBatchConfig {

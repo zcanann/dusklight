@@ -279,7 +279,7 @@ fn first_step_offsets(expanded: &[u8]) -> (usize, usize) {
 fn rejects_incomplete_header_before_allocating() {
     let mut bytes = vec![0; HEADER_SIZE];
     bytes[..8].copy_from_slice(MAGIC);
-    bytes[8..10].copy_from_slice(&VERSION.to_le_bytes());
+    bytes[8..10].copy_from_slice(&VERSION_V2.to_le_bytes());
     bytes[10..12].copy_from_slice(&(HEADER_SIZE as u16).to_le_bytes());
     let error = NativeEpisodeShard::decode(&bytes).unwrap_err();
     assert!(error.to_string().contains("incomplete"));

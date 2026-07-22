@@ -29,7 +29,12 @@ use huntctl::learning::multitask_set_encoder::{
 use huntctl::learning::native_auxiliary_dataset::{
     AuxiliarySplitConfig, NATIVE_AUXILIARY_DATASET_SCHEMA_V2, NativeAuxiliaryDataset,
 };
-use huntctl::learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
+use huntctl::learning::native_frozen_policy_reinference::{
+    realize_native_frozen_policy_tape, verify_native_frozen_policy_reinference,
+};
+use huntctl::learning::native_frozen_policy_suffix_batch::{
+    NativeFrozenPolicySuffixBatch, native_frozen_policy_probe_model,
+};
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
@@ -299,6 +304,132 @@ fn command_conservative_q(learn_args: &[String]) -> Result<(), Box<dyn Error>> {
 
 pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("export-frozen-policy-tape") => {
+            let learn_args = &args[1..];
+            let source_path = required_path(learn_args, "--source-tape")?;
+            let shard_path = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "frozen policy realized tape output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let episode_id =
+                option(learn_args, "--episode-id").ok_or("missing required --episode-id ID")?;
+            let source = InputTape::decode(&fs::read(&source_path)?)?.tape;
+            let shard = NativeEpisodeShard::read(&shard_path)?;
+            let realized = realize_native_frozen_policy_tape(&source, &shard, &episode_id)?;
+            let frame_count = realized.frames.len();
+            let bytes = realized.encode()?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "dusklight-native-frozen-policy-realized-tape/v1",
+                    "source_tape": source_path,
+                    "episode_shard": shard_path,
+                    "episode_id": episode_id,
+                    "source_frame": shard.source_frame,
+                    "frame_count": frame_count,
+                    "tape_sha256": Digest(Sha256::digest(&bytes).into()),
+                    "output": output
+                }))?
+            );
+            Ok(())
+        }
+        Some("verify-frozen-policy") => {
+            let learn_args = &args[1..];
+            let model_path = required_path(learn_args, "--model")?;
+            let shard_path = required_path(learn_args, "--input")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "frozen policy verification output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let objective = option(learn_args, "--objective-sha256")
+                .ok_or("missing required --objective-sha256 SHA256")?
+                .parse::<Digest>()?;
+            let checkpoint = option(learn_args, "--checkpoint-identity")
+                .ok_or("missing required --checkpoint-identity VALUE")?;
+            let boundary = option(learn_args, "--source-boundary-fingerprint")
+                .ok_or("missing required --source-boundary-fingerprint VALUE")?;
+            let shard = NativeEpisodeShard::read(&shard_path)?;
+            let report = verify_native_frozen_policy_reinference(
+                &fs::read(&model_path)?,
+                &shard,
+                objective,
+                &checkpoint,
+                &boundary,
+            )?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut bytes = serde_json::to_vec_pretty(&report)?;
+            bytes.push(b'\n');
+            fs::write(&output, bytes)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            Ok(())
+        }
+        Some("frozen-policy-probe-model") => {
+            let learn_args = &args[1..];
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "frozen policy probe model output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let objective = option(learn_args, "--objective-sha256")
+                .ok_or("missing required --objective-sha256 SHA256")?
+                .parse::<Digest>()?;
+            let model = native_frozen_policy_probe_model(objective)?;
+            let bytes = model.to_bytes()?;
+            let parameter_count = model
+                .layers
+                .iter()
+                .map(|layer| layer.weights.len() + layer.biases.len())
+                .sum::<usize>();
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "dusklight-native-frozen-policy-probe/v1",
+                    "output": output,
+                    "artifact_sha256": model.artifact_sha256()?,
+                    "feature_schema_sha256": model.feature_schema_sha256,
+                    "action_schema_sha256": model.action_schema_sha256,
+                    "objective_sha256": model.objective_sha256,
+                    "input_width": model.input_width,
+                    "output_width": model.actions.len(),
+                    "parameter_count": parameter_count,
+                    "byte_count": bytes.len(),
+                    "policy": "player-present forward drive plus current-yaw steering",
+                    "promotion_authority": false
+                }))?
+            );
+            Ok(())
+        }
         Some("frozen-policy-batch") => {
             let learn_args = &args[1..];
             let model = required_path(learn_args, "--model")?;

@@ -218,6 +218,15 @@ fn print_usage() {
         "  huntctl learn factorized-policy-batch --input OUTPUTS.json --output BATCH.json --source-boundary-fingerprint VALUE [--source-frame N] [--maximum-ticks N] [--checkpoint-validation-ticks N] [--verify-state-hashes]"
     );
     eprintln!(
+        "  huntctl learn frozen-policy-probe-model --objective-sha256 SHA256 --output MODEL.dsfrozen"
+    );
+    eprintln!(
+        "  huntctl learn verify-frozen-policy --model MODEL.dsfrozen --input EPISODES.dseps --objective-sha256 SHA256 --checkpoint-identity VALUE --source-boundary-fingerprint VALUE --output REPORT.json"
+    );
+    eprintln!(
+        "  huntctl learn export-frozen-policy-tape --source-tape SOURCE.tape --input EPISODES.dseps --episode-id ID --output REALIZED.tape"
+    );
+    eprintln!(
         "  huntctl learn frozen-policy-batch --model MODEL.dsfrozen --objective-sha256 SHA256 --output BATCH.json --source-boundary-fingerprint VALUE [--candidate-id ID] [--source-frame N] [--maximum-ticks N] [--checkpoint-validation-ticks N] [--verify-state-hashes]"
     );
     eprintln!("  huntctl learn inspect-episode --input IMMUTABLE-EPISODE.json");

@@ -82,7 +82,7 @@ private:
         std::string& error);
     bool captureTickDigest(std::uint64_t simulationTick, std::uint64_t tapeFrame,
         std::uint64_t preparedInputFrame, bool tapeFrameApplied, std::string& output,
-        std::string& replayOutput, std::string& hostStateOutput,
+        std::string& machineOutput, std::string& replayOutput, std::string& hostStateOutput,
         std::vector<StateCheckpointEntryDigest>* entryDigests, std::string& error);
     void recordImageDifferences(
         const StateCheckpointImage& expected, const StateCheckpointImage& actual);
@@ -104,6 +104,7 @@ private:
     HostSnapshot mSource;
     MilestoneObservationStorage mObservationStorage;
     std::vector<std::string> mA1Digests;
+    std::vector<std::string> mA1MachineDigests;
     std::vector<std::string> mA1ReplayDigests;
     std::vector<std::string> mA1HostStates;
     std::vector<std::vector<StateCheckpointEntryDigest>> mA1EntryDigests;

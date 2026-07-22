@@ -126,6 +126,7 @@ private:
         std::size_t ticksExecuted = 0;
         std::optional<std::size_t> firstHitTick;
         std::string stateSequenceDigest;
+        std::vector<std::string> stateTickDigests;
         std::string predicateEvidence;
         TerminalObservation terminal;
         std::vector<RawPadState> successfulConsumedPads;
@@ -223,6 +224,7 @@ private:
     FrozenInferenceModel mFrozenPolicyModel;
     LearningEpisodeShardWriter mEpisodeShard;
     std::string mStateDigestMaterial;
+    std::vector<std::string> mStateTickDigests;
     std::vector<CandidateResult> mResults;
     std::optional<std::size_t> mWinnerResultIndex;
     std::uint64_t mCaptureMicros = 0;

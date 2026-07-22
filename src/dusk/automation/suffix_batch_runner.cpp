@@ -224,8 +224,10 @@ bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
     mConsumedPads.reserve(mDefinition.maximumTicks);
     mCurrentEpisode.reserve(
         std::min<std::size_t>(mDefinition.maximumTicks * 4096, 16 * 1024 * 1024));
-    if (mDefinition.verifyStateHashes)
+    if (mDefinition.verifyStateHashes) {
         mStateDigestMaterial.reserve(mDefinition.maximumTicks * 32);
+        mStateTickDigests.reserve(mDefinition.maximumTicks);
+    }
     mResults.reserve(mDefinition.candidates.size());
     mRestoreMicros.reserve(mDefinition.candidates.size() - 1);
     return true;
@@ -262,8 +264,11 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mCurrentEpisode.reserve(
         std::min<std::size_t>(mDefinition.maximumTicks * 4096, 16 * 1024 * 1024));
     mStateDigestMaterial.clear();
-    if (mDefinition.verifyStateHashes)
+    mStateTickDigests.clear();
+    if (mDefinition.verifyStateHashes) {
         mStateDigestMaterial.reserve(mDefinition.maximumTicks * 32);
+        mStateTickDigests.reserve(mDefinition.maximumTicks);
+    }
     mResults.clear();
     mResults.reserve(mDefinition.candidates.size());
     mWinnerResultIndex.reset();
@@ -440,6 +445,18 @@ bool SuffixBatchRunner::beginEpisodeShard(std::string& error) {
         .cardFixtureIdentity = std::string(active_automation_card_fixture_identity()),
         .actorProfileCatalogIdentity = std::string(actor_profile_catalog_identity()),
         .worldContextSha256 = mWorldContextSha256,
+        .policyModelSchema = mFrozenPolicyModel.loaded() ?
+            "dusklight-frozen-inference/v1" : "",
+        .policyModelXxh3_128 = mFrozenPolicyModel.loaded() ?
+            mDefinition.frozenPolicy->modelXxh3_128 : "",
+        .policyFeatureSchemaSha256 = mFrozenPolicyModel.loaded() ?
+            digest_hex(mFrozenPolicyModel.featureSchemaSha256()) : "",
+        .policyActionSchemaSha256 = mFrozenPolicyModel.loaded() ?
+            digest_hex(mFrozenPolicyModel.actionSchemaSha256()) : "",
+        .policyObjectiveSha256 = mFrozenPolicyModel.loaded() ?
+            digest_hex(mFrozenPolicyModel.objectiveSha256()) : "",
+        .policyFeatureWidth = mFrozenPolicyModel.loaded() ?
+            static_cast<std::uint32_t>(mFrozenPolicyModel.inputWidth()) : 0,
     };
     return mEpisodeShard.begin(mEpisodeShardPath, metadata, error);
 }
@@ -517,6 +534,7 @@ bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
     mCandidateTick = 0;
     mConsumedPads.clear();
     mStateDigestMaterial.clear();
+    mStateTickDigests.clear();
     mConsumedCaptureFailed = false;
     mEpisodePreInputCaptured = false;
     return true;
@@ -1006,8 +1024,10 @@ bool SuffixBatchRunner::finishCandidate(
     result.success = success;
     result.ticksExecuted = mCandidateTick + 1;
     if (success) result.firstHitTick = mCandidateTick;
-    if (mDefinition.verifyStateHashes)
+    if (mDefinition.verifyStateHashes) {
         result.stateSequenceDigest = xxh3_128_hex(mStateDigestMaterial);
+        result.stateTickDigests = mStateTickDigests;
+    }
     result.predicateEvidence = serialize_milestone_result(mGoalTracker);
 
     const ControllerObservation controller = capture_controller_observation(mControllerStorage);
@@ -1141,13 +1161,14 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         AccumulateMicros validation(mProfile.stateValidationMicros);
         ++mProfile.stateValidationSamples;
         std::string digest;
-        const StateCheckpointError checkpointError = mCheckpoint.currentDigest(digest);
+        const StateCheckpointError checkpointError = mCheckpoint.currentSemanticDigest(digest);
         if (checkpointError != StateCheckpointError::None) {
             error = state_checkpoint_error_message(checkpointError);
             fail(error);
             return true;
         }
         mStateDigestMaterial += digest;
+        mStateTickDigests.push_back(std::move(digest));
     }
 
     MilestoneObservation observation;
@@ -1223,6 +1244,8 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                     ? nlohmann::json(*result.firstHitTick) : nlohmann::json(nullptr)},
             {"state_sequence_digest", result.stateSequenceDigest.empty()
                     ? nlohmann::json(nullptr) : nlohmann::json(result.stateSequenceDigest)},
+            {"state_tick_digests", result.stateTickDigests.empty()
+                    ? nlohmann::json(nullptr) : nlohmann::json(result.stateTickDigests)},
             {"predicate_evidence", nlohmann::json::parse(result.predicateEvidence)},
             {"consumed_pad_states", std::move(consumed)},
             {"terminal_observation", {
@@ -1472,7 +1495,8 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         {"timing", timing},
         {"audio_callback_quiesced", mAudioCallbackQuiesced},
         {"episode_shard", {
-            {"schema", LearningEpisodeShardSchema},
+            {"schema", mDefinition.frozenPolicy.has_value() ?
+                LearningEpisodePolicyShardSchema : LearningEpisodeShardSchema},
             {"path", mEpisodeShardPath.string()},
             {"observation_schema", LearningObservationSchema},
             {"action_schema", LearningActionSchema},

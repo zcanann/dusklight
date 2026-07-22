@@ -1912,6 +1912,17 @@ LearningEpisodeShardWriter::~LearningEpisodeShardWriter() {
 bool LearningEpisodeShardWriter::begin(const std::filesystem::path& path,
     const LearningEpisodeShardMetadata& metadata, std::string& error) {
     error.clear();
+    const bool hasPolicyIdentity = !metadata.policyModelSchema.empty() ||
+        !metadata.policyModelXxh3_128.empty() || !metadata.policyFeatureSchemaSha256.empty() ||
+        !metadata.policyActionSchemaSha256.empty() || !metadata.policyObjectiveSha256.empty() ||
+        metadata.policyFeatureWidth != 0;
+    const bool validPolicyIdentity = !hasPolicyIdentity ||
+        (!metadata.policyModelSchema.empty() &&
+            is_lower_hex(metadata.policyModelXxh3_128, 32) &&
+            is_lower_hex(metadata.policyFeatureSchemaSha256, 64) &&
+            is_lower_hex(metadata.policyActionSchemaSha256, 64) &&
+            is_lower_hex(metadata.policyObjectiveSha256, 64) &&
+            metadata.policyFeatureWidth != 0);
     if (active() || path.empty() || metadata.sourceBoundaryFingerprint.empty() ||
         metadata.sourceBoundaryFingerprint.size() != 32 ||
         metadata.checkpointIdentity.size() != 32 || metadata.objective.empty() ||
@@ -1921,7 +1932,7 @@ bool LearningEpisodeShardWriter::begin(const std::filesystem::path& path,
         !metadata.cardFixtureIdentity.starts_with("card-fixture:") ||
         !metadata.actorProfileCatalogIdentity.starts_with("actor-profile-catalog:") ||
         !is_lower_hex(metadata.worldContextSha256, 64) || metadata.maximumTicks == 0 ||
-        metadata.maximumTicks > LearningEpisodeMaximumTicks)
+        metadata.maximumTicks > LearningEpisodeMaximumTicks || !validPolicyIdentity)
     {
         error = "learning episode shard metadata is incomplete";
         return false;
@@ -1946,23 +1957,37 @@ bool LearningEpisodeShardWriter::begin(const std::filesystem::path& path,
     }
 
     std::vector<std::uint8_t> encodedMetadata;
-    const std::array<std::string_view, 15> fields{
-        LearningEpisodeShardSchema,
-        LearningObservationSchema,
-        LearningActionSchema,
-        metadata.sourceBoundaryFingerprint,
-        metadata.checkpointIdentity,
-        metadata.objective,
-        metadata.objectiveIdentity,
-        metadata.buildRevision,
-        metadata.auroraRevision,
-        metadata.featureDigest,
-        metadata.fidelityProfile,
-        metadata.gameDataSha256,
-        metadata.cardFixtureIdentity,
-        metadata.actorProfileCatalogIdentity,
-        metadata.worldContextSha256,
-    };
+    std::vector<std::string> fields;
+    fields.reserve(hasPolicyIdentity ? 21 : 15);
+    fields.emplace_back(hasPolicyIdentity ? LearningEpisodePolicyShardSchema :
+                                            LearningEpisodeShardSchema);
+    for (const std::string_view field : std::array<std::string_view, 14>{
+             LearningObservationSchema,
+             LearningActionSchema,
+             metadata.sourceBoundaryFingerprint,
+             metadata.checkpointIdentity,
+             metadata.objective,
+             metadata.objectiveIdentity,
+             metadata.buildRevision,
+             metadata.auroraRevision,
+             metadata.featureDigest,
+             metadata.fidelityProfile,
+             metadata.gameDataSha256,
+             metadata.cardFixtureIdentity,
+             metadata.actorProfileCatalogIdentity,
+             metadata.worldContextSha256,
+         })
+    {
+        fields.emplace_back(field);
+    }
+    if (hasPolicyIdentity) {
+        fields.push_back(metadata.policyModelSchema);
+        fields.push_back(metadata.policyModelXxh3_128);
+        fields.push_back(metadata.policyFeatureSchemaSha256);
+        fields.push_back(metadata.policyActionSchemaSha256);
+        fields.push_back(metadata.policyObjectiveSha256);
+        fields.push_back(std::to_string(metadata.policyFeatureWidth));
+    }
     append_integer(encodedMetadata, static_cast<std::uint16_t>(fields.size()));
     for (const auto field : fields) {
         if (!append_string16(encodedMetadata, field, error)) {
@@ -1990,13 +2015,15 @@ bool LearningEpisodeShardWriter::begin(const std::filesystem::path& path,
     mCompressedBytes = 0;
     mUncompressedBytes = 0;
     mMaximumTicks = static_cast<std::uint32_t>(metadata.maximumTicks);
+    mSchema = hasPolicyIdentity ? LearningEpisodePolicyShardSchema : LearningEpisodeShardSchema;
 
     // Header fields that do not change are written now; completion and sizes
     // are patched only after every episode block is durable.
     mStream.seekp(0);
     constexpr std::array<char, 8> Magic{'D', 'U', 'S', 'K', 'E', 'P', 'S', 0};
     mStream.write(Magic.data(), Magic.size());
-    write_integer(mStream, LearningEpisodeShardVersion);
+    write_integer(mStream, hasPolicyIdentity ? LearningEpisodePolicyShardVersion :
+                                               LearningEpisodeShardVersion);
     write_integer(mStream, static_cast<std::uint16_t>(ShardHeaderSize));
     write_integer<std::uint32_t>(mStream, 0);
     write_integer<std::uint32_t>(mStream, 0);
@@ -2129,6 +2156,7 @@ void LearningEpisodeShardWriter::abandon() {
     mPath.clear();
     mTemporaryPath.clear();
     mMaximumTicks = 0;
+    mSchema = LearningEpisodeShardSchema;
 }
 
 }  // namespace dusk::automation

@@ -1,0 +1,105 @@
+{
+  "schema": "dusklight-frozen-policy-gate1-report/v1",
+  "recorded_date": "2026-07-21",
+  "gate_verified": false,
+  "build": {
+    "dusklight_commit": "8629356d2192b415ad1a9ea568ef6a3d51021e70",
+    "aurora_commit": "ce4baccedb2aabddce5b552f0573674e857fb7c3",
+    "profile": "Debug",
+    "executable_sha256": "0fb7bdffcf40301100a14b942db8b1bc79b6a81cbe5c10904ffeb4738f076352"
+  },
+  "source": {
+    "input_tape_sha256": "fad64d9c0610ef954a9f18c348d663dd249ae14d54a164471e766a2d38107f6f",
+    "source_frame": 500,
+    "source_boundary_fingerprint": "522cc8e73ec1c45dac831dd8fa3a6df1",
+    "checkpoint_identity": "eb1af215d6c4e8882bf556f87ea2fb84",
+    "checkpoint_validation_ticks": 8,
+    "checkpoint_validation_samples": 16
+  },
+  "policy": {
+    "schema": "dusklight-native-frozen-policy/v1",
+    "description": "player-present forward drive plus current-yaw steering",
+    "model_xxh3_128": "5cfbf6219b984194ca2fea989dbf7e0a",
+    "feature_schema_sha256": "b0b708c7594f25f74e3f82c8ebbde2b737cc4f1f0076e114efddb823a538d147",
+    "action_schema_sha256": "483953b663e327c6d839d88b72ce652cfcc5d0aeb420570e0c076a4c62e3ab7c",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+    "feature_width": 120,
+    "parameter_count": 3025
+  },
+  "native_episode": {
+    "batch_schema": "dusklight-suffix-batch-result/v5",
+    "batch_status": "passed",
+    "episode_shard_schema": "dusklight-native-episode-shard/v3",
+    "episode_shard_content_sha256": "3948aaf51542513d54b00ecace870de1b15c68967e5cf8522464be86f87b6816",
+    "episode_count": 1,
+    "transition_count": 8,
+    "terminal_goal_reached": false,
+    "state_sequence_digest": "8de00a9035619833f9803f92b5dc7fa1",
+    "state_tick_digests": [
+      "453e8d0462350cc0d1c269ec5a099d72",
+      "dc2aa995a81816ba35819e5256a41407",
+      "eeaef271984c005fb71ef5cab539b4a0",
+      "21b2b002477773f29484c9ab87fcd859",
+      "398ec495e5faf80ec97ebe20badd7f20",
+      "203a42b6f5075ab1066b74a9e734e1b1",
+      "69e5fcb0423ecf922d0541db612901e0",
+      "79375be4ca1daf888a0bcf7ceb1143d4"
+    ]
+  },
+  "rust_reinference": {
+    "schema": "dusklight-native-frozen-policy-reinference/v1",
+    "verified": true,
+    "feature_rows_sha256": "175c9e55597904022b79d15b365469d21bdaa8df84e7066ce81b13478f28519e",
+    "decoded_pad_sequence_sha256": "f5d2da86fd27c888f133d53ba039f455a6294ddf3a252b6df05c3d678b381c50",
+    "chosen_pad_sequence_sha256": "f5d2da86fd27c888f133d53ba039f455a6294ddf3a252b6df05c3d678b381c50",
+    "consumed_pad_sequence_sha256": "f5d2da86fd27c888f133d53ba039f455a6294ddf3a252b6df05c3d678b381c50"
+  },
+  "realized_tape": {
+    "frame_count": 508,
+    "sha256": "6d8d53ffb611f8e65d85663ae9d710f32cad23d292d8b65340c7c72f68be3c9f",
+    "model_in_loop": false
+  },
+  "cold_replay": {
+    "terminal_evidence_identical": true,
+    "terminal_goal_reached": false,
+    "checkpoint_probe_status": "passed",
+    "repeat_attempts": 2,
+    "state_sequence_digest": "788e8341a7333bf5a3a84a361f287f3b",
+    "state_tick_digests": [
+      "6c8637c0f2f22ded361e409c5d988797",
+      "c10558fb5fd22bfac1b4301eeb67a89e",
+      "701788dc1d7fab41d01ee32f40843e0b",
+      "aff0edbf1d3e9e3abf48bfb3cbbec4ba",
+      "d8665cde244256f04be09bd1fdae05ad",
+      "e3ccba8340cca0525b9eb5f330223a2a",
+      "da4d7417906b010d36cb85fa7e3e7558",
+      "2fa1062098b0a971ec9167661109718d"
+    ],
+    "state_sequence_identical": false,
+    "first_state_divergence_tick": 0
+  },
+  "timing": {
+    "batch_wall_micros": 14494910,
+    "checkpoint_capture_micros": 1871055,
+    "checkpoint_restore_micros": 31552,
+    "checkpoint_restore_samples": 2,
+    "checkpoint_validation_micros": 7374544,
+    "policy_inference_nanoseconds": 82793,
+    "policy_inference_samples": 8,
+    "policy_head_decode_nanoseconds": 6166,
+    "policy_head_decode_samples": 8,
+    "observation_capture_micros": 1434,
+    "observation_capture_samples": 16,
+    "simulation_micros": 13650,
+    "simulation_samples": 8,
+    "episode_encoding_micros": 8627,
+    "gpu_submissions": 0
+  },
+  "conclusion": {
+    "native_policy_episode_complete": true,
+    "rust_pad_reinference_exact": true,
+    "cold_terminal_evidence_exact": true,
+    "cold_gameplay_state_exact": false,
+    "next_question": "Does phase-correct policy observation mutate checkpointed machine state, or does the semantic digest still include runner-only state?"
+  }
+}

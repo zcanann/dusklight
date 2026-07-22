@@ -15,7 +15,8 @@ const MAGIC: &[u8; 8] = b"DUSKEPS\0";
 const EPISODE_MAGIC: &[u8; 4] = b"EPIS";
 const PAYLOAD_MAGIC: &[u8; 8] = b"DUSKEP\0\0";
 const VERSION_V1: u16 = 1;
-const VERSION: u16 = 2;
+const VERSION_V2: u16 = 2;
+const VERSION_V3: u16 = 3;
 const HEADER_SIZE: usize = 128;
 const BLOCK_HEADER_SIZE: usize = 64;
 const PAYLOAD_HEADER_SIZE: usize = 24;
@@ -80,6 +81,7 @@ pub use planner::{
 
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V1: &str = "dusklight-native-episode-shard/v1";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V2: &str = "dusklight-native-episode-shard/v2";
+pub const NATIVE_EPISODE_SHARD_SCHEMA_V3: &str = "dusklight-native-episode-shard/v3";
 pub const LEARNING_OBSERVATION_SCHEMA_V2: &str = "dusklight-learning-observation/v2";
 pub const LEARNING_OBSERVATION_SCHEMA_V3: &str = "dusklight-learning-observation/v3";
 pub const LEARNING_OBSERVATION_SCHEMA_V4: &str = "dusklight-learning-observation/v4";
@@ -156,6 +158,17 @@ pub struct NativeEpisodeShardMetadata {
     pub card_fixture_identity: Option<String>,
     pub actor_profile_catalog_identity: Option<String>,
     pub world_context_sha256: Option<Digest>,
+    pub policy_model: Option<NativeEpisodePolicyModelIdentity>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NativeEpisodePolicyModelIdentity {
+    pub schema: String,
+    pub model_xxh3_128: String,
+    pub feature_schema_sha256: Digest,
+    pub action_schema_sha256: Digest,
+    pub objective_sha256: Digest,
+    pub feature_width: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -962,7 +975,7 @@ impl NativeEpisodeShard {
         let mut header = Reader::new(bytes);
         header.bytes(8)?;
         let shard_version = header.u16()?;
-        if !matches!(shard_version, VERSION_V1 | VERSION)
+        if !matches!(shard_version, VERSION_V1 | VERSION_V2 | VERSION_V3)
             || usize::from(header.u16()?) != HEADER_SIZE
         {
             return Err(NativeEpisodeShardError::new(
@@ -1108,7 +1121,8 @@ fn decode_metadata(
     let mut reader = Reader::new(bytes);
     let expected_field_count = match shard_version {
         VERSION_V1 => 12,
-        VERSION => 15,
+        VERSION_V2 => 15,
+        VERSION_V3 => 21,
         _ => unreachable!("shard version was validated by the header decoder"),
     };
     if usize::from(reader.u16()?) != expected_field_count {
@@ -1153,10 +1167,11 @@ fn decode_metadata(
             ));
         }
     };
-    let expected_shard_schema = if shard_version == VERSION_V1 {
-        NATIVE_EPISODE_SHARD_SCHEMA_V1
-    } else {
-        NATIVE_EPISODE_SHARD_SCHEMA_V2
+    let expected_shard_schema = match shard_version {
+        VERSION_V1 => NATIVE_EPISODE_SHARD_SCHEMA_V1,
+        VERSION_V2 => NATIVE_EPISODE_SHARD_SCHEMA_V2,
+        VERSION_V3 => NATIVE_EPISODE_SHARD_SCHEMA_V3,
+        _ => unreachable!("shard version was validated by the header decoder"),
     };
     if !reader.done()
         || fields[0] != expected_shard_schema
@@ -1174,7 +1189,7 @@ fn decode_metadata(
             "invalid shard identity metadata",
         ));
     }
-    let game_data_sha256 = if shard_version == VERSION {
+    let game_data_sha256 = if shard_version != VERSION_V1 {
         Some(parse_canonical_digest(&fields[11], "game-data SHA-256")?)
     } else {
         None
@@ -1182,7 +1197,7 @@ fn decode_metadata(
     let card_fixture_index = if shard_version == VERSION_V1 { 11 } else { 12 };
     let card_fixture_identity =
         (!fields[card_fixture_index].is_empty()).then(|| fields[card_fixture_index].clone());
-    if shard_version == VERSION
+    if shard_version != VERSION_V1
         && (!fields[card_fixture_index].starts_with("card-fixture:")
             || !fields[13].starts_with("actor-profile-catalog:"))
     {
@@ -1190,12 +1205,48 @@ fn decode_metadata(
             "invalid static dependency identity metadata",
         ));
     }
-    let actor_profile_catalog_identity = (shard_version == VERSION).then(|| fields[13].clone());
-    let world_context_sha256 = if shard_version == VERSION {
+    let actor_profile_catalog_identity = (shard_version != VERSION_V1).then(|| fields[13].clone());
+    let world_context_sha256 = if shard_version != VERSION_V1 {
         Some(parse_canonical_digest(
             &fields[14],
             "world-context SHA-256",
         )?)
+    } else {
+        None
+    };
+    let policy_model = if shard_version == VERSION_V3 {
+        if fields[15].is_empty()
+            || fields[16].len() != 32
+            || !fields[16]
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(NativeEpisodeShardError::new(
+                "invalid frozen policy model identity metadata",
+            ));
+        }
+        let feature_width = fields[20]
+            .parse::<u32>()
+            .map_err(|_| NativeEpisodeShardError::new("invalid policy feature width metadata"))?;
+        if feature_width == 0 || feature_width.to_string() != fields[20] {
+            return Err(NativeEpisodeShardError::new(
+                "noncanonical policy feature width metadata",
+            ));
+        }
+        Some(NativeEpisodePolicyModelIdentity {
+            schema: fields[15].clone(),
+            model_xxh3_128: fields[16].clone(),
+            feature_schema_sha256: parse_canonical_digest(
+                &fields[17],
+                "policy feature-schema SHA-256",
+            )?,
+            action_schema_sha256: parse_canonical_digest(
+                &fields[18],
+                "policy action-schema SHA-256",
+            )?,
+            objective_sha256: parse_canonical_digest(&fields[19], "policy objective SHA-256")?,
+            feature_width,
+        })
     } else {
         None
     };
@@ -1215,6 +1266,7 @@ fn decode_metadata(
         card_fixture_identity,
         actor_profile_catalog_identity,
         world_context_sha256,
+        policy_model,
     })
 }
 

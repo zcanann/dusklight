@@ -105,6 +105,7 @@ bool CheckpointProbe::configure(const std::size_t sourceFrame, const std::size_t
     mRepeatAttempts = repeatAttempts;
     mResultPath = std::move(resultPath);
     mA1Digests.reserve(suffixTicks);
+    mA1MachineDigests.reserve(suffixTicks);
     mA1ReplayDigests.reserve(suffixTicks);
     mA1HostStates.reserve(suffixTicks);
     mA1EntryDigests.reserve(suffixTicks);
@@ -347,8 +348,8 @@ void CheckpointProbe::overrideInputForAlternate() {
 
 bool CheckpointProbe::captureTickDigest(const std::uint64_t simulationTick,
     const std::uint64_t tapeFrame, const std::uint64_t preparedInputFrame,
-    const bool tapeFrameApplied, std::string& output, std::string& replayOutput,
-    std::string& hostStateOutput,
+    const bool tapeFrameApplied, std::string& output, std::string& machineOutput,
+    std::string& replayOutput, std::string& hostStateOutput,
     std::vector<StateCheckpointEntryDigest>* const entryDigests, std::string& error) {
     std::string machine;
     const StateCheckpointError checkpointError =
@@ -357,6 +358,7 @@ bool CheckpointProbe::captureTickDigest(const std::uint64_t simulationTick,
         error = state_checkpoint_error_message(checkpointError);
         return false;
     }
+    machineOutput = machine;
     const InputTapePlayerState player = input_tape_player().captureState();
     PADAutomationState pad{};
     if (!PADCaptureAutomationState(&pad)) {
@@ -420,16 +422,18 @@ bool CheckpointProbe::postSimulation(const std::uint64_t simulationTick,
     const bool tapeFrameApplied, std::string& error) {
     if (!mEnabled || mPhase == Phase::WaitingForSource || mCompleted || mFailed) return false;
     std::string digest;
+    std::string machineDigest;
     std::string replayDigest;
     std::string hostState;
     std::vector<StateCheckpointEntryDigest> entryDigests;
     if (!captureTickDigest(simulationTick, tapeFrame, preparedInputFrame, tapeFrameApplied,
-            digest, replayDigest, hostState, &entryDigests, error)) {
+            digest, machineDigest, replayDigest, hostState, &entryDigests, error)) {
         fail(error);
         return true;
     }
     if (mPhase == Phase::A1) {
         mA1Digests.push_back(digest);
+        mA1MachineDigests.push_back(machineDigest);
         mA1ReplayDigests.push_back(replayDigest);
         mA1HostStates.push_back(std::move(hostState));
         mA1EntryDigests.push_back(std::move(entryDigests));
@@ -525,6 +529,8 @@ bool CheckpointProbe::writeResult(std::string& error) const {
     if (!mEnabled) return true;
     std::string sequence;
     for (const std::string& digest : mA1Digests) sequence += digest;
+    std::string machineSequence;
+    for (const std::string& digest : mA1MachineDigests) machineSequence += digest;
     std::string replaySequence;
     for (const std::string& digest : mA1ReplayDigests) replaySequence += digest;
     nlohmann::json byteDifferences = nlohmann::json::array();
@@ -564,6 +570,8 @@ bool CheckpointProbe::writeResult(std::string& error) const {
         {"audio_callback_quiesced", mAudioCallbackQuiesced},
         {"restore_integrity_failed", mRestoreIntegrityFailed},
         {"a_sequence_digest", hex_digest(sequence)},
+        {"a_machine_sequence_digest", hex_digest(machineSequence)},
+        {"a_machine_tick_digests", mA1MachineDigests},
         {"replay_fingerprint_schema", "dusklight-milestone-observation/v1"},
         {"a_replay_sequence_digest", hex_digest(replaySequence)},
         {"a_replay_tick_digests", mA1ReplayDigests},
