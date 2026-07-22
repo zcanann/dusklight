@@ -287,6 +287,7 @@ fn optimization_resume_recovers_a_partial_tail_without_repeating_candidates() {
     draft["content_sha256"] = Value::String("0".repeat(64));
     draft["resume"]["state_path"] = Value::String(format!("{relative_root}/state.json"));
     draft["resume"]["journal_path"] = Value::String(format!("{relative_root}/journal.jsonl"));
+    draft["resume"]["checkpoint_every_candidates"] = Value::from(1);
     fs::write(&draft_path, serde_json::to_vec_pretty(&draft).unwrap()).unwrap();
 
     let seal = Command::new(env!("CARGO_BIN_EXE_huntctl"))
@@ -364,6 +365,19 @@ fn optimization_resume_recovers_a_partial_tail_without_repeating_candidates() {
         serde_json::json!(["candidate-0001"])
     );
 
+    let oversized_evaluation = append(serde_json::json!({
+        "kind": "evaluation_completed",
+        "candidate_id": "candidate-0001",
+        "candidate_sha256": request_digest.clone(),
+        "result": {"path": result_artifact, "sha256": result_digest.clone()},
+        "simulated_ticks": 161
+    }));
+    assert!(!oversized_evaluation.status.success());
+    assert!(
+        String::from_utf8_lossy(&oversized_evaluation.stderr)
+            .contains("per-candidate exploration tick bound")
+    );
+
     let evaluation_result = append(serde_json::json!({
         "kind": "evaluation_completed",
         "candidate_id": "candidate-0001",
@@ -375,6 +389,21 @@ fn optimization_resume_recovers_a_partial_tail_without_repeating_candidates() {
     let evaluation_state: Value = serde_json::from_slice(&evaluation_result.stdout).unwrap();
     assert_eq!(evaluation_state["completed_candidates"], 1);
     assert_eq!(evaluation_state["uncheckpointed_completions"], 1);
+
+    let before_checkpoint = append(serde_json::json!({
+        "kind": "candidate_sealed",
+        "candidate_id": "candidate-0002",
+        "candidate": {"path": request_artifact, "sha256": request_digest.clone()},
+        "compiled_tape": {"path": tape_artifact, "sha256": tape_digest.clone()},
+        "parent_tape_sha256": tape_digest.clone(),
+        "generation": 1,
+        "proposer_seed": 130363
+    }));
+    assert!(!before_checkpoint.status.success());
+    assert!(
+        String::from_utf8_lossy(&before_checkpoint.stderr)
+            .contains("optimizer checkpoint is required")
+    );
 
     let checkpoint_result = append(serde_json::json!({
         "kind": "optimizer_checkpoint",

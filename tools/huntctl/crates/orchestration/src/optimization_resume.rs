@@ -8,7 +8,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -171,6 +171,7 @@ pub fn initialize_optimization_resume(
         .open(&journal_path)
         .map_err(OptimizationResumeError::io)?;
     journal.sync_all().map_err(OptimizationResumeError::io)?;
+    sync_parent(&journal_path)?;
     let state = fold_journal(request, &root, &journal_path, false)?;
     write_state_atomically(&state_path, &state)?;
     Ok(state)
@@ -418,6 +419,11 @@ fn validate_next_event(
             ..
         } => {
             validate_id(candidate_id)?;
+            if state.uncheckpointed_completions >= request.resume.checkpoint_every_candidates {
+                return Err(resume_error(
+                    "optimizer checkpoint is required before sealing another candidate",
+                ));
+            }
             if state.candidates.len() as u64 >= request.budgets.candidate_budget
                 || state.candidates.iter().any(|candidate| {
                     candidate.id == *candidate_id
@@ -440,6 +446,16 @@ fn validate_next_event(
             simulated_ticks,
             ..
         } => {
+            let maximum_candidate_ticks = request
+                .budgets
+                .exploration_horizon_ticks
+                .checked_mul(u64::from(request.execution.repetitions))
+                .ok_or_else(|| resume_error("candidate tick bound overflowed"))?;
+            if *simulated_ticks > maximum_candidate_ticks {
+                return Err(resume_error(
+                    "evaluation exceeds its per-candidate exploration tick bound",
+                ));
+            }
             let candidate = state
                 .candidates
                 .iter()
@@ -661,12 +677,22 @@ fn write_state_atomically(
             .map_err(OptimizationResumeError::io)?;
         output.sync_all().map_err(OptimizationResumeError::io)?;
         drop(output);
-        fs::rename(&temporary, path).map_err(OptimizationResumeError::io)
+        fs::rename(&temporary, path).map_err(OptimizationResumeError::io)?;
+        sync_parent(path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+fn sync_parent(path: &Path) -> Result<(), OptimizationResumeError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| resume_error("optimization persistence path has no parent"))?;
+    File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(OptimizationResumeError::io)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
