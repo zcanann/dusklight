@@ -582,6 +582,18 @@ target_include_directories(dusk_state_checkpoint_test PRIVATE
 target_link_libraries(dusk_state_checkpoint_test PRIVATE xxHash::xxhash)
 set_target_properties(dusk_state_checkpoint_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_jsu_list_checkpoint_test EXCLUDE_FROM_ALL
+    tests/jsu_list_checkpoint_test.cpp
+)
+target_include_directories(dusk_jsu_list_checkpoint_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/libs/JSystem/include
+    ${CMAKE_SOURCE_DIR}/extern/aurora/include/dolphin
+)
+target_compile_definitions(dusk_jsu_list_checkpoint_test PRIVATE TARGET_PC=1 AURORA=1)
+target_link_libraries(dusk_jsu_list_checkpoint_test PRIVATE JSystem_JSupport)
+set_target_properties(dusk_jsu_list_checkpoint_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_card_fixture_test EXCLUDE_FROM_ALL
     tests/card_fixture_test.cpp
     src/dusk/automation/card_fixture.cpp

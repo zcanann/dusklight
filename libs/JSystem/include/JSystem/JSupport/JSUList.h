@@ -37,6 +37,19 @@ public:
 };
 
 /**
+ * Host-side list header captured beside emulated-memory checkpoints.
+ *
+ * The linked objects and their JSUPtrLink fields live in MEM1 and are restored
+ * with it. JSystem list heads are native statics, so they must be rewound
+ * separately before the restored links may be traversed again.
+ */
+struct JSUPtrListCheckpointState {
+    JSUPtrLink* head;
+    JSUPtrLink* tail;
+    u32 length;
+};
+
+/**
 * @ingroup jsystem-jsupport
 * 
 */
@@ -81,6 +94,24 @@ public:
     JSUPtrLink* getLastLink() const { return mTail; }
 
     u32 getNumLinks() const { return mLength; }
+
+    JSUPtrListCheckpointState captureCheckpointState() const { return {mHead, mTail, mLength}; }
+
+    bool restoreCheckpointState(const JSUPtrListCheckpointState& state) {
+        if (state.length == 0) {
+            if (state.head != NULL || state.tail != NULL) {
+                return false;
+            }
+        } else if (state.head == NULL || state.tail == NULL ||
+                   ((state.length == 1) != (state.head == state.tail)))
+        {
+            return false;
+        }
+        mHead = state.head;
+        mTail = state.tail;
+        mLength = state.length;
+        return true;
+    }
 
 protected:
     JSUPtrLink* mHead;

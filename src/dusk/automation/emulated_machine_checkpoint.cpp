@@ -10,6 +10,10 @@
 #include "JSystem/JAudio2/JASChannel.h"
 #include "JSystem/JAudio2/JASTrack.h"
 #include "JSystem/JFramework/JFWDisplay.h"
+#include "JSystem/JKernel/JKRAramHeap.h"
+#include "JSystem/JKernel/JKRArchive.h"
+#include "JSystem/JKernel/JKRDvdFile.h"
+#include "JSystem/JKernel/JKRFileLoader.h"
 #include "JSystem/JKernel/JKRHeap.h"
 #include "Z2AudioLib/Z2Audience.h"
 #include "Z2AudioLib/Z2SoundHandles.h"
@@ -30,6 +34,22 @@ namespace {
 static_assert(std::is_trivially_copyable_v<JASGenericMemPoolState>);
 static_assert(std::is_trivially_copyable_v<JFWDisplayCheckpointState>);
 static_assert(std::is_trivially_copyable_v<JUTGamePadState>);
+
+struct JKRResourceRegistryCheckpointState {
+    JKRFileLoader* currentVolume;
+    JSUPtrLink* volumeHead;
+    JSUPtrLink* volumeTail;
+    JSUPtrLink* aramHead;
+    JSUPtrLink* aramTail;
+    JSUPtrLink* dvdHead;
+    JSUPtrLink* dvdTail;
+    u32 volumeLength;
+    u32 aramLength;
+    u32 dvdLength;
+    u32 currentDirectoryId;
+};
+
+static_assert(std::is_trivially_copyable_v<JKRResourceRegistryCheckpointState>);
 
 std::vector<StateCheckpointIgnoredRange> native_semantic_padding(
     const std::span<std::byte> region) {
@@ -140,6 +160,51 @@ bool restore_jkr_heap_selection(void*, const std::span<const std::byte> input) {
     JKRHeapSelectionState state{};
     std::memcpy(&state, input.data(), sizeof(state));
     JKRHeap::setCurrentHeap(state.currentHeap);
+    return true;
+}
+
+bool capture_jkr_resource_registries(void*, const std::span<std::byte> output) {
+    if (output.size() != sizeof(JKRResourceRegistryCheckpointState)) {
+        return false;
+    }
+    const JSUPtrListCheckpointState volumes =
+        JKRFileLoader::getVolumeList().captureCheckpointState();
+    const JSUPtrListCheckpointState aram = JKRAramHeap::sAramList.captureCheckpointState();
+    const JSUPtrListCheckpointState dvds = JKRDvdFile::getDvdList().captureCheckpointState();
+    const JKRResourceRegistryCheckpointState state{
+        .currentVolume = JKRFileLoader::getCurrentVolume(),
+        .volumeHead = volumes.head,
+        .volumeTail = volumes.tail,
+        .aramHead = aram.head,
+        .aramTail = aram.tail,
+        .dvdHead = dvds.head,
+        .dvdTail = dvds.tail,
+        .volumeLength = volumes.length,
+        .aramLength = aram.length,
+        .dvdLength = dvds.length,
+        .currentDirectoryId = JKRArchive::getCurrentDirID(),
+    };
+    std::memcpy(output.data(), &state, sizeof(state));
+    return true;
+}
+
+bool restore_jkr_resource_registries(void*, const std::span<const std::byte> input) {
+    if (input.size() != sizeof(JKRResourceRegistryCheckpointState)) {
+        return false;
+    }
+    JKRResourceRegistryCheckpointState state{};
+    std::memcpy(&state, input.data(), sizeof(state));
+    if (!JKRFileLoader::getVolumeList().restoreCheckpointState(
+            {state.volumeHead, state.volumeTail, state.volumeLength}) ||
+        !JKRAramHeap::sAramList.restoreCheckpointState(
+            {state.aramHead, state.aramTail, state.aramLength}) ||
+        !JKRDvdFile::getDvdList().restoreCheckpointState(
+            {state.dvdHead, state.dvdTail, state.dvdLength}))
+    {
+        return false;
+    }
+    JKRFileLoader::setCurrentVolume(state.currentVolume);
+    JKRArchive::setCurrentDirID(state.currentDirectoryId);
     return true;
 }
 
@@ -306,6 +371,12 @@ StateCheckpointError register_emulated_machine_checkpoint(StateCheckpoint& check
     }
     error = checkpoint.addComponent("jkr_current_heap", sizeof(JKRHeapSelectionState), nullptr,
         capture_jkr_heap_selection, restore_jkr_heap_selection);
+    if (error != StateCheckpointError::None) {
+        return error;
+    }
+    error = checkpoint.addComponent("jkr_resource_registries",
+        sizeof(JKRResourceRegistryCheckpointState), nullptr, capture_jkr_resource_registries,
+        restore_jkr_resource_registries);
     if (error != StateCheckpointError::None) {
         return error;
     }
