@@ -25,6 +25,8 @@ pub use dusklight_orchestration as search_evaluator;
 pub use dusklight_orchestration::harness;
 pub use dusklight_orchestration::optimization_request;
 pub use dusklight_orchestration::optimization_resume;
+pub use dusklight_orchestration::residual_campaign;
+pub use dusklight_orchestration::residual_campaign_runner;
 pub use dusklight_orchestration::stage_actor_coverage;
 pub use dusklight_orchestration::stage_observation_coverage;
 pub use dusklight_orchestration::stage_survey;

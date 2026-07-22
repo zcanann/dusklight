@@ -18,6 +18,23 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("run-residual-optimization") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let template: HarnessRunRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--run-request")?)?)?;
+        let report = huntctl::residual_campaign_runner::run_residual_campaign(
+            &huntctl::residual_campaign_runner::ResidualCampaignRunConfig {
+                repository_root: &repository_root,
+                optimization: &optimization,
+                harness_template: &template,
+            },
+        )?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("init-optimization-resume") {
         let command_args = &args[1..];
         let request: OptimizationRequest =
