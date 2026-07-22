@@ -1,4 +1,5 @@
 use super::*;
+use dusklight_automation_contracts::native_fidelity::FIXED_AUTOMATION_CVARS;
 
 /// Resolve a pinned continuation and concatenate its immutable segment artifacts. A frame
 /// selector is inclusive: frame N's input is present in the output tape.
@@ -715,15 +716,10 @@ pub(super) fn append_playback_args(
         .arg("--automation-data-root")
         .arg(state_root)
         .arg("--renderer-cache-root")
-        .arg(&renderer_cache_root)
-        .arg("--cvar")
-        .arg("game.instantSaves=true")
-        .arg("--cvar")
-        .arg("backend.cardFileType=1")
-        .arg("--cvar")
-        .arg("backend.wasPresetChosen=true")
-        .arg("--cvar")
-        .arg("game.enableMenuPointer=false");
+        .arg(&renderer_cache_root);
+    for cvar in FIXED_AUTOMATION_CVARS {
+        command.arg("--cvar").arg(cvar);
+    }
     append_fixed_step_pacing(command, options.playback.speed_percent);
     if let Some(stage) = options.seed_stage {
         command.arg("--stage").arg(stage);
@@ -1071,15 +1067,10 @@ pub(super) fn record_continuation(
         .arg("--automation-data-root")
         .arg(&state)
         .arg("--renderer-cache-root")
-        .arg(&renderer_cache_root)
-        .arg("--cvar")
-        .arg("game.instantSaves=true")
-        .arg("--cvar")
-        .arg("backend.cardFileType=1")
-        .arg("--cvar")
-        .arg("backend.wasPresetChosen=true")
-        .arg("--cvar")
-        .arg("game.enableMenuPointer=false");
+        .arg(&renderer_cache_root);
+    for cvar in FIXED_AUTOMATION_CVARS {
+        command.arg("--cvar").arg(cvar);
+    }
     append_origin_card_fixture_arg(
         timeline,
         &config.repository_root,

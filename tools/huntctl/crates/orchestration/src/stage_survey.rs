@@ -4,6 +4,7 @@ use crate::stage_survey_artifact::{
     compact_survey_artifact, compressed_artifact_path, read_survey_artifact,
 };
 use dusklight_automation_contracts::artifact::Digest;
+use dusklight_automation_contracts::native_fidelity::FIXED_AUTOMATION_CVARS;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, TapeBoot};
 use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V27;
 use dusklight_evidence::semantic_state_hash::SemanticStateHashSeries;
@@ -32,12 +33,7 @@ const EMPTY_CARD_IDENTITY_DOMAIN: &[u8] = b"dusklight-stage-survey-empty-card/v1
 const OBSERVATION_SCHEMA_DOMAIN: &[u8] =
     b"dusklight-stage-survey-all-trace-plus-learning-actor-catalog/v7\0";
 const SURVEY_SETTINGS_DOMAIN: &[u8] = b"dusklight-stage-survey-settings/v1\0";
-const SURVEY_CVARS: [&str; 4] = [
-    "game.instantSaves=true",
-    "backend.cardFileType=1",
-    "backend.wasPresetChosen=true",
-    "game.enableMenuPointer=false",
-];
+const SURVEY_CVARS: [&str; 5] = FIXED_AUTOMATION_CVARS;
 const BUTTON_L: u16 = 0x0040;
 const BUTTON_A: u16 = 0x0100;
 const BUTTON_B: u16 = 0x0200;

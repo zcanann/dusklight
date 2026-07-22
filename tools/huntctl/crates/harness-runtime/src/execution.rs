@@ -17,6 +17,7 @@ use crate::controller_program::ControllerProgram;
 use crate::milestone_dsl;
 use crate::scenario_fixture::ScenarioFixture;
 use crate::tape::{InputFrame, InputTape, TapeBoot, WaitCondition};
+use dusklight_automation_contracts::native_fidelity::FIXED_AUTOMATION_CVARS;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
@@ -164,15 +165,11 @@ fn execute_native_request(
         .arg("--gameplay-trace")
         .arg(&paths.gameplay_trace)
         .arg("--gameplay-trace-channels")
-        .arg("all")
-        .arg("--cvar")
-        .arg("game.instantSaves=true")
-        .arg("--cvar")
-        .arg("backend.cardFileType=1")
-        .arg("--cvar")
-        .arg("backend.wasPresetChosen=true")
-        .arg("--cvar")
-        .arg("game.enableMenuPointer=false")
+        .arg("all");
+    for cvar in FIXED_AUTOMATION_CVARS {
+        command.arg("--cvar").arg(cvar);
+    }
+    command
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
     if request.native_evidence == Some(HarnessNativeEvidenceRequest::EyeShredderV4) {

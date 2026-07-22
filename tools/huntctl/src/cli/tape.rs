@@ -5,6 +5,7 @@ use crate::{
 };
 use huntctl::Digest;
 use huntctl::harness::run_contract::sha256_artifact_file;
+use huntctl::native_fidelity::FIXED_AUTOMATION_CVARS;
 use huntctl::scenario_fixture::ScenarioFixture;
 use huntctl::search_evaluator::BoundaryFingerprint;
 use huntctl::tape::InputTape;
@@ -332,17 +333,11 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
         .arg("--automation-card-root")
         .arg(&card_root.path)
         .arg("--renderer-cache-root")
-        .arg(&renderer_cache)
-        .arg("--cvar")
-        .arg("game.instantSaves=true")
-        .arg("--cvar")
-        .arg("backend.cardFileType=1")
-        .arg("--cvar")
-        .arg("backend.wasPresetChosen=true")
-        .arg("--cvar")
-        .arg("game.enableMenuPointer=false")
-        .arg("--fixed-step")
-        .arg("--exit-after-tape");
+        .arg(&renderer_cache);
+    for cvar in FIXED_AUTOMATION_CVARS {
+        command.arg("--cvar").arg(cvar);
+    }
+    command.arg("--fixed-step").arg("--exit-after-tape");
     if let Some(path) = &card_fixture {
         command.arg("--automation-card-fixture").arg(path);
     }
@@ -428,12 +423,7 @@ struct TapeMinimizeProof {
 
 const TAPE_REPLAY_TERMINAL_CLASS: &str = "reached";
 const TAPE_REPLAY_FIDELITY_PROFILE: &str = "headless-fixed-step-unpaced-30hz/v1";
-const TAPE_REPLAY_CVARS: [&str; 4] = [
-    "game.instantSaves=true",
-    "backend.cardFileType=1",
-    "backend.wasPresetChosen=true",
-    "game.enableMenuPointer=false",
-];
+const TAPE_REPLAY_CVARS: [&str; 5] = FIXED_AUTOMATION_CVARS;
 
 fn command_tape_prove(args: &[String]) -> Result<(), Box<dyn Error>> {
     let input = PathBuf::from(args.first().ok_or("tape prove requires INPUT.tape")?);
@@ -1111,16 +1101,11 @@ fn command_tape_record(args: &[String]) -> Result<(), Box<dyn Error>> {
         .arg("--automation-data-root")
         .arg(&state_root)
         .arg("--renderer-cache-root")
-        .arg(&renderer_cache)
-        .arg("--cvar")
-        .arg("game.instantSaves=true")
-        .arg("--cvar")
-        .arg("backend.cardFileType=1")
-        .arg("--cvar")
-        .arg("backend.wasPresetChosen=true")
-        .arg("--cvar")
-        .arg("game.enableMenuPointer=false")
-        .arg("--fixed-step");
+        .arg(&renderer_cache);
+    for cvar in FIXED_AUTOMATION_CVARS {
+        command.arg("--cvar").arg(cvar);
+    }
+    command.arg("--fixed-step");
 
     let timeout = timeout_option(args)?;
     let started = Instant::now();

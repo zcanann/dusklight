@@ -357,6 +357,16 @@ frame neutral
     assert_eq!(minimize_summary["fidelity"]["unpaced"], true);
     assert_eq!(minimize_summary["fidelity"]["logical_hz"], 30);
     assert_eq!(
+        minimize_summary["fidelity"]["cvars"],
+        serde_json::json!([
+            "game.instantSaves=true",
+            "backend.cardFileType=1",
+            "backend.wasPresetChosen=true",
+            "game.enableMenuPointer=false",
+            "game.hideTvSettingsScreen=false",
+        ])
+    );
+    assert_eq!(
         minimize_summary["source_tape_sha256"],
         proof["input_tape_sha256"]
     );

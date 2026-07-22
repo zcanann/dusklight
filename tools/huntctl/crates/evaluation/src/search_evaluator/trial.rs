@@ -1,4 +1,5 @@
 use super::*;
+use dusklight_automation_contracts::native_fidelity::FIXED_AUTOMATION_CVARS;
 
 #[derive(Clone, Debug)]
 pub(super) struct Trial {
@@ -343,15 +344,10 @@ pub(super) fn run_trial(
                 .arg("--gameplay-trace-channels")
                 .arg("all");
         }
+        for cvar in FIXED_AUTOMATION_CVARS {
+            command.arg("--cvar").arg(cvar);
+        }
         command
-            .arg("--cvar")
-            .arg("game.instantSaves=true")
-            .arg("--cvar")
-            .arg("backend.cardFileType=1")
-            .arg("--cvar")
-            .arg("backend.wasPresetChosen=true")
-            .arg("--cvar")
-            .arg("game.enableMenuPointer=false")
             .arg("--headless")
             .arg("--fixed-step")
             .arg("--exit-after-tape")

@@ -88,6 +88,14 @@ Virtual input currently merges with physical input. Automation must select an
 exclusive source and record the canonical state after host mapping and before
 the game consumes it.
 
+Native automation launches also own a fixed CVar set, applied after caller
+arguments so persisted user preferences cannot alter a run. That set forces
+`game.hideTvSettingsScreen=false`: playback, recording, evaluation, workbench,
+harness, and survey processes therefore retain the console TV calibration
+screen. This launch-scoped override does not change Dusklight's normal setting
+default or gameplay source. Fixed-CVar lists are included in the run identities
+that serialize automation settings.
+
 ### Time and pacing
 
 `OSGetTime` currently derives from a host steady clock, while the main loop also
