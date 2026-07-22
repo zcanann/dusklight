@@ -9,6 +9,7 @@ pub mod continuous_search;
 pub mod motion_path_golf;
 pub mod option_golf;
 pub mod residual_action;
+pub mod residual_search;
 pub mod search;
 pub mod suffix_batch;
 
