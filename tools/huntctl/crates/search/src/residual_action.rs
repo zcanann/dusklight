@@ -16,7 +16,7 @@ pub const RESIDUAL_PROPOSAL_SCHEMA_DESCRIPTOR_V1: &str =
 const MAX_ANALOG_RESIDUALS: usize = 128;
 const MAX_BUTTON_RESIDUALS: usize = 128;
 const MAX_ABSOLUTE_DELTA: i16 = 255;
-const AUTHENTIC_BUTTON_MASK: u16 = 0x1f7f;
+pub const AUTHENTIC_BUTTON_MASK: u16 = 0x1f7f;
 
 pub fn residual_proposal_schema_sha256() -> Digest {
     sha256(RESIDUAL_PROPOSAL_SCHEMA_DESCRIPTOR_V1.as_bytes())

@@ -1,6 +1,7 @@
 //! Sealed request boundary for resumable route optimization campaigns.
 
 use dusklight_automation_contracts::artifact::Digest;
+use dusklight_automation_contracts::tape::InputTape;
 use dusklight_harness_contracts::objective_suite::{ArtifactReference, SchemaIdentity};
 use dusklight_harness_contracts::run_contract::HarnessFidelityMode;
 use dusklight_learning::factorized_pad_action::ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256;
@@ -8,6 +9,7 @@ use dusklight_routes::timeline::{ArtifactSource, Timeline};
 use dusklight_search::residual_action::{
     RESIDUAL_PROPOSAL_SCHEMA_ID_V1, residual_proposal_schema_sha256,
 };
+use dusklight_search::residual_optimizer::ResidualSearchSpace;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
@@ -87,6 +89,7 @@ pub struct OptimizationExecution {
 pub struct OptimizationProposal {
     pub action_schema: SchemaIdentity,
     pub proposal_schema: SchemaIdentity,
+    pub search_space: ResidualSearchSpace,
     pub optimizer: ResidualOptimizerConfig,
 }
 
@@ -149,6 +152,7 @@ pub struct OptimizationRequestValidationReport {
     pub promotion_before_tick: u64,
     pub candidate_budget: u64,
     pub simulated_tick_budget: u64,
+    pub search_space_sha256: Digest,
     pub workers: u16,
     pub repetitions: u16,
 }
@@ -220,6 +224,10 @@ impl OptimizationRequest {
                 "optimization action or residual proposal schema is detached from the implemented raw-PAD compiler",
             ));
         }
+        self.proposal
+            .search_space
+            .validate()
+            .map_err(|source| request_error(source.to_string()))?;
         match self.proposal.optimizer {
             ResidualOptimizerConfig::Random { samples }
                 if samples == 0 || samples > self.budgets.candidate_budget =>
@@ -398,6 +406,15 @@ impl OptimizationRequest {
                     "incumbent tape or first-hit tick differs from the timeline proof",
                 ));
             }
+            let incumbent_bytes = fs::read(&incumbent_path)
+                .map_err(|source| request_error(format!("cannot read incumbent tape: {source}")))?;
+            let incumbent_tape = InputTape::decode(&incumbent_bytes)
+                .map_err(|source| request_error(format!("cannot decode incumbent tape: {source}")))?
+                .tape;
+            self.proposal
+                .search_space
+                .validate_parent(&incumbent_tape)
+                .map_err(|source| request_error(source.to_string()))?;
         }
 
         Ok(OptimizationRequestValidationReport {
@@ -415,6 +432,11 @@ impl OptimizationRequest {
             promotion_before_tick: self.budgets.promotion_before_tick,
             candidate_budget: self.budgets.candidate_budget,
             simulated_tick_budget: self.budgets.simulated_tick_budget,
+            search_space_sha256: self
+                .proposal
+                .search_space
+                .sha256()
+                .map_err(|source| request_error(source.to_string()))?,
             workers: self.execution.workers,
             repetitions: self.execution.repetitions,
         })

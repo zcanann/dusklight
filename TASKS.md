@@ -215,11 +215,11 @@ goal-only discovery.
 - [x] Implement one finite-sample distribution optimizer over the same residual
       surface. Start with CEM; add CMA-ES, ARS, or another method only if a
       measured failure justifies it.
-      `dusklight-search::residual_search` gives random sampling a separate RNG
-      domain and implements integer-probability, rank-only CEM over the same
-      sealed residual-atom search space. Both materialize the authoritative
-      `ResidualCandidate`; CEM snapshots include the complete pending
-      generation and RNG state and restore byte-exact proposal behavior.
+      `dusklight-search::residual_optimizer` implements independent seeded
+      random sampling and integer-probability, rank-only categorical CEM over
+      the same sealed finite search space. Both compile the authoritative
+      `ResidualCandidate` before dispatch and deduplicate on realized raw tape;
+      snapshots retain RNG, distribution, pending-genome, and seen-tape state.
 - [ ] Retain every terminal success inside the exploration horizon, including
       routes slower than the incumbent.
 - [ ] Rank successes by deterministic first-hit tick, then tape simplicity and
