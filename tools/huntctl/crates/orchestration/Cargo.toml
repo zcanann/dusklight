@@ -18,6 +18,7 @@ dusklight-learning = { path = "../learning" }
 dusklight-objectives = { path = "../objectives" }
 dusklight-proposals = { path = "../proposals" }
 dusklight-proposer-tournament = { path = "../proposer-tournament" }
+dusklight-routes = { path = "../routes" }
 dusklight-search = { path = "../search" }
 dusklight-semantic-novelty = { path = "../semantic-novelty" }
 dusklight-trace = { path = "../trace" }

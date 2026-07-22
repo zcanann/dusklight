@@ -434,6 +434,7 @@ dependencies = [
  "dusklight-objectives",
  "dusklight-proposals",
  "dusklight-proposer-tournament",
+ "dusklight-routes",
  "dusklight-search",
  "dusklight-semantic-novelty",
  "dusklight-trace",

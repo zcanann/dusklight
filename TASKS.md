@@ -41,6 +41,12 @@ Working foundations:
 - A real state-reactive frozen policy now completes live native execution,
   byte-exact Rust reinference, ordinary-tape realization, and model-free cold
   replay with identical full-channel gameplay state across all 508 boundaries.
+- A sealed optimization-request contract now binds route lineage, incumbent,
+  source boundary, terminal predicate, independent exploration/promotion
+  horizons, budgets, execution seeds, proposal schemas, optimizer, resume
+  location, and retention policy. The first Ordon q125 CEM request validates
+  against the checked-in route and uses 160 ticks for exploration while keeping
+  promotion strictly sub-125.
 
 Not yet working:
 
@@ -154,7 +160,7 @@ goal-only discovery.
 
 ### 2.1 Campaign contract
 
-- [ ] Define one content-bound optimization request containing:
+- [x] Define one content-bound optimization request containing:
   - timeline, lineage, segment, source boundary, and terminal predicate;
   - incumbent tape and incumbent first-hit tick when supplied;
   - exploration horizon independent of the promotion threshold;
@@ -162,8 +168,11 @@ goal-only discovery.
   - worker count, deterministic seeds, repetitions, and fidelity settings;
   - proposal/action schema and optimizer configuration;
   - resume location and artifact-retention policy.
-- [ ] Default the first Ordon campaign to an exploration horizon with enough
+- [x] Default the first Ordon campaign to an exploration horizon with enough
       slack to retain perturbed successes. Promotion remains strictly sub-125.
+      The sealed `ordon-q125-residual-campaign.request.json` explores through
+      tick 160 while retaining the incumbent first-hit tick and strict
+      `promotion_before_tick = 125` as separate authenticated fields.
 - [ ] Make campaigns resumable after cancellation, worker crash, or UI closure
       without repeating sealed candidates or losing optimizer state.
 

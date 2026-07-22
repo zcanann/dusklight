@@ -5,6 +5,7 @@ use huntctl::harness::execution::execute_request;
 use huntctl::harness::inspection::inspect_objective;
 use huntctl::harness::objective_suite::ObjectiveSuite;
 use huntctl::harness::run_contract::{HarnessRunRequest, HarnessRunResult};
+use huntctl::optimization_request::OptimizationRequest;
 use huntctl::search_evaluator::TournamentDefinition;
 use std::env;
 use std::error::Error;
@@ -13,6 +14,27 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("seal-optimization-request") {
+        let command_args = &args[1..];
+        let input = required_path(command_args, "--input")?;
+        let output = required_path(command_args, "--output")?;
+        refuse_existing_output(&output, "optimization-request")?;
+        let repository_root = repository_root(command_args)?;
+        let mut request: OptimizationRequest = serde_json::from_slice(&fs::read(input)?)?;
+        request.refresh_content_sha256()?;
+        let report = request.validate_files(&repository_root)?;
+        write_new_file(&output, request.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("validate-optimization-request") {
+        let command_args = &args[1..];
+        let input = required_path(command_args, "--input")?;
+        let request: OptimizationRequest = serde_json::from_slice(&fs::read(input)?)?;
+        let report = request.validate_files(&repository_root(command_args)?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     let proposer_names = repeated_option(args, "--proposer");
     let tournament_definition_path = option(args, "--definition").map(PathBuf::from);
     let proposers = if proposer_names.is_empty()
