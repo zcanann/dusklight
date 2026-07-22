@@ -54,6 +54,11 @@ Working foundations:
   into the last optimizer snapshot, and validates ordered event batches in
   memory before one durable append/refold so large generations do not require
   one full journal pass per candidate.
+- The residual campaign command now accepts a sealed native execution binding,
+  owns one persistent checkpoint worker per deterministic lane for the complete
+  run, dispatches exact horizon-extended residual tapes as native suffix
+  batches, adopts completed crash-window artifacts, and checkpoints native
+  evidence plus optimizer/archive state without relaunching per generation.
 
 Not yet working:
 
@@ -180,12 +185,14 @@ goal-only discovery.
       The sealed `ordon-q125-residual-campaign.request.json` explores through
       tick 160 while retaining the incumbent first-hit tick and strict
       `promotion_before_tick = 125` as separate authenticated fields.
-- [ ] Make campaigns resumable after cancellation, worker crash, or UI closure
+- [x] Make campaigns resumable after cancellation, worker crash, or UI closure
       without repeating sealed candidates or losing optimizer state.
-      The journal/state contract and CLI lifecycle are complete; this remains
-      open until the checked Ordon runner owns persistent native workers and
-      records dispatch, result, and optimizer-update boundaries through that
-      contract automatically.
+      `native_residual_campaign_runner` now journals candidate batches before
+      dispatch, revalidates and adopts complete result artifacts after a crash,
+      allocates a fresh result path around partial artifacts, records every
+      evaluation before the optimizer update, and restores the exact pending
+      CEM generation. Focused tests cover deterministic residual-to-native
+      conversion at frame 440 and non-overwriting crash-window recovery.
 
 ### 2.2 Residual action surface
 
@@ -223,13 +230,13 @@ goal-only discovery.
       the same sealed finite search space. Both compile the authoritative
       `ResidualCandidate` before dispatch and deduplicate on realized raw tape;
       snapshots retain RNG, distribution, pending-genome, and seen-tape state.
-- [ ] Retain every terminal success inside the exploration horizon, including
+- [x] Retain every terminal success inside the exploration horizon, including
       routes slower than the incumbent.
-- [ ] Rank successes by deterministic first-hit tick, then tape simplicity and
+- [x] Rank successes by deterministic first-hit tick, then tape simplicity and
       declared risk. Do not let a shaped reward override that order.
-- [ ] Keep failures as experience and diversity evidence. Do not pretend that
+- [x] Keep failures as experience and diversity evidence. Do not pretend that
       Euclidean distance to the exit is terminal success or universal progress.
-- [ ] Maintain successful trajectory diversity long enough for coordinated
+- [x] Maintain successful trajectory diversity long enough for coordinated
       alternatives to survive; do not collapse immediately to one greedy elite.
 - [ ] Tighten the exploration horizon only after the retained successful basin
       supports it.
@@ -240,9 +247,11 @@ goal-only discovery.
       first-hit/simplicity/risk ordering, diverse success elites, a failure
       diversity reservoir, supported horizon-tightening evidence, and
       replay-authoritative post-discovery minimization. Its complete history
-      round-trips through a sealed resume snapshot. These items remain open
-      until the persistent native campaign runner records every native result
-      through the archive and checkpoints it automatically.
+      round-trips through a sealed resume snapshot. The persistent native runner
+      now validates every exact terminal result, records it through this archive,
+      uses the archive's deterministic generation rank for CEM, and checkpoints
+      the complete archive with the optimizer. Horizon tightening and winner
+      minimization remain separate post-discovery operations below.
 
 ### 2.4 Baseline proof
 
@@ -264,8 +273,12 @@ winner is the target and remains an open framework challenge until achieved.
 
 ## 3. Close the autonomous learning loop
 
-- [ ] Add one campaign command/API that owns persistent workers for the entire
+- [x] Add one campaign command/API that owns persistent workers for the entire
       run instead of relaunching the game per generation.
+      `campaign run-residual-optimization --execution EXECUTION.json` launches
+      one persistent native checkpoint session per sealed worker lane, reuses it
+      across every generation, verifies pool build identity, and shuts all
+      sessions down on success or error.
 - [ ] Automatically ingest all eligible native episodes into immutable replay
       generations with demonstration, policy-rollout, randomized-coverage, and
       alternate-terminal roles.

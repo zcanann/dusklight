@@ -1029,3 +1029,142 @@ impl fmt::Display for NativeResidualCampaignRunnerError {
 }
 
 impl Error for NativeResidualCampaignRunnerError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_residual_campaign::NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1;
+    use crate::residual_campaign_runner::prepare_batch;
+    use dusklight_harness_contracts::objective_suite::ArtifactReference;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    fn repository() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../..")
+            .canonicalize()
+            .unwrap()
+    }
+
+    fn optimization(root: &Path) -> OptimizationRequest {
+        serde_json::from_slice(
+            &fs::read(root.join(
+                "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+            ))
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn placeholder(path: &str, byte: u8) -> ArtifactReference {
+        ArtifactReference {
+            path: path.into(),
+            sha256: Digest([byte; 32]),
+        }
+    }
+
+    fn execution(optimization: &OptimizationRequest) -> NativeResidualExecutionBinding {
+        NativeResidualExecutionBinding {
+            schema: NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1.into(),
+            content_sha256: Digest([9; 32]),
+            optimization_request_sha256: optimization.content_sha256,
+            executable: placeholder("build/test/Dusklight", 1),
+            game_data: placeholder("build/test/game.iso", 2),
+            process_boot_tape: placeholder("build/test/process.tape", 3),
+            milestone_program: placeholder("build/test/terminal.dmsp", 4),
+            world_context: placeholder("build/test/world.context.json", 5),
+            checkpoint_validation_ticks: 8,
+            verify_state_hashes: false,
+        }
+    }
+
+    fn prepared_generation(
+        root: &Path,
+        optimization: &OptimizationRequest,
+    ) -> (InputTape, Vec<u8>, Vec<PreparedCandidate>) {
+        let incumbent = optimization.incumbent.as_ref().unwrap();
+        let parent_bytes = fs::read(root.join(&incumbent.tape.path)).unwrap();
+        let parent = InputTape::decode(&parent_bytes).unwrap().tape;
+        let mut optimizer = new_optimizer(optimization, &parent_bytes).unwrap();
+        let ResidualCampaignOptimizer::Cem(cem) = &mut optimizer else {
+            panic!("checked Ordon request must use CEM")
+        };
+        let proposal = cem.ask(&parent, &parent_bytes).unwrap();
+        let prepared = prepare_batch(optimization, &parent, &parent_bytes, 0, proposal).unwrap();
+        (parent, parent_bytes, prepared)
+    }
+
+    #[test]
+    fn native_batch_losslessly_bridges_residual_tapes_at_the_route_checkpoint() {
+        let root = repository();
+        let optimization = optimization(&root);
+        let execution = execution(&optimization);
+        let (_parent, _parent_bytes, prepared) = prepared_generation(&root, &optimization);
+        let selected = prepared.iter().take(4).collect::<Vec<_>>();
+        let batch = native_batch(
+            &optimization,
+            &execution,
+            segment_profile(&root, &optimization).unwrap(),
+            &selected,
+            1,
+        )
+        .unwrap();
+
+        assert_eq!(batch.source_frame, 440);
+        assert_eq!(batch.maximum_ticks, 160);
+        assert_eq!(batch.checkpoint_validation.ticks, 8);
+        assert_eq!(batch.candidates.len(), selected.len());
+        for (actual, expected) in batch.candidates.iter().zip(selected) {
+            let imported = Candidate::from_absolute_tape(
+                segment_profile(&root, &optimization).unwrap(),
+                &expected.compiled.tape,
+            )
+            .unwrap();
+            assert_eq!(actual.actions, imported.actions);
+            assert_eq!(actual.id, wire_candidate_id(&expected.envelope.id, 1));
+        }
+    }
+
+    #[test]
+    fn crash_recovery_never_reuses_a_partial_native_result_path() {
+        let root = repository();
+        let optimization = optimization(&root);
+        let execution = execution(&optimization);
+        let (_parent, _parent_bytes, prepared) = prepared_generation(&root, &optimization);
+        let batch = native_batch(
+            &optimization,
+            &execution,
+            segment_profile(&root, &optimization).unwrap(),
+            &[&prepared[0]],
+            1,
+        )
+        .unwrap();
+        let nonce = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+        let batch_root = root.join("build").join(format!(
+            "native-residual-crash-path-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&batch_root).unwrap();
+        fs::write(batch_root.join("result-try001.json"), b"{\"partial\":").unwrap();
+        fs::write(
+            batch_root.join("result-try001.json.episodes.dseps"),
+            b"partial episode",
+        )
+        .unwrap();
+        let terminal = NativeTerminalBinding {
+            goal: optimization.terminal_predicate.goal.clone(),
+            program_sha256: optimization.terminal_predicate.program_sha256,
+            definition_sha256: optimization.terminal_predicate.definition_sha256,
+        };
+
+        let (path, adopted) = select_result_path(&batch_root, &batch, &terminal).unwrap();
+        assert_eq!(path, batch_root.join("result-try002.json"));
+        assert!(adopted.is_none());
+        assert_eq!(
+            fs::read(batch_root.join("result-try001.json")).unwrap(),
+            b"{\"partial\":"
+        );
+        fs::remove_dir_all(batch_root).unwrap();
+    }
+}
