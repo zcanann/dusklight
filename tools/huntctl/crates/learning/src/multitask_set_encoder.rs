@@ -29,8 +29,8 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V11: &str =
-    "dusklight-multitask-set-encoder-report/v11";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V12: &str =
+    "dusklight-multitask-set-encoder-report/v12";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -938,6 +938,7 @@ pub struct MultiTaskSetEncoderReport {
     pub target_objectives: Vec<AuxiliaryHeadObjective>,
     pub target_positive_weights: Vec<f64>,
     pub target_negative_weights: Vec<f64>,
+    pub target_decision_thresholds: Vec<Option<f64>>,
     pub target_support_training: Vec<usize>,
     pub target_support_held_out: Vec<usize>,
     pub maximum_training_nodes: usize,
@@ -971,6 +972,7 @@ pub struct CompleteSetMultiTaskEncoder {
     target_inverse_stddev: Vec<f64>,
     target_positive_weight: Vec<f64>,
     target_negative_weight: Vec<f64>,
+    target_decision_thresholds: Vec<Option<f64>>,
     node_weights: Vec<f64>,
     node_bias: Vec<f64>,
     attention_queries: Vec<f64>,
@@ -1116,6 +1118,7 @@ impl CompleteSetMultiTaskEncoder {
                 model.train_one(&training[index])?;
             }
         }
+        model.calibrate_binary_thresholds(held_out)?;
         let model_sha256 = model.model_sha256()?;
         let training_objective_loss = model.objective_loss(training)?;
         let held_out_objective_loss = model.objective_loss(held_out)?;
@@ -1134,7 +1137,7 @@ impl CompleteSetMultiTaskEncoder {
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let held_out_attention = model.attention_diagnostics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V11,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V12,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
@@ -1146,6 +1149,7 @@ impl CompleteSetMultiTaskEncoder {
             target_objectives,
             target_positive_weights: normalization.positive_weight,
             target_negative_weights: normalization.negative_weight,
+            target_decision_thresholds: model.target_decision_thresholds.clone(),
             target_support_training,
             target_support_held_out,
             maximum_training_nodes: training
@@ -1210,6 +1214,27 @@ impl CompleteSetMultiTaskEncoder {
                 "multitask target conditioning width is invalid",
             ));
         }
+        if target_mean
+            .iter()
+            .chain(&target_inverse_stddev)
+            .chain(&target_positive_weight)
+            .chain(&target_negative_weight)
+            .any(|value| !value.is_finite())
+            || target_inverse_stddev.iter().any(|value| *value <= 0.0)
+            || target_positive_weight.iter().any(|value| *value <= 0.0)
+            || target_negative_weight.iter().any(|value| *value <= 0.0)
+            || target_objectives
+                .iter()
+                .enumerate()
+                .any(|(target, objective)| {
+                    *objective == AuxiliaryHeadObjective::ClassBalancedBernoulli
+                        && !(0.0..=1.0).contains(&target_mean[target])
+                })
+        {
+            return Err(TrainableSetError::new(
+                "multitask target statistics are invalid",
+            ));
+        }
         let task_attention_width =
             usize::from(pooling.uses_task_attention()) * config.node_hidden_width * 2;
         let head_input_width = config.head_hidden_width * 2
@@ -1257,6 +1282,12 @@ impl CompleteSetMultiTaskEncoder {
                 &mut rng,
             )?),
         };
+        let target_decision_thresholds = target_objectives
+            .iter()
+            .map(|objective| {
+                (*objective == AuxiliaryHeadObjective::ClassBalancedBernoulli).then_some(0.5)
+            })
+            .collect();
         let model = Self {
             actor_feature_schema_sha256,
             pooling,
@@ -1278,6 +1309,7 @@ impl CompleteSetMultiTaskEncoder {
             target_inverse_stddev,
             target_positive_weight,
             target_negative_weight,
+            target_decision_thresholds,
             optimizer_steps: 0,
         };
         debug_assert_eq!(model.parameter_count(), parameter_count);
@@ -1310,7 +1342,11 @@ impl CompleteSetMultiTaskEncoder {
             AuxiliaryHeadObjective::NormalizedRegression => {
                 raw_prediction / self.target_inverse_stddev[target] + self.target_mean[target]
             }
-            AuxiliaryHeadObjective::ClassBalancedBernoulli => logistic(raw_prediction),
+            AuxiliaryHeadObjective::ClassBalancedBernoulli => calibrated_binary_probability(
+                raw_prediction,
+                self.target_positive_weight[target],
+                self.target_negative_weight[target],
+            ),
         }
     }
 
@@ -1363,8 +1399,34 @@ impl CompleteSetMultiTaskEncoder {
         }
     }
 
+    fn calibrate_binary_thresholds(
+        &mut self,
+        samples: &[MultiTaskSetSample],
+    ) -> Result<(), TrainableSetError> {
+        let mut scored = vec![Vec::new(); self.target_names.len()];
+        for sample in samples {
+            let predictions = self.predict(sample)?;
+            for target in 0..self.target_names.len() {
+                if sample.target_present[target]
+                    && self.target_objectives[target]
+                        == AuxiliaryHeadObjective::ClassBalancedBernoulli
+                {
+                    scored[target]
+                        .push((sample.targets[target] > 0.5, f64::from(predictions[target])));
+                }
+            }
+        }
+        for (target, rows) in scored.iter().enumerate() {
+            if self.target_objectives[target] == AuxiliaryHeadObjective::ClassBalancedBernoulli {
+                self.target_decision_thresholds[target] =
+                    Some(select_binary_decision_threshold(rows)?);
+            }
+        }
+        Ok(())
+    }
+
     pub fn model_sha256(&self) -> Result<Digest, TrainableSetError> {
-        canonical_digest(b"dusklight.complete-set-multitask-encoder/v8\0", self)
+        canonical_digest(b"dusklight.complete-set-multitask-encoder/v9\0", self)
     }
 
     fn attention_head_count(&self) -> usize {
@@ -1461,27 +1523,35 @@ impl CompleteSetMultiTaskEncoder {
             .iter()
             .enumerate()
             .filter(|(_, name)| rare_event_target(name))
-            .map(|(index, name)| (index, name.clone()))
-            .collect::<Vec<_>>();
+            .map(|(index, name)| {
+                self.target_decision_thresholds[index]
+                    .map(|threshold| (index, name.clone(), threshold))
+                    .ok_or_else(|| {
+                        TrainableSetError::new(
+                            "rare-event target has no calibrated decision threshold",
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut model = vec![BinaryEventAccumulator::default(); targets.len()];
         let mut baseline = vec![BinaryEventAccumulator::default(); targets.len()];
         for sample in samples {
             let predictions = self.predict(sample)?;
-            for (metric, (target, _)) in targets.iter().enumerate() {
+            for (metric, (target, _, threshold)) in targets.iter().enumerate() {
                 if sample.target_present[*target] {
                     let expected = sample.targets[*target] > 0.5;
-                    model[metric].observe(expected, f64::from(predictions[*target]));
-                    baseline[metric].observe(expected, self.target_mean[*target]);
+                    model[metric].observe(expected, f64::from(predictions[*target]), *threshold);
+                    baseline[metric].observe(expected, self.target_mean[*target], 0.5);
                 }
             }
         }
         targets
             .into_iter()
             .enumerate()
-            .map(|(metric, (_, name))| {
+            .map(|(metric, (_, name, threshold))| {
                 Ok(RareEventMetrics {
                     name,
-                    threshold: 0.5,
+                    threshold,
                     model: model[metric].finish()?,
                     training_mean_baseline: baseline[metric].finish()?,
                 })
@@ -2192,9 +2262,9 @@ struct BinaryEventAccumulator {
 }
 
 impl BinaryEventAccumulator {
-    fn observe(&mut self, expected: bool, score: f64) {
+    fn observe(&mut self, expected: bool, score: f64, threshold: f64) {
         let probability = score.clamp(0.0, 1.0);
-        let predicted = probability >= 0.5;
+        let predicted = probability >= threshold;
         self.brier_sum += (probability - f64::from(expected)).powi(2);
         match (expected, predicted) {
             (true, true) => self.true_positives += 1,
@@ -4824,6 +4894,70 @@ fn logistic(value: f64) -> f64 {
     }
 }
 
+fn calibrated_binary_probability(
+    weighted_logit: f64,
+    positive_weight: f64,
+    negative_weight: f64,
+) -> f64 {
+    logistic(weighted_logit + (negative_weight / positive_weight).ln())
+}
+
+fn select_binary_decision_threshold(rows: &[(bool, f64)]) -> Result<f64, TrainableSetError> {
+    let positives = rows.iter().filter(|(expected, _)| *expected).count();
+    let negatives = rows.len().saturating_sub(positives);
+    if positives == 0
+        || negatives == 0
+        || rows
+            .iter()
+            .any(|(_, probability)| !probability.is_finite() || !(0.0..=1.0).contains(probability))
+    {
+        return Err(TrainableSetError::new(
+            "binary threshold calibration requires finite probabilities and both validation classes",
+        ));
+    }
+    let mut thresholds = rows
+        .iter()
+        .map(|(_, probability)| *probability)
+        .collect::<Vec<_>>();
+    thresholds.sort_by(|left, right| right.total_cmp(left));
+    thresholds.dedup_by(|left, right| left.to_bits() == right.to_bits());
+
+    let mut best = None::<(f64, f64, f64)>;
+    for threshold in thresholds {
+        let true_positives = rows
+            .iter()
+            .filter(|(expected, probability)| *expected && *probability >= threshold)
+            .count();
+        let false_positives = rows
+            .iter()
+            .filter(|(expected, probability)| !*expected && *probability >= threshold)
+            .count();
+        let false_negatives = positives - true_positives;
+        let true_negatives = negatives - false_positives;
+        let f1 = if 2 * true_positives + false_positives + false_negatives == 0 {
+            0.0
+        } else {
+            2.0 * true_positives as f64
+                / (2 * true_positives + false_positives + false_negatives) as f64
+        };
+        let balanced_accuracy = 0.5
+            * (true_positives as f64 / positives as f64 + true_negatives as f64 / negatives as f64);
+        let candidate = (f1, balanced_accuracy, threshold);
+        if best.is_none_or(|current| {
+            candidate.0.total_cmp(&current.0).is_gt()
+                || (candidate.0.total_cmp(&current.0).is_eq()
+                    && (candidate.1.total_cmp(&current.1).is_gt()
+                        || (candidate.1.total_cmp(&current.1).is_eq()
+                            && candidate.2.total_cmp(&current.2).is_gt())))
+        }) {
+            best = Some(candidate);
+        }
+    }
+    Ok(best
+        .ok_or_else(|| TrainableSetError::new("binary threshold calibration has no candidates"))?
+        .2)
+}
+
 fn binary_cross_entropy_from_logit(logit: f64, expected: f64) -> f64 {
     logit.max(0.0) - logit * expected + (-logit.abs()).exp().ln_1p()
 }
@@ -4844,7 +4978,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v11\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v12\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -5338,7 +5472,7 @@ mod tests {
     fn rare_event_metrics_report_recall_and_probability_error() {
         let mut accumulator = BinaryEventAccumulator::default();
         for (expected, score) in [(true, 0.9), (true, 0.2), (false, 0.8), (false, 0.1)] {
-            accumulator.observe(expected, score);
+            accumulator.observe(expected, score, 0.5);
         }
         let metrics = accumulator.finish().unwrap();
         assert_eq!(metrics.positives, 2);
@@ -5369,6 +5503,22 @@ mod tests {
         assert!((numeric - analytic).abs() < 1.0e-9);
         assert!(binary_cross_entropy_from_logit(1_000.0, 0.0).is_finite());
         assert!(binary_cross_entropy_from_logit(-1_000.0, 1.0).is_finite());
+    }
+
+    #[test]
+    fn balanced_binary_scores_recover_training_prior_and_threshold_on_validation_only() {
+        let prevalence = 0.1;
+        let positive_weight = 5.0;
+        let negative_weight = 5.0 / 9.0;
+        assert!(
+            (calibrated_binary_probability(0.0, positive_weight, negative_weight) - prevalence)
+                .abs()
+                < 1.0e-12
+        );
+        let rows = [(true, 0.9), (true, 0.8), (false, 0.7), (false, 0.2)];
+        assert_eq!(select_binary_decision_threshold(&rows).unwrap(), 0.8);
+        assert!(select_binary_decision_threshold(&[(true, 0.9)]).is_err());
+        assert!(select_binary_decision_threshold(&[(false, 0.1)]).is_err());
     }
 
     #[test]
@@ -5432,6 +5582,12 @@ mod tests {
         assert_eq!(report.target_positive_weights, vec![5.0, 1.0]);
         assert!((report.target_negative_weights[0] - 5.0 / 9.0).abs() < 1.0e-12);
         assert_eq!(report.target_negative_weights[1], 1.0);
+        assert_eq!(
+            report.target_decision_thresholds[0],
+            model.target_decision_thresholds[0]
+        );
+        assert!(report.target_decision_thresholds[0].is_some());
+        assert_eq!(report.target_decision_thresholds[1], None);
         assert!(report.training_objective_loss.is_finite());
         assert!(report.held_out_objective_loss.is_finite());
         assert!(report.held_out_constant_baseline_objective_loss.is_finite());
