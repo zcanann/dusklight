@@ -23,8 +23,28 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         let repository_root = repository_root(command_args)?;
         let optimization: OptimizationRequest =
             serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
-        let template: HarnessRunRequest =
-            serde_json::from_slice(&fs::read(required_path(command_args, "--run-request")?)?)?;
+        let template: HarnessRunRequest = if let Some(path) = option(command_args, "--run-request")
+        {
+            if option(command_args, "--game").is_some() || option(command_args, "--dvd").is_some() {
+                return Err(
+                    "residual campaign accepts either --run-request or --game/--dvd, not both"
+                        .into(),
+                );
+            }
+            serde_json::from_slice(&fs::read(path)?)?
+        } else {
+            huntctl::residual_campaign_runner::materialize_residual_harness_template(
+                &repository_root,
+                &optimization,
+                &required_path(command_args, "--game")?,
+                &required_path(command_args, "--dvd")?,
+                u32_option(command_args, "--timeout-seconds", 120)?,
+            )?
+        };
+        if let Some(output) = option(command_args, "--output-run-request").map(PathBuf::from) {
+            refuse_existing_output(&output, "residual run-request")?;
+            write_new_file(&output, template.to_pretty_json()?)?;
+        }
         let report = huntctl::residual_campaign_runner::run_residual_campaign(
             &huntctl::residual_campaign_runner::ResidualCampaignRunConfig {
                 repository_root: &repository_root,

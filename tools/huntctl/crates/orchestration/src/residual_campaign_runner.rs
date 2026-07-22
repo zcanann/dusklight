@@ -11,11 +11,23 @@ use crate::residual_campaign::{
     ResidualCampaignEvaluation, ResidualCampaignOptimizer, ResidualNativeAttempt,
 };
 use dusklight_automation_contracts::artifact::Digest;
+use dusklight_automation_contracts::observation_view::ObservationSpec;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_evaluation::derive_candidate_request;
-use dusklight_harness_contracts::objective_suite::ArtifactReference;
+use dusklight_harness_contracts::objective_suite::{
+    ArtifactReference, ExpectedTerminalClass, ObjectiveBoot, ObjectiveCaseRole,
+    ObjectiveProgramReference, ObjectiveSeed, ObjectiveSuiteCase, ObservationViewReference,
+};
+use dusklight_harness_contracts::observation_contract::{
+    OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1, ObjectiveObservationRequirements,
+    ObservationFamilyRequirement, family_for_fact,
+};
 use dusklight_harness_contracts::run_contract::{HarnessRunRequest, HarnessRunResult};
 use dusklight_harness_runtime::execution::execute_request;
+use dusklight_harness_runtime::request_materialization::{
+    NativeRequestConfig, inspect_native_inputs, materialize_native_request, protocol_for_cases,
+};
+use dusklight_objectives::milestone_dsl;
 use dusklight_search::residual_action::{
     CompiledResidualCandidate, compile_residual_candidate_to_horizon,
 };
@@ -25,6 +37,7 @@ use dusklight_search::residual_retention::{
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -43,7 +56,7 @@ pub struct ResidualCampaignRunConfig<'a> {
 pub struct ResidualCampaignRunSummary {
     pub schema: &'static str,
     pub optimization_request_sha256: Digest,
-    pub harness_template_sha256: Digest,
+    pub execution_binding_sha256: Digest,
     pub completed: bool,
     pub generation: u64,
     pub sealed_candidates: u64,
@@ -53,6 +66,110 @@ pub struct ResidualCampaignRunSummary {
     pub retained_failures: u64,
     pub best_first_hit_tick: Option<u64>,
     pub resume_state: String,
+}
+
+pub fn materialize_residual_harness_template(
+    repository_root: &Path,
+    optimization: &OptimizationRequest,
+    executable: &Path,
+    game_data: &Path,
+    host_timeout_seconds: u32,
+) -> Result<HarnessRunRequest, ResidualCampaignRunnerError> {
+    let root = repository_root.canonicalize().map_err(runner_error)?;
+    optimization.validate_files(&root).map_err(runner_error)?;
+    if host_timeout_seconds == 0 {
+        return Err(runner_message("residual host timeout must be positive"));
+    }
+    let incumbent = optimization
+        .incumbent
+        .as_ref()
+        .ok_or_else(|| runner_message("residual campaign requires an incumbent tape"))?;
+    let timeline = root.join(&optimization.route.timeline.path);
+    let support = timeline.with_extension("").join("benchmarks");
+    let scenario = support.join("process_boot.fixture.json");
+    let observation_path = support.join(format!(
+        "{}.observation.json",
+        optimization.terminal_predicate.goal
+    ));
+    let observation: ObservationSpec =
+        serde_json::from_slice(&fs::read(&observation_path).map_err(runner_error)?)
+            .map_err(runner_error)?;
+    observation.validate().map_err(runner_error)?;
+    if observation.objective.id != optimization.terminal_predicate.goal {
+        return Err(runner_message(
+            "residual observation objective differs from the terminal goal",
+        ));
+    }
+    let predicate_source = root.join(&optimization.terminal_predicate.source.path);
+    let program =
+        milestone_dsl::parse(&fs::read_to_string(&predicate_source).map_err(runner_error)?)
+            .map_err(runner_error)?;
+    let required_facts =
+        milestone_dsl::required_query_facts(&program, &optimization.terminal_predicate.goal)
+            .map_err(runner_error)?;
+    let mut families = BTreeSet::new();
+    for fact in &required_facts {
+        families.insert(
+            family_for_fact(fact)
+                .ok_or_else(|| runner_message(format!("goal fact {fact:?} has no family")))?
+                .to_owned(),
+        );
+    }
+    let case = ObjectiveSuiteCase {
+        id: optimization.id.clone(),
+        description: "Materialized residual optimization harness template".into(),
+        role: ObjectiveCaseRole::Positive,
+        control_for: None,
+        boot: ObjectiveBoot::Process,
+        scenario: artifact_reference(&root, &scenario)?,
+        objective: ObjectiveProgramReference {
+            source: optimization.terminal_predicate.source.clone(),
+            program_sha256: optimization.terminal_predicate.program_sha256,
+            goal: optimization.terminal_predicate.goal.clone(),
+        },
+        observation_view: ObservationViewReference {
+            source: artifact_reference(&root, &observation_path)?,
+            schema_sha256: observation.digest().map_err(runner_error)?,
+        },
+        action_schema: optimization.proposal.action_schema.clone(),
+        observation_requirements: ObjectiveObservationRequirements {
+            schema: OBJECTIVE_OBSERVATION_REQUIREMENTS_SCHEMA_V1.into(),
+            families: families
+                .into_iter()
+                .map(|id| ObservationFamilyRequirement {
+                    id,
+                    minimum_version: 1,
+                })
+                .collect(),
+            facts: required_facts,
+        },
+        seed: ObjectiveSeed::Tape {
+            artifact: incumbent.tape.clone(),
+        },
+        logical_tick_budget: optimization.budgets.exploration_horizon_ticks,
+        host_timeout_seconds,
+        repetitions: optimization.execution.repetitions,
+        expected_terminal: ExpectedTerminalClass::Reached,
+    };
+    let inputs = inspect_native_inputs(&root, executable, game_data).map_err(runner_error)?;
+    let protocol = protocol_for_cases(std::slice::from_ref(&case)).map_err(runner_error)?;
+    let destination = campaign_root(&root, optimization)?.join("template-unused");
+    let relative_destination = PathBuf::from(repository_relative(&root, &destination)?);
+    let request = materialize_native_request(&NativeRequestConfig {
+        case: &case,
+        inputs: &inputs,
+        protocol: &protocol,
+        request_id: &optimization.id,
+        artifact_destination: &relative_destination,
+        fidelity: optimization.execution.fidelity,
+        native_evidence: None,
+        rng_seed: optimization.execution.deterministic_seeds[0],
+    })
+    .map_err(runner_error)?;
+    optimization
+        .validate_harness_template(&root, &request)
+        .map_err(runner_error)?;
+    Ok(request)
 }
 
 #[derive(Debug)]
@@ -191,7 +308,7 @@ fn append_checkpoint(
 ) -> Result<OptimizationResumeState, ResidualCampaignRunnerError> {
     let checkpoint = ResidualCampaignCheckpoint::seal(
         optimization,
-        template,
+        template.content_sha256,
         generation,
         resume.completed_candidates,
         optimizer.snapshot()?,
@@ -226,7 +343,7 @@ fn load_checkpoint(
         .artifact;
     let checkpoint: ResidualCampaignCheckpoint =
         serde_json::from_slice(&read_artifact(root, reference)?).map_err(runner_error)?;
-    checkpoint.validate(optimization, template)?;
+    checkpoint.validate(optimization, template.content_sha256)?;
     Ok(checkpoint)
 }
 
@@ -863,7 +980,7 @@ fn summary(
     ResidualCampaignRunSummary {
         schema: "dusklight-residual-campaign-run-summary/v1",
         optimization_request_sha256: config.optimization.content_sha256,
-        harness_template_sha256: config.harness_template.content_sha256,
+        execution_binding_sha256: config.harness_template.content_sha256,
         completed: true,
         generation,
         sealed_candidates: resume.candidates.len() as u64,

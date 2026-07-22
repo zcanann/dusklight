@@ -23,10 +23,10 @@ use std::error::Error;
 use std::fmt;
 
 pub const RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V1: &str = "dusklight-residual-campaign-candidate/v1";
-pub const RESIDUAL_CAMPAIGN_EVALUATION_SCHEMA_V1: &str =
-    "dusklight-residual-campaign-evaluation/v1";
-pub const RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V1: &str =
-    "dusklight-residual-campaign-checkpoint/v1";
+pub const RESIDUAL_CAMPAIGN_EVALUATION_SCHEMA_V2: &str =
+    "dusklight-residual-campaign-evaluation/v2";
+pub const RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2: &str =
+    "dusklight-residual-campaign-checkpoint/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -116,7 +116,10 @@ pub struct ResidualCampaignEvaluation {
     pub schema: String,
     pub content_sha256: Digest,
     pub optimization_request_sha256: Digest,
-    pub harness_template_sha256: Digest,
+    /// Identity of the authenticated execution surface. Generic harness runs
+    /// bind the harness template; checkpoint-backed runs bind their sealed
+    /// native execution manifest.
+    pub execution_binding_sha256: Digest,
     pub candidate_id: String,
     pub candidate_sha256: Digest,
     pub realized_tape_sha256: Digest,
@@ -218,10 +221,10 @@ impl ResidualCampaignEvaluation {
         evidence: ResidualEvaluationEvidence,
     ) -> Result<Self, ResidualCampaignError> {
         let mut value = Self {
-            schema: RESIDUAL_CAMPAIGN_EVALUATION_SCHEMA_V1.into(),
+            schema: RESIDUAL_CAMPAIGN_EVALUATION_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: optimization.content_sha256,
-            harness_template_sha256: template.content_sha256,
+            execution_binding_sha256: template.content_sha256,
             candidate_id: candidate.id.clone(),
             candidate_sha256: candidate.candidate.content_sha256,
             realized_tape_sha256: candidate.compilation.realized_tape_sha256,
@@ -230,7 +233,7 @@ impl ResidualCampaignEvaluation {
             evidence,
         };
         value.content_sha256 = value.identity()?;
-        value.validate(optimization, template, candidate)?;
+        value.validate_for_execution(optimization, template.content_sha256, candidate)?;
         Ok(value)
     }
 
@@ -240,9 +243,18 @@ impl ResidualCampaignEvaluation {
         template: &HarnessRunRequest,
         candidate: &ResidualCampaignCandidate,
     ) -> Result<(), ResidualCampaignError> {
-        if self.schema != RESIDUAL_CAMPAIGN_EVALUATION_SCHEMA_V1
+        self.validate_for_execution(optimization, template.content_sha256, candidate)
+    }
+
+    pub fn validate_for_execution(
+        &self,
+        optimization: &OptimizationRequest,
+        execution_binding_sha256: Digest,
+        candidate: &ResidualCampaignCandidate,
+    ) -> Result<(), ResidualCampaignError> {
+        if self.schema != RESIDUAL_CAMPAIGN_EVALUATION_SCHEMA_V2
             || self.optimization_request_sha256 != optimization.content_sha256
-            || self.harness_template_sha256 != template.content_sha256
+            || self.execution_binding_sha256 != execution_binding_sha256
             || self.candidate_id != candidate.id
             || self.candidate_sha256 != candidate.candidate.content_sha256
             || self.realized_tape_sha256 != candidate.compilation.realized_tape_sha256
@@ -279,7 +291,7 @@ impl ResidualCampaignEvaluation {
     fn identity(&self) -> Result<Digest, ResidualCampaignError> {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.residual-campaign-evaluation/v1\0", &canonical)
+        canonical_digest(b"dusklight.residual-campaign-evaluation/v2\0", &canonical)
     }
 }
 
@@ -348,7 +360,7 @@ pub struct ResidualCampaignCheckpoint {
     pub schema: String,
     pub content_sha256: Digest,
     pub optimization_request_sha256: Digest,
-    pub harness_template_sha256: Digest,
+    pub execution_binding_sha256: Digest,
     pub generation: u64,
     pub completed_candidates: u64,
     pub optimizer: ResidualCampaignOptimizerSnapshot,
@@ -358,17 +370,17 @@ pub struct ResidualCampaignCheckpoint {
 impl ResidualCampaignCheckpoint {
     pub fn seal(
         optimization: &OptimizationRequest,
-        template: &HarnessRunRequest,
+        execution_binding_sha256: Digest,
         generation: u64,
         completed_candidates: u64,
         optimizer: ResidualCampaignOptimizerSnapshot,
         archive: &ResidualOutcomeArchive,
     ) -> Result<Self, ResidualCampaignError> {
         let mut value = Self {
-            schema: RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V1.into(),
+            schema: RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: optimization.content_sha256,
-            harness_template_sha256: template.content_sha256,
+            execution_binding_sha256,
             generation,
             completed_candidates,
             optimizer,
@@ -377,21 +389,21 @@ impl ResidualCampaignCheckpoint {
                 .map_err(|error| campaign_error(error.to_string()))?,
         };
         value.content_sha256 = value.identity()?;
-        value.validate(optimization, template)?;
+        value.validate(optimization, execution_binding_sha256)?;
         Ok(value)
     }
 
     pub fn validate(
         &self,
         optimization: &OptimizationRequest,
-        template: &HarnessRunRequest,
+        execution_binding_sha256: Digest,
     ) -> Result<(), ResidualCampaignError> {
         self.retention
             .validate()
             .map_err(|error| campaign_error(error.to_string()))?;
-        if self.schema != RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V1
+        if self.schema != RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2
             || self.optimization_request_sha256 != optimization.content_sha256
-            || self.harness_template_sha256 != template.content_sha256
+            || self.execution_binding_sha256 != execution_binding_sha256
             || self.completed_candidates > optimization.budgets.candidate_budget
             || self.retention.config
                 != optimization
@@ -463,7 +475,7 @@ impl ResidualCampaignCheckpoint {
     fn identity(&self) -> Result<Digest, ResidualCampaignError> {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.residual-campaign-checkpoint/v1\0", &canonical)
+        canonical_digest(b"dusklight.residual-campaign-checkpoint/v2\0", &canonical)
     }
 }
 
