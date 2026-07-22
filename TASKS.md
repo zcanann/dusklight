@@ -115,19 +115,23 @@ Working foundations:
   retries reuse identical corpus bytes, pre-v3 completed campaigns backfill on
   resume, and residual proposals are explicitly classified as randomized
   coverage rather than demonstrations or policy rollouts.
+- Native checkpoint restore now rewinds the host-side JKR volume, ARAM, and DVD
+  registries with their emulated-memory links. A fresh four-lane degraded-canary
+  run crossed the former `dMeterButton_c::screenInitButton` crash repeatedly.
+  Candidate episode evidence now binds the authenticated member ID as well as
+  its shared batch shard, so all 64 results in a generation can enter retention
+  without falsely appearing to reuse one episode for different tapes.
 
 Not yet working:
 
 - There is no closed `collect -> train -> freeze -> execute -> ingest -> refit`
   campaign.
 - The 125-tick Ordon incumbent remains unbeaten.
-- The remaining q125 generation-zero lane reproducibly crashes during persistent
-  checkpoint evaluation in `dMeterButton_c::screenInitButton`, where J2D follows
-  the same poisoned meter-button archive pointer on two independent launches.
-  Complete sibling-lane artifacts and the optimizer checkpoint remain valid and
-  uncharged, but retries alone cannot complete this batch; native checkpoint
-  resource lifetime/restore safety must be corrected or the failing batch must
-  be reduced into an equally authenticated isolation path first.
+- The degraded q131 canary remains unimproved after four durable CEM generations:
+  256 completed evaluations, 185 exact main-terminal successes, 47,313 charged
+  simulated ticks, and best first hit 131. The v2 run is cleanly resumable from
+  optimizer checkpoint generation 4 with 64 sealed generation-4 candidates and
+  zero uncheckpointed completions.
 - The historical 18,867-candidate Ordon campaign was local procedural mutation,
   not evidence of successful learning.
 - The current learned proposer is an offline window-patching system over a coarse
