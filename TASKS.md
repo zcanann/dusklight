@@ -291,7 +291,7 @@ goal-only discovery.
       a fresh request ID, the supported lower horizon, its conservative derived
       tick budget, fresh resume paths, and the sealed lineage record to change.
       A resealed request with any other delta fails file validation.
-- [ ] Minimize a winner only after discovery, using exact terminal replay as the
+- [x] Minimize a winner only after discovery, using exact terminal replay as the
       acceptance authority.
       The sealed `residual_retention` archive now implements these policies,
       including candidate/tape-bound exact evidence, deterministic
@@ -301,8 +301,18 @@ goal-only discovery.
       round-trips through a sealed resume snapshot. The persistent native runner
       now validates every exact terminal result, records it through this archive,
       uses the archive's deterministic generation rank for CEM, and checkpoints
-      the complete archive with the optimizer. Horizon tightening and winner
-      minimization remain separate post-discovery operations below.
+      the complete archive with the optimizer.
+      `campaign minimize-residual-winner` now admits only a candidate that
+      recompiles to an original retained exact success in a digest-bound source
+      request/execution/checkpoint chain. It performs bounded deterministic
+      component ddmin through the persistent validated checkpoint pool, accepts
+      only strict compiled-tape simplifications whose exact native repetitions
+      agree and remain no slower than the discovery, and retains every evaluated
+      reduction, batch/result/episode proof, tick charge, and reproduced archive
+      snapshot in a sealed independently revalidatable summary. A sealed request
+      makes partial runs safely resumable; no shaped score can accept a
+      reduction. Horizon tightening and minimization remain separate explicit
+      post-discovery operations.
 
 ### 2.4 Baseline proof
 

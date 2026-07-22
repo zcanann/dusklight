@@ -23,6 +23,84 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("validate-residual-winner-minimization") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let input = repository_file(
+            &repository_root,
+            &required_path(command_args, "--input")?,
+            "residual winner minimization summary",
+        )?;
+        let summary: huntctl::search_evaluator::residual_winner_minimization::ResidualWinnerMinimizationSummary =
+            serde_json::from_slice(&fs::read(input)?)?;
+        summary.validate_files(&repository_root)?;
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("minimize-residual-winner") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let source_request = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "minimization source optimization request",
+        )?;
+        let source_execution = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--execution")?,
+            "minimization source execution binding",
+        )?;
+        let source_checkpoint = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--checkpoint")?,
+            "minimization source checkpoint",
+        )?;
+        let source_candidate = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--candidate")?,
+            "minimization source candidate",
+        )?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_request.path))?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_execution.path))?)?;
+        let checkpoint: huntctl::search_evaluator::residual_campaign::ResidualCampaignCheckpoint =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_checkpoint.path))?)?;
+        let candidate: huntctl::search_evaluator::residual_campaign::ResidualCampaignCandidate =
+            serde_json::from_slice(&fs::read(repository_root.join(&source_candidate.path))?)?;
+        let output_relative = required_path(command_args, "--output")?;
+        if output_relative.is_absolute()
+            || output_relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+            || !output_relative.starts_with("build")
+        {
+            return Err(
+                "residual winner minimization output must be a repository-relative build/ path"
+                    .into(),
+            );
+        }
+        let output = repository_root.join(output_relative);
+        let summary = huntctl::search_evaluator::residual_winner_minimization::run_residual_winner_minimization(
+            &huntctl::search_evaluator::residual_winner_minimization::ResidualWinnerMinimizationConfig {
+                repository_root: &repository_root,
+                optimization: &optimization,
+                execution: &execution,
+                checkpoint: &checkpoint,
+                source_request,
+                source_execution,
+                source_checkpoint,
+                source_candidate,
+                candidate: &candidate,
+                output_root: &output,
+                candidate_budget: u64_option(command_args, "--candidate-budget", 256)?,
+                resume: flag(command_args, "--resume"),
+                cancellation: None,
+            },
+        )?;
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("tighten-residual-horizon") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;

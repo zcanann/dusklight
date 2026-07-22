@@ -61,6 +61,27 @@ pub struct NativeResidualCampaignRunConfig<'a> {
     pub cancellation: Option<&'a AtomicBool>,
 }
 
+/// One named absolute suffix tape submitted to the authenticated native
+/// checkpoint replay surface. Post-discovery reducers use this smaller boundary
+/// instead of pretending their deterministic reductions came from an optimizer
+/// genome.
+pub(crate) struct NativeResidualExactReplayCandidate {
+    pub id: String,
+    pub tape: InputTape,
+}
+
+/// Persistent exact-replay pool shared by bounded post-discovery operations.
+/// Every returned attempt is backed by the same validated batch/result/episode
+/// artifacts as an ordinary residual campaign evaluation.
+pub(crate) struct NativeResidualExactReplayPool<'a> {
+    root: &'a Path,
+    campaign: &'a Path,
+    config: &'a NativeResidualCampaignRunConfig<'a>,
+    profile: dusklight_search::search::SegmentProfile,
+    pool: WorkerPool<'a>,
+    round: u64,
+}
+
 struct WorkerLane {
     index: usize,
     seed: u64,
@@ -271,6 +292,159 @@ impl Drop for WorkerPool<'_> {
     }
 }
 
+impl<'a> NativeResidualExactReplayPool<'a> {
+    pub(crate) fn new(
+        root: &'a Path,
+        campaign: &'a Path,
+        config: &'a NativeResidualCampaignRunConfig<'a>,
+    ) -> Result<Self, NativeResidualCampaignRunnerError> {
+        ensure_not_cancelled(config)?;
+        config
+            .execution
+            .validate_files(root, config.optimization)
+            .map_err(native_error)?;
+        Ok(Self {
+            root,
+            campaign,
+            config,
+            profile: segment_profile(root, config.optimization)?,
+            pool: WorkerPool::new(root, campaign, config.optimization, config.execution)?,
+            round: 0,
+        })
+    }
+
+    pub(crate) fn replay(
+        &mut self,
+        candidates: &[NativeResidualExactReplayCandidate],
+    ) -> Result<BTreeMap<String, Vec<NativeResidualAttempt>>, NativeResidualCampaignRunnerError>
+    {
+        if candidates.is_empty() {
+            return Err(native_message(
+                "native exact replay requires at least one candidate",
+            ));
+        }
+        let mut ids = BTreeSet::new();
+        if candidates.iter().any(|candidate| {
+            candidate.id.is_empty()
+                || candidate.id.len() > 128
+                || !candidate
+                    .id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+                || !ids.insert(candidate.id.as_str())
+        }) {
+            return Err(native_message(
+                "native exact replay candidate IDs are invalid or duplicated",
+            ));
+        }
+        let lane_count = self.pool.lanes.len();
+        if lane_count == 0 {
+            return Err(native_message("native exact replay has no worker lanes"));
+        }
+        let mut attempts = candidates
+            .iter()
+            .map(|candidate| (candidate.id.clone(), Vec::new()))
+            .collect::<BTreeMap<_, _>>();
+        for repetition in 1..=self.config.optimization.execution.repetitions {
+            ensure_not_cancelled(self.config)?;
+            let mut groups = vec![Vec::new(); lane_count];
+            for (index, candidate) in candidates.iter().enumerate() {
+                groups[index % lane_count].push(candidate);
+            }
+            let mut jobs = Vec::new();
+            let mut adopted = Vec::new();
+            for (lane, group) in groups.iter().enumerate() {
+                if group.is_empty() {
+                    continue;
+                }
+                let batch = exact_replay_batch(
+                    self.config.optimization,
+                    self.config.execution,
+                    self.profile,
+                    group,
+                    repetition,
+                )?;
+                let batch_root = self
+                    .campaign
+                    .join("minimization")
+                    .join("native-batches")
+                    .join(format!("round-{:06}", self.round))
+                    .join(format!("repetition-{repetition:03}"))
+                    .join(format!("worker-{lane:03}"))
+                    .join(format!("batch-{}", batch_group_id(&batch)));
+                fs::create_dir_all(&batch_root).map_err(native_error)?;
+                let request_path = batch_root.join("request.json");
+                write_exact_or_new(&request_path, &pretty_json(&batch).map_err(native_error)?)
+                    .map_err(native_error)?;
+                let (result_path, validated) =
+                    select_result_path(&batch_root, &batch, &self.pool.terminal)?;
+                if let Some(validated) = validated {
+                    adopted.push(BatchOutput {
+                        lane,
+                        request_path,
+                        result_path,
+                        validated,
+                    });
+                } else {
+                    jobs.push(BatchJob {
+                        lane,
+                        request_path,
+                        result_path,
+                        batch,
+                    });
+                }
+            }
+            let mut outputs = self.pool.run_jobs(jobs)?;
+            outputs.extend(adopted);
+            outputs.sort_by_key(|output| output.lane);
+            for output in outputs {
+                let request =
+                    artifact_reference(self.root, &output.request_path).map_err(native_error)?;
+                let result =
+                    artifact_reference(self.root, &output.result_path).map_err(native_error)?;
+                let episode =
+                    artifact_reference(self.root, Path::new(&output.validated.episode_shard_path))
+                        .map_err(native_error)?;
+                for actual in &output.validated.candidates {
+                    let candidate_id = actual
+                        .id
+                        .strip_suffix(&format!("-r{repetition:03}"))
+                        .ok_or_else(|| {
+                            native_message("native exact replay wire candidate ID is malformed")
+                        })?;
+                    attempts
+                        .get_mut(candidate_id)
+                        .ok_or_else(|| {
+                            native_message("native exact replay returned an unknown candidate")
+                        })?
+                        .push(native_attempt(
+                            repetition,
+                            self.pool.lanes[output.lane].seed,
+                            actual,
+                            request.clone(),
+                            result.clone(),
+                            episode.clone(),
+                            &output.validated,
+                        ));
+                }
+            }
+        }
+        self.round = self
+            .round
+            .checked_add(1)
+            .ok_or_else(|| native_message("native exact replay round overflowed"))?;
+        if attempts
+            .values()
+            .any(|rows| rows.len() != usize::from(self.config.optimization.execution.repetitions))
+        {
+            return Err(native_message(
+                "native exact replay did not return every sealed repetition",
+            ));
+        }
+        Ok(attempts)
+    }
+}
+
 fn alternate_worker_pools<'a>(
     root: &'a Path,
     campaign: &'a Path,
@@ -417,6 +591,43 @@ fn native_batch(
     })
 }
 
+fn exact_replay_batch(
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    segment: dusklight_search::search::SegmentProfile,
+    candidates: &[&NativeResidualExactReplayCandidate],
+    repetition: u16,
+) -> Result<NativeSuffixBatch, NativeResidualCampaignRunnerError> {
+    let native_candidates = candidates
+        .iter()
+        .map(|candidate| {
+            let imported =
+                Candidate::from_absolute_tape(segment, &candidate.tape).map_err(native_error)?;
+            Ok(NativeSuffixCandidate {
+                id: wire_candidate_id(&candidate.id, repetition),
+                actions: imported.actions,
+            })
+        })
+        .collect::<Result<Vec<_>, NativeResidualCampaignRunnerError>>()?;
+    Ok(NativeSuffixBatch {
+        schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
+        source_frame: usize::try_from(optimization.route.source_boundary_index)
+            .map_err(native_error)?,
+        source_boundary_fingerprint: optimization
+            .route
+            .native_source_boundary_fingerprint
+            .clone(),
+        checkpoint_validation: NativeCheckpointValidation {
+            kind: "recorded_replay_window".into(),
+            ticks: usize::try_from(execution.checkpoint_validation_ticks).map_err(native_error)?,
+        },
+        maximum_ticks: usize::try_from(optimization.budgets.exploration_horizon_ticks)
+            .map_err(native_error)?,
+        verify_state_hashes: execution.verify_state_hashes,
+        candidates: native_candidates,
+    })
+}
+
 fn wire_candidate_id(candidate_id: &str, repetition: u16) -> String {
     format!("{candidate_id}-r{repetition:03}")
 }
@@ -507,7 +718,7 @@ fn validate_evaluation_artifacts(
     Ok(())
 }
 
-fn validate_attempt_artifacts(
+pub(crate) fn validate_attempt_artifacts(
     root: &Path,
     terminal: &NativeTerminalBinding,
     attempt: &NativeResidualAttempt,
@@ -535,10 +746,51 @@ fn validate_attempt_artifacts(
         || validated.checkpoint_bytes != attempt.checkpoint_bytes
         || candidate.simulated_ticks != attempt.simulated_ticks
         || candidate.first_hit_tick != attempt.first_hit_tick
+        || candidate.terminal_boundary_fingerprint != attempt.terminal_boundary_fingerprint
         || candidate.behavior_sha256 != attempt.behavior_sha256
     {
         return Err(native_message(
             "native residual attempt differs from its validated batch artifacts",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_exact_replay_attempt_artifacts(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    terminal: &NativeTerminalBinding,
+    expected_tape: &InputTape,
+    attempt: &NativeResidualAttempt,
+) -> Result<(), NativeResidualCampaignRunnerError> {
+    validate_attempt_artifacts(root, terminal, attempt)?;
+    let batch: NativeSuffixBatch =
+        serde_json::from_slice(&read_artifact(root, &attempt.batch_request).map_err(native_error)?)
+            .map_err(native_error)?;
+    let expected =
+        Candidate::from_absolute_tape(segment_profile(root, optimization)?, expected_tape)
+            .map_err(native_error)?;
+    let actual = batch
+        .candidates
+        .iter()
+        .find(|candidate| candidate.id == attempt.wire_candidate_id)
+        .ok_or_else(|| native_message("exact replay candidate is absent from its batch"))?;
+    if batch.source_frame
+        != usize::try_from(optimization.route.source_boundary_index).map_err(native_error)?
+        || batch.source_boundary_fingerprint
+            != optimization.route.native_source_boundary_fingerprint
+        || batch.checkpoint_validation.kind != "recorded_replay_window"
+        || batch.checkpoint_validation.ticks
+            != usize::try_from(execution.checkpoint_validation_ticks).map_err(native_error)?
+        || batch.maximum_ticks
+            != usize::try_from(optimization.budgets.exploration_horizon_ticks)
+                .map_err(native_error)?
+        || batch.verify_state_hashes != execution.verify_state_hashes
+        || actual.actions != expected.actions
+    {
+        return Err(native_message(
+            "exact replay attempt differs from its expected residual tape or execution boundary",
         ));
     }
     Ok(())
@@ -1904,7 +2156,7 @@ mod tests {
         assert_eq!(batch.maximum_ticks, 160);
         assert_eq!(batch.checkpoint_validation.ticks, 8);
         assert_eq!(batch.candidates.len(), selected.len());
-        for (actual, expected) in batch.candidates.iter().zip(selected) {
+        for (actual, expected) in batch.candidates.iter().zip(selected.iter().copied()) {
             let imported = Candidate::from_absolute_tape(
                 segment_profile(&root, &optimization).unwrap(),
                 &expected.compiled.tape,
@@ -1913,6 +2165,27 @@ mod tests {
             assert_eq!(actual.actions, imported.actions);
             assert_eq!(actual.id, wire_candidate_id(&expected.envelope.id, 1));
         }
+
+        let exact = selected
+            .iter()
+            .map(|candidate| NativeResidualExactReplayCandidate {
+                id: candidate.envelope.id.clone(),
+                tape: candidate.compiled.tape.clone(),
+            })
+            .collect::<Vec<_>>();
+        let exact_refs = exact.iter().collect::<Vec<_>>();
+        let exact_batch = exact_replay_batch(
+            &optimization,
+            &execution,
+            segment_profile(&root, &optimization).unwrap(),
+            &exact_refs,
+            1,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(exact_batch).unwrap(),
+            serde_json::to_value(batch).unwrap()
+        );
     }
 
     #[test]
