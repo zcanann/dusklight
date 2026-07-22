@@ -1333,7 +1333,7 @@ mod tests {
         inventory.validate().unwrap();
         let geometry = NativeEpisodeGeometryView::build(
             &shard,
-            &[inventory.clone()],
+            std::slice::from_ref(&inventory),
             NativeGeometryViewConfiguration {
                 maximum_distance: 64.0,
                 surface_limit: 4,
