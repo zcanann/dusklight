@@ -1715,8 +1715,19 @@ and geometry set sizes without schema changes.
     therefore already sufficient for this lifecycle signal once the objective
     and decision rule were correct; history remains useful general capacity,
     but it is not the supported explanation or default solution for this head.
-    Cross-seed confirmation remains required before promoting the typed binary
-    contract beyond this frozen-corpus treatment.
+    Two further single-frame seeds confirm the contract rather than one lucky
+    initialization. Across all three seeds, aggregate untouched-test
+    improvement spans 84.469-88.374% and every independently trained shuffled
+    control remains negative at -6.560% to -2.586%. Actor disappearance stays
+    at 14-15/15 recall with zero false positives, F1 0.9655-1.0, calibrated
+    threshold 0.2293-0.2725 and Brier 0.00423-0.00482. Contact retains 22-24/30
+    positives with 0-4 false positives and F1 0.8276-0.8679. The additional
+    report/model pairs are `83cbb684...3d804` / `00496a36...01e99` and
+    `f3fbd575...ab03d` / `731dc0dd...a7271`; all three use 14,831 parameters
+    and exactly 92,000 updates. The typed objective, prior correction and
+    validation-only threshold contract is therefore promoted as the default
+    auxiliary-event semantics. This promotes an evaluation/training contract,
+    not any frozen model as an online policy or outcome authority.
 - [ ] Learn a goal-conditioned estimate of reachability and time-to-go from
   `state + goal + remaining tick budget`. Do not use distance to the Ordon exit
   edge or distance along the incumbent as the learned objective.
