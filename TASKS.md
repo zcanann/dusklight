@@ -76,6 +76,14 @@ Working foundations:
   large-artifact digest cache, and rejects direct external paths or any
   intermediate-directory symlink escape. The checked Ordon request can once
   again seal a current execution binding against that local layout.
+- The repaired macOS Ordon source chain reaches the native Link-control boundary
+  at frame 506, validates an eight-tick checkpoint replay there, and reproduces
+  the incumbent's F_SP104 load commit at raw suffix boundary 125 after 126
+  sampled transitions. The live q125 CEM campaign has sealed that incumbent as
+  its demonstration and prepared generation zero. Three of its four native
+  lanes completed, and a fresh resume authenticated and adopted those three
+  result/shard pairs before launching only the missing lane, proving the
+  crash-window adoption path against real campaign evidence.
 - The Route Workbench now projects checked optimization requests on their owning
   segments and exposes an explicit typed run/resume action. Rust validates and
   materializes immutable native execution authority, runs the persistent
@@ -113,6 +121,13 @@ Not yet working:
 - There is no closed `collect -> train -> freeze -> execute -> ingest -> refit`
   campaign.
 - The 125-tick Ordon incumbent remains unbeaten.
+- The remaining q125 generation-zero lane reproducibly crashes during persistent
+  checkpoint evaluation in `dMeterButton_c::screenInitButton`, where J2D follows
+  the same poisoned meter-button archive pointer on two independent launches.
+  Complete sibling-lane artifacts and the optimizer checkpoint remain valid and
+  uncharged, but retries alone cannot complete this batch; native checkpoint
+  resource lifetime/restore safety must be corrected or the failing batch must
+  be reduced into an equally authenticated isolation path first.
 - The historical 18,867-candidate Ordon campaign was local procedural mutation,
   not evidence of successful learning.
 - The current learned proposer is an offline window-patching system over a coarse
