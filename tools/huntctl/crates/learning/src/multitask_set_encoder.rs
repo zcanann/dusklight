@@ -29,8 +29,8 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V10: &str =
-    "dusklight-multitask-set-encoder-report/v10";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V11: &str =
+    "dusklight-multitask-set-encoder-report/v11";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -865,7 +865,7 @@ pub struct AuxiliaryHeadMetrics {
     pub held_out_support: usize,
     pub training_loss: f64,
     pub held_out_loss: f64,
-    pub held_out_training_mean_loss: f64,
+    pub held_out_constant_baseline_loss: f64,
     pub relative_held_out_improvement: f64,
 }
 
@@ -875,7 +875,7 @@ pub struct AuxiliaryHeadEvaluation {
     pub objective: AuxiliaryHeadObjective,
     pub support: usize,
     pub loss: f64,
-    pub training_mean_loss: f64,
+    pub constant_baseline_loss: f64,
     pub relative_improvement: f64,
 }
 
@@ -883,7 +883,7 @@ pub struct AuxiliaryHeadEvaluation {
 pub struct MultiTaskSetEvaluation {
     pub samples: usize,
     pub objective_loss: f64,
-    pub training_mean_objective_loss: f64,
+    pub constant_baseline_objective_loss: f64,
     pub relative_improvement: f64,
     pub heads: Vec<AuxiliaryHeadEvaluation>,
     pub rare_events: Vec<RareEventMetrics>,
@@ -946,7 +946,7 @@ pub struct MultiTaskSetEncoderReport {
     pub optimizer_steps: u64,
     pub training_objective_loss: f64,
     pub held_out_objective_loss: f64,
-    pub held_out_training_mean_objective_loss: f64,
+    pub held_out_constant_baseline_objective_loss: f64,
     pub relative_held_out_improvement: f64,
     pub heads: Vec<AuxiliaryHeadMetrics>,
     pub held_out_rare_events: Vec<RareEventMetrics>,
@@ -1119,9 +1119,10 @@ impl CompleteSetMultiTaskEncoder {
         let model_sha256 = model.model_sha256()?;
         let training_objective_loss = model.objective_loss(training)?;
         let held_out_objective_loss = model.objective_loss(held_out)?;
-        let held_out_training_mean_objective_loss = model.training_mean_objective_loss(held_out)?;
+        let held_out_constant_baseline_objective_loss =
+            model.constant_baseline_objective_loss(held_out)?;
         let relative_held_out_improvement = relative_improvement(
-            held_out_training_mean_objective_loss,
+            held_out_constant_baseline_objective_loss,
             held_out_objective_loss,
         );
         let heads = model.head_metrics(training, held_out)?;
@@ -1133,7 +1134,7 @@ impl CompleteSetMultiTaskEncoder {
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let held_out_attention = model.attention_diagnostics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V10,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V11,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
@@ -1163,7 +1164,7 @@ impl CompleteSetMultiTaskEncoder {
             optimizer_steps: model.optimizer_steps,
             training_objective_loss,
             held_out_objective_loss,
-            held_out_training_mean_objective_loss,
+            held_out_constant_baseline_objective_loss,
             relative_held_out_improvement,
             heads,
             held_out_rare_events,
@@ -1327,14 +1328,29 @@ impl CompleteSetMultiTaskEncoder {
         }
     }
 
-    fn training_mean_loss(&self, target: usize, expected: f64) -> f64 {
+    fn constant_baseline_loss(&self, target: usize, expected: f64) -> f64 {
         match self.target_objectives[target] {
             AuxiliaryHeadObjective::NormalizedRegression => {
                 ((expected - self.target_mean[target]) * self.target_inverse_stddev[target]).powi(2)
             }
             AuxiliaryHeadObjective::ClassBalancedBernoulli => {
                 self.binary_weight(target, expected)
-                    * binary_cross_entropy_from_probability(self.target_mean[target], expected)
+                    * binary_cross_entropy_from_probability(
+                        self.constant_baseline_prediction(target),
+                        expected,
+                    )
+            }
+        }
+    }
+
+    fn constant_baseline_prediction(&self, target: usize) -> f64 {
+        match self.target_objectives[target] {
+            AuxiliaryHeadObjective::NormalizedRegression => self.target_mean[target],
+            AuxiliaryHeadObjective::ClassBalancedBernoulli => {
+                let positive_mass = self.target_positive_weight[target] * self.target_mean[target];
+                let negative_mass =
+                    self.target_negative_weight[target] * (1.0 - self.target_mean[target]);
+                positive_mass / (positive_mass + negative_mass)
             }
         }
     }
@@ -1386,7 +1402,7 @@ impl CompleteSetMultiTaskEncoder {
             ));
         }
         let objective_loss = self.objective_loss(samples)?;
-        let training_mean_objective_loss = self.training_mean_objective_loss(samples)?;
+        let constant_baseline_objective_loss = self.constant_baseline_objective_loss(samples)?;
         let mut target_loss = vec![0.0; self.target_names.len()];
         let mut baseline_loss = vec![0.0; self.target_names.len()];
         let mut support = vec![0_usize; self.target_names.len()];
@@ -1398,7 +1414,7 @@ impl CompleteSetMultiTaskEncoder {
                     let expected = f64::from(sample.targets[target]);
                     target_loss[target] +=
                         self.target_loss(target, raw_predictions[target], expected);
-                    baseline_loss[target] += self.training_mean_loss(target, expected);
+                    baseline_loss[target] += self.constant_baseline_loss(target, expected);
                     support[target] += 1;
                 }
             }
@@ -1411,14 +1427,14 @@ impl CompleteSetMultiTaskEncoder {
                     ));
                 }
                 let loss = target_loss[target] / support[target] as f64;
-                let training_mean_loss = baseline_loss[target] / support[target] as f64;
+                let constant_baseline_loss = baseline_loss[target] / support[target] as f64;
                 Ok(AuxiliaryHeadEvaluation {
                     name: self.target_names[target].clone(),
                     objective: self.target_objectives[target],
                     support: support[target],
                     loss,
-                    training_mean_loss,
-                    relative_improvement: relative_improvement(training_mean_loss, loss),
+                    constant_baseline_loss,
+                    relative_improvement: relative_improvement(constant_baseline_loss, loss),
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1426,9 +1442,9 @@ impl CompleteSetMultiTaskEncoder {
         Ok(MultiTaskSetEvaluation {
             samples: samples.len(),
             objective_loss,
-            training_mean_objective_loss,
+            constant_baseline_objective_loss,
             relative_improvement: relative_improvement(
-                training_mean_objective_loss,
+                constant_baseline_objective_loss,
                 objective_loss,
             ),
             heads,
@@ -2064,7 +2080,7 @@ impl CompleteSetMultiTaskEncoder {
         Ok(loss / count as f64)
     }
 
-    fn training_mean_objective_loss(
+    fn constant_baseline_objective_loss(
         &self,
         samples: &[MultiTaskSetSample],
     ) -> Result<f64, TrainableSetError> {
@@ -2073,7 +2089,7 @@ impl CompleteSetMultiTaskEncoder {
         for sample in samples {
             for target in 0..self.target_names.len() {
                 if sample.target_present[target] {
-                    loss += self.training_mean_loss(target, f64::from(sample.targets[target]));
+                    loss += self.constant_baseline_loss(target, f64::from(sample.targets[target]));
                     count += 1;
                 }
             }
@@ -2103,7 +2119,7 @@ impl CompleteSetMultiTaskEncoder {
                         let expected = f64::from(sample.targets[target]);
                         target_loss[target] +=
                             self.target_loss(target, raw_predictions[target], expected);
-                        baseline_loss[target] += self.training_mean_loss(target, expected);
+                        baseline_loss[target] += self.constant_baseline_loss(target, expected);
                         support[target] += 1;
                     }
                 }
@@ -2116,7 +2132,7 @@ impl CompleteSetMultiTaskEncoder {
             .map(|target| {
                 let training_loss = training_error[target] / training_support[target] as f64;
                 let held_out_loss = held_out_error[target] / held_out_support[target] as f64;
-                let held_out_training_mean_loss =
+                let held_out_constant_baseline_loss =
                     held_out_baseline_error[target] / held_out_support[target] as f64;
                 AuxiliaryHeadMetrics {
                     name: self.target_names[target].clone(),
@@ -2125,9 +2141,9 @@ impl CompleteSetMultiTaskEncoder {
                     held_out_support: held_out_support[target],
                     training_loss,
                     held_out_loss,
-                    held_out_training_mean_loss,
+                    held_out_constant_baseline_loss,
                     relative_held_out_improvement: relative_improvement(
-                        held_out_training_mean_loss,
+                        held_out_constant_baseline_loss,
                         held_out_loss,
                     ),
                 }
@@ -4828,7 +4844,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v10\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v11\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -5418,6 +5434,19 @@ mod tests {
         assert_eq!(report.target_negative_weights[1], 1.0);
         assert!(report.training_objective_loss.is_finite());
         assert!(report.held_out_objective_loss.is_finite());
+        assert!(report.held_out_constant_baseline_objective_loss.is_finite());
+        assert!((model.constant_baseline_prediction(0) - 0.5).abs() < 1.0e-12);
+        let zero_logit_loss = training
+            .iter()
+            .map(|sample| model.target_loss(0, 0.0, f64::from(sample.targets[0])))
+            .sum::<f64>()
+            / training.len() as f64;
+        let constant_baseline_loss = training
+            .iter()
+            .map(|sample| model.constant_baseline_loss(0, f64::from(sample.targets[0])))
+            .sum::<f64>()
+            / training.len() as f64;
+        assert!((zero_logit_loss - constant_baseline_loss).abs() < 1.0e-12);
         let probability = model.predict(&held_out[0]).unwrap()[0];
         assert!((0.0..=1.0).contains(&probability));
 
