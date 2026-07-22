@@ -29,8 +29,8 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V9: &str =
-    "dusklight-multitask-set-encoder-report/v9";
+pub const MULTITASK_SET_ENCODER_REPORT_SCHEMA_V10: &str =
+    "dusklight-multitask-set-encoder-report/v10";
 pub const SHUFFLED_AUXILIARY_CONTROL_SCHEMA_V1: &str = "dusklight-shuffled-auxiliary-control/v1";
 const MAX_TARGETS: usize = 64;
 const MAX_SAMPLES: usize = 100_000;
@@ -42,7 +42,13 @@ const LEARNED_ATTENTION_HEADS: usize = 4;
 pub const DEFAULT_HISTORY_RECURRENT_WIDTH: usize = 16;
 const MAX_HISTORY_RECURRENT_WIDTH: usize = 256;
 const HISTORY_RESERVOIR_SEED: u64 = 0x4e41_5449_5645_4801;
-type TargetNormalization = (Vec<f64>, Vec<f64>, Vec<usize>);
+struct TargetNormalization {
+    mean: Vec<f64>,
+    inverse_stddev: Vec<f64>,
+    positive_weight: Vec<f64>,
+    negative_weight: Vec<f64>,
+    support: Vec<usize>,
+}
 
 #[derive(Clone, Debug)]
 pub struct MultiTaskSetSample {
@@ -66,6 +72,13 @@ pub struct MultiTaskHistoryStep {
 pub enum AuxiliaryHeadConditioning {
     PreStateAndAction,
     PreAndPostState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuxiliaryHeadObjective {
+    NormalizedRegression,
+    ClassBalancedBernoulli,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -847,28 +860,30 @@ pub enum MultiTaskEncoderDecision {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AuxiliaryHeadMetrics {
     pub name: String,
+    pub objective: AuxiliaryHeadObjective,
     pub training_support: usize,
     pub held_out_support: usize,
-    pub training_mse: f64,
-    pub held_out_mse: f64,
-    pub held_out_training_mean_mse: f64,
+    pub training_loss: f64,
+    pub held_out_loss: f64,
+    pub held_out_training_mean_loss: f64,
     pub relative_held_out_improvement: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct AuxiliaryHeadEvaluation {
     pub name: String,
+    pub objective: AuxiliaryHeadObjective,
     pub support: usize,
-    pub mse: f64,
-    pub training_mean_mse: f64,
+    pub loss: f64,
+    pub training_mean_loss: f64,
     pub relative_improvement: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MultiTaskSetEvaluation {
     pub samples: usize,
-    pub normalized_mse: f64,
-    pub training_mean_normalized_mse: f64,
+    pub objective_loss: f64,
+    pub training_mean_objective_loss: f64,
     pub relative_improvement: f64,
     pub heads: Vec<AuxiliaryHeadEvaluation>,
     pub rare_events: Vec<RareEventMetrics>,
@@ -920,15 +935,18 @@ pub struct MultiTaskSetEncoderReport {
     pub temporal: MultiTaskTemporalConfig,
     pub target_names: Vec<String>,
     pub target_conditioning: Vec<AuxiliaryHeadConditioning>,
+    pub target_objectives: Vec<AuxiliaryHeadObjective>,
+    pub target_positive_weights: Vec<f64>,
+    pub target_negative_weights: Vec<f64>,
     pub target_support_training: Vec<usize>,
     pub target_support_held_out: Vec<usize>,
     pub maximum_training_nodes: usize,
     pub maximum_held_out_nodes: usize,
     pub parameter_count: usize,
     pub optimizer_steps: u64,
-    pub training_normalized_mse: f64,
-    pub held_out_normalized_mse: f64,
-    pub held_out_training_mean_normalized_mse: f64,
+    pub training_objective_loss: f64,
+    pub held_out_objective_loss: f64,
+    pub held_out_training_mean_objective_loss: f64,
     pub relative_held_out_improvement: f64,
     pub heads: Vec<AuxiliaryHeadMetrics>,
     pub held_out_rare_events: Vec<RareEventMetrics>,
@@ -948,8 +966,11 @@ pub struct CompleteSetMultiTaskEncoder {
     temporal: MultiTaskTemporalConfig,
     target_names: Vec<String>,
     target_conditioning: Vec<AuxiliaryHeadConditioning>,
+    target_objectives: Vec<AuxiliaryHeadObjective>,
     target_mean: Vec<f64>,
     target_inverse_stddev: Vec<f64>,
+    target_positive_weight: Vec<f64>,
+    target_negative_weight: Vec<f64>,
     node_weights: Vec<f64>,
     node_bias: Vec<f64>,
     attention_queries: Vec<f64>,
@@ -1064,8 +1085,9 @@ impl CompleteSetMultiTaskEncoder {
         )?;
         let layout = FeatureLayout::fit(training.iter().flat_map(sample_model_states), dimensions)?;
         let target_conditioning = target_conditioning_for_names(&target_names);
-        let (target_mean, target_inverse_stddev, target_support_training) =
-            target_normalization(training, target_names.len())?;
+        let target_objectives = target_objectives_for_names(&target_names);
+        let normalization = target_normalization(training, &target_objectives)?;
+        let target_support_training = normalization.support.clone();
         let target_support_held_out = target_support(held_out, target_names.len());
         if target_support_held_out.contains(&0) {
             return Err(TrainableSetError::new(
@@ -1078,8 +1100,11 @@ impl CompleteSetMultiTaskEncoder {
             config,
             target_names.clone(),
             target_conditioning.clone(),
-            target_mean,
-            target_inverse_stddev,
+            target_objectives.clone(),
+            normalization.mean,
+            normalization.inverse_stddev,
+            normalization.positive_weight.clone(),
+            normalization.negative_weight.clone(),
             pooling,
             temporal,
         )?;
@@ -1092,12 +1117,12 @@ impl CompleteSetMultiTaskEncoder {
             }
         }
         let model_sha256 = model.model_sha256()?;
-        let training_normalized_mse = model.normalized_mse(training)?;
-        let held_out_normalized_mse = model.normalized_mse(held_out)?;
-        let held_out_training_mean_normalized_mse = model.training_mean_normalized_mse(held_out)?;
+        let training_objective_loss = model.objective_loss(training)?;
+        let held_out_objective_loss = model.objective_loss(held_out)?;
+        let held_out_training_mean_objective_loss = model.training_mean_objective_loss(held_out)?;
         let relative_held_out_improvement = relative_improvement(
-            held_out_training_mean_normalized_mse,
-            held_out_normalized_mse,
+            held_out_training_mean_objective_loss,
+            held_out_objective_loss,
         );
         let heads = model.head_metrics(training, held_out)?;
         let decision = if relative_held_out_improvement >= config.minimum_relative_improvement {
@@ -1108,7 +1133,7 @@ impl CompleteSetMultiTaskEncoder {
         let held_out_rare_events = model.rare_event_metrics(held_out)?;
         let held_out_attention = model.attention_diagnostics(held_out)?;
         let mut report = MultiTaskSetEncoderReport {
-            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V9,
+            schema: MULTITASK_SET_ENCODER_REPORT_SCHEMA_V10,
             actor_feature_schema_sha256,
             training_dataset_sha256,
             held_out_dataset_sha256,
@@ -1117,6 +1142,9 @@ impl CompleteSetMultiTaskEncoder {
             temporal,
             target_names,
             target_conditioning,
+            target_objectives,
+            target_positive_weights: normalization.positive_weight,
+            target_negative_weights: normalization.negative_weight,
             target_support_training,
             target_support_held_out,
             maximum_training_nodes: training
@@ -1133,9 +1161,9 @@ impl CompleteSetMultiTaskEncoder {
                 .unwrap_or(0),
             parameter_count: model.parameter_count(),
             optimizer_steps: model.optimizer_steps,
-            training_normalized_mse,
-            held_out_normalized_mse,
-            held_out_training_mean_normalized_mse,
+            training_objective_loss,
+            held_out_objective_loss,
+            held_out_training_mean_objective_loss,
             relative_held_out_improvement,
             heads,
             held_out_rare_events,
@@ -1156,8 +1184,11 @@ impl CompleteSetMultiTaskEncoder {
         config: TrainableSetConfig,
         target_names: Vec<String>,
         target_conditioning: Vec<AuxiliaryHeadConditioning>,
+        target_objectives: Vec<AuxiliaryHeadObjective>,
         target_mean: Vec<f64>,
         target_inverse_stddev: Vec<f64>,
+        target_positive_weight: Vec<f64>,
+        target_negative_weight: Vec<f64>,
         pooling: MultiTaskSetPooling,
         temporal: MultiTaskTemporalConfig,
     ) -> Result<Self, TrainableSetError> {
@@ -1167,7 +1198,13 @@ impl CompleteSetMultiTaskEncoder {
         let attention_heads = pooling.attention_heads(target_width);
         let state_input_width =
             layout.base_input_width + 2 + config.node_hidden_width * (2 + global_attention_heads);
-        if target_conditioning.len() != target_width {
+        if target_conditioning.len() != target_width
+            || target_objectives.len() != target_width
+            || target_mean.len() != target_width
+            || target_inverse_stddev.len() != target_width
+            || target_positive_weight.len() != target_width
+            || target_negative_weight.len() != target_width
+        {
             return Err(TrainableSetError::new(
                 "multitask target conditioning width is invalid",
             ));
@@ -1235,8 +1272,11 @@ impl CompleteSetMultiTaskEncoder {
             config,
             target_names,
             target_conditioning,
+            target_objectives,
             target_mean,
             target_inverse_stddev,
+            target_positive_weight,
+            target_negative_weight,
             optimizer_steps: 0,
         };
         debug_assert_eq!(model.parameter_count(), parameter_count);
@@ -1260,14 +1300,55 @@ impl CompleteSetMultiTaskEncoder {
             .predictions
             .iter()
             .enumerate()
-            .map(|(target, prediction)| {
-                (prediction / self.target_inverse_stddev[target] + self.target_mean[target]) as f32
-            })
+            .map(|(target, prediction)| self.prediction_value(target, *prediction) as f32)
             .collect())
     }
 
+    fn prediction_value(&self, target: usize, raw_prediction: f64) -> f64 {
+        match self.target_objectives[target] {
+            AuxiliaryHeadObjective::NormalizedRegression => {
+                raw_prediction / self.target_inverse_stddev[target] + self.target_mean[target]
+            }
+            AuxiliaryHeadObjective::ClassBalancedBernoulli => logistic(raw_prediction),
+        }
+    }
+
+    fn target_loss(&self, target: usize, raw_prediction: f64, expected: f64) -> f64 {
+        match self.target_objectives[target] {
+            AuxiliaryHeadObjective::NormalizedRegression => {
+                let normalized =
+                    (expected - self.target_mean[target]) * self.target_inverse_stddev[target];
+                (raw_prediction - normalized).powi(2)
+            }
+            AuxiliaryHeadObjective::ClassBalancedBernoulli => {
+                self.binary_weight(target, expected)
+                    * binary_cross_entropy_from_logit(raw_prediction, expected)
+            }
+        }
+    }
+
+    fn training_mean_loss(&self, target: usize, expected: f64) -> f64 {
+        match self.target_objectives[target] {
+            AuxiliaryHeadObjective::NormalizedRegression => {
+                ((expected - self.target_mean[target]) * self.target_inverse_stddev[target]).powi(2)
+            }
+            AuxiliaryHeadObjective::ClassBalancedBernoulli => {
+                self.binary_weight(target, expected)
+                    * binary_cross_entropy_from_probability(self.target_mean[target], expected)
+            }
+        }
+    }
+
+    fn binary_weight(&self, target: usize, expected: f64) -> f64 {
+        if expected > 0.5 {
+            self.target_positive_weight[target]
+        } else {
+            self.target_negative_weight[target]
+        }
+    }
+
     pub fn model_sha256(&self) -> Result<Digest, TrainableSetError> {
-        canonical_digest(b"dusklight.complete-set-multitask-encoder/v7\0", self)
+        canonical_digest(b"dusklight.complete-set-multitask-encoder/v8\0", self)
     }
 
     fn attention_head_count(&self) -> usize {
@@ -1304,19 +1385,20 @@ impl CompleteSetMultiTaskEncoder {
                 "multitask evaluation requires samples",
             ));
         }
-        let normalized_mse = self.normalized_mse(samples)?;
-        let training_mean_normalized_mse = self.training_mean_normalized_mse(samples)?;
-        let mut squared_error = vec![0.0; self.target_names.len()];
-        let mut baseline_error = vec![0.0; self.target_names.len()];
+        let objective_loss = self.objective_loss(samples)?;
+        let training_mean_objective_loss = self.training_mean_objective_loss(samples)?;
+        let mut target_loss = vec![0.0; self.target_names.len()];
+        let mut baseline_loss = vec![0.0; self.target_names.len()];
         let mut support = vec![0_usize; self.target_names.len()];
         for sample in samples {
-            let predictions = self.predict(sample)?;
+            self.validate_transition(sample)?;
+            let raw_predictions = self.conditioned_forward(sample)?.predictions;
             for target in 0..self.target_names.len() {
                 if sample.target_present[target] {
-                    let prediction = f64::from(predictions[target]);
                     let expected = f64::from(sample.targets[target]);
-                    squared_error[target] += (prediction - expected).powi(2);
-                    baseline_error[target] += (self.target_mean[target] - expected).powi(2);
+                    target_loss[target] +=
+                        self.target_loss(target, raw_predictions[target], expected);
+                    baseline_loss[target] += self.training_mean_loss(target, expected);
                     support[target] += 1;
                 }
             }
@@ -1328,25 +1410,26 @@ impl CompleteSetMultiTaskEncoder {
                         "multitask evaluation target has no support",
                     ));
                 }
-                let mse = squared_error[target] / support[target] as f64;
-                let training_mean_mse = baseline_error[target] / support[target] as f64;
+                let loss = target_loss[target] / support[target] as f64;
+                let training_mean_loss = baseline_loss[target] / support[target] as f64;
                 Ok(AuxiliaryHeadEvaluation {
                     name: self.target_names[target].clone(),
+                    objective: self.target_objectives[target],
                     support: support[target],
-                    mse,
-                    training_mean_mse,
-                    relative_improvement: relative_improvement(training_mean_mse, mse),
+                    loss,
+                    training_mean_loss,
+                    relative_improvement: relative_improvement(training_mean_loss, loss),
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let rare_events = self.rare_event_metrics(samples)?;
         Ok(MultiTaskSetEvaluation {
             samples: samples.len(),
-            normalized_mse,
-            training_mean_normalized_mse,
+            objective_loss,
+            training_mean_objective_loss,
             relative_improvement: relative_improvement(
-                training_mean_normalized_mse,
-                normalized_mse,
+                training_mean_objective_loss,
+                objective_loss,
             ),
             heads,
             rare_events,
@@ -1718,12 +1801,19 @@ impl CompleteSetMultiTaskEncoder {
             if !sample.target_present[target] {
                 continue;
             }
-            let expected = (f64::from(sample.targets[target]) - self.target_mean[target])
-                * self.target_inverse_stddev[target];
-            *d_output = clip(
-                2.0 * (forward.predictions[target] - expected) / present_count as f64,
-                self.config.gradient_clip,
-            );
+            let expected = f64::from(sample.targets[target]);
+            let gradient = match self.target_objectives[target] {
+                AuxiliaryHeadObjective::NormalizedRegression => {
+                    let normalized =
+                        (expected - self.target_mean[target]) * self.target_inverse_stddev[target];
+                    2.0 * (forward.predictions[target] - normalized)
+                }
+                AuxiliaryHeadObjective::ClassBalancedBernoulli => {
+                    self.binary_weight(target, expected)
+                        * (logistic(forward.predictions[target]) - expected)
+                }
+            };
+            *d_output = clip(gradient / present_count as f64, self.config.gradient_clip);
             for input in 0..head_input_width {
                 let parameter = target * head_input_width + input;
                 let gradient = *d_output * forward.head_inputs[target][input]
@@ -1958,36 +2048,32 @@ impl CompleteSetMultiTaskEncoder {
         }
     }
 
-    fn normalized_mse(&self, samples: &[MultiTaskSetSample]) -> Result<f64, TrainableSetError> {
-        let mut squared_error = 0.0;
+    fn objective_loss(&self, samples: &[MultiTaskSetSample]) -> Result<f64, TrainableSetError> {
+        let mut loss = 0.0;
         let mut count = 0_usize;
         for sample in samples {
             self.validate_transition(sample)?;
             let prediction = self.conditioned_forward(sample)?.predictions;
             for (target, predicted) in prediction.iter().enumerate() {
                 if sample.target_present[target] {
-                    let expected = (f64::from(sample.targets[target]) - self.target_mean[target])
-                        * self.target_inverse_stddev[target];
-                    squared_error += (*predicted - expected).powi(2);
+                    loss += self.target_loss(target, *predicted, f64::from(sample.targets[target]));
                     count += 1;
                 }
             }
         }
-        Ok(squared_error / count as f64)
+        Ok(loss / count as f64)
     }
 
-    fn training_mean_normalized_mse(
+    fn training_mean_objective_loss(
         &self,
         samples: &[MultiTaskSetSample],
     ) -> Result<f64, TrainableSetError> {
-        let mut squared_error = 0.0;
+        let mut loss = 0.0;
         let mut count = 0_usize;
         for sample in samples {
             for target in 0..self.target_names.len() {
                 if sample.target_present[target] {
-                    let expected = (f64::from(sample.targets[target]) - self.target_mean[target])
-                        * self.target_inverse_stddev[target];
-                    squared_error += expected.powi(2);
+                    loss += self.training_mean_loss(target, f64::from(sample.targets[target]));
                     count += 1;
                 }
             }
@@ -1997,7 +2083,7 @@ impl CompleteSetMultiTaskEncoder {
                 "multitask baseline has no supported targets",
             ));
         }
-        Ok(squared_error / count as f64)
+        Ok(loss / count as f64)
     }
 
     fn head_metrics(
@@ -2006,41 +2092,43 @@ impl CompleteSetMultiTaskEncoder {
         held_out: &[MultiTaskSetSample],
     ) -> Result<Vec<AuxiliaryHeadMetrics>, TrainableSetError> {
         let collect = |samples: &[MultiTaskSetSample]| {
-            let mut squared_error = vec![0.0; self.target_names.len()];
-            let mut baseline_error = vec![0.0; self.target_names.len()];
+            let mut target_loss = vec![0.0; self.target_names.len()];
+            let mut baseline_loss = vec![0.0; self.target_names.len()];
             let mut support = vec![0_usize; self.target_names.len()];
             for sample in samples {
-                let predictions = self.predict(sample)?;
+                self.validate_transition(sample)?;
+                let raw_predictions = self.conditioned_forward(sample)?.predictions;
                 for target in 0..self.target_names.len() {
                     if sample.target_present[target] {
                         let expected = f64::from(sample.targets[target]);
-                        squared_error[target] +=
-                            (f64::from(predictions[target]) - expected).powi(2);
-                        baseline_error[target] += (self.target_mean[target] - expected).powi(2);
+                        target_loss[target] +=
+                            self.target_loss(target, raw_predictions[target], expected);
+                        baseline_loss[target] += self.training_mean_loss(target, expected);
                         support[target] += 1;
                     }
                 }
             }
-            Ok::<_, TrainableSetError>((support, squared_error, baseline_error))
+            Ok::<_, TrainableSetError>((support, target_loss, baseline_loss))
         };
         let (training_support, training_error, _) = collect(training)?;
         let (held_out_support, held_out_error, held_out_baseline_error) = collect(held_out)?;
         Ok((0..self.target_names.len())
             .map(|target| {
-                let training_mse = training_error[target] / training_support[target] as f64;
-                let held_out_mse = held_out_error[target] / held_out_support[target] as f64;
-                let held_out_training_mean_mse =
+                let training_loss = training_error[target] / training_support[target] as f64;
+                let held_out_loss = held_out_error[target] / held_out_support[target] as f64;
+                let held_out_training_mean_loss =
                     held_out_baseline_error[target] / held_out_support[target] as f64;
                 AuxiliaryHeadMetrics {
                     name: self.target_names[target].clone(),
+                    objective: self.target_objectives[target],
                     training_support: training_support[target],
                     held_out_support: held_out_support[target],
-                    training_mse,
-                    held_out_mse,
-                    held_out_training_mean_mse,
+                    training_loss,
+                    held_out_loss,
+                    held_out_training_mean_loss,
                     relative_held_out_improvement: relative_improvement(
-                        held_out_training_mean_mse,
-                        held_out_mse,
+                        held_out_training_mean_loss,
+                        held_out_loss,
                     ),
                 }
             })
@@ -2155,7 +2243,7 @@ fn rare_event_target(name: &str) -> bool {
         "contact_changed"
             | "procedure_changed"
             | "mode_flags_changed"
-            | "actor_disappearance_count"
+            | "actor_disappearance_occurred"
     )
 }
 
@@ -3547,6 +3635,7 @@ fn native_target_names() -> Vec<String> {
         "contact_changed",
         "procedure_changed",
         "mode_flags_changed",
+        "actor_disappearance_occurred",
         "actor_disappearance_count",
         "inverse_stick_x",
         "inverse_stick_y",
@@ -3558,9 +3647,29 @@ fn native_target_names() -> Vec<String> {
 }
 
 fn native_target_conditioning() -> Vec<AuxiliaryHeadConditioning> {
-    let mut conditioning = vec![AuxiliaryHeadConditioning::PreStateAndAction; 11];
+    let mut conditioning = vec![AuxiliaryHeadConditioning::PreStateAndAction; 12];
     conditioning.extend([AuxiliaryHeadConditioning::PreAndPostState; 3]);
     conditioning
+}
+
+fn target_objectives_for_names(names: &[String]) -> Vec<AuxiliaryHeadObjective> {
+    names
+        .iter()
+        .map(|name| {
+            if matches!(
+                name.as_str(),
+                "contact_changed"
+                    | "procedure_changed"
+                    | "mode_flags_changed"
+                    | "actor_disappearance_occurred"
+                    | "inverse_button_0x0100"
+            ) {
+                AuxiliaryHeadObjective::ClassBalancedBernoulli
+            } else {
+                AuxiliaryHeadObjective::NormalizedRegression
+            }
+        })
+        .collect()
 }
 
 fn target_conditioning_for_names(names: &[String]) -> Vec<AuxiliaryHeadConditioning> {
@@ -3927,8 +4036,8 @@ fn append_recurrent_episode_history_features(
 }
 
 fn native_targets(example: &NativeAuxiliaryExample) -> (Vec<f32>, Vec<bool>) {
-    let mut targets = vec![0.0; 14];
-    let mut present = vec![false; 14];
+    let mut targets = vec![0.0; 15];
+    let mut present = vec![false; 15];
     if let Some(dynamics) = &example.targets.player_dynamics {
         targets[..3].copy_from_slice(&dynamics.position_delta);
         targets[3..6].copy_from_slice(&dynamics.velocity_delta);
@@ -3945,13 +4054,15 @@ fn native_targets(example: &NativeAuxiliaryExample) -> (Vec<f32>, Vec<bool>) {
         present[8..10].fill(true);
     }
     if let Some(lifecycle) = &example.targets.actor_lifecycle {
-        targets[10] = lifecycle.disappeared_runtime_generations.len() as f32;
-        present[10] = true;
+        let count = lifecycle.disappeared_runtime_generations.len();
+        targets[10] = f32::from(count != 0);
+        targets[11] = count as f32;
+        present[10..12].fill(true);
     }
-    targets[11] = f32::from(example.targets.inverse_action.stick_x);
-    targets[12] = f32::from(example.targets.inverse_action.stick_y);
-    targets[13] = f32::from(example.targets.inverse_action.buttons & 0x0100 != 0);
-    present[11..].fill(true);
+    targets[12] = f32::from(example.targets.inverse_action.stick_x);
+    targets[13] = f32::from(example.targets.inverse_action.stick_y);
+    targets[14] = f32::from(example.targets.inverse_action.buttons & 0x0100 != 0);
+    present[12..].fill(true);
     (targets, present)
 }
 
@@ -4440,7 +4551,7 @@ fn append_core_temporal_features(
 
 fn sample_manifest_digest(samples: &[MultiTaskSetSample]) -> Result<Digest, TrainableSetError> {
     canonical_digest(
-        b"dusklight.native-multitask-sample-dataset/v4\0",
+        b"dusklight.native-multitask-sample-dataset/v5\0",
         &samples
             .iter()
             .map(|sample| {
@@ -4531,6 +4642,7 @@ fn validate_samples(
         binary: first_node.map_or(0, |node| node.binary.len()),
         base: training[0].input.base.len(),
     };
+    let target_objectives = target_objectives_for_names(target_names);
     let mut identities = BTreeSet::new();
     let mut history_steps = 0_usize;
     for sample in training.iter().chain(held_out) {
@@ -4550,6 +4662,12 @@ fn validate_samples(
                 .iter()
                 .zip(&sample.target_present)
                 .any(|(target, present)| !target.is_finite() || (!present && *target != 0.0))
+            || sample.targets.iter().enumerate().any(|(target, value)| {
+                sample.target_present[target]
+                    && target_objectives[target] == AuxiliaryHeadObjective::ClassBalancedBernoulli
+                    && *value != 0.0
+                    && *value != 1.0
+            })
         {
             return Err(TrainableSetError::new(
                 "multitask sample identity, schema, target, or mask is invalid",
@@ -4611,40 +4729,92 @@ fn target_support(samples: &[MultiTaskSetSample], width: usize) -> Vec<usize> {
 
 fn target_normalization(
     training: &[MultiTaskSetSample],
-    width: usize,
+    objectives: &[AuxiliaryHeadObjective],
 ) -> Result<TargetNormalization, TrainableSetError> {
+    let width = objectives.len();
     let support = target_support(training, width);
-    let mut means = Vec::with_capacity(width);
-    let mut inverse_stddevs = Vec::with_capacity(width);
-    for target in 0..width {
+    let mut mean = Vec::with_capacity(width);
+    let mut inverse_stddev = Vec::with_capacity(width);
+    let mut positive_weight = Vec::with_capacity(width);
+    let mut negative_weight = Vec::with_capacity(width);
+    for (target, objective) in objectives.iter().copied().enumerate() {
         let values = training
             .iter()
             .filter(|sample| sample.target_present[target])
             .map(|sample| f64::from(sample.targets[target]))
             .collect::<Vec<_>>();
-        let mean = values.iter().sum::<f64>() / values.len() as f64;
+        let target_mean = values.iter().sum::<f64>() / values.len() as f64;
         let variance = values
             .iter()
-            .map(|value| (value - mean).powi(2))
+            .map(|value| (value - target_mean).powi(2))
             .sum::<f64>()
             / values.len() as f64;
-        means.push(mean);
-        inverse_stddevs.push(if variance > 1.0e-12 {
-            1.0 / variance.sqrt()
-        } else {
-            1.0
-        });
+        mean.push(target_mean);
+        match objective {
+            AuxiliaryHeadObjective::NormalizedRegression => {
+                inverse_stddev.push(if variance > 1.0e-12 {
+                    1.0 / variance.sqrt()
+                } else {
+                    1.0
+                });
+                positive_weight.push(1.0);
+                negative_weight.push(1.0);
+            }
+            AuxiliaryHeadObjective::ClassBalancedBernoulli => {
+                if values.iter().any(|value| *value != 0.0 && *value != 1.0) {
+                    return Err(TrainableSetError::new(
+                        "Bernoulli auxiliary target is not binary",
+                    ));
+                }
+                let positives = values.iter().filter(|value| **value == 1.0).count();
+                let negatives = values.len() - positives;
+                if positives == 0 || negatives == 0 {
+                    return Err(TrainableSetError::new(
+                        "class-balanced Bernoulli target requires both training classes",
+                    ));
+                }
+                inverse_stddev.push(1.0);
+                positive_weight.push(values.len() as f64 / (2.0 * positives as f64));
+                negative_weight.push(values.len() as f64 / (2.0 * negatives as f64));
+            }
+        }
     }
-    if means
+    if mean
         .iter()
-        .chain(&inverse_stddevs)
+        .chain(&inverse_stddev)
+        .chain(&positive_weight)
+        .chain(&negative_weight)
         .any(|value| !value.is_finite())
     {
         return Err(TrainableSetError::new(
             "multitask target normalization is non-finite",
         ));
     }
-    Ok((means, inverse_stddevs, support))
+    Ok(TargetNormalization {
+        mean,
+        inverse_stddev,
+        positive_weight,
+        negative_weight,
+        support,
+    })
+}
+
+fn logistic(value: f64) -> f64 {
+    if value >= 0.0 {
+        1.0 / (1.0 + (-value).exp())
+    } else {
+        let exponential = value.exp();
+        exponential / (1.0 + exponential)
+    }
+}
+
+fn binary_cross_entropy_from_logit(logit: f64, expected: f64) -> f64 {
+    logit.max(0.0) - logit * expected + (-logit.abs()).exp().ln_1p()
+}
+
+fn binary_cross_entropy_from_probability(probability: f64, expected: f64) -> f64 {
+    let probability = probability.clamp(1.0e-12, 1.0 - 1.0e-12);
+    -expected * probability.ln() - (1.0 - expected) * (1.0 - probability).ln()
 }
 
 fn relative_improvement(baseline: f64, model: f64) -> f64 {
@@ -4658,7 +4828,7 @@ fn relative_improvement(baseline: f64, model: f64) -> f64 {
 fn report_digest(report: &MultiTaskSetEncoderReport) -> Result<Digest, TrainableSetError> {
     let mut canonical = report.clone();
     canonical.report_sha256 = Digest::ZERO;
-    canonical_digest(b"dusklight.multitask-set-encoder-report/v9\0", &canonical)
+    canonical_digest(b"dusklight.multitask-set-encoder-report/v10\0", &canonical)
 }
 
 fn canonical_digest<T: Serialize>(domain: &[u8], value: &T) -> Result<Digest, TrainableSetError> {
@@ -5170,7 +5340,127 @@ mod tests {
     }
 
     #[test]
+    fn bernoulli_loss_is_stable_and_its_gradient_matches_finite_difference() {
+        let logit = 0.37;
+        let expected = 1.0;
+        let weight = 3.25;
+        let epsilon = 1.0e-6;
+        let numeric = weight
+            * (binary_cross_entropy_from_logit(logit + epsilon, expected)
+                - binary_cross_entropy_from_logit(logit - epsilon, expected))
+            / (2.0 * epsilon);
+        let analytic = weight * (logistic(logit) - expected);
+        assert!((numeric - analytic).abs() < 1.0e-9);
+        assert!(binary_cross_entropy_from_logit(1_000.0, 0.0).is_finite());
+        assert!(binary_cross_entropy_from_logit(-1_000.0, 1.0).is_finite());
+    }
+
+    #[test]
+    fn bernoulli_normalization_balances_classes_without_changing_regression() {
+        let mut samples = corpus(1, 4);
+        for (index, sample) in samples.iter_mut().enumerate() {
+            sample.targets = vec![f32::from(index == 0), index as f32];
+            sample.target_present = vec![true, true];
+        }
+        let objectives = vec![
+            AuxiliaryHeadObjective::ClassBalancedBernoulli,
+            AuxiliaryHeadObjective::NormalizedRegression,
+        ];
+        let normalization = target_normalization(&samples, &objectives).unwrap();
+        assert_eq!(normalization.mean, vec![0.25, 1.5]);
+        assert_eq!(normalization.inverse_stddev[0], 1.0);
+        assert_eq!(normalization.positive_weight[0], 2.0);
+        assert!((normalization.negative_weight[0] - 2.0 / 3.0).abs() < 1.0e-12);
+        assert_eq!(normalization.positive_weight[1], 1.0);
+        assert_eq!(normalization.negative_weight[1], 1.0);
+
+        samples[0].targets[0] = 0.25;
+        assert!(target_normalization(&samples, &objectives).is_err());
+    }
+
+    #[test]
+    fn typed_multitask_fit_binds_balanced_binary_heads_and_probabilities() {
+        let mut training = corpus(1, 40);
+        let mut held_out = corpus(101, 20);
+        for (index, sample) in training.iter_mut().enumerate() {
+            sample.targets[0] = f32::from(index % 10 == 0);
+        }
+        for (index, sample) in held_out.iter_mut().enumerate() {
+            sample.targets[0] = f32::from(index % 5 == 0);
+        }
+        let training_digest = sample_manifest_digest(&training).unwrap();
+        let held_out_digest = sample_manifest_digest(&held_out).unwrap();
+        let config = TrainableSetConfig {
+            epochs: 4,
+            node_hidden_width: 4,
+            head_hidden_width: 4,
+            ..TrainableSetConfig::default()
+        };
+        let (report, model) = CompleteSetMultiTaskEncoder::fit(
+            Digest([7; 32]),
+            training_digest,
+            held_out_digest,
+            vec!["contact_changed".into(), "inverse_difference".into()],
+            &training,
+            &held_out,
+            config,
+        )
+        .unwrap();
+        assert_eq!(
+            report.target_objectives,
+            vec![
+                AuxiliaryHeadObjective::ClassBalancedBernoulli,
+                AuxiliaryHeadObjective::NormalizedRegression,
+            ]
+        );
+        assert_eq!(report.target_positive_weights, vec![5.0, 1.0]);
+        assert!((report.target_negative_weights[0] - 5.0 / 9.0).abs() < 1.0e-12);
+        assert_eq!(report.target_negative_weights[1], 1.0);
+        assert!(report.training_objective_loss.is_finite());
+        assert!(report.held_out_objective_loss.is_finite());
+        let probability = model.predict(&held_out[0]).unwrap()[0];
+        assert!((0.0..=1.0).contains(&probability));
+
+        let control = fit_shuffled_auxiliary_control(
+            Digest([7; 32]),
+            vec!["contact_changed".into(), "inverse_difference".into()],
+            training,
+            held_out_digest,
+            &held_out,
+            &held_out,
+            config,
+        )
+        .unwrap();
+        assert_eq!(control.report.target_objectives, report.target_objectives);
+        assert_eq!(
+            control.report.target_positive_weights,
+            report.target_positive_weights
+        );
+    }
+
+    #[test]
     fn feature_family_names_round_trip_and_actor_columns_require_population() {
+        let target_names = native_target_names();
+        assert_eq!(target_names.len(), 15);
+        assert_eq!(
+            target_conditioning_for_names(&target_names),
+            native_target_conditioning()
+        );
+        let objectives = target_objectives_for_names(&target_names);
+        assert_eq!(
+            objectives[target_names
+                .iter()
+                .position(|name| name == "actor_disappearance_occurred")
+                .unwrap()],
+            AuxiliaryHeadObjective::ClassBalancedBernoulli
+        );
+        assert_eq!(
+            objectives[target_names
+                .iter()
+                .position(|name| name == "actor_disappearance_count")
+                .unwrap()],
+            AuxiliaryHeadObjective::NormalizedRegression
+        );
         assert_eq!(
             MultiTaskSetPooling::parse("mean-max"),
             Some(MultiTaskSetPooling::MeanMax)
@@ -5531,13 +5821,22 @@ mod tests {
             Digest([7; 32]),
             layout,
             config,
-            vec!["actor_disappearance_count".into(), "inverse_stick_x".into()],
+            vec![
+                "actor_disappearance_occurred".into(),
+                "inverse_stick_x".into(),
+            ],
             vec![
                 AuxiliaryHeadConditioning::PreStateAndAction,
                 AuxiliaryHeadConditioning::PreAndPostState,
             ],
-            vec![0.0; 2],
+            vec![
+                AuxiliaryHeadObjective::ClassBalancedBernoulli,
+                AuxiliaryHeadObjective::NormalizedRegression,
+            ],
+            vec![0.1, 0.0],
             vec![1.0; 2],
+            vec![2.0, 1.0],
+            vec![0.5, 1.0],
             MultiTaskSetPooling::MeanMax,
             temporal,
         )
