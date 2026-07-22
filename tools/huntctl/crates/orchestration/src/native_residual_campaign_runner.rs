@@ -691,6 +691,7 @@ fn native_attempt(
         checkpoint_bytes: batch.checkpoint_bytes,
         simulated_ticks: candidate.simulated_ticks,
         first_hit_tick: candidate.first_hit_tick,
+        terminal_boundary_fingerprint: candidate.terminal_boundary_fingerprint.clone(),
         behavior_sha256: candidate.behavior_sha256,
     }
 }

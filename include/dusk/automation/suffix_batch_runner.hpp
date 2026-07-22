@@ -127,6 +127,7 @@ private:
         std::optional<std::size_t> firstHitTick;
         std::string stateSequenceDigest;
         std::vector<std::string> stateTickDigests;
+        std::string terminalBoundaryFingerprint;
         std::string predicateEvidence;
         TerminalObservation terminal;
         std::vector<RawPadState> successfulConsumedPads;

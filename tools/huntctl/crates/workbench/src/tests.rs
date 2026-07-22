@@ -7,6 +7,20 @@ use crate::option_execution::{
     OptionCondition, OptionEndReason, OptionExecution, OptionType, TapeRange,
 };
 use crate::tape::{InputFrame, RawPadState};
+use dusklight_harness_contracts::objective_suite::ArtifactReference;
+use dusklight_orchestration::native_residual_campaign::{
+    NativeResidualAttempt, NativeResidualCampaignEvaluation,
+};
+use dusklight_orchestration::optimization_request::OptimizationRequest;
+use dusklight_orchestration::optimization_resume::{
+    OptimizationResumeEvent, append_optimization_resume_event, initialize_optimization_resume,
+};
+use dusklight_orchestration::residual_campaign::ResidualCampaignCandidate;
+use dusklight_search::residual_action::{
+    AnalogChannel, AnalogResidual, ResidualCandidate, TemporalBasis,
+    compile_residual_candidate_to_horizon,
+};
+use dusklight_search::residual_optimizer::ResidualGenome;
 
 #[test]
 fn explicit_stage_boot_supersedes_the_legacy_workbench_stage_argument() {
@@ -64,6 +78,18 @@ fn write_tape(root: &Path, name: &str, values: &[i8]) {
         ..InputTape::default()
     };
     fs::write(root.join(name), tape.encode().unwrap()).unwrap();
+}
+
+fn test_artifact_reference(repository: &Path, path: &Path) -> ArtifactReference {
+    let bytes = fs::read(path).unwrap();
+    ArtifactReference {
+        path: path
+            .strip_prefix(repository)
+            .unwrap()
+            .to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "/"),
+        sha256: crate::artifact::Digest(Sha256::digest(bytes).into()),
+    }
 }
 
 fn timeline() -> Timeline {
@@ -1249,6 +1275,9 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "const stop=segment?{kind:'segment',segment:id}",
         "goalDetail(segment.id",
         "optimizationDetail(segment.id)",
+        "generatedDetail(segment)",
+        "Generated candidate",
+        "Ephemeral campaign evidence",
         "View campaign request",
         "Run optimization",
         "Resume optimization",
@@ -1309,7 +1338,9 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     assert!(html.contains("aria-label=\"Custom boot\""));
     assert!(!html.contains("Move to folder (for example routes/"));
     assert!(html.contains("workspaceNodeSelection.kind==='folder'&&graph.projects.groups.some"));
-    assert!(html.contains("${segmentActions(segment)}</div>${goalDetail"));
+    assert!(
+        html.contains("${segmentActions(segment)}</div>${generatedDetail(segment)}${goalDetail")
+    );
     assert!(!html.contains("${segmentActions(segment)}</section>"));
 }
 
@@ -1976,6 +2007,193 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let boot = graph.origin.as_ref().unwrap();
     assert!(boot.recordable_from_boot);
     assert_eq!(boot.id, "boot");
+}
+
+#[test]
+fn completed_optimization_candidate_projects_as_a_playable_ephemeral_sibling() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../..")
+        .canonicalize()
+        .unwrap();
+    let request_path = repository.join(
+        "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+    );
+    let mut request: OptimizationRequest =
+        serde_json::from_slice(&fs::read(request_path).unwrap()).unwrap();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let campaign_relative = format!(
+        "build/workbench-optimization-projection-{}-{nonce}",
+        std::process::id()
+    );
+    let campaign_root = repository.join(&campaign_relative);
+    request.resume.state_path = format!("{campaign_relative}/state.json");
+    request.resume.journal_path = format!("{campaign_relative}/journal.jsonl");
+    request.refresh_content_sha256().unwrap();
+    request.validate_files(&repository).unwrap();
+
+    let fixture_root = campaign_root.join("fixture");
+    fs::create_dir_all(&fixture_root).unwrap();
+    let executable = fixture_root.join("Dusklight");
+    let game_data = fixture_root.join("game.iso");
+    let world_context = fixture_root.join("world.context.json");
+    fs::write(&executable, b"test executable").unwrap();
+    fs::write(&game_data, b"test game data").unwrap();
+    let game_data_sha256 =
+        crate::artifact::Digest(Sha256::digest(fs::read(&game_data).unwrap()).into());
+    fs::write(
+        &world_context,
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "dusklight-world-context/v1",
+            "game_data_sha256": game_data_sha256,
+            "stages": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let execution = prepare_optimization_execution(
+        &repository,
+        &request,
+        &executable,
+        &game_data,
+        &world_context,
+    )
+    .unwrap();
+    initialize_optimization_resume(&request, &repository).unwrap();
+
+    let incumbent = request.incumbent.as_ref().unwrap();
+    let incumbent_bytes = fs::read(repository.join(&incumbent.tape.path)).unwrap();
+    let incumbent_tape = InputTape::decode(&incumbent_bytes).unwrap().tape;
+    let intervention_frame = incumbent_tape
+        .frames
+        .iter()
+        .position(|frame| frame.owned_ports & 1 != 0)
+        .unwrap();
+    let delta = if incumbent_tape.frames[intervention_frame].pads[0].stick_x <= 0 {
+        64
+    } else {
+        -64
+    };
+    let residual = ResidualCandidate::seal(
+        &incumbent_bytes,
+        vec![AnalogResidual {
+            port: 0,
+            channel: AnalogChannel::MainX,
+            basis: TemporalBasis::ExactFrame {
+                frame: intervention_frame as u64,
+                delta,
+            },
+        }],
+        Vec::new(),
+    )
+    .unwrap();
+    let compiled = compile_residual_candidate_to_horizon(
+        &incumbent_tape,
+        &incumbent_bytes,
+        &residual,
+        request.budgets.exploration_horizon_ticks,
+    )
+    .unwrap();
+    let candidate = ResidualCampaignCandidate::seal(
+        "g000007-s00000-projected".into(),
+        7,
+        0,
+        request.execution.deterministic_seeds[0],
+        ResidualGenome { genes: Vec::new() },
+        residual,
+        &compiled,
+    )
+    .unwrap();
+    let candidate_root = campaign_root.join("candidates");
+    fs::create_dir_all(&candidate_root).unwrap();
+    let candidate_path = candidate_root.join(format!("{}.json", candidate.id));
+    let tape_path = candidate_root.join(format!("{}.tape", candidate.id));
+    fs::write(&candidate_path, candidate.to_pretty_json().unwrap()).unwrap();
+    fs::write(&tape_path, &compiled.bytes).unwrap();
+    let candidate_reference = test_artifact_reference(&repository, &candidate_path);
+    let tape_reference = test_artifact_reference(&repository, &tape_path);
+    append_optimization_resume_event(
+        &request,
+        &repository,
+        OptimizationResumeEvent::CandidateSealed {
+            candidate_id: candidate.id.clone(),
+            candidate: candidate_reference.clone(),
+            compiled_tape: tape_reference,
+            parent_tape_sha256: Some(incumbent.tape.sha256),
+            generation: candidate.generation,
+            proposer_seed: candidate.proposer_seed,
+        },
+    )
+    .unwrap();
+
+    let evidence_root = campaign_root.join("evaluations").join(&candidate.id);
+    fs::create_dir_all(&evidence_root).unwrap();
+    let batch_request_path = evidence_root.join("batch-request.json");
+    let batch_result_path = evidence_root.join("batch-result.json");
+    let episode_path = evidence_root.join("episode.bin");
+    fs::write(&batch_request_path, b"request").unwrap();
+    fs::write(&batch_result_path, b"result").unwrap();
+    fs::write(&episode_path, b"episode").unwrap();
+    let terminal_boundary = "b".repeat(32);
+    let evaluation = NativeResidualCampaignEvaluation::seal(
+        &request,
+        &execution,
+        &candidate,
+        vec![NativeResidualAttempt {
+            repetition: 1,
+            worker_seed: request.execution.deterministic_seeds[0],
+            wire_candidate_id: "candidate-000001".into(),
+            batch_request: test_artifact_reference(&repository, &batch_request_path),
+            batch_result: test_artifact_reference(&repository, &batch_result_path),
+            episode_shard: test_artifact_reference(&repository, &episode_path),
+            restore_identity: "a".repeat(32),
+            checkpoint_bytes: 64,
+            simulated_ticks: 100,
+            first_hit_tick: Some(100),
+            terminal_boundary_fingerprint: terminal_boundary.clone(),
+            behavior_sha256: crate::artifact::Digest([7; 32]),
+        }],
+    )
+    .unwrap();
+    let evaluation_path = evidence_root.join("evaluation.json");
+    fs::write(&evaluation_path, evaluation.to_pretty_json().unwrap()).unwrap();
+    let evaluation_reference = test_artifact_reference(&repository, &evaluation_path);
+    append_optimization_resume_event(
+        &request,
+        &repository,
+        OptimizationResumeEvent::EvaluationCompleted {
+            candidate_id: candidate.id.clone(),
+            candidate_sha256: candidate_reference.sha256,
+            result: evaluation_reference,
+            simulated_ticks: evaluation.simulated_ticks,
+        },
+    )
+    .unwrap();
+
+    let timeline_path = checked_intro_timeline(&repository);
+    let projections = project_request_candidates(&repository, &timeline_path, &request);
+    assert_eq!(projections.len(), 1);
+    let projection = &projections[0];
+    assert_eq!(
+        projection.segment.parent.as_deref(),
+        Some("tolink_link_control")
+    );
+    assert_eq!(projection.segment.boundary_fingerprint, terminal_boundary);
+    assert_eq!(projection.segment.predicate_proof, "verified");
+    assert_eq!(projection.segment.first_hit_tick, Some(100));
+    assert_eq!(projection.segment.frame_count, Some(160));
+    assert_eq!(projection.full_tape.frames.len(), 600);
+    let generated = projection.segment.generated.as_ref().unwrap();
+    assert_eq!(generated.kind, "optimization_candidate");
+    assert_eq!(generated.status, "success");
+    assert_eq!(generated.generation, 7);
+    assert_eq!(generated.proof_attempts, 1);
+
+    fs::remove_file(&tape_path).unwrap();
+    assert!(project_request_candidates(&repository, &timeline_path, &request).is_empty());
+    fs::remove_dir_all(campaign_root).unwrap();
 }
 
 #[test]

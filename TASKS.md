@@ -47,6 +47,11 @@ Working foundations:
   location, and retention policy. The first Ordon q125 CEM request validates
   against the checked-in route and uses 160 ticks for exploration while keeping
   promotion strictly sub-125.
+- Completed native campaign evaluations now retain the exact terminal engine
+  boundary and project a bounded set of authenticated successes and recent
+  misses as ephemeral Workbench siblings. Those candidates use ordinary
+  playback and thumbnail capture, and disappear on refresh when their campaign
+  artifacts are removed.
 - Optimization resume state now has a synced append-only hash-chain journal for
   sealed candidates, completed evaluations, and optimizer checkpoints. It
   recovers a torn final record, rejects complete-record tampering and duplicate
@@ -366,10 +371,10 @@ continuous optimizer, and appropriate negative controls remove the advantage.
 - [x] Show campaign state: queued/running/completed candidates, generations,
       simulated ticks, successes, current best, proposal sources, workers, and
       explicit blockers.
-- [ ] Project generated candidates as ordinary ephemeral sibling segments while
+- [x] Project generated candidates as ordinary ephemeral sibling segments while
       the campaign runs. Refreshing must add completed candidates and remove
       deleted campaign artifacts.
-- [ ] Let any candidate play through the normal playback path and acquire a
+- [x] Let any candidate play through the normal playback path and acquire a
       thumbnail without a separate search workflow.
 - [ ] Make promotion an explicit Git-owned operation that stores the compact tape,
       exact proof, parent boundary, and lineage. Generated failures and discarded

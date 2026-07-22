@@ -242,8 +242,11 @@ fn validate_batch_result<'a>(
     let feature_schema_sha256 = reinference.feature_schema_sha256.to_string();
     let action_schema_sha256 = reinference.action_schema_sha256.to_string();
     let objective_sha256 = reinference.objective_sha256.to_string();
-    if string_field(batch, "schema")? != "dusklight-suffix-batch-result/v5"
-        || string_field(batch, "status")? != "passed"
+    let schema = string_field(batch, "schema")?;
+    if !matches!(
+        schema.as_str(),
+        "dusklight-suffix-batch-result/v5" | "dusklight-suffix-batch-result/v6"
+    ) || string_field(batch, "status")? != "passed"
         || u64_field(batch, "source_frame")? != shard.source_frame
         || string_field(batch, "restore_identity")? != reinference.checkpoint_identity
         || batch
@@ -284,7 +287,7 @@ fn validate_batch_result<'a>(
             != Some(objective_sha256.as_str())
     {
         return Err(error(
-            "native frozen policy batch result is not a passed identity-complete v5 run",
+            "native frozen policy batch result is not a passed identity-complete v5/v6 run",
         ));
     }
     let candidates = batch
@@ -297,8 +300,19 @@ fn validate_batch_result<'a>(
     let candidate = matching
         .next()
         .ok_or_else(|| error("native batch result lacks the requested episode"))?;
+    let terminal_boundary_valid = schema != "dusklight-suffix-batch-result/v6"
+        || candidate
+            .get("terminal_boundary_fingerprint")
+            .and_then(Value::as_str)
+            .is_some_and(|value| {
+                value.len() == 32
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            });
     if matching.next().is_some()
         || u64_field(candidate, "ticks_executed")? != reinference.transition_count as u64
+        || !terminal_boundary_valid
     {
         return Err(error(
             "native batch candidate identity or transition count differs",
@@ -665,6 +679,35 @@ mod tests {
             .to_string()
             .contains("identity-complete")
         );
+    }
+
+    #[test]
+    fn v6_cold_replay_requires_the_exact_terminal_boundary_field() {
+        let mut fixture = fixture();
+        let mut batch: Value = serde_json::from_slice(&fixture.batch).unwrap();
+        batch["schema"] = Value::String("dusklight-suffix-batch-result/v6".into());
+        fixture.batch = serde_json::to_vec(&batch).unwrap();
+        assert!(
+            verify(
+                &fixture,
+                &fixture.realized,
+                &fixture.realized_bytes,
+                &fixture.trace,
+                &fixture.predicate,
+            )
+            .is_err()
+        );
+
+        batch["candidates"][0]["terminal_boundary_fingerprint"] = Value::String("a".repeat(32));
+        fixture.batch = serde_json::to_vec(&batch).unwrap();
+        verify(
+            &fixture,
+            &fixture.realized,
+            &fixture.realized_bytes,
+            &fixture.trace,
+            &fixture.predicate,
+        )
+        .unwrap();
     }
 
     #[test]

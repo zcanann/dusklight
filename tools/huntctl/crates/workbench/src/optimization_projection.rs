@@ -2,13 +2,25 @@
 
 use super::*;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
-use dusklight_orchestration::native_residual_campaign::NativeResidualExecutionBinding;
+use dusklight_orchestration::native_residual_campaign::{
+    NativeResidualCampaignEvaluation, NativeResidualExecutionBinding,
+};
 use dusklight_orchestration::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
 use dusklight_orchestration::optimization_resume::OptimizationResumeState;
-use dusklight_orchestration::residual_campaign::ResidualCampaignCheckpoint;
-use dusklight_search::residual_retention::ResidualRetentionSnapshot;
+use dusklight_orchestration::residual_campaign::{
+    ResidualCampaignCandidate, ResidualCampaignCheckpoint,
+};
+use dusklight_routes::timeline_materialization::materialize_segment_chain;
+use dusklight_search::residual_retention::{ExactTerminalVerdict, ResidualRetentionSnapshot};
 
 const MAX_CAMPAIGN_REQUESTS: usize = 256;
+const MAX_PROJECTED_OPTIMIZATION_CANDIDATES: usize = 16;
+const MAX_PROJECTED_OPTIMIZATION_SUCCESSES: usize = 8;
+
+pub(super) struct OptimizationCandidateProjection {
+    pub segment: GraphSegment,
+    pub full_tape: InputTape,
+}
 
 pub(super) fn append_optimization_campaigns(
     graph: &mut WorkbenchGraph,
@@ -73,6 +85,13 @@ pub(super) fn append_optimization_campaigns(
         {
             campaign.blocker = optimization_runtime_blocker(&root, config);
         }
+        if campaign.status != "invalid" {
+            graph.segments.extend(
+                project_request_candidates(&root, &timeline, &request)
+                    .into_iter()
+                    .map(|projection| projection.segment),
+            );
+        }
         graph.campaigns.push(campaign);
     }
     graph.campaigns.sort_by(|left, right| {
@@ -81,6 +100,285 @@ pub(super) fn append_optimization_campaigns(
             .then_with(|| left.id.cmp(&right.id))
     });
     Ok(())
+}
+
+pub(super) fn optimization_candidate_projections(
+    repository_root: &Path,
+    timeline_path: &Path,
+) -> Result<Vec<OptimizationCandidateProjection>, WorkbenchError> {
+    let root = repository_root.canonicalize().map_err(optimization_error)?;
+    let timeline_path = timeline_path.canonicalize().map_err(optimization_error)?;
+    if !timeline_path.starts_with(&root) || !timeline_path.is_file() {
+        return Err(WorkbenchError::new(
+            "optimization timeline is outside the workbench repository",
+        ));
+    }
+    let benchmark_root = timeline_path.with_extension("").join("benchmarks");
+    let Ok(metadata) = fs::symlink_metadata(&benchmark_root) else {
+        return Ok(Vec::new());
+    };
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Ok(Vec::new());
+    }
+    let mut paths = fs::read_dir(benchmark_root)
+        .map_err(optimization_error)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            (name.ends_with(".request.json") && entry.file_type().ok()?.is_file())
+                .then_some(entry.path())
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.truncate(MAX_CAMPAIGN_REQUESTS);
+    let mut projections = Vec::new();
+    for path in paths {
+        let Some(request) = bounded_json::<OptimizationRequest>(&path) else {
+            continue;
+        };
+        if root
+            .join(&request.route.timeline.path)
+            .canonicalize()
+            .ok()
+            .as_ref()
+            != Some(&timeline_path)
+            || request.validate_files(&root).is_err()
+        {
+            continue;
+        }
+        projections.extend(project_request_candidates(&root, &timeline_path, &request));
+    }
+    Ok(projections)
+}
+
+pub(super) fn project_request_candidates(
+    root: &Path,
+    timeline_path: &Path,
+    request: &OptimizationRequest,
+) -> Vec<OptimizationCandidateProjection> {
+    let Some(state) = bounded_json::<OptimizationResumeState>(
+        &root.join(&request.resume.state_path),
+    )
+    .filter(|state| state.request_sha256 == request.content_sha256 && state.validate().is_ok()) else {
+        return Vec::new();
+    };
+    let campaign_root = root
+        .join(&request.resume.state_path)
+        .parent()
+        .unwrap_or(root)
+        .to_path_buf();
+    let execution_path = campaign_root.join("execution/execution.json");
+    let Some(execution) = bounded_json::<NativeResidualExecutionBinding>(&execution_path)
+        .filter(|execution| execution.validate_files(root, request).is_ok())
+    else {
+        return Vec::new();
+    };
+    let ranked_successes = state
+        .latest_optimizer_checkpoint
+        .as_ref()
+        .and_then(|latest| {
+            bound_artifact_json::<ResidualCampaignCheckpoint>(root, &latest.artifact).filter(
+                |checkpoint| {
+                    checkpoint.content_sha256 == latest.artifact_sha256
+                        && checkpoint
+                            .validate(request, execution.content_sha256)
+                            .is_ok()
+                },
+            )
+        })
+        .map(|checkpoint| {
+            checkpoint
+                .retention
+                .successes
+                .iter()
+                .map(|success| success.candidate_sha256)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut selected = Vec::new();
+    let mut selected_ids = BTreeSet::new();
+    for candidate_sha256 in ranked_successes
+        .iter()
+        .take(MAX_PROJECTED_OPTIMIZATION_SUCCESSES)
+    {
+        if let Some(row) = state.candidates.iter().find(|row| {
+            row.result.is_some()
+                && bound_artifact_json::<ResidualCampaignCandidate>(root, &row.candidate)
+                    .is_some_and(|candidate| {
+                        candidate.validate().is_ok()
+                            && candidate.candidate.content_sha256 == *candidate_sha256
+                    })
+        }) {
+            selected_ids.insert(row.id.clone());
+            selected.push(row);
+        }
+    }
+    for row in state
+        .candidates
+        .iter()
+        .rev()
+        .filter(|row| row.result.is_some())
+    {
+        if selected.len() >= MAX_PROJECTED_OPTIMIZATION_CANDIDATES {
+            break;
+        }
+        if selected_ids.insert(row.id.clone()) {
+            selected.push(row);
+        }
+    }
+
+    let Ok(timeline) = load_authoritative_timeline(timeline_path) else {
+        return Vec::new();
+    };
+    let Some(authored) = timeline.segments.get(&request.route.segment) else {
+        return Vec::new();
+    };
+    let Some(parent_id) = authored.parent.as_deref() else {
+        return Vec::new();
+    };
+    let artifact_root = timeline_path.parent().unwrap_or(root);
+    let Ok(parent) = materialize_segment_chain(&timeline, artifact_root, parent_id) else {
+        return Vec::new();
+    };
+    if parent.tape.frames.len() as u64 != request.route.source_boundary_index {
+        return Vec::new();
+    }
+    let display_base = authored
+        .name
+        .clone()
+        .unwrap_or_else(|| request.route.segment.replace('_', " "));
+    let campaign_relative = campaign_root
+        .strip_prefix(root)
+        .map(path_text)
+        .unwrap_or_else(|_| campaign_root.display().to_string());
+    let mut projections = selected
+        .into_iter()
+        .filter_map(|row| {
+            let candidate = bound_artifact_json::<ResidualCampaignCandidate>(root, &row.candidate)?;
+            if candidate.validate().is_err()
+                || candidate.id != row.id
+                || candidate.generation != row.generation
+                || candidate.proposer_seed != row.proposer_seed
+                || candidate.compilation.realized_tape_sha256 != row.compiled_tape_sha256
+            {
+                return None;
+            }
+            let tape_bytes = bound_artifact_bytes(root, &row.compiled_tape)?;
+            let tape = InputTape::decode(&tape_bytes).ok()?.tape;
+            if tape.frames.len() as u64 != candidate.compilation.frame_count {
+                return None;
+            }
+            let result = row.result.as_ref()?;
+            let evaluation = bound_artifact_json::<NativeResidualCampaignEvaluation>(root, result)?;
+            if evaluation
+                .validate(request, &execution, &candidate)
+                .is_err()
+                || row.result_sha256 != Some(result.sha256)
+            {
+                return None;
+            }
+            let full_tape = concatenate(vec![
+                ChainSegment::all(parent.tape.clone()),
+                ChainSegment::all(tape.clone()),
+            ])
+            .ok()?
+            .tape;
+            let materialization_sha256 = tape_digest(&full_tape).ok()?;
+            let (status, first_hit_tick) = match evaluation.evidence.verdict {
+                ExactTerminalVerdict::Reached { first_hit_tick } => {
+                    ("success", Some(first_hit_tick))
+                }
+                ExactTerminalVerdict::Miss => ("miss", None),
+            };
+            let proof = GraphGoalProof {
+                goal: request.terminal_predicate.goal.clone(),
+                predicate: request.terminal_predicate.goal.clone(),
+                program_sha256: request.terminal_predicate.program_sha256.to_string(),
+                definition_sha256: request.terminal_predicate.definition_sha256.to_string(),
+                status: if first_hit_tick.is_some() {
+                    "verified"
+                } else {
+                    "failed"
+                }
+                .into(),
+                first_hit_tick,
+            };
+            let generation = u32::try_from(row.generation).ok()?;
+            let short = candidate.id.chars().rev().take(6).collect::<String>();
+            let short = short.chars().rev().collect::<String>();
+            let name = first_hit_tick.map_or_else(
+                || format!("{display_base} · miss · g{generation} · {short}"),
+                |tick| format!("{display_base} · {tick}f · g{generation} · {short}"),
+            );
+            Some(OptimizationCandidateProjection {
+                segment: GraphSegment {
+                    id: format!(
+                        "optimization-{}-{}",
+                        &request.content_sha256.to_string()[..12],
+                        candidate.id
+                    ),
+                    name: Some(name),
+                    parent: Some(parent_id.into()),
+                    profile: authored.profile.as_str().into(),
+                    artifact: GraphArtifact {
+                        kind: "tape".into(),
+                        value: row.compiled_tape.path.clone(),
+                    },
+                    start_fingerprint: request.route.source_boundary_fingerprint.clone(),
+                    boundary_fingerprint: evaluation.terminal_boundary_fingerprint.clone(),
+                    materialization_sha256,
+                    goal_proofs: vec![proof],
+                    predicate_proof: if first_hit_tick.is_some() {
+                        "verified"
+                    } else {
+                        "failed"
+                    }
+                    .into(),
+                    first_hit_tick,
+                    frame_count: Some(tape.frames.len() as u64),
+                    start_tick: 0,
+                    end_tick: (tape.frames.len() as u64).checked_sub(1),
+                    ticks: first_hit_tick,
+                    playable: true,
+                    recordable: false,
+                    record_anchors: Vec::new(),
+                    option_visualization: Vec::new(),
+                    option_diagnostic_error: None,
+                    generated: Some(GraphGeneratedSegment {
+                        kind: "optimization_candidate".into(),
+                        status: status.into(),
+                        uncommitted: true,
+                        run: campaign_relative.clone(),
+                        generation,
+                        candidate_id: candidate.id.clone(),
+                        candidate: row.candidate.path.clone(),
+                        tape: row.compiled_tape.path.clone(),
+                        objective_sha256: request.content_sha256.to_string(),
+                        source_predicate: request.route.native_source_boundary_fingerprint.clone(),
+                        goal_predicate: request.terminal_predicate.goal.clone(),
+                        proof_attempts: u32::try_from(evaluation.attempts.len()).ok()?,
+                    }),
+                    thumbnail: None,
+                    error: None,
+                },
+                full_tape,
+            })
+        })
+        .collect::<Vec<_>>();
+    projections.sort_by(|left, right| {
+        left.segment
+            .first_hit_tick
+            .is_none()
+            .cmp(&right.segment.first_hit_tick.is_none())
+            .then_with(|| {
+                left.segment
+                    .first_hit_tick
+                    .cmp(&right.segment.first_hit_tick)
+            })
+            .then_with(|| left.segment.id.cmp(&right.segment.id))
+    });
+    projections
 }
 
 fn campaign_projection(
@@ -242,6 +540,10 @@ fn bound_artifact_json<T: for<'de> Deserialize<'de>>(
     root: &Path,
     reference: &ArtifactReference,
 ) -> Option<T> {
+    serde_json::from_slice(&bound_artifact_bytes(root, reference)?).ok()
+}
+
+fn bound_artifact_bytes(root: &Path, reference: &ArtifactReference) -> Option<Vec<u8>> {
     let relative = Path::new(&reference.path);
     if relative.as_os_str().is_empty()
         || relative.is_absolute()
@@ -268,7 +570,7 @@ fn bound_artifact_json<T: for<'de> Deserialize<'de>>(
     if digest != reference.sha256 {
         return None;
     }
-    serde_json::from_slice(&bytes).ok()
+    Some(bytes)
 }
 
 fn campaign_complete(request: &OptimizationRequest, state: &OptimizationResumeState) -> bool {

@@ -312,10 +312,69 @@ pub(super) fn capture_thumbnail(
     let artifact_root = configured_artifact_root(config)?;
     let mut graph = graph_with_drafts(timeline, &artifact_root, &config.state_root)?;
     graph.projects = project_catalog_projection(&config.repository_root, &config.timeline_path)?;
+    append_generated_search_segments(
+        &mut graph,
+        timeline,
+        &config.repository_root.join("build/search"),
+        &config.state_root,
+    )?;
+    append_optimization_campaigns(
+        &mut graph,
+        &config.repository_root,
+        &config.timeline_path,
+        Some(config),
+    )?;
     let key = graph_node_thumbnail_key(&graph, &request.selection)?;
     let materialized = match &request.selection {
-        BrowserSelection::Segment { id } => {
+        BrowserSelection::Segment { id } if timeline.segments.contains_key(id) => {
             materialize_segment_playback(timeline, &artifact_root, id, None)?
+        }
+        BrowserSelection::Segment { id } => {
+            if let Some(projection) =
+                optimization_candidate_projections(&config.repository_root, &config.timeline_path)?
+                    .into_iter()
+                    .find(|projection| projection.segment.id == *id)
+            {
+                MaterializedPlayback {
+                    lineage: None,
+                    segment: Some(id.clone()),
+                    tape: projection.full_tape,
+                    seed_stage: None,
+                    native_oracle: NativePlaybackOracle::None,
+                }
+            } else {
+                let projection = visible_generated_search_projections(
+                    timeline,
+                    &config.repository_root.join("build/search"),
+                    &config.state_root,
+                )?
+                .into_iter()
+                .find(|projection| projection.segment.id == *id)
+                .ok_or_else(|| {
+                    WorkbenchError::new(format!(
+                        "unknown, deleted, or expired generated candidate {id:?}"
+                    ))
+                })?;
+                let bytes = fs::read(&projection.full_tape).map_err(|error| {
+                    WorkbenchError::new(format!(
+                        "cannot read generated candidate tape {}: {error}",
+                        projection.full_tape.display()
+                    ))
+                })?;
+                MaterializedPlayback {
+                    lineage: None,
+                    segment: Some(id.clone()),
+                    tape: InputTape::decode(&bytes)
+                        .map_err(|error| {
+                            WorkbenchError::new(format!(
+                                "invalid generated candidate tape: {error}"
+                            ))
+                        })?
+                        .tape,
+                    seed_stage: None,
+                    native_oracle: NativePlaybackOracle::None,
+                }
+            }
         }
         BrowserSelection::Draft { id } => {
             materialize_draft(timeline, &artifact_root, &config.state_root, id)?
@@ -1817,8 +1876,37 @@ pub(super) fn play_segment(
     if !timeline.segments.contains_key(segment_id) {
         if !matches!(stop, BrowserStop::Segment { segment } if segment == segment_id) {
             return Err(WorkbenchError::new(
-                "generated search playback only supports its proved endpoint",
+                "generated candidate playback only supports its evaluated endpoint",
             ));
+        }
+        if let Some(projection) =
+            optimization_candidate_projections(&config.repository_root, &config.timeline_path)?
+                .into_iter()
+                .find(|projection| projection.segment.id == segment_id)
+        {
+            let materialized = MaterializedPlayback {
+                lineage: None,
+                segment: Some(segment_id.into()),
+                tape: projection.full_tape,
+                seed_stage: None,
+                native_oracle: NativePlaybackOracle::None,
+            };
+            let fast_forward_frames = playback_fast_forward_frames(
+                options.playback,
+                materialized.tape.frames.len() as u64,
+            );
+            return launch_materialized(
+                timeline,
+                config,
+                materialized,
+                MaterializedLaunchOptions {
+                    takeover: options.handoff,
+                    origin: PlaybackOrigin::Boot,
+                    fast_forward_frames,
+                    thumbnail: None,
+                    playback: options.playback,
+                },
+            );
         }
         let projection = visible_generated_search_projections(
             timeline,
@@ -1829,7 +1917,7 @@ pub(super) fn play_segment(
         .find(|projection| projection.segment.id == segment_id)
         .ok_or_else(|| {
             WorkbenchError::new(format!(
-                "unknown or expired generated search segment {segment_id:?}"
+                "unknown, deleted, or expired generated candidate {segment_id:?}"
             ))
         })?;
         let bytes = fs::read(&projection.full_tape).map_err(|error| {

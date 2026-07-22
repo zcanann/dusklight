@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V4: &str = "dusklight-suffix-batch-result/v4";
+pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6: &str = "dusklight-suffix-batch-result/v6";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V2: &str = "dusklight-native-episode-shard/v2";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
@@ -109,6 +109,7 @@ pub struct NativeSuffixCandidateResult {
     pub state_sequence_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_tick_digests: Option<Vec<String>>,
+    pub terminal_boundary_fingerprint: String,
     pub predicate_evidence: NativePredicateEvidence,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumed_pad_states: Option<Vec<RawPadState>>,
@@ -172,6 +173,7 @@ pub struct ValidatedNativeSuffixCandidate {
     pub simulated_ticks: u64,
     pub first_hit_tick: Option<u64>,
     pub state_sequence_digest: Option<String>,
+    pub terminal_boundary_fingerprint: String,
     pub behavior_sha256: Digest,
 }
 
@@ -196,7 +198,7 @@ impl NativeSuffixBatchResult {
             ));
         }
         let candidate_count = request.candidates.len() as u64;
-        if self.schema != NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V4
+        if self.schema != NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6
             || self.status != "passed"
             || self.error.is_some()
             || self.source_frame != request.source_frame as u64
@@ -313,6 +315,11 @@ impl NativeSuffixCandidateResult {
             }
         }
         validate_predicate(&self.predicate_evidence, terminal, exact_verdict)?;
+        if !lower_hex(&self.terminal_boundary_fingerprint, 32) {
+            return Err(result_error(
+                "native suffix candidate terminal boundary fingerprint is invalid",
+            ));
+        }
         Ok(ValidatedNativeSuffixCandidate {
             id: self.id.clone(),
             simulated_ticks: self.ticks_executed,
@@ -320,6 +327,7 @@ impl NativeSuffixCandidateResult {
             // index; route scores and retention use one-based elapsed ticks.
             first_hit_tick: self.first_hit_tick.map(|tick| tick + 1),
             state_sequence_digest: state_sequence_digest.map(str::to_owned),
+            terminal_boundary_fingerprint: self.terminal_boundary_fingerprint.clone(),
             behavior_sha256: behavior_digest(self)?,
         })
     }
@@ -334,6 +342,7 @@ fn behavior_digest(
         first_hit_tick: Option<u64>,
         ticks_executed: u64,
         state_sequence_digest: Option<&'a str>,
+        terminal_boundary_fingerprint: &'a str,
         terminal_observation: &'a Value,
     }
     let value = Behavior {
@@ -341,6 +350,7 @@ fn behavior_digest(
         first_hit_tick: candidate.first_hit_tick,
         ticks_executed: candidate.ticks_executed,
         state_sequence_digest: candidate.state_sequence_digest.as_deref(),
+        terminal_boundary_fingerprint: &candidate.terminal_boundary_fingerprint,
         terminal_observation: &candidate.terminal_observation,
     };
     let bytes = serde_json::to_vec(&value).map_err(|error| result_error(error.to_string()))?;
@@ -504,7 +514,7 @@ mod tests {
         let first_hit_tick = success.then_some(0);
         let ticks = first_hit_tick.map_or(2, |tick| tick + 1);
         NativeSuffixBatchResult {
-            schema: NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V4.into(),
+            schema: NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6.into(),
             status: "passed".into(),
             source_frame: 500,
             source_boundary: NativeSourceBoundaryResult {
@@ -561,6 +571,7 @@ mod tests {
                 state_sequence_digest: verify_state_hashes.then(|| "7".repeat(32)),
                 state_tick_digests: verify_state_hashes
                     .then(|| vec!["8".repeat(32); ticks as usize]),
+                terminal_boundary_fingerprint: "9".repeat(32),
                 predicate_evidence: NativePredicateEvidence {
                     schema: NativeMilestoneSchema {
                         name: "dusklight.automation.milestones".into(),
@@ -601,6 +612,10 @@ mod tests {
             .unwrap();
         assert_eq!(miss.simulated_ticks, 2);
         assert_eq!(miss.candidates[0].first_hit_tick, None);
+        assert_eq!(
+            miss.candidates[0].terminal_boundary_fingerprint,
+            "9".repeat(32)
+        );
 
         let success = result(true, false)
             .validate_against(&request(false), &terminal())
@@ -620,6 +635,10 @@ mod tests {
 
         let mut tampered = result(false, true);
         tampered.checkpoint_validation.restored_sequence_digest = Some("9".repeat(32));
+        assert!(tampered.validate_against(&batch, &authority).is_err());
+
+        let mut tampered = result(false, true);
+        tampered.candidates[0].terminal_boundary_fingerprint = "9".repeat(31);
         assert!(tampered.validate_against(&batch, &authority).is_err());
 
         let mut tampered = result(false, true);

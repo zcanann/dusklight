@@ -189,7 +189,7 @@ pub(super) fn start_optimization_campaign(
     })
 }
 
-fn prepare_optimization_execution(
+pub(super) fn prepare_optimization_execution(
     root: &Path,
     optimization: &OptimizationRequest,
     game: &Path,

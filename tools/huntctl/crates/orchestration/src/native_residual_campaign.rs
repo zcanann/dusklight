@@ -19,7 +19,7 @@ use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 
 pub const NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1: &str = "dusklight-native-residual-execution/v1";
-pub const NATIVE_RESIDUAL_EVALUATION_SCHEMA_V1: &str = "dusklight-native-residual-evaluation/v1";
+pub const NATIVE_RESIDUAL_EVALUATION_SCHEMA_V2: &str = "dusklight-native-residual-evaluation/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -401,6 +401,7 @@ pub struct NativeResidualAttempt {
     pub simulated_ticks: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_hit_tick: Option<u64>,
+    pub terminal_boundary_fingerprint: String,
     pub behavior_sha256: Digest,
 }
 
@@ -416,6 +417,7 @@ pub struct NativeResidualCampaignEvaluation {
     pub realized_tape_sha256: Digest,
     pub attempts: Vec<NativeResidualAttempt>,
     pub simulated_ticks: u64,
+    pub terminal_boundary_fingerprint: String,
     pub evidence: ResidualEvaluationEvidence,
 }
 
@@ -430,12 +432,13 @@ impl NativeResidualCampaignEvaluation {
             return Err(native_message("native residual evaluation is empty"));
         }
         let first_hit_tick = attempts[0].first_hit_tick;
-        if attempts
-            .iter()
-            .any(|attempt| attempt.first_hit_tick != first_hit_tick)
-        {
+        let terminal_boundary_fingerprint = attempts[0].terminal_boundary_fingerprint.clone();
+        if attempts.iter().any(|attempt| {
+            attempt.first_hit_tick != first_hit_tick
+                || attempt.terminal_boundary_fingerprint != terminal_boundary_fingerprint
+        }) {
             return Err(native_message(
-                "native residual repetitions disagree on the exact terminal verdict",
+                "native residual repetitions disagree on the exact terminal verdict or boundary",
             ));
         }
         let simulated_ticks = attempts.iter().try_fold(0_u64, |total, attempt| {
@@ -449,7 +452,7 @@ impl NativeResidualCampaignEvaluation {
             terminal_program_sha256: optimization.terminal_predicate.program_sha256,
             terminal_definition_sha256: optimization.terminal_predicate.definition_sha256,
             evaluation_sha256: canonical_digest(
-                b"dusklight.native-residual-attempts/v1\0",
+                b"dusklight.native-residual-attempts/v2\0",
                 &attempts,
             )?,
             episode_sha256: canonical_digest(
@@ -473,7 +476,7 @@ impl NativeResidualCampaignEvaluation {
             native_risk_events: None,
         };
         let mut value = Self {
-            schema: NATIVE_RESIDUAL_EVALUATION_SCHEMA_V1.into(),
+            schema: NATIVE_RESIDUAL_EVALUATION_SCHEMA_V2.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: optimization.content_sha256,
             execution_binding_sha256: execution.content_sha256,
@@ -482,6 +485,7 @@ impl NativeResidualCampaignEvaluation {
             realized_tape_sha256: candidate.compilation.realized_tape_sha256,
             attempts,
             simulated_ticks,
+            terminal_boundary_fingerprint,
             evidence,
         };
         value.content_sha256 = value.identity()?;
@@ -518,6 +522,8 @@ impl NativeResidualCampaignEvaluation {
                     .first_hit_tick
                     .is_none_or(|tick| tick > 0 && tick == attempt.simulated_ticks)
                 && attempt.first_hit_tick == verdict_tick
+                && lower_hex(&attempt.terminal_boundary_fingerprint, 32)
+                && attempt.terminal_boundary_fingerprint == self.terminal_boundary_fingerprint
                 && attempt.behavior_sha256 != Digest::ZERO
         });
         let charged = self.attempts.iter().try_fold(0_u64, |total, attempt| {
@@ -526,7 +532,7 @@ impl NativeResidualCampaignEvaluation {
         let expected_verdict = verdict_tick.map_or(ExactTerminalVerdict::Miss, |first_hit_tick| {
             ExactTerminalVerdict::Reached { first_hit_tick }
         });
-        if self.schema != NATIVE_RESIDUAL_EVALUATION_SCHEMA_V1
+        if self.schema != NATIVE_RESIDUAL_EVALUATION_SCHEMA_V2
             || self.optimization_request_sha256 != optimization.content_sha256
             || self.execution_binding_sha256 != execution.content_sha256
             || self.candidate_id != candidate.id
@@ -535,6 +541,7 @@ impl NativeResidualCampaignEvaluation {
             || self.attempts.len() != expected_attempts
             || !attempts_valid
             || charged != Some(self.simulated_ticks)
+            || !lower_hex(&self.terminal_boundary_fingerprint, 32)
             || self.evidence.candidate_sha256 != self.candidate_sha256
             || self.evidence.realized_tape_sha256 != self.realized_tape_sha256
             || self.evidence.terminal_program_sha256
@@ -559,7 +566,7 @@ impl NativeResidualCampaignEvaluation {
     fn identity(&self) -> Result<Digest, NativeResidualCampaignError> {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.native-residual-evaluation/v1\0", &canonical)
+        canonical_digest(b"dusklight.native-residual-evaluation/v2\0", &canonical)
     }
 }
 

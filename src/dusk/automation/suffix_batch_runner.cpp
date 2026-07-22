@@ -1028,6 +1028,12 @@ bool SuffixBatchRunner::finishCandidate(
         result.stateSequenceDigest = xxh3_128_hex(mStateDigestMaterial);
         result.stateTickDigests = mStateTickDigests;
     }
+    result.terminalBoundaryFingerprint =
+        compute_milestone_boundary_fingerprint(observation, input_tape_player().tape().boot);
+    if (result.terminalBoundaryFingerprint.empty()) {
+        error = "suffix candidate terminal boundary fingerprint is unavailable";
+        return false;
+    }
     result.predicateEvidence = serialize_milestone_result(mGoalTracker);
 
     const ControllerObservation controller = capture_controller_observation(mControllerStorage);
@@ -1246,6 +1252,7 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                     ? nlohmann::json(nullptr) : nlohmann::json(result.stateSequenceDigest)},
             {"state_tick_digests", result.stateTickDigests.empty()
                     ? nlohmann::json(nullptr) : nlohmann::json(result.stateTickDigests)},
+            {"terminal_boundary_fingerprint", result.terminalBoundaryFingerprint},
             {"predicate_evidence", nlohmann::json::parse(result.predicateEvidence)},
             {"consumed_pad_states", std::move(consumed)},
             {"terminal_observation", {
@@ -1421,9 +1428,7 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         }},
     };
     nlohmann::json result{
-        {"schema", mDefinition.frozenPolicy.has_value() ?
-                       "dusklight-suffix-batch-result/v5" :
-                       "dusklight-suffix-batch-result/v4"},
+        {"schema", "dusklight-suffix-batch-result/v6"},
         {"status", mCompleted ? "passed" :
                    mFailed    ? "failed" :
                                 "incomplete"},
