@@ -1,5 +1,8 @@
 //! Resumable residual optimization over a campaign-owned native checkpoint pool.
 
+use crate::campaign_replay::{
+    append_residual_replay_generation, load_corpus, validate_residual_corpus_scope,
+};
 use crate::native_residual_campaign::{
     NativeResidualAttempt, NativeResidualCampaignEvaluation, NativeResidualExecutionBinding,
 };
@@ -14,7 +17,9 @@ use crate::optimization_resume::{
     OptimizationResumeEvent, OptimizationResumeState, append_optimization_resume_events,
     initialize_optimization_resume, load_optimization_resume,
 };
-use crate::residual_campaign::{ResidualCampaignCheckpoint, ResidualCampaignOptimizer};
+use crate::residual_campaign::{
+    ResidualCampaignCheckpoint, ResidualCampaignOptimizer, ResidualReplayCheckpoint,
+};
 use crate::residual_campaign_runner::{
     PreparedCandidate, ResidualCampaignRunSummary, append_checkpoint, artifact_reference,
     campaign_root, load_candidate, load_checkpoint, load_generation, new_optimizer, prepare_batch,
@@ -32,7 +37,7 @@ use dusklight_search::suffix_batch::{
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs;
@@ -775,6 +780,84 @@ fn generation_rank(
     .map_err(native_error)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn append_generation_replay(
+    root: &Path,
+    campaign: &Path,
+    config: &NativeResidualCampaignRunConfig<'_>,
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    resume: &OptimizationResumeState,
+    previous: Option<&ResidualReplayCheckpoint>,
+    generation: u64,
+) -> Result<ResidualReplayCheckpoint, NativeResidualCampaignRunnerError> {
+    let generations = if previous.is_none() {
+        resume
+            .candidates
+            .iter()
+            .filter(|row| row.result.is_some())
+            .map(|row| row.generation)
+            .collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::from([generation])
+    };
+    let mut evaluations = Vec::new();
+    for generation in generations {
+        let candidates = load_generation(
+            root,
+            config.optimization,
+            parent,
+            parent_bytes,
+            resume,
+            generation,
+        )
+        .map_err(native_error)?;
+        for candidate in &candidates {
+            let row = resume
+                .candidates
+                .iter()
+                .find(|row| row.id == candidate.envelope.id)
+                .ok_or_else(|| native_message("replay candidate is absent from resume state"))?;
+            if row.result.is_some() {
+                evaluations.push(load_native_evaluation(
+                    root,
+                    config.optimization,
+                    config.execution,
+                    row,
+                    candidate,
+                )?);
+            }
+        }
+    }
+    append_residual_replay_generation(root, campaign, config.optimization, previous, &evaluations)
+        .map_err(native_error)
+}
+
+fn validate_checkpoint_replay(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    checkpoint: &ResidualCampaignCheckpoint,
+) -> Result<(), NativeResidualCampaignRunnerError> {
+    let Some(replay) = &checkpoint.replay_corpus else {
+        // Checkpoints written before automatic ingestion remain migratable. The
+        // next completed generation backfills all authenticated evaluations.
+        return Ok(());
+    };
+    let corpus = load_corpus(root, &replay.artifact).map_err(native_error)?;
+    replay.validate_corpus(&corpus).map_err(native_error)?;
+    validate_residual_corpus_scope(optimization, &corpus).map_err(native_error)?;
+    let expected_entries = checkpoint
+        .completed_candidates
+        .checked_mul(u64::from(optimization.execution.repetitions))
+        .ok_or_else(|| native_message("residual replay checkpoint entry count overflowed"))?;
+    if replay.entries != expected_entries {
+        return Err(native_message(
+            "residual replay corpus does not cover every checkpointed native attempt",
+        ));
+    }
+    Ok(())
+}
+
 pub fn run_native_residual_campaign(
     config: &NativeResidualCampaignRunConfig<'_>,
 ) -> Result<ResidualCampaignRunSummary, NativeResidualCampaignRunnerError> {
@@ -842,6 +925,7 @@ fn run_campaign_loop(
             0,
             &optimizer,
             &archive,
+            None,
         )
         .map_err(native_error)?;
     }
@@ -854,6 +938,7 @@ fn run_campaign_loop(
             &resume,
         )
         .map_err(native_error)?;
+        validate_checkpoint_replay(root, config.optimization, &checkpoint)?;
         let optimizer = checkpoint
             .restore_optimizer(config.optimization, parent_bytes)
             .map_err(native_error)?;
@@ -867,7 +952,44 @@ fn run_campaign_loop(
                     unreachable!()
                 };
                 if resume.completed_candidates >= samples {
-                    return Ok(summary(config, &resume, checkpoint.generation, &archive));
+                    if checkpoint.completed_candidates != resume.completed_candidates
+                        || (checkpoint.replay_corpus.is_none() && resume.completed_candidates > 0)
+                    {
+                        let replay_corpus = append_generation_replay(
+                            root,
+                            campaign,
+                            config,
+                            parent,
+                            parent_bytes,
+                            &resume,
+                            checkpoint.replay_corpus.as_ref(),
+                            checkpoint.generation,
+                        )?;
+                        let optimizer = ResidualCampaignOptimizer::Random(random);
+                        resume = append_checkpoint(
+                            root,
+                            campaign,
+                            config.optimization,
+                            config.execution.content_sha256,
+                            &resume,
+                            checkpoint.generation
+                                + u64::from(
+                                    checkpoint.completed_candidates != resume.completed_candidates,
+                                ),
+                            &optimizer,
+                            &archive,
+                            Some(replay_corpus),
+                        )
+                        .map_err(native_error)?;
+                        continue;
+                    }
+                    return Ok(summary(
+                        config,
+                        &resume,
+                        checkpoint.generation,
+                        &archive,
+                        checkpoint.replay_corpus.clone(),
+                    ));
                 }
                 let generation = checkpoint.generation;
                 let generation_count = resume
@@ -905,6 +1027,7 @@ fn run_campaign_loop(
                         generation,
                         &optimizer,
                         &archive,
+                        checkpoint.replay_corpus.clone(),
                     )
                     .map_err(native_error)?;
                     continue;
@@ -937,6 +1060,16 @@ fn run_campaign_loop(
                     generation,
                 )?;
                 ensure_not_cancelled(config)?;
+                let replay_corpus = append_generation_replay(
+                    root,
+                    campaign,
+                    config,
+                    parent,
+                    parent_bytes,
+                    &resume,
+                    checkpoint.replay_corpus.as_ref(),
+                    generation,
+                )?;
                 let optimizer = ResidualCampaignOptimizer::Random(random);
                 resume = append_checkpoint(
                     root,
@@ -947,6 +1080,7 @@ fn run_campaign_loop(
                     generation + 1,
                     &optimizer,
                     &archive,
+                    Some(replay_corpus),
                 )
                 .map_err(native_error)?;
             }
@@ -959,7 +1093,39 @@ fn run_campaign_loop(
                 let state = cem.snapshot().map_err(native_error)?;
                 let generation = u64::from(state.generation);
                 if state.pending.is_empty() && generation >= u64::from(generations) {
-                    return Ok(summary(config, &resume, generation, &archive));
+                    if checkpoint.replay_corpus.is_none() && resume.completed_candidates > 0 {
+                        let replay_corpus = append_generation_replay(
+                            root,
+                            campaign,
+                            config,
+                            parent,
+                            parent_bytes,
+                            &resume,
+                            None,
+                            generation,
+                        )?;
+                        let optimizer = ResidualCampaignOptimizer::Cem(cem);
+                        resume = append_checkpoint(
+                            root,
+                            campaign,
+                            config.optimization,
+                            config.execution.content_sha256,
+                            &resume,
+                            generation,
+                            &optimizer,
+                            &archive,
+                            Some(replay_corpus),
+                        )
+                        .map_err(native_error)?;
+                        continue;
+                    }
+                    return Ok(summary(
+                        config,
+                        &resume,
+                        generation,
+                        &archive,
+                        checkpoint.replay_corpus.clone(),
+                    ));
                 }
                 if state.pending.is_empty() {
                     let batch = cem.ask(parent, parent_bytes).map_err(native_error)?;
@@ -984,6 +1150,7 @@ fn run_campaign_loop(
                         generation,
                         &optimizer,
                         &archive,
+                        checkpoint.replay_corpus.clone(),
                     )
                     .map_err(native_error)?;
                     continue;
@@ -1013,6 +1180,16 @@ fn run_campaign_loop(
                 let ranked =
                     generation_rank(root, config, parent, parent_bytes, &resume, generation)?;
                 cem.tell(&ranked).map_err(native_error)?;
+                let replay_corpus = append_generation_replay(
+                    root,
+                    campaign,
+                    config,
+                    parent,
+                    parent_bytes,
+                    &resume,
+                    checkpoint.replay_corpus.as_ref(),
+                    generation,
+                )?;
                 let optimizer = ResidualCampaignOptimizer::Cem(cem);
                 resume = append_checkpoint(
                     root,
@@ -1023,6 +1200,7 @@ fn run_campaign_loop(
                     generation + 1,
                     &optimizer,
                     &archive,
+                    Some(replay_corpus),
                 )
                 .map_err(native_error)?;
             }
@@ -1035,6 +1213,7 @@ fn summary(
     resume: &OptimizationResumeState,
     generation: u64,
     archive: &ResidualOutcomeArchive,
+    replay_corpus: Option<ResidualReplayCheckpoint>,
 ) -> ResidualCampaignRunSummary {
     ResidualCampaignRunSummary {
         schema: "dusklight-residual-campaign-run-summary/v2",
@@ -1052,6 +1231,7 @@ fn summary(
             .first()
             .map(|success| success.first_hit_tick),
         resume_state: config.optimization.resume.state_path.clone(),
+        replay_corpus,
     }
 }
 

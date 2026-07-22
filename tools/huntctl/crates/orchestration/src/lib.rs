@@ -3,6 +3,7 @@
 #![recursion_limit = "256"]
 
 mod anchored_search;
+mod campaign_replay;
 pub mod harness;
 pub mod native_residual_campaign;
 pub mod native_residual_campaign_runner;

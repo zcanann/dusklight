@@ -9,6 +9,7 @@ use crate::optimization_resume::{
 use crate::residual_campaign::{
     ResidualCampaignCandidate, ResidualCampaignCheckpoint, ResidualCampaignError,
     ResidualCampaignEvaluation, ResidualCampaignOptimizer, ResidualNativeAttempt,
+    ResidualReplayCheckpoint,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::observation_view::ObservationSpec;
@@ -66,6 +67,8 @@ pub struct ResidualCampaignRunSummary {
     pub retained_failures: u64,
     pub best_first_hit_tick: Option<u64>,
     pub resume_state: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_corpus: Option<ResidualReplayCheckpoint>,
 }
 
 pub fn materialize_residual_harness_template(
@@ -311,6 +314,7 @@ pub(crate) fn append_checkpoint(
     generation: u64,
     optimizer: &ResidualCampaignOptimizer,
     archive: &ResidualOutcomeArchive,
+    replay_corpus: Option<ResidualReplayCheckpoint>,
 ) -> Result<OptimizationResumeState, ResidualCampaignRunnerError> {
     let checkpoint = ResidualCampaignCheckpoint::seal(
         optimization,
@@ -319,6 +323,7 @@ pub(crate) fn append_checkpoint(
         resume.completed_candidates,
         optimizer.snapshot()?,
         archive,
+        replay_corpus,
     )?;
     let path = campaign
         .join("checkpoints")
@@ -758,6 +763,7 @@ pub fn run_residual_campaign(
             0,
             &optimizer,
             &archive,
+            None,
         )?;
     }
 
@@ -787,7 +793,13 @@ pub fn run_residual_campaign(
                     unreachable!()
                 };
                 if resume.completed_candidates >= samples {
-                    return Ok(summary(config, &resume, checkpoint.generation, &archive));
+                    return Ok(summary(
+                        config,
+                        &resume,
+                        checkpoint.generation,
+                        &archive,
+                        checkpoint.replay_corpus.clone(),
+                    ));
                 }
                 let generation = checkpoint.generation;
                 let generation_count = resume
@@ -828,6 +840,7 @@ pub fn run_residual_campaign(
                         generation,
                         &optimizer,
                         &archive,
+                        checkpoint.replay_corpus.clone(),
                     )?;
                     continue;
                 }
@@ -870,6 +883,7 @@ pub fn run_residual_campaign(
                     generation + 1,
                     &optimizer,
                     &archive,
+                    checkpoint.replay_corpus.clone(),
                 )?;
             }
             ResidualCampaignOptimizer::Cem(mut cem) => {
@@ -881,7 +895,13 @@ pub fn run_residual_campaign(
                 let state = cem.snapshot().map_err(runner_error)?;
                 let generation = u64::from(state.generation);
                 if state.pending.is_empty() && generation >= u64::from(generations) {
-                    return Ok(summary(config, &resume, generation, &archive));
+                    return Ok(summary(
+                        config,
+                        &resume,
+                        generation,
+                        &archive,
+                        checkpoint.replay_corpus.clone(),
+                    ));
                 }
                 if state.pending.is_empty() {
                     let batch = cem.ask(&parent, &parent_bytes).map_err(runner_error)?;
@@ -909,6 +929,7 @@ pub fn run_residual_campaign(
                         generation,
                         &optimizer,
                         &archive,
+                        checkpoint.replay_corpus.clone(),
                     )?;
                     continue;
                 }
@@ -945,6 +966,7 @@ pub fn run_residual_campaign(
                     generation + 1,
                     &optimizer,
                     &archive,
+                    checkpoint.replay_corpus.clone(),
                 )?;
             }
         }
@@ -986,6 +1008,7 @@ fn summary(
     resume: &OptimizationResumeState,
     generation: u64,
     archive: &ResidualOutcomeArchive,
+    replay_corpus: Option<ResidualReplayCheckpoint>,
 ) -> ResidualCampaignRunSummary {
     ResidualCampaignRunSummary {
         schema: "dusklight-residual-campaign-run-summary/v2",
@@ -1003,6 +1026,7 @@ fn summary(
             .first()
             .map(|success| success.first_hit_tick),
         resume_state: config.optimization.resume.state_path.clone(),
+        replay_corpus,
     }
 }
 

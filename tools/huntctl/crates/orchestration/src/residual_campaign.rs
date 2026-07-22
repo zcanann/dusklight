@@ -6,6 +6,7 @@ use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_harness_contracts::run_contract::{
     HarnessRunRequest, HarnessRunResult, HarnessTerminalReason,
 };
+use dusklight_learning::native_replay_corpus::NativeReplayCorpus;
 use dusklight_search::residual_action::{
     CompiledResidualCandidate, ResidualCandidate, ResidualCompilationReport,
 };
@@ -27,6 +28,8 @@ pub const RESIDUAL_CAMPAIGN_EVALUATION_SCHEMA_V2: &str =
     "dusklight-residual-campaign-evaluation/v2";
 pub const RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2: &str =
     "dusklight-residual-campaign-checkpoint/v2";
+pub const RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3: &str =
+    "dusklight-residual-campaign-checkpoint/v3";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -365,6 +368,73 @@ pub struct ResidualCampaignCheckpoint {
     pub completed_candidates: u64,
     pub optimizer: ResidualCampaignOptimizerSnapshot,
     pub retention: ResidualRetentionSnapshot,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay_corpus: Option<ResidualReplayCheckpoint>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResidualReplayCheckpoint {
+    pub artifact: ArtifactReference,
+    pub generation: u32,
+    pub entries: u64,
+    pub transitions: u64,
+    pub successes: u64,
+    pub failures: u64,
+}
+
+impl ResidualReplayCheckpoint {
+    pub fn seal(
+        artifact: ArtifactReference,
+        corpus: &NativeReplayCorpus,
+    ) -> Result<Self, ResidualCampaignError> {
+        corpus
+            .validate()
+            .map_err(|error| campaign_error(error.to_string()))?;
+        let value = Self {
+            artifact,
+            generation: corpus.generation,
+            entries: u64::try_from(corpus.report.entries)
+                .map_err(|_| campaign_error("replay entry count overflowed"))?,
+            transitions: corpus.report.transitions,
+            successes: u64::try_from(corpus.report.successes)
+                .map_err(|_| campaign_error("replay success count overflowed"))?,
+            failures: u64::try_from(corpus.report.failures)
+                .map_err(|_| campaign_error("replay failure count overflowed"))?,
+        };
+        value.validate_corpus(corpus)?;
+        Ok(value)
+    }
+
+    pub fn validate_corpus(
+        &self,
+        corpus: &NativeReplayCorpus,
+    ) -> Result<(), ResidualCampaignError> {
+        corpus
+            .validate()
+            .map_err(|error| campaign_error(error.to_string()))?;
+        if !valid_artifact_reference(&self.artifact)
+            || self.generation != corpus.generation
+            || self.entries != corpus.report.entries as u64
+            || self.transitions != corpus.report.transitions
+            || self.successes != corpus.report.successes as u64
+            || self.failures != corpus.report.failures as u64
+            || self.successes.checked_add(self.failures) != Some(self.entries)
+        {
+            return Err(campaign_error(
+                "residual replay checkpoint summary is invalid or detached",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_shape(&self) -> bool {
+        valid_artifact_reference(&self.artifact)
+            && self.generation > 0
+            && self.entries > 0
+            && self.transitions > 0
+            && self.successes.checked_add(self.failures) == Some(self.entries)
+    }
 }
 
 impl ResidualCampaignCheckpoint {
@@ -375,9 +445,10 @@ impl ResidualCampaignCheckpoint {
         completed_candidates: u64,
         optimizer: ResidualCampaignOptimizerSnapshot,
         archive: &ResidualOutcomeArchive,
+        replay_corpus: Option<ResidualReplayCheckpoint>,
     ) -> Result<Self, ResidualCampaignError> {
         let mut value = Self {
-            schema: RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2.into(),
+            schema: RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: optimization.content_sha256,
             execution_binding_sha256,
@@ -387,6 +458,7 @@ impl ResidualCampaignCheckpoint {
             retention: archive
                 .snapshot()
                 .map_err(|error| campaign_error(error.to_string()))?,
+            replay_corpus,
         };
         value.content_sha256 = value.identity()?;
         value.validate(optimization, execution_binding_sha256)?;
@@ -401,10 +473,18 @@ impl ResidualCampaignCheckpoint {
         self.retention
             .validate()
             .map_err(|error| campaign_error(error.to_string()))?;
-        if self.schema != RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2
+        if !matches!(
+            self.schema.as_str(),
+            RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2 | RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3
+        ) || (self.schema == RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2
+            && self.replay_corpus.is_some())
             || self.optimization_request_sha256 != optimization.content_sha256
             || self.execution_binding_sha256 != execution_binding_sha256
             || self.completed_candidates > optimization.budgets.candidate_budget
+            || self
+                .replay_corpus
+                .as_ref()
+                .is_some_and(|replay| !replay.validate_shape())
             || self.retention.config
                 != optimization
                     .residual_retention_config()
@@ -475,8 +555,31 @@ impl ResidualCampaignCheckpoint {
     fn identity(&self) -> Result<Digest, ResidualCampaignError> {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.residual-campaign-checkpoint/v2\0", &canonical)
+        let domain = match self.schema.as_str() {
+            RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2 => {
+                b"dusklight.residual-campaign-checkpoint/v2\0".as_slice()
+            }
+            RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3 => {
+                b"dusklight.residual-campaign-checkpoint/v3\0".as_slice()
+            }
+            _ => {
+                return Err(campaign_error(
+                    "unsupported residual campaign checkpoint schema",
+                ));
+            }
+        };
+        canonical_digest(domain, &canonical)
     }
+}
+
+fn valid_artifact_reference(reference: &ArtifactReference) -> bool {
+    let path = std::path::Path::new(&reference.path);
+    reference.sha256 != Digest::ZERO
+        && !path.as_os_str().is_empty()
+        && !path.is_absolute()
+        && path
+            .components()
+            .all(|component| matches!(component, std::path::Component::Normal(_)))
 }
 
 #[derive(Debug)]
@@ -563,6 +666,7 @@ impl Error for ResidualCampaignError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::residual_campaign_runner::new_optimizer;
     use dusklight_automation_contracts::tape::{InputFrame, InputTape};
     use dusklight_search::residual_action::{
         AnalogChannel, AnalogResidual, TemporalBasis, compile_residual_candidate_to_horizon,
@@ -628,5 +732,76 @@ mod tests {
         let mut tampered = envelope.clone();
         tampered.compilation.frame_count = 63;
         assert!(tampered.validate().is_err());
+    }
+
+    #[test]
+    fn replay_checkpoint_v3_is_bound_and_replayless_v2_remains_valid() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../..")
+            .canonicalize()
+            .unwrap();
+        let optimization: OptimizationRequest = serde_json::from_slice(
+            &std::fs::read(root.join(
+                "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let incumbent = optimization.incumbent.as_ref().unwrap();
+        let parent = std::fs::read(root.join(&incumbent.tape.path)).unwrap();
+        let optimizer = new_optimizer(&optimization, &parent).unwrap();
+        let archive =
+            ResidualOutcomeArchive::new(optimization.residual_retention_config().unwrap()).unwrap();
+        let replay = ResidualReplayCheckpoint {
+            artifact: ArtifactReference {
+                path: "build/campaigns/test/replay/generation-00000001.json".into(),
+                sha256: Digest([9; 32]),
+            },
+            generation: 1,
+            entries: 1,
+            transitions: 1,
+            successes: 1,
+            failures: 0,
+        };
+        let checkpoint = ResidualCampaignCheckpoint::seal(
+            &optimization,
+            Digest([8; 32]),
+            0,
+            0,
+            optimizer.snapshot().unwrap(),
+            &archive,
+            Some(replay),
+        )
+        .unwrap();
+        assert_eq!(checkpoint.schema, RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3);
+        checkpoint.validate(&optimization, Digest([8; 32])).unwrap();
+
+        let mut legacy = checkpoint.clone();
+        legacy.schema = RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2.into();
+        legacy.replay_corpus = None;
+        legacy.content_sha256 = Digest::ZERO;
+        legacy.content_sha256 = legacy.identity().unwrap();
+        let bytes = serde_json::to_vec(&legacy).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains("replay_corpus"));
+        let decoded: ResidualCampaignCheckpoint = serde_json::from_slice(&bytes).unwrap();
+        decoded.validate(&optimization, Digest([8; 32])).unwrap();
+
+        let mut invalid_legacy = legacy;
+        invalid_legacy.replay_corpus = Some(ResidualReplayCheckpoint {
+            artifact: ArtifactReference {
+                path: "../foreign.json".into(),
+                sha256: Digest([7; 32]),
+            },
+            generation: 1,
+            entries: 1,
+            transitions: 1,
+            successes: 0,
+            failures: 1,
+        });
+        assert!(
+            invalid_legacy
+                .validate(&optimization, Digest([8; 32]))
+                .is_err()
+        );
     }
 }

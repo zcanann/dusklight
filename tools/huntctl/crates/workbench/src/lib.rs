@@ -154,6 +154,14 @@ pub struct GraphOptimizationCampaign {
     pub retained_failures: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub best_first_hit_tick: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay_generation: Option<u32>,
+    pub replay_entries: u64,
+    pub replay_transitions: u64,
+    pub replay_successes: u64,
+    pub replay_failures: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replay_corpus: Option<String>,
     pub uncheckpointed_completions: u64,
     pub artifacts_present: bool,
     pub proposal_sources: Vec<String>,

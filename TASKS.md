@@ -95,6 +95,13 @@ Working foundations:
   evidence is served by a stale-bound authenticated endpoint and loaded only
   when the selected candidate asks for detail; deleted candidates evict cached
   browser detail on refresh.
+- Persistent residual campaigns now decode and authenticate every completed
+  native episode shard into a cumulative, content-addressed replay generation
+  before advancing their optimizer checkpoint. Checkpoint v3 binds constant-size
+  replay episode/transition/outcome counts for responsive workbench polling;
+  retries reuse identical corpus bytes, pre-v3 completed campaigns backfill on
+  resume, and residual proposals are explicitly classified as randomized
+  coverage rather than demonstrations or policy rollouts.
 
 Not yet working:
 
@@ -318,6 +325,11 @@ winner is the target and remains an open framework challenge until achieved.
 - [ ] Automatically ingest all eligible native episodes into immutable replay
       generations with demonstration, policy-rollout, randomized-coverage, and
       alternate-terminal roles.
+      Native residual random/CEM attempts now ingest automatically as authenticated
+      randomized-coverage generations and are checkpointed atomically with the
+      optimizer. Demonstration, policy-rollout, and alternate-terminal producers
+      still need to invoke the same corpus contract from the unattended learning
+      loop before this item is complete.
 - [ ] Train a goal-conditioned estimate of terminal reachability and time-to-go
       from complete trajectories using tick cost, real terminal outcomes, n-step
       returns, replay, target isolation, and uncertainty.

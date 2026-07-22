@@ -564,6 +564,12 @@ fn campaign_projection(
         retained_successes: 0,
         retained_failures: 0,
         best_first_hit_tick: None,
+        replay_generation: None,
+        replay_entries: 0,
+        replay_transitions: 0,
+        replay_successes: 0,
+        replay_failures: 0,
+        replay_corpus: None,
         uncheckpointed_completions: 0,
         artifacts_present: optimization_campaign_artifacts_present(root, request),
         proposal_sources: vec![
@@ -632,6 +638,14 @@ fn campaign_projection(
                 Some(checkpoint) => {
                     projection.generation = checkpoint.generation;
                     apply_retention_projection(&mut projection, &checkpoint.retention);
+                    if let Some(replay) = checkpoint.replay_corpus {
+                        projection.replay_generation = Some(replay.generation);
+                        projection.replay_entries = replay.entries;
+                        projection.replay_transitions = replay.transitions;
+                        projection.replay_successes = replay.successes;
+                        projection.replay_failures = replay.failures;
+                        projection.replay_corpus = Some(replay.artifact.path);
+                    }
                 }
                 None => {
                     projection.status = "invalid".into();

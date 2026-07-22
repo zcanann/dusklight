@@ -1304,6 +1304,9 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "campaign.completed_candidates",
         "Proposal sources",
         "Current best",
+        "Replay generation",
+        "Replay experience",
+        "Replay corpus",
         "Retained failures",
         "Awaiting checkpoint",
         "Campaign blocked",
@@ -1910,6 +1913,12 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     assert_eq!(campaign.retained_successes, 0);
     assert_eq!(campaign.retained_failures, 0);
     assert_eq!(campaign.best_first_hit_tick, None);
+    assert_eq!(campaign.replay_generation, None);
+    assert_eq!(campaign.replay_entries, 0);
+    assert_eq!(campaign.replay_transitions, 0);
+    assert_eq!(campaign.replay_successes, 0);
+    assert_eq!(campaign.replay_failures, 0);
+    assert_eq!(campaign.replay_corpus, None);
     assert_eq!(campaign.proposal_sources, ["cem"]);
     assert!(campaign.blocker.is_none());
     assert!(graph.predicate_program.is_none());
