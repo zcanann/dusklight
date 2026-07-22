@@ -379,11 +379,7 @@ fn replay_completed(
     resume: &OptimizationResumeState,
     archive: &mut ResidualOutcomeArchive,
 ) -> Result<(), ResidualCampaignRunnerError> {
-    for row in resume
-        .candidates
-        .iter()
-        .filter(|row| row.result.is_some())
-    {
+    for row in resume.candidates.iter().filter(|row| row.result.is_some()) {
         let candidate = load_candidate(root, optimization, parent, parent_bytes, row)?;
         let evaluation = load_evaluation(root, optimization, template, row, &candidate)?;
         archive
@@ -598,7 +594,10 @@ fn generation_rank(
 pub fn run_residual_campaign(
     config: &ResidualCampaignRunConfig<'_>,
 ) -> Result<ResidualCampaignRunSummary, ResidualCampaignRunnerError> {
-    let root = config.repository_root.canonicalize().map_err(runner_error)?;
+    let root = config
+        .repository_root
+        .canonicalize()
+        .map_err(runner_error)?;
     config
         .optimization
         .validate_harness_template(&root, config.harness_template)
@@ -609,9 +608,7 @@ pub fn run_residual_campaign(
         .as_ref()
         .ok_or_else(|| runner_message("residual campaign requires an incumbent tape"))?;
     let parent_bytes = fs::read(root.join(&incumbent.tape.path)).map_err(runner_error)?;
-    let parent = InputTape::decode(&parent_bytes)
-        .map_err(runner_error)?
-        .tape;
+    let parent = InputTape::decode(&parent_bytes).map_err(runner_error)?.tape;
     let campaign = campaign_root(&root, config.optimization)?;
     fs::create_dir_all(&campaign).map_err(runner_error)?;
     let mut resume = if root.join(&config.optimization.resume.journal_path).exists() {
@@ -642,12 +639,8 @@ pub fn run_residual_campaign(
     }
 
     loop {
-        let checkpoint = load_checkpoint(
-            &root,
-            config.optimization,
-            config.harness_template,
-            &resume,
-        )?;
+        let checkpoint =
+            load_checkpoint(&root, config.optimization, config.harness_template, &resume)?;
         let optimizer = checkpoint.restore_optimizer(config.optimization, &parent_bytes)?;
         let mut archive = checkpoint.restore_archive()?;
         replay_completed(
@@ -675,10 +668,8 @@ pub fn run_residual_campaign(
                     .iter()
                     .filter(|row| row.generation == generation)
                     .count();
-                let produced = random
-                    .snapshot()
-                    .map_err(runner_error)?
-                    .produced_candidates as usize;
+                let produced =
+                    random.snapshot().map_err(runner_error)?.produced_candidates as usize;
                 if generation_count == 0 {
                     let count = (samples - resume.candidates.len() as u64)
                         .min(config.optimization.resume.checkpoint_every_candidates)
@@ -715,11 +706,7 @@ pub fn run_residual_campaign(
                 }
                 if produced < resume.candidates.len() {
                     let batch = random
-                        .sample(
-                            &parent,
-                            &parent_bytes,
-                            resume.candidates.len() - produced,
-                        )
+                        .sample(&parent, &parent_bytes, resume.candidates.len() - produced)
                         .map_err(runner_error)?;
                     let prepared = prepare_batch(
                         config.optimization,
@@ -818,14 +805,8 @@ pub fn run_residual_campaign(
                     &mut archive,
                     generation,
                 )?;
-                let ranked = generation_rank(
-                    &root,
-                    config,
-                    &parent,
-                    &parent_bytes,
-                    &resume,
-                    generation,
-                )?;
+                let ranked =
+                    generation_rank(&root, config, &parent, &parent_bytes, &resume, generation)?;
                 cem.tell(&ranked).map_err(runner_error)?;
                 let optimizer = ResidualCampaignOptimizer::Cem(cem);
                 resume = append_checkpoint(
@@ -890,7 +871,10 @@ fn summary(
         charged_simulated_ticks: resume.charged_simulated_ticks,
         retained_successes: archive.successes().len() as u64,
         retained_failures: archive.failures().len() as u64,
-        best_first_hit_tick: archive.successes().first().map(|success| success.first_hit_tick),
+        best_first_hit_tick: archive
+            .successes()
+            .first()
+            .map(|success| success.first_hit_tick),
         resume_state: config.optimization.resume.state_path.clone(),
     }
 }
@@ -921,5 +905,69 @@ impl Error for ResidualCampaignRunnerError {}
 impl From<ResidualCampaignError> for ResidualCampaignRunnerError {
     fn from(error: ResidualCampaignError) -> Self {
         runner_error(error)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn repository() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../..")
+            .canonicalize()
+            .unwrap()
+    }
+
+    #[test]
+    fn crash_before_optimizer_checkpoint_reproposes_without_repeating_candidates() {
+        let root = repository();
+        let checked = root.join(
+            "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+        );
+        let mut optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(checked).unwrap()).unwrap();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let relative = format!(
+            "build/campaigns/residual-crash-window-{}-{nonce}",
+            std::process::id()
+        );
+        optimization.resume.state_path = format!("{relative}/state.json");
+        optimization.resume.journal_path = format!("{relative}/journal.jsonl");
+        optimization.content_sha256 = Digest::ZERO;
+        optimization.refresh_content_sha256().unwrap();
+        optimization.validate_files(&root).unwrap();
+        let incumbent = optimization.incumbent.as_ref().unwrap();
+        let parent_bytes = fs::read(root.join(&incumbent.tape.path)).unwrap();
+        let parent = InputTape::decode(&parent_bytes).unwrap().tape;
+        let campaign = root.join(&relative);
+        let resume = initialize_optimization_resume(&optimization, &root).unwrap();
+        let mut first = new_optimizer(&optimization, &parent_bytes).unwrap();
+        let ResidualCampaignOptimizer::Cem(first) = &mut first else {
+            panic!("checked campaign is not CEM");
+        };
+        let batch = first.ask(&parent, &parent_bytes).unwrap();
+        let prepared = prepare_batch(&optimization, &parent, &parent_bytes, 0, batch).unwrap();
+        let sealed =
+            seal_candidate_batch(&root, &campaign, &optimization, &resume, &prepared).unwrap();
+        assert_eq!(sealed.candidates.len(), 64);
+        assert_eq!(sealed.record_count, 64);
+
+        let mut recovered = new_optimizer(&optimization, &parent_bytes).unwrap();
+        let ResidualCampaignOptimizer::Cem(recovered) = &mut recovered else {
+            panic!("checked campaign is not CEM");
+        };
+        let reproposed = recovered.ask(&parent, &parent_bytes).unwrap();
+        let reproposed =
+            prepare_batch(&optimization, &parent, &parent_bytes, 0, reproposed).unwrap();
+        let adopted =
+            seal_candidate_batch(&root, &campaign, &optimization, &sealed, &reproposed).unwrap();
+        assert_eq!(adopted.record_count, sealed.record_count);
+        assert_eq!(adopted.candidates, sealed.candidates);
+        fs::remove_dir_all(campaign).unwrap();
     }
 }
