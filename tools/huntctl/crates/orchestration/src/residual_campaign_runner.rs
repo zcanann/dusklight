@@ -61,6 +61,129 @@ struct PreparedCandidate {
     compiled: CompiledResidualCandidate,
 }
 
+fn new_optimizer(
+    optimization: &OptimizationRequest,
+    parent_bytes: &[u8],
+) -> Result<ResidualCampaignOptimizer, ResidualCampaignRunnerError> {
+    match optimization.proposal.optimizer {
+        ResidualOptimizerConfig::Random { .. } => Ok(ResidualCampaignOptimizer::Random(
+            dusklight_search::residual_optimizer::ResidualRandomSampler::new(
+                optimization.proposal.search_space.clone(),
+                parent_bytes,
+                optimization.execution.deterministic_seeds[0],
+            )
+            .map_err(runner_error)?,
+        )),
+        ResidualOptimizerConfig::Cem {
+            population,
+            elites,
+            smoothing_millionths,
+            ..
+        } => Ok(ResidualCampaignOptimizer::Cem(
+            ResidualCemOptimizer::new(
+                optimization.proposal.search_space.clone(),
+                parent_bytes,
+                ResidualCemConfig {
+                    population: population as usize,
+                    elites: elites as usize,
+                    smoothing_millionths,
+                    seed: optimization.execution.deterministic_seeds[0],
+                },
+            )
+            .map_err(runner_error)?,
+        )),
+    }
+}
+
+fn campaign_root(
+    root: &Path,
+    optimization: &OptimizationRequest,
+) -> Result<PathBuf, ResidualCampaignRunnerError> {
+    let relative = Path::new(&optimization.resume.state_path)
+        .parent()
+        .ok_or_else(|| runner_message("residual resume state has no campaign directory"))?;
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(runner_message(
+            "residual campaign directory is not repository relative",
+        ));
+    }
+    Ok(root.join(relative))
+}
+
+fn artifact_reference(
+    root: &Path,
+    path: &Path,
+) -> Result<ArtifactReference, ResidualCampaignRunnerError> {
+    let bytes = fs::read(path).map_err(runner_error)?;
+    Ok(ArtifactReference {
+        path: repository_relative(root, path)?,
+        sha256: sha256(&bytes),
+    })
+}
+
+fn read_artifact(
+    root: &Path,
+    reference: &ArtifactReference,
+) -> Result<Vec<u8>, ResidualCampaignRunnerError> {
+    let bytes = fs::read(root.join(&reference.path)).map_err(runner_error)?;
+    if sha256(&bytes) != reference.sha256 {
+        return Err(runner_message("residual campaign artifact digest differs"));
+    }
+    Ok(bytes)
+}
+
+fn repository_relative(
+    root: &Path,
+    path: &Path,
+) -> Result<String, ResidualCampaignRunnerError> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| runner_message("residual campaign path is outside the repository"))?;
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(runner_message("residual campaign path is not canonical"));
+    }
+    relative
+        .to_str()
+        .map(|value| value.replace(std::path::MAIN_SEPARATOR, "/"))
+        .ok_or_else(|| runner_message("residual campaign path is not UTF-8"))
+}
+
+fn write_exact_or_new(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), ResidualCampaignRunnerError> {
+    if path.exists() {
+        if fs::read(path).map_err(runner_error)? != bytes {
+            return Err(runner_message(format!(
+                "existing residual artifact differs: {}",
+                path.display()
+            )));
+        }
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(runner_error)?;
+    }
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(runner_error)?;
+    output.write_all(bytes).map_err(runner_error)?;
+    output.sync_all().map_err(runner_error)?;
+    Ok(())
+}
+
 fn sha256(bytes: &[u8]) -> Digest {
     Digest(Sha256::digest(bytes).into())
 }
