@@ -52,12 +52,27 @@ pub struct ProcessTransport {
 
 impl ProcessTransport {
     pub fn spawn(program: impl AsRef<Path>, args: &[String]) -> std::io::Result<Self> {
-        let mut child = Command::new(program.as_ref())
+        Self::spawn_in(program, args, None::<&Path>)
+    }
+
+    /// Spawns a persistent protocol child in an explicit working directory.
+    /// Engine workers need this because their executable, disc, and artifact
+    /// paths are authenticated independently from process cwd.
+    pub fn spawn_in(
+        program: impl AsRef<Path>,
+        args: &[String],
+        working_directory: Option<impl AsRef<Path>>,
+    ) -> std::io::Result<Self> {
+        let mut command = Command::new(program.as_ref());
+        command
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
+            .stderr(Stdio::inherit());
+        if let Some(working_directory) = working_directory {
+            command.current_dir(working_directory);
+        }
+        let mut child = command.spawn()?;
         let stdin = child.stdin.take().expect("piped child stdin");
         let stdout = child.stdout.take().expect("piped child stdout");
         Ok(Self {
