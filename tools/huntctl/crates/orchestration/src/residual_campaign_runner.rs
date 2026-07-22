@@ -595,6 +595,306 @@ fn generation_rank(
     .map_err(runner_error)
 }
 
+pub fn run_residual_campaign(
+    config: &ResidualCampaignRunConfig<'_>,
+) -> Result<ResidualCampaignRunSummary, ResidualCampaignRunnerError> {
+    let root = config.repository_root.canonicalize().map_err(runner_error)?;
+    config
+        .optimization
+        .validate_harness_template(&root, config.harness_template)
+        .map_err(runner_error)?;
+    let incumbent = config
+        .optimization
+        .incumbent
+        .as_ref()
+        .ok_or_else(|| runner_message("residual campaign requires an incumbent tape"))?;
+    let parent_bytes = fs::read(root.join(&incumbent.tape.path)).map_err(runner_error)?;
+    let parent = InputTape::decode(&parent_bytes)
+        .map_err(runner_error)?
+        .tape;
+    let campaign = campaign_root(&root, config.optimization)?;
+    fs::create_dir_all(&campaign).map_err(runner_error)?;
+    let mut resume = if root.join(&config.optimization.resume.journal_path).exists() {
+        load_optimization_resume(config.optimization, &root)
+    } else {
+        initialize_optimization_resume(config.optimization, &root)
+    }
+    .map_err(runner_error)?;
+    if resume.latest_optimizer_checkpoint.is_none() {
+        let optimizer = new_optimizer(config.optimization, &parent_bytes)?;
+        let archive = ResidualOutcomeArchive::new(
+            config
+                .optimization
+                .residual_retention_config()
+                .map_err(runner_error)?,
+        )
+        .map_err(runner_error)?;
+        resume = append_checkpoint(
+            &root,
+            &campaign,
+            config.optimization,
+            config.harness_template,
+            &resume,
+            0,
+            &optimizer,
+            &archive,
+        )?;
+    }
+
+    loop {
+        let checkpoint = load_checkpoint(
+            &root,
+            config.optimization,
+            config.harness_template,
+            &resume,
+        )?;
+        let optimizer = checkpoint.restore_optimizer(config.optimization, &parent_bytes)?;
+        let mut archive = checkpoint.restore_archive()?;
+        replay_completed(
+            &root,
+            config.optimization,
+            config.harness_template,
+            &parent,
+            &parent_bytes,
+            &resume,
+            &mut archive,
+        )?;
+        match optimizer {
+            ResidualCampaignOptimizer::Random(mut random) => {
+                let ResidualOptimizerConfig::Random { samples } =
+                    config.optimization.proposal.optimizer
+                else {
+                    unreachable!()
+                };
+                if resume.completed_candidates >= samples {
+                    return Ok(summary(config, &resume, checkpoint.generation, &archive));
+                }
+                let generation = checkpoint.generation;
+                let generation_count = resume
+                    .candidates
+                    .iter()
+                    .filter(|row| row.generation == generation)
+                    .count();
+                let produced = random
+                    .snapshot()
+                    .map_err(runner_error)?
+                    .produced_candidates as usize;
+                if generation_count == 0 {
+                    let count = (samples - resume.candidates.len() as u64)
+                        .min(config.optimization.resume.checkpoint_every_candidates)
+                        .min(16_384) as usize;
+                    let batch = random
+                        .sample(&parent, &parent_bytes, count)
+                        .map_err(runner_error)?;
+                    let prepared = prepare_batch(
+                        config.optimization,
+                        &parent,
+                        &parent_bytes,
+                        generation,
+                        batch,
+                    )?;
+                    resume = seal_candidate_batch(
+                        &root,
+                        &campaign,
+                        config.optimization,
+                        &resume,
+                        &prepared,
+                    )?;
+                    let optimizer = ResidualCampaignOptimizer::Random(random);
+                    resume = append_checkpoint(
+                        &root,
+                        &campaign,
+                        config.optimization,
+                        config.harness_template,
+                        &resume,
+                        generation,
+                        &optimizer,
+                        &archive,
+                    )?;
+                    continue;
+                }
+                if produced < resume.candidates.len() {
+                    let batch = random
+                        .sample(
+                            &parent,
+                            &parent_bytes,
+                            resume.candidates.len() - produced,
+                        )
+                        .map_err(runner_error)?;
+                    let prepared = prepare_batch(
+                        config.optimization,
+                        &parent,
+                        &parent_bytes,
+                        generation,
+                        batch,
+                    )?;
+                    resume = seal_candidate_batch(
+                        &root,
+                        &campaign,
+                        config.optimization,
+                        &resume,
+                        &prepared,
+                    )?;
+                }
+                evaluate_generation(
+                    &root,
+                    &campaign,
+                    config,
+                    &parent,
+                    &parent_bytes,
+                    &mut resume,
+                    &mut archive,
+                    generation,
+                )?;
+                let optimizer = ResidualCampaignOptimizer::Random(random);
+                resume = append_checkpoint(
+                    &root,
+                    &campaign,
+                    config.optimization,
+                    config.harness_template,
+                    &resume,
+                    generation + 1,
+                    &optimizer,
+                    &archive,
+                )?;
+            }
+            ResidualCampaignOptimizer::Cem(mut cem) => {
+                let ResidualOptimizerConfig::Cem { generations, .. } =
+                    config.optimization.proposal.optimizer
+                else {
+                    unreachable!()
+                };
+                let state = cem.snapshot().map_err(runner_error)?;
+                let generation = u64::from(state.generation);
+                if state.pending.is_empty() && generation >= u64::from(generations) {
+                    return Ok(summary(config, &resume, generation, &archive));
+                }
+                if state.pending.is_empty() {
+                    let batch = cem.ask(&parent, &parent_bytes).map_err(runner_error)?;
+                    let prepared = prepare_batch(
+                        config.optimization,
+                        &parent,
+                        &parent_bytes,
+                        generation,
+                        batch,
+                    )?;
+                    resume = seal_candidate_batch(
+                        &root,
+                        &campaign,
+                        config.optimization,
+                        &resume,
+                        &prepared,
+                    )?;
+                    let optimizer = ResidualCampaignOptimizer::Cem(cem);
+                    resume = append_checkpoint(
+                        &root,
+                        &campaign,
+                        config.optimization,
+                        config.harness_template,
+                        &resume,
+                        generation,
+                        &optimizer,
+                        &archive,
+                    )?;
+                    continue;
+                }
+                let actual = resume
+                    .candidates
+                    .iter()
+                    .filter(|row| row.generation == generation)
+                    .count();
+                if actual != state.pending.len() {
+                    return Err(runner_message(
+                        "pending CEM checkpoint differs from its atomic candidate batch",
+                    ));
+                }
+                evaluate_generation(
+                    &root,
+                    &campaign,
+                    config,
+                    &parent,
+                    &parent_bytes,
+                    &mut resume,
+                    &mut archive,
+                    generation,
+                )?;
+                let ranked = generation_rank(
+                    &root,
+                    config,
+                    &parent,
+                    &parent_bytes,
+                    &resume,
+                    generation,
+                )?;
+                cem.tell(&ranked).map_err(runner_error)?;
+                let optimizer = ResidualCampaignOptimizer::Cem(cem);
+                resume = append_checkpoint(
+                    &root,
+                    &campaign,
+                    config.optimization,
+                    config.harness_template,
+                    &resume,
+                    generation + 1,
+                    &optimizer,
+                    &archive,
+                )?;
+            }
+        }
+    }
+}
+
+fn prepare_batch(
+    optimization: &OptimizationRequest,
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    generation: u64,
+    batch: dusklight_search::residual_optimizer::ResidualProposalBatch,
+) -> Result<Vec<PreparedCandidate>, ResidualCampaignRunnerError> {
+    batch
+        .proposals
+        .into_iter()
+        .map(|proposal| {
+            let compiled = compile_residual_candidate_to_horizon(
+                parent,
+                parent_bytes,
+                &proposal.candidate,
+                optimization.budgets.exploration_horizon_ticks,
+            )
+            .map_err(runner_error)?;
+            prepare_candidate(
+                optimization,
+                generation,
+                proposal.sample_index,
+                proposal.genome,
+                proposal.candidate,
+                compiled,
+            )
+        })
+        .collect()
+}
+
+fn summary(
+    config: &ResidualCampaignRunConfig<'_>,
+    resume: &OptimizationResumeState,
+    generation: u64,
+    archive: &ResidualOutcomeArchive,
+) -> ResidualCampaignRunSummary {
+    ResidualCampaignRunSummary {
+        schema: "dusklight-residual-campaign-run-summary/v1",
+        optimization_request_sha256: config.optimization.content_sha256,
+        harness_template_sha256: config.harness_template.content_sha256,
+        completed: true,
+        generation,
+        sealed_candidates: resume.candidates.len() as u64,
+        completed_candidates: resume.completed_candidates,
+        charged_simulated_ticks: resume.charged_simulated_ticks,
+        retained_successes: archive.successes().len() as u64,
+        retained_failures: archive.failures().len() as u64,
+        best_first_hit_tick: archive.successes().first().map(|success| success.first_hit_tick),
+        resume_state: config.optimization.resume.state_path.clone(),
+    }
+}
+
 fn sha256(bytes: &[u8]) -> Digest {
     Digest(Sha256::digest(bytes).into())
 }
