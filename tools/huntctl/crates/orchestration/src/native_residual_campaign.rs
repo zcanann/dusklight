@@ -484,13 +484,13 @@ impl NativeIncumbentDemonstration {
             || !valid_reference(&self.attempt.episode_shard)
             || !lower_hex(&self.attempt.restore_identity, 32)
             || self.attempt.checkpoint_bytes == 0
-            || self.attempt.simulated_ticks != incumbent.first_hit_tick
+            || incumbent.first_hit_tick.checked_add(1) != Some(self.attempt.simulated_ticks)
             || self.attempt.first_hit_tick != Some(incumbent.first_hit_tick)
             || !lower_hex(&self.attempt.terminal_boundary_fingerprint, 32)
             || self.attempt.behavior_sha256 == Digest::ZERO
             || self.replay.generation != 1
             || self.replay.entries != 1
-            || self.replay.transitions != incumbent.first_hit_tick
+            || self.replay.transitions != self.attempt.simulated_ticks
             || self.replay.successes != 1
             || self.replay.failures != 0
             || !valid_reference(&self.replay.artifact)
@@ -664,9 +664,9 @@ impl NativeResidualCampaignEvaluation {
                 && attempt.checkpoint_bytes > 0
                 && attempt.simulated_ticks > 0
                 && attempt.simulated_ticks <= optimization.budgets.exploration_horizon_ticks
-                && attempt
-                    .first_hit_tick
-                    .is_none_or(|tick| tick > 0 && tick == attempt.simulated_ticks)
+                && attempt.first_hit_tick.is_none_or(|tick| {
+                    tick > 0 && tick.checked_add(1) == Some(attempt.simulated_ticks)
+                })
                 && attempt.first_hit_tick == expected_tick
                 && lower_hex(&attempt.terminal_boundary_fingerprint, 32)
                 && attempt.terminal_boundary_fingerprint == expected_boundary
@@ -1040,10 +1040,10 @@ mod tests {
         )
         .unwrap();
         let report = binding.validate_files(&root, &optimization).unwrap();
-        assert_eq!(report.source_frame, 440);
+        assert_eq!(report.source_frame, 506);
         assert_eq!(report.exploration_horizon_ticks, 160);
-        assert_eq!(report.process_boot_tape_frames, 600);
-        assert_eq!(report.materialized_route_frames, 566);
+        assert_eq!(report.process_boot_tape_frames, 666);
+        assert_eq!(report.materialized_route_frames, 632);
         assert_eq!(report.workers, 4);
 
         fs::write(&program, b"tampered").unwrap();

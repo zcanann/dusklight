@@ -1412,7 +1412,7 @@ fn ensure_incumbent_demonstration(
         .as_ref()
         .ok_or_else(|| native_message("native residual campaign requires an incumbent"))?;
     if candidate.first_hit_tick != Some(incumbent.first_hit_tick)
-        || candidate.simulated_ticks != incumbent.first_hit_tick
+        || incumbent.first_hit_tick.checked_add(1) != Some(candidate.simulated_ticks)
     {
         return Err(native_message(
             "incumbent demonstration did not reproduce its exact terminal proof",
@@ -2193,7 +2193,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(batch.source_frame, 440);
+        assert_eq!(batch.source_frame, 506);
         assert_eq!(
             batch.source_boundary_fingerprint,
             optimization.route.native_source_boundary_fingerprint
@@ -2254,7 +2254,7 @@ mod tests {
             episode_shard: placeholder("build/test/episodes.dseps", byte.saturating_add(2)),
             restore_identity: "7".repeat(32),
             checkpoint_bytes: 1,
-            simulated_ticks: first_hit_tick.unwrap_or(160),
+            simulated_ticks: first_hit_tick.map_or(160, |tick| tick + 1),
             first_hit_tick,
             terminal_boundary_fingerprint: "8".repeat(32),
             behavior_sha256: Digest([byte.saturating_add(3); 32]),
@@ -2275,7 +2275,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(evaluation.simulated_ticks, 273);
+        assert_eq!(evaluation.simulated_ticks, 274);
         assert_eq!(evaluation.alternate_terminals.len(), 1);
         assert_eq!(
             evaluation.alternate_terminals[0].attempts[0].first_hit_tick,
