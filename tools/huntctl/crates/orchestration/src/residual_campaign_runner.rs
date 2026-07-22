@@ -137,10 +137,7 @@ fn read_artifact(
     Ok(bytes)
 }
 
-fn repository_relative(
-    root: &Path,
-    path: &Path,
-) -> Result<String, ResidualCampaignRunnerError> {
+fn repository_relative(root: &Path, path: &Path) -> Result<String, ResidualCampaignRunnerError> {
     let relative = path
         .strip_prefix(root)
         .map_err(|_| runner_message("residual campaign path is outside the repository"))?;
@@ -158,10 +155,7 @@ fn repository_relative(
         .ok_or_else(|| runner_message("residual campaign path is not UTF-8"))
 }
 
-fn write_exact_or_new(
-    path: &Path,
-    bytes: &[u8],
-) -> Result<(), ResidualCampaignRunnerError> {
+fn write_exact_or_new(path: &Path, bytes: &[u8]) -> Result<(), ResidualCampaignRunnerError> {
     if path.exists() {
         if fs::read(path).map_err(runner_error)? != bytes {
             return Err(runner_message(format!(
@@ -279,8 +273,7 @@ fn seal_candidate_batch(
                     .map_err(runner_error)?;
             loaded.validate()?;
             if loaded != candidate.envelope
-                || existing.compiled_tape_sha256
-                    != candidate.compiled.report.realized_tape_sha256
+                || existing.compiled_tape_sha256 != candidate.compiled.report.realized_tape_sha256
             {
                 return Err(runner_message(
                     "journaled candidate differs from deterministic reproposal",
@@ -357,6 +350,249 @@ fn load_generation(
         .collect::<Result<Vec<_>, _>>()?;
     values.sort_by_key(|candidate| candidate.envelope.sample_index);
     Ok(values)
+}
+
+fn load_evaluation(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    template: &HarnessRunRequest,
+    row: &OptimizationResumeCandidate,
+    candidate: &PreparedCandidate,
+) -> Result<ResidualCampaignEvaluation, ResidualCampaignRunnerError> {
+    let reference = row
+        .result
+        .as_ref()
+        .ok_or_else(|| runner_message("residual evaluation is not journaled"))?;
+    let evaluation: ResidualCampaignEvaluation =
+        serde_json::from_slice(&read_artifact(root, reference)?).map_err(runner_error)?;
+    evaluation.validate(optimization, template, &candidate.envelope)?;
+    Ok(evaluation)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_completed(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    template: &HarnessRunRequest,
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    resume: &OptimizationResumeState,
+    archive: &mut ResidualOutcomeArchive,
+) -> Result<(), ResidualCampaignRunnerError> {
+    for row in resume
+        .candidates
+        .iter()
+        .filter(|row| row.result.is_some())
+    {
+        let candidate = load_candidate(root, optimization, parent, parent_bytes, row)?;
+        let evaluation = load_evaluation(root, optimization, template, row, &candidate)?;
+        archive
+            .record(&candidate.compiled, evaluation.evidence)
+            .map_err(runner_error)?;
+    }
+    Ok(())
+}
+
+fn execute_native_attempt(
+    root: &Path,
+    campaign: &Path,
+    config: &ResidualCampaignRunConfig<'_>,
+    row: &OptimizationResumeCandidate,
+    candidate: &PreparedCandidate,
+    repetition: u16,
+) -> Result<(ResidualNativeAttempt, HarnessRunRequest, HarnessRunResult), ResidualCampaignRunnerError>
+{
+    let seed = candidate
+        .envelope
+        .proposer_seed
+        .checked_add(u64::from(repetition - 1))
+        .ok_or_else(|| runner_message("residual repetition seed overflowed"))?;
+    let tape_path = root.join(&row.compiled_tape.path);
+    for trial in 1..=100_u32 {
+        let destination_path = campaign
+            .join("native")
+            .join(&candidate.envelope.id)
+            .join(format!("r{repetition:03}-try{trial:03}"));
+        let destination = repository_relative(root, &destination_path)?;
+        let request_path = campaign
+            .join("native-requests")
+            .join(&candidate.envelope.id)
+            .join(format!("r{repetition:03}-try{trial:03}.json"));
+        let request = derive_candidate_request(
+            config.harness_template,
+            root,
+            &tape_path,
+            &destination,
+            seed,
+        )
+        .map_err(runner_error)?;
+        write_exact_or_new(
+            &request_path,
+            &request.to_pretty_json().map_err(runner_error)?,
+        )?;
+        let result_path = destination_path.join("result.json");
+        let result = if result_path.is_file() {
+            serde_json::from_slice(&fs::read(&result_path).map_err(runner_error)?)
+                .map_err(runner_error)?
+        } else if destination_path.exists() {
+            continue;
+        } else {
+            execute_request(&request, root, trial).map_err(runner_error)?
+        };
+        result
+            .validate_files(&request, &destination_path)
+            .map_err(runner_error)?;
+        if !matches!(
+            (result.terminal, result.objective.reached),
+            (
+                dusklight_harness_contracts::run_contract::HarnessTerminalReason::Reached,
+                true
+            ) | (
+                dusklight_harness_contracts::run_contract::HarnessTerminalReason::Exhausted,
+                false
+            )
+        ) {
+            continue;
+        }
+        return Ok((
+            ResidualNativeAttempt {
+                repetition,
+                rng_seed: seed,
+                request: artifact_reference(root, &request_path)?,
+                request_content_sha256: request.content_sha256,
+                result: artifact_reference(root, &result_path)?,
+                result_content_sha256: result.content_sha256,
+            },
+            request,
+            result,
+        ));
+    }
+    Err(runner_message(
+        "residual candidate exhausted native recovery attempts",
+    ))
+}
+
+fn execute_candidate(
+    root: &Path,
+    campaign: &Path,
+    config: &ResidualCampaignRunConfig<'_>,
+    row: &OptimizationResumeCandidate,
+    candidate: &PreparedCandidate,
+) -> Result<ResidualCampaignEvaluation, ResidualCampaignRunnerError> {
+    let attempts = (1..=config.optimization.execution.repetitions)
+        .map(|repetition| {
+            execute_native_attempt(root, campaign, config, row, candidate, repetition)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    ResidualCampaignEvaluation::from_native(
+        config.optimization,
+        config.harness_template,
+        &candidate.envelope,
+        attempts,
+    )
+    .map_err(Into::into)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_generation(
+    root: &Path,
+    campaign: &Path,
+    config: &ResidualCampaignRunConfig<'_>,
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    resume: &mut OptimizationResumeState,
+    archive: &mut ResidualOutcomeArchive,
+    generation: u64,
+) -> Result<(), ResidualCampaignRunnerError> {
+    for candidate in load_generation(
+        root,
+        config.optimization,
+        parent,
+        parent_bytes,
+        resume,
+        generation,
+    )? {
+        let row = resume
+            .candidates
+            .iter()
+            .find(|row| row.id == candidate.envelope.id)
+            .cloned()
+            .ok_or_else(|| runner_message("residual candidate is absent from journal"))?;
+        if row.result.is_some() {
+            continue;
+        }
+        let evaluation = execute_candidate(root, campaign, config, &row, &candidate)?;
+        archive
+            .record(&candidate.compiled, evaluation.evidence.clone())
+            .map_err(runner_error)?;
+        let path = campaign
+            .join("evaluations")
+            .join(format!("{}.json", candidate.envelope.id));
+        write_exact_or_new(&path, &evaluation.to_pretty_json()?)?;
+        *resume = append_optimization_resume_event(
+            config.optimization,
+            root,
+            OptimizationResumeEvent::EvaluationCompleted {
+                candidate_id: candidate.envelope.id,
+                candidate_sha256: row.candidate_sha256,
+                result: artifact_reference(root, &path)?,
+                simulated_ticks: evaluation.simulated_ticks,
+            },
+        )
+        .map_err(runner_error)?;
+    }
+    Ok(())
+}
+
+fn generation_rank(
+    root: &Path,
+    config: &ResidualCampaignRunConfig<'_>,
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    resume: &OptimizationResumeState,
+    generation: u64,
+) -> Result<Vec<Digest>, ResidualCampaignRunnerError> {
+    let candidates = load_generation(
+        root,
+        config.optimization,
+        parent,
+        parent_bytes,
+        resume,
+        generation,
+    )?;
+    let evaluations = candidates
+        .iter()
+        .map(|candidate| {
+            let row = resume
+                .candidates
+                .iter()
+                .find(|row| row.id == candidate.envelope.id)
+                .ok_or_else(|| runner_message("ranked residual candidate is not journaled"))?;
+            load_evaluation(
+                root,
+                config.optimization,
+                config.harness_template,
+                row,
+                candidate,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let inputs = candidates
+        .iter()
+        .zip(&evaluations)
+        .map(|(candidate, evaluation)| ResidualGenerationEvaluation {
+            compiled: &candidate.compiled,
+            evidence: &evaluation.evidence,
+        })
+        .collect::<Vec<_>>();
+    rank_residual_generation(
+        &config
+            .optimization
+            .residual_retention_config()
+            .map_err(runner_error)?,
+        &inputs,
+    )
+    .map_err(runner_error)
 }
 
 fn sha256(bytes: &[u8]) -> Digest {
