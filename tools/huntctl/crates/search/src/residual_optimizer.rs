@@ -215,6 +215,10 @@ pub struct ResidualRandomSnapshot {
     pub rng_state: u64,
     pub produced_candidates: u64,
     pub attempted_genomes: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rejected_invalid_genomes: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rejected_duplicate_tapes: u64,
     pub seen_tape_sha256: Vec<Digest>,
 }
 
@@ -225,6 +229,8 @@ pub struct ResidualRandomSampler {
     rng: DeterministicRng,
     produced_candidates: u64,
     attempted_genomes: u64,
+    rejected_invalid_genomes: u64,
+    rejected_duplicate_tapes: u64,
     seen_tape_sha256: BTreeSet<Digest>,
 }
 
@@ -241,6 +247,8 @@ impl ResidualRandomSampler {
             rng: DeterministicRng::new(seed ^ 0x7261_6e64_6f6d_5f72),
             produced_candidates: 0,
             attempted_genomes: 0,
+            rejected_invalid_genomes: 0,
+            rejected_duplicate_tapes: 0,
             seen_tape_sha256: BTreeSet::new(),
         })
     }
@@ -262,6 +270,12 @@ impl ResidualRandomSampler {
                 .any(|pair| pair[0] >= pair[1])
             || snapshot.produced_candidates != snapshot.seen_tape_sha256.len() as u64
             || snapshot.attempted_genomes < snapshot.produced_candidates
+            || snapshot
+                .rejected_invalid_genomes
+                .checked_add(snapshot.rejected_duplicate_tapes)
+                .is_none_or(|classified| {
+                    classified > snapshot.attempted_genomes - snapshot.produced_candidates
+                })
         {
             return Err(optimizer_error("random residual snapshot is invalid"));
         }
@@ -273,6 +287,8 @@ impl ResidualRandomSampler {
             },
             produced_candidates: snapshot.produced_candidates,
             attempted_genomes: snapshot.attempted_genomes,
+            rejected_invalid_genomes: snapshot.rejected_invalid_genomes,
+            rejected_duplicate_tapes: snapshot.rejected_duplicate_tapes,
             seen_tape_sha256: snapshot.seen_tape_sha256.into_iter().collect(),
         })
     }
@@ -288,7 +304,7 @@ impl ResidualRandomSampler {
         validate_batch_count(count)?;
         let generation = u32::try_from(self.produced_candidates)
             .map_err(|_| optimizer_error("random proposal index overflowed"))?;
-        sample_unique(
+        let batch = sample_unique(
             &self.space,
             &mut self.rng,
             parent,
@@ -299,7 +315,16 @@ impl ResidualRandomSampler {
             &mut self.produced_candidates,
             &mut self.seen_tape_sha256,
             None,
-        )
+        )?;
+        self.rejected_invalid_genomes = self
+            .rejected_invalid_genomes
+            .checked_add(batch.rejected_invalid)
+            .ok_or_else(|| optimizer_error("random invalid-rejection count overflowed"))?;
+        self.rejected_duplicate_tapes = self
+            .rejected_duplicate_tapes
+            .checked_add(batch.rejected_duplicate_tape)
+            .ok_or_else(|| optimizer_error("random duplicate-rejection count overflowed"))?;
+        Ok(batch)
     }
 
     pub fn snapshot(&self) -> Result<ResidualRandomSnapshot, ResidualOptimizerError> {
@@ -311,6 +336,8 @@ impl ResidualRandomSampler {
             rng_state: self.rng.state,
             produced_candidates: self.produced_candidates,
             attempted_genomes: self.attempted_genomes,
+            rejected_invalid_genomes: self.rejected_invalid_genomes,
+            rejected_duplicate_tapes: self.rejected_duplicate_tapes,
             seen_tape_sha256: self.seen_tape_sha256.iter().copied().collect(),
         };
         snapshot.content_sha256 = snapshot.compute_identity()?;
@@ -577,6 +604,10 @@ pub struct ResidualCemSnapshot {
     pub generation: u32,
     pub rng_state: u64,
     pub attempted_genomes: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rejected_invalid_genomes: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rejected_duplicate_tapes: u64,
     pub distributions: Vec<ResidualGeneDistribution>,
     pub seen_tape_sha256: Vec<Digest>,
     pub pending: Vec<PendingResidualCemSample>,
@@ -590,6 +621,8 @@ pub struct ResidualCemOptimizer {
     generation: u32,
     rng: DeterministicRng,
     attempted_genomes: u64,
+    rejected_invalid_genomes: u64,
+    rejected_duplicate_tapes: u64,
     distributions: Vec<ResidualGeneDistribution>,
     seen_tape_sha256: BTreeSet<Digest>,
     pending: BTreeMap<Digest, PendingResidualCemSample>,
@@ -613,6 +646,8 @@ impl ResidualCemOptimizer {
             generation: 0,
             rng: DeterministicRng::new(config.seed ^ 0x6365_6d5f_7265_7369),
             attempted_genomes: 0,
+            rejected_invalid_genomes: 0,
+            rejected_duplicate_tapes: 0,
             seen_tape_sha256: BTreeSet::new(),
             pending: BTreeMap::new(),
         })
@@ -652,6 +687,13 @@ impl ResidualCemOptimizer {
                 .any(|pair| pair[0].candidate_sha256 >= pair[1].candidate_sha256)
             || pending.len() != snapshot.pending.len()
             || pending.len() > config.population
+            || snapshot.attempted_genomes < snapshot.seen_tape_sha256.len() as u64
+            || snapshot
+                .rejected_invalid_genomes
+                .checked_add(snapshot.rejected_duplicate_tapes)
+                .is_none_or(|classified| {
+                    classified > snapshot.attempted_genomes - snapshot.seen_tape_sha256.len() as u64
+                })
             || snapshot
                 .pending
                 .iter()
@@ -668,6 +710,8 @@ impl ResidualCemOptimizer {
                 state: snapshot.rng_state,
             },
             attempted_genomes: snapshot.attempted_genomes,
+            rejected_invalid_genomes: snapshot.rejected_invalid_genomes,
+            rejected_duplicate_tapes: snapshot.rejected_duplicate_tapes,
             distributions: snapshot.distributions,
             seen_tape_sha256: snapshot.seen_tape_sha256.into_iter().collect(),
             pending,
@@ -699,6 +743,14 @@ impl ResidualCemOptimizer {
             &mut self.seen_tape_sha256,
             Some(&self.distributions),
         )?;
+        self.rejected_invalid_genomes = self
+            .rejected_invalid_genomes
+            .checked_add(batch.rejected_invalid)
+            .ok_or_else(|| optimizer_error("CEM invalid-rejection count overflowed"))?;
+        self.rejected_duplicate_tapes = self
+            .rejected_duplicate_tapes
+            .checked_add(batch.rejected_duplicate_tape)
+            .ok_or_else(|| optimizer_error("CEM duplicate-rejection count overflowed"))?;
         for proposal in &batch.proposals {
             self.pending.insert(
                 proposal.candidate.content_sha256,
@@ -766,6 +818,8 @@ impl ResidualCemOptimizer {
             generation: self.generation,
             rng_state: self.rng.state,
             attempted_genomes: self.attempted_genomes,
+            rejected_invalid_genomes: self.rejected_invalid_genomes,
+            rejected_duplicate_tapes: self.rejected_duplicate_tapes,
             distributions: self.distributions.clone(),
             seen_tape_sha256: self.seen_tape_sha256.iter().copied().collect(),
             pending: self.pending.values().cloned().collect(),
@@ -1085,6 +1139,10 @@ fn sha256_bytes(bytes: &[u8]) -> Digest {
     Digest(Sha256::digest(bytes).into())
 }
 
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
 #[derive(Clone, Copy, Debug)]
 struct DeterministicRng {
     state: u64,
@@ -1207,6 +1265,18 @@ mod tests {
             proposal.compiled.report.realized_tape_authoritative
                 && proposal.compiled.report.parent_tape_sha256 == sha256(&bytes)
         }));
+        let snapshot = first.snapshot().unwrap();
+        assert_eq!(snapshot.rejected_invalid_genomes, left.rejected_invalid);
+        assert_eq!(
+            snapshot.rejected_duplicate_tapes,
+            left.rejected_duplicate_tape
+        );
+        assert_eq!(
+            snapshot.attempted_genomes,
+            snapshot.produced_candidates
+                + snapshot.rejected_invalid_genomes
+                + snapshot.rejected_duplicate_tapes
+        );
     }
 
     #[test]
@@ -1255,6 +1325,11 @@ mod tests {
             .collect::<Vec<_>>();
         ranking.sort();
         let before = optimizer.snapshot().unwrap();
+        assert_eq!(before.rejected_invalid_genomes, first.rejected_invalid);
+        assert_eq!(
+            before.rejected_duplicate_tapes,
+            first.rejected_duplicate_tape
+        );
         assert!(optimizer.tell(&ranking[..11]).is_err());
         optimizer.tell(&ranking).unwrap();
         let updated = optimizer.snapshot().unwrap();

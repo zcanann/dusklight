@@ -1,6 +1,7 @@
 //! Sealed artifacts and execution loop for resumable native residual campaigns.
 
 use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
+use crate::residual_campaign_audit::ResidualCampaignAudit;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_harness_contracts::run_contract::{
@@ -30,6 +31,8 @@ pub const RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2: &str =
     "dusklight-residual-campaign-checkpoint/v2";
 pub const RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3: &str =
     "dusklight-residual-campaign-checkpoint/v3";
+pub const RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V4: &str =
+    "dusklight-residual-campaign-checkpoint/v4";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -370,6 +373,8 @@ pub struct ResidualCampaignCheckpoint {
     pub retention: ResidualRetentionSnapshot,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_corpus: Option<ResidualReplayCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<ResidualCampaignAudit>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -459,6 +464,35 @@ impl ResidualCampaignCheckpoint {
                 .snapshot()
                 .map_err(|error| campaign_error(error.to_string()))?,
             replay_corpus,
+            audit: None,
+        };
+        value.content_sha256 = value.identity()?;
+        value.validate(optimization, execution_binding_sha256)?;
+        Ok(value)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn seal_with_audit(
+        optimization: &OptimizationRequest,
+        execution_binding_sha256: Digest,
+        generation: u64,
+        completed_candidates: u64,
+        optimizer: ResidualCampaignOptimizerSnapshot,
+        retention: ResidualRetentionSnapshot,
+        replay_corpus: Option<ResidualReplayCheckpoint>,
+        audit: ResidualCampaignAudit,
+    ) -> Result<Self, ResidualCampaignError> {
+        let mut value = Self {
+            schema: RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V4.into(),
+            content_sha256: Digest::ZERO,
+            optimization_request_sha256: optimization.content_sha256,
+            execution_binding_sha256,
+            generation,
+            completed_candidates,
+            optimizer,
+            retention,
+            replay_corpus,
+            audit: Some(audit),
         };
         value.content_sha256 = value.identity()?;
         value.validate(optimization, execution_binding_sha256)?;
@@ -475,9 +509,13 @@ impl ResidualCampaignCheckpoint {
             .map_err(|error| campaign_error(error.to_string()))?;
         if !matches!(
             self.schema.as_str(),
-            RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2 | RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3
+            RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2
+                | RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3
+                | RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V4
         ) || (self.schema == RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2
-            && self.replay_corpus.is_some())
+            && (self.replay_corpus.is_some() || self.audit.is_some()))
+            || (self.schema == RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3 && self.audit.is_some())
+            || (self.schema == RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V4 && self.audit.is_none())
             || self.optimization_request_sha256 != optimization.content_sha256
             || self.execution_binding_sha256 != execution_binding_sha256
             || self.completed_candidates > optimization.budgets.candidate_budget
@@ -489,6 +527,14 @@ impl ResidualCampaignCheckpoint {
                 != optimization
                     .residual_retention_config()
                     .map_err(|error| campaign_error(error.to_string()))?
+            || self.audit.as_ref().is_some_and(|audit| {
+                audit
+                    .validate(optimization, execution_binding_sha256)
+                    .is_err()
+                    || audit.retention_sha256 != self.retention.content_sha256
+                    || audit.optimizer_sha256 != optimizer_snapshot_sha256(&self.optimizer)
+                    || audit.completed_candidates != self.completed_candidates
+            })
             || !optimizer_kind_matches(&self.optimizer, &optimization.proposal.optimizer)
             || self.content_sha256 == Digest::ZERO
             || self.content_sha256 != self.identity()?
@@ -562,6 +608,9 @@ impl ResidualCampaignCheckpoint {
             RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V3 => {
                 b"dusklight.residual-campaign-checkpoint/v3\0".as_slice()
             }
+            RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V4 => {
+                b"dusklight.residual-campaign-checkpoint/v4\0".as_slice()
+            }
             _ => {
                 return Err(campaign_error(
                     "unsupported residual campaign checkpoint schema",
@@ -569,6 +618,13 @@ impl ResidualCampaignCheckpoint {
             }
         };
         canonical_digest(domain, &canonical)
+    }
+}
+
+fn optimizer_snapshot_sha256(snapshot: &ResidualCampaignOptimizerSnapshot) -> Digest {
+    match snapshot {
+        ResidualCampaignOptimizerSnapshot::Random { state } => state.content_sha256,
+        ResidualCampaignOptimizerSnapshot::Cem { state } => state.content_sha256,
     }
 }
 
@@ -666,6 +722,10 @@ impl Error for ResidualCampaignError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimization_resume::{OptimizationResumeCandidate, OptimizationResumeState};
+    use crate::residual_campaign_audit::{
+        ResidualAuditCompletion, ResidualCampaignAudit, ResidualCampaignDiagnosis,
+    };
     use crate::residual_campaign_runner::new_optimizer;
     use dusklight_automation_contracts::tape::{InputFrame, InputTape};
     use dusklight_search::residual_action::{
@@ -803,5 +863,185 @@ mod tests {
                 .validate(&optimization, Digest([8; 32]))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn v4_audit_reports_exact_search_coverage_and_rejects_tampering() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../..")
+            .canonicalize()
+            .unwrap();
+        let mut optimization: OptimizationRequest = serde_json::from_slice(
+            &std::fs::read(root.join(
+                "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        optimization.proposal.optimizer = ResidualOptimizerConfig::Random { samples: 1 };
+        optimization.budgets.candidate_budget = 1;
+        optimization.resume.checkpoint_every_candidates = 1;
+        optimization.refresh_content_sha256().unwrap();
+        let incumbent = optimization.incumbent.as_ref().unwrap();
+        let parent_bytes = std::fs::read(root.join(&incumbent.tape.path)).unwrap();
+        let parent = InputTape::decode(&parent_bytes).unwrap().tape;
+        let mut optimizer = new_optimizer(&optimization, &parent_bytes).unwrap();
+        let empty_optimizer_snapshot = optimizer.snapshot().unwrap();
+        let ResidualCampaignOptimizer::Random(random) = &mut optimizer else {
+            panic!("expected random optimizer");
+        };
+        let proposal = random
+            .sample(&parent, &parent_bytes, 1)
+            .unwrap()
+            .proposals
+            .pop()
+            .unwrap();
+        let envelope = ResidualCampaignCandidate::seal(
+            "g000000-s00000-audit".into(),
+            0,
+            0,
+            optimization.execution.deterministic_seeds[0],
+            proposal.genome,
+            proposal.candidate,
+            &proposal.compiled,
+        )
+        .unwrap();
+        let evidence = ResidualEvaluationEvidence {
+            candidate_sha256: envelope.candidate.content_sha256,
+            realized_tape_sha256: envelope.compilation.realized_tape_sha256,
+            terminal_program_sha256: optimization.terminal_predicate.program_sha256,
+            terminal_definition_sha256: optimization.terminal_predicate.definition_sha256,
+            evaluation_sha256: Digest([31; 32]),
+            episode_sha256: Digest([32; 32]),
+            behavior_sha256: Digest([33; 32]),
+            verdict: ExactTerminalVerdict::Reached {
+                first_hit_tick: 124,
+            },
+            shaped_progress_millionths: None,
+            native_risk_events: None,
+        };
+        let mut archive =
+            ResidualOutcomeArchive::new(optimization.residual_retention_config().unwrap()).unwrap();
+        archive.record(&proposal.compiled, evidence).unwrap();
+        let candidate_reference = ArtifactReference {
+            path: "build/campaigns/audit/candidate.json".into(),
+            sha256: envelope.content_sha256,
+        };
+        let tape_reference = ArtifactReference {
+            path: "build/campaigns/audit/candidate.tape".into(),
+            sha256: envelope.compilation.realized_tape_sha256,
+        };
+        let result_reference = ArtifactReference {
+            path: "build/campaigns/audit/evaluation.json".into(),
+            sha256: Digest([34; 32]),
+        };
+        let resume = OptimizationResumeState {
+            schema: crate::optimization_resume::OPTIMIZATION_RESUME_STATE_SCHEMA_V2.into(),
+            request_sha256: optimization.content_sha256,
+            journal_sha256: Digest([35; 32]),
+            valid_journal_bytes: 1,
+            record_count: 1,
+            last_record_sha256: Digest([36; 32]),
+            next_sequence: 2,
+            demonstration: Some(ArtifactReference {
+                path: "build/campaigns/audit/demonstration.json".into(),
+                sha256: Digest([37; 32]),
+            }),
+            demonstration_simulated_ticks: 125,
+            candidates: vec![OptimizationResumeCandidate {
+                id: envelope.id.clone(),
+                candidate: candidate_reference.clone(),
+                candidate_sha256: candidate_reference.sha256,
+                compiled_tape: tape_reference.clone(),
+                compiled_tape_sha256: tape_reference.sha256,
+                generation: 0,
+                proposer_seed: envelope.proposer_seed,
+                result: Some(result_reference.clone()),
+                result_sha256: Some(result_reference.sha256),
+                simulated_ticks: Some(124),
+            }],
+            completed_candidates: 1,
+            charged_simulated_ticks: 249,
+            pending_candidate_ids: vec![],
+            latest_optimizer_checkpoint: None,
+            uncheckpointed_completions: 1,
+            state_sha256: Digest([38; 32]),
+        };
+        let optimizer_snapshot = optimizer.snapshot().unwrap();
+        let retention = archive.snapshot().unwrap();
+        let completion = ResidualAuditCompletion {
+            candidate: &envelope,
+            result_sha256: result_reference.sha256,
+            simulated_ticks: 124,
+            verdict: ExactTerminalVerdict::Reached {
+                first_hit_tick: 124,
+            },
+        };
+        let execution = Digest([39; 32]);
+        let mut initial_resume = resume.clone();
+        initial_resume.candidates.clear();
+        initial_resume.completed_candidates = 0;
+        initial_resume.charged_simulated_ticks = 125;
+        initial_resume.uncheckpointed_completions = 0;
+        let empty_retention =
+            ResidualOutcomeArchive::new(optimization.residual_retention_config().unwrap())
+                .unwrap()
+                .snapshot()
+                .unwrap();
+        let initial_audit = ResidualCampaignAudit::advance(
+            &optimization,
+            execution,
+            &initial_resume,
+            &empty_optimizer_snapshot,
+            &empty_retention,
+            None,
+            &[],
+        )
+        .unwrap();
+        assert_eq!(
+            initial_audit.diagnosis,
+            ResidualCampaignDiagnosis::InProgress
+        );
+        let audit = ResidualCampaignAudit::advance(
+            &optimization,
+            execution,
+            &resume,
+            &optimizer_snapshot,
+            &retention,
+            Some(&initial_audit),
+            &[completion],
+        )
+        .unwrap();
+        assert_eq!(audit.diagnosis, ResidualCampaignDiagnosis::WinnerFound);
+        assert_eq!(audit.successful_episode_rate_millionths, 1_000_000);
+        assert_eq!(audit.successful_behavior_classes, 1);
+        assert_eq!(
+            audit.improvement_by_simulated_tick[0].charged_simulated_ticks,
+            249
+        );
+        assert!(audit.coverage.iter().any(|row| row.components > 0));
+        assert!(audit.coverage.iter().any(|row| row.components == 0));
+
+        let checkpoint = ResidualCampaignCheckpoint::seal_with_audit(
+            &optimization,
+            execution,
+            1,
+            1,
+            optimizer_snapshot,
+            retention,
+            None,
+            audit.clone(),
+        )
+        .unwrap();
+        assert_eq!(checkpoint.schema, RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V4);
+        checkpoint.validate(&optimization, execution).unwrap();
+
+        let mut tampered = checkpoint;
+        tampered
+            .audit
+            .as_mut()
+            .unwrap()
+            .successful_episode_rate_millionths = 0;
+        assert!(tampered.validate(&optimization, execution).is_err());
     }
 }

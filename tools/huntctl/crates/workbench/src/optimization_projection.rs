@@ -13,6 +13,9 @@ use dusklight_orchestration::optimization_resume::{
 use dusklight_orchestration::residual_campaign::{
     ResidualCampaignCandidate, ResidualCampaignCheckpoint,
 };
+use dusklight_orchestration::residual_campaign_audit::{
+    ResidualCampaignAudit, ResidualCampaignDiagnosis,
+};
 use dusklight_routes::timeline_materialization::materialize_segment_chain;
 use dusklight_search::residual_retention::{ExactTerminalVerdict, ResidualRetentionSnapshot};
 
@@ -588,6 +591,7 @@ fn campaign_projection(
         execution: None,
         blocker: None,
         error: None,
+        audit: None,
         learning: goal_learning_projection(root, request, runtime_config),
     };
     let state_path = root.join(&request.resume.state_path);
@@ -647,6 +651,9 @@ fn campaign_projection(
                 Some(checkpoint) => {
                     projection.generation = checkpoint.generation;
                     apply_retention_projection(&mut projection, &checkpoint.retention);
+                    if let Some(audit) = checkpoint.audit.as_ref() {
+                        projection.audit = Some(project_campaign_audit(audit));
+                    }
                     if let Some(replay) = checkpoint.replay_corpus {
                         projection.replay_generation = Some(replay.generation);
                         projection.replay_entries = replay.entries;
@@ -688,6 +695,59 @@ fn campaign_projection(
         }
     }
     projection
+}
+
+fn project_campaign_audit(audit: &ResidualCampaignAudit) -> GraphResidualCampaignAudit {
+    let coverage = |dimension: &str| {
+        let rows = audit
+            .coverage
+            .iter()
+            .filter(|row| row.dimension == dimension)
+            .collect::<Vec<_>>();
+        (
+            rows.iter().filter(|row| row.components > 0).count() as u64,
+            rows.len() as u64,
+        )
+    };
+    let (covered_action_categories, available_action_categories) = coverage("action");
+    let (covered_temporal_categories, available_temporal_categories) = coverage("temporal_basis");
+    GraphResidualCampaignAudit {
+        diagnosis: match audit.diagnosis {
+            ResidualCampaignDiagnosis::InProgress => "in_progress",
+            ResidualCampaignDiagnosis::WinnerFound => "winner_found",
+            ResidualCampaignDiagnosis::CompletedSuccessWithoutImprovement => {
+                "completed_success_without_improvement"
+            }
+            ResidualCampaignDiagnosis::CompletedWithoutSuccess => "completed_without_success",
+            ResidualCampaignDiagnosis::TickBudgetTruncated => "tick_budget_truncated",
+            ResidualCampaignDiagnosis::ProposalGenerationStalled => "proposal_generation_stalled",
+        }
+        .into(),
+        evidence_sha256: audit.evidence_chain_sha256.to_string(),
+        unique_compiled_tapes: audit.unique_compiled_tapes,
+        evaluated_episodes: audit.evaluated_episodes,
+        successful_episodes: audit.successful_episodes,
+        successful_episode_rate_millionths: audit.successful_episode_rate_millionths,
+        successful_behavior_classes: audit.successful_behavior_classes,
+        attempted_genomes: audit.optimizer_health.attempted_genomes,
+        rejected_or_duplicate_genomes: audit.optimizer_health.rejected_or_duplicate_genomes,
+        rejected_invalid_genomes: audit.optimizer_health.rejected_invalid_genomes,
+        rejected_duplicate_tapes: audit.optimizer_health.rejected_duplicate_tapes,
+        rejected_unclassified_genomes: audit.optimizer_health.rejected_unclassified_genomes,
+        proposal_rejection_millionths: audit.optimizer_health.proposal_rejection_millionths,
+        most_concentrated_category_millionths: audit
+            .optimizer_health
+            .most_concentrated_category_millionths,
+        covered_action_categories,
+        available_action_categories,
+        covered_temporal_categories,
+        available_temporal_categories,
+        improvements: audit.improvement_by_simulated_tick.len() as u64,
+        latest_improvement_simulated_tick: audit
+            .improvement_by_simulated_tick
+            .last()
+            .map(|point| point.charged_simulated_ticks),
+    }
 }
 
 pub(super) fn apply_retention_projection(

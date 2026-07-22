@@ -22,6 +22,7 @@ use crate::optimization_resume::{
 use crate::residual_campaign::{
     ResidualCampaignCheckpoint, ResidualCampaignOptimizer, ResidualReplayCheckpoint,
 };
+use crate::residual_campaign_audit::ResidualCampaignAudit;
 use crate::residual_campaign_runner::{
     PreparedCandidate, ResidualCampaignRunSummary, append_checkpoint, artifact_reference,
     campaign_root, load_candidate, load_checkpoint, load_generation, new_optimizer, prepare_batch,
@@ -1454,19 +1455,24 @@ fn run_campaign_loop(
                     unreachable!()
                 };
                 if resume.completed_candidates >= samples {
-                    if checkpoint.completed_candidates != resume.completed_candidates
-                        || (checkpoint.replay_corpus.is_none() && resume.completed_candidates > 0)
-                    {
-                        let replay_corpus = append_generation_replay(
-                            root,
-                            campaign,
-                            config,
-                            parent,
-                            parent_bytes,
-                            &resume,
-                            checkpoint.replay_corpus.as_ref(),
-                            checkpoint.generation,
-                        )?;
+                    let needs_replay = checkpoint.completed_candidates
+                        != resume.completed_candidates
+                        || (checkpoint.replay_corpus.is_none() && resume.completed_candidates > 0);
+                    if needs_replay || checkpoint.audit.is_none() {
+                        let replay_corpus = if needs_replay {
+                            Some(append_generation_replay(
+                                root,
+                                campaign,
+                                config,
+                                parent,
+                                parent_bytes,
+                                &resume,
+                                checkpoint.replay_corpus.as_ref(),
+                                checkpoint.generation,
+                            )?)
+                        } else {
+                            checkpoint.replay_corpus.clone()
+                        };
                         let optimizer = ResidualCampaignOptimizer::Random(random);
                         resume = append_checkpoint(
                             root,
@@ -1480,7 +1486,7 @@ fn run_campaign_loop(
                                 ),
                             &optimizer,
                             &archive,
-                            Some(replay_corpus),
+                            replay_corpus,
                         )
                         .map_err(native_error)?;
                         continue;
@@ -1491,6 +1497,7 @@ fn run_campaign_loop(
                         checkpoint.generation,
                         &archive,
                         checkpoint.replay_corpus.clone(),
+                        checkpoint.audit.clone(),
                     ));
                 }
                 let generation = checkpoint.generation;
@@ -1596,17 +1603,23 @@ fn run_campaign_loop(
                 let state = cem.snapshot().map_err(native_error)?;
                 let generation = u64::from(state.generation);
                 if state.pending.is_empty() && generation >= u64::from(generations) {
-                    if checkpoint.replay_corpus.is_none() && resume.completed_candidates > 0 {
-                        let replay_corpus = append_generation_replay(
-                            root,
-                            campaign,
-                            config,
-                            parent,
-                            parent_bytes,
-                            &resume,
-                            None,
-                            generation,
-                        )?;
+                    let needs_replay =
+                        checkpoint.replay_corpus.is_none() && resume.completed_candidates > 0;
+                    if needs_replay || checkpoint.audit.is_none() {
+                        let replay_corpus = if needs_replay {
+                            Some(append_generation_replay(
+                                root,
+                                campaign,
+                                config,
+                                parent,
+                                parent_bytes,
+                                &resume,
+                                None,
+                                generation,
+                            )?)
+                        } else {
+                            checkpoint.replay_corpus.clone()
+                        };
                         let optimizer = ResidualCampaignOptimizer::Cem(cem);
                         resume = append_checkpoint(
                             root,
@@ -1617,7 +1630,7 @@ fn run_campaign_loop(
                             generation,
                             &optimizer,
                             &archive,
-                            Some(replay_corpus),
+                            replay_corpus,
                         )
                         .map_err(native_error)?;
                         continue;
@@ -1628,6 +1641,7 @@ fn run_campaign_loop(
                         generation,
                         &archive,
                         checkpoint.replay_corpus.clone(),
+                        checkpoint.audit.clone(),
                     ));
                 }
                 if state.pending.is_empty() {
@@ -1718,9 +1732,10 @@ fn summary(
     generation: u64,
     archive: &ResidualOutcomeArchive,
     replay_corpus: Option<ResidualReplayCheckpoint>,
+    audit: Option<ResidualCampaignAudit>,
 ) -> ResidualCampaignRunSummary {
     ResidualCampaignRunSummary {
-        schema: "dusklight-residual-campaign-run-summary/v2",
+        schema: "dusklight-residual-campaign-run-summary/v3",
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         completed: true,
@@ -1736,6 +1751,7 @@ fn summary(
             .map(|success| success.first_hit_tick),
         resume_state: config.optimization.resume.state_path.clone(),
         replay_corpus,
+        audit,
     }
 }
 

@@ -305,10 +305,29 @@ goal-only discovery.
 - [ ] Report successful-episode rate, unique compiled tapes, action/window
       coverage, first-hit distribution, retained basin diversity, and improvement
       by simulated tick.
+      New v4 campaign checkpoints now carry an incrementally reproduced,
+      content-sealed audit over the exact evaluation-journal order. It reports
+      zero-inclusive raw-PAD action, temporal-basis, and intervention-octant
+      coverage; main-terminal episode rate and first-hit distribution; unique
+      realized tapes and successful behavior classes; separately accumulated
+      invalid-genome and duplicate-tape rejection plus CEM concentration
+      evidence; and every strict sub-incumbent improvement at its
+      cumulative simulated-tick charge. The CLI completion summary returns the
+      audit and the Route Workbench projects its bounded diagnosis and coverage.
+      Legacy v2/v3 checkpoints remain readable and migrate to v4 at the next
+      durable checkpoint. The real degraded-canary and Ordon runs must still
+      populate the final comparative reports before this empirical item closes.
 - [ ] Promote any sub-125 winner only after five identical cold replays.
 - [ ] If no winner appears, preserve enough evidence to distinguish exhausted
       residual coverage from a broken generator, truncated budget, absent
       successes, or premature population collapse. Do not call 125 optimal.
+      The checkpoint audit now distinguishes declared-budget completion,
+      tick-budget truncation, proposal-generation stalls, exact successes without
+      improvement, and no-success completion while retaining attempted-genome,
+      invalid-versus-duplicate rejection, categorical-concentration, coverage,
+      and basin facts.
+      A no-winner campaign remains required before this conditional evidence can
+      be judged in practice.
 
 **Gate 2:** the residual optimizer improves the degraded canary and operates as a
 credible, observable search on the 125-tick incumbent. A deterministic sub-125

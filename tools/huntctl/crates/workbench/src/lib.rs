@@ -175,7 +175,35 @@ pub struct GraphOptimizationCampaign {
     pub blocker: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit: Option<GraphResidualCampaignAudit>,
     pub learning: GraphGoalLearningLoop,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphResidualCampaignAudit {
+    pub diagnosis: String,
+    pub evidence_sha256: String,
+    pub unique_compiled_tapes: u64,
+    pub evaluated_episodes: u64,
+    pub successful_episodes: u64,
+    pub successful_episode_rate_millionths: u32,
+    pub successful_behavior_classes: u64,
+    pub attempted_genomes: u64,
+    pub rejected_or_duplicate_genomes: u64,
+    pub rejected_invalid_genomes: u64,
+    pub rejected_duplicate_tapes: u64,
+    pub rejected_unclassified_genomes: u64,
+    pub proposal_rejection_millionths: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub most_concentrated_category_millionths: Option<u32>,
+    pub covered_action_categories: u64,
+    pub available_action_categories: u64,
+    pub covered_temporal_categories: u64,
+    pub available_temporal_categories: u64,
+    pub improvements: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_improvement_simulated_tick: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize)]

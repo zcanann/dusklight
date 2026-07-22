@@ -235,6 +235,43 @@ pub fn load_optimization_resume(
     Ok(state)
 }
 
+/// Returns completed candidate IDs in the journal's authoritative evaluation
+/// order. The full fold runs first, so callers never consume an unsealed,
+/// detached, or torn ordering as campaign evidence.
+pub(crate) fn optimization_evaluation_order(
+    request: &OptimizationRequest,
+    repository_root: &Path,
+) -> Result<Vec<String>, OptimizationResumeError> {
+    request
+        .validate_files(repository_root)
+        .map_err(|source| resume_error(source.to_string()))?;
+    let root = canonical_root(repository_root)?;
+    let journal_path = output_path(&root, &request.resume.journal_path)?;
+    let state = fold_journal(request, &root, &journal_path, false)?;
+    let bytes = fs::read(&journal_path).map_err(OptimizationResumeError::io)?;
+    if bytes.len() as u64 != state.valid_journal_bytes {
+        return Err(resume_error(
+            "optimization evaluation order differs from the validated journal",
+        ));
+    }
+    let mut order = Vec::new();
+    for line in bytes.split_inclusive(|byte| *byte == b'\n') {
+        let record: OptimizationResumeRecord = serde_json::from_slice(&line[..line.len() - 1])
+            .map_err(|source| resume_error(source.to_string()))?;
+        if let OptimizationResumeEvent::EvaluationCompleted { candidate_id, .. } = record.event {
+            order.push(candidate_id);
+        }
+    }
+    if order.len() as u64 != state.completed_candidates
+        || order.iter().collect::<BTreeSet<_>>().len() != order.len()
+    {
+        return Err(resume_error(
+            "optimization evaluation order is incomplete or repeats a candidate",
+        ));
+    }
+    Ok(order)
+}
+
 pub fn append_optimization_resume_event(
     request: &OptimizationRequest,
     repository_root: &Path,

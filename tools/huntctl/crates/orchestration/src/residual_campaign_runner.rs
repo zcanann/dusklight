@@ -4,13 +4,14 @@ use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
 use crate::optimization_resume::{
     OptimizationResumeCandidate, OptimizationResumeEvent, OptimizationResumeState,
     append_optimization_resume_event, append_optimization_resume_events,
-    initialize_optimization_resume, load_optimization_resume,
+    initialize_optimization_resume, load_optimization_resume, optimization_evaluation_order,
 };
 use crate::residual_campaign::{
     ResidualCampaignCandidate, ResidualCampaignCheckpoint, ResidualCampaignError,
     ResidualCampaignEvaluation, ResidualCampaignOptimizer, ResidualNativeAttempt,
     ResidualReplayCheckpoint,
 };
+use crate::residual_campaign_audit::{ResidualAuditCompletion, ResidualCampaignAudit};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::observation_view::ObservationSpec;
 use dusklight_automation_contracts::tape::InputTape;
@@ -70,6 +71,8 @@ pub struct ResidualCampaignRunSummary {
     pub resume_state: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_corpus: Option<ResidualReplayCheckpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit: Option<ResidualCampaignAudit>,
 }
 
 pub fn materialize_residual_harness_template(
@@ -350,14 +353,88 @@ pub(crate) fn append_checkpoint(
     archive: &ResidualOutcomeArchive,
     replay_corpus: Option<ResidualReplayCheckpoint>,
 ) -> Result<OptimizationResumeState, ResidualCampaignRunnerError> {
-    let checkpoint = ResidualCampaignCheckpoint::seal(
+    let optimizer_snapshot = optimizer.snapshot()?;
+    let retention = archive
+        .snapshot()
+        .map_err(|error| runner_message(error.to_string()))?;
+    let previous = if resume.latest_optimizer_checkpoint.is_some() {
+        load_checkpoint(root, optimization, execution_binding_sha256, resume)?.audit
+    } else {
+        None
+    };
+    let evaluation_order =
+        optimization_evaluation_order(optimization, root).map_err(runner_error)?;
+    let prior_completed = previous
+        .as_ref()
+        .map_or(0_usize, |audit| audit.completed_candidates as usize);
+    if prior_completed > evaluation_order.len() {
+        return Err(runner_message(
+            "residual campaign audit progress exceeds the evaluation journal",
+        ));
+    }
+    let incumbent = optimization
+        .incumbent
+        .as_ref()
+        .ok_or_else(|| runner_message("residual campaign audit requires an incumbent"))?;
+    let parent_bytes = read_artifact(root, &incumbent.tape)?;
+    let parent = InputTape::decode(&parent_bytes).map_err(runner_error)?.tape;
+    let verdicts = retention
+        .evaluated_tapes
+        .iter()
+        .map(|entry| (entry.realized_tape_sha256, entry.verdict))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let prepared = evaluation_order[prior_completed..]
+        .iter()
+        .map(|candidate_id| {
+            let row = resume
+                .candidates
+                .iter()
+                .find(|row| row.id == *candidate_id)
+                .ok_or_else(|| runner_message("audited evaluation candidate is not journaled"))?;
+            let candidate = load_candidate(root, optimization, &parent, &parent_bytes, row)?;
+            let result_sha256 = row
+                .result_sha256
+                .ok_or_else(|| runner_message("audited candidate has no result identity"))?;
+            let simulated_ticks = row
+                .simulated_ticks
+                .ok_or_else(|| runner_message("audited candidate has no tick charge"))?;
+            let verdict = verdicts
+                .get(&candidate.compiled.report.realized_tape_sha256)
+                .copied()
+                .ok_or_else(|| runner_message("audited candidate has no retained verdict"))?;
+            Ok((candidate, result_sha256, simulated_ticks, verdict))
+        })
+        .collect::<Result<Vec<_>, ResidualCampaignRunnerError>>()?;
+    let completions = prepared
+        .iter()
+        .map(
+            |(candidate, result_sha256, simulated_ticks, verdict)| ResidualAuditCompletion {
+                candidate: &candidate.envelope,
+                result_sha256: *result_sha256,
+                simulated_ticks: *simulated_ticks,
+                verdict: *verdict,
+            },
+        )
+        .collect::<Vec<_>>();
+    let audit = ResidualCampaignAudit::advance(
+        optimization,
+        execution_binding_sha256,
+        resume,
+        &optimizer_snapshot,
+        &retention,
+        previous.as_ref(),
+        &completions,
+    )
+    .map_err(runner_error)?;
+    let checkpoint = ResidualCampaignCheckpoint::seal_with_audit(
         optimization,
         execution_binding_sha256,
         generation,
         resume.completed_candidates,
-        optimizer.snapshot()?,
-        archive,
+        optimizer_snapshot,
+        retention,
         replay_corpus,
+        audit,
     )?;
     let path = campaign
         .join("checkpoints")
@@ -827,12 +904,28 @@ pub fn run_residual_campaign(
                     unreachable!()
                 };
                 if resume.completed_candidates >= samples {
+                    if checkpoint.audit.is_none() {
+                        let optimizer = ResidualCampaignOptimizer::Random(random);
+                        resume = append_checkpoint(
+                            &root,
+                            &campaign,
+                            config.optimization,
+                            config.harness_template.content_sha256,
+                            &resume,
+                            checkpoint.generation,
+                            &optimizer,
+                            &archive,
+                            checkpoint.replay_corpus.clone(),
+                        )?;
+                        continue;
+                    }
                     return Ok(summary(
                         config,
                         &resume,
                         checkpoint.generation,
                         &archive,
                         checkpoint.replay_corpus.clone(),
+                        checkpoint.audit.clone(),
                     ));
                 }
                 let generation = checkpoint.generation;
@@ -929,12 +1022,28 @@ pub fn run_residual_campaign(
                 let state = cem.snapshot().map_err(runner_error)?;
                 let generation = u64::from(state.generation);
                 if state.pending.is_empty() && generation >= u64::from(generations) {
+                    if checkpoint.audit.is_none() {
+                        let optimizer = ResidualCampaignOptimizer::Cem(cem);
+                        resume = append_checkpoint(
+                            &root,
+                            &campaign,
+                            config.optimization,
+                            config.harness_template.content_sha256,
+                            &resume,
+                            generation,
+                            &optimizer,
+                            &archive,
+                            checkpoint.replay_corpus.clone(),
+                        )?;
+                        continue;
+                    }
                     return Ok(summary(
                         config,
                         &resume,
                         generation,
                         &archive,
                         checkpoint.replay_corpus.clone(),
+                        checkpoint.audit.clone(),
                     ));
                 }
                 if state.pending.is_empty() {
@@ -1043,9 +1152,10 @@ fn summary(
     generation: u64,
     archive: &ResidualOutcomeArchive,
     replay_corpus: Option<ResidualReplayCheckpoint>,
+    audit: Option<ResidualCampaignAudit>,
 ) -> ResidualCampaignRunSummary {
     ResidualCampaignRunSummary {
-        schema: "dusklight-residual-campaign-run-summary/v2",
+        schema: "dusklight-residual-campaign-run-summary/v3",
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.harness_template.content_sha256,
         completed: true,
@@ -1061,6 +1171,7 @@ fn summary(
             .map(|success| success.first_hit_tick),
         resume_state: config.optimization.resume.state_path.clone(),
         replay_corpus,
+        audit,
     }
 }
 
