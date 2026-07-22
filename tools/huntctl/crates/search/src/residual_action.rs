@@ -431,32 +431,7 @@ pub fn compile_residual_candidate_to_horizon(
     }
     let span = exact_intervention_span(parent, &realized)
         .ok_or_else(|| action_error("residual candidate compiles to the incumbent tape"))?;
-    let horizon = usize::try_from(exploration_horizon_ticks)
-        .map_err(|_| action_error("residual exploration horizon does not fit memory"))?;
-    if horizon < realized.frames.len() {
-        return Err(action_error(
-            "residual exploration horizon cannot truncate the incumbent tape",
-        ));
-    }
-    if horizon > realized.frames.len() {
-        let mut released = realized
-            .frames
-            .last()
-            .cloned()
-            .ok_or_else(|| action_error("residual parent tape has no frames"))?;
-        released.wait_condition = WaitCondition::None;
-        released.wait_timeout_ticks = 0;
-        for pad in &mut released.pads {
-            let connected = pad.connected;
-            let error = pad.error;
-            *pad = RawPadState {
-                connected,
-                error,
-                ..RawPadState::default()
-            };
-        }
-        realized.frames.resize(horizon, released);
-    }
+    extend_tape_with_released_input(&mut realized, exploration_horizon_ticks)?;
     let bytes = realized
         .encode()
         .map_err(|source| action_error(source.to_string()))?;
@@ -483,6 +458,42 @@ pub fn compile_residual_candidate_to_horizon(
         tape: realized,
         bytes,
     })
+}
+
+/// Extends a tape with released input while preserving controller connection
+/// and error state. The native checkpoint source and every compiled residual
+/// use this one authoritative horizon rule.
+pub fn extend_tape_with_released_input(
+    tape: &mut InputTape,
+    exploration_horizon_ticks: u64,
+) -> Result<(), ResidualActionError> {
+    let horizon = usize::try_from(exploration_horizon_ticks)
+        .map_err(|_| action_error("residual exploration horizon does not fit memory"))?;
+    if horizon < tape.frames.len() {
+        return Err(action_error(
+            "residual exploration horizon cannot truncate the incumbent tape",
+        ));
+    }
+    if horizon > tape.frames.len() {
+        let mut released = tape
+            .frames
+            .last()
+            .cloned()
+            .ok_or_else(|| action_error("residual parent tape has no frames"))?;
+        released.wait_condition = WaitCondition::None;
+        released.wait_timeout_ticks = 0;
+        for pad in &mut released.pads {
+            let connected = pad.connected;
+            let error = pad.error;
+            *pad = RawPadState {
+                connected,
+                error,
+                ..RawPadState::default()
+            };
+        }
+        tape.frames.resize(horizon, released);
+    }
+    Ok(())
 }
 
 pub fn compile_unique_residual_candidates(

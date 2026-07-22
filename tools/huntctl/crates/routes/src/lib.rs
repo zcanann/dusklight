@@ -5,6 +5,7 @@
 
 pub mod route_store;
 pub mod timeline;
+pub mod timeline_materialization;
 
 // Preserve concise module-local paths while making every owner a declared,
 // one-way dependency rather than reaching back into root orchestration.

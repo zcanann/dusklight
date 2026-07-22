@@ -173,12 +173,12 @@ pub fn materialize_residual_harness_template(
 }
 
 #[derive(Debug)]
-struct PreparedCandidate {
-    envelope: ResidualCampaignCandidate,
-    compiled: CompiledResidualCandidate,
+pub(crate) struct PreparedCandidate {
+    pub(crate) envelope: ResidualCampaignCandidate,
+    pub(crate) compiled: CompiledResidualCandidate,
 }
 
-fn new_optimizer(
+pub(crate) fn new_optimizer(
     optimization: &OptimizationRequest,
     parent_bytes: &[u8],
 ) -> Result<ResidualCampaignOptimizer, ResidualCampaignRunnerError> {
@@ -212,7 +212,7 @@ fn new_optimizer(
     }
 }
 
-fn campaign_root(
+pub(crate) fn campaign_root(
     root: &Path,
     optimization: &OptimizationRequest,
 ) -> Result<PathBuf, ResidualCampaignRunnerError> {
@@ -232,7 +232,7 @@ fn campaign_root(
     Ok(root.join(relative))
 }
 
-fn artifact_reference(
+pub(crate) fn artifact_reference(
     root: &Path,
     path: &Path,
 ) -> Result<ArtifactReference, ResidualCampaignRunnerError> {
@@ -243,7 +243,7 @@ fn artifact_reference(
     })
 }
 
-fn read_artifact(
+pub(crate) fn read_artifact(
     root: &Path,
     reference: &ArtifactReference,
 ) -> Result<Vec<u8>, ResidualCampaignRunnerError> {
@@ -254,7 +254,10 @@ fn read_artifact(
     Ok(bytes)
 }
 
-fn repository_relative(root: &Path, path: &Path) -> Result<String, ResidualCampaignRunnerError> {
+pub(crate) fn repository_relative(
+    root: &Path,
+    path: &Path,
+) -> Result<String, ResidualCampaignRunnerError> {
     let relative = path
         .strip_prefix(root)
         .map_err(|_| runner_message("residual campaign path is outside the repository"))?;
@@ -272,7 +275,10 @@ fn repository_relative(root: &Path, path: &Path) -> Result<String, ResidualCampa
         .ok_or_else(|| runner_message("residual campaign path is not UTF-8"))
 }
 
-fn write_exact_or_new(path: &Path, bytes: &[u8]) -> Result<(), ResidualCampaignRunnerError> {
+pub(crate) fn write_exact_or_new(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), ResidualCampaignRunnerError> {
     if path.exists() {
         if fs::read(path).map_err(runner_error)? != bytes {
             return Err(runner_message(format!(
@@ -296,11 +302,11 @@ fn write_exact_or_new(path: &Path, bytes: &[u8]) -> Result<(), ResidualCampaignR
 }
 
 #[allow(clippy::too_many_arguments)]
-fn append_checkpoint(
+pub(crate) fn append_checkpoint(
     root: &Path,
     campaign: &Path,
     optimization: &OptimizationRequest,
-    template: &HarnessRunRequest,
+    execution_binding_sha256: Digest,
     resume: &OptimizationResumeState,
     generation: u64,
     optimizer: &ResidualCampaignOptimizer,
@@ -308,7 +314,7 @@ fn append_checkpoint(
 ) -> Result<OptimizationResumeState, ResidualCampaignRunnerError> {
     let checkpoint = ResidualCampaignCheckpoint::seal(
         optimization,
-        template.content_sha256,
+        execution_binding_sha256,
         generation,
         resume.completed_candidates,
         optimizer.snapshot()?,
@@ -330,10 +336,10 @@ fn append_checkpoint(
     .map_err(runner_error)
 }
 
-fn load_checkpoint(
+pub(crate) fn load_checkpoint(
     root: &Path,
     optimization: &OptimizationRequest,
-    template: &HarnessRunRequest,
+    execution_binding_sha256: Digest,
     resume: &OptimizationResumeState,
 ) -> Result<ResidualCampaignCheckpoint, ResidualCampaignRunnerError> {
     let reference = &resume
@@ -343,7 +349,7 @@ fn load_checkpoint(
         .artifact;
     let checkpoint: ResidualCampaignCheckpoint =
         serde_json::from_slice(&read_artifact(root, reference)?).map_err(runner_error)?;
-    checkpoint.validate(optimization, template.content_sha256)?;
+    checkpoint.validate(optimization, execution_binding_sha256)?;
     Ok(checkpoint)
 }
 
@@ -371,7 +377,7 @@ fn prepare_candidate(
     Ok(PreparedCandidate { envelope, compiled })
 }
 
-fn seal_candidate_batch(
+pub(crate) fn seal_candidate_batch(
     root: &Path,
     campaign: &Path,
     optimization: &OptimizationRequest,
@@ -421,7 +427,7 @@ fn seal_candidate_batch(
     append_optimization_resume_events(optimization, root, events).map_err(runner_error)
 }
 
-fn load_candidate(
+pub(crate) fn load_candidate(
     root: &Path,
     optimization: &OptimizationRequest,
     parent: &InputTape,
@@ -451,7 +457,7 @@ fn load_candidate(
     Ok(PreparedCandidate { envelope, compiled })
 }
 
-fn load_generation(
+pub(crate) fn load_generation(
     root: &Path,
     optimization: &OptimizationRequest,
     parent: &InputTape,
@@ -747,7 +753,7 @@ pub fn run_residual_campaign(
             &root,
             &campaign,
             config.optimization,
-            config.harness_template,
+            config.harness_template.content_sha256,
             &resume,
             0,
             &optimizer,
@@ -756,8 +762,12 @@ pub fn run_residual_campaign(
     }
 
     loop {
-        let checkpoint =
-            load_checkpoint(&root, config.optimization, config.harness_template, &resume)?;
+        let checkpoint = load_checkpoint(
+            &root,
+            config.optimization,
+            config.harness_template.content_sha256,
+            &resume,
+        )?;
         let optimizer = checkpoint.restore_optimizer(config.optimization, &parent_bytes)?;
         let mut archive = checkpoint.restore_archive()?;
         replay_completed(
@@ -813,7 +823,7 @@ pub fn run_residual_campaign(
                         &root,
                         &campaign,
                         config.optimization,
-                        config.harness_template,
+                        config.harness_template.content_sha256,
                         &resume,
                         generation,
                         &optimizer,
@@ -855,7 +865,7 @@ pub fn run_residual_campaign(
                     &root,
                     &campaign,
                     config.optimization,
-                    config.harness_template,
+                    config.harness_template.content_sha256,
                     &resume,
                     generation + 1,
                     &optimizer,
@@ -894,7 +904,7 @@ pub fn run_residual_campaign(
                         &root,
                         &campaign,
                         config.optimization,
-                        config.harness_template,
+                        config.harness_template.content_sha256,
                         &resume,
                         generation,
                         &optimizer,
@@ -930,7 +940,7 @@ pub fn run_residual_campaign(
                     &root,
                     &campaign,
                     config.optimization,
-                    config.harness_template,
+                    config.harness_template.content_sha256,
                     &resume,
                     generation + 1,
                     &optimizer,
@@ -941,7 +951,7 @@ pub fn run_residual_campaign(
     }
 }
 
-fn prepare_batch(
+pub(crate) fn prepare_batch(
     optimization: &OptimizationRequest,
     parent: &InputTape,
     parent_bytes: &[u8],
@@ -978,7 +988,7 @@ fn summary(
     archive: &ResidualOutcomeArchive,
 ) -> ResidualCampaignRunSummary {
     ResidualCampaignRunSummary {
-        schema: "dusklight-residual-campaign-run-summary/v1",
+        schema: "dusklight-residual-campaign-run-summary/v2",
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.harness_template.content_sha256,
         completed: true,

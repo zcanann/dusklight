@@ -172,6 +172,7 @@ pub struct ValidatedNativeSuffixCandidate {
     pub simulated_ticks: u64,
     pub first_hit_tick: Option<u64>,
     pub state_sequence_digest: Option<String>,
+    pub behavior_sha256: Digest,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -319,8 +320,36 @@ impl NativeSuffixCandidateResult {
             // index; route scores and retention use one-based elapsed ticks.
             first_hit_tick: self.first_hit_tick.map(|tick| tick + 1),
             state_sequence_digest: state_sequence_digest.map(str::to_owned),
+            behavior_sha256: behavior_digest(self)?,
         })
     }
+}
+
+fn behavior_digest(
+    candidate: &NativeSuffixCandidateResult,
+) -> Result<Digest, NativeSuffixResultError> {
+    #[derive(Serialize)]
+    struct Behavior<'a> {
+        success: bool,
+        first_hit_tick: Option<u64>,
+        ticks_executed: u64,
+        state_sequence_digest: Option<&'a str>,
+        terminal_observation: &'a Value,
+    }
+    let value = Behavior {
+        success: candidate.success,
+        first_hit_tick: candidate.first_hit_tick,
+        ticks_executed: candidate.ticks_executed,
+        state_sequence_digest: candidate.state_sequence_digest.as_deref(),
+        terminal_observation: &candidate.terminal_observation,
+    };
+    let bytes = serde_json::to_vec(&value).map_err(|error| result_error(error.to_string()))?;
+    let mut hasher = sha2::Sha256::new();
+    use sha2::Digest as _;
+    hasher.update(b"dusklight.native-suffix-behavior/v1\0");
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+    Ok(Digest(hasher.finalize().into()))
 }
 
 fn validate_source_boundary(

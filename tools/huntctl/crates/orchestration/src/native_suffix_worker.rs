@@ -286,18 +286,41 @@ fn validate_completed_batch(
             "engine worker returned a different suffix result path",
         ));
     }
-    let result: NativeSuffixBatchResult =
-        serde_json::from_slice(&fs::read(&result_path).map_err(worker_error)?)
-            .map_err(worker_error)?;
-    let validated = result
-        .validate_against(batch, terminal)
-        .map_err(worker_error)?;
+    let validated = validate_native_suffix_artifacts(batch, &result_path, terminal)?;
     let episode_path = canonical_file(Path::new(&complete.episode_shard), "native episode shard")?;
     if Path::new(&complete.episode_shard) != episode_path
         || Path::new(&validated.episode_shard_path) != episode_path
     {
         return Err(worker_message(
             "engine worker response, suffix result, and episode shard paths differ",
+        ));
+    }
+    Ok(validated)
+}
+
+/// Revalidates a completed native batch from sealed request/result artifacts.
+/// This lets a resumed campaign adopt a result written before the journal
+/// boundary without rerunning those candidates.
+pub fn validate_native_suffix_artifacts(
+    batch: &NativeSuffixBatch,
+    result_path: &Path,
+    terminal: &NativeTerminalBinding,
+) -> Result<ValidatedNativeSuffixBatch, NativeSuffixWorkerError> {
+    validate_batch_shape(batch)?;
+    let result_path = canonical_file(result_path, "native suffix result")?;
+    let result: NativeSuffixBatchResult =
+        serde_json::from_slice(&fs::read(&result_path).map_err(worker_error)?)
+            .map_err(worker_error)?;
+    let validated = result
+        .validate_against(batch, terminal)
+        .map_err(worker_error)?;
+    let episode_path = canonical_file(
+        Path::new(&validated.episode_shard_path),
+        "native episode shard",
+    )?;
+    if Path::new(&validated.episode_shard_path) != episode_path {
+        return Err(worker_message(
+            "native suffix result episode shard path is not canonical",
         ));
     }
     Ok(validated)

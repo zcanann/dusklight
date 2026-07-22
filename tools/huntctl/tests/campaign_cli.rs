@@ -177,6 +177,7 @@ fn validates_and_seals_the_ordon_optimization_request() {
     );
     let report: Value = serde_json::from_slice(&validated.stdout).unwrap();
     assert_eq!(report["segment"], "to_ordon_spring_q125");
+    assert_eq!(report["source_boundary_index"], 440);
     assert_eq!(report["incumbent_first_hit_tick"], 125);
     assert_eq!(report["exploration_horizon_ticks"], 160);
     assert_eq!(report["promotion_before_tick"], 125);
@@ -220,6 +221,83 @@ fn validates_and_seals_the_ordon_optimization_request() {
 }
 
 #[test]
+fn materializes_a_native_ordon_execution_binding_from_the_checked_route() {
+    let repository = repository();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let relative_root = format!(
+        "build/harness/native-residual-execution-test-{}-{nonce}",
+        std::process::id()
+    );
+    let absolute_root = repository.join(&relative_root);
+    fs::create_dir_all(&absolute_root).unwrap();
+    let executable = absolute_root.join("Dusklight");
+    let game_data = absolute_root.join("game.iso");
+    let world_context = absolute_root.join("world.context.json");
+    fs::write(&executable, b"test executable").unwrap();
+    fs::write(&game_data, b"test game data").unwrap();
+    fs::write(
+        &world_context,
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "dusklight-world-context/v1",
+            "game_data_sha256": sha256(&game_data),
+            "stages": []
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = format!("{relative_root}/execution");
+    let materialized = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .current_dir(&repository)
+        .args([
+            "campaign",
+            "materialize-native-residual-execution",
+            "--request",
+            "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+            "--game",
+        ])
+        .arg(&executable)
+        .arg("--dvd")
+        .arg(&game_data)
+        .arg("--world-context")
+        .arg(&world_context)
+        .args(["--output", &output, "--repository-root"])
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        materialized.status.success(),
+        "{}",
+        String::from_utf8_lossy(&materialized.stderr)
+    );
+    let report: Value = serde_json::from_slice(&materialized.stdout).unwrap();
+    assert_eq!(report["source_frame"], 440);
+    assert_eq!(report["materialized_route_frames"], 566);
+    assert_eq!(report["process_boot_tape_frames"], 600);
+    assert_eq!(report["workers"], 4);
+    let execution: Value =
+        serde_json::from_slice(&fs::read(absolute_root.join("execution/execution.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        execution["schema"],
+        "dusklight-native-residual-execution/v1"
+    );
+    assert_eq!(
+        execution["process_boot_tape"]["path"],
+        format!("{output}/process-route.tape")
+    );
+    let tape = huntctl::tape::InputTape::decode(
+        &fs::read(absolute_root.join("execution/process-route.tape")).unwrap(),
+    )
+    .unwrap()
+    .tape;
+    assert_eq!(tape.frames.len(), 600);
+    fs::remove_dir_all(absolute_root).unwrap();
+}
+
+#[test]
 fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
     let repository = repository();
     let request_path = repository.join(
@@ -236,6 +314,11 @@ fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
             "timeline",
             ("/route/timeline/sha256", Value::String("1".repeat(64))),
             "timeline content digest differs",
+        ),
+        (
+            "source-boundary",
+            ("/route/source_boundary_index", Value::from(500)),
+            "materialized parent checkpoint",
         ),
         (
             "proposal-schema",

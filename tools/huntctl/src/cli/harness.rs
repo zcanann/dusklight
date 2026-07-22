@@ -15,14 +15,102 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("materialize-native-residual-execution") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        optimization.validate_files(&repository_root)?;
+        let output_arg = required_path(command_args, "--output")?;
+        if output_arg.is_absolute()
+            || output_arg
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err("native residual execution output must be repository-relative".into());
+        }
+        let output = repository_root.join(output_arg);
+        let executable = repository_file(
+            &repository_root,
+            &required_path(command_args, "--game")?,
+            "game executable",
+        )?;
+        let game_data = repository_file(
+            &repository_root,
+            &required_path(command_args, "--dvd")?,
+            "game data",
+        )?;
+        let world_context = repository_file(
+            &repository_root,
+            &required_path(command_args, "--world-context")?,
+            "world context",
+        )?;
+        if output.exists() {
+            return Err(format!(
+                "native residual execution output already exists: {}",
+                output.display()
+            )
+            .into());
+        }
+        fs::create_dir_all(&output)?;
+        let tape_path = output.join("process-route.tape");
+        let program_path = output.join("terminal.dmsp");
+        let binding_path = output.join("execution.json");
+        let tape = huntctl::search_evaluator::native_residual_campaign::materialize_native_residual_process_tape(
+            &repository_root,
+            &optimization,
+        )?;
+        write_new_file(&tape_path, tape.encode()?)?;
+        let predicate_source = repository_root.join(&optimization.terminal_predicate.source.path);
+        let compiled =
+            huntctl::milestone_dsl::compile_source(&fs::read_to_string(predicate_source)?)?;
+        write_new_file(&program_path, compiled.bytes)?;
+        let binding = huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding::seal(
+            &repository_root,
+            &optimization,
+            &executable,
+            &game_data,
+            &tape_path,
+            &program_path,
+            &world_context,
+            u64::try_from(usize_option(command_args, "--checkpoint-validation-ticks", 8)?)?,
+            flag(command_args, "--verify-state-hashes"),
+        )?;
+        write_new_file(&binding_path, binding.to_pretty_json()?)?;
+        let report = binding.validate_files(&repository_root, &optimization)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("run-residual-optimization") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?;
         let optimization: OptimizationRequest =
             serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        if let Some(path) = option(command_args, "--execution") {
+            if option(command_args, "--run-request").is_some()
+                || option(command_args, "--game").is_some()
+                || option(command_args, "--dvd").is_some()
+            {
+                return Err(
+                    "native residual execution cannot be combined with harness or loose game inputs"
+                        .into(),
+                );
+            }
+            let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(path)?)?;
+            let report = huntctl::search_evaluator::native_residual_campaign_runner::run_native_residual_campaign(
+                &huntctl::search_evaluator::native_residual_campaign_runner::NativeResidualCampaignRunConfig {
+                    repository_root: &repository_root,
+                    optimization: &optimization,
+                    execution: &execution,
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            return Ok(());
+        }
         let template: HarnessRunRequest = if let Some(path) = option(command_args, "--run-request")
         {
             if option(command_args, "--game").is_some() || option(command_args, "--dvd").is_some() {
@@ -290,6 +378,23 @@ fn repository_root(args: &[String]) -> Result<PathBuf, Box<dyn Error>> {
     Ok(option(args, "--repository-root")
         .map(PathBuf::from)
         .unwrap_or(env::current_dir()?))
+}
+
+fn repository_file(
+    repository_root: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<PathBuf, Box<dyn Error>> {
+    let unresolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        repository_root.join(path)
+    };
+    let resolved = unresolved.canonicalize()?;
+    if !resolved.starts_with(repository_root) || !resolved.is_file() {
+        return Err(format!("{label} must be a file inside the repository").into());
+    }
+    Ok(resolved)
 }
 
 fn refuse_existing_output(path: &Path, label: &str) -> Result<(), Box<dyn Error>> {

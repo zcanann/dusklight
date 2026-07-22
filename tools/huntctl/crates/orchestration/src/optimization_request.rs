@@ -8,6 +8,7 @@ use dusklight_harness_contracts::objective_suite::{
 use dusklight_harness_contracts::run_contract::{HarnessFidelityMode, HarnessRunRequest};
 use dusklight_learning::factorized_pad_action::ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256;
 use dusklight_routes::timeline::{ArtifactSource, Timeline};
+use dusklight_routes::timeline_materialization::materialize_segment_chain;
 use dusklight_search::residual_action::{
     RESIDUAL_PROPOSAL_SCHEMA_ID_V1, residual_proposal_schema_sha256,
 };
@@ -356,6 +357,21 @@ impl OptimizationRequest {
             return Err(request_error(
                 "optimization source boundary differs from the selected segment",
             ));
+        }
+        if self.incumbent.is_some() {
+            let parent_id = segment.parent.as_deref().ok_or_else(|| {
+                request_error("residual incumbent segment has no parent source boundary")
+            })?;
+            let artifact_root = timeline_path
+                .parent()
+                .ok_or_else(|| request_error("optimization timeline has no artifact root"))?;
+            let parent = materialize_segment_chain(&timeline, artifact_root, parent_id)
+                .map_err(|source| request_error(source.to_string()))?;
+            if parent.tape.frames.len() as u64 != self.route.source_boundary_index {
+                return Err(request_error(
+                    "optimization source boundary index differs from the exact materialized parent checkpoint",
+                ));
+            }
         }
 
         let goal = timeline
