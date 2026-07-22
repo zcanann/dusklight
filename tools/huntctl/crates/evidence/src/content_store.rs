@@ -38,6 +38,7 @@ pub enum ContentKind {
     NativeReplayCorpus,
     NativeEpisodeHistory,
     NativeAuxiliaryDataset,
+    NativeGoalTrajectoryDataset,
     Screenshot,
     Model,
     DatasetManifest,
@@ -74,6 +75,9 @@ impl ContentKind {
             Self::NativeEpisodeHistory => "application/vnd.dusklight.native-episode-history+json",
             Self::NativeAuxiliaryDataset => {
                 "application/vnd.dusklight.native-auxiliary-dataset+json"
+            }
+            Self::NativeGoalTrajectoryDataset => {
+                "application/vnd.dusklight.native-goal-trajectory-dataset+json"
             }
             Self::Screenshot => "image/png",
             Self::Model => "application/vnd.dusklight.model+json",
@@ -544,6 +548,7 @@ mod tests {
             ContentKind::NativeReplayCorpus,
             ContentKind::NativeEpisodeHistory,
             ContentKind::NativeAuxiliaryDataset,
+            ContentKind::NativeGoalTrajectoryDataset,
             ContentKind::Screenshot,
             ContentKind::Model,
             ContentKind::DatasetManifest,

@@ -333,6 +333,14 @@ winner is the target and remains an open framework challenge until achieved.
 - [ ] Train a goal-conditioned estimate of terminal reachability and time-to-go
       from complete trajectories using tick cost, real terminal outcomes, n-step
       returns, replay, target isolation, and uncertainty.
+      An immutable goal-trajectory dataset now authenticates replay entries back
+      to complete native shards and a compiled semantic goal, keeps whole episodes
+      in one deterministic split, binds the exact native feature/action schemas,
+      and materializes time-to-goal, fixed-point tick cost, Monte Carlo outcome,
+      and linked n-step bootstrap targets. `huntctl learn goal-trajectory-dataset`
+      writes the content-addressed artifact without copying observations. The
+      actual reachability/time fitter, uncertainty estimate, and held-out policy
+      admission gate remain before this item is complete.
 - [ ] Export the trained policy into the native frozen format without a manual
       translation step.
 - [ ] Execute the frozen policy online from pre-input state, ingest its realized

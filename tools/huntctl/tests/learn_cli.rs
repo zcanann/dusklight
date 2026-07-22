@@ -1,11 +1,12 @@
 use huntctl::artifact::Digest;
 use huntctl::learning::native_auxiliary_dataset::NativeAuxiliaryDataset;
+use huntctl::learning::native_goal_trajectory::NativeGoalTrajectoryDataset;
 use huntctl::learning::native_replay_corpus::NativeReplayCorpus;
 use huntctl::learning::option_values::{
     OptionActionDescriptor, OptionValueBatch, OptionValueSample,
 };
 use huntctl::native_collision_history::NativeCollisionHistoryView;
-use huntctl::native_episode_shard::NativeEpisodeShard;
+use huntctl::native_episode_shard::{NativeEpisodeShard, authored_milestone_objective_identity};
 use huntctl::native_resource_load_view::NativeEpisodeResourceLoadView;
 use huntctl::native_room_load_view::NativeEpisodeRoomLoadView;
 use huntctl::option_execution::OptionType;
@@ -344,6 +345,101 @@ fn native_replay_cli_classifies_rich_episodes_without_copying_the_shard() {
     assert_eq!(direct.entries.len(), shard.episodes.len());
     assert!(direct.entries.iter().all(|entry| entry.role
         == huntctl::learning::native_replay_corpus::ReplayExperienceRole::RandomizedCoverage));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn goal_trajectory_cli_materializes_authenticated_n_step_targets() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-goal-trajectory-{nonce}"));
+    fs::create_dir_all(&root).unwrap();
+    let source = r#"milestones 1.8
+milestone exit-f-sp103-to-f-sp104 {
+  phase post_sim
+  when stage.room == 1
+}
+"#;
+    let compiled = huntctl::milestone_dsl::compile_source(source).unwrap();
+    let objective_identity = authored_milestone_objective_identity(
+        &Digest(compiled.program_sha256).to_string(),
+        &Digest(compiled.definitions[0].sha256).to_string(),
+    )
+    .unwrap();
+    let original = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/automation/native_episode_v14.dseps");
+    let mut bytes = fs::read(original).unwrap();
+    let placeholder = b"cccccccccccccccccccccccccccccccc";
+    let offset = bytes
+        .windows(placeholder.len())
+        .position(|window| window == placeholder)
+        .unwrap();
+    bytes[offset..offset + placeholder.len()].copy_from_slice(objective_identity.as_bytes());
+    let fixture = root.join("episodes.dseps");
+    fs::write(&fixture, bytes).unwrap();
+    NativeEpisodeShard::read(&fixture).unwrap();
+    let milestones = root.join("goal.dmsp");
+    fs::write(&milestones, &compiled.bytes).unwrap();
+    let corpus_path = root.join("replay.json");
+    let content = root.join("content");
+    let replay = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "native-replay", "--input"])
+        .arg(&fixture)
+        .args(["--role", "randomized_coverage", "--output"])
+        .arg(&corpus_path)
+        .args(["--artifact-store"])
+        .arg(&content)
+        .output()
+        .unwrap();
+    assert!(
+        replay.status.success(),
+        "{}",
+        String::from_utf8_lossy(&replay.stderr)
+    );
+    let dataset_path = root.join("trajectory.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "goal-trajectory-dataset", "--corpus"])
+        .arg(&corpus_path)
+        .args(["--input"])
+        .arg(&fixture)
+        .args(["--milestones"])
+        .arg(&milestones)
+        .args([
+            "--milestone-goal",
+            "exit-f-sp103-to-f-sp104",
+            "--n-step",
+            "4",
+            "--discount-millionths",
+            "900000",
+            "--output",
+        ])
+        .arg(&dataset_path)
+        .args(["--artifact-store"])
+        .arg(&content)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        summary["schema"],
+        "dusklight-native-goal-trajectory-dataset/v1"
+    );
+    assert_eq!(summary["report"]["episodes"], 2);
+    assert_eq!(
+        summary["content_blob"]["kind"],
+        "native_goal_trajectory_dataset"
+    );
+    let dataset: NativeGoalTrajectoryDataset =
+        serde_json::from_slice(&fs::read(dataset_path).unwrap()).unwrap();
+    dataset.validate().unwrap();
+    assert_eq!(dataset.config.n_step, 4);
+    assert_eq!(dataset.config.discount_millionths, 900_000);
     fs::remove_dir_all(root).unwrap();
 }
 

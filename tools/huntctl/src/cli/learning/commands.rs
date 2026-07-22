@@ -37,6 +37,10 @@ use huntctl::learning::native_frozen_policy_reinference::{
 use huntctl::learning::native_frozen_policy_suffix_batch::{
     NativeFrozenPolicySuffixBatch, native_frozen_policy_probe_model,
 };
+use huntctl::learning::native_goal_trajectory::{
+    NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V1, NativeGoalTrajectoryConfig,
+    NativeGoalTrajectoryDataset,
+};
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
@@ -1137,6 +1141,111 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "schema": NATIVE_AUXILIARY_DATASET_SCHEMA_V2,
                     "dataset_sha256": dataset.dataset_sha256,
                     "replay_corpus_sha256": dataset.replay_corpus_sha256,
+                    "output": output,
+                    "artifact_store": artifact_store,
+                    "content_blob": content_blob,
+                    "report": dataset.report,
+                }))?
+            );
+            Ok(())
+        }
+        Some("goal-trajectory-dataset") => {
+            let learn_args = &args[1..];
+            let corpus_path = required_path(learn_args, "--corpus")?;
+            let input_paths = repeated_option(learn_args, "--input");
+            if input_paths.is_empty() || input_paths.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn goal-trajectory-dataset requires 1..={MAX_LEARN_INPUT_CORPORA} --input EPISODES.dseps"
+                )
+                .into());
+            }
+            let milestones_path = required_path(learn_args, "--milestones")?;
+            let milestone_goal = option(learn_args, "--milestone-goal")
+                .ok_or("learn goal-trajectory-dataset requires --milestone-goal NAME")?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "native goal trajectory dataset output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let corpus: NativeReplayCorpus = serde_json::from_slice(&fs::read(&corpus_path)?)?;
+            corpus.validate()?;
+            let shards = input_paths
+                .iter()
+                .map(NativeEpisodeShard::read)
+                .collect::<Result<Vec<_>, _>>()?;
+            let milestone_bytes = fs::read(&milestones_path)?;
+            let decoded = huntctl::milestone_dsl::decode(&milestone_bytes)?;
+            let definition_index = decoded
+                .definitions
+                .iter()
+                .position(|definition| definition.name == milestone_goal)
+                .ok_or_else(|| {
+                    format!(
+                        "compiled milestone definition {milestone_goal:?} does not exist in {}",
+                        milestones_path.display()
+                    )
+                })?;
+            let compiled = huntctl::milestone_dsl::CompiledMilestones {
+                bytes: milestone_bytes,
+                program_sha256: decoded.program_sha256,
+                definitions: decoded.definitions,
+            };
+            let graph = huntctl::learning::compiled_goal_graph::CompiledGoalGraph::from_compiled(
+                &compiled,
+                definition_index,
+            )?;
+            let defaults = NativeGoalTrajectoryConfig::default();
+            let n_step = usize_option(learn_args, "--n-step", usize::from(defaults.n_step))?;
+            let discount_millionths = usize_option(
+                learn_args,
+                "--discount-millionths",
+                defaults.discount_millionths as usize,
+            )?;
+            let training_basis_points = usize_option(
+                learn_args,
+                "--training-basis-points",
+                usize::from(defaults.training_basis_points),
+            )?;
+            let validation_basis_points = usize_option(
+                learn_args,
+                "--validation-basis-points",
+                usize::from(defaults.validation_basis_points),
+            )?;
+            let config = NativeGoalTrajectoryConfig {
+                n_step: u16::try_from(n_step).map_err(|_| "n-step exceeds u16")?,
+                discount_millionths: u32::try_from(discount_millionths)
+                    .map_err(|_| "discount millionths exceed u32")?,
+                training_basis_points: u16::try_from(training_basis_points)
+                    .map_err(|_| "training basis points exceed u16")?,
+                validation_basis_points: u16::try_from(validation_basis_points)
+                    .map_err(|_| "validation basis points exceed u16")?,
+                split_seed: u64_option(learn_args, "--seed", defaults.split_seed)?,
+            };
+            let dataset = NativeGoalTrajectoryDataset::build(&corpus, &shards, &graph, config)?;
+            let bytes = serde_json::to_vec_pretty(&dataset)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| output.parent().unwrap_or(Path::new(".")).join("content"));
+            let content_blob = ContentStore::initialize(&artifact_store)?
+                .put_bytes(&bytes, ContentKind::NativeGoalTrajectoryDataset)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V1,
+                    "dataset_sha256": dataset.dataset_sha256,
+                    "replay_corpus_sha256": dataset.replay_corpus_sha256,
+                    "goal": milestone_goal,
+                    "goal_graph_sha256": dataset.goal.graph_sha256,
                     "output": output,
                     "artifact_store": artifact_store,
                     "content_blob": content_blob,
