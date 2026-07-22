@@ -349,8 +349,16 @@ winner is the target and remains an open framework challenge until achieved.
       replay, goal, observation, feature, and action lineage and has no promotion
       authority. A real campaign corpus still needs to satisfy the split gate and
       produce an admitted model before this item is complete.
-- [ ] Export the trained policy into the native frozen format without a manual
-      translation step.
+- [x] Export the trained policy into the native frozen format without a manual
+      translation step. `huntctl learn fit-frozen-goal-policy` now authenticates
+      successful trajectory actions back to native pre-input observations,
+      requires an admitted reachability model for the exact dataset and goal,
+      trains and admits a state-conditioned factorized PAD policy on whole-episode
+      train/validation/test splits, folds training-only normalization into its
+      first layer, and writes the existing C++-readable `.dsfrozen` format
+      directly. Its separately sealed manifest preserves dataset, replay, critic,
+      goal, feature, action, split-episode, training, metric, and frozen-byte
+      lineage; `inspect-frozen-goal-policy` verifies both artifacts together.
 - [ ] Execute the frozen policy online from pre-input state, ingest its realized
       episodes, refit, and repeat until the declared budget or stopping rule is
       reached.

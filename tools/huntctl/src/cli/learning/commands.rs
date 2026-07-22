@@ -37,6 +37,10 @@ use huntctl::learning::native_frozen_policy_reinference::{
 use huntctl::learning::native_frozen_policy_suffix_batch::{
     NativeFrozenPolicySuffixBatch, native_frozen_policy_probe_model,
 };
+use huntctl::learning::native_goal_frozen_policy::{
+    NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V1, NativeGoalFrozenPolicyConfig,
+    NativeGoalFrozenPolicyExport, NativeGoalFrozenPolicyManifest,
+};
 use huntctl::learning::native_goal_reachability::{
     NATIVE_GOAL_REACHABILITY_MODEL_SCHEMA_V1, NativeGoalReachabilityConfig,
     NativeGoalReachabilityModel,
@@ -1386,6 +1390,128 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "promotion_authority": model.promotion_authority,
                 }))?
             );
+            Ok(())
+        }
+        Some("fit-frozen-goal-policy") => {
+            let learn_args = &args[1..];
+            let dataset_path = required_path(learn_args, "--dataset")?;
+            let critic_path = required_path(learn_args, "--critic")?;
+            let input_paths = repeated_option(learn_args, "--input");
+            if input_paths.is_empty() || input_paths.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn fit-frozen-goal-policy requires 1..={MAX_LEARN_INPUT_CORPORA} --input EPISODES.dseps"
+                )
+                .into());
+            }
+            let model_output = required_path(learn_args, "--model-output")?;
+            let manifest_output = required_path(learn_args, "--manifest-output")?;
+            if model_output == manifest_output {
+                return Err("goal frozen policy model and manifest outputs must differ".into());
+            }
+            for output in [&model_output, &manifest_output] {
+                if output.exists() {
+                    return Err(format!(
+                        "goal frozen policy output already exists: {}",
+                        output.display()
+                    )
+                    .into());
+                }
+            }
+            let dataset: NativeGoalTrajectoryDataset =
+                serde_json::from_slice(&fs::read(&dataset_path)?)?;
+            dataset.validate()?;
+            let critic: NativeGoalReachabilityModel =
+                serde_json::from_slice(&fs::read(&critic_path)?)?;
+            critic.validate()?;
+            let shards = input_paths
+                .iter()
+                .map(NativeEpisodeShard::read)
+                .collect::<Result<Vec<_>, _>>()?;
+            let defaults = NativeGoalFrozenPolicyConfig::default();
+            let parse_f64 = |name: &str, default: f64| -> Result<f64, Box<dyn Error>> {
+                option(learn_args, name)
+                    .map(|value| value.parse::<f64>().map_err(Into::into))
+                    .transpose()
+                    .map(|value| value.unwrap_or(default))
+            };
+            let config = NativeGoalFrozenPolicyConfig {
+                epochs: u16::try_from(usize_option(
+                    learn_args,
+                    "--epochs",
+                    usize::from(defaults.epochs),
+                )?)
+                .map_err(|_| "goal frozen policy epochs exceed u16")?,
+                hidden_width: u16::try_from(usize_option(
+                    learn_args,
+                    "--hidden-width",
+                    usize::from(defaults.hidden_width),
+                )?)
+                .map_err(|_| "goal frozen policy hidden width exceeds u16")?,
+                learning_rate: parse_f64("--learning-rate", defaults.learning_rate)?,
+                l2_penalty: parse_f64("--l2-penalty", defaults.l2_penalty)?,
+                gradient_clip: parse_f64("--gradient-clip", defaults.gradient_clip)?,
+                minimum_validation_joint_improvement: parse_f64(
+                    "--minimum-validation-joint-improvement",
+                    defaults.minimum_validation_joint_improvement,
+                )?,
+                seed: u64_option(learn_args, "--seed", defaults.seed)?,
+            };
+            let export = NativeGoalFrozenPolicyExport::fit(&dataset, &shards, &critic, config)?;
+            let mut manifest_bytes = serde_json::to_vec_pretty(&export.manifest)?;
+            manifest_bytes.push(b'\n');
+            for output in [&model_output, &manifest_output] {
+                if let Some(parent) = output
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                {
+                    fs::create_dir_all(parent)?;
+                }
+            }
+            fs::write(&model_output, &export.model_bytes)?;
+            fs::write(&manifest_output, &manifest_bytes)?;
+            let artifact_store = option(learn_args, "--artifact-store")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    manifest_output
+                        .parent()
+                        .unwrap_or(Path::new("."))
+                        .join("content")
+                });
+            let store = ContentStore::initialize(&artifact_store)?;
+            let model_blob = store.put_bytes(&export.model_bytes, ContentKind::Model)?;
+            let manifest_blob = store.put_bytes(&manifest_bytes, ContentKind::Model)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V1,
+                    "manifest_sha256": export.manifest.manifest_sha256,
+                    "frozen_artifact_sha256": export.manifest.frozen_artifact_sha256,
+                    "source_dataset_sha256": export.manifest.source_dataset_sha256,
+                    "source_reachability_model_sha256": export.manifest.source_reachability_model_sha256,
+                    "objective_sha256": export.manifest.objective_sha256,
+                    "admission": export.manifest.admission,
+                    "training": export.manifest.training,
+                    "validation": export.manifest.validation,
+                    "test": export.manifest.test,
+                    "model_output": model_output,
+                    "manifest_output": manifest_output,
+                    "artifact_store": artifact_store,
+                    "model_content_blob": model_blob,
+                    "manifest_content_blob": manifest_blob,
+                    "promotion_authority": false,
+                }))?
+            );
+            Ok(())
+        }
+        Some("inspect-frozen-goal-policy") => {
+            let learn_args = &args[1..];
+            let manifest_path = required_path(learn_args, "--manifest")?;
+            let model_path = required_path(learn_args, "--model")?;
+            let manifest: NativeGoalFrozenPolicyManifest =
+                serde_json::from_slice(&fs::read(&manifest_path)?)?;
+            let model_bytes = fs::read(&model_path)?;
+            manifest.validate(&model_bytes)?;
+            println!("{}", serde_json::to_string_pretty(&manifest)?);
             Ok(())
         }
         Some("inspect-auxiliary") => {
