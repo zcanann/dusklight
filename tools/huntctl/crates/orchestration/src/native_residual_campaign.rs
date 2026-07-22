@@ -598,10 +598,10 @@ impl NativeResidualCampaignEvaluation {
                 &attempts,
             )?,
             episode_sha256: canonical_digest(
-                b"dusklight.native-residual-episodes/v1\0",
+                b"dusklight.native-residual-episode-members/v1\0",
                 &attempts
                     .iter()
-                    .map(|attempt| attempt.episode_shard.sha256)
+                    .map(|attempt| (&attempt.wire_candidate_id, attempt.episode_shard.sha256))
                     .collect::<Vec<_>>(),
             )?,
             behavior_sha256: canonical_digest(

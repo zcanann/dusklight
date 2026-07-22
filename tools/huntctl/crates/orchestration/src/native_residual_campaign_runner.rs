@@ -2287,6 +2287,51 @@ mod tests {
     }
 
     #[test]
+    fn residual_evaluations_distinguish_candidates_in_a_shared_episode_shard() {
+        let root = repository();
+        let optimization = optimization(&root);
+        let execution = execution(&optimization);
+        let (_parent, _parent_bytes, prepared) = prepared_generation(&root, &optimization);
+        let attempt = |candidate: &PreparedCandidate| NativeResidualAttempt {
+            repetition: 1,
+            worker_seed: optimization.execution.deterministic_seeds[0],
+            wire_candidate_id: wire_candidate_id(&candidate.envelope.id, 1),
+            batch_request: placeholder("build/test/shared-request.json", 10),
+            batch_result: placeholder("build/test/shared-result.json", 11),
+            episode_shard: placeholder("build/test/shared-episodes.dseps", 12),
+            restore_identity: "7".repeat(32),
+            checkpoint_bytes: 1,
+            simulated_ticks: 160,
+            first_hit_tick: None,
+            terminal_boundary_fingerprint: "8".repeat(32),
+            behavior_sha256: Digest([13; 32]),
+        };
+        let first = NativeResidualCampaignEvaluation::seal(
+            &optimization,
+            &execution,
+            &prepared[0].envelope,
+            vec![attempt(&prepared[0])],
+        )
+        .unwrap();
+        let second = NativeResidualCampaignEvaluation::seal(
+            &optimization,
+            &execution,
+            &prepared[1].envelope,
+            vec![attempt(&prepared[1])],
+        )
+        .unwrap();
+
+        assert_eq!(
+            first.attempts[0].episode_shard,
+            second.attempts[0].episode_shard
+        );
+        assert_ne!(
+            first.evidence.episode_sha256,
+            second.evidence.episode_sha256
+        );
+    }
+
+    #[test]
     fn crash_recovery_never_reuses_a_partial_native_result_path() {
         let root = repository();
         let optimization = optimization(&root);
