@@ -6,6 +6,12 @@ use crate::native_suffix_result::{
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::native_fidelity::FIXED_AUTOMATION_CVARS;
 use dusklight_automation_contracts::tape::{InputTape, TapeBoot};
+use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
+use dusklight_learning::frozen_inference::FrozenInferenceModel;
+use dusklight_learning::native_frozen_policy_reinference::{
+    NativeFrozenPolicyReinferenceReport, verify_native_frozen_policy_reinference,
+};
+use dusklight_learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
 use dusklight_search::suffix_batch::{NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch};
 use dusklight_worker_protocol::client::{BatchComplete, HelloResponse, WorkerClient};
 use dusklight_worker_protocol::transport::ProcessTransport;
@@ -34,6 +40,22 @@ pub struct NativeSuffixWorkerLaunch {
     pub initial_winner_tape: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug)]
+pub struct NativeFrozenPolicyWorkerLaunch {
+    pub executable: PathBuf,
+    pub game_data: PathBuf,
+    pub input_tape: PathBuf,
+    pub milestone_program: PathBuf,
+    pub card_fixture: PathBuf,
+    pub card_fixture_sha256: Digest,
+    pub working_directory: PathBuf,
+    pub state_root: PathBuf,
+    pub world_context_sha256: Digest,
+    pub terminal: NativeTerminalBinding,
+    pub initial_batch: PathBuf,
+    pub initial_result: PathBuf,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSuffixWorkerIdentity {
@@ -58,11 +80,28 @@ pub struct NativeSuffixWorkerSession {
     terminal: NativeTerminalBinding,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidatedNativeFrozenPolicyBatch {
+    pub execution: ValidatedNativeSuffixBatch,
+    pub reinference: NativeFrozenPolicyReinferenceReport,
+}
+
 struct PreparedLaunch {
     executable: PathBuf,
     working_directory: PathBuf,
     args: Vec<String>,
     batch: NativeSuffixBatch,
+    result: PathBuf,
+    identity: NativeSuffixWorkerIdentity,
+    terminal: NativeTerminalBinding,
+}
+
+struct PreparedFrozenLaunch {
+    executable: PathBuf,
+    working_directory: PathBuf,
+    args: Vec<String>,
+    batch: NativeFrozenPolicySuffixBatch,
+    model_bytes: Vec<u8>,
     result: PathBuf,
     identity: NativeSuffixWorkerIdentity,
     terminal: NativeTerminalBinding,
@@ -91,6 +130,40 @@ impl NativeSuffixWorkerSession {
             &complete,
             &prepared.result,
             &prepared.batch,
+            &prepared.terminal,
+        )?;
+        let session = Self {
+            client,
+            hello,
+            identity: prepared.identity,
+            terminal: prepared.terminal,
+        };
+        Ok((session, validated))
+    }
+
+    pub fn launch_frozen(
+        config: &NativeFrozenPolicyWorkerLaunch,
+    ) -> Result<(Self, ValidatedNativeFrozenPolicyBatch), NativeSuffixWorkerError> {
+        let prepared = prepare_frozen_launch(config)?;
+        let transport = ProcessTransport::spawn_in(
+            &prepared.executable,
+            &prepared.args,
+            Some(&prepared.working_directory),
+        )
+        .map_err(worker_error)?;
+        let mut client = WorkerClient::new(transport);
+        let hello = client.handshake().map_err(worker_error)?.clone();
+        if !hello.capabilities.persistent_control || !hello.capabilities.batch_run {
+            return Err(worker_message(
+                "native child does not advertise persistent frozen-policy batch capability",
+            ));
+        }
+        let complete = client.await_initial_batch().map_err(worker_error)?;
+        let validated = validate_completed_frozen_batch(
+            &complete,
+            &prepared.result,
+            &prepared.batch,
+            &prepared.model_bytes,
             &prepared.terminal,
         )?;
         let session = Self {
@@ -137,6 +210,36 @@ impl NativeSuffixWorkerSession {
             )
             .map_err(worker_error)?;
         validate_completed_batch(&complete, &result_path, &batch, &self.terminal)
+    }
+
+    pub fn run_frozen_batch(
+        &mut self,
+        batch_path: &Path,
+        result_path: &Path,
+    ) -> Result<ValidatedNativeFrozenPolicyBatch, NativeSuffixWorkerError> {
+        let batch_path = canonical_file(batch_path, "frozen policy suffix batch")?;
+        let batch: NativeFrozenPolicySuffixBatch =
+            serde_json::from_slice(&fs::read(&batch_path).map_err(worker_error)?)
+                .map_err(worker_error)?;
+        let model_path = canonical_frozen_model(&batch)?;
+        let model_bytes = fs::read(&model_path).map_err(worker_error)?;
+        validate_frozen_batch_identity(&batch, &model_bytes, &self.identity, &self.terminal)?;
+        let result_path = prepare_new_result_output(result_path, "frozen policy suffix result")?;
+        let complete = self
+            .client
+            .run_batch(
+                path_text(&batch_path, "frozen policy suffix batch")?,
+                path_text(&result_path, "frozen policy suffix result")?,
+                None,
+            )
+            .map_err(worker_error)?;
+        validate_completed_frozen_batch(
+            &complete,
+            &result_path,
+            &batch,
+            &model_bytes,
+            &self.terminal,
+        )
     }
 
     pub fn shutdown(mut self) -> Result<(), NativeSuffixWorkerError> {
@@ -282,6 +385,146 @@ fn prepare_launch(
     })
 }
 
+fn prepare_frozen_launch(
+    config: &NativeFrozenPolicyWorkerLaunch,
+) -> Result<PreparedFrozenLaunch, NativeSuffixWorkerError> {
+    if config.world_context_sha256 == Digest::ZERO
+        || config.card_fixture_sha256 == Digest::ZERO
+        || config.terminal.program_sha256 == Digest::ZERO
+        || config.terminal.definition_sha256 == Digest::ZERO
+        || config.terminal.goal.is_empty()
+    {
+        return Err(worker_message(
+            "native frozen-policy launch identities are incomplete",
+        ));
+    }
+    let executable = canonical_file(&config.executable, "executable")?;
+    let game_data = canonical_file(&config.game_data, "game data")?;
+    let input_tape = canonical_file(&config.input_tape, "input tape")?;
+    let milestone_program = canonical_file(&config.milestone_program, "milestone program")?;
+    let card_fixture = canonical_directory(&config.card_fixture, "card fixture")?;
+    let working_directory = canonical_directory(&config.working_directory, "working directory")?;
+    let batch_path = canonical_file(&config.initial_batch, "initial frozen policy batch")?;
+    let batch: NativeFrozenPolicySuffixBatch =
+        serde_json::from_slice(&fs::read(&batch_path).map_err(worker_error)?)
+            .map_err(worker_error)?;
+    let model_path = canonical_frozen_model(&batch)?;
+    let model_bytes = fs::read(&model_path).map_err(worker_error)?;
+    batch.validate(&model_bytes).map_err(worker_error)?;
+    let model = FrozenInferenceModel::from_bytes(&model_bytes).map_err(worker_error)?;
+    if model.objective_sha256 != config.terminal.definition_sha256 {
+        return Err(worker_message(
+            "native frozen policy objective differs from the terminal definition",
+        ));
+    }
+
+    let tape_bytes = fs::read(&input_tape).map_err(worker_error)?;
+    let tape = InputTape::decode(&tape_bytes).map_err(worker_error)?.tape;
+    if tape.boot != TapeBoot::Process
+        || batch
+            .source_frame
+            .checked_add(batch.maximum_ticks)
+            .is_none_or(|end| end > tape.frames.len())
+        || batch
+            .source_frame
+            .checked_add(batch.checkpoint_validation.ticks)
+            .is_none_or(|end| end > tape.frames.len())
+    {
+        return Err(worker_message(
+            "native frozen policy source and horizon do not fit the process-boot tape",
+        ));
+    }
+
+    let program_bytes = fs::read(&milestone_program).map_err(worker_error)?;
+    let decoded =
+        dusklight_objectives::milestone_dsl::decode(&program_bytes).map_err(worker_error)?;
+    let definition_index = decoded
+        .program
+        .definitions
+        .iter()
+        .position(|definition| definition.name == config.terminal.goal)
+        .ok_or_else(|| worker_message("milestone program does not define the terminal goal"))?;
+    if Digest(decoded.program_sha256) != config.terminal.program_sha256
+        || Digest(decoded.definitions[definition_index].sha256) != config.terminal.definition_sha256
+    {
+        return Err(worker_message(
+            "milestone program identities differ from the frozen policy terminal binding",
+        ));
+    }
+
+    let result = prepare_new_result_output(&config.initial_result, "initial frozen policy result")?;
+    prepare_state_root(&config.state_root)?;
+    let state_root = config.state_root.canonicalize().map_err(worker_error)?;
+    let renderer_cache = state_root
+        .parent()
+        .unwrap_or(&state_root)
+        .join("renderer-cache");
+    fs::create_dir_all(&renderer_cache).map_err(worker_error)?;
+
+    let game_data_sha256 = sha256_file(&game_data)?;
+    let identity = NativeSuffixWorkerIdentity {
+        executable_sha256: sha256_file(&executable)?,
+        game_data_sha256,
+        input_tape_sha256: sha256(&tape_bytes),
+        milestone_program_sha256: sha256(&program_bytes),
+        card_fixture_sha256: config.card_fixture_sha256,
+        world_context_sha256: config.world_context_sha256,
+        source_frame: batch.source_frame as u64,
+        source_boundary_fingerprint: batch.source_boundary_fingerprint.clone(),
+        checkpoint_validation_kind: batch.checkpoint_validation.kind.clone(),
+        checkpoint_validation_ticks: batch.checkpoint_validation.ticks as u64,
+        maximum_ticks: batch.maximum_ticks as u64,
+        terminal: config.terminal.clone(),
+    };
+    validate_frozen_batch_identity(&batch, &model_bytes, &identity, &config.terminal)?;
+    let mut args = vec![
+        "--automation-engine-worker".into(),
+        "--headless".into(),
+        "--dvd".into(),
+        path_text(&game_data, "game data")?.into(),
+        "--input-tape".into(),
+        path_text(&input_tape, "input tape")?.into(),
+        "--input-tape-end".into(),
+        "release".into(),
+        "--automation-data-root".into(),
+        path_text(&state_root, "state root")?.into(),
+        "--automation-card-fixture".into(),
+        path_text(&card_fixture, "card fixture")?.into(),
+        "--renderer-cache-root".into(),
+        path_text(&renderer_cache, "renderer cache")?.into(),
+        "--suffix-batch".into(),
+        path_text(&batch_path, "initial frozen policy batch")?.into(),
+        "--suffix-batch-result".into(),
+        path_text(&result, "initial frozen policy result")?.into(),
+        "--automation-game-data-sha256".into(),
+        game_data_sha256.to_string(),
+        "--automation-world-context-sha256".into(),
+        config.world_context_sha256.to_string(),
+        "--milestone-program".into(),
+        path_text(&milestone_program, "milestone program")?.into(),
+        "--milestones".into(),
+        config.terminal.goal.clone(),
+        "--milestone-goal".into(),
+        config.terminal.goal.clone(),
+        "--milestone-result".into(),
+        path_text(&state_root.join("milestones.json"), "milestone result")?.into(),
+    ];
+    for cvar in FIXED_AUTOMATION_CVARS {
+        args.push("--cvar".into());
+        args.push((*cvar).into());
+    }
+    Ok(PreparedFrozenLaunch {
+        executable,
+        working_directory,
+        args,
+        batch,
+        model_bytes,
+        result,
+        identity,
+        terminal: config.terminal.clone(),
+    })
+}
+
 fn validate_completed_batch(
     complete: &BatchComplete,
     expected_result: &Path,
@@ -301,6 +544,35 @@ fn validate_completed_batch(
     {
         return Err(worker_message(
             "engine worker response, suffix result, and episode shard paths differ",
+        ));
+    }
+    Ok(validated)
+}
+
+fn validate_completed_frozen_batch(
+    complete: &BatchComplete,
+    expected_result: &Path,
+    batch: &NativeFrozenPolicySuffixBatch,
+    model_bytes: &[u8],
+    terminal: &NativeTerminalBinding,
+) -> Result<ValidatedNativeFrozenPolicyBatch, NativeSuffixWorkerError> {
+    let result_path = canonical_file(expected_result, "native frozen policy result")?;
+    if Path::new(&complete.result) != result_path {
+        return Err(worker_message(
+            "engine worker returned a different frozen policy result path",
+        ));
+    }
+    let validated =
+        validate_native_frozen_policy_artifacts(batch, model_bytes, &result_path, terminal)?;
+    let episode_path = canonical_file(
+        Path::new(&complete.episode_shard),
+        "native frozen policy episode shard",
+    )?;
+    if Path::new(&complete.episode_shard) != episode_path
+        || Path::new(&validated.execution.episode_shard_path) != episode_path
+    {
+        return Err(worker_message(
+            "engine worker response, frozen policy result, and episode shard paths differ",
         ));
     }
     Ok(validated)
@@ -334,6 +606,68 @@ pub fn validate_native_suffix_artifacts(
     Ok(validated)
 }
 
+pub fn validate_native_frozen_policy_artifacts(
+    batch: &NativeFrozenPolicySuffixBatch,
+    model_bytes: &[u8],
+    result_path: &Path,
+    terminal: &NativeTerminalBinding,
+) -> Result<ValidatedNativeFrozenPolicyBatch, NativeSuffixWorkerError> {
+    batch.validate(model_bytes).map_err(worker_error)?;
+    let result_path = canonical_file(result_path, "native frozen policy result")?;
+    let result: NativeSuffixBatchResult =
+        serde_json::from_slice(&fs::read(&result_path).map_err(worker_error)?)
+            .map_err(worker_error)?;
+    let execution = result
+        .validate_frozen_against(batch, model_bytes, terminal)
+        .map_err(worker_error)?;
+    let episode_path = canonical_file(
+        Path::new(&execution.episode_shard_path),
+        "native frozen policy episode shard",
+    )?;
+    if Path::new(&execution.episode_shard_path) != episode_path {
+        return Err(worker_message(
+            "native frozen policy result episode shard path is not canonical",
+        ));
+    }
+    let shard = NativeEpisodeShard::read(&episode_path).map_err(worker_error)?;
+    if shard.source_frame != batch.source_frame as u64
+        || shard.maximum_ticks != batch.maximum_ticks as u32
+        || shard.episodes.len() != batch.candidates.len()
+        || shard.metadata.checkpoint_identity != execution.restore_identity
+        || shard.metadata.source_boundary_fingerprint != batch.source_boundary_fingerprint
+        || shard.metadata.objective != terminal.goal
+    {
+        return Err(worker_message(
+            "native frozen policy episode shard differs from its request and result",
+        ));
+    }
+    shard
+        .verify_authored_objective(
+            &terminal.program_sha256.to_string(),
+            &terminal.definition_sha256.to_string(),
+        )
+        .map_err(worker_error)?;
+    let reinference = verify_native_frozen_policy_reinference(
+        model_bytes,
+        &shard,
+        terminal.definition_sha256,
+        &execution.restore_identity,
+        &batch.source_boundary_fingerprint,
+    )
+    .map_err(worker_error)?;
+    if reinference.transition_count != execution.simulated_ticks as usize
+        || reinference.episode_count != batch.candidates.len()
+    {
+        return Err(worker_message(
+            "native frozen policy reinference accounting differs from the batch result",
+        ));
+    }
+    Ok(ValidatedNativeFrozenPolicyBatch {
+        execution,
+        reinference,
+    })
+}
+
 fn validate_batch_identity(
     batch: &NativeSuffixBatch,
     identity: &NativeSuffixWorkerIdentity,
@@ -350,6 +684,42 @@ fn validate_batch_identity(
         ));
     }
     Ok(())
+}
+
+fn validate_frozen_batch_identity(
+    batch: &NativeFrozenPolicySuffixBatch,
+    model_bytes: &[u8],
+    identity: &NativeSuffixWorkerIdentity,
+    terminal: &NativeTerminalBinding,
+) -> Result<(), NativeSuffixWorkerError> {
+    batch.validate(model_bytes).map_err(worker_error)?;
+    let model = FrozenInferenceModel::from_bytes(model_bytes).map_err(worker_error)?;
+    if model.objective_sha256 != terminal.definition_sha256
+        || batch.source_frame as u64 != identity.source_frame
+        || batch.source_boundary_fingerprint != identity.source_boundary_fingerprint
+        || batch.checkpoint_validation.kind != identity.checkpoint_validation_kind
+        || batch.checkpoint_validation.ticks as u64 != identity.checkpoint_validation_ticks
+        || batch.maximum_ticks as u64 != identity.maximum_ticks
+        || terminal != &identity.terminal
+    {
+        return Err(worker_message(
+            "next frozen policy batch differs from the authenticated session source or terminal",
+        ));
+    }
+    Ok(())
+}
+
+fn canonical_frozen_model(
+    batch: &NativeFrozenPolicySuffixBatch,
+) -> Result<PathBuf, NativeSuffixWorkerError> {
+    let declared = Path::new(&batch.frozen_policy.model_path);
+    let canonical = canonical_file(declared, "frozen policy model")?;
+    if declared != canonical {
+        return Err(worker_message(
+            "frozen policy model path must be canonical and absolute",
+        ));
+    }
+    Ok(canonical)
 }
 
 fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWorkerError> {
@@ -480,6 +850,10 @@ impl Error for NativeSuffixWorkerError {}
 mod tests {
     use super::*;
     use dusklight_automation_contracts::tape::InputFrame;
+    use dusklight_learning::factorized_policy_suffix_batch::NativeFactorizedPolicyBatchConfig;
+    use dusklight_learning::native_frozen_policy_suffix_batch::{
+        NativeFrozenPolicySuffixBatch, native_frozen_policy_probe_model,
+    };
     use dusklight_search::search::MacroAction;
     use dusklight_search::suffix_batch::{NativeCheckpointValidation, NativeSuffixCandidate};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -574,6 +948,49 @@ mod tests {
         (root, launch)
     }
 
+    fn frozen_fixture() -> (TestRoot, NativeFrozenPolicyWorkerLaunch) {
+        let (root, launch) = fixture();
+        let model_path = root.0.join("policy.dsfrozen");
+        let model = native_frozen_policy_probe_model(launch.terminal.definition_sha256).unwrap();
+        let model_bytes = model.to_bytes().unwrap();
+        fs::write(&model_path, &model_bytes).unwrap();
+        let model_path = model_path.canonicalize().unwrap();
+        let batch = NativeFrozenPolicySuffixBatch::build(
+            &model_bytes,
+            model_path.to_string_lossy().into_owned(),
+            launch.terminal.definition_sha256,
+            "policy-generation-0".into(),
+            NativeFactorizedPolicyBatchConfig {
+                source_frame: 1,
+                source_boundary_fingerprint: "1".repeat(32),
+                checkpoint_validation_ticks: 2,
+                maximum_ticks: 2,
+                verify_state_hashes: false,
+            },
+        )
+        .unwrap();
+        fs::write(
+            &launch.initial_batch,
+            serde_json::to_vec_pretty(&batch).unwrap(),
+        )
+        .unwrap();
+        let frozen = NativeFrozenPolicyWorkerLaunch {
+            executable: launch.executable,
+            game_data: launch.game_data,
+            input_tape: launch.input_tape,
+            milestone_program: launch.milestone_program,
+            card_fixture: launch.card_fixture,
+            card_fixture_sha256: launch.card_fixture_sha256,
+            working_directory: launch.working_directory,
+            state_root: launch.state_root,
+            world_context_sha256: launch.world_context_sha256,
+            terminal: launch.terminal,
+            initial_batch: launch.initial_batch,
+            initial_result: launch.initial_result,
+        };
+        (root, frozen)
+    }
+
     #[test]
     fn launch_preflight_binds_every_persistent_source_identity() {
         let (_root, launch) = fixture();
@@ -622,5 +1039,58 @@ mod tests {
 
         launch.world_context_sha256 = Digest::ZERO;
         assert!(prepare_launch(&launch).is_err());
+    }
+
+    #[test]
+    fn frozen_launch_preflight_binds_model_goal_and_persistent_source() {
+        let (_root, launch) = frozen_fixture();
+        let prepared = prepare_frozen_launch(&launch).unwrap();
+        assert_eq!(prepared.identity.source_frame, 1);
+        assert_eq!(prepared.identity.maximum_ticks, 2);
+        assert_eq!(prepared.identity.terminal, launch.terminal);
+        assert_eq!(
+            FrozenInferenceModel::from_bytes(&prepared.model_bytes)
+                .unwrap()
+                .objective_sha256,
+            launch.terminal.definition_sha256
+        );
+        assert!(
+            prepared
+                .args
+                .iter()
+                .any(|argument| argument == "--automation-engine-worker")
+        );
+        assert!(
+            prepared
+                .args
+                .iter()
+                .any(|argument| argument == "--suffix-batch")
+        );
+    }
+
+    #[test]
+    fn frozen_launch_preflight_rejects_model_and_terminal_detachment() {
+        let (_root, launch) = frozen_fixture();
+        let mut batch: NativeFrozenPolicySuffixBatch =
+            serde_json::from_slice(&fs::read(&launch.initial_batch).unwrap()).unwrap();
+        let replacement = if batch.frozen_policy.model_xxh3_128.starts_with('0') {
+            "1"
+        } else {
+            "0"
+        };
+        batch
+            .frozen_policy
+            .model_xxh3_128
+            .replace_range(0..1, replacement);
+        fs::write(
+            &launch.initial_batch,
+            serde_json::to_vec_pretty(&batch).unwrap(),
+        )
+        .unwrap();
+        assert!(prepare_frozen_launch(&launch).is_err());
+
+        let (_root, mut launch) = frozen_fixture();
+        launch.terminal.definition_sha256 = Digest([9; 32]);
+        assert!(prepare_frozen_launch(&launch).is_err());
     }
 }

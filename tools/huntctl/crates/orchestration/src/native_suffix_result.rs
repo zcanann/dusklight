@@ -2,6 +2,10 @@
 
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::RawPadState;
+use dusklight_learning::frozen_inference::FrozenInferenceModel;
+use dusklight_learning::native_frozen_policy_suffix_batch::{
+    NATIVE_FROZEN_POLICY_SCHEMA_V1, NativeFrozenPolicySuffixBatch,
+};
 use dusklight_search::suffix_batch::{NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -11,6 +15,7 @@ use std::fmt;
 
 pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6: &str = "dusklight-suffix-batch-result/v6";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V2: &str = "dusklight-native-episode-shard/v2";
+pub const NATIVE_EPISODE_SHARD_SCHEMA_V3: &str = "dusklight-native-episode-shard/v3";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -226,7 +231,11 @@ impl NativeSuffixBatchResult {
             .ok_or_else(|| result_error("native suffix result lacks a checkpoint identity"))?;
         validate_source_boundary(&self.source_boundary, request)?;
         validate_checkpoint(&self.checkpoint_validation, request)?;
-        validate_episode_shard(&self.episode_shard, candidate_count)?;
+        validate_episode_shard(
+            &self.episode_shard,
+            candidate_count,
+            NATIVE_EPISODE_SHARD_SCHEMA_V2,
+        )?;
 
         let mut ids = BTreeSet::new();
         let mut simulated_ticks = 0_u64;
@@ -237,7 +246,11 @@ impl NativeSuffixBatchResult {
                     "native suffix result candidates are reordered, duplicated, or detached",
                 ));
             }
-            candidates.push(actual.validate_against(request, terminal)?);
+            candidates.push(actual.validate_common(
+                request.maximum_ticks,
+                request.verify_state_hashes,
+                terminal,
+            )?);
             simulated_ticks = simulated_ticks
                 .checked_add(actual.ticks_executed)
                 .ok_or_else(|| result_error("native suffix simulated tick total overflowed"))?;
@@ -266,22 +279,144 @@ impl NativeSuffixBatchResult {
             candidates,
         })
     }
+
+    pub fn validate_frozen_against(
+        &self,
+        request: &NativeFrozenPolicySuffixBatch,
+        model_bytes: &[u8],
+        terminal: &NativeTerminalBinding,
+    ) -> Result<ValidatedNativeSuffixBatch, NativeSuffixResultError> {
+        request
+            .validate(model_bytes)
+            .map_err(|error| result_error(error.to_string()))?;
+        let model = FrozenInferenceModel::from_bytes(model_bytes)
+            .map_err(|error| result_error(error.to_string()))?;
+        if model.objective_sha256 != terminal.definition_sha256 {
+            return Err(result_error(
+                "frozen policy objective differs from the authored terminal definition",
+            ));
+        }
+        let candidate_count = request.candidates.len() as u64;
+        let parameter_count = model.layers.iter().try_fold(0_u64, |count, layer| {
+            count
+                .checked_add(layer.weights.len() as u64)
+                .and_then(|value| value.checked_add(layer.biases.len() as u64))
+        });
+        let policy = self
+            .policy_model
+            .as_ref()
+            .ok_or_else(|| result_error("native frozen policy result lacks its model identity"))?;
+        if self.schema != NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6
+            || self.status != "passed"
+            || self.error.is_some()
+            || self.source_frame != request.source_frame as u64
+            || self.maximum_ticks != request.maximum_ticks as u64
+            || self.candidate_count != candidate_count
+            || self.completed_candidates != candidate_count
+            || self.candidates.len() != request.candidates.len()
+            || self.verify_state_hashes != request.verify_state_hashes
+            || self.checkpoint_bytes == 0
+            || self.capture_micros == 0
+            || self.restore_micros.is_empty()
+            || !self.audio_callback_quiesced
+            || !self.timing.verified
+            || self.timing.schema != "dusklight-suffix-batch-timing/v2"
+            || policy.get("schema").and_then(Value::as_str) != Some(NATIVE_FROZEN_POLICY_SCHEMA_V1)
+            || policy.get("model_xxh3_128").and_then(Value::as_str)
+                != Some(request.frozen_policy.model_xxh3_128.as_str())
+            || policy.get("feature_schema_sha256").and_then(Value::as_str)
+                != Some(model.feature_schema_sha256.to_string().as_str())
+            || policy.get("action_schema_sha256").and_then(Value::as_str)
+                != Some(model.action_schema_sha256.to_string().as_str())
+            || policy.get("objective_sha256").and_then(Value::as_str)
+                != Some(model.objective_sha256.to_string().as_str())
+            || policy.get("parameter_count").and_then(Value::as_u64) != parameter_count
+        {
+            return Err(result_error(
+                "native frozen policy result is incomplete or detached from its request and model",
+            ));
+        }
+        let restore_identity = self
+            .restore_identity
+            .as_deref()
+            .filter(|value| lower_hex(value, 32))
+            .ok_or_else(|| {
+                result_error("native frozen policy result lacks a checkpoint identity")
+            })?;
+        validate_source_boundary_values(
+            &self.source_boundary,
+            &request.source_boundary_fingerprint,
+        )?;
+        validate_checkpoint_values(
+            &self.checkpoint_validation,
+            &request.checkpoint_validation.kind,
+            request.checkpoint_validation.ticks as u64,
+        )?;
+        validate_episode_shard(
+            &self.episode_shard,
+            candidate_count,
+            NATIVE_EPISODE_SHARD_SCHEMA_V3,
+        )?;
+
+        let mut ids = BTreeSet::new();
+        let mut simulated_ticks = 0_u64;
+        let mut candidates = Vec::with_capacity(self.candidates.len());
+        for (expected, actual) in request.candidates.iter().zip(&self.candidates) {
+            if expected.id != actual.id || !ids.insert(actual.id.as_str()) {
+                return Err(result_error(
+                    "native frozen policy result candidates are reordered, duplicated, or detached",
+                ));
+            }
+            candidates.push(actual.validate_common(
+                request.maximum_ticks,
+                request.verify_state_hashes,
+                terminal,
+            )?);
+            simulated_ticks = simulated_ticks
+                .checked_add(actual.ticks_executed)
+                .ok_or_else(|| result_error("native frozen policy tick total overflowed"))?;
+        }
+        if self.timing.candidate_ticks != simulated_ticks {
+            return Err(result_error(
+                "native frozen policy timing does not charge every simulated tick",
+            ));
+        }
+        let winner = self
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.success)
+            .min_by_key(|candidate| (candidate.first_hit_tick, candidate.id.as_str()))
+            .map(|candidate| candidate.id.as_str());
+        if self.winner_id.as_deref() != winner {
+            return Err(result_error(
+                "native frozen policy winner differs from the exact terminal results",
+            ));
+        }
+        Ok(ValidatedNativeSuffixBatch {
+            restore_identity: restore_identity.into(),
+            checkpoint_bytes: self.checkpoint_bytes,
+            simulated_ticks,
+            episode_shard_path: self.episode_shard.path.clone(),
+            candidates,
+        })
+    }
 }
 
 impl NativeSuffixCandidateResult {
-    fn validate_against(
+    fn validate_common(
         &self,
-        request: &NativeSuffixBatch,
+        maximum_ticks: usize,
+        verify_state_hashes: bool,
         terminal: &NativeTerminalBinding,
     ) -> Result<ValidatedNativeSuffixCandidate, NativeSuffixResultError> {
         let exact_verdict = match (self.success, self.first_hit_tick) {
             (true, Some(tick))
                 if tick.checked_add(1) == Some(self.ticks_executed)
-                    && self.ticks_executed <= request.maximum_ticks as u64 =>
+                    && self.ticks_executed <= maximum_ticks as u64 =>
             {
                 true
             }
-            (false, None) if self.ticks_executed == request.maximum_ticks as u64 => false,
+            (false, None) if self.ticks_executed == maximum_ticks as u64 => false,
             _ => {
                 return Err(result_error(
                     "native suffix candidate has an invalid exact terminal verdict",
@@ -292,7 +427,7 @@ impl NativeSuffixCandidateResult {
         match (
             state_sequence_digest,
             &self.state_tick_digests,
-            request.verify_state_hashes,
+            verify_state_hashes,
         ) {
             (Some(sequence), Some(digests), true)
                 if lower_hex(sequence, 32)
@@ -366,9 +501,15 @@ fn validate_source_boundary(
     actual: &NativeSourceBoundaryResult,
     request: &NativeSuffixBatch,
 ) -> Result<(), NativeSuffixResultError> {
-    if actual.expected_fingerprint != request.source_boundary_fingerprint
-        || actual.actual_fingerprint.as_deref()
-            != Some(request.source_boundary_fingerprint.as_str())
+    validate_source_boundary_values(actual, &request.source_boundary_fingerprint)
+}
+
+fn validate_source_boundary_values(
+    actual: &NativeSourceBoundaryResult,
+    expected: &str,
+) -> Result<(), NativeSuffixResultError> {
+    if actual.expected_fingerprint != expected
+        || actual.actual_fingerprint.as_deref() != Some(expected)
         || !actual.fingerprint_verified
         || !actual.verified
     {
@@ -383,8 +524,20 @@ fn validate_checkpoint(
     actual: &NativeCheckpointValidationResult,
     request: &NativeSuffixBatch,
 ) -> Result<(), NativeSuffixResultError> {
-    if actual.kind != request.checkpoint_validation.kind
-        || actual.ticks != request.checkpoint_validation.ticks as u64
+    validate_checkpoint_values(
+        actual,
+        &request.checkpoint_validation.kind,
+        request.checkpoint_validation.ticks as u64,
+    )
+}
+
+fn validate_checkpoint_values(
+    actual: &NativeCheckpointValidationResult,
+    expected_kind: &str,
+    expected_ticks: u64,
+) -> Result<(), NativeSuffixResultError> {
+    if actual.kind != expected_kind
+        || actual.ticks != expected_ticks
         || !actual.verified
         || actual.first_divergence_tick.is_some()
         || actual.fresh_sequence_digest.as_deref() != actual.restored_sequence_digest.as_deref()
@@ -407,8 +560,9 @@ fn validate_checkpoint(
 fn validate_episode_shard(
     shard: &NativeEpisodeShardResult,
     candidate_count: u64,
+    expected_schema: &str,
 ) -> Result<(), NativeSuffixResultError> {
-    if shard.schema != NATIVE_EPISODE_SHARD_SCHEMA_V2
+    if shard.schema != expected_schema
         || shard.path.is_empty()
         || shard.observation_schema.is_empty()
         || shard.action_schema != RAW_PAD_ACTION_SCHEMA_V2
@@ -480,6 +634,10 @@ impl Error for NativeSuffixResultError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dusklight_learning::factorized_policy_suffix_batch::NativeFactorizedPolicyBatchConfig;
+    use dusklight_learning::native_frozen_policy_suffix_batch::{
+        NativeFrozenPolicySuffixBatch, native_frozen_policy_probe_model,
+    };
     use dusklight_search::search::MacroAction;
     use dusklight_search::suffix_batch::{NativeCheckpointValidation, NativeSuffixCandidate};
 
@@ -605,6 +763,45 @@ mod tests {
         }
     }
 
+    fn frozen_request() -> (NativeFrozenPolicySuffixBatch, Vec<u8>) {
+        let model = native_frozen_policy_probe_model(terminal().definition_sha256).unwrap();
+        let bytes = model.to_bytes().unwrap();
+        let request = NativeFrozenPolicySuffixBatch::build(
+            &bytes,
+            "policy.dsfrozen".into(),
+            terminal().definition_sha256,
+            "candidate-0".into(),
+            NativeFactorizedPolicyBatchConfig {
+                source_frame: 500,
+                source_boundary_fingerprint: "1".repeat(32),
+                checkpoint_validation_ticks: 2,
+                maximum_ticks: 2,
+                verify_state_hashes: false,
+            },
+        )
+        .unwrap();
+        (request, bytes)
+    }
+
+    fn frozen_result(
+        model_bytes: &[u8],
+        request: &NativeFrozenPolicySuffixBatch,
+    ) -> NativeSuffixBatchResult {
+        let model = FrozenInferenceModel::from_bytes(model_bytes).unwrap();
+        let mut result = result(false, false);
+        result.timing.schema = "dusklight-suffix-batch-timing/v2".into();
+        result.episode_shard.schema = NATIVE_EPISODE_SHARD_SCHEMA_V3.into();
+        result.policy_model = Some(serde_json::json!({
+            "schema": NATIVE_FROZEN_POLICY_SCHEMA_V1,
+            "model_xxh3_128": request.frozen_policy.model_xxh3_128,
+            "feature_schema_sha256": model.feature_schema_sha256,
+            "action_schema_sha256": model.action_schema_sha256,
+            "objective_sha256": model.objective_sha256,
+            "parameter_count": model.layers.iter().map(|layer| layer.weights.len() + layer.biases.len()).sum::<usize>(),
+        }));
+        result
+    }
+
     #[test]
     fn accepts_exact_miss_and_success_evidence() {
         let miss = result(false, true)
@@ -649,6 +846,33 @@ mod tests {
         let mut tampered = result(false, true);
         tampered.timing.candidate_ticks = 1;
         assert!(tampered.validate_against(&batch, &authority).is_err());
+    }
+
+    #[test]
+    fn accepts_exact_frozen_policy_identity_and_rejects_detachment() {
+        let (request, bytes) = frozen_request();
+        let result = frozen_result(&bytes, &request);
+        let validated = result
+            .validate_frozen_against(&request, &bytes, &terminal())
+            .unwrap();
+        assert_eq!(validated.simulated_ticks, 2);
+        assert_eq!(validated.candidates[0].id, "candidate-0");
+
+        let mut tampered = frozen_result(&bytes, &request);
+        tampered.policy_model.as_mut().unwrap()["objective_sha256"] = Value::String("0".repeat(64));
+        assert!(
+            tampered
+                .validate_frozen_against(&request, &bytes, &terminal())
+                .is_err()
+        );
+
+        let mut tampered = frozen_result(&bytes, &request);
+        tampered.episode_shard.schema = NATIVE_EPISODE_SHARD_SCHEMA_V2.into();
+        assert!(
+            tampered
+                .validate_frozen_against(&request, &bytes, &terminal())
+                .is_err()
+        );
     }
 
     #[test]

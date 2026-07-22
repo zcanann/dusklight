@@ -157,6 +157,35 @@ impl NativeFrozenPolicySuffixBatch {
             }],
         })
     }
+
+    pub fn validate(&self, model_bytes: &[u8]) -> Result<(), NativeFrozenPolicyBatchError> {
+        if self.candidates.len() != 1 {
+            return Err(NativeFrozenPolicyBatchError::new(
+                "native frozen policy batch must contain exactly one policy candidate",
+            ));
+        }
+        let model = FrozenInferenceModel::from_bytes(model_bytes)
+            .map_err(|error| NativeFrozenPolicyBatchError::new(error.to_string()))?;
+        let rebuilt = Self::build(
+            model_bytes,
+            self.frozen_policy.model_path.clone(),
+            model.objective_sha256,
+            self.candidates[0].id.clone(),
+            NativeFactorizedPolicyBatchConfig {
+                source_frame: self.source_frame,
+                source_boundary_fingerprint: self.source_boundary_fingerprint.clone(),
+                checkpoint_validation_ticks: self.checkpoint_validation.ticks,
+                maximum_ticks: self.maximum_ticks,
+                verify_state_hashes: self.verify_state_hashes,
+            },
+        )?;
+        if &rebuilt != self {
+            return Err(NativeFrozenPolicyBatchError::new(
+                "native frozen policy batch is noncanonical or detached from its model",
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn valid_boundary_fingerprint(value: &str) -> bool {
@@ -307,5 +336,16 @@ mod tests {
             )
             .is_err()
         );
+
+        let mut batch = NativeFrozenPolicySuffixBatch::build(
+            &bytes,
+            "policy.dsfrozen".into(),
+            objective,
+            "native-policy".into(),
+            config(),
+        )
+        .unwrap();
+        batch.frozen_policy.model_xxh3_128.replace_range(0..1, "0");
+        assert!(batch.validate(&bytes).is_err());
     }
 }

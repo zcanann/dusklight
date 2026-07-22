@@ -361,7 +361,12 @@ winner is the target and remains an open framework challenge until achieved.
       lineage; `inspect-frozen-goal-policy` verifies both artifacts together.
 - [ ] Execute the frozen policy online from pre-input state, ingest its realized
       episodes, refit, and repeat until the declared budget or stopping rule is
-      reached.
+      reached. The persistent native worker boundary now accepts exact frozen
+      policy v5 batches as well as residual batches, pins every refit to the same
+      checkpoint and authored terminal, validates v6 model/timing/episode
+      identities, requires policy-tagged v3 shards, and independently reinfers
+      every emitted PAD in Rust before admission. The resumable multi-generation
+      execute/ingest/refit journal still remains before this item is complete.
 - [ ] Preserve policy, dataset, checkpoint, objective, feature, action, proposal,
       and parent-generation lineage across the loop.
 - [ ] Seed optimization runs with the incumbent demonstration while allowing the
