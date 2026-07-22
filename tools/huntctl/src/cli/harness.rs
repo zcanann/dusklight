@@ -111,6 +111,7 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
                     repository_root: &repository_root,
                     optimization: &optimization,
                     execution: &execution,
+                    cancellation: None,
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);

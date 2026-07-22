@@ -418,6 +418,7 @@ fn campaign_projection(
         retained_failures: 0,
         best_first_hit_tick: None,
         uncheckpointed_completions: 0,
+        artifacts_present: optimization_campaign_artifacts_present(root, request),
         proposal_sources: vec![
             match request.proposal.optimizer {
                 ResidualOptimizerConfig::Random { .. } => "random",

@@ -1250,7 +1250,7 @@ fn search_and_learned_origin_candidates_share_the_authenticated_executor() {
     assert_eq!(candidate_ids, expected_ids);
     assert_ne!(tape_digests[0], tape_digests[1]);
     assert_eq!(objective_digests[0], objective_digests[1]);
-    assert_eq!(identity_digests[0], identity_digests[1]);
+    assert_eq!(identity_digests, tape_digests);
     let learned_attempt = report["attempts"]
         .as_array()
         .unwrap()

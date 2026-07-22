@@ -37,6 +37,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Debug)]
@@ -44,6 +45,11 @@ pub struct NativeResidualCampaignRunConfig<'a> {
     pub repository_root: &'a Path,
     pub optimization: &'a OptimizationRequest,
     pub execution: &'a NativeResidualExecutionBinding,
+    /// Cooperative cancellation is observed only at durable orchestration
+    /// boundaries. A batch already executing is allowed to finish so its exact
+    /// result can be adopted on resume; all workers are shut down before this
+    /// runner returns a cancelled outcome.
+    pub cancellation: Option<&'a AtomicBool>,
 }
 
 struct WorkerLane {
@@ -59,6 +65,7 @@ struct WorkerPool<'a> {
     execution: &'a NativeResidualExecutionBinding,
     terminal: NativeTerminalBinding,
     card_fixture_root: PathBuf,
+    session_root: PathBuf,
     lanes: Vec<WorkerLane>,
 }
 
@@ -114,6 +121,7 @@ impl<'a> WorkerPool<'a> {
                 program_sha256: optimization.terminal_predicate.program_sha256,
                 definition_sha256: optimization.terminal_predicate.definition_sha256,
             },
+            session_root,
             lanes,
         })
     }
@@ -199,6 +207,18 @@ impl<'a> WorkerPool<'a> {
                 failures.push(format!("worker {}: {error}", lane.index));
             }
         }
+        match fs::remove_dir_all(&self.session_root) {
+            Ok(()) => {
+                if let Some(parent) = self.session_root.parent() {
+                    let _ = fs::remove_dir(parent);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => failures.push(format!(
+                "ephemeral session {}: {error}",
+                self.session_root.display()
+            )),
+        }
         if failures.is_empty() {
             Ok(())
         } else {
@@ -207,6 +227,12 @@ impl<'a> WorkerPool<'a> {
                 failures.join("; ")
             )))
         }
+    }
+}
+
+impl Drop for WorkerPool<'_> {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
     }
 }
 
@@ -394,18 +420,19 @@ fn validate_evaluation_artifacts(
 }
 
 fn replay_completed(
+    config: &NativeResidualCampaignRunConfig<'_>,
     root: &Path,
-    optimization: &OptimizationRequest,
-    execution: &NativeResidualExecutionBinding,
     parent: &InputTape,
     parent_bytes: &[u8],
     resume: &OptimizationResumeState,
     archive: &mut ResidualOutcomeArchive,
 ) -> Result<(), NativeResidualCampaignRunnerError> {
     for row in resume.candidates.iter().filter(|row| row.result.is_some()) {
-        let candidate =
-            load_candidate(root, optimization, parent, parent_bytes, row).map_err(native_error)?;
-        let evaluation = load_native_evaluation(root, optimization, execution, row, &candidate)?;
+        ensure_not_cancelled(config)?;
+        let candidate = load_candidate(root, config.optimization, parent, parent_bytes, row)
+            .map_err(native_error)?;
+        let evaluation =
+            load_native_evaluation(root, config.optimization, config.execution, row, &candidate)?;
         archive
             .record(&candidate.compiled, evaluation.evidence)
             .map_err(native_error)?;
@@ -482,6 +509,7 @@ fn evaluate_generation(
     pool: &mut WorkerPool<'_>,
     generation: u64,
 ) -> Result<(), NativeResidualCampaignRunnerError> {
+    ensure_not_cancelled(config)?;
     let candidates = load_generation(
         root,
         config.optimization,
@@ -532,6 +560,7 @@ fn evaluate_generation(
             .map(|candidate| (candidate.envelope.id.clone(), Vec::new()))
             .collect::<BTreeMap<_, _>>();
         for repetition in 1..=config.optimization.execution.repetitions {
+            ensure_not_cancelled(config)?;
             let mut groups = vec![Vec::new(); lane_count];
             for (index, candidate) in dispatch.iter().enumerate() {
                 groups[index % lane_count].push(*candidate);
@@ -577,7 +606,9 @@ fn evaluate_generation(
                     });
                 }
             }
+            ensure_not_cancelled(config)?;
             let mut outputs = pool.run_jobs(jobs)?;
+            ensure_not_cancelled(config)?;
             outputs.extend(adopted);
             outputs.sort_by_key(|output| output.lane);
             for output in outputs {
@@ -608,6 +639,7 @@ fn evaluate_generation(
             }
         }
         for candidate in dispatch {
+            ensure_not_cancelled(config)?;
             let evaluation = NativeResidualCampaignEvaluation::seal(
                 config.optimization,
                 config.execution,
@@ -627,6 +659,7 @@ fn evaluate_generation(
     }
 
     let mut events = Vec::new();
+    ensure_not_cancelled(config)?;
     for candidate in pending {
         let row = resume
             .candidates
@@ -745,6 +778,7 @@ fn generation_rank(
 pub fn run_native_residual_campaign(
     config: &NativeResidualCampaignRunConfig<'_>,
 ) -> Result<ResidualCampaignRunSummary, NativeResidualCampaignRunnerError> {
+    ensure_not_cancelled(config)?;
     let root = config
         .repository_root
         .canonicalize()
@@ -767,7 +801,10 @@ pub fn run_native_residual_campaign(
     let shutdown = pool.shutdown();
     match (result, shutdown) {
         (Ok(summary), Ok(())) => Ok(summary),
-        (Err(error), _) => Err(error),
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(shutdown)) => Err(native_message(format!(
+            "{error}; worker teardown reported: {shutdown}"
+        ))),
         (Ok(_), Err(error)) => Err(error),
     }
 }
@@ -780,6 +817,7 @@ fn run_campaign_loop(
     parent_bytes: &[u8],
     pool: &mut WorkerPool<'_>,
 ) -> Result<ResidualCampaignRunSummary, NativeResidualCampaignRunnerError> {
+    ensure_not_cancelled(config)?;
     let mut resume = if root.join(&config.optimization.resume.journal_path).exists() {
         load_optimization_resume(config.optimization, root)
     } else {
@@ -808,6 +846,7 @@ fn run_campaign_loop(
         .map_err(native_error)?;
     }
     loop {
+        ensure_not_cancelled(config)?;
         let checkpoint: ResidualCampaignCheckpoint = load_checkpoint(
             root,
             config.optimization,
@@ -819,15 +858,7 @@ fn run_campaign_loop(
             .restore_optimizer(config.optimization, parent_bytes)
             .map_err(native_error)?;
         let mut archive = checkpoint.restore_archive().map_err(native_error)?;
-        replay_completed(
-            root,
-            config.optimization,
-            config.execution,
-            parent,
-            parent_bytes,
-            &resume,
-            &mut archive,
-        )?;
+        replay_completed(config, root, parent, parent_bytes, &resume, &mut archive)?;
         match optimizer {
             ResidualCampaignOptimizer::Random(mut random) => {
                 let ResidualOptimizerConfig::Random { samples } =
@@ -905,6 +936,7 @@ fn run_campaign_loop(
                     pool,
                     generation,
                 )?;
+                ensure_not_cancelled(config)?;
                 let optimizer = ResidualCampaignOptimizer::Random(random);
                 resume = append_checkpoint(
                     root,
@@ -977,6 +1009,7 @@ fn run_campaign_loop(
                     pool,
                     generation,
                 )?;
+                ensure_not_cancelled(config)?;
                 let ranked =
                     generation_rank(root, config, parent, parent_bytes, &resume, generation)?;
                 cem.tell(&ranked).map_err(native_error)?;
@@ -1029,10 +1062,44 @@ fn pretty_json(value: &impl Serialize) -> Result<Vec<u8>, serde_json::Error> {
 }
 
 #[derive(Debug)]
-pub struct NativeResidualCampaignRunnerError(String);
+pub struct NativeResidualCampaignRunnerError {
+    message: String,
+    cancelled: bool,
+}
+
+impl NativeResidualCampaignRunnerError {
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
+    }
+}
+
+fn ensure_not_cancelled(
+    config: &NativeResidualCampaignRunConfig<'_>,
+) -> Result<(), NativeResidualCampaignRunnerError> {
+    if config
+        .cancellation
+        .is_some_and(|cancelled| cancelled.load(Ordering::Acquire))
+    {
+        Err(native_cancelled(
+            "native residual campaign cancelled at a durable boundary",
+        ))
+    } else {
+        Ok(())
+    }
+}
 
 fn native_message(message: impl Into<String>) -> NativeResidualCampaignRunnerError {
-    NativeResidualCampaignRunnerError(message.into())
+    NativeResidualCampaignRunnerError {
+        message: message.into(),
+        cancelled: false,
+    }
+}
+
+fn native_cancelled(message: impl Into<String>) -> NativeResidualCampaignRunnerError {
+    NativeResidualCampaignRunnerError {
+        message: message.into(),
+        cancelled: true,
+    }
 }
 
 fn native_error(error: impl fmt::Display) -> NativeResidualCampaignRunnerError {
@@ -1041,7 +1108,7 @@ fn native_error(error: impl fmt::Display) -> NativeResidualCampaignRunnerError {
 
 impl fmt::Display for NativeResidualCampaignRunnerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
 
@@ -1188,5 +1255,55 @@ mod tests {
             b"{\"partial\":"
         );
         fs::remove_dir_all(batch_root).unwrap();
+    }
+
+    #[test]
+    fn pre_cancelled_campaign_returns_a_typed_outcome_without_launching_workers() {
+        let root = repository();
+        let optimization = optimization(&root);
+        let execution = execution(&optimization);
+        let cancellation = AtomicBool::new(true);
+
+        let error = run_native_residual_campaign(&NativeResidualCampaignRunConfig {
+            repository_root: &root,
+            optimization: &optimization,
+            execution: &execution,
+            cancellation: Some(&cancellation),
+        })
+        .unwrap_err();
+
+        assert!(error.is_cancelled());
+        assert!(error.to_string().contains("durable boundary"));
+    }
+
+    #[test]
+    fn worker_pool_drop_shuts_down_and_removes_its_ephemeral_session_tree() {
+        let root = repository();
+        let optimization = optimization(&root);
+        let execution = execution(&optimization);
+        let nonce = NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed);
+        let session_root = root.join("build").join(format!(
+            "native-residual-session-cleanup-test-{}-{nonce}/native-sessions/run-test",
+            std::process::id()
+        ));
+        fs::create_dir_all(session_root.join("worker-000/renderer-cache")).unwrap();
+        fs::write(session_root.join("worker-000/transient.bin"), b"transient").unwrap();
+        {
+            let _pool = WorkerPool {
+                root: &root,
+                optimization: &optimization,
+                execution: &execution,
+                terminal: NativeTerminalBinding {
+                    goal: optimization.terminal_predicate.goal.clone(),
+                    program_sha256: optimization.terminal_predicate.program_sha256,
+                    definition_sha256: optimization.terminal_predicate.definition_sha256,
+                },
+                card_fixture_root: root.clone(),
+                session_root: session_root.clone(),
+                lanes: Vec::new(),
+            };
+        }
+        assert!(!session_root.exists());
+        fs::remove_dir_all(session_root.ancestors().nth(2).expect("test campaign root")).unwrap();
     }
 }

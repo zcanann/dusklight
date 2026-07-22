@@ -81,6 +81,13 @@ Working foundations:
   generations, charged ticks, exact successes, current best, retained failures,
   proposal source, workers, uncheckpointed completions, and explicit runtime or
   artifact blockers while remaining cheap to poll.
+- Campaign lifecycle controls now stop through a cooperative token observed at
+  durable batch/checkpoint boundaries, report cancellation only after persistent
+  native workers are shut down, and remove each run's ephemeral state/cache tree
+  on normal return or unwind. Cancelled campaigns resume from sealed evidence;
+  stale-bound cleanup removes only the selected physical `build/campaigns/`
+  root, rejects symlink escapes and active promotion, and cannot race start,
+  cancellation, or promotion registration.
 
 Not yet working:
 
@@ -386,7 +393,7 @@ continuous optimizer, and appropriate negative controls remove the advantage.
 - [x] Make promotion an explicit Git-owned operation that stores the compact tape,
       exact proof, parent boundary, and lineage. Generated failures and discarded
       candidates remain outside source control.
-- [ ] Support cancel, resume, and cleanup without leaving native workers, hidden
+- [x] Support cancel, resume, and cleanup without leaving native workers, hidden
       windows, locks, or orphaned artifacts.
 - [ ] Keep the workbench responsive while thousands of candidates are generated;
       summarize campaigns and load candidate detail on demand.

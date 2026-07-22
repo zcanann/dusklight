@@ -91,6 +91,22 @@ fn set_promotion_status(key: &str, status: OptimizationPromotionStatus) {
     }
 }
 
+pub(super) fn optimization_request_promotion_active(request_sha256: &str) -> bool {
+    let prefix = format!("{request_sha256}:");
+    optimization_promotions().lock().is_ok_and(|promotions| {
+        promotions.iter().any(|(key, status)| {
+            key.starts_with(&prefix) && matches!(status.status, "verifying" | "installing")
+        })
+    })
+}
+
+pub(super) fn forget_optimization_promotions(request_sha256: &str) {
+    let prefix = format!("{request_sha256}:");
+    if let Ok(mut promotions) = optimization_promotions().lock() {
+        promotions.retain(|key, _| !key.starts_with(&prefix));
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PreparedOptimizationPromotion {
     root: PathBuf,
@@ -298,6 +314,9 @@ pub(super) fn start_optimization_promotion(
     config: &WorkbenchConfig,
     request: &BrowserOptimizationPromoteRequest,
 ) -> Result<OptimizationPromotionResponse, WorkbenchError> {
+    let _lifecycle = optimization_lifecycle_edits()
+        .lock()
+        .map_err(|_| promotion_message("optimization lifecycle lock is unavailable"))?;
     let prepared = prepare_optimization_promotion(config, request)?;
     let key = promotion_key(
         &prepared.request.content_sha256.to_string(),

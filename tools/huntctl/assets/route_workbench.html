@@ -847,8 +847,10 @@
       return campaigns.map(campaign=>{
         const progress=campaign.candidate_budget?Math.min(100,campaign.completed_candidates/campaign.candidate_budget*100):0;
         const reveal=`<button class="reveal" type="button" data-reveal-kind="campaign" data-id="${escapeHtml(campaign.id)}">View campaign request</button>`;
-        const action=campaign.status==='invalid'?'<button class="record" type="button" disabled>Campaign invalid</button>':campaign.status==='completed'?'<button class="record" type="button" disabled>Campaign complete</button>':campaign.blocker?'<button class="record" type="button" disabled>Campaign blocked</button>':['running','preparing'].includes(campaign.status)?'<button class="record" type="button" disabled>Optimization running…</button>':`<button class="record" type="button" data-start-campaign="${escapeHtml(campaign.id)}">${['resumable','failed'].includes(campaign.status)?'Resume optimization':'Run optimization'}</button>`;
-        return `<div class="detail-section"><h3>Optimization · ${escapeHtml(label(campaign.goal))}</h3><div class="fields">${field('Status',label(campaign.status))}${field('Proposal sources',(campaign.proposal_sources||[]).map(label).join(', ')||'—')}${field('Progress',`${campaign.completed_candidates} / ${campaign.candidate_budget} candidates · ${progress.toFixed(1)}%`)}${field('Queued',campaign.pending_candidates)}${field('Generation',campaign.generation)}${field('Successes',campaign.retained_successes)}${field('Retained failures',campaign.retained_failures)}${field('Current best',campaign.best_first_hit_tick==null?'No exact success yet':`${campaign.best_first_hit_tick} ticks`)}${campaign.uncheckpointed_completions?field('Awaiting checkpoint',campaign.uncheckpointed_completions):''}${field('Exploration horizon',`${campaign.exploration_horizon_ticks} ticks`)}${field('Promotion',`before ${campaign.promotion_before_tick} ticks`)}${field('Workers',campaign.workers)}${field('Simulated ticks',`${campaign.charged_simulated_ticks} / ${campaign.simulated_tick_budget}`)}${field('Request',campaign.request,true)}${campaign.execution?field('Execution',campaign.execution,true):''}</div><div class="actions">${action}${reveal}</div>${campaign.blocker?`<div class="error-note">Blocked: ${escapeHtml(campaign.blocker)}</div>`:''}${campaign.error?`<div class="error-note">${escapeHtml(campaign.error)}</div>`:''}</div>`;
+        const active=['running','preparing'].includes(campaign.status),cancelling=campaign.status==='cancelling';
+        const action=campaign.status==='invalid'?'<button class="record" type="button" disabled>Campaign invalid</button>':active?`<button class="delete" type="button" data-cancel-campaign="${escapeHtml(campaign.id)}">Stop campaign</button>`:cancelling?'<button class="delete" type="button" disabled>Stopping workers…</button>':campaign.status==='completed'?'<button class="record" type="button" disabled>Campaign complete</button>':campaign.blocker?'<button class="record" type="button" disabled>Campaign blocked</button>':`<button class="record" type="button" data-start-campaign="${escapeHtml(campaign.id)}">${['resumable','failed','cancelled'].includes(campaign.status)?'Resume optimization':'Run optimization'}</button>`;
+        const cleanup=campaign.artifacts_present&&!active&&!cancelling?`<button class="delete" type="button" data-cleanup-campaign="${escapeHtml(campaign.id)}">Clean local campaign…</button>`:'';
+        return `<div class="detail-section"><h3>Optimization · ${escapeHtml(label(campaign.goal))}</h3><div class="fields">${field('Status',label(campaign.status))}${field('Proposal sources',(campaign.proposal_sources||[]).map(label).join(', ')||'—')}${field('Progress',`${campaign.completed_candidates} / ${campaign.candidate_budget} candidates · ${progress.toFixed(1)}%`)}${field('Queued',campaign.pending_candidates)}${field('Generation',campaign.generation)}${field('Successes',campaign.retained_successes)}${field('Retained failures',campaign.retained_failures)}${field('Current best',campaign.best_first_hit_tick==null?'No exact success yet':`${campaign.best_first_hit_tick} ticks`)}${campaign.uncheckpointed_completions?field('Awaiting checkpoint',campaign.uncheckpointed_completions):''}${field('Exploration horizon',`${campaign.exploration_horizon_ticks} ticks`)}${field('Promotion',`before ${campaign.promotion_before_tick} ticks`)}${field('Workers',campaign.workers)}${field('Simulated ticks',`${campaign.charged_simulated_ticks} / ${campaign.simulated_tick_budget}`)}${field('Local evidence',campaign.artifacts_present?'Present':'None')}${field('Request',campaign.request,true)}${campaign.execution?field('Execution',campaign.execution,true):''}</div><div class="actions">${action}${cleanup}${reveal}</div>${campaign.blocker?`<div class="error-note">Blocked: ${escapeHtml(campaign.blocker)}</div>`:''}${campaign.error?`<div class="error-note">${escapeHtml(campaign.error)}</div>`:''}</div>`;
       }).join('');
     }
     function taggedName(value) {
@@ -971,6 +973,8 @@
       root.querySelectorAll('[data-play-kind]').forEach(button=>button.addEventListener('click',()=>play(button)));
       root.querySelectorAll('[data-record-kind]').forEach(button=>button.addEventListener('click',()=>record(button)));
       root.querySelectorAll('[data-start-campaign]').forEach(button=>button.addEventListener('click',()=>startOptimization(button)));
+      root.querySelectorAll('[data-cancel-campaign]').forEach(button=>button.addEventListener('click',()=>cancelOptimization(button)));
+      root.querySelectorAll('[data-cleanup-campaign]').forEach(button=>button.addEventListener('click',()=>cleanupOptimization(button)));
       root.querySelectorAll('[data-promote-candidate]').forEach(button=>button.addEventListener('click',()=>promoteOptimizationCandidate(button)));
       root.querySelectorAll('[data-rename-segment]').forEach(button=>button.addEventListener('click',()=>renameSegment(button.dataset.renameSegment,button)));
       root.querySelectorAll('[data-open-subgraph-detail]').forEach(button=>button.addEventListener('click',()=>openSubgraph(button.dataset.openSubgraphDetail)));
@@ -1455,7 +1459,7 @@
     }
     async function startOptimization(button) {
       const campaign=(graph.campaigns||[]).find(item=>item.id===button.dataset.startCampaign);if(!campaign)return;
-      const resume=['resumable','failed'].includes(campaign.status);
+      const resume=['resumable','failed','cancelled'].includes(campaign.status);
       if(!window.confirm(`${resume?'Resume':'Run'} ${label(campaign.id)}?\n\nBudget: ${campaign.candidate_budget} candidates, ${campaign.simulated_tick_budget} simulated ticks, ${campaign.workers} native workers. The workbench will persist checkpoints and show live status here.`))return;
       const original=button.textContent;button.disabled=true;button.textContent=resume?'Resuming…':'Starting…';
       try {
@@ -1463,6 +1467,26 @@
         const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent='Optimization running';$('status').className='status ok';toast(`Optimization ${campaign.id} is running. Progress will refresh automatically.`);await load();
       } catch(error) { $('status').textContent='Optimization failed to start';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent=original; }
+    }
+    async function cancelOptimization(button) {
+      const campaign=(graph.campaigns||[]).find(item=>item.id===button.dataset.cancelCampaign);if(!campaign)return;
+      if(!window.confirm(`Stop ${label(campaign.id)}?\n\nAny native batch already executing will finish as recoverable evidence. The campaign becomes cancelled only after every persistent worker has shut down and its ephemeral session directory has been removed.`))return;
+      button.disabled=true;button.textContent='Requesting stop…';
+      try {
+        const response=await fetch('/api/optimization/cancel',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign:campaign.id,request_sha256:campaign.request_sha256})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        $('status').textContent='Stopping optimization workers';$('status').className='status';toast('Cancellation requested. Resume evidence is preserved; cleanup unlocks after worker teardown.');await load();
+      } catch(error) { $('status').textContent='Cancellation failed';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent='Stop campaign'; }
+    }
+    async function cleanupOptimization(button) {
+      const campaign=(graph.campaigns||[]).find(item=>item.id===button.dataset.cleanupCampaign);if(!campaign)return;
+      if(!window.confirm(`Permanently clean local evidence for ${label(campaign.id)}?\n\nThis removes its resumable journal, candidates, evaluations, native batches, execution binding, and stale worker-session directories beneath build/campaigns. Any separately promoted Git-owned route artifacts are retained.`))return;
+      button.disabled=true;button.textContent='Cleaning…';
+      try {
+        const response=await fetch('/api/optimization/cleanup',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign:campaign.id,request_sha256:campaign.request_sha256})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        $('status').textContent='Campaign cleaned';$('status').className='status ok';toast(body.artifacts_removed?'Local campaign evidence was removed. The sealed request is ready for a fresh run.':'No local campaign evidence remained.');await load();
+      } catch(error) { $('status').textContent='Cleanup failed';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent='Clean local campaign…'; }
     }
     async function promoteOptimizationCandidate(button) {
       const candidate=graph.segments.find(item=>item.id===button.dataset.promoteCandidate),generated=candidate?.generated;if(!candidate||!generated?.promotion?.eligible)return;
@@ -1484,7 +1508,7 @@
         const body=await response.json().catch(()=>({}));
         if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         graph=normalize(body); if(activeSubgraph&&!subgraphById(activeSubgraph)){activeSubgraph=null;groupedSelection=new Set();selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};} if(!workspaceSelection||!graph.projects.entries.some(item=>item.id===workspaceSelection)){workspaceSelection=graph.projects.entries.find(item=>item.active)?.id||graph.projects.entries.find(item=>item.kind==='timeline')?.id||graph.projects.entries[0]?.id||null;} render(); $('status').textContent='Ready'; $('status').className='status ok';
-        clearTimeout(load.poll); if(graph.drafts.some(draft=>['preparing','recording','orphaned'].includes(draft.status))||graph.campaigns.some(campaign=>['preparing','running'].includes(campaign.status))||graph.segments.some(segment=>['verifying','installing'].includes(segment.generated?.promotion?.status)))load.poll=setTimeout(load,2500);
+        clearTimeout(load.poll); if(graph.drafts.some(draft=>['preparing','recording','orphaned'].includes(draft.status))||graph.campaigns.some(campaign=>['preparing','running','cancelling'].includes(campaign.status))||graph.segments.some(segment=>['verifying','installing'].includes(segment.generated?.promotion?.status)))load.poll=setTimeout(load,2500);
       } catch(error) {
         $('timelineName').textContent='Could not load timeline'; $('status').textContent='Disconnected'; $('status').className='status error';
         $('tree').innerHTML=`<div class="empty">${escapeHtml(error.message)}<br><br>Start this page through the Route Workbench launch configuration.</div>`;

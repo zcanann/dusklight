@@ -496,7 +496,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v14");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v15");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1284,6 +1284,14 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "data-start-campaign",
         "startOptimization(button)",
         "/api/optimization/start",
+        "/api/optimization/cancel",
+        "/api/optimization/cleanup",
+        "cancelOptimization(button)",
+        "cleanupOptimization(button)",
+        "Stop campaign",
+        "Stopping workers…",
+        "Clean local campaign…",
+        "Any native batch already executing will finish as recoverable evidence",
         "/api/optimization/promote",
         "promoteOptimizationCandidate(button)",
         "Verify & promote",
@@ -2276,6 +2284,69 @@ fn optimization_promotion_api_rejects_unknown_candidates_and_smuggled_authority(
         "POST",
         "/api/optimization/promote",
         br#"{"candidate":"optimization-missing","segment_id":"optimized_missing","label":"Missing","proof":"../forged.json","repetitions":1}"#,
+    );
+    assert_eq!(smuggled.status, 400);
+    assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
+}
+
+#[test]
+fn optimization_lifecycle_api_is_stale_bound_and_rejects_smuggled_cleanup_authority() {
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../..")
+        .canonicalize()
+        .unwrap();
+    let config = WorkbenchConfig {
+        timeline_path: checked_intro_timeline(&repository),
+        repository_root: repository.clone(),
+        working_directory: repository.clone(),
+        game: repository.join("build/unused-game"),
+        dvd: repository.join("build/unused-dvd"),
+        world_context: None,
+        state_root: repository.join("build/automation-state/route-workbench-test"),
+    };
+    let request: OptimizationRequest = serde_json::from_slice(
+        &fs::read(repository.join(
+            "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let stale = call_http(
+        &config,
+        "POST",
+        "/api/optimization/cancel",
+        format!(
+            "{{\"campaign\":\"{}\",\"request_sha256\":\"{}\"}}",
+            request.id,
+            "0".repeat(64)
+        )
+        .as_bytes(),
+    );
+    assert_eq!(stale.status, 400);
+    assert!(String::from_utf8_lossy(&stale.body).contains("changed; refresh"));
+
+    let inactive = call_http(
+        &config,
+        "POST",
+        "/api/optimization/cancel",
+        format!(
+            "{{\"campaign\":\"{}\",\"request_sha256\":\"{}\"}}",
+            request.id, request.content_sha256
+        )
+        .as_bytes(),
+    );
+    assert_eq!(inactive.status, 400);
+    assert!(String::from_utf8_lossy(&inactive.body).contains("not running"));
+
+    let smuggled = call_http(
+        &config,
+        "POST",
+        "/api/optimization/cleanup",
+        format!(
+            "{{\"campaign\":\"{}\",\"request_sha256\":\"{}\",\"force\":true,\"path\":\"build\"}}",
+            request.id, request.content_sha256
+        )
+        .as_bytes(),
     );
     assert_eq!(smuggled.status, 400);
     assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
