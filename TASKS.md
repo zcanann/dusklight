@@ -677,7 +677,7 @@ it and emit any legal PAD action for the entire episode.
       workbench learning launch fail closed if the demonstration or its shard is
       missing or detached. The workbench identifies whether the seed exists and
       shows its exact tick charge.
-- [ ] Build a reverse curriculum from validated states on actual successful
+- [x] Build a reverse curriculum from validated states on actual successful
       trajectories.
   - Begin close enough to the terminal predicate to observe several viable
     continuations.
@@ -692,8 +692,14 @@ it and emit any legal PAD action for the entire episode.
       one policy step only after a digest-bound native checkpoint contains the
       configured number, behavior diversity, and rate of exact successful
       continuations. Recursive file validation rebuilds every seed/expansion and
-      rejects any other request delta. Real held-out curriculum campaigns must
-      still populate and expand this lineage before the item closes.
+      rejects any other request delta. The real q125 lineage advanced from
+      frames 62 to 46, 30, 14, and finally 0. Its four advancing frontiers
+      retained 3,444/3,904, 101/128, 96/128, and 139/192 exact successes across
+      2,725, 55, 50, and 74 behavior classes. At the full frame-0 frontier, the
+      first 64 native candidates produced 49 terminal successes across 23
+      behavior classes (76.5625%) under the same terminal predicate and exact
+      simulation authority. The sealed lineage and checkpoint identities are
+      recorded in `ordon-q125-reverse-curriculum.md`.
 - [ ] Use residual search for continuous trajectory proposals and the learned
       critic for state-conditioned ranking. Keep exact simulation as authority.
 - [x] Preserve achieved goals and alternate terminals so failed main-goal runs
