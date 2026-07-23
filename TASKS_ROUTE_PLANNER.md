@@ -3031,8 +3031,15 @@ timeline assumptions.
       threshold reports only non-established facts used by enough distinct
       routes. `report-route-evidence-coverage` exports the report. See
       `docs/route-planner/route-evidence-coverage.md`.
-- [ ] Report which facts and obligations are exercised by glitchless story, 100%,
-      Any%, and hypothetical route suites.
+- [x] Report which facts and obligations are exercised by glitchless story, 100%,
+      Any%, and hypothetical route suites. The canonical
+      `route-suite-coverage/v1` validates every categorized route against one
+      exact composed catalog, reuses the recursive fact-usage census, and
+      collects obligations from transition/obstruction, technique, and resolver
+      contracts. All four suite rows are always emitted; absent categories are
+      explicitly unreported rather than inferred. `report-route-suite-coverage`
+      accepts repeated books per category and retains all route/catalog digests.
+      See `docs/route-planner/route-suite-coverage.md`.
 - [x] Report extraction coverage separately for topology, hard guards, backing
       stores, actor lifecycle, and physical feasibility. The canonical
       `extraction-coverage-report/v1` groups sealed manifests by exact content

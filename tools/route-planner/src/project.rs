@@ -2685,6 +2685,7 @@ mod tests {
         PlannerServiceOutcome, PlannerServicePayload, PlannerServiceRequest, handle_request,
     };
     use dusklight_route_planner::route_evidence_coverage::RouteEvidenceCoverageReport;
+    use dusklight_route_planner::route_suite_coverage::{RouteSuiteCoverageReport, RouteSuiteKind};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -3065,6 +3066,21 @@ mod tests {
                 .route_book_ids
                 .len(),
             2
+        );
+        let suite_coverage = RouteSuiteCoverageReport::build(
+            &weak_catalog,
+            &[(RouteSuiteKind::Hypothetical, *book.clone())],
+        )
+        .unwrap();
+        assert_eq!(suite_coverage.suites.len(), 4);
+        assert!(
+            suite_coverage.suites[..3]
+                .iter()
+                .all(|suite| !suite.reported)
+        );
+        assert_eq!(
+            suite_coverage.suites[3].exercised_fact_ids,
+            ["local.forest-switch", "local.tot-switch", "path.tot-open"]
         );
         let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
             request_id: "request.remove-hypothetical-rebind".into(),

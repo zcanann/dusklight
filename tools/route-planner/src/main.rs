@@ -59,6 +59,7 @@ use dusklight_route_planner::refinement::{
 use dusklight_route_planner::return_place::gz2e01_tower_return_place_mechanics;
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::route_evidence_coverage::RouteEvidenceCoverageReport;
+use dusklight_route_planner::route_suite_coverage::{RouteSuiteCoverageReport, RouteSuiteKind};
 use dusklight_route_planner::scene_change_audit::SceneChangeConsumerAudit;
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::solver::{ForwardSolver, SolverOptions};
@@ -142,6 +143,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("project-feasibility-diff") => project_feasibility_diff(&args[1..]),
         Some("report-extraction-coverage") => report_extraction_coverage(&args[1..]),
         Some("report-route-evidence-coverage") => report_route_evidence_coverage(&args[1..]),
+        Some("report-route-suite-coverage") => report_route_suite_coverage(&args[1..]),
         Some("serve-stdio") => serve_stdio(&args[1..]),
         Some("serve-web") => serve_web_command(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
@@ -288,6 +290,38 @@ fn report_route_evidence_coverage(args: &[String]) -> Result<(), Box<dyn Error>>
             "used_facts": report.facts.len(),
             "weak_high_usage_facts": report.weak_high_usage_fact_ids.len(),
             "minimum_route_count": report.minimum_route_count,
+        }))?
+    );
+    Ok(())
+}
+
+fn report_route_suite_coverage(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let catalog =
+        ComposedPlannerCatalog::decode_canonical(&fs::read(required_path(args, "--catalog")?)?)?;
+    let mut categorized = Vec::new();
+    for (option_name, suite) in [
+        ("--glitchless", RouteSuiteKind::GlitchlessStory),
+        ("--hundred-percent", RouteSuiteKind::HundredPercent),
+        ("--any-percent", RouteSuiteKind::AnyPercent),
+        ("--hypothetical", RouteSuiteKind::Hypothetical),
+    ] {
+        for path in repeated_option(args, option_name) {
+            categorized.push((suite, RouteBook::decode_canonical(&fs::read(path)?)?));
+        }
+    }
+    let report = RouteSuiteCoverageReport::build(&catalog, &categorized)?;
+    let output = required_path(args, "--output")?;
+    write_file(&output, &report.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "sha256": report.digest()?,
+            "reported_suites": report.suites.iter().filter(|suite| suite.reported).count(),
+            "routes": categorized.len(),
+            "suite_fact_counts": report.suites.iter().map(|suite| (suite.suite, suite.exercised_fact_ids.len())).collect::<Vec<_>>(),
+            "suite_obligation_counts": report.suites.iter().map(|suite| (suite.suite, suite.exercised_obligation_ids.len())).collect::<Vec<_>>(),
         }))?
     );
     Ok(())
@@ -2435,6 +2469,7 @@ fn print_usage() {
             "  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json",
             "  route-planner report-extraction-coverage --manifest MANIFEST.json [--manifest MANIFEST.json]... --output REPORT.json",
             "  route-planner report-route-evidence-coverage --catalog CATALOG.json --route-book BOOK.json [--route-book BOOK.json]... --output REPORT.json [--minimum-route-count N]",
+            "  route-planner report-route-suite-coverage --catalog CATALOG.json [--glitchless BOOK.json]... [--hundred-percent BOOK.json]... [--any-percent BOOK.json]... [--hypothetical BOOK.json]... --output REPORT.json",
             "  route-planner scan-orig --orig ORIG_ROOT [--product-id ID] --output SCAN.json",
             "  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json",
             "  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)",
