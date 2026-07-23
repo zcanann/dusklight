@@ -637,11 +637,11 @@ async function editTheorycraftOverlays(edit) {
       transition.id,
       transitionSearchText(transition),
     ]));
+    state.transitionEvaluation = null;
+    await refreshAuthoredRouteInspections();
     ensurePositions();
     const selected = state.graph.nodes.find((candidate) => candidate.id === selectedId);
     state.selected = selected ? { type: "node", value: selected } : null;
-    state.transitionEvaluation = null;
-    await refreshAuthoredRouteInspections();
     markDirty();
     render();
     const action = payload.added_pack

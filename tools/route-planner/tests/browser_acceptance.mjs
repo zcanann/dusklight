@@ -445,8 +445,12 @@ try {
   })()`);
   await browserUntil(
     "reversible theorycraft removal",
-    `document.getElementById("status").textContent.includes("Removed 1 theorycraft overlay")
-      && !document.getElementById("model-context-body").textContent.includes("what-if.browser-component-rebind")`,
+    `(() => {
+      const status = document.getElementById("status");
+      if (status.classList.contains("bad")) throw new Error(status.textContent);
+      return status.textContent.includes("Removed 1 theorycraft overlay")
+        && !document.getElementById("model-context-body").textContent.includes("what-if.browser-component-rebind");
+    })()`,
   );
   await evaluate(`(() => {
     const goal = document.querySelector("#nodes .node.goal");
