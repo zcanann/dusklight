@@ -986,17 +986,34 @@ that it blocks the current loop.
       policy remain in force.
 - [ ] Combine learned setup, locomotion, interaction, and frame-synchronization
       behavior with short-horizon continuous/discrete boundary refinement.
-- [ ] Require an exact input-only deterministic proof for every claimed outcome.
+- [x] Require an exact input-only deterministic proof for every claimed outcome.
+      Promotion owns the compact raw tape and rejects stale timelines, altered
+      terminal boundaries, detached lineage, symlinked artifact roots, or any
+      disagreement across five ordinary-boot cold replays. Frozen learned
+      policies separately seal their exact consumed PAD realization and require
+      model-free cold replay to reproduce the complete gameplay state, terminal
+      predicate, boundary sequence, and input sequence. Rankings, novelty, and
+      learned models remain proposal evidence with no outcome authority.
 
 ### Broader information coverage
 
 - [ ] Continue the bootable-world and complete-actor survey as background coverage,
       not as a prerequisite for controlling Link in Ordon.
-- [ ] Use Skybook and other catalogs only to identify reusable missing observation,
+- [x] Use Skybook and other catalogs only to identify reusable missing observation,
       action, history, and proof capabilities. Do not translate published setups
-      into learner routes or rewards.
-- [ ] Validate new channels with neutral temporal coverage, exact replay, and
-      explicit missingness before exposing them to a learner.
+      into learner routes or rewards. The revision-bound 483-page manifest is an
+      offline evidence corpus; its derived requirements index can read only
+      canonical tags, titles, and descriptions—not page bodies, controller
+      sequences, or setup steps—and emits mechanism/capability categories rather
+      than tactics, checkpoints, goals, waypoints, routes, or reward terms.
+- [x] Validate new channels with neutral temporal coverage, exact replay, and
+      explicit missingness before exposing them to a learner. Generic-observation
+      v1 binds the current observation/action schemas, bounded past-only history,
+      complete untruncated actor sets, and present/absent/unavailable status for
+      every required camera, action, collision, geometry, event, loading,
+      resource, and relationship channel. Native corpus/parity validation rejects
+      partial or retained traces and seals exact state/PAD agreement across cold
+      replay before a shard can enter learning.
 
 ## Definition of usable
 
