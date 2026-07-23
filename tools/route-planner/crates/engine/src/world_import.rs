@@ -29,8 +29,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v14";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v15";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
+
+const DUNGEON_SESSION_SWITCH_LABEL_KIND: &str = "observed-dungeon-session-switch-labels";
+const ROOM_SWITCH_LABEL_KIND: &str = "observed-room-switch-labels";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -1431,6 +1434,9 @@ fn import_gz2e01_keyed_actor_actions(
         "kshtr00" | "L3Bdoor" => {
             import_gz2e01_key_shutter(inventory, placement, scope, inventory_sha256)
         }
+        "vshuter" => {
+            import_gz2e01_external_switch_shutter(inventory, placement, scope, inventory_sha256)
+        }
         "K_Gate" => import_gz2e01_koki_gate(inventory, placement, scope, inventory_sha256),
         "R_Gate" => import_gz2e01_rider_gate(inventory, placement, scope, inventory_sha256),
         "CrvGate" => import_gz2e01_caravan_gate(inventory, placement, scope, inventory_sha256),
@@ -1805,6 +1811,120 @@ fn import_gz2e01_key_shutter(
     }))
 }
 
+fn import_gz2e01_external_switch_shutter(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedKeyedActorActions>, PlannerContractError> {
+    let Some(room) = placement.scope.room else {
+        return Ok(None);
+    };
+    let switch_id = placement.parameters as u8;
+    let runtime_type = ((placement.parameters >> 8) as u8).wrapping_add(1);
+    let checks_key = placement.parameters >> 31 != 0;
+    if inventory.stage != "R_SP116"
+        || room != 6
+        || switch_id != 0xef
+        || runtime_type != 4
+        || checks_key
+    {
+        return Ok(None);
+    }
+
+    let family = "external-switch-shutter";
+    let token = stable_token(
+        "keyed",
+        &[
+            family.as_bytes(),
+            inventory.stage.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    let evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![
+            EvidenceRecord {
+                id: format!("evidence.source.actor.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(
+                    "dca04961403031ef232059f5f9f8997d2f0a3965b111e97d9d72604e0014d14b",
+                )),
+                note: "d_a_obj_kshutter.cpp: runtime type 4 has no internal key check or switch writer and opens after its external switch becomes set.".into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.source.switch-dispatch.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(
+                    "a275457390b8464750adaab345c769afa2dc0b295baba47a617ce6aad6fd26d3",
+                )),
+                note: "d_save.cpp: switch 0xef resolves through the current room's one-zone switch store.".into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.world.inventory.{token}"),
+                kind: EvidenceKind::Extracted,
+                source_sha256: Some(inventory_sha256),
+                note: format!(
+                    "Authenticated R_SP116 room-6 vshuter placement {} with external one-zone switch 0xef.",
+                    placement.stable_id
+                ),
+            },
+        ],
+    };
+    let unknown_evidence = RuleEvidence {
+        truth: TruthStatus::Unknown,
+        records: evidence.records.clone(),
+    };
+    let actor_id = format!("obligation.actor-state.{token}");
+    let passage_id = format!("obligation.interaction.{token}.passage");
+    let obligations = vec![
+        FeasibilityObligation {
+            id: actor_id.clone(),
+            label: format!("Observe {} respond to external switch 0xef", placement.name),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Activate,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Confirm the loaded type-4 shutter observes the already-set external switch and completes its opening/collision-release phases.".into(),
+            },
+            evidence: unknown_evidence.clone(),
+        },
+        FeasibilityObligation {
+            id: passage_id.clone(),
+            label: format!("Traverse the externally opened {}", placement.name),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Witness sufficient shutter opening and background-collision release for passage.".into(),
+            },
+            evidence: unknown_evidence,
+        },
+    ];
+    let transition = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "set-switch-passage",
+        "R_SP116 vshuter room 6 externally switched passage",
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                placement_location_guard(inventory, placement, room),
+                room_switch_label_guard(switch_id, true),
+            ],
+        },
+        Vec::new(),
+        &[actor_id, passage_id],
+        &evidence,
+    );
+    Ok(Some(ImportedKeyedActorActions {
+        exit_record_id: None,
+        transitions: vec![transition],
+        obligations,
+    }))
+}
+
 fn import_gz2e01_koki_gate(
     inventory: &WorldInventory,
     placement: &PlacementRecord,
@@ -1907,9 +2027,24 @@ fn import_gz2e01_rider_gate(
         return Ok(None);
     };
     let switch_id = placement.parameters as u8;
-    if inventory.stage != "F_SP109" || room != 0 || switch_id != 0x6b {
-        return Ok(None);
-    }
+    let (switch_guard, switch_write, switch_description) =
+        match (inventory.stage.as_str(), room, switch_id) {
+            ("F_SP109", 0, 0x6b) => (
+                memory_switch_guard as fn(u8, bool) -> PredicateExpression,
+                memory_switch_write as fn(u8) -> StateOperation,
+                "memory switch 0x6b",
+            ),
+            ("F_SP121", 3, 0x82) | ("F_SP121", 15, 0x81) => (
+                dungeon_session_switch_guard as fn(u8, bool) -> PredicateExpression,
+                dungeon_session_switch_write as fn(u8) -> StateOperation,
+                if switch_id == 0x82 {
+                    "dungeon-session switch 0x82"
+                } else {
+                    "dungeon-session switch 0x81"
+                },
+            ),
+            _ => return Ok(None),
+        };
     let family = "rider-gate";
     let token = stable_token(
         "keyed",
@@ -1953,12 +2088,20 @@ fn import_gz2e01_rider_gate(
             note: "d_stage.cpp: R_Gate maps to the rider-gate actor process.".into(),
         },
         EvidenceRecord {
+            id: format!("evidence.source.switch-dispatch.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "a275457390b8464750adaab345c769afa2dc0b295baba47a617ce6aad6fd26d3",
+            )),
+            note: "d_save.cpp: switches 0x80 through 0xbf resolve to the 64-bit dungeon-session switch store; lower switches resolve to loaded stage memory.".into(),
+        },
+        EvidenceRecord {
             id: format!("evidence.world.inventory.{token}"),
             kind: EvidenceKind::Extracted,
             source_sha256: Some(inventory_sha256),
             note: format!(
-                "Authenticated F_SP109 room-0 layered rider-gate placement {} with memory switch 0x6b.",
-                placement.stable_id
+                "Authenticated {} room-{} layered rider-gate placement {} with {}.",
+                inventory.stage, room, placement.stable_id, switch_description
             ),
         },
     ];
@@ -2013,7 +2156,7 @@ fn import_gz2e01_rider_gate(
     let locked = PredicateExpression::All {
         terms: vec![
             location.clone(),
-            memory_switch_guard(switch_id, false),
+            switch_guard(switch_id, false),
             persistent_event_bit_guard(0x0810, false),
         ],
     };
@@ -2036,7 +2179,7 @@ fn import_gz2e01_rider_gate(
                 small_key_guard(ComparisonOperator::LessThanOrEqual, 100),
             ],
         },
-        vec![small_key_adjust(-1), memory_switch_write(switch_id)],
+        vec![small_key_adjust(-1), switch_write(switch_id)],
         &[actor_id.clone(), interaction_id.clone()],
         &evidence,
     );
@@ -2058,7 +2201,7 @@ fn import_gz2e01_rider_gate(
                 small_key_guard(ComparisonOperator::GreaterThan, 100),
             ],
         },
-        vec![small_key_write(99), memory_switch_write(switch_id)],
+        vec![small_key_write(99), switch_write(switch_id)],
         &[actor_id, interaction_id],
         &evidence,
     );
@@ -2077,7 +2220,7 @@ fn import_gz2e01_rider_gate(
         PredicateExpression::All {
             terms: vec![
                 location.clone(),
-                memory_switch_guard(switch_id, true),
+                switch_guard(switch_id, true),
                 persistent_event_bit_guard(0x0810, false),
             ],
         },
@@ -2532,6 +2675,43 @@ fn memory_switch_guard(switch_id: u8, set: bool) -> PredicateExpression {
     }
 }
 
+fn dungeon_session_switch_guard(switch_id: u8, set: bool) -> PredicateExpression {
+    debug_assert!((0x80..0xc0).contains(&switch_id));
+    PredicateExpression::Compare {
+        left: ValueReference::BoundRawBits {
+            component_kind: ComponentKind::Custom {
+                id: DUNGEON_SESSION_SWITCH_LABEL_KIND.into(),
+            },
+            binding: ComponentBindingReference::CurrentStage,
+            byte_offset: u32::from(switch_id - 0x80),
+            byte_width: 1,
+            mask: 1,
+        },
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Unsigned(u64::from(set)),
+        },
+    }
+}
+
+fn room_switch_label_guard(switch_id: u8, set: bool) -> PredicateExpression {
+    PredicateExpression::Compare {
+        left: ValueReference::BoundRawBits {
+            component_kind: ComponentKind::Custom {
+                id: ROOM_SWITCH_LABEL_KIND.into(),
+            },
+            binding: ComponentBindingReference::CurrentRoom,
+            byte_offset: u32::from(switch_id),
+            byte_width: 1,
+            mask: 1,
+        },
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Unsigned(u64::from(set)),
+        },
+    }
+}
+
 fn persistent_event_bit_guard(packed_coordinate: u16, set: bool) -> PredicateExpression {
     let byte_offset = u32::from(packed_coordinate >> 8);
     let mask = packed_coordinate as u8;
@@ -2560,6 +2740,19 @@ fn memory_switch_write(switch_id: u8) -> StateOperation {
         byte_offset,
         mask: vec![mask],
         value: vec![mask],
+    }
+}
+
+fn dungeon_session_switch_write(switch_id: u8) -> StateOperation {
+    debug_assert!((0x80..0xc0).contains(&switch_id));
+    StateOperation::WriteBoundRaw {
+        component_kind: ComponentKind::Custom {
+            id: DUNGEON_SESSION_SWITCH_LABEL_KIND.into(),
+        },
+        binding: ComponentBindingReference::CurrentStage,
+        byte_offset: u32::from(switch_id - 0x80),
+        mask: vec![1],
+        value: vec![1],
     }
 }
 
@@ -4505,13 +4698,90 @@ mod tests {
 
         let mut fsp121 = inventory;
         fsp121.stage = "F_SP121".into();
+        fsp121.sources[1].scope.room = Some(3);
+        fsp121.placements[0].scope.room = Some(3);
         fsp121.placements[0].parameters = (fsp121.placements[0].parameters & !0xff) | 0x82;
         let context = world_context(content.fingerprint.game_data_sha256, &fsp121);
-        let excluded =
+        let imported =
             ExtractedWorldFacts::build(&content, &runtime, &context, std::slice::from_ref(&fsp121))
                 .unwrap();
+        assert_eq!(imported.mechanics.transitions.len(), 4);
+        assert_eq!(imported.mechanics.obligations.len(), 3);
+        let unlock = imported
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("keyed rider-gate unlock"))
+            .unwrap();
+        assert!(unlock.activation.effects.iter().any(|effect| matches!(
+            effect,
+            StateOperation::WriteBoundRaw {
+                component_kind: ComponentKind::Custom { id },
+                binding: ComponentBindingReference::CurrentStage,
+                byte_offset: 2,
+                mask,
+                value,
+            } if id == DUNGEON_SESSION_SWITCH_LABEL_KIND && mask == &[1] && value == &[1]
+        )));
+
+        let mut wrong_room = fsp121;
+        wrong_room.sources[1].scope.room = Some(4);
+        wrong_room.placements[0].scope.room = Some(4);
+        let context = world_context(content.fingerprint.game_data_sha256, &wrong_room);
+        let excluded = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&wrong_room),
+        )
+        .unwrap();
         assert!(excluded.mechanics.transitions.is_empty());
-        assert!(excluded.mechanics.obligations.is_empty());
+    }
+
+    #[test]
+    fn imports_rsp116_vshuter_as_external_one_zone_switch_passage() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let mut inventory = regular_key_shutter_inventory();
+        inventory.stage = "R_SP116".into();
+        inventory.sources[1].scope.room = Some(6);
+        let placement = &mut inventory.placements[0];
+        placement.name = "vshuter".into();
+        placement.scope.room = Some(6);
+        placement.parameters = 0x00ff_03ef;
+        let context = world_context(content.fingerprint.game_data_sha256, &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+
+        assert_eq!(facts.mechanics.transitions.len(), 1);
+        assert_eq!(facts.mechanics.obligations.len(), 2);
+        let passage = &facts.mechanics.transitions[0];
+        assert!(passage.activation.effects.is_empty());
+        assert!(matches!(
+            &passage.activation.hard_guards,
+            PredicateExpression::All { terms }
+                if terms.iter().any(|term| matches!(
+                    term,
+                    PredicateExpression::Compare {
+                        left: ValueReference::BoundRawBits {
+                            component_kind: ComponentKind::Custom { id },
+                            binding: ComponentBindingReference::CurrentRoom,
+                            byte_offset: 0xef,
+                            byte_width: 1,
+                            mask: 1,
+                        },
+                        operator: ComparisonOperator::Equal,
+                        right: ValueReference::Literal {
+                            value: StateValue::Unsigned(1),
+                        },
+                    } if id == ROOM_SWITCH_LABEL_KIND
+                ))
+        ));
     }
 
     #[test]
