@@ -483,10 +483,15 @@ it and emit any legal PAD action for the entire episode.
       state, camera/PAD history, local collision contacts and geometry, target
       trigger relation, loading/event state, and complete relevant actor sets
       with explicit missingness.
-- [ ] Separate authoritative rewards from diagnostics. Terminal success and
+- [x] Separate authoritative rewards from diagnostics. Terminal success and
       per-tick cost define the task; navigation-aware potential, novelty,
       contacts, and learned reachability may shape exploration but cannot declare
-      success or encode a human waypoint corridor.
+      success or encode a human waypoint corridor. Goal-trajectory dataset v2
+      seals `authored_terminal_and_unit_tick_cost` as its only reward authority;
+      every return and bootstrap target is recomputed from authenticated native
+      terminal outcomes and duration. Diagnostic shaping reports now carry
+      `terminal_objective_unchanged: true` and `promotion_authority: false`, and
+      dataset validation rejects any attempt to grant shaping promotion authority.
 
 - [x] Add one campaign command/API that owns persistent workers for the entire
       run instead of relaunching the game per generation.

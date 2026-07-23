@@ -428,7 +428,7 @@ milestone exit-f-sp103-to-f-sp104 {
     let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         summary["schema"],
-        "dusklight-native-goal-trajectory-dataset/v1"
+        "dusklight-native-goal-trajectory-dataset/v2"
     );
     assert_eq!(summary["report"]["episodes"], 2);
     assert_eq!(

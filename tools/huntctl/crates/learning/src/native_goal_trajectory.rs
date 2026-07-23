@@ -24,12 +24,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V1: &str =
-    "dusklight-native-goal-trajectory-dataset/v1";
+pub const NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V2: &str =
+    "dusklight-native-goal-trajectory-dataset/v2";
 pub const NATIVE_GOAL_TRAJECTORY_ROW_SCHEMA_V1: &str = "dusklight-native-goal-trajectory-row/v1";
 pub const RETURN_SCALE: u64 = 1_000_000;
 const MAX_ROWS: usize = 16_000_000;
 const MAX_N_STEP: u16 = 4_096;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeGoalRewardAuthority {
+    AuthoredTerminalAndUnitTickCost,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -316,6 +322,8 @@ pub struct NativeGoalTrajectoryReport {
 #[serde(deny_unknown_fields)]
 pub struct NativeGoalTrajectoryDataset {
     pub schema: String,
+    pub reward_authority: NativeGoalRewardAuthority,
+    pub diagnostic_shaping_promotion_authority: bool,
     pub replay_corpus_sha256: Digest,
     pub observation_schema: String,
     pub action_schema: String,
@@ -411,7 +419,9 @@ impl NativeGoalTrajectoryDataset {
         rows.sort_by_key(|row| row.row_sha256);
         let report = report(&rows)?;
         let mut dataset = Self {
-            schema: NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V1.into(),
+            schema: NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V2.into(),
+            reward_authority: NativeGoalRewardAuthority::AuthoredTerminalAndUnitTickCost,
+            diagnostic_shaping_promotion_authority: false,
             replay_corpus_sha256: corpus.corpus_sha256,
             observation_schema: corpus.observation_schema.clone(),
             action_schema: corpus.action_schema.clone(),
@@ -440,7 +450,9 @@ impl NativeGoalTrajectoryDataset {
             &self.goal.definition_sha256.to_string(),
         )
         .map_err(|error| NativeGoalTrajectoryError::new(error.to_string()))?;
-        if self.schema != NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V1
+        if self.schema != NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V2
+            || self.reward_authority != NativeGoalRewardAuthority::AuthoredTerminalAndUnitTickCost
+            || self.diagnostic_shaping_promotion_authority
             || self.replay_corpus_sha256 == Digest::ZERO
             || self.observation_schema.is_empty()
             || self.action_schema.is_empty()
@@ -536,9 +548,11 @@ impl NativeGoalTrajectoryDataset {
 
     fn digest(&self) -> Result<Digest, NativeGoalTrajectoryError> {
         canonical_digest(
-            b"dusklight.native-goal-trajectory-dataset/v1\0",
+            b"dusklight.native-goal-trajectory-dataset/v2\0",
             &(
                 &self.schema,
+                self.reward_authority,
+                self.diagnostic_shaping_promotion_authority,
                 self.replay_corpus_sha256,
                 &self.observation_schema,
                 &self.action_schema,
@@ -817,6 +831,11 @@ milestone test_goal {
         assert_eq!(dataset.report.successful_episodes, 1);
         assert_eq!(dataset.report.failed_episodes, 1);
         assert_eq!(
+            dataset.reward_authority,
+            NativeGoalRewardAuthority::AuthoredTerminalAndUnitTickCost
+        );
+        assert!(!dataset.diagnostic_shaping_promotion_authority);
+        assert_eq!(
             dataset.native_feature_schema_sha256,
             Digest(NATIVE_POLICY_FEATURE_SCHEMA_SHA256)
         );
@@ -997,6 +1016,10 @@ milestone other_goal {
 
         let mut tampered = dataset.clone();
         tampered.rows[0].terminal_reward_millionths ^= 1;
+        assert!(tampered.validate().is_err());
+        let mut tampered = dataset.clone();
+        tampered.diagnostic_shaping_promotion_authority = true;
+        tampered.dataset_sha256 = tampered.digest().unwrap();
         assert!(tampered.validate().is_err());
         let mut tampered = dataset;
         tampered.rows[0]

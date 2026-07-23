@@ -46,7 +46,7 @@ use huntctl::learning::native_goal_reachability::{
     NativeGoalReachabilityModel,
 };
 use huntctl::learning::native_goal_trajectory::{
-    NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V1, NativeGoalTrajectoryConfig,
+    NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V2, NativeGoalTrajectoryConfig,
     NativeGoalTrajectoryDataset,
 };
 use huntctl::learning::native_replay_corpus::{
@@ -1250,7 +1250,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
-                    "schema": NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V1,
+                    "schema": NATIVE_GOAL_TRAJECTORY_DATASET_SCHEMA_V2,
                     "dataset_sha256": dataset.dataset_sha256,
                     "replay_corpus_sha256": dataset.replay_corpus_sha256,
                     "goal": milestone_goal,

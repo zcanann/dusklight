@@ -193,6 +193,9 @@ pub struct RewardBreakdown {
     pub terminal: bool,
     /// This is always true: shaping never supplies or changes a goal verdict.
     pub terminal_objective_unchanged: bool,
+    /// Shaping may rank or train proposals, but exact simulation alone may
+    /// authorize a winner.
+    pub promotion_authority: bool,
     pub source_potential: f64,
     pub next_potential: f64,
     pub effective_next_potential: f64,
@@ -343,6 +346,7 @@ impl PotentialShapingSpec {
             transition_discount,
             terminal,
             terminal_objective_unchanged: true,
+            promotion_authority: false,
             source_potential,
             next_potential,
             effective_next_potential,
@@ -545,6 +549,7 @@ mod tests {
         assert_eq!(shaped.shaping_reward, 7.0);
         assert_eq!(shaped.training_reward, 6.0);
         assert!(shaped.terminal_objective_unchanged);
+        assert!(!shaped.promotion_authority);
         assert_eq!(shaped.components[0].source_fact, 10.0);
         assert_eq!(shaped.components[0].next_fact, 5.0);
     }
