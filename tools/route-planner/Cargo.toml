@@ -21,4 +21,5 @@ path = "src/main.rs"
 
 [workspace]
 members = [".", "crates/engine"]
+default-members = [".", "crates/engine"]
 resolver = "3"

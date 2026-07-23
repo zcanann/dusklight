@@ -1111,7 +1111,7 @@ mod tests {
     #[test]
     fn product_mismatch_ambiguity_and_symlinks_fail_closed() {
         let fixture = FixtureRoot::new();
-        let game = game_fixture(&fixture.0, "GZ2E01", 0);
+        let _game = game_fixture(&fixture.0, "GZ2E01", 0);
         assert!(scan_orig_tree(&fixture.0, Some("GZ2P01")).is_err());
         game_fixture(&fixture.0, "GZ2P01", 0);
         assert!(scan_orig_tree(&fixture.0, None).is_err());
@@ -1119,11 +1119,11 @@ mod tests {
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink(
-                game.join("sys/main.dol"),
-                game.join("files/res/linked.arc"),
+                _game.join("sys/main.dol"),
+                _game.join("files/res/linked.arc"),
             )
             .unwrap();
-            assert!(scan_orig_tree(&game, Some("GZ2E01")).is_err());
+            assert!(scan_orig_tree(&_game, Some("GZ2E01")).is_err());
         }
     }
 

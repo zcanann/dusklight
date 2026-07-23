@@ -3,11 +3,28 @@
 
 # Explicitly declare text files
 *.py   text
+*.c    text eol=lf
+*.cc   text eol=lf
+*.cpp  text eol=lf
+*.h    text eol=lf
+*.hpp  text eol=lf
 
 # Enforce platform-specific encodings
 *.bat  text eol=crlf
 *.sh   text eol=lf
 *.sha1 text eol=lf
+
+# These authored automation formats are content-addressed by the harness.
+# Keep their checked-out bytes platform-independent so a request sealed on one
+# OS does not fail identity validation on another solely due to CRLF checkout.
+*.timeline   text eol=lf
+*.milestones text eol=lf
+*.tas        text eol=lf
+
+# The route planner embeds these canonical JSON artifacts directly and verifies
+# their byte representation. CRLF checkout would invalidate their identities.
+tools/route-planner/crates/engine/data/*.json    text eol=lf
+tools/route-planner/crates/engine/data/**/*.json text eol=lf
 
 # decomp-toolkit writes files with LF
 config/**/*.txt  text eol=lf

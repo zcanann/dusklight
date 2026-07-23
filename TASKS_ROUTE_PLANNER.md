@@ -59,12 +59,11 @@ route books, or inspecting propagated state. Coverage is also incomplete, so
 the current engine is a causal-reasoning laboratory over selected modeled
 mechanics rather than a whole-game route explorer.
 
-Current Windows health is not green. The standalone runtime tests pass, but the
-engine suite currently reports 219/233 passing. Bundled canonical JSON is
-checked out with CRLF endings, causing exact-build/profile validation failures;
-the failed build-registry lookup then suppresses audited GZ2E01 actor-transition
-imports and produces downstream world-import failures. Fix this before treating
-the backend or its demonstrations as release-ready.
+Current Windows health is green. Planner-owned canonical JSON and source-evidence
+files are forced to LF checkout, and the workspace declares both crates as
+default members. The normal planner test command now runs the engine rather than
+hiding it behind a green wrapper-only suite: 233 engine tests, seven runtime
+library tests, one runtime binary test, and both doc-test targets pass.
 
 ---
 
@@ -1754,14 +1753,18 @@ evidenced overlays over the generated base rather than silent edits to it.
 
 ### Immediate stabilization gate
 
-- [ ] Enforce checkout-independent canonical bytes for planner-owned JSON
+- [x] Enforce checkout-independent canonical bytes for planner-owned JSON
       artifacts, preferably with repository LF attributes plus a parser/error
-      contract that makes accidental newline conversion obvious.
-- [ ] Restore the complete planner engine suite to green on Windows and retain a
+      contract that makes accidental newline conversion obvious. Planner data
+      JSON plus C/C++ source-evidence files now use explicit LF attributes.
+- [x] Restore the complete planner engine suite to green on Windows and retain a
       regression proving exact-build recognition and audited actor-transition
-      imports survive a normal checkout.
-- [ ] Run both the runtime and engine manifests in the normal planner test entry
+      imports survive a normal checkout. All 233 engine tests pass, including
+      exact build recognition and the keyed actor/door imports formerly hidden
+      by the failed registry decode.
+- [x] Run both the runtime and engine manifests in the normal planner test entry
       point so a green wrapper suite cannot hide failing dependency-crate tests.
+      The planner workspace now declares both packages as default members.
 
 ### Phase 0 — Evidence inventory and terminology
 
