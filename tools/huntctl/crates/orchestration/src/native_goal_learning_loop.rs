@@ -42,6 +42,8 @@ const MIN_GENERATIONS: u16 = 3;
 const MAX_GENERATIONS: u16 = 1_024;
 const MAX_ROLLOUTS_PER_GENERATION: u16 = 256;
 const MAX_SIMULATED_TICKS: u64 = 1_000_000_000_000;
+const MIN_DISCOVERY_HORIZON_MARGIN_TICKS: u64 = 16;
+const MIN_DISCOVERY_HORIZON_MARGIN_TENTHS: u64 = 1;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -377,6 +379,15 @@ impl NativeGoalLearningLoopRequest {
                 "reverse-curriculum demonstration mode and checkpoint authority disagree",
             ));
         }
+        let minimum_horizon =
+            minimum_discovery_horizon_ticks(optimization.budgets.promotion_before_tick)?;
+        if optimization.budgets.exploration_horizon_ticks < minimum_horizon
+            || optimization.horizon_tightening.is_some()
+        {
+            return Err(loop_message(
+                "learning-loop discovery requires an untightened generous initial horizon",
+            ));
+        }
         let mut shard_identities = BTreeSet::new();
         let mut episode_count = 0_u64;
         for reference in &self.initial_episode_shards {
@@ -425,6 +436,10 @@ impl NativeGoalLearningLoopRequest {
             generation_limit: self.generation_limit,
             rollouts_per_generation: self.rollouts_per_generation,
             simulated_tick_budget: self.simulated_tick_budget,
+            horizon_strategy: "generous_fixed",
+            exploration_horizon_ticks: optimization.budgets.exploration_horizon_ticks,
+            minimum_generous_horizon_ticks: minimum_horizon,
+            retains_timeouts: true,
         })
     }
 
@@ -459,6 +474,22 @@ pub struct NativeGoalLearningLoopValidationReport {
     pub generation_limit: u16,
     pub rollouts_per_generation: u16,
     pub simulated_tick_budget: u64,
+    pub horizon_strategy: &'static str,
+    pub exploration_horizon_ticks: u64,
+    pub minimum_generous_horizon_ticks: u64,
+    pub retains_timeouts: bool,
+}
+
+fn minimum_discovery_horizon_ticks(
+    promotion_before_tick: u64,
+) -> Result<u64, NativeGoalLearningLoopError> {
+    let proportional_margin = promotion_before_tick
+        .checked_add(9)
+        .map(|ticks| ticks / 10 * MIN_DISCOVERY_HORIZON_MARGIN_TENTHS)
+        .ok_or_else(|| loop_message("discovery horizon margin overflowed"))?;
+    promotion_before_tick
+        .checked_add(proportional_margin.max(MIN_DISCOVERY_HORIZON_MARGIN_TICKS))
+        .ok_or_else(|| loop_message("minimum discovery horizon overflowed"))
 }
 
 fn demonstration_assisted_class() -> CampaignClass {
@@ -1316,6 +1347,15 @@ mod tests {
         request.content_sha256 = request.identity().unwrap();
         request.validate().unwrap();
         request
+    }
+
+    #[test]
+    fn discovery_horizon_reserves_a_material_timeout_margin() {
+        assert_eq!(minimum_discovery_horizon_ticks(1).unwrap(), 17);
+        assert_eq!(minimum_discovery_horizon_ticks(125).unwrap(), 141);
+        assert_eq!(minimum_discovery_horizon_ticks(131).unwrap(), 147);
+        assert_eq!(minimum_discovery_horizon_ticks(1_000).unwrap(), 1_100);
+        assert!(minimum_discovery_horizon_ticks(u64::MAX).is_err());
     }
 
     fn initialize_journal(root: &Path, request: &NativeGoalLearningLoopRequest) {

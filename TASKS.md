@@ -458,9 +458,16 @@ it and emit any legal PAD action for the entire episode.
       nonterminal episode tick, and its result authenticates the exact policy-
       controlled tick count plus zero fallback ticks; Rust rejects any missing,
       shortened, or fallback authority evidence.
-- [ ] Use a generous initial horizon or a success-supported adaptive curriculum.
+- [x] Use a generous initial horizon or a success-supported adaptive curriculum.
       Retain slow successes and timeouts as experience; contract the horizon only
-      after held-out goal reachability is reliable.
+      after held-out goal reachability is reliable. Goal-learning validation now
+      requires an untightened fixed horizon at least 16 ticks and 10% beyond the
+      promotion terminal, reports the exact actual/minimum horizon and timeout-
+      retention authority, and rejects residual horizon-tightening lineage as an
+      initial discovery horizon. Every full-horizon miss and every slower exact
+      success remains a policy-rollout shard in cumulative replay; the learning
+      loop performs no horizon contraction, so contraction can only enter through
+      a separately sealed, support-gated authority after this fixed campaign.
 - [x] Support controlled demonstration modes: absent, replay-only, behavior-
       cloning warm start, and reverse-curriculum checkpoints. Record the active
       mode in every model, rollout, and comparison artifact. The sealed loop
