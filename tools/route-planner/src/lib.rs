@@ -24,8 +24,8 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v10";
-pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v9";
+pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v11";
+pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v10";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

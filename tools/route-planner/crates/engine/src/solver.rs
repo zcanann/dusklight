@@ -13,7 +13,10 @@ use crate::relevance::{
     BackwardRelevance, StateDependency, dependencies_overlap, operation_outputs,
 };
 use crate::route_book::{RouteActionRef, RouteBook, RouteDirectiveKind};
-use crate::transition::{CandidateTransition, MechanicsCatalog, PathConstraint};
+use crate::transition::{
+    CandidateTransition, FeasibilityObligation, GateRule, MechanicsCatalog, PathConstraint,
+    StateOperation, UnknownRequirement,
+};
 use crate::{PlannerContractError, artifact::Digest, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
@@ -419,6 +422,19 @@ pub struct SearchStep {
     pub unknown_reader_ids: Vec<String>,
     pub evidence_dependencies: Vec<EvidenceDependency>,
     pub weakest_evidence: Option<TruthStatus>,
+    pub action_derivations: Vec<ActionDerivation>,
+    pub obligation_derivations: Vec<FeasibilityObligation>,
+    pub source_state_sha256: Digest,
+    pub result_state_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionDerivation {
+    pub action: RouteActionRef,
+    pub precondition: PredicateExpression,
+    pub precondition_result: EvaluatedTruth,
+    pub operations: Vec<StateOperation>,
     pub source_state_sha256: Digest,
     pub result_state_sha256: Digest,
 }
@@ -451,6 +467,10 @@ pub struct BlockedTransitionWitness {
     pub unknown_reader_ids: Vec<String>,
     pub evidence_dependencies: Vec<EvidenceDependency>,
     pub weakest_evidence: Option<TruthStatus>,
+    pub hard_guard_expression: PredicateExpression,
+    pub effect_operations: Vec<StateOperation>,
+    pub obligation_derivations: Vec<FeasibilityObligation>,
+    pub unknown_requirements: Vec<UnknownRequirement>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -464,6 +484,9 @@ pub struct BlockedWriterWitness {
     pub unknown_gate_ids: Vec<String>,
     pub evidence_dependencies: Vec<EvidenceDependency>,
     pub weakest_evidence: Option<TruthStatus>,
+    pub activation_expression: PredicateExpression,
+    pub operation: StateOperation,
+    pub gate_derivations: Vec<GateRule>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1382,6 +1405,15 @@ impl<'a> ForwardSolver<'a> {
                                 unknown_gate_ids: assessment.unknown_gate_ids,
                                 weakest_evidence: weakest_evidence(&evidence_dependencies),
                                 evidence_dependencies,
+                                activation_expression: writer.activation.clone(),
+                                operation: writer.operation.clone(),
+                                gate_derivations: self
+                                    .mechanics
+                                    .gates
+                                    .iter()
+                                    .filter(|gate| gate.blocked_writer_ids.contains(&writer.id))
+                                    .cloned()
+                                    .collect(),
                             },
                         );
                     }
@@ -1434,6 +1466,8 @@ impl<'a> ForwardSolver<'a> {
                         unknown_reader_ids: Vec::new(),
                         evidence_dependencies,
                         weakest_evidence,
+                        action_derivations: Vec::new(),
+                        obligation_derivations: Vec::new(),
                         source_state_sha256: state_identity,
                         result_state_sha256: Digest::ZERO,
                     },
@@ -1511,6 +1545,8 @@ impl<'a> ForwardSolver<'a> {
                         unknown_reader_ids: Vec::new(),
                         evidence_dependencies,
                         weakest_evidence,
+                        action_derivations: Vec::new(),
+                        obligation_derivations: Vec::new(),
                         source_state_sha256: state_identity,
                         result_state_sha256: Digest::ZERO,
                     },
@@ -1686,6 +1722,27 @@ impl<'a> ForwardSolver<'a> {
                                     unknown_reader_ids,
                                     evidence_dependencies,
                                     weakest_evidence,
+                                    hard_guard_expression: transition
+                                        .activation
+                                        .hard_guards
+                                        .clone(),
+                                    effect_operations: transition.activation.effects.clone(),
+                                    obligation_derivations: self
+                                        .mechanics
+                                        .obligations
+                                        .iter()
+                                        .filter(|obligation| {
+                                            transition
+                                                .activation
+                                                .physical_obligation_ids
+                                                .contains(&obligation.id)
+                                        })
+                                        .cloned()
+                                        .collect(),
+                                    unknown_requirements: transition
+                                        .activation
+                                        .unknown_requirements
+                                        .clone(),
                                 },
                             );
                             continue;
@@ -1927,6 +1984,8 @@ impl<'a> ForwardSolver<'a> {
                                 unknown_reader_ids,
                                 evidence_dependencies,
                                 weakest_evidence,
+                                action_derivations: Vec::new(),
+                                obligation_derivations: Vec::new(),
                                 source_state_sha256: state_identity,
                                 result_state_sha256: Digest::ZERO,
                             },
@@ -2138,6 +2197,28 @@ impl<'a> ForwardSolver<'a> {
             continuation,
             route_costs: route_costs.clone(),
         };
+        let derivation_evidence_policy = route_policy
+            .map_or(self.options.evidence_policy, |policy| {
+                policy.evidence_policy
+            });
+        step.action_derivations = boundaries
+            .iter()
+            .map(|boundary| self.action_derivation(boundary, derivation_evidence_policy))
+            .collect::<Result<Vec<_>, _>>()?;
+        let obligation_ids = step
+            .discharged_obligation_ids
+            .iter()
+            .chain(&step.outstanding_obligation_ids)
+            .chain(&step.unknown_obligation_ids)
+            .chain(&step.introduced_obligation_ids)
+            .collect::<BTreeSet<_>>();
+        step.obligation_derivations = self
+            .mechanics
+            .obligations
+            .iter()
+            .filter(|obligation| obligation_ids.contains(&obligation.id))
+            .cloned()
+            .collect();
         step.result_state_sha256 = result;
         if let Some(recorder) = authorization {
             recorder.observe_state(
@@ -2171,6 +2252,112 @@ impl<'a> ForwardSolver<'a> {
             insertion_order,
         });
         Ok(saw_unknown_condition)
+    }
+
+    fn action_derivation(
+        &self,
+        boundary: &AppliedActionBoundary,
+        evidence_policy: EvidencePolicy,
+    ) -> Result<ActionDerivation, PlannerContractError> {
+        let (precondition, operations) = match &boundary.action {
+            RouteActionRef::Transition { transition_id } => {
+                let transition = self
+                    .mechanics
+                    .transitions
+                    .iter()
+                    .find(|transition| transition.id == *transition_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "solver.action_derivation",
+                            format!("references unknown transition {transition_id}"),
+                        )
+                    })?;
+                (
+                    transition.activation.hard_guards.clone(),
+                    transition.activation.effects.clone(),
+                )
+            }
+            RouteActionRef::Technique { technique_id } => {
+                let technique = self
+                    .mechanics
+                    .techniques
+                    .iter()
+                    .find(|technique| technique.id == *technique_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "solver.action_derivation",
+                            format!("references unknown technique {technique_id}"),
+                        )
+                    })?;
+                (
+                    technique.prerequisites.clone(),
+                    technique.operations.clone(),
+                )
+            }
+            RouteActionRef::Resolver { resolver_id } => {
+                let resolver = self
+                    .mechanics
+                    .resolvers
+                    .iter()
+                    .find(|resolver| resolver.id == *resolver_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "solver.action_derivation",
+                            format!("references unknown resolver {resolver_id}"),
+                        )
+                    })?;
+                (
+                    resolver.applicable_when.clone(),
+                    resolver.operations.clone(),
+                )
+            }
+            RouteActionRef::Writer { writer_id } => {
+                let writer = self
+                    .mechanics
+                    .writers
+                    .iter()
+                    .find(|writer| writer.id == *writer_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "solver.action_derivation",
+                            format!("references unknown writer {writer_id}"),
+                        )
+                    })?;
+                (writer.activation.clone(), vec![writer.operation.clone()])
+            }
+            RouteActionRef::Microtrace { microtrace_id } => {
+                let microtrace = self
+                    .mechanics
+                    .microtraces
+                    .iter()
+                    .find(|microtrace| microtrace.id == *microtrace_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "solver.action_derivation",
+                            format!("references unknown microtrace {microtrace_id}"),
+                        )
+                    })?;
+                (
+                    microtrace.precondition.clone(),
+                    microtrace.operations.clone(),
+                )
+            }
+        };
+        let evaluator = PredicateEvaluator::new(
+            &boundary.before.snapshot,
+            self.facts,
+            self.equivalence_sets,
+            &boundary.before.gate_states,
+            evidence_policy,
+        )?;
+        Ok(ActionDerivation {
+            action: boundary.action.clone(),
+            precondition_result: evaluator.evaluate(&precondition),
+            precondition,
+            operations,
+            source_state_sha256: boundary.before.semantic_digest()?,
+            result_state_sha256: boundary.after.semantic_digest()?,
+        })
     }
 
     fn advance_sequence_progress(
@@ -2276,6 +2463,20 @@ fn blocked_witness(
         unknown_reader_ids: unknown_reader_ids.to_vec(),
         evidence_dependencies,
         weakest_evidence,
+        hard_guard_expression: transition.activation.hard_guards.clone(),
+        effect_operations: transition.activation.effects.clone(),
+        obligation_derivations: mechanics
+            .obligations
+            .iter()
+            .filter(|obligation| {
+                transition
+                    .activation
+                    .physical_obligation_ids
+                    .contains(&obligation.id)
+            })
+            .cloned()
+            .collect(),
+        unknown_requirements: transition.activation.unknown_requirements.clone(),
     })
 }
 
@@ -3179,6 +3380,25 @@ mod tests {
         );
         assert_ne!(
             result.steps[0].source_state_sha256,
+            result.steps[0].result_state_sha256
+        );
+        assert_eq!(result.steps[0].action_derivations.len(), 1);
+        assert_eq!(
+            result.steps[0].action_derivations[0].action,
+            RouteActionRef::Transition {
+                transition_id: "transition.a-to-b".into()
+            }
+        );
+        assert_eq!(
+            result.steps[0].action_derivations[0].precondition_result,
+            EvaluatedTruth::True
+        );
+        assert_eq!(
+            result.steps[0].action_derivations[0].source_state_sha256,
+            result.steps[0].source_state_sha256
+        );
+        assert_eq!(
+            result.steps[0].action_derivations[0].result_state_sha256,
             result.steps[0].result_state_sha256
         );
         assert!(result.backward_pruning_applied);
@@ -5317,6 +5537,33 @@ mod tests {
             vec!["obligation.blocker"]
         );
         assert!(result.steps[0].outstanding_obligation_ids.is_empty());
+        assert_eq!(result.steps[0].action_derivations.len(), 2);
+        assert_eq!(
+            result.steps[0]
+                .action_derivations
+                .iter()
+                .map(|derivation| derivation.action.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                RouteActionRef::Resolver {
+                    resolver_id: "resolver.text-state".into()
+                },
+                RouteActionRef::Transition {
+                    transition_id: "transition.a-to-b".into()
+                }
+            ]
+        );
+        assert!(
+            result.steps[0]
+                .action_derivations
+                .iter()
+                .all(|derivation| derivation.precondition_result == EvaluatedTruth::True)
+        );
+        assert_eq!(result.steps[0].obligation_derivations.len(), 1);
+        assert_eq!(
+            result.steps[0].obligation_derivations[0].id,
+            "obligation.blocker"
+        );
         assert!(result.blocked_transition_witnesses.is_empty());
     }
 
@@ -7862,6 +8109,16 @@ mod tests {
             dependency.dependency_kind == EvidenceDependencyKind::Obligation
                 && dependency.record_id == "obligation.blocker"
         }));
+        assert_eq!(
+            witness.hard_guard_expression,
+            mechanics.transitions[0].activation.hard_guards
+        );
+        assert_eq!(
+            witness.effect_operations,
+            mechanics.transitions[0].activation.effects
+        );
+        assert_eq!(witness.obligation_derivations, mechanics.obligations);
+        assert!(witness.unknown_requirements.is_empty());
     }
 
     #[test]

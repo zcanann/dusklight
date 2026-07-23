@@ -29,7 +29,7 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v38";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v39";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

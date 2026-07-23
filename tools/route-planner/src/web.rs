@@ -323,7 +323,10 @@ mod tests {
     use dusklight_route_planner::logic::{FACT_CATALOG_SCHEMA, FactCatalog};
     use dusklight_route_planner::transition::{MECHANICS_CATALOG_SCHEMA, MechanicsCatalog};
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    static NEXT_TEST_ROOT: AtomicU64 = AtomicU64::new(0);
 
     fn state() -> (WebState, PathBuf) {
         let nonce = SystemTime::now()
@@ -331,8 +334,9 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "dusklight-route-web-{}-{nonce}",
-            std::process::id()
+            "dusklight-route-web-{}-{nonce}-{}",
+            std::process::id(),
+            NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed),
         ));
         let state = WebState {
             projects: Arc::new(Mutex::new(ProjectStore::open(&root).unwrap())),

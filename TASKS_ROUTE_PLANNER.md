@@ -2565,11 +2565,17 @@ Deliverable: a headless query API and deterministic fixture suite.
 
 ### Phase 8 — Proofs and explanations
 
-- [ ] Retain causal proof objects for every result.
+- [x] Retain causal proof objects for every result.
   - [x] Retain the selected transition, resolver/technique choices, and source/
         result semantic state identities for each reached-path step.
-  - [ ] Retain full guard, obligation, operation, and evidence derivations for
-        reached and failed alternatives.
+  - [x] Retain full guard, obligation, operation, and evidence derivations for
+        reached and failed alternatives. Reached steps embed each ordered setup
+        and terminal action boundary with its complete precondition, evaluated
+        truth, exact operations, and source/result state identities, alongside
+        complete obligation records and existing evidence dependencies. Blocked
+        transition/writer witnesses retain the underlying guard or activation,
+        effects, obligation/unknown-requirement definitions, writer operation,
+        and applicable gate rules rather than only flattened IDs.
 - [ ] Explain derived lockouts as failed producer cuts.
 - [x] Explain active/unknown obstructions and the resolver/technique chosen for
       each reached approach; retain the closest unresolved witness on failure.
@@ -2590,7 +2596,7 @@ Deliverable: a headless query API and deterministic fixture suite.
     `RuleEvidence`, and `weakest_evidence` makes contested, hypothetical, or
     unknown support directly filterable without rejoining the catalog.
 - [x] Generate concise collapsed summaries and fully expanded research views.
-      Solve-report v10 derives a presentation-only summary with primary and
+      Solve-report v11 derives a presentation-only summary with primary and
       alternative action sequences, costs, preference/evidence strength, bounds,
       unknown IDs, and blocker/merge/cut counts. The complete typed search result
       remains adjacent as the expanded view with every step dependency, state
