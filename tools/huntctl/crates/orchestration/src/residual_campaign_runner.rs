@@ -458,7 +458,11 @@ pub(crate) fn append_checkpoint(
         .join("checkpoints")
         .join(format!("checkpoint-{:08}.json", resume.next_sequence));
     write_exact_or_new(&path, &checkpoint.to_pretty_json()?)?;
-    append_optimization_resume_event(
+    let previous_checkpoint = resume
+        .latest_optimizer_checkpoint
+        .as_ref()
+        .map(|checkpoint| root.join(&checkpoint.artifact.path));
+    let next = append_optimization_resume_event(
         optimization,
         root,
         OptimizationResumeEvent::OptimizerCheckpoint {
@@ -467,7 +471,16 @@ pub(crate) fn append_checkpoint(
             state: artifact_reference(root, &path)?,
         },
     )
-    .map_err(runner_error)
+    .map_err(runner_error)?;
+    // Keep the predecessor until both the replacement file and its journal
+    // event are durable, so interruption always leaves one restorable snapshot.
+    if let Some(previous) = previous_checkpoint
+        && previous != path
+        && previous.is_file()
+    {
+        fs::remove_file(previous).map_err(runner_error)?;
+    }
+    Ok(next)
 }
 
 pub(crate) fn load_checkpoint(

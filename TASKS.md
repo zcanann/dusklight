@@ -78,7 +78,11 @@ Working foundations:
   compiled tapes, preserves uncheckpointed results for deterministic replay
   into the last optimizer snapshot, and validates ordered event batches in
   memory before one durable append/refold so large generations do not require
-  one full journal pass per candidate.
+  one full journal pass per candidate. Historical checkpoint references remain
+  authenticated by the journal, but only the latest optimizer checkpoint file
+  is required for restore; after a new checkpoint and journal record are both
+  durable, the runner removes the superseded file. A regression deletes an old
+  checkpoint and still resumes, then proves deleting the latest fails closed.
 - The residual campaign command now accepts a sealed native execution binding,
   owns one persistent checkpoint worker per deterministic lane for the complete
   run, dispatches exact horizon-extended residual tapes as native suffix

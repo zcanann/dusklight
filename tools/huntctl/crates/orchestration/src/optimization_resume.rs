@@ -648,6 +648,9 @@ fn fold_journal(
     };
     state.state_sha256 = state.compute_identity()?;
     state.validate()?;
+    if let Some(checkpoint) = &state.latest_optimizer_checkpoint {
+        validate_artifact(root, "latest optimizer checkpoint", &checkpoint.artifact)?;
+    }
     Ok(state)
 }
 
@@ -831,7 +834,10 @@ fn validate_event_artifacts(
                     "optimizer checkpoint exceeds candidate budget",
                 ));
             }
-            validate_artifact(root, "optimizer checkpoint", state)?;
+            // Superseded checkpoint files may be pruned after their successor is
+            // durable. Their immutable references remain authenticated by the
+            // hash-chained journal; fold_journal validates the latest file below.
+            validate_artifact_reference("optimizer checkpoint", state)?;
         }
     }
     Ok(())
@@ -839,6 +845,27 @@ fn validate_event_artifacts(
 
 fn validate_artifact(
     root: &Path,
+    label: &str,
+    artifact: &ArtifactReference,
+) -> Result<(), OptimizationResumeError> {
+    validate_artifact_reference(label, artifact)?;
+    let relative = Path::new(&artifact.path);
+    let path = root.join(relative).canonicalize().map_err(|source| {
+        resume_error(format!(
+            "cannot resolve {label} {}: {source}",
+            artifact.path
+        ))
+    })?;
+    if !path.starts_with(root) || !path.is_file() {
+        return Err(resume_error(format!("{label} must be a repository file")));
+    }
+    if sha256(&fs::read(path).map_err(OptimizationResumeError::io)?) != artifact.sha256 {
+        return Err(resume_error(format!("{label} content digest differs")));
+    }
+    Ok(())
+}
+
+fn validate_artifact_reference(
     label: &str,
     artifact: &ArtifactReference,
 ) -> Result<(), OptimizationResumeError> {
@@ -851,18 +878,6 @@ fn validate_artifact(
             .any(|component| !matches!(component, Component::Normal(_)))
     {
         return Err(resume_error(format!("{label} reference is invalid")));
-    }
-    let path = root.join(relative).canonicalize().map_err(|source| {
-        resume_error(format!(
-            "cannot resolve {label} {}: {source}",
-            artifact.path
-        ))
-    })?;
-    if !path.starts_with(root) || !path.is_file() {
-        return Err(resume_error(format!("{label} must be a repository file")));
-    }
-    if sha256(&fs::read(path).map_err(OptimizationResumeError::io)?) != artifact.sha256 {
-        return Err(resume_error(format!("{label} content digest differs")));
     }
     Ok(())
 }
@@ -1338,6 +1353,74 @@ mod tests {
         );
         assert_ne!(state.last_record_sha256, initial.last_record_sha256);
         assert_eq!(load_optimization_resume(&request, &root.0).unwrap(), state);
+    }
+
+    #[test]
+    fn resume_requires_only_the_latest_checkpoint_artifact() {
+        let (root, request) = fixture(1);
+        initialize_optimization_resume(&request, &root.0).unwrap();
+        let old_checkpoint = artifact(
+            &root.0,
+            "build/artifacts/checkpoint-old.json",
+            b"checkpoint-old",
+        );
+        append_optimization_resume_event(
+            &request,
+            &root.0,
+            OptimizationResumeEvent::OptimizerCheckpoint {
+                generation: 0,
+                completed_candidates: 0,
+                state: old_checkpoint.clone(),
+            },
+        )
+        .unwrap();
+        let candidate = artifact(
+            &root.0,
+            "build/artifacts/candidate-prune.json",
+            b"candidate",
+        );
+        let candidate_sha256 = candidate.sha256;
+        let tape = artifact(&root.0, "build/artifacts/candidate-prune.tape", b"tape");
+        let result = artifact(&root.0, "build/artifacts/result-prune.json", b"result");
+        let latest_checkpoint = artifact(
+            &root.0,
+            "build/artifacts/checkpoint-latest.json",
+            b"checkpoint-latest",
+        );
+        append_optimization_resume_events(
+            &request,
+            &root.0,
+            vec![
+                candidate_event(&request, "g0-prune", candidate, tape),
+                OptimizationResumeEvent::EvaluationCompleted {
+                    candidate_id: "g0-prune".into(),
+                    candidate_sha256,
+                    result,
+                    simulated_ticks: request.budgets.exploration_horizon_ticks,
+                },
+                OptimizationResumeEvent::OptimizerCheckpoint {
+                    generation: 1,
+                    completed_candidates: 1,
+                    state: latest_checkpoint.clone(),
+                },
+            ],
+        )
+        .unwrap();
+
+        fs::remove_file(root.0.join(&old_checkpoint.path)).unwrap();
+        assert_eq!(
+            load_optimization_resume(&request, &root.0)
+                .unwrap()
+                .completed_candidates,
+            1
+        );
+        fs::remove_file(root.0.join(&latest_checkpoint.path)).unwrap();
+        assert!(
+            load_optimization_resume(&request, &root.0)
+                .unwrap_err()
+                .to_string()
+                .contains("latest optimizer checkpoint")
+        );
     }
 
     #[test]
