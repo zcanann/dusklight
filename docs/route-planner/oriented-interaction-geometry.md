@@ -43,11 +43,21 @@ These records do not claim that the keyhole, event, collision release, scene
 change, or restart phases completed. That actor-state obligation remains
 explicitly unresolved.
 
-## Deliberate L1 boundary
+## L1 compound interaction
 
 The L1 family uses the player attention position for the main rectangle while
 wolf Link is active, then independently checks the player's current-position
-local X against a narrower `130` bound. The current planner snapshot does not
-carry that attention point. World facts consequently retain the L1 interaction
-as unresolved rather than evaluating both checks against the player origin or
-silently excluding wolf routes.
+local X against a narrower `130` bound. `CompoundInteraction` models those as
+form-selected branches:
+
+- human Link tests the player origin against the yaw-oriented `200 x 100`
+  rectangle;
+- wolf Link tests the observed player attention point against that rectangle
+  and independently tests the player origin against a yaw-oriented local-X
+  strip bounded by `[-130, 130]`.
+
+`PlayerState::attention_position` is optional and the native observation
+projection carries it only when the producer captures the exact
+`daPy_py_c::attention_info.position`. A legacy or incomplete observation makes
+the active wolf branch unknown. It is never replaced with the player origin,
+and the inactive wolf branch does not impose that observation on human Link.

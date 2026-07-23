@@ -26,7 +26,7 @@ name might suggest.
 | `message-flow-entry-contract-set/v4` and `compiled-message-flow-entry-set/v4` | Exact compiled-flow schema/digest, stage/message resource joins, optional raw actor placement identity, resolved flow label, authored guards, obligations, unknowns, speaker context, source-pinned presentation requests, resolved generic item backings, and deterministic entry mechanics | Unauthored callers, presentation-actor execution, inferred interaction geometry, actor behavior not established by placement, or equivalence across builds/languages |
 | `dusklight-world-context/v1` | One game-data digest and sorted stage-to-inventory/spatial-index digests | Product/revision identity, runtime configuration, the inventory or spatial records themselves |
 | `dusklight-world-inventory/v1` | Source records; chunk directory; actor/scaled/door/treasure/player placements; SCLS; KCL prisms and decoded PLC words; inferred same-room collision/SCLS joins | Actor-specific guards and lifecycle, dynamic collision, paths/rails/volumes, source-confirmed activation behavior |
-| `extracted-world-facts/v10` | Exact context; source digests; static objects; player spawns; encoded exits; collision-join candidates; exact-GZ2E01 L1/L5 boss doors, keyed mini-boss doors, key shutters, Lakebed boss shutter, and memory-switch-backed type-0 Koki gates; backing-sensitive key/boss-key guards, switch writes and key adjustments; kind-sensitive exit association; source-and-placement-bound L5 yaw-oriented interaction rectangles, front-side planes, and circular facing obligations | Collision navigation/connectivity, unjoined SCLS activation, L1 wolf attention/current-position compound geometry, source-censused but semantically unaudited actor-driven exits, item/NPC/event producers, rider/caravan/external-switch gate semantics, and live actor reconstruction |
+| `extracted-world-facts/v10` | Exact context; source digests; static objects; player spawns; encoded exits; collision-join candidates; exact-GZ2E01 L1/L5 boss doors, keyed mini-boss doors, key shutters, Lakebed boss shutter, and memory-switch-backed type-0 Koki gates; backing-sensitive key/boss-key guards, switch writes and key adjustments; kind-sensitive exit association; source-and-placement-bound L1/L5 yaw-oriented interaction shapes, L1 human/wolf compound branches, L5 front-side planes, and circular facing obligations | Collision navigation/connectivity, unjoined SCLS activation, source-censused but semantically unaudited actor-driven exits, item/NPC/event producers, rider/caravan/external-switch gate semantics, live actor reconstruction, and unavailable native attention-position observations |
 | `orig-bundle-diff/v1` | Exact input-bundle/content digests; raw-versus-decoded stage/message/ignored-candidate differences; explicit one-sided locale coverage | Semantic comparison for domains not decoded into the input bundles |
 | `fact-pack/v1` plus immutable cache | Exact content, extractor, source, coverage, payload, and manifest identities; verified reuse without `orig/` | Any implication that a partial coverage declaration is complete |
 
@@ -75,12 +75,14 @@ digests, then imports:
 - every SCLS record as an encoded destination; and
 - each precomputed collision/SCLS join as an encoded-map-exit candidate.
 
-For exact GZ2E01 L5 boss doors, v10 also imports the actor-local `checkArea`
+For exact GZ2E01 L1/L5 boss doors, v10 also imports the actor-local `checkArea`
 rectangle (`|x| <= 200`, `|z| <= 100`) using the placement's binary-angle yaw,
-the strict positive-local-Z `checkFront` plane, and the shortest-circular-facing
-obligation around `door_yaw - 0x7fff`. These observations are bound to both the
-world inventory and audited actor source. They do not discharge the separate
-loaded-actor/event-phase obligation.
+and the shortest-circular-facing obligation around `door_yaw - 0x7fff`. L5
+adds the strict positive-local-Z `checkFront` plane. L1 adds form-selected
+human/wolf compound checks, including the wolf attention point and independent
+current-position local-X strip. These observations are bound to both the world
+inventory and audited actor source. They do not discharge the separate loaded-
+actor/event-phase obligation.
 
 Every collision-join candidate still receives a geometry obligation. Joins
 marked `inferred_semantics` also receive an unknown activation-semantics

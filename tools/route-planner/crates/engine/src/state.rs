@@ -128,6 +128,10 @@ pub struct PlayerState {
     pub form: PlayerForm,
     pub mount: Option<PlayerMount>,
     pub position: [f32; 3],
+    /// Source-observed player attention point. This is distinct from Link's
+    /// origin and is absent when the capture channel did not expose it.
+    #[serde(default)]
+    pub attention_position: Option<[f32; 3]>,
     pub rotation: [i16; 3],
     pub has_control: Option<bool>,
     pub action: String,
@@ -343,6 +347,22 @@ pub enum SpatialVolumeShape {
         minimum_local_xz: [f32; 2],
         maximum_local_xz: [f32; 2],
     },
+    /// One bounded actor-local horizontal axis with the orthogonal axis left
+    /// intentionally unconstrained.
+    YawOrientedStrip {
+        origin_xz: [f32; 2],
+        yaw: i16,
+        axis: SpatialLocalAxis,
+        minimum: f32,
+        maximum: f32,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SpatialLocalAxis {
+    X,
+    Z,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -874,6 +894,16 @@ fn validate_player(player: &PlayerState) -> Result<(), PlannerContractError> {
             "must contain finite canonical coordinates",
         ));
     }
+    if player.attention_position.is_some_and(|position| {
+        !position
+            .iter()
+            .all(|value| value.is_finite() && value.to_bits() != (-0.0_f32).to_bits())
+    }) {
+        return Err(PlannerContractError::new(
+            "player.attention_position",
+            "must contain finite canonical coordinates when observed",
+        ));
+    }
     validate_label("player.action", &player.action)?;
     validate_player_form(&player.form)?;
     if let Some(mount) = &player.mount {
@@ -1132,6 +1162,20 @@ pub(crate) fn validate_spatial_volume(volume: &SpatialVolume) -> Result<(), Plan
             }
             Ok(())
         }
+        SpatialVolumeShape::YawOrientedStrip {
+            origin_xz,
+            minimum,
+            maximum,
+            ..
+        } => {
+            if !canonical_floats(origin_xz.iter().chain([minimum, maximum])) || minimum > maximum {
+                return Err(PlannerContractError::new(
+                    "spatial_volumes.shape",
+                    "oriented strip must contain finite canonical ordered local bounds",
+                ));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1326,6 +1370,7 @@ mod tests {
                 form: PlayerForm::Human,
                 mount: None,
                 position: [0.0, 1.0, 2.0],
+                attention_position: None,
                 rotation: [0, 0, 0],
                 has_control: Some(true),
                 action: "idle".into(),

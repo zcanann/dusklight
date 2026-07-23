@@ -1095,6 +1095,22 @@ impl GraphBuilder {
                         PlannerGraphRelation::Requires,
                     )?;
                 }
+                ObligationDetail::CompoundInteraction { branches, .. } => {
+                    for (index, branch) in branches.iter().enumerate() {
+                        self.project_predicate(
+                            &owner,
+                            &format!("branch-{index}-when"),
+                            &branch.when,
+                            PlannerGraphRelation::Requires,
+                        )?;
+                        self.project_predicate(
+                            &owner,
+                            &format!("branch-{index}-pose"),
+                            &branch.pose_predicate,
+                            PlannerGraphRelation::Requires,
+                        )?;
+                    }
+                }
                 ObligationDetail::Geometry { .. }
                 | ObligationDetail::PlaneSide { .. }
                 | ObligationDetail::Facing { .. }
@@ -1312,6 +1328,10 @@ impl GraphBuilder {
         for obligation in &mechanics.obligations {
             let requirement = match &obligation.detail {
                 ObligationDetail::Interaction {
+                    temporal_requirement: Some(requirement),
+                    ..
+                }
+                | ObligationDetail::CompoundInteraction {
                     temporal_requirement: Some(requirement),
                     ..
                 }
@@ -2752,6 +2772,7 @@ mod tests {
                     form: PlayerForm::Human,
                     mount: None,
                     position: [0.0; 3],
+                    attention_position: None,
                     rotation: [0; 3],
                     has_control: Some(true),
                     action: "idle".into(),

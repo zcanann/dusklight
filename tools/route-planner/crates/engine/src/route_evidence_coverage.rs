@@ -392,6 +392,12 @@ fn collect_obligation(obligation: &FeasibilityObligation, facts: &mut BTreeSet<S
         ObligationDetail::Interaction { pose_predicate, .. } => {
             collect_predicate(pose_predicate, facts)
         }
+        ObligationDetail::CompoundInteraction { branches, .. } => {
+            for branch in branches {
+                collect_predicate(&branch.when, facts);
+                collect_predicate(&branch.pose_predicate, facts);
+            }
+        }
         ObligationDetail::Temporal { precondition, .. } => collect_predicate(precondition, facts),
         ObligationDetail::Geometry { .. }
         | ObligationDetail::PlaneSide { .. }

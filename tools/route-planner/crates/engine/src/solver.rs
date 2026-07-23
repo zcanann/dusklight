@@ -3425,12 +3425,27 @@ fn collect_obligation_evidence(
         &obligation.id,
         &obligation.evidence,
     );
+    if let crate::transition::ObligationDetail::CompoundInteraction { branches, .. } =
+        &obligation.detail
+    {
+        for branch in branches {
+            collect_predicate_evidence(&branch.when, facts, dependencies, &mut BTreeSet::new());
+            collect_predicate_evidence(
+                &branch.pose_predicate,
+                facts,
+                dependencies,
+                &mut BTreeSet::new(),
+            );
+        }
+        return;
+    }
     let predicate = match &obligation.detail {
         crate::transition::ObligationDetail::Predicate { predicate } => Some(predicate),
         crate::transition::ObligationDetail::Interaction { pose_predicate, .. } => {
             Some(pose_predicate)
         }
         crate::transition::ObligationDetail::Temporal { precondition, .. } => Some(precondition),
+        crate::transition::ObligationDetail::CompoundInteraction { .. } => unreachable!(),
         crate::transition::ObligationDetail::Geometry { .. }
         | crate::transition::ObligationDetail::PlaneSide { .. }
         | crate::transition::ObligationDetail::Facing { .. }
@@ -3842,6 +3857,7 @@ mod tests {
                     form: PlayerForm::Human,
                     mount: None,
                     position: [0.0; 3],
+                    attention_position: None,
                     rotation: [0; 3],
                     has_control: Some(true),
                     action: "idle".into(),

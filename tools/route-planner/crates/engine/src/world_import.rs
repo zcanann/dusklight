@@ -836,24 +836,118 @@ fn import_gz2e01_boss_door(
     );
     let (spatial_volumes, spatial_planes, mut physical_obligation_ids, mut imported_obligations) =
         match family {
-            Gz2e01BossDoorFamily::L1 => (
-                Vec::new(),
-                Vec::new(),
-                vec![actor_obligation_id.clone(), interaction_obligation_id.clone()],
-                vec![FeasibilityObligation {
-                    id: interaction_obligation_id.clone(),
-                    label: format!("Reach and face {}", placement.name),
-                    scope: scope.clone(),
-                    obligation_kind: ObligationKind::Interaction,
-                    detail: ObligationDetail::Unresolved {
-                        research_question: "Represent the L1 family's wolf attention-position rectangle and simultaneous narrower current-position X bound without replacing either observation with Link's origin.".into(),
+            Gz2e01BossDoorFamily::L1 => {
+                let spatial_source_sha256 =
+                    boss_door_spatial_source_digest(family, inventory_sha256, placement);
+                let position = canonicalize_position([
+                    placement.position.x,
+                    placement.position.y,
+                    placement.position.z,
+                ]);
+                let form_is = |form: &str| PredicateExpression::Compare {
+                    left: ValueReference::PlayerForm,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text(form.into()),
                     },
-                    evidence: unknown_evidence.clone(),
-                }],
-            ),
+                };
+                let volume = |volume_id: &str, position: crate::transition::InteractionPosition| {
+                    crate::transition::InteractionVolumeTest {
+                        position,
+                        volume: crate::transition::VolumeReference {
+                            object_id: object_id.clone(),
+                            volume_id: volume_id.into(),
+                        },
+                        must_be_inside: true,
+                    }
+                };
+                (
+                    vec![
+                        SpatialVolume {
+                            object_id: object_id.clone(),
+                            volume_id: "boss-door-check-area".into(),
+                            shape: SpatialVolumeShape::YawOrientedRectangle {
+                                origin_xz: [position[0], position[2]],
+                                yaw: placement.angle[1],
+                                minimum_local_xz: [-200.0, -100.0],
+                                maximum_local_xz: [200.0, 100.0],
+                            },
+                            source_sha256: spatial_source_sha256,
+                        },
+                        SpatialVolume {
+                            object_id: object_id.clone(),
+                            volume_id: "boss-door-wolf-current-x".into(),
+                            shape: SpatialVolumeShape::YawOrientedStrip {
+                                origin_xz: [position[0], position[2]],
+                                yaw: placement.angle[1],
+                                axis: crate::state::SpatialLocalAxis::X,
+                                minimum: -130.0,
+                                maximum: 130.0,
+                            },
+                            source_sha256: spatial_source_sha256,
+                        },
+                    ],
+                    Vec::new(),
+                    vec![
+                        actor_obligation_id.clone(),
+                        interaction_obligation_id.clone(),
+                        facing_obligation_id.clone(),
+                    ],
+                    vec![
+                        FeasibilityObligation {
+                            id: interaction_obligation_id.clone(),
+                            label: format!("Satisfy {} form-specific actor-local area checks", placement.name),
+                            scope: scope.clone(),
+                            obligation_kind: ObligationKind::Interaction,
+                            detail: ObligationDetail::CompoundInteraction {
+                                actor_instance_id: object_id.clone(),
+                                interaction_mode: "door".into(),
+                                branches: vec![
+                                    crate::transition::InteractionBranch {
+                                        when: form_is("human"),
+                                        volume_tests: vec![volume(
+                                            "boss-door-check-area",
+                                            crate::transition::InteractionPosition::Player,
+                                        )],
+                                        pose_predicate: PredicateExpression::True,
+                                    },
+                                    crate::transition::InteractionBranch {
+                                        when: form_is("wolf"),
+                                        volume_tests: vec![
+                                            volume(
+                                                "boss-door-check-area",
+                                                crate::transition::InteractionPosition::PlayerAttention,
+                                            ),
+                                            volume(
+                                                "boss-door-wolf-current-x",
+                                                crate::transition::InteractionPosition::Player,
+                                            ),
+                                        ],
+                                        pose_predicate: PredicateExpression::True,
+                                    },
+                                ],
+                                temporal_requirement: None,
+                            },
+                            evidence: evidence.clone(),
+                        },
+                        FeasibilityObligation {
+                            id: facing_obligation_id.clone(),
+                            label: format!("Face {} within binary-angle delta 0x4000", placement.name),
+                            scope: scope.clone(),
+                            obligation_kind: ObligationKind::Interaction,
+                            detail: ObligationDetail::Facing {
+                                yaw: ValueReference::PlayerRotationY,
+                                target_yaw: placement.angle[1].wrapping_sub(0x7fff),
+                                maximum_delta: 0x4000,
+                            },
+                            evidence: evidence.clone(),
+                        },
+                    ],
+                )
+            }
             Gz2e01BossDoorFamily::L5 => {
                 let spatial_source_sha256 =
-                    l5_boss_door_spatial_source_digest(inventory_sha256, placement);
+                    boss_door_spatial_source_digest(family, inventory_sha256, placement);
                 let radians = f64::from(placement.angle[1]) * std::f64::consts::TAU / 65536.0;
                 let (sin, cos) = radians.sin_cos();
                 let normal = canonicalize_position([sin as f32, 0.0, cos as f32]);
@@ -862,9 +956,8 @@ fn import_gz2e01_boss_door(
                     placement.position.y,
                     placement.position.z,
                 ]);
-                let offset = canonicalize_scalar(
-                    -(normal[0] * position[0] + normal[2] * position[2]),
-                );
+                let offset =
+                    canonicalize_scalar(-(normal[0] * position[0] + normal[2] * position[2]));
                 let plane_id = format!("plane.front.{token}");
                 (
                     vec![SpatialVolume {
@@ -893,7 +986,10 @@ fn import_gz2e01_boss_door(
                     vec![
                         FeasibilityObligation {
                             id: interaction_obligation_id.clone(),
-                            label: format!("Stand within {} actor-local checkArea rectangle", placement.name),
+                            label: format!(
+                                "Stand within {} actor-local checkArea rectangle",
+                                placement.name
+                            ),
                             scope: scope.clone(),
                             obligation_kind: ObligationKind::Interaction,
                             detail: ObligationDetail::Interaction {
@@ -911,7 +1007,10 @@ fn import_gz2e01_boss_door(
                         },
                         FeasibilityObligation {
                             id: front_obligation_id.clone(),
-                            label: format!("Approach {} from positive actor-local Z", placement.name),
+                            label: format!(
+                                "Approach {} from positive actor-local Z",
+                                placement.name
+                            ),
                             scope: scope.clone(),
                             obligation_kind: ObligationKind::Geometry,
                             detail: ObligationDetail::PlaneSide {
@@ -922,7 +1021,10 @@ fn import_gz2e01_boss_door(
                         },
                         FeasibilityObligation {
                             id: facing_obligation_id.clone(),
-                            label: format!("Face {} within binary-angle delta 0x4000", placement.name),
+                            label: format!(
+                                "Face {} within binary-angle delta 0x4000",
+                                placement.name
+                            ),
                             scope: scope.clone(),
                             obligation_kind: ObligationKind::Interaction,
                             detail: ObligationDetail::Facing {
@@ -987,12 +1089,19 @@ fn import_gz2e01_boss_door(
     }))
 }
 
-fn l5_boss_door_spatial_source_digest(
+fn boss_door_spatial_source_digest(
+    family: Gz2e01BossDoorFamily,
     inventory_sha256: Digest,
     placement: &PlacementRecord,
 ) -> Digest {
-    let source_sha256 =
-        static_digest("9f649b99f027e39f1d39ce066d815a78032b536c4a9a83e0361681af2265102e");
+    let source_sha256 = match family {
+        Gz2e01BossDoorFamily::L1 => {
+            static_digest("221c170e034cf90cc43b20dc737bebeb44d6f8b54111d4454024f2fea7069d79")
+        }
+        Gz2e01BossDoorFamily::L5 => {
+            static_digest("9f649b99f027e39f1d39ce066d815a78032b536c4a9a83e0361681af2265102e")
+        }
+    };
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight.route-planner.boss-door-spatial-source/v1");
     hasher.update(inventory_sha256.0);
@@ -2624,12 +2733,36 @@ mod tests {
         .unwrap();
 
         assert_eq!(facts.mechanics.transitions.len(), 1);
-        assert_eq!(facts.mechanics.obligations.len(), 2);
+        assert_eq!(facts.mechanics.obligations.len(), 3);
+        assert_eq!(facts.spatial_volumes.len(), 2);
         assert_eq!(facts.encoded_exits[0].candidate_transition_ids.len(), 1);
         let transition = &facts.mechanics.transitions[0];
         assert_eq!(transition.transition_kind, TransitionKind::Door);
         assert_eq!(transition.evidence.truth, TruthStatus::Established);
-        assert_eq!(transition.activation.physical_obligation_ids.len(), 2);
+        assert_eq!(transition.activation.physical_obligation_ids.len(), 3);
+        assert!(facts.mechanics.obligations.iter().any(|obligation| {
+            matches!(
+                &obligation.detail,
+                ObligationDetail::CompoundInteraction { branches, .. }
+                    if branches.len() == 2
+                        && branches[1].volume_tests.iter().any(|test| {
+                            test.position == crate::transition::InteractionPosition::PlayerAttention
+                        })
+                        && branches[1].volume_tests.iter().any(|test| {
+                            test.position == crate::transition::InteractionPosition::Player
+                                && test.volume.volume_id == "boss-door-wolf-current-x"
+                        })
+            )
+        }));
+        assert!(matches!(
+            facts.spatial_volumes[1].shape,
+            SpatialVolumeShape::YawOrientedStrip {
+                axis: crate::state::SpatialLocalAxis::X,
+                minimum: -130.0,
+                maximum: 130.0,
+                ..
+            }
+        ));
         let PredicateExpression::All { terms } = &transition.activation.hard_guards else {
             panic!("boss door must retain source location and boss-key guards")
         };

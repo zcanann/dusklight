@@ -610,6 +610,7 @@ mod tests {
                     form: PlayerForm::Human,
                     mount: None,
                     position: [0.0; 3],
+                    attention_position: None,
                     rotation: [0; 3],
                     has_control: Some(true),
                     action: "wait".into(),

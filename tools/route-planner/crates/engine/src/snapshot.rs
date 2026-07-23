@@ -686,6 +686,7 @@ mod tests {
                     form: PlayerForm::Human,
                     mount: None,
                     position: [0.0, 0.0, 0.0],
+                    attention_position: None,
                     rotation: [0, 0, 0],
                     has_control: Some(true),
                     action: "idle".into(),

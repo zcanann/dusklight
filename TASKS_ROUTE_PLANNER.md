@@ -2418,15 +2418,17 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
         and keep missing actor/volume observations unknown.
   - [x] Derive sphere and vertical-cylinder membership plus witnessed temporal
         windows with exact action/input/frame requirements and proof provenance.
-  - [ ] Add actor-family-specific oriented or compound shapes found by the
+  - [x] Add actor-family-specific oriented or compound shapes found by the
         interaction-volume audit rather than assuming one universal primitive.
     - [x] Add a generic yaw-oriented actor-local rectangle and shortest-circular
           binary-angle facing obligation. Exact GZ2E01 L5 boss-door imports now
           bind `checkArea`, the positive-local-Z `checkFront` plane, and facing
           to the placement plus audited source digests in world facts v10.
-    - [ ] Represent the L1 wolf branch's attention-position rectangle together
-          with its independent narrower current-position X bound; do not
-          approximate both observations with the player's origin.
+    - [x] Represent the L1 wolf branch's attention-position rectangle together
+          with its independent narrower current-position X strip. Compound
+          interaction branches select human versus wolf checks from propagated
+          form, preserve the two observation points, and evaluate missing
+          attention capture as unknown rather than substituting Link's origin.
 - [x] Import authored obstructions without mutating build facts.
   - [x] Evaluate obstruction activation and resolver applicability as separate
         scoped/evidenced rules; a resolver discharges named obligations but does

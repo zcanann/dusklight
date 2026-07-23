@@ -486,6 +486,29 @@ pub struct VolumeReference {
     pub volume_id: String,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionPosition {
+    Player,
+    PlayerAttention,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InteractionVolumeTest {
+    pub position: InteractionPosition,
+    pub volume: VolumeReference,
+    pub must_be_inside: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct InteractionBranch {
+    pub when: PredicateExpression,
+    pub volume_tests: Vec<InteractionVolumeTest>,
+    pub pose_predicate: PredicateExpression,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ObligationDetail {
@@ -498,6 +521,15 @@ pub enum ObligationDetail {
         required_volumes: Vec<VolumeReference>,
         excluded_volumes: Vec<VolumeReference>,
         pose_predicate: PredicateExpression,
+        temporal_requirement: Option<TemporalRequirement>,
+    },
+    /// Form- or state-dependent interaction geometry where different observed
+    /// points participate in one actor check. Branches are alternatives; every
+    /// volume test inside the selected branch is conjunctive.
+    CompoundInteraction {
+        actor_instance_id: String,
+        interaction_mode: String,
+        branches: Vec<InteractionBranch>,
         temporal_requirement: Option<TemporalRequirement>,
     },
     Geometry {
@@ -1651,6 +1683,38 @@ fn validate_obligation(obligation: &FeasibilityObligation) -> Result<(), Planner
             validate_volumes(required_volumes)?;
             validate_volumes(excluded_volumes)?;
             pose_predicate.validate()?;
+            if let Some(requirement) = temporal_requirement {
+                requirement.validate()?;
+            }
+        }
+        ObligationDetail::CompoundInteraction {
+            actor_instance_id,
+            interaction_mode,
+            branches,
+            temporal_requirement,
+        } => {
+            validate_stable_id("obligation.actor_instance_id", actor_instance_id)?;
+            validate_stable_id("obligation.interaction_mode", interaction_mode)?;
+            if branches.is_empty() || branches.len() > 16 {
+                return Err(PlannerContractError::new(
+                    "obligation.branches",
+                    "must contain between 1 and 16 interaction branches",
+                ));
+            }
+            for branch in branches {
+                branch.when.validate()?;
+                branch.pose_predicate.validate()?;
+                if branch.volume_tests.is_empty() || branch.volume_tests.len() > 16 {
+                    return Err(PlannerContractError::new(
+                        "obligation.volume_tests",
+                        "must contain between 1 and 16 tests",
+                    ));
+                }
+                for test in &branch.volume_tests {
+                    validate_stable_id("obligation.volume.object_id", &test.volume.object_id)?;
+                    validate_stable_id("obligation.volume.volume_id", &test.volume.volume_id)?;
+                }
+            }
             if let Some(requirement) = temporal_requirement {
                 requirement.validate()?;
             }

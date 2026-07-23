@@ -551,6 +551,19 @@ impl RelevanceBuilder {
                         self.add_temporal_witnesses(mechanics, &requirement.action_id);
                     }
                 }
+                ObligationDetail::CompoundInteraction {
+                    branches,
+                    temporal_requirement,
+                    ..
+                } => {
+                    for branch in branches {
+                        self.add_predicate(&branch.when);
+                        self.add_predicate(&branch.pose_predicate);
+                    }
+                    if let Some(requirement) = temporal_requirement {
+                        self.add_temporal_witnesses(mechanics, &requirement.action_id);
+                    }
+                }
                 ObligationDetail::Temporal {
                     requirement,
                     precondition,

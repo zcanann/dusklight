@@ -522,6 +522,7 @@ pub fn snapshot_native_observation(
         },
         mount: observed_mount(observation),
         position: canonical_vec3(observation.player_position),
+        attention_position: observation.player_attention_position.map(canonical_vec3),
         rotation: observation.player_current_angle,
         has_control: None,
         action: observation.player_action.as_ref().map_or_else(
@@ -1122,6 +1123,7 @@ mod tests {
             player_present: true,
             player_is_link: true,
             player_position: [1.0, 2.0, 3.0],
+            player_attention_position: Some([4.0, 5.0, 6.0]),
             player_current_angle: [0, 0x1000, 0],
             player_form_present: true,
             player_action: Some(NativePlayerActionObservation {
@@ -1268,6 +1270,11 @@ mod tests {
     fn projects_native_backing_components_writers_and_explicit_unknowns() {
         let snapshot = snapshot_native_observation(&observation(), context(1)).unwrap();
         snapshot.validate().unwrap();
+        assert_eq!(snapshot.environment.player.position, [1.0, 2.0, 3.0]);
+        assert_eq!(
+            snapshot.environment.player.attention_position,
+            Some([4.0, 5.0, 6.0])
+        );
         assert_eq!(
             snapshot.environment.active_runtime_file.backing,
             BackingAttachment::CardBacked {

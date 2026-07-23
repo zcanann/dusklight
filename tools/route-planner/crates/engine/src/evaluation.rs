@@ -12,8 +12,8 @@ use crate::state::{
 };
 use crate::transition::{
     ActorReconstructionRule, CandidateTransition, FeasibilityObligation, GateRule,
-    ObligationDetail, ReaderRule, TemporalRequirement, VolumeReference, WitnessedMicrotrace,
-    WriterRule,
+    InteractionPosition, ObligationDetail, ReaderRule, TemporalRequirement, VolumeReference,
+    WitnessedMicrotrace, WriterRule,
 };
 use crate::transition::{Obstruction, ObstructionResolver, Technique};
 use crate::{PlannerContractError, validate_stable_id};
@@ -415,6 +415,45 @@ impl<'a> PredicateEvaluator<'a> {
                     );
                     (classify_obligation_truth(combined), Some(combined))
                 }
+                ObligationDetail::CompoundInteraction {
+                    actor_instance_id,
+                    branches,
+                    temporal_requirement,
+                    ..
+                } => {
+                    let actor = self.interaction_actor_loaded(actor_instance_id);
+                    let branch_result = branches
+                        .iter()
+                        .map(|branch| match self.evaluate(&branch.when) {
+                            EvaluatedTruth::False => EvaluatedTruth::False,
+                            EvaluatedTruth::Unknown => EvaluatedTruth::Unknown,
+                            EvaluatedTruth::True => branch
+                                .volume_tests
+                                .iter()
+                                .map(|test| {
+                                    let result = self.interaction_position_inside_volume(
+                                        test.position,
+                                        &test.volume,
+                                    );
+                                    if test.must_be_inside {
+                                        result
+                                    } else {
+                                        result.not()
+                                    }
+                                })
+                                .fold(self.evaluate(&branch.pose_predicate), and_evaluated_truth),
+                        })
+                        .fold(EvaluatedTruth::False, or_evaluated_truth);
+                    let temporal = temporal_requirement
+                        .as_ref()
+                        .map_or((EvaluatedTruth::True, Vec::new()), |requirement| {
+                            self.assess_temporal(requirement, microtraces)
+                        });
+                    supporting_microtrace_ids = temporal.1;
+                    let combined =
+                        and_evaluated_truth(and_evaluated_truth(actor, branch_result), temporal.0);
+                    (classify_obligation_truth(combined), Some(combined))
+                }
                 ObligationDetail::Temporal {
                     requirement,
                     precondition,
@@ -534,6 +573,33 @@ impl<'a> PredicateEvaluator<'a> {
         if !self.world_execution_active() {
             return EvaluatedTruth::Unknown;
         }
+        self.position_inside_volume(self.snapshot.environment.player.position, reference)
+    }
+
+    fn interaction_position_inside_volume(
+        &self,
+        position: InteractionPosition,
+        reference: &VolumeReference,
+    ) -> EvaluatedTruth {
+        if !self.world_execution_active() {
+            return EvaluatedTruth::Unknown;
+        }
+        let position = match position {
+            InteractionPosition::Player => Some(self.snapshot.environment.player.position),
+            InteractionPosition::PlayerAttention => {
+                self.snapshot.environment.player.attention_position
+            }
+        };
+        position.map_or(EvaluatedTruth::Unknown, |position| {
+            self.position_inside_volume(position, reference)
+        })
+    }
+
+    fn position_inside_volume(
+        &self,
+        position: [f32; 3],
+        reference: &VolumeReference,
+    ) -> EvaluatedTruth {
         let Some(volume) = self
             .snapshot
             .environment
@@ -545,7 +611,6 @@ impl<'a> PredicateEvaluator<'a> {
         else {
             return EvaluatedTruth::Unknown;
         };
-        let position = self.snapshot.environment.player.position;
         match &volume.shape {
             SpatialVolumeShape::AxisAlignedBox { minimum, maximum } => {
                 if position
@@ -609,6 +674,27 @@ impl<'a> PredicateEvaluator<'a> {
                     && local_z >= f64::from(minimum_local_xz[1])
                     && local_z <= f64::from(maximum_local_xz[1])
                 {
+                    EvaluatedTruth::True
+                } else {
+                    EvaluatedTruth::False
+                }
+            }
+            SpatialVolumeShape::YawOrientedStrip {
+                origin_xz,
+                yaw,
+                axis,
+                minimum,
+                maximum,
+            } => {
+                let delta_x = f64::from(position[0]) - f64::from(origin_xz[0]);
+                let delta_z = f64::from(position[2]) - f64::from(origin_xz[1]);
+                let radians = f64::from(*yaw) * std::f64::consts::TAU / 65536.0;
+                let (sin, cos) = radians.sin_cos();
+                let local = match axis {
+                    crate::state::SpatialLocalAxis::X => cos * delta_x - sin * delta_z,
+                    crate::state::SpatialLocalAxis::Z => sin * delta_x + cos * delta_z,
+                };
+                if local >= f64::from(*minimum) && local <= f64::from(*maximum) {
                     EvaluatedTruth::True
                 } else {
                     EvaluatedTruth::False
@@ -1467,6 +1553,14 @@ fn and_evaluated_truth(left: EvaluatedTruth, right: EvaluatedTruth) -> Evaluated
     }
 }
 
+fn or_evaluated_truth(left: EvaluatedTruth, right: EvaluatedTruth) -> EvaluatedTruth {
+    match (left, right) {
+        (EvaluatedTruth::True, _) | (_, EvaluatedTruth::True) => EvaluatedTruth::True,
+        (EvaluatedTruth::Unknown, _) | (_, EvaluatedTruth::Unknown) => EvaluatedTruth::Unknown,
+        _ => EvaluatedTruth::False,
+    }
+}
+
 fn classify_obligation_truth(truth: EvaluatedTruth) -> ObligationClassification {
     match truth {
         EvaluatedTruth::True => ObligationClassification::Satisfied,
@@ -1581,12 +1675,13 @@ mod tests {
         EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment, LiveWorldObject,
         PlaneRelation, PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile,
         RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
-        SerializationOwner, SpatialConnection, SpatialConnectionStatus, SpatialPlane,
-        SpatialVolume, SpatialVolumeShape, StateComponent,
+        SerializationOwner, SpatialConnection, SpatialConnectionStatus, SpatialLocalAxis,
+        SpatialPlane, SpatialVolume, SpatialVolumeShape, StateComponent,
     };
     use crate::transition::{
-        ActivationContract, ObligationKind, StateOperation, TemporalWindow, TransitionKind,
-        UnknownRequirement, VolumeReference,
+        ActivationContract, InteractionBranch, InteractionPosition, InteractionVolumeTest,
+        ObligationKind, StateOperation, TemporalWindow, TransitionKind, UnknownRequirement,
+        VolumeReference,
     };
 
     fn evidence(truth: TruthStatus) -> RuleEvidence {
@@ -1661,6 +1756,7 @@ mod tests {
                     form: PlayerForm::Human,
                     mount: None,
                     position: [0.0; 3],
+                    attention_position: None,
                     rotation: [0; 3],
                     has_control: Some(true),
                     action: "idle".into(),
@@ -3154,6 +3250,124 @@ mod tests {
                 field: "executing".into(),
             }),
             None
+        );
+    }
+
+    #[test]
+    fn compound_interaction_selects_form_branch_and_keeps_attention_distinct() {
+        let mut snapshot = snapshot(0xff);
+        snapshot.environment.player.form = PlayerForm::Wolf;
+        snapshot.environment.player.position = [100.0, 0.0, 1000.0];
+        snapshot.environment.player.attention_position = Some([150.0, 0.0, 50.0]);
+        snapshot.environment.live_world_objects = vec![LiveWorldObject {
+            instance_id: "actor.boss-door".into(),
+            static_object_id: None,
+            actor_type: "door.boss-l1".into(),
+            lifecycle: ActorLifecycle::Loaded,
+            fields: BTreeMap::new(),
+        }];
+        snapshot.environment.spatial_volumes = vec![
+            SpatialVolume {
+                object_id: "actor.boss-door".into(),
+                volume_id: "check-area".into(),
+                shape: SpatialVolumeShape::YawOrientedRectangle {
+                    origin_xz: [0.0, 0.0],
+                    yaw: 0,
+                    minimum_local_xz: [-200.0, -100.0],
+                    maximum_local_xz: [200.0, 100.0],
+                },
+                source_sha256: Digest([20; 32]),
+            },
+            SpatialVolume {
+                object_id: "actor.boss-door".into(),
+                volume_id: "wolf-current-x".into(),
+                shape: SpatialVolumeShape::YawOrientedStrip {
+                    origin_xz: [0.0, 0.0],
+                    yaw: 0,
+                    axis: SpatialLocalAxis::X,
+                    minimum: -130.0,
+                    maximum: 130.0,
+                },
+                source_sha256: Digest([20; 32]),
+            },
+        ];
+        snapshot.environment.validate().unwrap();
+        let reference = |volume_id: &str, position| InteractionVolumeTest {
+            position,
+            volume: VolumeReference {
+                object_id: "actor.boss-door".into(),
+                volume_id: volume_id.into(),
+            },
+            must_be_inside: true,
+        };
+        let form_is = |form: &str| PredicateExpression::Compare {
+            left: ValueReference::PlayerForm,
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Text(form.into()),
+            },
+        };
+        let obligation = FeasibilityObligation {
+            id: "obligation.boss-door-area".into(),
+            label: "Satisfy form-specific boss-door area checks".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Interaction,
+            detail: ObligationDetail::CompoundInteraction {
+                actor_instance_id: "actor.boss-door".into(),
+                interaction_mode: "door".into(),
+                branches: vec![
+                    InteractionBranch {
+                        when: form_is("human"),
+                        volume_tests: vec![reference("check-area", InteractionPosition::Player)],
+                        pose_predicate: PredicateExpression::True,
+                    },
+                    InteractionBranch {
+                        when: form_is("wolf"),
+                        volume_tests: vec![
+                            reference("check-area", InteractionPosition::PlayerAttention),
+                            reference("wolf-current-x", InteractionPosition::Player),
+                        ],
+                        pose_predicate: PredicateExpression::True,
+                    },
+                ],
+                temporal_requirement: None,
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
+        let facts = facts(&snapshot, TruthStatus::Established);
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation, &[])
+                .classification,
+            ObligationClassification::Satisfied
+        );
+
+        snapshot.environment.player.attention_position = None;
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation, &[])
+                .classification,
+            ObligationClassification::EvaluationUnknown
+        );
+
+        snapshot.environment.player.form = PlayerForm::Human;
+        snapshot.environment.player.position = [150.0, 999.0, 50.0];
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation, &[])
+                .classification,
+            ObligationClassification::Satisfied,
+            "the inactive wolf branch must not demand an attention observation"
+        );
+
+        snapshot.environment.player.form = PlayerForm::Wolf;
+        snapshot.environment.player.attention_position = Some([150.0, 0.0, 50.0]);
+        snapshot.environment.player.position = [131.0, 0.0, 0.0];
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation, &[])
+                .classification,
+            ObligationClassification::Unsatisfied
         );
     }
 }

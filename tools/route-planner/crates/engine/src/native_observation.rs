@@ -257,6 +257,10 @@ pub struct NativeLearningObservation {
     pub player_present: bool,
     pub player_is_link: bool,
     pub player_position: [f32; 3],
+    /// Exact `daPy_py_c::attention_info.position` when the observation producer
+    /// captures it. Legacy shards omit this channel.
+    #[serde(default)]
+    pub player_attention_position: Option<[f32; 3]>,
     pub player_current_angle: [i16; 3],
     pub player_form_present: bool,
     pub player_is_wolf: bool,

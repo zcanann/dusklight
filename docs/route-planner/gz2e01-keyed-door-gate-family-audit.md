@@ -188,13 +188,13 @@ V10 also separates transition association by kind: encoded-map and door
 transitions must be referenced exactly once by an encoded SCLS record, while
 in-room actor-driven actions must not be attached to a fabricated exit.
 
-For L5 boss doors, v10 replaces the former prose-only interaction boundary
-with placement-derived typed observations: a yaw-oriented actor-local
-`checkArea` rectangle, a positive-local-Z front plane, and a shortest-circular
-binary-angle facing obligation. The loaded actor/event/collision/scene-change
-phase remains unresolved, and L1's wolf-only attention-position plus narrower
-current-position compound test remains explicit rather than being approximated
-as a single player-origin rectangle.
+For L1 and L5 boss doors, v10 replaces the former prose-only interaction
+boundary with placement-derived typed observations: yaw-oriented actor-local
+`checkArea` rectangles and shortest-circular binary-angle facing obligations.
+L5 adds its positive-local-Z front plane. L1 uses form-selected compound
+branches so wolf attention position and the independent narrower player-origin
+X strip remain distinct; a missing attention capture evaluates unknown. The
+loaded actor/event/collision/scene-change phase remains unresolved.
 
 The importer intentionally excludes rider gates, caravan gates, externally
 switched `vshuter`, absent/non-memory switches, Koki-gate types without exact
