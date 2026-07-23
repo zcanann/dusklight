@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v15";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v16";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 const DUNGEON_SESSION_SWITCH_LABEL_KIND: &str = "observed-dungeon-session-switch-labels";
@@ -1437,6 +1437,7 @@ fn import_gz2e01_keyed_actor_actions(
         "vshuter" => {
             import_gz2e01_external_switch_shutter(inventory, placement, scope, inventory_sha256)
         }
+        "Wchain" => import_gz2e01_wolf_chain_switch(inventory, placement, scope, inventory_sha256),
         "K_Gate" => import_gz2e01_koki_gate(inventory, placement, scope, inventory_sha256),
         "R_Gate" => import_gz2e01_rider_gate(inventory, placement, scope, inventory_sha256),
         "CrvGate" => import_gz2e01_caravan_gate(inventory, placement, scope, inventory_sha256),
@@ -1916,6 +1917,135 @@ fn import_gz2e01_external_switch_shutter(
         },
         Vec::new(),
         &[actor_id, passage_id],
+        &evidence,
+    );
+    Ok(Some(ImportedKeyedActorActions {
+        exit_record_id: None,
+        transitions: vec![transition],
+        obligations,
+    }))
+}
+
+fn import_gz2e01_wolf_chain_switch(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedKeyedActorActions>, PlannerContractError> {
+    let Some(room) = placement.scope.room else {
+        return Ok(None);
+    };
+    let switch_id = placement.parameters as u8;
+    let authored_repeat = ((placement.parameters >> 8) & 0x0f) as u8;
+    let repeatable = authored_repeat != 0 && authored_repeat != 0x0f;
+    if inventory.stage != "R_SP116"
+        || room != 6
+        || switch_id != 0xef
+        || authored_repeat != 0x0f
+        || repeatable
+    {
+        return Ok(None);
+    }
+
+    let family = "wolf-chain-switch";
+    let token = stable_token(
+        "keyed",
+        &[
+            family.as_bytes(),
+            inventory.stage.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    let evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![
+            EvidenceRecord {
+                id: format!("evidence.source.actor.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(
+                    "e72a2bfcc715f03d1fa934a2033e4360aa22fbfd2ffd4c962cb7a27c949b7fd0",
+                )),
+                note: "d_a_obj_wchain.cpp: low parameter byte selects the switch; authored repeat nibble 0xf normalizes to one-shot; onNowSwitch writes the clear switch on the next chain execute.".into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.source.player.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(
+                    "b0c094b0c95144d7c5f89bc1d35d63fcde80f1f032a7772670a8142eb4dc9d8d",
+                )),
+                note: "d_a_alink_wolf.inc: wolf chain ready/wait state attaches to Wchain and raises onNowSwitch after pull length exceeds the exact 94-unit switch offset.".into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.source.switch-dispatch.{token}"),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(static_digest(
+                    "a275457390b8464750adaab345c769afa2dc0b295baba47a617ce6aad6fd26d3",
+                )),
+                note: "d_save.cpp: switch 0xef resolves through the current room's one-zone switch store.".into(),
+            },
+            EvidenceRecord {
+                id: format!("evidence.world.inventory.{token}"),
+                kind: EvidenceKind::Extracted,
+                source_sha256: Some(inventory_sha256),
+                note: format!(
+                    "Authenticated R_SP116 room-6 Wchain placement {} with parameters 0x00000fef.",
+                    placement.stable_id
+                ),
+            },
+        ],
+    };
+    let unknown_evidence = RuleEvidence {
+        truth: TruthStatus::Unknown,
+        records: evidence.records.clone(),
+    };
+    let interaction_id = format!("obligation.interaction.{token}");
+    let effect_id = format!("obligation.actor-state.{token}");
+    let obligations = vec![
+        FeasibilityObligation {
+            id: interaction_id.clone(),
+            label: "Reach, bite, and pull the R_SP116 room-6 wolf chain".into(),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Reach the chain as wolf, acquire its attention target, complete the ready jump without a wall hit, remain attached through the tension wait, and pull past the exact 94-unit switch offset.".into(),
+            },
+            evidence: unknown_evidence.clone(),
+        },
+        FeasibilityObligation {
+            id: effect_id.clone(),
+            label: "Commit the R_SP116 Wchain one-shot switch write".into(),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Effect,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Confirm onNowSwitch survives into the chain actor's next execute, writes one-zone switch 0xef, and completes without an intervening unload.".into(),
+            },
+            evidence: unknown_evidence,
+        },
+    ];
+    let transition = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "wolf-pull-switch",
+        "R_SP116 room 6 wolf-chain pull sets one-zone switch 0xef",
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                placement_location_guard(inventory, placement, room),
+                PredicateExpression::Compare {
+                    left: ValueReference::PlayerForm,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("wolf".into()),
+                    },
+                },
+                room_switch_label_guard(switch_id, false),
+            ],
+        },
+        vec![room_switch_label_write(switch_id, true)],
+        &[effect_id, interaction_id],
         &evidence,
     );
     Ok(Some(ImportedKeyedActorActions {
@@ -2753,6 +2883,18 @@ fn dungeon_session_switch_write(switch_id: u8) -> StateOperation {
         byte_offset: u32::from(switch_id - 0x80),
         mask: vec![1],
         value: vec![1],
+    }
+}
+
+fn room_switch_label_write(switch_id: u8, set: bool) -> StateOperation {
+    StateOperation::WriteBoundRaw {
+        component_kind: ComponentKind::Custom {
+            id: ROOM_SWITCH_LABEL_KIND.into(),
+        },
+        binding: ComponentBindingReference::CurrentRoom,
+        byte_offset: u32::from(switch_id),
+        mask: vec![1],
+        value: vec![u8::from(set)],
     }
 }
 
@@ -4739,7 +4881,7 @@ mod tests {
     }
 
     #[test]
-    fn imports_rsp116_vshuter_as_external_one_zone_switch_passage() {
+    fn imports_rsp116_wolf_chain_writer_and_vshuter_consumer_as_causal_pair() {
         let content = audited_content();
         let runtime = runtime(&content);
         let mut inventory = regular_key_shutter_inventory();
@@ -4749,6 +4891,12 @@ mod tests {
         placement.name = "vshuter".into();
         placement.scope.room = Some(6);
         placement.parameters = 0x00ff_03ef;
+        let mut chain = placement.clone();
+        chain.stable_id = format!("{}/wchain", chain.stable_id);
+        chain.name = "Wchain".into();
+        chain.parameters = 0x0000_0fef;
+        chain.raw_hex = "57636861696e000000000fefbefd6d7fc4fa0000c4a71af4000000000000ffff".into();
+        inventory.placements.push(chain);
         let context = world_context(content.fingerprint.game_data_sha256, &inventory);
         let facts = ExtractedWorldFacts::build(
             &content,
@@ -4758,9 +4906,45 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(facts.mechanics.transitions.len(), 1);
-        assert_eq!(facts.mechanics.obligations.len(), 2);
-        let passage = &facts.mechanics.transitions[0];
+        assert_eq!(facts.mechanics.transitions.len(), 2);
+        assert_eq!(facts.mechanics.obligations.len(), 4);
+        let writer = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("wolf-chain pull"))
+            .unwrap();
+        assert!(matches!(
+            writer.activation.effects.as_slice(),
+            [StateOperation::WriteBoundRaw {
+                component_kind: ComponentKind::Custom { id },
+                binding: ComponentBindingReference::CurrentRoom,
+                byte_offset: 0xef,
+                mask,
+                value,
+            }] if id == ROOM_SWITCH_LABEL_KIND && mask == &[1] && value == &[1]
+        ));
+        assert!(matches!(
+            &writer.activation.hard_guards,
+            PredicateExpression::All { terms }
+                if terms.iter().any(|term| matches!(
+                    term,
+                    PredicateExpression::Compare {
+                        left: ValueReference::PlayerForm,
+                        operator: ComparisonOperator::Equal,
+                        right: ValueReference::Literal {
+                            value: StateValue::Text(form),
+                        },
+                    } if form == "wolf"
+                ))
+        ));
+
+        let passage = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("externally switched passage"))
+            .unwrap();
         assert!(passage.activation.effects.is_empty());
         assert!(matches!(
             &passage.activation.hard_guards,

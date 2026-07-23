@@ -26,7 +26,7 @@ yaw and accepts `|local_x| <= 200` and `|local_z| <= 100`. `checkFront`
 separately requires `local_z > 0`. The facing test compares player yaw against
 `door_yaw - 0x7fff` with maximum binary-angle delta `0x4000`.
 
-World facts v15 therefore emit, for each exact imported L5 boss door:
+World facts v16 therefore emit, for each exact imported L5 boss door:
 
 - one placement-origin yaw-oriented `checkArea` rectangle;
 - one strict positive-local-Z plane;

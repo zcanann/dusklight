@@ -2134,8 +2134,13 @@ Deliverable: replayable state evidence that can validate transition rules.
         dungeon-session Boolean view, preserving normal/high-count key writes,
         set-switch passage, and M_035 forced-open branches. Import the exact
         R_SP116 room-6 `vshuter` as a state-neutral passage guarded by the
-        current-room one-zone switch `0xef`, without inventing its external
-        writer.
+        current-room one-zone switch `0xef`.
+  - [x] Trace and import the exact colocated `Wchain` producer for R_SP116
+        switch `0xef`. Its parameters `0x00000fef` normalize to one-shot; a wolf
+        pull past the 94-unit threshold writes the shared current-room one-zone
+        view, composing causally with `vshuter` while attention, ready-jump,
+        tension, pull, actor-execute, opening, and collision phases remain
+        obligations.
   - [x] Import the exact F_SP118 room-1 and room-2 caravan-gate parents as
         transient paired actions. Normal/high-count key branches consume one
         key without inventing an unlock switch; the running-boar destruction
@@ -2495,7 +2500,7 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 ### Phase 5 — Physical feasibility and obstructions
 
 - [x] Derive approach geometry from collision and spawn data where possible.
-      World facts v15 attaches one typed approach-geometry record to every
+      World facts v16 attaches one typed approach-geometry record to every
       collision-derived encoded-map candidate. Reconstructed KCL prisms retain
       their exact triangle, plane, and computed bounds; same-room player spawns
       are linked as candidates, never asserted paths. Degenerate reconstruction
@@ -3874,8 +3879,7 @@ These should remain explicit unknowns until evidence closes them:
 - Whether any existing technique can preserve/rebind live stage memory across a
   context that normally replaces it.
 - Complete semantic mapping for stage, zone, dungeon, and temporary flag banks.
-- The exact writer provenance for R_SP116 one-zone switch `0xef`; cross-build
-  keyed-family equivalence also remains unproved.
+- Cross-build keyed-family equivalence remains unproved.
 - Exact Fanadi/Ooccoo glitch sequence, `NO_TELOP` lifetime, clear conditions, and
   build support.
 - All return-place writers encountered on paths to Fanadi.
