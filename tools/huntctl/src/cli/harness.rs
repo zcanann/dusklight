@@ -371,6 +371,36 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         println!("{}", serde_json::to_string_pretty(&state)?);
         return Ok(());
     }
+    if args.first().map(String::as_str) == Some("evaluate-native-goal-learning-checkpoints") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?;
+        let request: huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--loop-request")?)?)?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--request")?)?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(required_path(command_args, "--execution")?)?)?;
+        let state =
+            huntctl::search_evaluator::native_goal_learning_loop::load_native_goal_learning_loop(
+                &request,
+                &repository_root,
+                &optimization,
+                &execution,
+            )?;
+        let report = huntctl::search_evaluator::native_goal_learning_loop::evaluate_native_goal_learning_checkpoints(
+            &state,
+            &repository_root,
+        )?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "native goal learning checkpoint report",
+        )?;
+        refuse_existing_output(&output, "native goal learning checkpoint report")?;
+        write_new_file(&output, report.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("run-native-goal-learning-loop") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?;

@@ -16,8 +16,12 @@ use dusklight_learning::native_generic_observation::{
     NATIVE_GENERIC_OBSERVATION_HISTORY_DEPTH, native_generic_observation_contract_sha256,
     validate_native_generic_observation_shard,
 };
-use dusklight_learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
-use dusklight_learning::native_goal_reachability::NativeGoalReachabilityConfig;
+use dusklight_learning::native_goal_frozen_policy::{
+    NativeGoalFrozenPolicyConfig, NativeGoalFrozenPolicyManifest, NativeGoalFrozenPolicyMetrics,
+};
+use dusklight_learning::native_goal_reachability::{
+    NativeGoalReachabilityConfig, NativeGoalReachabilityMetrics, NativeGoalReachabilityModel,
+};
 use dusklight_learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
 use dusklight_learning::native_policy_collapse::NativePolicyCollapseReport;
 use dusklight_learning::native_replay_corpus::{
@@ -41,6 +45,8 @@ pub const NATIVE_GOAL_LEARNING_LOOP_RECORD_SCHEMA_V3: &str =
     "dusklight-native-goal-learning-loop-record/v3";
 pub const NATIVE_GOAL_LEARNING_LOOP_STATE_SCHEMA_V3: &str =
     "dusklight-native-goal-learning-loop-state/v3";
+pub const NATIVE_GOAL_LEARNING_CHECKPOINT_REPORT_SCHEMA_V1: &str =
+    "dusklight-native-goal-learning-checkpoint-report/v1";
 
 const MIN_GENERATIONS: u16 = 3;
 const MAX_GENERATIONS: u16 = 1_024;
@@ -229,6 +235,45 @@ pub struct NativeGoalLearningLoopState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stopped: Option<NativeGoalLearningStopState>,
     pub state_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeGoalLearningCheckpointPerformance {
+    pub generation: u16,
+    pub input_corpus_sha256: Digest,
+    pub output_corpus_sha256: Digest,
+    pub output_entries: u64,
+    pub output_transitions: u64,
+    pub simulated_ticks: u64,
+    pub rollouts: u64,
+    pub terminal_successes: u64,
+    pub terminal_success_millionths: u32,
+    pub unique_success_ticks: u64,
+    pub reachability_model_sha256: Digest,
+    pub policy_manifest_sha256: Digest,
+    pub critic_validation: NativeGoalReachabilityMetrics,
+    pub critic_test: NativeGoalReachabilityMetrics,
+    pub policy_validation: NativeGoalFrozenPolicyMetrics,
+    pub policy_test: NativeGoalFrozenPolicyMetrics,
+    pub unique_parent_states: u64,
+    pub unique_consumed_actions: u64,
+    pub unique_action_trajectories: u64,
+    pub unique_state_identities: u64,
+    pub contact_observations: u64,
+    pub unique_contact_signatures: u64,
+    pub collapse_detected: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeGoalLearningCheckpointReport {
+    pub schema: String,
+    pub source_loop_state_sha256: Digest,
+    pub checkpoints: Vec<NativeGoalLearningCheckpointPerformance>,
+    pub charged_simulated_ticks: u64,
+    pub promotion_authority: bool,
+    pub report_sha256: Digest,
 }
 
 impl NativeGoalLearningLoopRequest {
@@ -589,6 +634,248 @@ impl NativeGoalLearningLoopState {
             &canonical,
         )
     }
+}
+
+impl NativeGoalLearningCheckpointReport {
+    pub fn validate(&self) -> Result<(), NativeGoalLearningLoopError> {
+        if self.schema != NATIVE_GOAL_LEARNING_CHECKPOINT_REPORT_SCHEMA_V1
+            || self.source_loop_state_sha256 == Digest::ZERO
+            || self.checkpoints.is_empty()
+            || self.promotion_authority
+            || self
+                .checkpoints
+                .windows(2)
+                .any(|pair| pair[0].generation.checked_add(1) != Some(pair[1].generation))
+            || self
+                .checkpoints
+                .first()
+                .is_some_and(|checkpoint| checkpoint.generation != 1)
+            || self.charged_simulated_ticks
+                != self
+                    .checkpoints
+                    .iter()
+                    .try_fold(0_u64, |total, checkpoint| {
+                        total.checked_add(checkpoint.simulated_ticks)
+                    })
+                    .ok_or_else(|| loop_message("checkpoint-report tick total overflowed"))?
+            || self
+                .checkpoints
+                .iter()
+                .any(|checkpoint| !checkpoint_performance_valid(checkpoint))
+            || self.report_sha256 != self.identity()?
+        {
+            return Err(loop_message(
+                "native goal learning checkpoint report is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn to_pretty_json(&self) -> Result<Vec<u8>, NativeGoalLearningLoopError> {
+        pretty_json(self)
+    }
+
+    fn identity(&self) -> Result<Digest, NativeGoalLearningLoopError> {
+        let mut canonical = self.clone();
+        canonical.report_sha256 = Digest::ZERO;
+        canonical_digest(
+            b"dusklight.native-goal-learning-checkpoint-report/v1\0",
+            &canonical,
+        )
+    }
+}
+
+pub fn evaluate_native_goal_learning_checkpoints(
+    state: &NativeGoalLearningLoopState,
+    repository_root: &Path,
+) -> Result<NativeGoalLearningCheckpointReport, NativeGoalLearningLoopError> {
+    state.validate()?;
+    let root = canonical_root(repository_root)?;
+    let mut checkpoints = Vec::with_capacity(state.committed_generations as usize);
+    for generation in state
+        .generations
+        .iter()
+        .filter(|generation| generation.committed_record_sha256.is_some())
+    {
+        let model: NativeGoalReachabilityModel =
+            serde_json::from_slice(&read_reference(&root, &generation.reachability_model)?)
+                .map_err(loop_error)?;
+        model.validate().map_err(loop_error)?;
+        let policy: NativeGoalFrozenPolicyManifest =
+            serde_json::from_slice(&read_reference(&root, &generation.policy_manifest)?)
+                .map_err(loop_error)?;
+        let frozen_model = read_reference(&root, &generation.frozen_model)?;
+        policy.validate(&frozen_model).map_err(loop_error)?;
+        let collapse_reference = generation
+            .collapse_diagnostics
+            .as_ref()
+            .ok_or_else(|| loop_message("committed generation lacks collapse diagnostics"))?;
+        let collapse: NativePolicyCollapseReport =
+            serde_json::from_slice(&read_reference(&root, collapse_reference)?)
+                .map_err(loop_error)?;
+        collapse.validate().map_err(loop_error)?;
+        let output_corpus_sha256 = generation
+            .output_corpus_sha256
+            .ok_or_else(|| loop_message("committed generation lacks output corpus identity"))?;
+        let output_entries = generation
+            .output_entries
+            .ok_or_else(|| loop_message("committed generation lacks output entry count"))?;
+        let output_transitions = generation
+            .output_transitions
+            .ok_or_else(|| loop_message("committed generation lacks output transition count"))?;
+        let simulated_ticks = generation
+            .simulated_ticks
+            .ok_or_else(|| loop_message("committed generation lacks simulated ticks"))?;
+        let successes = u64::from(
+            generation
+                .successes
+                .ok_or_else(|| loop_message("committed generation lacks terminal outcomes"))?,
+        );
+        if model.model_sha256 != generation.reachability_model_sha256
+            || policy.manifest_sha256 != generation.policy_manifest_sha256
+            || policy.source_reachability_model_sha256 != model.model_sha256
+            || !model
+                .source_replay_corpus_sha256
+                .contains(&generation.input_corpus_sha256)
+            || policy.source_replay_corpus_sha256 != generation.input_corpus_sha256
+            || collapse.generation != generation.generation
+            || collapse.successes != successes
+            || collapse.rollouts == 0
+        {
+            return Err(loop_message(
+                "checkpoint diagnostics differ from generation lineage",
+            ));
+        }
+        let success_millionths = successes
+            .checked_mul(1_000_000)
+            .and_then(|value| value.checked_div(collapse.rollouts))
+            .and_then(|value| u32::try_from(value).ok())
+            .ok_or_else(|| loop_message("checkpoint success rate overflowed"))?;
+        checkpoints.push(NativeGoalLearningCheckpointPerformance {
+            generation: generation.generation,
+            input_corpus_sha256: generation.input_corpus_sha256,
+            output_corpus_sha256,
+            output_entries,
+            output_transitions,
+            simulated_ticks,
+            rollouts: collapse.rollouts,
+            terminal_successes: successes,
+            terminal_success_millionths: success_millionths,
+            unique_success_ticks: collapse.unique_success_ticks,
+            reachability_model_sha256: model.model_sha256,
+            policy_manifest_sha256: policy.manifest_sha256,
+            critic_validation: model.validation.clone(),
+            critic_test: model.test.clone(),
+            policy_validation: policy.validation.clone(),
+            policy_test: policy.test.clone(),
+            unique_parent_states: collapse.unique_parent_states,
+            unique_consumed_actions: collapse.unique_consumed_actions,
+            unique_action_trajectories: collapse.unique_action_trajectories,
+            unique_state_identities: collapse.unique_state_identities,
+            contact_observations: collapse.contact_observations,
+            unique_contact_signatures: collapse.unique_contact_signatures,
+            collapse_detected: collapse.collapse_detected,
+        });
+    }
+    if checkpoints.len() != usize::from(state.committed_generations) {
+        return Err(loop_message(
+            "checkpoint report does not cover every committed generation",
+        ));
+    }
+    let charged_simulated_ticks = checkpoints
+        .iter()
+        .try_fold(0_u64, |total, checkpoint| {
+            total.checked_add(checkpoint.simulated_ticks)
+        })
+        .ok_or_else(|| loop_message("checkpoint-report tick total overflowed"))?;
+    let mut report = NativeGoalLearningCheckpointReport {
+        schema: NATIVE_GOAL_LEARNING_CHECKPOINT_REPORT_SCHEMA_V1.into(),
+        source_loop_state_sha256: state.state_sha256,
+        checkpoints,
+        charged_simulated_ticks,
+        promotion_authority: false,
+        report_sha256: Digest::ZERO,
+    };
+    report.report_sha256 = report.identity()?;
+    report.validate()?;
+    Ok(report)
+}
+
+fn checkpoint_performance_valid(checkpoint: &NativeGoalLearningCheckpointPerformance) -> bool {
+    checkpoint.generation > 0
+        && checkpoint.input_corpus_sha256 != Digest::ZERO
+        && checkpoint.output_corpus_sha256 != Digest::ZERO
+        && checkpoint.output_entries > 0
+        && checkpoint.output_transitions > 0
+        && checkpoint.simulated_ticks > 0
+        && checkpoint.rollouts > 0
+        && checkpoint.terminal_successes <= checkpoint.rollouts
+        && checkpoint.terminal_success_millionths
+            == u32::try_from(
+                checkpoint.terminal_successes.saturating_mul(1_000_000) / checkpoint.rollouts,
+            )
+            .unwrap_or(u32::MAX)
+        && checkpoint.reachability_model_sha256 != Digest::ZERO
+        && checkpoint.policy_manifest_sha256 != Digest::ZERO
+        && reachability_metrics_valid(&checkpoint.critic_validation)
+        && reachability_metrics_valid(&checkpoint.critic_test)
+        && policy_metrics_valid(&checkpoint.policy_validation)
+        && policy_metrics_valid(&checkpoint.policy_test)
+        && checkpoint.unique_parent_states <= checkpoint.rollouts
+        && checkpoint.unique_action_trajectories <= checkpoint.rollouts
+}
+
+fn reachability_metrics_valid(metrics: &NativeGoalReachabilityMetrics) -> bool {
+    metrics.rows > 0
+        && metrics.episodes > 0
+        && metrics.successful_rows > 0
+        && metrics.failed_rows > 0
+        && metrics.successful_rows + metrics.failed_rows == metrics.rows
+        && [
+            metrics.reachability_brier,
+            metrics.baseline_reachability_brier,
+            metrics.reachability_relative_improvement,
+            metrics.successful_time_mae_ticks,
+            metrics.baseline_successful_time_mae_ticks,
+            metrics.successful_time_relative_improvement,
+            metrics.discounted_return_rmse,
+            metrics.baseline_discounted_return_rmse,
+            metrics.return_relative_improvement,
+            metrics.discounted_tick_cost_mae,
+            metrics.baseline_discounted_tick_cost_mae,
+            metrics.tick_cost_relative_improvement,
+            metrics.mean_reachability_stddev,
+            metrics.mean_return_stddev,
+        ]
+        .into_iter()
+        .all(|value| value.is_finite() && value >= 0.0)
+        && metrics.reachability_brier <= 1.0
+        && metrics.baseline_reachability_brier <= 1.0
+        && metrics.mean_reachability_stddev <= 0.5
+        && metrics.mean_return_stddev <= 0.5
+}
+
+fn policy_metrics_valid(metrics: &NativeGoalFrozenPolicyMetrics) -> bool {
+    metrics.rows > 0
+        && metrics.episodes > 0
+        && [
+            metrics.continuous_mae,
+            metrics.baseline_continuous_mae,
+            metrics.button_bit_error_rate,
+            metrics.baseline_button_bit_error_rate,
+            metrics.joint_error,
+            metrics.baseline_joint_error,
+            metrics.joint_relative_improvement,
+            metrics.decoded_pad_exact_rate,
+            metrics.baseline_decoded_pad_exact_rate,
+        ]
+        .into_iter()
+        .all(|value| value.is_finite() && (0.0..=2.0).contains(&value))
+        && metrics.button_bit_error_rate <= 1.0
+        && metrics.baseline_button_bit_error_rate <= 1.0
+        && metrics.joint_relative_improvement <= 1.0
+        && metrics.decoded_pad_exact_rate <= 1.0
+        && metrics.baseline_decoded_pad_exact_rate <= 1.0
 }
 
 pub fn initialize_native_goal_learning_loop(
@@ -1377,6 +1664,88 @@ mod tests {
         assert_eq!(minimum_discovery_horizon_ticks(131).unwrap(), 147);
         assert_eq!(minimum_discovery_horizon_ticks(1_000).unwrap(), 1_100);
         assert!(minimum_discovery_horizon_ticks(u64::MAX).is_err());
+    }
+
+    fn reachability_metrics() -> NativeGoalReachabilityMetrics {
+        NativeGoalReachabilityMetrics {
+            rows: 4,
+            episodes: 2,
+            successful_rows: 2,
+            failed_rows: 2,
+            reachability_brier: 0.1,
+            baseline_reachability_brier: 0.2,
+            reachability_relative_improvement: 0.5,
+            successful_time_mae_ticks: 1.0,
+            baseline_successful_time_mae_ticks: 2.0,
+            successful_time_relative_improvement: 0.5,
+            discounted_return_rmse: 0.1,
+            baseline_discounted_return_rmse: 0.2,
+            return_relative_improvement: 0.5,
+            discounted_tick_cost_mae: 0.1,
+            baseline_discounted_tick_cost_mae: 0.2,
+            tick_cost_relative_improvement: 0.5,
+            mean_reachability_stddev: 0.05,
+            mean_return_stddev: 0.04,
+        }
+    }
+
+    fn policy_metrics() -> NativeGoalFrozenPolicyMetrics {
+        NativeGoalFrozenPolicyMetrics {
+            rows: 4,
+            episodes: 2,
+            continuous_mae: 0.1,
+            baseline_continuous_mae: 0.2,
+            button_bit_error_rate: 0.1,
+            baseline_button_bit_error_rate: 0.2,
+            joint_error: 0.2,
+            baseline_joint_error: 0.4,
+            joint_relative_improvement: 0.5,
+            decoded_pad_exact_rate: 0.5,
+            baseline_decoded_pad_exact_rate: 0.25,
+        }
+    }
+
+    #[test]
+    fn checkpoint_report_seals_all_required_performance_axes() {
+        let checkpoint = NativeGoalLearningCheckpointPerformance {
+            generation: 1,
+            input_corpus_sha256: Digest([1; 32]),
+            output_corpus_sha256: Digest([2; 32]),
+            output_entries: 10,
+            output_transitions: 100,
+            simulated_ticks: 320,
+            rollouts: 4,
+            terminal_successes: 1,
+            terminal_success_millionths: 250_000,
+            unique_success_ticks: 1,
+            reachability_model_sha256: Digest([3; 32]),
+            policy_manifest_sha256: Digest([4; 32]),
+            critic_validation: reachability_metrics(),
+            critic_test: reachability_metrics(),
+            policy_validation: policy_metrics(),
+            policy_test: policy_metrics(),
+            unique_parent_states: 2,
+            unique_consumed_actions: 8,
+            unique_action_trajectories: 4,
+            unique_state_identities: 80,
+            contact_observations: 20,
+            unique_contact_signatures: 3,
+            collapse_detected: false,
+        };
+        let mut report = NativeGoalLearningCheckpointReport {
+            schema: NATIVE_GOAL_LEARNING_CHECKPOINT_REPORT_SCHEMA_V1.into(),
+            source_loop_state_sha256: Digest([5; 32]),
+            checkpoints: vec![checkpoint],
+            charged_simulated_ticks: 320,
+            promotion_authority: false,
+            report_sha256: Digest::ZERO,
+        };
+        report.report_sha256 = report.identity().unwrap();
+        report.validate().unwrap();
+
+        report.checkpoints[0].terminal_success_millionths = 1_000_000;
+        report.report_sha256 = report.identity().unwrap();
+        assert!(report.validate().is_err());
     }
 
     fn initialize_journal(root: &Path, request: &NativeGoalLearningLoopRequest) {

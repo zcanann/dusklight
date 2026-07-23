@@ -756,7 +756,16 @@ revalidated crash-safe journal/state chain.
       proving those fields cannot provide the observed signal through this
       input contract. The sealed diagnosis is recorded in
       `routes/Glitch Exhibition/intro/benchmarks/ordon-q131-goal-reachability-negative-controls.md`.
-- [ ] Attribute failure before changing architecture:
+- [x] Attribute failure before changing architecture. The sealed q131
+      checkpoint report attributes the current online failure to
+      exploration/population collapse and sparse terminal coverage: all twelve
+      byte-exactly reinferred policy rollouts miss, each generation has one
+      parent state and one action trajectory, while the complete PAD surface,
+      113--159 distinct consumed actions, 161 state identities, persistent
+      native throughput, and well-calibrated held-out critics rule out the
+      obvious action-support, inference, and execution fallbacks. Observation
+      limits remain separately measured by the negative-control sweep. See
+      `routes/Glitch Exhibition/intro/benchmarks/ordon-q131-goal-learning-checkpoints.md`.
   - observation insufficiency;
   - lossy or unsupported action surface;
   - sparse terminal coverage or poor credit assignment;
@@ -766,9 +775,17 @@ revalidated crash-safe journal/state chain.
 - [ ] Add or change FQI, Double Q, DDQN, recurrent state, model-based rollouts,
       or network capacity only when a controlled comparison targets one of those
       diagnosed failures.
-- [ ] Track terminal success, time-to-go calibration, critic disagreement,
+- [x] Track terminal success, time-to-go calibration, critic disagreement,
       effective state/action coverage, and performance by checkpoint. Never
-      promote on training loss alone.
+      promote on training loss alone. `campaign
+      evaluate-native-goal-learning-checkpoints` replays the authenticated loop
+      journal and validates every critic, policy, frozen model, and collapse
+      artifact before sealing one row per committed generation. Report v1 binds
+      native success rate/ticks, corpus size, held-out Brier and successful-time
+      MAE, reachability/return disagreement, held-out factorized-PAD errors, and
+      parent/action/trajectory/state/contact diversity with
+      `promotion_authority: false`. The real q131 v2 report covers all three
+      checkpoints and 1,920 charged ticks.
 
 **Gate 4:** under equal budgets, state-conditioned learning produces more held-out
 successes, faster valid routes, or materially better sample efficiency than the
