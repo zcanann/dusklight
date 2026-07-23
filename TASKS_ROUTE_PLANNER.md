@@ -3161,8 +3161,18 @@ slice into release criteria only when it exercises a missing core semantic law.
       item-bit consumer unchanged across builds, applies external HD targeting
       evidence as a resolver, leaves base SD blocked, and enables SD only through
       an explicitly hypothetical removable geometry refinement.
-- [ ] Prove GCN BiT does not author a rod loss; it merely lacks reachable producers.
-- [ ] Collapse all methods into `obtain Fishing Rod` with residual-state safety.
+- [x] Prove GCN BiT does not author a rod loss; it merely lacks reachable producers.
+      In a title-file-0 `F_SP102` state, every ordinary/chicken producer is
+      guard-blocked by its explicit Ordon `F_SP103` scope and the producer-cut
+      query is unreachable under the enabled model. Setting the actual rod
+      inventory bit in that identical file-0 state satisfies the goal with zero
+      actions, proving there is no separate BiT/rod-loss predicate.
+- [x] Collapse all methods into `obtain Fishing Rod` with residual-state safety.
+      Ordinary, chicken-plus-hawk, direct OOB/reload, and the existing Auru
+      consumer all target the actual item `0x4a` ownership bit and the single
+      `goal.obtain-fishing-rod`. Regression execution proves the three Ordon
+      methods retain distinct quest/carry/reload residual maps and preserve an
+      unrelated inventory bit, so the friendly goal does not merge their states.
 
 #### 11B. Back in Time/file 0
 

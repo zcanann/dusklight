@@ -726,4 +726,165 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn title_file_zero_has_no_synthetic_rod_loss_only_unreachable_producers() {
+        let mut title = snapshot();
+        title.environment.active_runtime_file.origin = RuntimeFileOrigin::TitleFile0;
+        title.environment.location.stage = "F_SP102".into();
+        let mechanics = profile(&title).compile_with_chicken_routes().unwrap();
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let options = SolverOptions {
+            max_depth: 8,
+            max_states: 512,
+            max_resolution_combinations: 16,
+            feasibility_mode: FeasibilityMode::UpperBound,
+            evidence_policy: EvidencePolicy::RESEARCH,
+        };
+        let missing = ForwardSolver::new(&facts, &mechanics, &[], options)
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(title.clone()).unwrap(),
+                &fishing_rod_owned(),
+            )
+            .unwrap();
+        assert_eq!(missing.status, SearchStatus::UnreachableUnderModel);
+        assert!(missing.blocked_transition_witnesses.iter().all(|witness| {
+            witness.classification == crate::evaluation::TransitionClassification::GuardBlocked
+        }));
+
+        let inventory = title
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == ORDINARY_ROD_INVENTORY_COMPONENT_ID)
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut inventory.payload else {
+            unreachable!();
+        };
+        let StateValue::Bytes(owned) = fields.get_mut("owned_item_ids").unwrap() else {
+            unreachable!();
+        };
+        owned[usize::from(FISHING_ROD_ITEM_ID / 8)] |= 1 << (FISHING_ROD_ITEM_ID % 8);
+        let retained = ForwardSolver::new(&facts, &mechanics, &[], options)
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(title).unwrap(),
+                &fishing_rod_owned(),
+            )
+            .unwrap();
+        assert_eq!(retained.status, SearchStatus::Reached);
+        assert!(retained.steps.is_empty());
+    }
+
+    #[test]
+    fn shared_goal_preserves_distinct_residual_states_and_unrelated_items() {
+        let mut start = snapshot();
+        let inventory = start
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == ORDINARY_ROD_INVENTORY_COMPONENT_ID)
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut inventory.payload else {
+            unreachable!();
+        };
+        let StateValue::Bytes(owned) = fields.get_mut("owned_item_ids").unwrap() else {
+            unreachable!();
+        };
+        owned[0] |= 1 << 1;
+
+        let mechanics = profile(&start).compile_with_chicken_routes().unwrap();
+        assert_eq!(mechanics.goals.len(), 1);
+        assert_eq!(mechanics.goals[0].predicate, fishing_rod_owned());
+        let run = |ids: &[&str]| {
+            let mut state = PlannerExecutionState::new(start.clone()).unwrap();
+            for (index, id) in ids.iter().enumerate() {
+                let transition = mechanics
+                    .transitions
+                    .iter()
+                    .find(|transition| transition.id == *id)
+                    .unwrap();
+                state
+                    .apply_operations(
+                        id,
+                        &format!("snapshot.rod-method-{index}"),
+                        &transition.activation.effects,
+                    )
+                    .unwrap();
+            }
+            state
+        };
+        let ordinary = run(&[
+            "transition.fishing-rod.ordinary.01-vine-guidance",
+            "transition.fishing-rod.ordinary.02-reach-hawk-grass",
+            "transition.fishing-rod.ordinary.03-hawk-displaces-cradle",
+            "transition.fishing-rod.ordinary.04-pick-up-cradle",
+            "transition.fishing-rod.ordinary.05-return-cradle-to-uli",
+            "transition.fishing-rod.ordinary.06-uli-reward",
+        ]);
+        let mixed = run(&[
+            "transition.fishing-rod.chicken.01-pick-up",
+            "transition.fishing-rod.chicken.02-vine-bypass",
+            "transition.fishing-rod.ordinary.03-hawk-displaces-cradle",
+            "transition.fishing-rod.ordinary.04-pick-up-cradle",
+            "transition.fishing-rod.ordinary.05-return-cradle-to-uli",
+            "transition.fishing-rod.ordinary.06-uli-reward",
+        ]);
+        let oob = run(&[
+            "transition.fishing-rod.chicken.01-pick-up",
+            "transition.fishing-rod.chicken.03-oob-cradle-carry",
+            "transition.fishing-rod.chicken.04-reload-with-cradle",
+            "transition.fishing-rod.ordinary.05-return-cradle-to-uli",
+            "transition.fishing-rod.ordinary.06-uli-reward",
+        ]);
+
+        let residual = |state: &PlannerExecutionState| {
+            let quest = state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == ORDINARY_ROD_QUEST_COMPONENT_ID)
+                .unwrap();
+            let ComponentPayload::Structured { fields } = &quest.payload else {
+                unreachable!();
+            };
+            let inventory = state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == ORDINARY_ROD_INVENTORY_COMPONENT_ID)
+                .unwrap();
+            let ComponentPayload::Structured {
+                fields: inventory_fields,
+            } = &inventory.payload
+            else {
+                unreachable!();
+            };
+            let StateValue::Bytes(owned) = &inventory_fields["owned_item_ids"] else {
+                unreachable!();
+            };
+            assert_ne!(owned[0] & (1 << 1), 0);
+            assert_ne!(
+                owned[usize::from(FISHING_ROD_ITEM_ID / 8)] & (1 << (FISHING_ROD_ITEM_ID % 8)),
+                0
+            );
+            fields.clone()
+        };
+        let ordinary = residual(&ordinary);
+        let mixed = residual(&mixed);
+        let oob = residual(&oob);
+        assert_ne!(ordinary, mixed);
+        assert_ne!(mixed, oob);
+        assert_ne!(ordinary, oob);
+        assert_eq!(ordinary["vine_guidance"], StateValue::Boolean(true));
+        assert_eq!(mixed["vine_bypassed"], StateValue::Boolean(true));
+        assert_eq!(oob["reload_required"], StateValue::Boolean(false));
+    }
 }

@@ -44,3 +44,30 @@ later, at the shared cradle-return transition, but cannot do so before its
 explicit reload. Regression searches remove the unused alternatives and prove
 both the mixed chicken-plus-hawk route and the direct OOB/reload route reach the
 same unchanged Uli reward transition.
+
+## File 0 is a producer cut, not a rod-loss state
+
+The acceptance query also runs from a title-origin file at `F_SP102`. All
+ordinary and chicken candidates are hard-guarded to Ordon `F_SP103`, so an empty
+file-0 inventory has no reachable producer in this bounded catalog and reports
+`unreachable_under_model`. The same title-origin snapshot with item bit `0x4a`
+already set satisfies `goal.obtain-fishing-rod` with no action. Runtime-file
+origin never appears in the goal predicate, so Back in Time does not fabricate
+a second `rod_lost` condition; availability is exactly the current inventory
+bit plus the reachability of ordinary alternate producers.
+
+## Shared goal and residual safety
+
+The catalog exposes one `goal.obtain-fishing-rod`, defined only by ownership of
+item bit `0x4a`. Ordinary, chicken-plus-hawk, and direct OOB/reload executions
+all satisfy that predicate through the same Uli reward operation. The Auru
+model's generic recent-item consumer targets the same bit through the same
+`SetBitFromValue` semantics.
+
+The friendly goal does not erase method state. Regression execution retains
+each complete quest component and proves the three Ordon outcomes remain
+distinct: ordinary guidance, chicken vine bypass, and OOB reload history do not
+collapse into one snapshot. A pre-owned unrelated inventory bit also survives
+all three grants. A UI region may therefore label each proof “Obtain Fishing
+Rod” while continuation identity still decides whether their residual states
+are interchangeable downstream.
