@@ -10,6 +10,7 @@ const elements = Object.fromEntries([
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
+  "contract-inspector",
   "evaluate-transition", "insert-transition", "replace-step", "remove-step",
   "pin-selection", "ban-selection", "prefer-selection", "select-method",
 ].map((id) => [id, document.getElementById(id)]));
@@ -387,6 +388,7 @@ function renderDetails() {
     elements["replace-step"].disabled = true;
     elements["remove-step"].disabled = true;
     updateDirectiveControls(null);
+    renderContractInspector(null);
     renderStateInspector();
     return;
   }
@@ -406,16 +408,78 @@ function renderDetails() {
   elements["evaluate-transition"].title = state.project?.start_state
     ? "Run the authoritative transition evaluator"
     : "This project has no exact start state";
+  const contract = selected.type === "node" ? selectedContract(selected.value) : null;
   elements["detail-json"].textContent = JSON.stringify({
     selection: selected.value,
-    ...(transition ? {
-      transition_contract: state.project.catalog.mechanics.transitions.find((candidate) =>
-        candidate.id === selected.value.payload.transition_id),
-    } : {}),
+    ...(contract ? { authoritative_contract: contract } : {}),
     ...(state.replacementStep ? { replacement_target: state.replacementStep } : {}),
     ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
   }, null, 2);
+  renderContractInspector(contract);
   renderStateInspector();
+}
+
+function selectedContract(node) {
+  const mechanics = state.project?.catalog.mechanics;
+  if (!mechanics) return null;
+  const lookups = {
+    transition: [mechanics.transitions, "transition_id"],
+    obligation: [mechanics.obligations, "obligation_id"],
+    obstruction: [mechanics.obstructions, "obstruction_id"],
+    resolver: [mechanics.resolvers, "resolver_id"],
+    technique: [mechanics.techniques, "technique_id"],
+    writer: [mechanics.writers, "writer_id"],
+    gate: [mechanics.gates, "gate_id"],
+    reader: [mechanics.readers, "reader_id"],
+    reconstruction: [mechanics.reconstruction_rules, "reconstruction_rule_id"],
+    microtrace: [mechanics.microtraces, "microtrace_id"],
+    goal: [mechanics.goals, "goal_id"],
+  };
+  const lookup = lookups[node.payload.kind];
+  if (!lookup) return null;
+  const [records, idField] = lookup;
+  return records.find((record) => record.id === node.payload[idField]) ?? null;
+}
+
+function renderContractInspector(contract) {
+  const container = elements["contract-inspector"];
+  container.replaceChildren();
+  if (!contract) {
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+  const heading = document.createElement("h3");
+  heading.textContent = "Authoritative contract";
+  const card = document.createElement("section");
+  card.className = "state-card";
+  const title = document.createElement("h4");
+  title.textContent = contract.label ?? contract.id;
+  const metrics = document.createElement("dl");
+  const evidence = contract.evidence?.truth ?? contract.evidence?.records?.[0]?.kind ?? "modeled";
+  const action = contract.blocked_action_id ?? contract.obstruction_id ?? contract.gate_id
+    ?? contract.transition_id ?? "—";
+  const operations = contract.operations?.length
+    ?? contract.effects?.operations?.length
+    ?? contract.effect?.operations?.length
+    ?? 0;
+  const rows = [
+    ["ID", contract.id],
+    ["Evidence", taggedValue(evidence)],
+    ["Scope", `${contract.scope?.selectors?.length ?? 0} exact selector(s)`],
+    ["Related", action],
+    ["Operations", operations],
+  ];
+  for (const [name, value] of rows) {
+    const term = document.createElement("dt");
+    term.textContent = name;
+    const detail = document.createElement("dd");
+    detail.textContent = String(value);
+    detail.title = String(value);
+    metrics.append(term, detail);
+  }
+  card.append(title, metrics);
+  container.append(heading, card);
 }
 
 function transitionSearchText(transition) {

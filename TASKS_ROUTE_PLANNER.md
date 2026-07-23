@@ -2758,7 +2758,11 @@ visual polish or whole-game authoring features.
   - [ ] Keep it available on every accepted node and closest rejected-join
         witness in the active graph, including nodes inside expanded regions.
 - [ ] Add raw flag catalogue search and friendly aliases.
-- [ ] Add obstruction and requirement inspectors.
+- [x] Add obstruction and requirement inspectors. Selecting an obligation,
+      obstruction, resolver, transition, technique, writer, gate, reader,
+      reconstruction, microtrace, or goal now resolves the exact composed
+      mechanics record, summarizes its scope/evidence/related action/effects,
+      and retains the full authoritative contract in the detail payload.
 - [ ] Add theorycraft component-transfer and bypass editor.
 - [ ] Show active packs, overlays, exact content identity, mutable language/config,
       provenance, coverage, confidence, and route costs.
