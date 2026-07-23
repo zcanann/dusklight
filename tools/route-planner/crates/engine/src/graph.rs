@@ -1097,6 +1097,7 @@ impl GraphBuilder {
                 }
                 ObligationDetail::Geometry { .. }
                 | ObligationDetail::PlaneSide { .. }
+                | ObligationDetail::Facing { .. }
                 | ObligationDetail::Unresolved { .. } => {}
             }
         }

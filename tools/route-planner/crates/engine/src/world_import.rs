@@ -12,8 +12,9 @@ use crate::logic::{
     RuleEvidence, TruthStatus, ValueReference,
 };
 use crate::state::{
-    ComponentBinding, ComponentBindingReference, ComponentKind, SceneLocation, StateValue,
-    StaticWorldObject, validate_static_object,
+    ComponentBinding, ComponentBindingReference, ComponentKind, SceneLocation, SpatialPlane,
+    SpatialVolume, SpatialVolumeShape, StateValue, StaticWorldObject, validate_spatial_plane,
+    validate_spatial_volume, validate_static_object,
 };
 use crate::transition::{
     ActivationContract, CandidateTransition, FeasibilityObligation, MECHANICS_CATALOG_SCHEMA,
@@ -26,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v9";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v10";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -72,6 +73,8 @@ pub struct ExtractedWorldFacts {
     pub world_context_sha256: Digest,
     pub inventories: Vec<WorldInventoryFactSource>,
     pub static_world_objects: Vec<StaticWorldObject>,
+    pub spatial_volumes: Vec<SpatialVolume>,
+    pub spatial_planes: Vec<SpatialPlane>,
     pub spawns: Vec<ExtractedSpawn>,
     pub encoded_exits: Vec<ExtractedEncodedExit>,
     pub mechanics: MechanicsCatalog,
@@ -136,6 +139,8 @@ impl ExtractedWorldFacts {
         };
         let mut sources = Vec::with_capacity(world_context.stages.len());
         let mut static_world_objects = Vec::new();
+        let mut spatial_volumes = Vec::new();
+        let mut spatial_planes = Vec::new();
         let mut spawns = Vec::new();
         let mut encoded_exits = Vec::new();
         let mut transitions = Vec::new();
@@ -264,6 +269,8 @@ impl ExtractedWorldFacts {
                         .or_default()
                         .push(imported.transition.id.clone());
                     obligations.extend(imported.obligations);
+                    spatial_volumes.extend(imported.spatial_volumes);
+                    spatial_planes.extend(imported.spatial_planes);
                     transitions.push(imported.transition);
                 }
                 for placement in &inventory.placements {
@@ -322,6 +329,10 @@ impl ExtractedWorldFacts {
         }
 
         static_world_objects.sort_by(|left, right| left.id.cmp(&right.id));
+        spatial_volumes.sort_by(|left, right| {
+            (&left.object_id, &left.volume_id).cmp(&(&right.object_id, &right.volume_id))
+        });
+        spatial_planes.sort_by(|left, right| left.plane_id.cmp(&right.plane_id));
         spawns.sort_by(|left, right| left.id.cmp(&right.id));
         encoded_exits.sort_by(|left, right| left.id.cmp(&right.id));
         obligations.sort_by(|left, right| left.id.cmp(&right.id));
@@ -334,6 +345,8 @@ impl ExtractedWorldFacts {
                 .map_err(|error| world_error("world_context", error))?,
             inventories: sources,
             static_world_objects,
+            spatial_volumes,
+            spatial_planes,
             spawns,
             encoded_exits,
             mechanics: MechanicsCatalog {
@@ -394,6 +407,33 @@ impl ExtractedWorldFacts {
         )?;
         for object in &self.static_world_objects {
             validate_static_object(object)?;
+        }
+        if self.spatial_volumes.windows(2).any(|pair| {
+            (&pair[0].object_id, &pair[0].volume_id) >= (&pair[1].object_id, &pair[1].volume_id)
+        }) {
+            return Err(PlannerContractError::new(
+                "spatial_volumes",
+                "must be unique and sorted by object and volume ID",
+            ));
+        }
+        for volume in &self.spatial_volumes {
+            validate_spatial_volume(volume)?;
+            if !self
+                .static_world_objects
+                .iter()
+                .any(|object| object.id == volume.object_id)
+            {
+                return Err(PlannerContractError::new(
+                    "spatial_volumes.object_id",
+                    "does not reference an imported static object",
+                ));
+            }
+        }
+        validate_sorted("spatial_planes", &self.spatial_planes, |value| {
+            value.plane_id.as_str()
+        })?;
+        for plane in &self.spatial_planes {
+            validate_spatial_plane(plane)?;
         }
         validate_sorted("spawns", &self.spawns, |value| value.id.as_str())?;
         let object_ids = self
@@ -486,6 +526,8 @@ impl ExtractedWorldFacts {
             ));
         }
         let total = self.static_world_objects.len()
+            + self.spatial_volumes.len()
+            + self.spatial_planes.len()
             + self.spawns.len()
             + self.encoded_exits.len()
             + self.mechanics.transitions.len()
@@ -645,6 +687,8 @@ struct ImportedBossDoor {
     exit_record_id: String,
     transition: CandidateTransition,
     obligations: Vec<FeasibilityObligation>,
+    spatial_volumes: Vec<SpatialVolume>,
+    spatial_planes: Vec<SpatialPlane>,
 }
 
 #[derive(Clone, Copy)]
@@ -724,6 +768,8 @@ fn import_gz2e01_boss_door(
     let approach_id = format!("approach.{token}");
     let interaction_obligation_id = format!("obligation.interaction.{token}");
     let actor_obligation_id = format!("obligation.actor-state.{token}");
+    let front_obligation_id = format!("obligation.front-side.{token}");
+    let facing_obligation_id = format!("obligation.facing.{token}");
     let evidence = gz2e01_boss_door_evidence(family, inventory_sha256, placement, &token);
     let unknown_evidence = RuleEvidence {
         truth: TruthStatus::Unknown,
@@ -775,16 +821,136 @@ fn import_gz2e01_boss_door(
     effects.push(StateOperation::SetLocation {
         location: destination.clone(),
     });
-    let (actor_question, interaction_question) = match family {
-        Gz2e01BossDoorFamily::L1 => (
-            "Confirm the loaded boss-door resources and actor/event phases reach INIT, UNLOCK, collision release, CHG_SCENE, and restart handling without an intervening failure or interruption.",
-            "Derive the actor-local interaction volume and facing test: |x| <= 200, |z| <= 100, wolf attention/current-position constraints, and facing delta <= 0x4000, then connect them to extracted oriented geometry.",
-        ),
-        Gz2e01BossDoorFamily::L5 => (
-            "Confirm the loaded L5 boss-door resources and event phases reach UNLOCK, key deletion when present, collision release, CHG_SCENE, close/end handling, and the restart-room write without an intervening failure or interruption.",
-            "Derive the L5 actor-local usable side and interaction volume: local z must be positive, |x| <= 200, |z| <= 100, and facing delta <= 0x4000, then connect them to extracted oriented geometry.",
-        ),
+    let actor_question = match family {
+        Gz2e01BossDoorFamily::L1 => {
+            "Confirm the loaded boss-door resources and actor/event phases reach INIT, UNLOCK, collision release, CHG_SCENE, and restart handling without an intervening failure or interruption."
+        }
+        Gz2e01BossDoorFamily::L5 => {
+            "Confirm the loaded L5 boss-door resources and event phases reach UNLOCK, key deletion when present, collision release, CHG_SCENE, close/end handling, and the restart-room write without an intervening failure or interruption."
+        }
     };
+
+    let object_id = stable_token(
+        "world.object",
+        &[inventory.stage.as_bytes(), placement.stable_id.as_bytes()],
+    );
+    let (spatial_volumes, spatial_planes, mut physical_obligation_ids, mut imported_obligations) =
+        match family {
+            Gz2e01BossDoorFamily::L1 => (
+                Vec::new(),
+                Vec::new(),
+                vec![actor_obligation_id.clone(), interaction_obligation_id.clone()],
+                vec![FeasibilityObligation {
+                    id: interaction_obligation_id.clone(),
+                    label: format!("Reach and face {}", placement.name),
+                    scope: scope.clone(),
+                    obligation_kind: ObligationKind::Interaction,
+                    detail: ObligationDetail::Unresolved {
+                        research_question: "Represent the L1 family's wolf attention-position rectangle and simultaneous narrower current-position X bound without replacing either observation with Link's origin.".into(),
+                    },
+                    evidence: unknown_evidence.clone(),
+                }],
+            ),
+            Gz2e01BossDoorFamily::L5 => {
+                let spatial_source_sha256 =
+                    l5_boss_door_spatial_source_digest(inventory_sha256, placement);
+                let radians = f64::from(placement.angle[1]) * std::f64::consts::TAU / 65536.0;
+                let (sin, cos) = radians.sin_cos();
+                let normal = canonicalize_position([sin as f32, 0.0, cos as f32]);
+                let position = canonicalize_position([
+                    placement.position.x,
+                    placement.position.y,
+                    placement.position.z,
+                ]);
+                let offset = canonicalize_scalar(
+                    -(normal[0] * position[0] + normal[2] * position[2]),
+                );
+                let plane_id = format!("plane.front.{token}");
+                (
+                    vec![SpatialVolume {
+                        object_id: object_id.clone(),
+                        volume_id: "boss-door-check-area".into(),
+                        shape: SpatialVolumeShape::YawOrientedRectangle {
+                            origin_xz: [position[0], position[2]],
+                            yaw: placement.angle[1],
+                            minimum_local_xz: [-200.0, -100.0],
+                            maximum_local_xz: [200.0, 100.0],
+                        },
+                        source_sha256: spatial_source_sha256,
+                    }],
+                    vec![SpatialPlane {
+                        plane_id: plane_id.clone(),
+                        normal,
+                        offset,
+                        source_sha256: spatial_source_sha256,
+                    }],
+                    vec![
+                        actor_obligation_id.clone(),
+                        interaction_obligation_id.clone(),
+                        front_obligation_id.clone(),
+                        facing_obligation_id.clone(),
+                    ],
+                    vec![
+                        FeasibilityObligation {
+                            id: interaction_obligation_id.clone(),
+                            label: format!("Stand within {} actor-local checkArea rectangle", placement.name),
+                            scope: scope.clone(),
+                            obligation_kind: ObligationKind::Interaction,
+                            detail: ObligationDetail::Interaction {
+                                actor_instance_id: object_id.clone(),
+                                interaction_mode: "door".into(),
+                                required_volumes: vec![crate::transition::VolumeReference {
+                                    object_id: object_id.clone(),
+                                    volume_id: "boss-door-check-area".into(),
+                                }],
+                                excluded_volumes: Vec::new(),
+                                pose_predicate: PredicateExpression::True,
+                                temporal_requirement: None,
+                            },
+                            evidence: evidence.clone(),
+                        },
+                        FeasibilityObligation {
+                            id: front_obligation_id.clone(),
+                            label: format!("Approach {} from positive actor-local Z", placement.name),
+                            scope: scope.clone(),
+                            obligation_kind: ObligationKind::Geometry,
+                            detail: ObligationDetail::PlaneSide {
+                                plane_id,
+                                relation: crate::state::PlaneRelation::Positive,
+                            },
+                            evidence: evidence.clone(),
+                        },
+                        FeasibilityObligation {
+                            id: facing_obligation_id.clone(),
+                            label: format!("Face {} within binary-angle delta 0x4000", placement.name),
+                            scope: scope.clone(),
+                            obligation_kind: ObligationKind::Interaction,
+                            detail: ObligationDetail::Facing {
+                                yaw: ValueReference::PlayerRotationY,
+                                target_yaw: placement.angle[1].wrapping_sub(0x7fff),
+                                maximum_delta: 0x4000,
+                            },
+                            evidence: evidence.clone(),
+                        },
+                    ],
+                )
+            }
+        };
+    physical_obligation_ids.sort();
+    imported_obligations.push(FeasibilityObligation {
+        id: actor_obligation_id.clone(),
+        label: format!(
+            "Run the loaded {} keyhole, event, collision, and scene-change phases",
+            placement.name
+        ),
+        scope: scope.clone(),
+        obligation_kind: ObligationKind::ActorState,
+        detail: ObligationDetail::Unresolved {
+            research_question: actor_question.into(),
+        },
+        evidence: unknown_evidence.clone(),
+    });
+    imported_obligations.sort_by(|left, right| left.id.cmp(&right.id));
 
     Ok(Some(ImportedBossDoor {
         exit_record_id: exit.stable_id.clone(),
@@ -809,41 +975,30 @@ fn import_gz2e01_boss_door(
                 hard_guards: PredicateExpression::All {
                     terms: hard_guard_terms,
                 },
-                physical_obligation_ids: vec![
-                    actor_obligation_id.clone(),
-                    interaction_obligation_id.clone(),
-                ],
+                physical_obligation_ids,
                 effects,
                 unknown_requirements: Vec::new(),
             },
             evidence,
         },
-        obligations: vec![
-            FeasibilityObligation {
-                id: actor_obligation_id,
-                label: format!(
-                    "Run the loaded {} keyhole, event, collision, and scene-change phases",
-                    placement.name
-                ),
-                scope: scope.clone(),
-                obligation_kind: ObligationKind::ActorState,
-                detail: ObligationDetail::Unresolved {
-                    research_question: actor_question.into(),
-                },
-                evidence: unknown_evidence.clone(),
-            },
-            FeasibilityObligation {
-                id: interaction_obligation_id,
-                label: format!("Reach and face {} from its usable side", placement.name),
-                scope: scope.clone(),
-                obligation_kind: ObligationKind::Interaction,
-                detail: ObligationDetail::Unresolved {
-                    research_question: interaction_question.into(),
-                },
-                evidence: unknown_evidence,
-            },
-        ],
+        obligations: imported_obligations,
+        spatial_volumes,
+        spatial_planes,
     }))
+}
+
+fn l5_boss_door_spatial_source_digest(
+    inventory_sha256: Digest,
+    placement: &PlacementRecord,
+) -> Digest {
+    let source_sha256 =
+        static_digest("9f649b99f027e39f1d39ce066d815a78032b536c4a9a83e0361681af2265102e");
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight.route-planner.boss-door-spatial-source/v1");
+    hasher.update(inventory_sha256.0);
+    hasher.update(source_sha256.0);
+    hasher.update(placement.stable_id.as_bytes());
+    Digest(hasher.finalize().into())
 }
 
 fn gz2e01_boss_door_family(name: &str) -> Option<Gz2e01BossDoorFamily> {
@@ -1771,6 +1926,10 @@ fn canonicalize_position(mut values: [f32; 3]) -> [f32; 3] {
     values
 }
 
+fn canonicalize_scalar(value: f32) -> f32 {
+    if value == 0.0 { 0.0 } else { value }
+}
+
 fn canonical_position(values: [f32; 3]) -> bool {
     values
         .iter()
@@ -2594,6 +2753,40 @@ mod tests {
                 == Some(static_digest(
                     "9f649b99f027e39f1d39ce066d815a78032b536c4a9a83e0361681af2265102e",
                 ))
+        }));
+        assert_eq!(dungeon.spatial_volumes.len(), 1);
+        assert_eq!(dungeon.spatial_planes.len(), 1);
+        assert!(matches!(
+            &dungeon.spatial_volumes[0].shape,
+            SpatialVolumeShape::YawOrientedRectangle {
+                origin_xz,
+                yaw: 0,
+                minimum_local_xz,
+                maximum_local_xz,
+            } if origin_xz == &[0.0, -5237.0]
+                && minimum_local_xz == &[-200.0, -100.0]
+                && maximum_local_xz == &[200.0, 100.0]
+        ));
+        assert_eq!(dungeon.spatial_planes[0].normal, [0.0, 0.0, 1.0]);
+        assert_eq!(dungeon.spatial_planes[0].offset, 5237.0);
+        assert_eq!(transition.activation.physical_obligation_ids.len(), 4);
+        assert!(dungeon.mechanics.obligations.iter().any(|obligation| {
+            matches!(
+                &obligation.detail,
+                ObligationDetail::Interaction {
+                    required_volumes,
+                    ..
+                } if required_volumes[0].volume_id == "boss-door-check-area"
+            )
+        }));
+        assert!(dungeon.mechanics.obligations.iter().any(|obligation| {
+            matches!(
+                &obligation.detail,
+                ObligationDetail::PlaneSide {
+                    plane_id,
+                    relation: crate::state::PlaneRelation::Positive,
+                } if plane_id == &dungeon.spatial_planes[0].plane_id
+            )
         }));
 
         let boss_room_inventory = l5_boss_door_inventory(true);

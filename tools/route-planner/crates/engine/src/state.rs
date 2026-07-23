@@ -334,6 +334,15 @@ pub enum SpatialVolumeShape {
         maximum_y: f32,
         radius: f32,
     },
+    /// A two-dimensional actor-local rectangle projected through the actor's
+    /// binary-angle yaw. This matches interaction checks that deliberately
+    /// ignore height instead of inventing world-axis Y bounds.
+    YawOrientedRectangle {
+        origin_xz: [f32; 2],
+        yaw: i16,
+        minimum_local_xz: [f32; 2],
+        maximum_local_xz: [f32; 2],
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -1055,7 +1064,7 @@ pub(crate) fn validate_static_object(
     validate_state_fields(&object.parameters)
 }
 
-fn validate_spatial_volume(volume: &SpatialVolume) -> Result<(), PlannerContractError> {
+pub(crate) fn validate_spatial_volume(volume: &SpatialVolume) -> Result<(), PlannerContractError> {
     validate_stable_id("spatial_volumes.object_id", &volume.object_id)?;
     validate_stable_id("spatial_volumes.volume_id", &volume.volume_id)?;
     require_digest("spatial_volumes.source_sha256", volume.source_sha256)?;
@@ -1100,6 +1109,29 @@ fn validate_spatial_volume(volume: &SpatialVolume) -> Result<(), PlannerContract
             }
             Ok(())
         }
+        SpatialVolumeShape::YawOrientedRectangle {
+            origin_xz,
+            minimum_local_xz,
+            maximum_local_xz,
+            ..
+        } => {
+            if !canonical_floats(
+                origin_xz
+                    .iter()
+                    .chain(minimum_local_xz)
+                    .chain(maximum_local_xz),
+            ) || minimum_local_xz
+                .iter()
+                .zip(maximum_local_xz)
+                .any(|(minimum, maximum)| minimum > maximum)
+            {
+                return Err(PlannerContractError::new(
+                    "spatial_volumes.shape",
+                    "oriented rectangle must contain finite canonical ordered local bounds",
+                ));
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1119,7 +1151,7 @@ fn validate_spatial_connection(connection: &SpatialConnection) -> Result<(), Pla
     )
 }
 
-fn validate_spatial_plane(plane: &SpatialPlane) -> Result<(), PlannerContractError> {
+pub(crate) fn validate_spatial_plane(plane: &SpatialPlane) -> Result<(), PlannerContractError> {
     validate_stable_id("spatial_planes.plane_id", &plane.plane_id)?;
     require_digest("spatial_planes.source_sha256", plane.source_sha256)?;
     if !canonical_floats(plane.normal.iter().chain(std::iter::once(&plane.offset)))

@@ -3433,6 +3433,7 @@ fn collect_obligation_evidence(
         crate::transition::ObligationDetail::Temporal { precondition, .. } => Some(precondition),
         crate::transition::ObligationDetail::Geometry { .. }
         | crate::transition::ObligationDetail::PlaneSide { .. }
+        | crate::transition::ObligationDetail::Facing { .. }
         | crate::transition::ObligationDetail::Unresolved { .. } => None,
     };
     if let Some(predicate) = predicate {

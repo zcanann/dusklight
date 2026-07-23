@@ -558,6 +558,7 @@ impl RelevanceBuilder {
                     self.add_predicate(precondition);
                     self.add_temporal_witnesses(mechanics, &requirement.action_id);
                 }
+                ObligationDetail::Facing { yaw, .. } => self.add_value(yaw),
                 ObligationDetail::Geometry { .. }
                 | ObligationDetail::PlaneSide { .. }
                 | ObligationDetail::Unresolved { .. } => {}

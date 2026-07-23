@@ -9,7 +9,7 @@ revision, platform, or language bundle.
 The earlier `DOOR20`, L1-family boss-door, and L5 boss-door audits remain the
 authoritative family-specific records for those actors. This document covers
 the remaining exact-build census and records which semantics are executable in
-`extracted-world-facts/v9` and which remain explicit boundaries.
+`extracted-world-facts/v10` and which remain explicit boundaries.
 
 ## Census method and source identities
 
@@ -54,7 +54,7 @@ hard guard checks only the boss key, yet its `UNLOCK` cut still queues a small-
 key decrement. Counts 1 through 100 lose one, zero clamps back to zero, and a
 raw count above 100 clamps to 99.
 
-The v9 candidate effect is the ordinary eventual committed-count equivalent,
+The v10 candidate effect is the ordinary eventual committed-count equivalent,
 not a claim that the transient queue and raw byte change simultaneously. Its
 actor-state obligation includes an uncontended pending delta. V9 splits zero,
 normal-range, and high-raw-count outcomes so the final committed byte remains
@@ -167,9 +167,9 @@ selected retail cuts:
 | `f68b5c754d2ccefc5f80f74e05fb659898e2f12c568260d4ad39237a02ce63a9` | `c8684156665423d1a133dc0b102098d8ec3be838dd6abe117dbafedf0144ab83` | `KOKI_GATE_OPEN00` contains `UNLOCK` before `OPEN` |
 | `a3700cf327a2469195fa93860b69dbada71cbff64bb846b0ee7cf0d932bb4e92` | `95582d74d858aeb5b01a9f1beb6c0c1bd6761b619b75f57d1d60d906f73ea856` | `RIDER_GATE_OPEN00` contains `UNLOCK` |
 
-## Executable v9 boundary
+## Executable v10 boundary
 
-For exact GZ2E01 content, `extracted-world-facts/v9` imports:
+For exact GZ2E01 content, `extracted-world-facts/v10` imports:
 
 - the six front-side option-2 mini-boss placements as distinct first-open and
   already-unlocked `Door` branches joined to their unique SCLS destinations;
@@ -184,9 +184,17 @@ Interaction geometry, resource/event completion, keyhole behavior, collision
 release, restart handling, and post-unlock pushing remain named feasibility
 obligations.
 
-V9 also separates transition association by kind: encoded-map and door
+V10 also separates transition association by kind: encoded-map and door
 transitions must be referenced exactly once by an encoded SCLS record, while
 in-room actor-driven actions must not be attached to a fabricated exit.
+
+For L5 boss doors, v10 replaces the former prose-only interaction boundary
+with placement-derived typed observations: a yaw-oriented actor-local
+`checkArea` rectangle, a positive-local-Z front plane, and a shortest-circular
+binary-angle facing obligation. The loaded actor/event/collision/scene-change
+phase remains unresolved, and L1's wolf-only attention-position plus narrower
+current-position compound test remains explicit rather than being approximated
+as a single player-origin rectangle.
 
 The importer intentionally excludes rider gates, caravan gates, externally
 switched `vshuter`, absent/non-memory switches, Koki-gate types without exact

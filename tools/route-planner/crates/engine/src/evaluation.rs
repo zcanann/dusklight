@@ -456,6 +456,34 @@ impl<'a> PredicateEvaluator<'a> {
                         Some(result),
                     )
                 }
+                ObligationDetail::Facing {
+                    yaw,
+                    target_yaw,
+                    maximum_delta,
+                } => {
+                    let result = match self.resolve_value(yaw) {
+                        Some(StateValue::Signed(value)) => {
+                            i16::try_from(value).ok().map(|observed| {
+                                observed.wrapping_sub(*target_yaw).unsigned_abs() <= *maximum_delta
+                            })
+                        }
+                        _ => None,
+                    };
+                    (
+                        match result {
+                            Some(true) => ObligationClassification::Satisfied,
+                            Some(false) => ObligationClassification::Unsatisfied,
+                            None => ObligationClassification::EvaluationUnknown,
+                        },
+                        result.map(|value| {
+                            if value {
+                                EvaluatedTruth::True
+                            } else {
+                                EvaluatedTruth::False
+                            }
+                        }),
+                    )
+                }
                 ObligationDetail::Unresolved { .. } => (ObligationClassification::Unmodeled, None),
             }
         };
@@ -556,6 +584,30 @@ impl<'a> PredicateEvaluator<'a> {
                 if position[1] >= *minimum_y
                     && position[1] <= *maximum_y
                     && delta_x * delta_x + delta_z * delta_z <= f64::from(*radius).powi(2)
+                {
+                    EvaluatedTruth::True
+                } else {
+                    EvaluatedTruth::False
+                }
+            }
+            SpatialVolumeShape::YawOrientedRectangle {
+                origin_xz,
+                yaw,
+                minimum_local_xz,
+                maximum_local_xz,
+            } => {
+                let delta_x = f64::from(position[0]) - f64::from(origin_xz[0]);
+                let delta_z = f64::from(position[2]) - f64::from(origin_xz[1]);
+                let radians = f64::from(*yaw) * std::f64::consts::TAU / 65536.0;
+                let (sin, cos) = radians.sin_cos();
+                // This is the inverse of the game's actor-local +Y yaw:
+                // world +Z is (sin(yaw), cos(yaw)) in the X/Z plane.
+                let local_x = cos * delta_x - sin * delta_z;
+                let local_z = sin * delta_x + cos * delta_z;
+                if local_x >= f64::from(minimum_local_xz[0])
+                    && local_x <= f64::from(maximum_local_xz[0])
+                    && local_z >= f64::from(minimum_local_xz[1])
+                    && local_z <= f64::from(maximum_local_xz[1])
                 {
                     EvaluatedTruth::True
                 } else {
@@ -2877,8 +2929,27 @@ mod tests {
             },
             evidence: evidence(TruthStatus::Established),
         };
+        snapshot.environment.player.rotation[1] = i16::MIN;
+        let facing = FeasibilityObligation {
+            id: "obligation.face-door".into(),
+            label: "Face the door across the signed binary-angle wrap".into(),
+            scope: scope(&snapshot),
+            obligation_kind: ObligationKind::Interaction,
+            detail: ObligationDetail::Facing {
+                yaw: ValueReference::PlayerRotationY,
+                target_yaw: i16::MAX,
+                maximum_delta: 1,
+            },
+            evidence: evidence(TruthStatus::Established),
+        };
 
         let initial_evaluator = evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY);
+        assert_eq!(
+            initial_evaluator
+                .assess_obligation(&facing, &[])
+                .classification,
+            ObligationClassification::Satisfied
+        );
         assert_eq!(
             initial_evaluator
                 .assess_obligation(&geometry, &[])
@@ -2982,6 +3053,17 @@ mod tests {
             },
             SpatialVolume {
                 object_id: "actor.test".into(),
+                volume_id: "oriented".into(),
+                shape: SpatialVolumeShape::YawOrientedRectangle {
+                    origin_xz: [0.0, 0.0],
+                    yaw: 0x4000,
+                    minimum_local_xz: [-1.0, 0.0],
+                    maximum_local_xz: [1.0, 3.0],
+                },
+                source_sha256: Digest([13; 32]),
+            },
+            SpatialVolume {
+                object_id: "actor.test".into(),
                 volume_id: "sphere".into(),
                 shape: SpatialVolumeShape::Sphere {
                     center: [0.0, 0.0, 0.0],
@@ -3026,11 +3108,26 @@ mod tests {
             ObligationClassification::Satisfied
         );
         assert_eq!(
+            world_evaluator
+                .assess_obligation(&obligation("oriented"), &[])
+                .classification,
+            ObligationClassification::Satisfied
+        );
+        assert_eq!(
             world_evaluator.resolve_value(&ValueReference::ActorField {
                 instance_id: "actor.test".into(),
                 field: "ready".into(),
             }),
             Some(StateValue::Boolean(true))
+        );
+
+        snapshot.environment.player.position = [0.0, 99.0, 2.0];
+        assert_eq!(
+            evaluator(&snapshot, &facts, EvidencePolicy::ESTABLISHED_ONLY)
+                .assess_obligation(&obligation("oriented"), &[])
+                .classification,
+            ObligationClassification::Unsatisfied,
+            "oriented rectangles rotate with actor yaw and intentionally ignore height"
         );
 
         snapshot.environment.execution_context = ExecutionContext::Process {

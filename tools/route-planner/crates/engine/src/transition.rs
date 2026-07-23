@@ -509,6 +509,14 @@ pub enum ObligationDetail {
         plane_id: String,
         relation: PlaneRelation,
     },
+    /// Requires one observed 16-bit binary-angle yaw to be within the shortest
+    /// circular distance of an authored target. Numeric less-than comparisons
+    /// are not equivalent at the signed wrap boundary.
+    Facing {
+        yaw: ValueReference,
+        target_yaw: i16,
+        maximum_delta: u16,
+    },
     Temporal {
         requirement: TemporalRequirement,
         precondition: PredicateExpression,
@@ -1658,6 +1666,17 @@ fn validate_obligation(obligation: &FeasibilityObligation) -> Result<(), Planner
         }
         ObligationDetail::PlaneSide { plane_id, .. } => {
             validate_stable_id("obligation.plane_id", plane_id)?;
+        }
+        ObligationDetail::Facing {
+            yaw, maximum_delta, ..
+        } => {
+            validate_value_reference(yaw)?;
+            if *maximum_delta > 0x8000 {
+                return Err(PlannerContractError::new(
+                    "obligation.maximum_delta",
+                    "binary-angle distance cannot exceed one half-turn",
+                ));
+            }
         }
         ObligationDetail::Temporal {
             requirement,

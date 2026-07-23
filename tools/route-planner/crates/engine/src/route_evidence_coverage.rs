@@ -395,6 +395,7 @@ fn collect_obligation(obligation: &FeasibilityObligation, facts: &mut BTreeSet<S
         ObligationDetail::Temporal { precondition, .. } => collect_predicate(precondition, facts),
         ObligationDetail::Geometry { .. }
         | ObligationDetail::PlaneSide { .. }
+        | ObligationDetail::Facing { .. }
         | ObligationDetail::Unresolved { .. } => {}
     }
 }
