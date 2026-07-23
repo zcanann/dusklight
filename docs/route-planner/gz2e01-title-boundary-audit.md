@@ -268,6 +268,24 @@ instead of retaining stale values. Exact clock reconstruction remains open. See
 `gz2e01-file-select-branches.md` for the exact functions and guard boundary.
 
 That member-level distinction is central to file-0 and Back in Time reasoning.
+
+## Unsaved file-0 research goal
+
+The exact title mechanics now expose
+`goal.gz2e01.unsaved-file-zero-world-active`. It requires both a
+`title_file_0` active-runtime origin and active world execution. Entering file 0
+inside opening/name/file-select therefore does not satisfy the goal merely by
+creating the runtime lifetime.
+
+`gz2e01_hypothetical_file_zero_escape_pack` is a separate opt-in refinement
+pack. Its single hypothetical technique changes only execution context from the
+title/name process back to the retained world. It does not set a new location,
+save to a physical slot, load a selected image, alter the active runtime file,
+or begin another lifetime. This permits the planner to ask what would follow if
+an unsaved file-0 escape were discovered while keeping the exact mechanics
+catalog free of that invented edge. Removing the pack removes the technique and
+leaves the goal available for future evidenced transitions.
+
 Future projection coverage must continue adding ordered writers and explicitly
 preserved members rather than approximating the title transition as “clear
 all.”

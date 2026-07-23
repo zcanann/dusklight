@@ -20,6 +20,7 @@ pub mod evaluation;
 pub mod execution;
 pub mod fact_pack;
 pub mod fact_pack_cache;
+pub mod file_zero_research;
 pub mod graph;
 pub mod identity;
 pub mod jstudio_import;

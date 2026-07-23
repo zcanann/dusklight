@@ -3049,7 +3049,12 @@ slice into release criteria only when it exercises a missing core semantic law.
         loaded existing file, with destination ownership and mixed provenance.
         The evidence-backed standard BiTE matrix is encoded; setup transitions
         remain open until exact native activation evidence lands.
-- [ ] Allow an unsaved file-0 goal and hypothetical escape overlay.
+- [x] Allow an unsaved file-0 goal and hypothetical escape overlay.
+  - Exact GZ2E01 title mechanics expose the conjunction of title-file-0 origin
+    and active-world execution as an ordinary goal. The opt-in refinement pack
+    resumes only the retained world execution context, is explicitly
+    hypothetical, and cannot save, load, reattach, replace, or end the active
+    runtime file. Without the pack, no escape technique is present.
 - [x] Explain exactly which components die when a file-0 lifetime ends.
   - State inspection diffs derive the complete ownership cut from the actual
     before/after states: every source-owned live component and serialized store

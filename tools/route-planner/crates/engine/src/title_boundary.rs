@@ -18,7 +18,7 @@ use crate::state::{
 };
 use crate::transition::{
     ActivationContract, CandidateTransition, ComponentFieldTarget, MECHANICS_CATALOG_SCHEMA,
-    MechanicsCatalog, SaveProjectionOperation, StateOperation, TransitionKind,
+    Goal, MechanicsCatalog, SaveProjectionOperation, StateOperation, TransitionKind,
 };
 use std::collections::BTreeMap;
 
@@ -44,6 +44,8 @@ const RETURN_PLACE_COMPONENT: &str = "return-place";
 const ACTIVE_VIBRATION_COMPONENT: &str = "session.active-vibration";
 const SAVE_STAGE_DISPLAY_COMPONENT: &str = "session.save-stage-display";
 const FILE_SELECT_BUFFER_OWNER_PREFIX: &str = "file-select-buffer.slot";
+pub const GZ2E01_UNSAVED_FILE_ZERO_GOAL_ID: &str =
+    "goal.gz2e01.unsaved-file-zero-world-active";
 
 const ITEM_NONE: u8 = 0xff;
 const ITEM_HOOKSHOT: u8 = 0x44;
@@ -1884,7 +1886,22 @@ pub fn gz2e01_reset_to_opening_mechanics(
         resolvers: Vec::new(),
         techniques: Vec::new(),
         microtraces: Vec::new(),
-        goals: Vec::new(),
+        goals: vec![Goal {
+            id: GZ2E01_UNSAVED_FILE_ZERO_GOAL_ID.into(),
+            label: "Remain on unsaved title-origin file 0 in an active world".into(),
+            predicate: PredicateExpression::All {
+                terms: vec![
+                    pending_compare(
+                        ValueReference::ActiveRuntimeFileOrigin,
+                        StateValue::Text("title_file_0".into()),
+                    ),
+                    pending_compare(
+                        ValueReference::WorldExecutionActive,
+                        StateValue::Boolean(true),
+                    ),
+                ],
+            },
+        }],
     };
     catalog.validate()?;
     Ok(catalog)
