@@ -33,6 +33,29 @@
 
 #include "dusk/string.hpp"
 #define strcpy dusk::SafeStringCopy
+
+namespace {
+dSv_return_restart_write_trace_c g_returnRestartWriteTrace;
+
+void incrementTraceCount(u16& count) {
+    if (count != 0xffff) {
+        ++count;
+    }
+}
+}  // namespace
+
+void dSv_noteSavmemExecute(bool eligible) {
+    incrementTraceCount(g_returnRestartWriteTrace.savmemExecuteCount);
+    if (eligible) {
+        incrementTraceCount(g_returnRestartWriteTrace.savmemEligibleExecuteCount);
+    }
+}
+
+dSv_return_restart_write_trace_c dSv_takeReturnRestartWriteTrace() {
+    const dSv_return_restart_write_trace_c trace = g_returnRestartWriteTrace;
+    g_returnRestartWriteTrace = {};
+    return trace;
+}
 #endif
 
 static u8 dSv_item_rename(u8 i_itemNo) {
@@ -238,18 +261,41 @@ void dSv_horse_place_c::set(const char* i_name, const cXyz& i_pos, s16 i_angle, 
 }
 
 void dSv_player_return_place_c::init() {
+#if TARGET_PC
+    constexpr char ExpectedName[8] = {'F', '_', 'S', 'P', '1', '0', '8', '\0'};
+    const bool changed = std::memcmp(mName, ExpectedName, sizeof(mName)) != 0 || mRoomNo != 1 ||
+                         mPlayerStatus != 0 || unk10 != 21 || unk11 != 0;
+#endif
     strcpy(mName, "F_SP108");
     mRoomNo = 1;
     mPlayerStatus = 0;
     unk10 = 21;
     unk11 = 0;
+#if TARGET_PC
+    incrementTraceCount(g_returnRestartWriteTrace.returnPlaceInitializeCount);
+    if (changed) {
+        incrementTraceCount(g_returnRestartWriteTrace.returnPlaceValueChangeCount);
+    }
+#endif
 }
 
 void dSv_player_return_place_c::set(const char* i_name, s8 i_roomNo, u8 i_status) {
     JUT_ASSERT(426, strlen(i_name) <= 7);
+#if TARGET_PC
+    char expectedName[8]{};
+    strcpy(expectedName, i_name);
+    const bool changed = std::memcmp(mName, expectedName, sizeof(mName)) != 0 ||
+                         mRoomNo != i_roomNo || mPlayerStatus != i_status;
+#endif
     strcpy(mName, i_name);
     mRoomNo = i_roomNo;
     mPlayerStatus = i_status;
+#if TARGET_PC
+    incrementTraceCount(g_returnRestartWriteTrace.returnPlaceSetCount);
+    if (changed) {
+        incrementTraceCount(g_returnRestartWriteTrace.returnPlaceValueChangeCount);
+    }
+#endif
 }
 
 void dSv_player_field_last_stay_info_c::init() {
@@ -1482,10 +1528,52 @@ void dSv_zone_c::init(int i_roomNo) {
 }
 
 void dSv_restart_c::setRoom(const cXyz& i_position, s16 i_angleY, s8 i_roomNo) {
+#if TARGET_PC
+    const bool changed = mRoomNo != i_roomNo || mRoomPos.x != i_position.x ||
+                         mRoomPos.y != i_position.y || mRoomPos.z != i_position.z ||
+                         mRoomAngleY != i_angleY;
+#endif
     mRoomNo = i_roomNo;
     mRoomPos = i_position;
     mRoomAngleY = i_angleY;
+#if TARGET_PC
+    incrementTraceCount(g_returnRestartWriteTrace.restartPlaceSetCount);
+    if (changed) {
+        incrementTraceCount(g_returnRestartWriteTrace.restartPlaceValueChangeCount);
+    }
+#endif
 }
+
+#if TARGET_PC
+void dSv_restart_c::setStartPoint(s16 point) {
+    const bool changed = mStartPoint != point;
+    mStartPoint = point;
+    incrementTraceCount(g_returnRestartWriteTrace.restartStartPointSetCount);
+    if (changed) {
+        incrementTraceCount(g_returnRestartWriteTrace.restartStartPointValueChangeCount);
+    }
+}
+
+void dSv_restart_c::setRoomParam(u32 param) {
+    const bool changed = mRoomParam != param;
+    mRoomParam = param;
+    incrementTraceCount(g_returnRestartWriteTrace.restartRoomParameterSetCount);
+    if (changed) {
+        incrementTraceCount(g_returnRestartWriteTrace.restartRoomParameterValueChangeCount);
+    }
+}
+
+void dSv_restart_c::setLastSceneInfo(f32 speed, u32 mode, s16 angle) {
+    const bool changed = mLastSpeedF != speed || mLastMode != mode || mLastAngleY != angle;
+    mLastSpeedF = speed;
+    mLastMode = mode;
+    mLastAngleY = angle;
+    incrementTraceCount(g_returnRestartWriteTrace.restartLastSceneInfoSetCount);
+    if (changed) {
+        incrementTraceCount(g_returnRestartWriteTrace.restartLastSceneInfoValueChangeCount);
+    }
+}
+#endif
 
 void dSv_turnRestart_c::set(const cXyz& i_position, s16 i_angleY, s8 param_3, u32 i_param) {
     mPosition = i_position;

@@ -300,6 +300,27 @@ struct MilestoneObservation {
     };
     RestartState restart;
 
+    // Counts since the previous observation boundary. A write count can be
+    // nonzero while its value-change count is zero, preserving idempotent
+    // writer execution as evidence instead of collapsing it into a raw diff.
+    struct ReturnRestartWriteTraceState {
+        ChannelStatus status = ChannelStatus::NotSampled;
+        std::uint16_t returnPlaceInitializeCount = 0;
+        std::uint16_t returnPlaceSetCount = 0;
+        std::uint16_t savmemExecuteCount = 0;
+        std::uint16_t savmemEligibleExecuteCount = 0;
+        std::uint16_t restartPlaceSetCount = 0;
+        std::uint16_t restartStartPointSetCount = 0;
+        std::uint16_t restartRoomParameterSetCount = 0;
+        std::uint16_t restartLastSceneInfoSetCount = 0;
+        std::uint16_t returnPlaceValueChangeCount = 0;
+        std::uint16_t restartPlaceValueChangeCount = 0;
+        std::uint16_t restartStartPointValueChangeCount = 0;
+        std::uint16_t restartRoomParameterValueChangeCount = 0;
+        std::uint16_t restartLastSceneInfoValueChangeCount = 0;
+    };
+    ReturnRestartWriteTraceState returnRestartWriteTrace;
+
     struct EventHandoffState {
         ChannelStatus status = ChannelStatus::NotSampled;
         std::uint8_t preItemNo = 0;

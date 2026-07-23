@@ -13,9 +13,9 @@ use crate::native_episode_shard::{
     LEARNING_OBSERVATION_SCHEMA_V21, LEARNING_OBSERVATION_SCHEMA_V22,
     LEARNING_OBSERVATION_SCHEMA_V23, LEARNING_OBSERVATION_SCHEMA_V24,
     LEARNING_OBSERVATION_SCHEMA_V25, LEARNING_OBSERVATION_SCHEMA_V26,
-    LEARNING_OBSERVATION_SCHEMA_V27, NativeActorObservation, NativeChannelStatus, NativeEpisode,
-    NativeEpisodeShard, NativeLearningObservation, NativeRawPad, NativeResourceArchiveKind,
-    NativeResourceLoadOutcome,
+    LEARNING_OBSERVATION_SCHEMA_V27, LEARNING_OBSERVATION_SCHEMA_V28, NativeActorObservation,
+    NativeChannelStatus, NativeEpisode, NativeEpisodeShard, NativeLearningObservation,
+    NativeRawPad, NativeResourceArchiveKind, NativeResourceLoadOutcome,
 };
 use crate::native_global_temporal::{GlobalTemporalCoverage, inspect_global_temporal_coverage};
 use serde::Serialize;
@@ -1080,6 +1080,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
                 | LEARNING_OBSERVATION_SCHEMA_V25
                 | LEARNING_OBSERVATION_SCHEMA_V26
                 | LEARNING_OBSERVATION_SCHEMA_V27
+                | LEARNING_OBSERVATION_SCHEMA_V28
         );
         *observation_schemas
             .entry(shard.metadata.observation_schema.clone())

@@ -335,6 +335,15 @@ fn record_transition(
         after.restart.as_ref()
     );
     record!(
+        "return_restart_write_trace.status",
+        before.return_restart_write_trace_status != after.return_restart_write_trace_status
+    );
+    record_optional!(
+        "return_restart_write_trace.value",
+        before.return_restart_write_trace.as_ref(),
+        after.return_restart_write_trace.as_ref()
+    );
+    record!(
         "event_handoff.status",
         before.event_handoff_status != after.event_handoff_status
     );

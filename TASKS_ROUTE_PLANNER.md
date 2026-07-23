@@ -1984,8 +1984,9 @@ evidenced overlays over the generated base rather than silent edits to it.
       `docs/route-planner/gz2e01-representative-actor-state-inventory.md`.
 - [x] Audit SavMem placements, guards, and all return/restart-place writers.
       The canonical exact-GZ2E01 audit joins all 132 placements to decoded
-      targets and guards and seals 30 persistent-return, transient-restart,
-      initialization, and restart-parameter source calls across 24 files. See
+      targets and guards and seals 32 persistent-return, transient-restart,
+      start-point, last-scene-info, initialization, and restart-parameter source
+      calls across 24 files. See
       `docs/route-planner/gz2e01-return-restart-writer-audit.md`.
 - [x] Record known BiT, BiTE, Auru duplication, wrong-flags respawn, Fanadi lock,
       Text Displacement, and Ordon/twilight route evidence without prematurely
@@ -2037,11 +2038,17 @@ Deliverable: one validated runtime representation independent of authoring forma
 - [x] Capture physical slots separately from the active runtime.
 - [x] Snapshot typed components plus unknown/raw regions where possible.
 - [x] Record binding changes and component provenance.
-- [ ] Record return/restart values, gates, and relevant actor writes.
+- [x] Record return/restart values, gates, and relevant actor writes.
   - [x] Observe held return/restart values and loaded SavMem writer targets plus
         exact `NO_TELOP`/event/switch guard evaluations (native observation v14).
-  - [ ] Audit and observe other return/restart writers and produce traces that
+  - [x] Audit and observe other return/restart writers and produce traces that
         distinguish eligible SavMem execution from an actual value change.
+        Native observation v28 records every audited writer domain and seals
+        phase-aligned before/after evidence. The witnessed GZ2E01 trace contains
+        264 `Savmem` executions, 132 eligible executions, and 132 idempotent
+        return-place writes, plus the independently observed start-point and
+        last-scene-info transition writes. See
+        `docs/route-planner/native-return-restart-write-trace.md`.
 - [x] Record `mGtItm`, `mPreItemNo`, current flow/node/cut, message-progress bits,
       pending cleanup, item partner, event name, and player-control transitions.
       Native event-handoff projection retains the action-lived pre-item,

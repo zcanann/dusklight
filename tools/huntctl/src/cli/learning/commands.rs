@@ -71,6 +71,7 @@ use huntctl::native_geometry_view::{
 use huntctl::native_resource_load_view::{
     NativeEpisodeResourceLoadView, ResourceArchiveKind, ResourceLoadOutcome, ResourceLoadSetStatus,
 };
+use huntctl::native_return_restart_trace::NativeReturnRestartWriteTrace;
 use huntctl::native_room_load_view::{
     NativeEpisodeRoomLoadView, RoomLoadSetStatus, RoomSceneSetStatus,
 };
@@ -1010,6 +1011,63 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 fs::write(output, &bytes)?;
             }
             println!("{}", String::from_utf8(bytes)?);
+            Ok(())
+        }
+        Some("trace-return-restart-writes") => {
+            let learn_args = &args[1..];
+            let inputs = repeated_option(learn_args, "--input");
+            if inputs.is_empty() || inputs.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn trace-return-restart-writes requires 1..={MAX_LEARN_INPUT_CORPORA} --input SHARD"
+                )
+                .into());
+            }
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "return/restart write trace output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            let shards = inputs
+                .iter()
+                .map(NativeEpisodeShard::read)
+                .collect::<Result<Vec<_>, _>>()?;
+            let report = NativeReturnRestartWriteTrace::build(&shards)?;
+            let bytes = serde_json::to_vec_pretty(&report)?;
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&output, &bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "content_sha256": report.content_sha256,
+                    "source_shards": report.source_shards.len(),
+                    "summary": report.summary,
+                    "output": output,
+                }))?
+            );
+            Ok(())
+        }
+        Some("validate-return-restart-write-trace") => {
+            let input = required_path(&args[1..], "--input")?;
+            let report = NativeReturnRestartWriteTrace::decode(&fs::read(&input)?)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "content_sha256": report.content_sha256,
+                    "source_shards": report.source_shards.len(),
+                    "summary": report.summary,
+                    "input": input,
+                }))?
+            );
             Ok(())
         }
         Some("native-replay") => {

@@ -48,6 +48,7 @@ const OBSERVATION_VERSION_V24: u16 = 24;
 const OBSERVATION_VERSION_V25: u16 = 25;
 const OBSERVATION_VERSION_V26: u16 = 26;
 const OBSERVATION_VERSION_V27: u16 = 27;
+const OBSERVATION_VERSION_V28: u16 = 28;
 const ACTION_VERSION: u16 = 2;
 const RNG_SNAPSHOT_VERSION: u32 = 1;
 const RNG_ALGORITHM_VERSION: u32 = 1;
@@ -108,6 +109,7 @@ pub const LEARNING_OBSERVATION_SCHEMA_V24: &str = "dusklight-learning-observatio
 pub const LEARNING_OBSERVATION_SCHEMA_V25: &str = "dusklight-learning-observation/v25";
 pub const LEARNING_OBSERVATION_SCHEMA_V26: &str = "dusklight-learning-observation/v26";
 pub const LEARNING_OBSERVATION_SCHEMA_V27: &str = "dusklight-learning-observation/v27";
+pub const LEARNING_OBSERVATION_SCHEMA_V28: &str = "dusklight-learning-observation/v28";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
 
 /// Reproduces the native writer's canonical identity for an exact authored
@@ -199,6 +201,23 @@ pub struct NativeEpisodeStep {
     pub chosen_pad: NativeRawPad,
     pub consumed_pad: NativeRawPad,
     pub post_simulation: NativeLearningObservation,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeReturnRestartWriteTraceObservation {
+    pub return_place_initialize_count: u16,
+    pub return_place_set_count: u16,
+    pub savmem_execute_count: u16,
+    pub savmem_eligible_execute_count: u16,
+    pub restart_place_set_count: u16,
+    pub restart_start_point_set_count: u16,
+    pub restart_room_parameter_set_count: u16,
+    pub restart_last_scene_info_set_count: u16,
+    pub return_place_value_change_count: u16,
+    pub restart_place_value_change_count: u16,
+    pub restart_start_point_value_change_count: u16,
+    pub restart_room_parameter_value_change_count: u16,
+    pub restart_last_scene_info_value_change_count: u16,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -920,6 +939,8 @@ pub struct NativeLearningObservation {
     pub return_place: Option<NativeReturnPlaceObservation>,
     pub restart_status: NativeChannelStatus,
     pub restart: Option<NativeRestartObservation>,
+    pub return_restart_write_trace_status: NativeChannelStatus,
+    pub return_restart_write_trace: Option<NativeReturnRestartWriteTraceObservation>,
     pub event_handoff_status: NativeChannelStatus,
     pub event_handoff: Option<NativeEventHandoffObservation>,
     pub message_session_status: NativeChannelStatus,
@@ -1019,6 +1040,7 @@ impl NativeEpisodeShard {
                 | OBSERVATION_VERSION_V25
                 | OBSERVATION_VERSION_V26
                 | OBSERVATION_VERSION_V27
+                | OBSERVATION_VERSION_V28
         ) || header.u16()? != ACTION_VERSION
         {
             return Err(NativeEpisodeShardError::new(
@@ -1161,6 +1183,7 @@ fn decode_metadata(
         OBSERVATION_VERSION_V25 => LEARNING_OBSERVATION_SCHEMA_V25,
         OBSERVATION_VERSION_V26 => LEARNING_OBSERVATION_SCHEMA_V26,
         OBSERVATION_VERSION_V27 => LEARNING_OBSERVATION_SCHEMA_V27,
+        OBSERVATION_VERSION_V28 => LEARNING_OBSERVATION_SCHEMA_V28,
         _ => {
             return Err(NativeEpisodeShardError::new(
                 "unsupported observation schema version",
@@ -2691,6 +2714,54 @@ fn decode_resource_loads(
     ))
 }
 
+fn decode_return_restart_write_trace(
+    reader: &mut Reader<'_>,
+) -> Result<
+    (
+        NativeChannelStatus,
+        Option<NativeReturnRestartWriteTraceObservation>,
+    ),
+    NativeEpisodeShardError,
+> {
+    let status = decode_channel_status(reader)?;
+    if reader.u8()? != 0 {
+        return Err(NativeEpisodeShardError::new(
+            "nonzero return/restart write-trace reserved byte",
+        ));
+    }
+    let trace = NativeReturnRestartWriteTraceObservation {
+        return_place_initialize_count: reader.u16()?,
+        return_place_set_count: reader.u16()?,
+        savmem_execute_count: reader.u16()?,
+        savmem_eligible_execute_count: reader.u16()?,
+        restart_place_set_count: reader.u16()?,
+        restart_start_point_set_count: reader.u16()?,
+        restart_room_parameter_set_count: reader.u16()?,
+        restart_last_scene_info_set_count: reader.u16()?,
+        return_place_value_change_count: reader.u16()?,
+        restart_place_value_change_count: reader.u16()?,
+        restart_start_point_value_change_count: reader.u16()?,
+        restart_room_parameter_value_change_count: reader.u16()?,
+        restart_last_scene_info_value_change_count: reader.u16()?,
+    };
+    let return_writes =
+        u32::from(trace.return_place_initialize_count) + u32::from(trace.return_place_set_count);
+    if status != NativeChannelStatus::Present
+        || trace.savmem_eligible_execute_count > trace.savmem_execute_count
+        || u32::from(trace.return_place_value_change_count) > return_writes
+        || trace.restart_place_value_change_count > trace.restart_place_set_count
+        || trace.restart_start_point_value_change_count > trace.restart_start_point_set_count
+        || trace.restart_room_parameter_value_change_count > trace.restart_room_parameter_set_count
+        || trace.restart_last_scene_info_value_change_count
+            > trace.restart_last_scene_info_set_count
+    {
+        return Err(NativeEpisodeShardError::new(
+            "inconsistent return/restart write trace",
+        ));
+    }
+    Ok((status, Some(trace)))
+}
+
 fn decode_camera(
     reader: &mut Reader<'_>,
 ) -> Result<NativeCameraObservation, NativeEpisodeShardError> {
@@ -3578,7 +3649,8 @@ fn decode_observation(
         | OBSERVATION_VERSION_V24
         | OBSERVATION_VERSION_V25
         | OBSERVATION_VERSION_V26
-        | OBSERVATION_VERSION_V27 => {
+        | OBSERVATION_VERSION_V27
+        | OBSERVATION_VERSION_V28 => {
             let camera_status = decode_channel_status(reader)?;
             let action_status = decode_channel_status(reader)?;
             let background_status = decode_channel_status(reader)?;
@@ -4619,6 +4691,12 @@ fn decode_observation(
     } else {
         (NativeChannelStatus::NotSampled, None)
     };
+    let (return_restart_write_trace_status, return_restart_write_trace) =
+        if observation_version >= OBSERVATION_VERSION_V28 {
+            decode_return_restart_write_trace(reader)?
+        } else {
+            (NativeChannelStatus::NotSampled, None)
+        };
     Ok(NativeLearningObservation {
         phase,
         terminal_reason,
@@ -4705,6 +4783,8 @@ fn decode_observation(
         return_place,
         restart_status,
         restart,
+        return_restart_write_trace_status,
+        return_restart_write_trace,
         event_handoff_status,
         event_handoff,
         message_session_status,

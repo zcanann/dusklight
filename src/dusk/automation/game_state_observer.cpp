@@ -1057,6 +1057,26 @@ MilestoneObservation capture_milestone_observation(MilestoneObservationStorage& 
     restart.lastMode = dComIfGs_getLastSceneMode();
     restart.lastAngleY = dComIfGs_getLastSceneAngleY();
 
+    const dSv_return_restart_write_trace_c writeTrace = dSv_takeReturnRestartWriteTrace();
+    auto& capturedWriteTrace = observation.returnRestartWriteTrace;
+    capturedWriteTrace.status = MilestoneObservation::ChannelStatus::Present;
+    capturedWriteTrace.returnPlaceInitializeCount = writeTrace.returnPlaceInitializeCount;
+    capturedWriteTrace.returnPlaceSetCount = writeTrace.returnPlaceSetCount;
+    capturedWriteTrace.savmemExecuteCount = writeTrace.savmemExecuteCount;
+    capturedWriteTrace.savmemEligibleExecuteCount = writeTrace.savmemEligibleExecuteCount;
+    capturedWriteTrace.restartPlaceSetCount = writeTrace.restartPlaceSetCount;
+    capturedWriteTrace.restartStartPointSetCount = writeTrace.restartStartPointSetCount;
+    capturedWriteTrace.restartRoomParameterSetCount = writeTrace.restartRoomParameterSetCount;
+    capturedWriteTrace.restartLastSceneInfoSetCount = writeTrace.restartLastSceneInfoSetCount;
+    capturedWriteTrace.returnPlaceValueChangeCount = writeTrace.returnPlaceValueChangeCount;
+    capturedWriteTrace.restartPlaceValueChangeCount = writeTrace.restartPlaceValueChangeCount;
+    capturedWriteTrace.restartStartPointValueChangeCount =
+        writeTrace.restartStartPointValueChangeCount;
+    capturedWriteTrace.restartRoomParameterValueChangeCount =
+        writeTrace.restartRoomParameterValueChangeCount;
+    capturedWriteTrace.restartLastSceneInfoValueChangeCount =
+        writeTrace.restartLastSceneInfoValueChangeCount;
+
     auto& handoff = observation.eventHandoff;
     handoff.noTelopStatus = MilestoneObservation::ChannelStatus::Present;
     handoff.noTelop = dComIfGs_isTmpBit(dSv_event_tmp_flag_c::NO_TELOP) != 0;

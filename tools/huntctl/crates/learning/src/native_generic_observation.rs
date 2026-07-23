@@ -8,8 +8,8 @@
 use crate::artifact::Digest;
 use crate::native_episode_history::NativeEpisodeHistoryView;
 use dusklight_evidence::native_episode_shard::{
-    LEARNING_OBSERVATION_SCHEMA_V27, NativeActorSelectionRule, NativeChannelStatus,
-    NativeEpisodeShard, NativeLearningObservation, RAW_PAD_ACTION_SCHEMA_V2,
+    LEARNING_OBSERVATION_SCHEMA_V27, LEARNING_OBSERVATION_SCHEMA_V28, NativeActorSelectionRule,
+    NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation, RAW_PAD_ACTION_SCHEMA_V2,
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -51,8 +51,10 @@ pub struct NativeGenericObservationReport {
 pub fn validate_native_generic_observation_shard(
     shard: &NativeEpisodeShard,
 ) -> Result<NativeGenericObservationReport, NativeGenericObservationError> {
-    if shard.metadata.observation_schema != LEARNING_OBSERVATION_SCHEMA_V27
-        || shard.metadata.action_schema != RAW_PAD_ACTION_SCHEMA_V2
+    if !matches!(
+        shard.metadata.observation_schema.as_str(),
+        LEARNING_OBSERVATION_SCHEMA_V27 | LEARNING_OBSERVATION_SCHEMA_V28
+    ) || shard.metadata.action_schema != RAW_PAD_ACTION_SCHEMA_V2
         || shard.episodes.is_empty()
     {
         return Err(observation_error(

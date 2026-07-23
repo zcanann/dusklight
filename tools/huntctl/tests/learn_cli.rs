@@ -8,6 +8,7 @@ use huntctl::learning::option_values::{
 use huntctl::native_collision_history::NativeCollisionHistoryView;
 use huntctl::native_episode_shard::{NativeEpisodeShard, authored_milestone_objective_identity};
 use huntctl::native_resource_load_view::NativeEpisodeResourceLoadView;
+use huntctl::native_return_restart_trace::NativeReturnRestartWriteTrace;
 use huntctl::native_room_load_view::NativeEpisodeRoomLoadView;
 use huntctl::option_execution::OptionType;
 use huntctl::reward_shaping::{
@@ -61,6 +62,53 @@ fn native_corpus_inspection_reports_complete_cpp_shard() {
         0
     );
     assert_eq!(report["determinism_conflicts"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn return_restart_trace_cli_seals_writer_execution_and_validates_it() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("huntctl-return-restart-trace-{nonce}"));
+    fs::create_dir_all(&root).unwrap();
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/fixtures/automation/native_episode_v28.dseps");
+    let output_path = root.join("return-restart-trace.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "trace-return-restart-writes", "--input"])
+        .arg(&fixture)
+        .args(["--output"])
+        .arg(&output_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        summary["schema"],
+        "dusklight-native-return-restart-write-trace/v1"
+    );
+    assert_eq!(summary["summary"]["observations"], 4);
+    assert_eq!(summary["summary"]["event_boundaries"], 4);
+    assert_eq!(summary["summary"]["savmem_executes"], 12);
+    assert_eq!(summary["summary"]["savmem_eligible_executes"], 8);
+    NativeReturnRestartWriteTrace::decode(&fs::read(&output_path).unwrap()).unwrap();
+
+    let validation = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .args(["learn", "validate-return-restart-write-trace", "--input"])
+        .arg(&output_path)
+        .output()
+        .unwrap();
+    assert!(
+        validation.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validation.stderr)
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

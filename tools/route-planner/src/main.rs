@@ -171,6 +171,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             validate_scene_change_consumer_audit(&args[1..])
         }
         Some("audit-return-restart-writers") => audit_return_restart_writers(&args[1..]),
+        Some("refresh-return-restart-audit-sources") => {
+            refresh_return_restart_audit_sources(&args[1..])
+        }
         Some("validate-return-restart-audit") => validate_return_restart_audit(&args[1..]),
         Some("help" | "--help" | "-h") | None => {
             print_usage();
@@ -665,6 +668,29 @@ fn validate_return_restart_audit(args: &[String]) -> Result<(), Box<dyn Error>> 
             "writer_counts": audit.writer_counts,
             "savmem_placements": audit.savmem_placements.len(),
             "input": input,
+        }))?
+    );
+    Ok(())
+}
+
+fn refresh_return_restart_audit_sources(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let repository_root = required_path(args, "--repository-root")?;
+    let input = required_path(args, "--input")?;
+    let output = required_path(args, "--output")?;
+    let audit = ReturnRestartAudit::refresh_source_census(&repository_root, &fs::read(&input)?)?;
+    write_file(&output, &audit.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": audit.schema,
+            "content_sha256": audit.content_sha256,
+            "source_bundle_sha256": audit.source_bundle_sha256,
+            "source_files": audit.source_files.len(),
+            "call_sites": audit.writer_counts.iter().map(|row| row.call_sites).sum::<u64>(),
+            "writer_counts": audit.writer_counts,
+            "savmem_placements": audit.savmem_placements.len(),
+            "input": input,
+            "output": output,
         }))?
     );
     Ok(())
@@ -2633,6 +2659,7 @@ fn print_usage() {
             "  route-planner audit-scene-change-consumers --source-root SOURCE --content-identity CONTENT.json --output AUDIT.json",
             "  route-planner validate-scene-change-consumer-audit --input AUDIT.json",
             "  route-planner audit-return-restart-writers --repository-root REPOSITORY --bundle BUNDLE.json --output AUDIT.json",
+            "  route-planner refresh-return-restart-audit-sources --repository-root REPOSITORY --input AUDIT.json --output AUDIT.json",
             "  route-planner validate-return-restart-audit --input AUDIT.json",
             "  route-planner cache-fact-pack --cache CACHE --payload PAYLOAD.json --manifest MANIFEST.json --receipt RECEIPT.json",
             "  route-planner catalog-state-boundaries --state STATE.json --policy POLICY.json [--policy POLICY.json]... --output CATALOG.json",

@@ -833,19 +833,31 @@ public:
 
     s8 getRoomNo() const { return mRoomNo; }
     s16 getStartPoint() const { return mStartPoint; }
+#if TARGET_PC
+    void setStartPoint(s16 point);
+#else
     void setStartPoint(s16 point) { mStartPoint = point; }
+#endif
     s16 getRoomAngleY() const { return mRoomAngleY; }
     const cXyz& getRoomPos() const { return mRoomPos; }
     u32 getRoomParam() const { return mRoomParam; }
+#if TARGET_PC
+    void setRoomParam(u32 param);
+#else
     void setRoomParam(u32 param) { mRoomParam = param; }
+#endif
     f32 getLastSpeedF() const { return mLastSpeedF; }
     u32 getLastMode() const { return mLastMode; }
     s16 getLastAngleY() const { return mLastAngleY; }
+#if TARGET_PC
+    void setLastSceneInfo(f32 speed, u32 mode, s16 angle);
+#else
     void setLastSceneInfo(f32 speed, u32 mode, s16 angle) {
         mLastSpeedF = speed;
         mLastMode = mode;
         mLastAngleY = angle;
     }
+#endif
 
     /* 0x00 */ s8 mRoomNo;
     /* 0x01 */ u8 field_0x01[3];
@@ -857,6 +869,30 @@ public:
     /* 0x1C */ u32 mLastMode;
     /* 0x20 */ s16 mLastAngleY;
 };  // Size: 0x24
+
+#if TARGET_PC
+// Per-observation-boundary write evidence. This telemetry is outside the save
+// layout and never changes gameplay values; the automation observer consumes
+// and clears it after each capture.
+struct dSv_return_restart_write_trace_c {
+    u16 returnPlaceInitializeCount = 0;
+    u16 returnPlaceSetCount = 0;
+    u16 savmemExecuteCount = 0;
+    u16 savmemEligibleExecuteCount = 0;
+    u16 restartPlaceSetCount = 0;
+    u16 restartStartPointSetCount = 0;
+    u16 restartRoomParameterSetCount = 0;
+    u16 restartLastSceneInfoSetCount = 0;
+    u16 returnPlaceValueChangeCount = 0;
+    u16 restartPlaceValueChangeCount = 0;
+    u16 restartStartPointValueChangeCount = 0;
+    u16 restartRoomParameterValueChangeCount = 0;
+    u16 restartLastSceneInfoValueChangeCount = 0;
+};
+
+void dSv_noteSavmemExecute(bool eligible);
+dSv_return_restart_write_trace_c dSv_takeReturnRestartWriteTrace();
+#endif
 
 class dSv_turnRestart_c {
 public:

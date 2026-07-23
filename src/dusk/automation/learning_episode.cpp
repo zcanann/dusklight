@@ -463,6 +463,41 @@ bool append_planner_runtime_state(std::vector<std::uint8_t>& output,
     return true;
 }
 
+bool append_return_restart_write_trace_state(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, std::string& error) {
+    using Status = MilestoneObservation::ChannelStatus;
+    const auto& trace = observation.returnRestartWriteTrace;
+    const std::uint32_t returnWrites = static_cast<std::uint32_t>(
+        trace.returnPlaceInitializeCount) + trace.returnPlaceSetCount;
+    if (trace.status != Status::Present ||
+        trace.savmemEligibleExecuteCount > trace.savmemExecuteCount ||
+        trace.returnPlaceValueChangeCount > returnWrites ||
+        trace.restartPlaceValueChangeCount > trace.restartPlaceSetCount ||
+        trace.restartStartPointValueChangeCount > trace.restartStartPointSetCount ||
+        trace.restartRoomParameterValueChangeCount > trace.restartRoomParameterSetCount ||
+        trace.restartLastSceneInfoValueChangeCount > trace.restartLastSceneInfoSetCount)
+    {
+        error = "learning observation has inconsistent return/restart write trace";
+        return false;
+    }
+    append_integer(output, static_cast<std::uint8_t>(trace.status));
+    append_integer<std::uint8_t>(output, 0);
+    append_integer(output, trace.returnPlaceInitializeCount);
+    append_integer(output, trace.returnPlaceSetCount);
+    append_integer(output, trace.savmemExecuteCount);
+    append_integer(output, trace.savmemEligibleExecuteCount);
+    append_integer(output, trace.restartPlaceSetCount);
+    append_integer(output, trace.restartStartPointSetCount);
+    append_integer(output, trace.restartRoomParameterSetCount);
+    append_integer(output, trace.restartLastSceneInfoSetCount);
+    append_integer(output, trace.returnPlaceValueChangeCount);
+    append_integer(output, trace.restartPlaceValueChangeCount);
+    append_integer(output, trace.restartStartPointValueChangeCount);
+    append_integer(output, trace.restartRoomParameterValueChangeCount);
+    append_integer(output, trace.restartLastSceneInfoValueChangeCount);
+    return true;
+}
+
 bool append_message_session_state(std::vector<std::uint8_t>& output,
     const MilestoneObservation& observation, std::string& error) {
     using Status = MilestoneObservation::ChannelStatus;
@@ -1875,7 +1910,8 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         return false;
     if (!append_warp_session_state(output, observation, error))
         return false;
-    return append_resource_load_state(output, observation, error);
+    return append_resource_load_state(output, observation, error) &&
+           append_return_restart_write_trace_state(output, observation, error);
 }
 
 void append_learning_action(std::vector<std::uint8_t>& output, const RawPadState& chosenPad,

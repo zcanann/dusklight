@@ -47,7 +47,7 @@ Dragging nodes marks presentation state dirty; JSON import/export remains
 available for interchange. Graph projection still runs through the Rust
 service, and layout metadata never participates in reachability.
 
-The planner CLI currently owns forty-four operations:
+The planner CLI currently owns forty-five operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -134,7 +134,10 @@ The planner CLI currently owns forty-four operations:
 - `audit-return-restart-writers` joins every exact-bundle `Savmem` placement to
   its decoded stage/room/spawn target and `NO_TELOP`, event-bit, and room-switch
   guards, then seals a repository source census of persistent return-place,
-  transient restart-place, initialization, and restart-parameter writers.
+  transient restart-place, start-point, last-scene-info, initialization, and
+  restart-parameter writers. `refresh-return-restart-audit-sources` rebinds the
+  source census while preserving the sealed exact-bundle placements, so a
+  source-only audit update does not require the original retail tree.
   `validate-return-restart-audit` rejects noncanonical, tampered, reordered, or
   internally inconsistent audit artifacts.
 - `scan-orig` discovers an extracted GameCube/Wii disc from either its game

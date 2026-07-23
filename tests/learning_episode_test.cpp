@@ -272,6 +272,21 @@ struct ObservationFixture {
         observation.restart.lastSpeed = 4.5F;
         observation.restart.lastMode = 0x05060708;
         observation.restart.lastAngleY = -0x1200;
+        observation.returnRestartWriteTrace.status =
+            MilestoneObservation::ChannelStatus::Present;
+        observation.returnRestartWriteTrace.returnPlaceInitializeCount = 1;
+        observation.returnRestartWriteTrace.returnPlaceSetCount = 2;
+        observation.returnRestartWriteTrace.savmemExecuteCount = 3;
+        observation.returnRestartWriteTrace.savmemEligibleExecuteCount = 2;
+        observation.returnRestartWriteTrace.restartPlaceSetCount = 4;
+        observation.returnRestartWriteTrace.restartStartPointSetCount = 5;
+        observation.returnRestartWriteTrace.restartRoomParameterSetCount = 6;
+        observation.returnRestartWriteTrace.restartLastSceneInfoSetCount = 7;
+        observation.returnRestartWriteTrace.returnPlaceValueChangeCount = 3;
+        observation.returnRestartWriteTrace.restartPlaceValueChangeCount = 4;
+        observation.returnRestartWriteTrace.restartStartPointValueChangeCount = 5;
+        observation.returnRestartWriteTrace.restartRoomParameterValueChangeCount = 6;
+        observation.returnRestartWriteTrace.restartLastSceneInfoValueChangeCount = 7;
         observation.eventHandoff.status = MilestoneObservation::ChannelStatus::Present;
         observation.eventHandoff.preItemNo = 0x48;
         observation.eventHandoff.getItemNo = 0x43;
@@ -1290,6 +1305,30 @@ void test_resource_load_state_fails_closed() {
     REQUIRE(error.find("inconsistent resource-load entry") != std::string::npos);
 }
 
+void test_return_restart_write_trace_fails_closed() {
+    ObservationFixture ineligibleOverflow;
+    ineligibleOverflow.observation.returnRestartWriteTrace.savmemEligibleExecuteCount = 4;
+    std::vector<std::uint8_t> bytes;
+    begin_learning_episode(bytes);
+    std::string error;
+    REQUIRE(!append_learning_observation(bytes, ineligibleOverflow.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent return/restart write trace") != std::string::npos);
+
+    ObservationFixture valueChangeOverflow;
+    valueChangeOverflow.observation.returnRestartWriteTrace.restartPlaceValueChangeCount = 5;
+    begin_learning_episode(bytes);
+    REQUIRE(!append_learning_observation(bytes, valueChangeOverflow.observation,
+        {
+            .stateIdentity = "11111111111111111111111111111111",
+        },
+        error));
+    REQUIRE(error.find("inconsistent return/restart write trace") != std::string::npos);
+}
+
 void test_player_relationships_join_complete_actor_population() {
     ObservationFixture fixture;
     fixture.observation.playerRelationships.targetedActor.runtimeGeneration = 99;
@@ -1432,6 +1471,7 @@ int main(const int argc, char** argv) {
     test_room_load_state_fails_closed();
     test_warp_session_state_fails_closed();
     test_resource_load_state_fails_closed();
+    test_return_restart_write_trace_fails_closed();
     test_player_relationships_join_complete_actor_population();
     test_mechanics_boundary_and_surface_identity_fail_closed();
     test_return_place_writer_guards_fail_closed();

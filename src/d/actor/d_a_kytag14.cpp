@@ -23,6 +23,9 @@ static int daKytag14_Execute(kytag14_class* i_this) {
     BOOL switch2_unset = true;
 
     if (dComIfGs_isTmpBit(dSv_event_tmp_flag_c::NO_TELOP)) {
+#if TARGET_PC
+        dSv_noteSavmemExecute(false);
+#endif
         return 1;
     }
 
@@ -58,8 +61,12 @@ static int daKytag14_Execute(kytag14_class* i_this) {
         }
     }
 
-    if (event1_set == true && event2_unset == true && switch1_set == true && switch2_unset == true)
-    {
+    const bool eligible =
+        event1_set == true && event2_unset == true && switch1_set == true && switch2_unset == true;
+#if TARGET_PC
+    dSv_noteSavmemExecute(eligible);
+#endif
+    if (eligible) {
         #if DEBUG
         if (!g_kankyoHIO.navy.display_save_location) {
             dDbVw_Report(20, 16, "TAG SavMem STAGE[%s] Room[%d] Lp[%d]", dComIfGp_getStartStageName(), i_this->mSaveRoomNo, i_this->mSavePoint);

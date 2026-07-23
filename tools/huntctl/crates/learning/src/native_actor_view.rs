@@ -7,8 +7,9 @@
 use crate::artifact::Digest;
 use crate::compiled_goal_graph::{CompiledGoalGraph, GoalSpatialAnchor};
 use dusklight_evidence::native_episode_shard::{
-    LEARNING_OBSERVATION_SCHEMA_V27, NativeActorIdentity, NativeActorObservation,
-    NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation, NativeObservationPhase,
+    LEARNING_OBSERVATION_SCHEMA_V27, LEARNING_OBSERVATION_SCHEMA_V28, NativeActorIdentity,
+    NativeActorObservation, NativeChannelStatus, NativeEpisodeShard, NativeLearningObservation,
+    NativeObservationPhase,
 };
 use dusklight_objectives::milestone_dsl::{CompiledMilestones, decode};
 use dusklight_world::actor_profile_catalog::ActorProfileCatalog;
@@ -508,7 +509,10 @@ impl NativeEpisodeActorView {
             .goal_graph
             .as_ref()
             .map_or_else(Vec::new, CompiledGoalGraph::spatial_anchors);
-        let door20_sampled = self.observation_schema == LEARNING_OBSERVATION_SCHEMA_V27;
+        let door20_sampled = matches!(
+            self.observation_schema.as_str(),
+            LEARNING_OBSERVATION_SCHEMA_V27 | LEARNING_OBSERVATION_SCHEMA_V28
+        );
         for observation in &self.observations {
             validate_observation(observation, &goal_anchors, door20_sampled)?;
         }

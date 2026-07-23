@@ -1,15 +1,16 @@
 # GZ2E01 return/restart writer audit
 
 This audit separates the persistent player return place written by `Savmem`
-from the transient restart position/angle/room and the packed restart-room
-parameter. These are distinct state domains and must not be treated as aliases.
+from transient restart position/angle/room, start point, packed room parameter,
+and last-scene information. These are distinct state domains and must not be
+treated as aliases.
 
 The canonical machine-readable census is
 `tools/route-planner/crates/engine/data/gz2e01-return-restart-audit.json`. It is
 bound to exact content `gcn-us-1.0-gz2e01`, extracted-orig bundle SHA-256
 `b105cb11f2304b01243fa040cfcc883718c5d34d2021acb47158b21cd8bdb1e2`,
 and audit SHA-256
-`d5e676d4a62e503935109dcc22ec8e127df0a6ead02151bffc5cb2a30a159caa`.
+`ec7adca3f055ac97ee2660d88422ca77b0aa89eb5fcd606af8510bf8a6e035ac`.
 
 ## SavMem placement and guard census
 
@@ -41,23 +42,27 @@ the before/after return-place value.
 
 The source census walks repository `src/` C++ and included implementation files,
 strips comments, binds every finding to an exact source digest and line, and
-finds 30 calls in 24 files:
+finds 32 calls in 24 files:
 
 | State domain | Calls | Files | Meaning |
 | --- | ---: | ---: | --- |
 | player return-place initialization | 1 | 1 | Clears/initializes the persistent return-place record. |
 | player return-place set | 1 | 1 | `Savmem` writes current stage plus decoded room and save point. |
 | restart-place set | 19 | 16 | Writes transient restart position, angle, and room. |
+| restart start-point set | 1 | 1 | Writes the entrance/start point carried by the restart record. |
 | restart-room parameter set | 9 | 7 | Clears or sets the packed restart request parameter, including the PC state-share path. |
+| restart last-scene-info set | 1 | 1 | Writes the last speed, mode, and angle tuple during a next-stage request. |
 
 The 19 transient restart-place writes cover player grounding and wolf/demo
 paths, boss phases, boss/mini-boss/knob/shutter/spiral doors, and explicit
 change/set-restart tags. Their positions and activation guards are local to
 those actor procedures; none authorizes a persistent `Savmem` return-place
-effect. The nine parameter writes cover stage request/consumption, title/name/
+effect. The start-point and last-scene-info setters run from the generic
+next-stage request path and remain distinct from the 19 position/angle/room
+writes. The nine parameter writes cover stage request/consumption, title/name/
 save-menu transitions, portal-warp setup, and the PC state-share input. A zero
-parameter is a distinct write and is not evidence that restart position or
-persistent return place was cleared.
+parameter is a distinct write and is not evidence that restart position,
+start point, last-scene info, or persistent return place was cleared.
 
 ## Reproduction
 
@@ -71,6 +76,12 @@ route-planner audit-return-restart-writers \
 
 route-planner validate-return-restart-audit \
   --input gz2e01-return-restart-audit.json
+
+# Re-census exact source files without re-reading unchanged extracted assets.
+route-planner refresh-return-restart-audit-sources \
+  --repository-root . \
+  --input gz2e01-return-restart-audit.json \
+  --output gz2e01-return-restart-audit.json
 ```
 
 Validation recomputes the content seal, writer counts, strict source ordering,

@@ -109,6 +109,10 @@ fn golden_v27() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v27.dseps")
 }
 
+fn golden_v28() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v28.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -1617,6 +1621,58 @@ fn decodes_v27_door20_component_with_legacy_missingness() {
 }
 
 #[test]
+fn decodes_v28_return_restart_write_trace_with_legacy_missingness() {
+    let shard = NativeEpisodeShard::decode(golden_v28()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V28
+    );
+    for observation in shard.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(
+            observation.return_restart_write_trace_status,
+            NativeChannelStatus::Present
+        );
+        assert_eq!(
+            observation.return_restart_write_trace,
+            Some(NativeReturnRestartWriteTraceObservation {
+                return_place_initialize_count: 1,
+                return_place_set_count: 2,
+                savmem_execute_count: 3,
+                savmem_eligible_execute_count: 2,
+                restart_place_set_count: 4,
+                restart_start_point_set_count: 5,
+                restart_room_parameter_set_count: 6,
+                restart_last_scene_info_set_count: 7,
+                return_place_value_change_count: 3,
+                restart_place_value_change_count: 4,
+                restart_start_point_value_change_count: 5,
+                restart_room_parameter_value_change_count: 6,
+                restart_last_scene_info_value_change_count: 7,
+            })
+        );
+    }
+
+    let legacy = NativeEpisodeShard::decode(golden_v27()).unwrap();
+    for observation in legacy.episodes.iter().flat_map(|episode| {
+        episode
+            .steps
+            .iter()
+            .flat_map(|step| [&step.pre_input, &step.post_simulation])
+    }) {
+        assert_eq!(
+            observation.return_restart_write_trace_status,
+            NativeChannelStatus::NotSampled
+        );
+        assert_eq!(observation.return_restart_write_trace, None);
+    }
+}
+
+#[test]
 fn rejects_noncanonical_v27_door20_component() {
     const DOOR20: [u8; 28] = [
         9, 3, 2, 1, 4, 5, 6, 3, 1, 13, 1, 42, 0x11, 0x22, 0x33, 1, 0x44, 0x33, 0xff, 1, 0x2e, 0xfb,
@@ -2004,6 +2060,7 @@ fn decodes_requested_live_native_batch() {
                             | LEARNING_OBSERVATION_SCHEMA_V25
                             | LEARNING_OBSERVATION_SCHEMA_V26
                             | LEARNING_OBSERVATION_SCHEMA_V27
+                            | LEARNING_OBSERVATION_SCHEMA_V28
                     ) || [&step.pre_input, &step.post_simulation]
                         .iter()
                         .all(|observation| {
@@ -2058,6 +2115,7 @@ fn decodes_requested_live_native_batch() {
             | LEARNING_OBSERVATION_SCHEMA_V25
             | LEARNING_OBSERVATION_SCHEMA_V26
             | LEARNING_OBSERVATION_SCHEMA_V27
+            | LEARNING_OBSERVATION_SCHEMA_V28
     ) {
         let observations = shard.episodes.iter().flat_map(|episode| {
             episode
@@ -2134,5 +2192,43 @@ fn rejects_action_shift_and_terminal_label_leakage() {
             true,
         )
         .is_err()
+    );
+}
+
+#[test]
+fn decodes_return_restart_write_trace_and_rejects_inconsistent_counts() {
+    let counts = [1_u16, 2, 3, 2, 4, 5, 6, 7, 3, 4, 5, 6, 7];
+    let mut bytes = vec![1, 0];
+    for count in counts {
+        bytes.extend_from_slice(&count.to_le_bytes());
+    }
+    let mut reader = Reader::new(&bytes);
+    let (status, trace) = decode_return_restart_write_trace(&mut reader).unwrap();
+    assert_eq!(status, NativeChannelStatus::Present);
+    assert!(reader.done());
+    assert_eq!(
+        trace.unwrap(),
+        NativeReturnRestartWriteTraceObservation {
+            return_place_initialize_count: 1,
+            return_place_set_count: 2,
+            savmem_execute_count: 3,
+            savmem_eligible_execute_count: 2,
+            restart_place_set_count: 4,
+            restart_start_point_set_count: 5,
+            restart_room_parameter_set_count: 6,
+            restart_last_scene_info_set_count: 7,
+            return_place_value_change_count: 3,
+            restart_place_value_change_count: 4,
+            restart_start_point_value_change_count: 5,
+            restart_room_parameter_value_change_count: 6,
+            restart_last_scene_info_value_change_count: 7,
+        }
+    );
+
+    let mut inconsistent = bytes;
+    inconsistent[8..10].copy_from_slice(&4_u16.to_le_bytes());
+    assert!(
+        decode_return_restart_write_trace(&mut Reader::new(&inconsistent)).is_err(),
+        "eligible Savmem executions cannot exceed executions"
     );
 }

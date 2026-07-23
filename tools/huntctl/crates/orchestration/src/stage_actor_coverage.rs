@@ -10,7 +10,9 @@ use crate::stage_survey::{
 };
 use crate::stage_survey_artifact::{compressed_artifact_path, read_survey_artifact};
 use dusklight_automation_contracts::artifact::Digest;
-use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V27;
+use dusklight_evidence::native_episode_shard::{
+    LEARNING_OBSERVATION_SCHEMA_V27, LEARNING_OBSERVATION_SCHEMA_V28,
+};
 use dusklight_world::stage_boot_catalog::StageBootCatalog;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -906,8 +908,10 @@ fn validate_snapshot(
     {
         return Err("actor_catalog_invariant_mismatch".into());
     }
-    if learning.source_schema != LEARNING_OBSERVATION_SCHEMA_V27
-        || learning.truncated
+    if !matches!(
+        learning.source_schema.as_str(),
+        LEARNING_OBSERVATION_SCHEMA_V27 | LEARNING_OBSERVATION_SCHEMA_V28
+    ) || learning.truncated
         || learning.observed_actor_count != learning.retained_actor_count
         || learning.retained_actor_count != snapshot.retained_actor_count
         || learning.actors.len() != learning.retained_actor_count as usize

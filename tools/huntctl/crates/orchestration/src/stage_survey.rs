@@ -6,7 +6,9 @@ use crate::stage_survey_artifact::{
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::native_fidelity::FIXED_AUTOMATION_CVARS;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, TapeBoot};
-use dusklight_evidence::native_episode_shard::LEARNING_OBSERVATION_SCHEMA_V27;
+use dusklight_evidence::native_episode_shard::{
+    LEARNING_OBSERVATION_SCHEMA_V27, LEARNING_OBSERVATION_SCHEMA_V28,
+};
 use dusklight_evidence::semantic_state_hash::SemanticStateHashSeries;
 use dusklight_harness_contracts::run_contract::sha256_artifact_file;
 use dusklight_trace::trace::{self, TraceAppliedPads, TraceChannel};
@@ -26,6 +28,13 @@ use std::time::{Duration, Instant};
 pub const STAGE_SURVEY_LEDGER_SCHEMA: &str = "dusklight-stage-survey-ledger/v1";
 pub const STAGE_SURVEY_FIDELITY: &str = "headless-fixed-step-unpaced-30hz/v1";
 const MAX_ATTEMPTS_PER_CASE: u8 = 8;
+
+fn supported_learning_observation_schema(value: &str) -> bool {
+    matches!(
+        value,
+        LEARNING_OBSERVATION_SCHEMA_V27 | LEARNING_OBSERVATION_SCHEMA_V28
+    )
+}
 const MAX_DIAGNOSTIC_BYTES: usize = 4096;
 const MAX_STDERR_INSPECTION_BYTES: u64 = 1024 * 1024;
 const DEFAULT_NATIVE_STAGE_READINESS_TICKS: u32 = 30 * 60;
@@ -1114,16 +1123,19 @@ fn validate_successful_probe(
         || actor_catalog.layer != final_observation.layer
         || actor_catalog.truncated
         || actor_catalog.observed_actor_count != actor_catalog.retained_actor_count
-        || actor_catalog.learning_actor_population.source_schema != LEARNING_OBSERVATION_SCHEMA_V27
+        || !supported_learning_observation_schema(
+            &actor_catalog.learning_actor_population.source_schema,
+        )
         || actor_catalog.learning_actor_population.truncated
         || actor_catalog.learning_actor_population.observed_actor_count
             != actor_catalog.learning_actor_population.retained_actor_count
         || actor_catalog.learning_actor_population.retained_actor_count
             != actor_catalog.retained_actor_count
-        || actor_catalog
-            .learning_dynamic_collision_population
-            .source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V27
+        || !supported_learning_observation_schema(
+            &actor_catalog
+                .learning_dynamic_collision_population
+                .source_schema,
+        )
         || !actor_catalog.learning_dynamic_collision_population.present
         || actor_catalog
             .learning_dynamic_collision_population
@@ -1139,13 +1151,17 @@ fn validate_successful_probe(
                 .learning_dynamic_collision_population
                 .colliders
                 .len()
-        || actor_catalog.learning_player_resources.source_schema != LEARNING_OBSERVATION_SCHEMA_V27
+        || !supported_learning_observation_schema(
+            &actor_catalog.learning_player_resources.source_schema,
+        )
         || !actor_catalog.learning_player_resources.present
-        || actor_catalog.learning_player_relationships.source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V27
+        || !supported_learning_observation_schema(
+            &actor_catalog.learning_player_relationships.source_schema,
+        )
         || !actor_catalog.learning_player_relationships.present
-        || actor_catalog.learning_player_collision_solver.source_schema
-            != LEARNING_OBSERVATION_SCHEMA_V27
+        || !supported_learning_observation_schema(
+            &actor_catalog.learning_player_collision_solver.source_schema,
+        )
         || !actor_catalog.learning_player_collision_solver.present
     {
         return Err("actor_catalog_incomplete");

@@ -3,14 +3,16 @@
 use crate::artifact::Digest;
 use crate::orig_discovery::{ExtractedOrigBundle, ExtractedOrigStageArchive};
 use crate::orig_extraction::ExtractedActorPlacement;
-use crate::{canonical_json, require_canonical_json_bytes, PlannerContractError};
+use crate::{PlannerContractError, canonical_json, require_canonical_json_bytes};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-pub const RETURN_RESTART_AUDIT_SCHEMA: &str = "dusklight.route-planner.return-restart-audit/v1";
+pub const RETURN_RESTART_AUDIT_SCHEMA: &str = "dusklight.route-planner.return-restart-audit/v2";
+const LEGACY_RETURN_RESTART_AUDIT_SCHEMA_V1: &str =
+    "dusklight.route-planner.return-restart-audit/v1";
 const MAX_SOURCE_FILES: usize = 100_000;
 const MAX_CALL_SITES: usize = 1_000_000;
 const MAX_PLACEMENTS: usize = 1_000_000;
@@ -51,7 +53,9 @@ pub enum ReturnRestartWriterKind {
     PlayerReturnPlaceInitialize,
     PlayerReturnPlaceSet,
     RestartPlaceSet,
+    RestartStartPointSet,
     RestartRoomParameterSet,
+    RestartLastSceneInfoSet,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -101,7 +105,7 @@ pub struct SavmemGuards {
     pub switch_2_must_be_unset: Option<u8>,
 }
 
-const WRITER_SYMBOLS: [(&str, ReturnRestartWriterKind); 4] = [
+const WRITER_SYMBOLS: [(&str, ReturnRestartWriterKind); 6] = [
     (
         "getPlayerReturnPlace().set",
         ReturnRestartWriterKind::PlayerReturnPlaceSet,
@@ -115,6 +119,14 @@ const WRITER_SYMBOLS: [(&str, ReturnRestartWriterKind); 4] = [
         ReturnRestartWriterKind::RestartRoomParameterSet,
     ),
     (
+        "dComIfGs_setStartPoint",
+        ReturnRestartWriterKind::RestartStartPointSet,
+    ),
+    (
+        "getRestart().setLastSceneInfo",
+        ReturnRestartWriterKind::RestartLastSceneInfoSet,
+    ),
+    (
         "dComIfGs_setRestartRoom",
         ReturnRestartWriterKind::RestartPlaceSet,
     ),
@@ -126,65 +138,7 @@ impl ReturnRestartAudit {
         bundle: &ExtractedOrigBundle,
     ) -> Result<Self, PlannerContractError> {
         bundle.validate()?;
-        let root = repository_root.canonicalize().map_err(|error| {
-            PlannerContractError::new("return_restart_audit.repository_root", error.to_string())
-        })?;
-        if !root.is_dir() {
-            return Err(PlannerContractError::new(
-                "return_restart_audit.repository_root",
-                "must resolve to a directory",
-            ));
-        }
-        let source_root = root.join("src");
-        if !source_root.is_dir() {
-            return Err(PlannerContractError::new(
-                "return_restart_audit.repository_root",
-                "must contain the source directory",
-            ));
-        }
-        let mut paths = Vec::new();
-        collect_source_files(&source_root, &mut paths)?;
-        paths.sort();
-        if paths.is_empty() || paths.len() > MAX_SOURCE_FILES {
-            return Err(PlannerContractError::new(
-                "return_restart_audit.source_files",
-                format!("must inspect between 1 and {MAX_SOURCE_FILES} source files"),
-            ));
-        }
-        let mut source_files = Vec::new();
-        let mut total_sites = 0_usize;
-        for path in paths {
-            let bytes = fs::read(&path).map_err(|error| {
-                PlannerContractError::new("return_restart_audit.source_file", error.to_string())
-            })?;
-            let source = std::str::from_utf8(&bytes).map_err(|error| {
-                PlannerContractError::new("return_restart_audit.source_file", error.to_string())
-            })?;
-            let call_sites = find_call_sites(source);
-            if call_sites.is_empty() {
-                continue;
-            }
-            total_sites = total_sites.checked_add(call_sites.len()).ok_or_else(|| {
-                PlannerContractError::new("return_restart_audit.call_sites", "count overflowed")
-            })?;
-            if total_sites > MAX_CALL_SITES {
-                return Err(PlannerContractError::new(
-                    "return_restart_audit.call_sites",
-                    format!("must contain at most {MAX_CALL_SITES} call sites"),
-                ));
-            }
-            source_files.push(ReturnRestartSourceFile {
-                relative_path: relative_path(&root, &path)?,
-                source_sha256: sha256(&bytes),
-                call_sites,
-            });
-        }
-        if source_files.is_empty() {
-            return Err(PlannerContractError::new(
-                "return_restart_audit.source_files",
-                "contains no recognized return/restart writers",
-            ));
-        }
+        let source_files = extract_source_census(repository_root)?;
         let mut savmem_placements = Vec::new();
         for archive in &bundle.stages {
             for placement in &archive.stage.actor_placements {
@@ -214,9 +168,43 @@ impl ReturnRestartAudit {
         Ok(audit)
     }
 
+    pub fn refresh_source_census(
+        repository_root: &Path,
+        prior_bytes: &[u8],
+    ) -> Result<Self, PlannerContractError> {
+        let mut audit: Self = serde_json::from_slice(prior_bytes)?;
+        let source_schema = audit.schema.clone();
+        if !matches!(
+            source_schema.as_str(),
+            LEGACY_RETURN_RESTART_AUDIT_SCHEMA_V1 | RETURN_RESTART_AUDIT_SCHEMA
+        ) {
+            return Err(PlannerContractError::new(
+                "return_restart_audit.schema",
+                "source refresh requires audit schema v1 or v2",
+            ));
+        }
+        audit.validate_schema(&source_schema)?;
+        require_canonical_json_bytes(
+            "return_restart_audit.legacy",
+            prior_bytes,
+            &canonical_json(&audit)?,
+        )?;
+        audit.schema = RETURN_RESTART_AUDIT_SCHEMA.into();
+        audit.source_files = extract_source_census(repository_root)?;
+        audit.writer_counts = derive_counts(&audit.source_files)?;
+        audit.content_sha256 = Digest::ZERO;
+        audit.content_sha256 = audit.identity()?;
+        audit.validate()?;
+        Ok(audit)
+    }
+
     pub fn validate(&self) -> Result<(), PlannerContractError> {
+        self.validate_schema(RETURN_RESTART_AUDIT_SCHEMA)
+    }
+
+    fn validate_schema(&self, expected_schema: &str) -> Result<(), PlannerContractError> {
         self.content.validate()?;
-        if self.schema != RETURN_RESTART_AUDIT_SCHEMA
+        if self.schema != expected_schema
             || self.source_bundle_sha256 == Digest::ZERO
             || self.content_sha256 == Digest::ZERO
             || self.content_sha256 != self.identity()?
@@ -488,6 +476,71 @@ fn collect_source_files(
     Ok(())
 }
 
+fn extract_source_census(
+    repository_root: &Path,
+) -> Result<Vec<ReturnRestartSourceFile>, PlannerContractError> {
+    let root = repository_root.canonicalize().map_err(|error| {
+        PlannerContractError::new("return_restart_audit.repository_root", error.to_string())
+    })?;
+    if !root.is_dir() {
+        return Err(PlannerContractError::new(
+            "return_restart_audit.repository_root",
+            "must resolve to a directory",
+        ));
+    }
+    let source_root = root.join("src");
+    if !source_root.is_dir() {
+        return Err(PlannerContractError::new(
+            "return_restart_audit.repository_root",
+            "must contain the source directory",
+        ));
+    }
+    let mut paths = Vec::new();
+    collect_source_files(&source_root, &mut paths)?;
+    paths.sort();
+    if paths.is_empty() || paths.len() > MAX_SOURCE_FILES {
+        return Err(PlannerContractError::new(
+            "return_restart_audit.source_files",
+            format!("must inspect between 1 and {MAX_SOURCE_FILES} source files"),
+        ));
+    }
+    let mut source_files = Vec::new();
+    let mut total_sites = 0_usize;
+    for path in paths {
+        let bytes = fs::read(&path).map_err(|error| {
+            PlannerContractError::new("return_restart_audit.source_file", error.to_string())
+        })?;
+        let source = std::str::from_utf8(&bytes).map_err(|error| {
+            PlannerContractError::new("return_restart_audit.source_file", error.to_string())
+        })?;
+        let call_sites = find_call_sites(source);
+        if call_sites.is_empty() {
+            continue;
+        }
+        total_sites = total_sites.checked_add(call_sites.len()).ok_or_else(|| {
+            PlannerContractError::new("return_restart_audit.call_sites", "count overflowed")
+        })?;
+        if total_sites > MAX_CALL_SITES {
+            return Err(PlannerContractError::new(
+                "return_restart_audit.call_sites",
+                format!("must contain at most {MAX_CALL_SITES} call sites"),
+            ));
+        }
+        source_files.push(ReturnRestartSourceFile {
+            relative_path: relative_path(&root, &path)?,
+            source_sha256: sha256(&bytes),
+            call_sites,
+        });
+    }
+    if source_files.is_empty() {
+        return Err(PlannerContractError::new(
+            "return_restart_audit.source_files",
+            "contains no recognized return/restart writers",
+        ));
+    }
+    Ok(source_files)
+}
+
 fn find_call_sites(source: &str) -> Vec<ReturnRestartCallSite> {
     let source = strip_comments(source);
     let mut sites = Vec::new();
@@ -619,16 +672,24 @@ mod tests {
     #[test]
     fn source_census_ignores_comments_and_keeps_writer_domains_distinct() {
         let sites = find_call_sites(
-            "// dComIfGs_setRestartRoom(a,b,c)\nvoid f(){ dComIfGs_setRestartRoom(a,b,c); }\n/* mPlayerReturnPlace.init(); */\nvoid g(){ dComIfGs_setRestartRoomParam(0); }\n",
+            "// dComIfGs_setRestartRoom(a,b,c)\nvoid f(){ dComIfGs_setRestartRoom(a,b,c); dComIfGs_setStartPoint(p); }\n/* mPlayerReturnPlace.init(); */\nvoid g(){ dComIfGs_setRestartRoomParam(0); getRestart().setLastSceneInfo(s,m,a); }\n",
         );
-        assert_eq!(sites.len(), 2);
+        assert_eq!(sites.len(), 4);
         assert_eq!(
             sites[0].writer_kind,
             ReturnRestartWriterKind::RestartPlaceSet
         );
         assert_eq!(
             sites[1].writer_kind,
+            ReturnRestartWriterKind::RestartStartPointSet
+        );
+        assert_eq!(
+            sites[2].writer_kind,
             ReturnRestartWriterKind::RestartRoomParameterSet
+        );
+        assert_eq!(
+            sites[3].writer_kind,
+            ReturnRestartWriterKind::RestartLastSceneInfoSet
         );
     }
 
@@ -642,7 +703,7 @@ mod tests {
                 .iter()
                 .map(|row| row.call_sites)
                 .sum::<u64>(),
-            30
+            32
         );
         assert_eq!(audit.savmem_placements.len(), 132);
         assert_eq!(
