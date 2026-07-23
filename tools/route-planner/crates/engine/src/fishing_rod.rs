@@ -65,7 +65,7 @@ impl OrdinaryFishingRodProfile {
                 transition_kind: kind,
                 approach_id: format!("approach.{id}"),
                 activation: ActivationContract {
-                    hard_guards: all(guards),
+                    hard_guards: all(std::iter::once(in_ordon_village()).chain(guards).collect()),
                     physical_obligation_ids: obligations.into_iter().map(str::to_owned).collect(),
                     effects,
                     unknown_requirements: Vec::new(),
@@ -122,6 +122,7 @@ impl OrdinaryFishingRodProfile {
                 vec![
                     field_is("carrying_cradle", StateValue::Boolean(true)),
                     field_is("cradle_returned", StateValue::Boolean(false)),
+                    field_is("uli_interaction_ready", StateValue::Boolean(true)),
                 ],
                 vec!["obligation.fishing-rod.ordinary.uli-cradle-return"],
                 vec![
@@ -230,6 +231,153 @@ impl OrdinaryFishingRodProfile {
         catalog.validate()?;
         Ok(catalog)
     }
+
+    /// Adds the chicken vine bypass and direct OOB cradle-carry branch to the
+    /// same quest state. Shared fields deliberately permit mixed routes.
+    pub fn compile_with_chicken_routes(&self) -> Result<MechanicsCatalog, PlannerContractError> {
+        let mut catalog = self.compile()?;
+        let unknown = RuleEvidence {
+            truth: TruthStatus::Unknown,
+            records: Vec::new(),
+        };
+        let candidate =
+            |id: &str,
+             label: &str,
+             kind: TransitionKind,
+             guards: Vec<PredicateExpression>,
+             obligations: Vec<&str>,
+             effects: Vec<StateOperation>| CandidateTransition {
+                id: id.into(),
+                label: label.into(),
+                scope: self.scope.clone(),
+                transition_kind: kind,
+                approach_id: format!("approach.{id}"),
+                activation: ActivationContract {
+                    hard_guards: all(std::iter::once(in_ordon_village()).chain(guards).collect()),
+                    physical_obligation_ids: obligations.into_iter().map(str::to_owned).collect(),
+                    effects,
+                    unknown_requirements: Vec::new(),
+                },
+                evidence: self.evidence.clone(),
+            };
+        let obligation = |id: &str,
+                          label: &str,
+                          stage: ObligationStage,
+                          kind: ObligationKind,
+                          question: &str| FeasibilityObligation {
+            id: id.into(),
+            label: label.into(),
+            scope: self.scope.clone(),
+            obligation_kind: kind,
+            stage,
+            detail: ObligationDetail::Unresolved {
+                research_question: question.into(),
+            },
+            evidence: unknown.clone(),
+        };
+
+        catalog.transitions.extend([
+            candidate(
+                "transition.fishing-rod.chicken.01-pick-up",
+                "Pick up the Ordon chicken",
+                TransitionKind::ActorDriven,
+                vec![
+                    field_is("chicken_available", StateValue::Boolean(true)),
+                    field_is("carrying_chicken", StateValue::Boolean(false)),
+                ],
+                vec!["obligation.fishing-rod.chicken.pick-up"],
+                vec![
+                    write("carrying_chicken", StateValue::Boolean(true)),
+                    write("chicken_available", StateValue::Boolean(false)),
+                ],
+            ),
+            candidate(
+                "transition.fishing-rod.chicken.02-vine-bypass",
+                "Use the chicken to bypass the vine route",
+                TransitionKind::Technique,
+                vec![
+                    field_is("carrying_chicken", StateValue::Boolean(true)),
+                    field_is("hawk_perch_reached", StateValue::Boolean(false)),
+                ],
+                vec!["obligation.fishing-rod.chicken.vine-bypass"],
+                vec![
+                    write("carrying_chicken", StateValue::Boolean(false)),
+                    write("hawk_perch_reached", StateValue::Boolean(true)),
+                    write("vine_bypassed", StateValue::Boolean(true)),
+                ],
+            ),
+            candidate(
+                "transition.fishing-rod.chicken.03-oob-cradle-carry",
+                "Use the chicken OOB route to acquire cradle carry state",
+                TransitionKind::Technique,
+                vec![
+                    field_is("carrying_chicken", StateValue::Boolean(true)),
+                    field_is("cradle_state", StateValue::Text("held-by-monkey".into())),
+                ],
+                vec!["obligation.fishing-rod.chicken.oob-cradle-carry"],
+                vec![
+                    write("carrying_chicken", StateValue::Boolean(false)),
+                    write("carrying_cradle", StateValue::Boolean(true)),
+                    write("cradle_state", StateValue::Text("carried".into())),
+                    write("reload_required", StateValue::Boolean(true)),
+                    write("uli_interaction_ready", StateValue::Boolean(false)),
+                ],
+            ),
+            candidate(
+                "transition.fishing-rod.chicken.04-reload-with-cradle",
+                "Reload Ordon while retaining the acquired cradle carry state",
+                TransitionKind::ActorReload,
+                vec![
+                    field_is("carrying_cradle", StateValue::Boolean(true)),
+                    field_is("reload_required", StateValue::Boolean(true)),
+                    field_is("uli_interaction_ready", StateValue::Boolean(false)),
+                ],
+                vec!["obligation.fishing-rod.chicken.reload-with-cradle"],
+                vec![
+                    write("reload_required", StateValue::Boolean(false)),
+                    write("uli_interaction_ready", StateValue::Boolean(true)),
+                ],
+            ),
+        ]);
+        catalog.obligations.extend([
+            obligation(
+                "obligation.fishing-rod.chicken.oob-cradle-carry",
+                "Execute the chicken OOB cradle-carry acquisition",
+                ObligationStage::Reach,
+                ObligationKind::Geometry,
+                "Import or witness the OOB path and the exact carry-state acquisition boundary.",
+            ),
+            obligation(
+                "obligation.fishing-rod.chicken.pick-up",
+                "Reach and pick up the Ordon chicken",
+                ObligationStage::Activate,
+                ObligationKind::Interaction,
+                "Import the chicken pickup volume, availability state, and carry acceptance rules.",
+            ),
+            obligation(
+                "obligation.fishing-rod.chicken.reload-with-cradle",
+                "Reload while preserving the cradle carry state",
+                ObligationStage::Effect,
+                ObligationKind::ActorState,
+                "Witness the reload boundary, cradle carry preservation, and Uli actor readiness after load.",
+            ),
+            obligation(
+                "obligation.fishing-rod.chicken.vine-bypass",
+                "Reach the hawk perch with the chicken vine bypass",
+                ObligationStage::Reach,
+                ObligationKind::Geometry,
+                "Import or witness the chicken-assisted path from the lower route to the ordinary hawk perch.",
+            ),
+        ]);
+        catalog
+            .transitions
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        catalog
+            .obligations
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        catalog.validate()?;
+        Ok(catalog)
+    }
 }
 
 pub fn fishing_rod_owned() -> PredicateExpression {
@@ -243,6 +391,16 @@ pub fn fishing_rod_owned() -> PredicateExpression {
         operator: ComparisonOperator::ContainsBits,
         right: ValueReference::Literal {
             value: StateValue::Bytes(mask),
+        },
+    }
+}
+
+fn in_ordon_village() -> PredicateExpression {
+    PredicateExpression::Compare {
+        left: ValueReference::LocationStage,
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Text("F_SP103".into()),
         },
     }
 }
@@ -369,6 +527,8 @@ mod tests {
                         },
                         BTreeMap::from([
                             ("carrying_cradle".into(), StateValue::Boolean(false)),
+                            ("carrying_chicken".into(), StateValue::Boolean(false)),
+                            ("chicken_available".into(), StateValue::Boolean(true)),
                             (
                                 "cradle_state".into(),
                                 StateValue::Text("held-by-monkey".into()),
@@ -377,6 +537,9 @@ mod tests {
                             ("hawk_perch_reached".into(), StateValue::Boolean(false)),
                             ("reward_claimed".into(), StateValue::Boolean(false)),
                             ("reward_item_id".into(), StateValue::Unsigned(0xff)),
+                            ("reload_required".into(), StateValue::Boolean(false)),
+                            ("uli_interaction_ready".into(), StateValue::Boolean(true)),
+                            ("vine_bypassed".into(), StateValue::Boolean(false)),
                             ("vine_guidance".into(), StateValue::Boolean(false)),
                         ]),
                     ),
@@ -473,6 +636,94 @@ mod tests {
             modeled
                 .unknown_transition_ids
                 .contains(&"transition.fishing-rod.ordinary.01-vine-guidance".into())
+        );
+    }
+
+    #[test]
+    fn chicken_routes_mix_through_shared_hawk_and_cradle_state() {
+        let snapshot = snapshot();
+        let compiled = profile(&snapshot).compile_with_chicken_routes().unwrap();
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let solve = |mechanics: &MechanicsCatalog| {
+            ForwardSolver::new(
+                &facts,
+                mechanics,
+                &[],
+                SolverOptions {
+                    max_depth: 8,
+                    max_states: 512,
+                    max_resolution_combinations: 16,
+                    feasibility_mode: FeasibilityMode::UpperBound,
+                    evidence_policy: EvidencePolicy::RESEARCH,
+                },
+            )
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &fishing_rod_owned(),
+            )
+            .unwrap()
+        };
+
+        let mut mixed = compiled.clone();
+        mixed.transitions.retain(|transition| {
+            !matches!(
+                transition.id.as_str(),
+                "transition.fishing-rod.ordinary.01-vine-guidance"
+                    | "transition.fishing-rod.ordinary.02-reach-hawk-grass"
+                    | "transition.fishing-rod.chicken.03-oob-cradle-carry"
+                    | "transition.fishing-rod.chicken.04-reload-with-cradle"
+            )
+        });
+        mixed.validate().unwrap();
+        let mixed = solve(&mixed);
+        assert_eq!(mixed.status, SearchStatus::Reached);
+        assert_eq!(
+            mixed
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "transition.fishing-rod.chicken.01-pick-up",
+                "transition.fishing-rod.chicken.02-vine-bypass",
+                "transition.fishing-rod.ordinary.03-hawk-displaces-cradle",
+                "transition.fishing-rod.ordinary.04-pick-up-cradle",
+                "transition.fishing-rod.ordinary.05-return-cradle-to-uli",
+                "transition.fishing-rod.ordinary.06-uli-reward",
+            ]
+        );
+
+        let mut oob = compiled;
+        oob.transitions.retain(|transition| {
+            !matches!(
+                transition.id.as_str(),
+                "transition.fishing-rod.ordinary.01-vine-guidance"
+                    | "transition.fishing-rod.ordinary.02-reach-hawk-grass"
+                    | "transition.fishing-rod.ordinary.03-hawk-displaces-cradle"
+                    | "transition.fishing-rod.ordinary.04-pick-up-cradle"
+                    | "transition.fishing-rod.chicken.02-vine-bypass"
+            )
+        });
+        oob.validate().unwrap();
+        let oob = solve(&oob);
+        assert_eq!(oob.status, SearchStatus::Reached);
+        assert_eq!(
+            oob.steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "transition.fishing-rod.chicken.01-pick-up",
+                "transition.fishing-rod.chicken.03-oob-cradle-carry",
+                "transition.fishing-rod.chicken.04-reload-with-cradle",
+                "transition.fishing-rod.ordinary.05-return-cradle-to-uli",
+                "transition.fishing-rod.ordinary.06-uli-reward",
+            ]
         );
     }
 }

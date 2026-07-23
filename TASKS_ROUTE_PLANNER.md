@@ -3146,10 +3146,21 @@ slice into release criteria only when it exercises a missing core semantic law.
       unaudited physical activation remains a staged obligation; upper-bound
       search reaches the rod while modeled search reports the first missing
       interaction instead of inventing feasibility.
-- [ ] Model chicken vine bypass, OOB, cradle carry state, reload, and Uli reward.
-- [ ] Permit compatible mixing where real predicates allow it.
-- [ ] Model Auru's session-level recent-item grant as an alternate producer, with
+- [x] Model chicken vine bypass, OOB, cradle carry state, reload, and Uli reward.
+      The alternative profile adds chicken pickup, vine bypass, direct OOB
+      cradle-carry acquisition, and a required carry-preserving actor reload;
+      both branches reuse the unchanged Uli return and reward producers.
+- [x] Permit compatible mixing where real predicates allow it. Chicken vine
+      bypass writes the ordinary `hawk_perch_reached` prerequisite, so the
+      solver composes it with ordinary hawk/cradle steps. The OOB branch writes
+      the same `carrying_cradle` state but clears Uli readiness until its reload,
+      preventing an invalid shortcut while sharing the downstream reward.
+- [x] Model Auru's session-level recent-item grant as an alternate producer, with
       HD activation evidence and a separately obstructed/hypothetical SD setup.
+      The completed 11I model keeps the session `mGtItm` reader and generic
+      item-bit consumer unchanged across builds, applies external HD targeting
+      evidence as a resolver, leaves base SD blocked, and enables SD only through
+      an explicitly hypothetical removable geometry refinement.
 - [ ] Prove GCN BiT does not author a rod loss; it merely lacks reachable producers.
 - [ ] Collapse all methods into `obtain Fishing Rod` with residual-state safety.
 
