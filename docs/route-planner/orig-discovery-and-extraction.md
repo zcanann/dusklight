@@ -25,6 +25,15 @@ route-planner extract-orig \
   --manifest extracted-orig.manifest.json
 ```
 
+Convert that canonical bundle into planner-owned stage inventories without a
+Huntctl artifact or crate dependency:
+
+```text
+route-planner construct-world-inventories \
+  --bundle extracted-orig.json \
+  --output extracted-orig-world-inventories.json
+```
+
 The default path identifies the input against the bundled audited registry.
 `--content-id ID` can select one bundled entry when the parent contains multiple
 games, and `--registry REGISTRY.json` can replace the bundled registry. An
@@ -118,6 +127,17 @@ Stage-data schema v4 keeps `actor_placements`, `treasure_placements`, and
 compatible inventory at 95 actors and five spawns for resource SHA-256
 `10487ef6754fec1f454c93aa33f605ee9781b4db4b91eed8e864721d76304d40`;
 the conditional retail regression reruns that check when `orig/` is present.
+
+`construct-world-inventories` groups the decoded archives by their exact
+`files/res/Stage/STAGE/{STG_00,RNN_00}.arc` coordinates, orders one stage source
+before its room sources, and emits
+`extracted-orig-world-inventories/v1`. The artifact binds the content,
+game-data, and source-bundle digests and retains all decoded chunk, placement,
+spawn, and SCLS source identities. Validation independently reconstructs every
+represented field from the retained lowercase raw hex and proves complete
+coverage of every recognized placement and SCLS chunk. Collision coverage is
+explicitly `unavailable`: the command does not manufacture KCL/PLC paths,
+spatial digests, prisms, or load-trigger joins.
 
 Stage discovery recognizes `files/res/Stage/**/STG_00.arc` as `stage.dzs` and
 room archives beginning with `R` as `room.dzr`. Message discovery treats

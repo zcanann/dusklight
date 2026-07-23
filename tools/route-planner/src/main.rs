@@ -54,6 +54,7 @@ use dusklight_route_planner::orig_extraction::{
     EXTRACTED_EVENT_LIST_SCHEMA, EXTRACTED_STAGE_DATA_SCHEMA, extract_unique_rarc_resource,
     list_rarc_resource_names, parse_event_list, parse_message_flow, parse_stage_data,
 };
+use dusklight_route_planner::orig_world::ExtractedOrigWorldInventories;
 use dusklight_route_planner::refinement::{
     ComposedPlannerCatalog, RefinementDiagnostic, RefinementLayers, RefinementPack,
     diagnose_refinement_packs,
@@ -120,6 +121,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("compile-return-place-mechanics") => compile_return_place_mechanics(&args[1..]),
         Some("compile-title-boundary-mechanics") => compile_title_boundary_mechanics(&args[1..]),
         Some("construct-message-flows") => construct_message_flows(&args[1..]),
+        Some("construct-world-inventories") => construct_world_inventories(&args[1..]),
         Some("compose") => compose(&args[1..]),
         Some("compare-semantic-contexts") => compare_semantic_contexts_command(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
@@ -816,6 +818,33 @@ fn construct_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
             "bundle_sha256": set.bundle_sha256,
             "locale_bundle": set.locale_bundle,
             "programs": set.programs.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn construct_world_inventories(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let bundle_path = required_path(args, "--bundle")?;
+    let output = required_path(args, "--output")?;
+    let bundle = dusklight_route_planner::orig_discovery::ExtractedOrigBundle::decode_canonical(
+        &fs::read(bundle_path)?,
+    )?;
+    let inventories = ExtractedOrigWorldInventories::build(&bundle)?;
+    write_file(&output, &inventories.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": inventories.schema,
+            "output": output,
+            "sha256": inventories.digest()?,
+            "source_bundle_sha256": inventories.source_bundle_sha256,
+            "stages": inventories.inventories.len(),
+            "sources": inventories.inventories.iter().map(|inventory| inventory.sources.len()).sum::<usize>(),
+            "chunks": inventories.inventories.iter().map(|inventory| inventory.chunks.len()).sum::<usize>(),
+            "placements": inventories.inventories.iter().map(|inventory| inventory.placements.len()).sum::<usize>(),
+            "player_spawns": inventories.inventories.iter().map(|inventory| inventory.player_spawns.len()).sum::<usize>(),
+            "scene_transitions": inventories.inventories.iter().map(|inventory| inventory.exits.len()).sum::<usize>(),
+            "collision_coverage": inventories.coverage.collision,
         }))?
     );
     Ok(())
@@ -2671,6 +2700,7 @@ fn print_usage() {
             "  route-planner compile-return-place-mechanics --content-identity CONTENT.json --runtime-configuration RUNTIME.json --output MECHANICS.json",
             "  route-planner compile-title-boundary-mechanics --content-identity CONTENT.json --runtime-configuration RUNTIME.json --output MECHANICS.json",
             "  route-planner construct-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json --output PROGRAMS.json",
+            "  route-planner construct-world-inventories --bundle BUNDLE.json --output INVENTORIES.json",
             "  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--message-flow-set MESSAGE.json]... [--message-entry-set ENTRIES.json]... [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json",
             "  route-planner compare-semantic-contexts --left-state STATE.json --left-catalog CATALOG.json [--left-equivalence-set SET.json]... --right-state STATE.json --right-catalog CATALOG.json [--right-equivalence-set SET.json]... --output REPORT.json [--research]",
             "  route-planner diff-orig --left LEFT.json --right RIGHT.json [--left-locale LOCALE --right-locale LOCALE] --output DIFF.json",

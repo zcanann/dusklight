@@ -2112,6 +2112,13 @@ Deliverable: replayable state evidence that can validate transition rules.
   - [x] Close the planner-native placement-layout gap for `PLYR`, `TRES`, and
         layered `TRE*` chunks with bounded decoding and a parser regression that
         proves the three placement classes remain distinct.
+  - [x] Convert the canonical planner-native orig bundle into sorted,
+        content-addressed per-stage world inventories without Huntctl types or
+        artifacts. The v1 inventory-set contract revalidates raw placement and
+        SCLS records, proves complete recognized-chunk coverage, and marks
+        KCL/PLC collision coverage explicitly unavailable; the exact 79-stage
+        acceptance run retains 384 sources, 6,128 chunks, 29,575 ordinary
+        placements, 1,277 spawns, and 1,036 exits.
   - [x] Import exact-GZ2E01 L1-family boss-door candidates by joining actor
         parameters to the unique same-room SCLS record. Reverse-side, ambiguous,
         non-audited-build, and unmodeled-switch-domain cases remain encoded facts

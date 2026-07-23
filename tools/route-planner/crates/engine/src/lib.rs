@@ -41,6 +41,7 @@ pub mod obligation_coverage;
 pub mod orig_diff;
 pub mod orig_discovery;
 pub mod orig_extraction;
+pub mod orig_world;
 pub mod refinement;
 pub mod relevance;
 pub mod return_place;
@@ -58,9 +59,9 @@ pub mod supported_context;
 pub mod title_boundary;
 pub mod transition;
 pub mod void_death;
+pub mod witness_promotion;
 pub mod world_data;
 pub mod world_import;
-pub mod witness_promotion;
 
 use std::error::Error;
 use std::fmt;

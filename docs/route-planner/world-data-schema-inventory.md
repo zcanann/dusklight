@@ -13,6 +13,7 @@ name might suggest.
 | `orig-input-scan/v1` | Disc-header product/platform/region/revision, normalized `sys/` and `files/` manifest, executable/game-data/resource digests, candidate archive paths | Friendly identity, runtime language selection, decoded records, behavior |
 | `supported-build-registry/v1` | Exact full-fingerprint-to-friendly-ID mapping | Nearest-build fallback, implied cross-build equivalence |
 | `extracted-orig-bundle/v4` | Source manifest; separate generic actor/scaled/door, treasure (`TRES`/`TRE*`), and player-spawn (`PLYR`) placements with raw records; STAG message group; indexed SCLS destinations; REVT event/exit coordinates; LBNK demo-archive selections; decoded numbered BMG flow graphs; explicit ignored message candidates | KCL/PLC, most other DZS/DZR chunk bodies, actor/treasure parameter meaning, JStudio cutscene internals, message text, runtime bindings |
+| `extracted-orig-world-inventories/v1` | Planner-native, content-addressed stage grouping of every decoded DZS/DZR source, chunk directory, actor/treasure placement, player spawn, and raw/normalized SCLS record; explicit domain coverage | KCL/PLC and collision joins are explicitly `unavailable`; actor-specific semantics and physical reachability are not inferred |
 | `cutscene-wrapper-topology/v1` | Exact joins among one REVT event, layer LBNK demo archive, `event_list.dat` staff/cut/data paths, map-tool ID, and normal/skip SCLS records | JStudio phase semantics, exceptional resource-failure dispatch, return/restart writers, executable transition effects |
 | `binary-function-evidence/v1` | Exact DOL/symbol-table identities, one bounded text symbol, DOL section/address/file coordinates, selected code bytes and digest, and exact `blr`-only immediate-return classification | Call-site reachability, function-name semantics, larger-function disassembly, source control flow, or cross-build equivalence |
 | `binary-range-evidence/v1` | Exact DOL identity, one bounded virtual-address range wholly contained in exactly one loadable text/data section, section/address/file coordinates, and selected bytes/digest | Semantic meaning, proof that code references the bytes, pointer/control-flow analysis, BSS, or cross-build equivalence |
@@ -33,9 +34,11 @@ name might suggest.
 The planner owns its copies of the `WorldContext` and `WorldInventory` wire
 contracts in `world_data.rs`. The compatible producer currently lives elsewhere
 in the repository, but the planner has no Rust dependency on Huntctl and must
-not acquire one. `extracted-orig-bundle/v4` is planner-native. There is not yet a
-transform from that bundle into `WorldInventory` or directly into a complete
-planner fact pack.
+not acquire one. `extracted-orig-bundle/v4` and
+`extracted-orig-world-inventories/v1` are planner-native. The latter is built
+directly from the former by `orig_world.rs`; it never imports Huntctl types or
+artifacts. Direct construction of complete base facts still awaits
+planner-owned KCL/PLC or an explicitly unavailable spatial-context contract.
 
 ## Exact GZ2E01 extraction coverage
 
@@ -72,6 +75,14 @@ is the retail parity witness: both the independent compatible inventory and
 planner-native v4 extraction produce 95 actor placements, five player spawns,
 zero treasures, and one 32-byte `PLYR` chunk with five records. The engine test
 reproduces this comparison whenever the original tree is present.
+
+The complete exact-tree acceptance run groups all 384 decoded archives into 79
+sorted stage inventories and retains 6,128 chunk directories, 29,575 ordinary
+actor/treasure placements, 1,277 player spawns, and 1,036 SCLS records. The
+inventory-set validator rechecks decoded placement and SCLS fields against each
+retained raw record, requires complete recognized-chunk coverage, and rejects
+duplicate scopes, sources, chunks, or record identities. Its collision domain
+is explicitly unavailable rather than represented by invented empty geometry.
 
 ## What the current world import really does
 
@@ -153,10 +164,10 @@ exact-GZ2E01 families above; every other placement remains opaque.
 
 ### Topology and activation
 
-- Connect planner-native orig records to base facts without routing through
-  Huntctl implementation types.
-- Connect the planner-native placement collections directly to base world facts
-  without routing through compatible world-inventory artifacts.
+- Construct base facts directly from the planner-native inventory set without
+  requiring a compatible world-context artifact. The remaining design work is
+  to represent the unavailable spatial-index digest honestly until
+  planner-owned KCL/PLC exists.
 - Import actor-driven map changes, doors, portals, elevators, warps, event
   transitions, cutscene scene changes, restart/savewarp, void, death, and title
   transitions as distinct classes.
