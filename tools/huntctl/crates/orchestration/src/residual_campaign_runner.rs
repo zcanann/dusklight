@@ -3,8 +3,8 @@
 use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
 use crate::optimization_resume::{
     OptimizationResumeCandidate, OptimizationResumeEvent, OptimizationResumeState,
-    append_optimization_resume_event, append_optimization_resume_events,
-    initialize_optimization_resume, load_optimization_resume, optimization_evaluation_order,
+    append_optimization_resume_events_from_validated_state, initialize_optimization_resume,
+    load_optimization_resume, optimization_evaluation_order_after_request_validation,
 };
 use crate::residual_campaign::{
     ResidualCampaignCandidate, ResidualCampaignCheckpoint, ResidualCampaignError,
@@ -381,7 +381,8 @@ pub(crate) fn append_checkpoint(
         None
     };
     let evaluation_order =
-        optimization_evaluation_order(optimization, root).map_err(runner_error)?;
+        optimization_evaluation_order_after_request_validation(optimization, root)
+            .map_err(runner_error)?;
     let prior_completed = previous
         .as_ref()
         .map_or(0_usize, |audit| audit.completed_candidates as usize);
@@ -462,14 +463,15 @@ pub(crate) fn append_checkpoint(
         .latest_optimizer_checkpoint
         .as_ref()
         .map(|checkpoint| root.join(&checkpoint.artifact.path));
-    let next = append_optimization_resume_event(
+    let next = append_optimization_resume_events_from_validated_state(
         optimization,
         root,
-        OptimizationResumeEvent::OptimizerCheckpoint {
+        resume,
+        vec![OptimizationResumeEvent::OptimizerCheckpoint {
             generation,
             completed_candidates: resume.completed_candidates,
             state: artifact_reference(root, &path)?,
-        },
+        }],
     )
     .map_err(runner_error)?;
     // Keep the predecessor until both the replacement file and its journal
@@ -571,7 +573,8 @@ pub(crate) fn seal_candidate_batch(
     if events.is_empty() {
         return Ok(resume.clone());
     }
-    append_optimization_resume_events(optimization, root, events).map_err(runner_error)
+    append_optimization_resume_events_from_validated_state(optimization, root, resume, events)
+        .map_err(runner_error)
 }
 
 pub(crate) fn load_candidate(
@@ -795,15 +798,16 @@ fn evaluate_generation(
             .join("evaluations")
             .join(format!("{}.json", candidate.envelope.id));
         write_exact_or_new(&path, &evaluation.to_pretty_json()?)?;
-        *resume = append_optimization_resume_event(
+        *resume = append_optimization_resume_events_from_validated_state(
             config.optimization,
             root,
-            OptimizationResumeEvent::EvaluationCompleted {
+            resume,
+            vec![OptimizationResumeEvent::EvaluationCompleted {
                 candidate_id: candidate.envelope.id,
                 candidate_sha256: row.candidate_sha256,
                 result: artifact_reference(root, &path)?,
                 simulated_ticks: evaluation.simulated_ticks,
-            },
+            }],
         )
         .map_err(runner_error)?;
     }

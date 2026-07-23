@@ -16,8 +16,9 @@ use crate::native_suffix_worker::{
 };
 use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
 use crate::optimization_resume::{
-    OptimizationResumeEvent, OptimizationResumeState, append_optimization_resume_events,
-    initialize_optimization_resume, load_optimization_resume,
+    OptimizationResumeEvent, OptimizationResumeState,
+    append_optimization_resume_events_from_validated_state, initialize_optimization_resume,
+    load_optimization_resume,
 };
 use crate::residual_campaign::{
     ResidualCampaignCheckpoint, ResidualCampaignOptimizer, ResidualReplayCheckpoint,
@@ -1196,8 +1197,13 @@ fn evaluate_generation(
             simulated_ticks: evaluation.simulated_ticks,
         });
     }
-    *resume = append_optimization_resume_events(config.optimization, root, events)
-        .map_err(native_error)?;
+    *resume = append_optimization_resume_events_from_validated_state(
+        config.optimization,
+        root,
+        resume,
+        events,
+    )
+    .map_err(native_error)?;
     let mut artifact_cache = NativeAttemptArtifactCache::default();
     for candidate in &candidates {
         if let Some(row) = resume
@@ -1544,13 +1550,14 @@ fn ensure_incumbent_demonstration(
     )
     .map_err(native_error)?;
     let reference = artifact_reference(root, &path).map_err(native_error)?;
-    let resume = crate::optimization_resume::append_optimization_resume_event(
+    let resume = append_optimization_resume_events_from_validated_state(
         config.optimization,
         root,
-        OptimizationResumeEvent::DemonstrationSeeded {
+        resume,
+        vec![OptimizationResumeEvent::DemonstrationSeeded {
             demonstration: reference,
             simulated_ticks: demonstration.attempt.simulated_ticks,
-        },
+        }],
     )
     .map_err(native_error)?;
     Ok((resume, demonstration))

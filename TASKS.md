@@ -141,16 +141,19 @@ Working foundations:
 
 Not yet working:
 
-- There is no closed `collect -> train -> freeze -> execute -> ingest -> refit`
-  campaign.
-- There is no campaign in which a learner receives full state-reactive PAD
-  authority throughout a genuinely exploratory episode. The checked residual
-  requests stop at tick 160, permit at most four incumbent-relative edits, and
-  restrict intervention starts to frames `0..126`; they cannot establish broad
-  learning or route discovery.
-- Campaign artifacts do not yet identify and enforce three distinct experiment
-  classes: demonstration-assisted discovery, from-scratch discovery, and local
-  TAS refinement.
+- The closed `collect -> train -> freeze -> execute -> ingest -> refit` campaign
+  is operational, but its first three-generation q131 run produced no terminal
+  success and repeated one policy trajectory per deterministic four-rollout
+  generation. The next experiment needs genuinely diverse exploratory rollouts,
+  not another proof that the lifecycle closes.
+- Episode-long state-reactive PAD authority is enforced for discovery policies,
+  but no campaign has yet combined that authority with diverse initial
+  checkpoints/seeds and broad successful exploration. Incumbent-relative
+  residual requests remain correctly classified as local refinement rather than
+  discovery evidence.
+- The three experiment classes are now sealed and enforced. Equal-budget real
+  comparisons across demonstration-assisted discovery, from-scratch discovery,
+  local residual baselines, and post-discovery refinement remain unrun.
 - The 125-tick Ordon incumbent remains unbeaten.
 - The degraded q131 canary remains unimproved by independent random or CEM
   sampling. A transient v3 run did reach tick 125, but its first population slot

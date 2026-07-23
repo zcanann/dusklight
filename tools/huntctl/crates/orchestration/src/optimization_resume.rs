@@ -229,6 +229,13 @@ pub fn load_optimization_resume(
     request
         .validate_files(repository_root)
         .map_err(|source| resume_error(source.to_string()))?;
+    load_optimization_resume_after_request_validation(request, repository_root)
+}
+
+pub(crate) fn load_optimization_resume_after_request_validation(
+    request: &OptimizationRequest,
+    repository_root: &Path,
+) -> Result<OptimizationResumeState, OptimizationResumeError> {
     let root = canonical_root(repository_root)?;
     let journal_path = output_path(&root, &request.resume.journal_path)?;
     let state_path = output_path(&root, &request.resume.state_path)?;
@@ -240,13 +247,10 @@ pub fn load_optimization_resume(
 /// Returns completed candidate IDs in the journal's authoritative evaluation
 /// order. The full fold runs first, so callers never consume an unsealed,
 /// detached, or torn ordering as campaign evidence.
-pub(crate) fn optimization_evaluation_order(
+pub(crate) fn optimization_evaluation_order_after_request_validation(
     request: &OptimizationRequest,
     repository_root: &Path,
 ) -> Result<Vec<String>, OptimizationResumeError> {
-    request
-        .validate_files(repository_root)
-        .map_err(|source| resume_error(source.to_string()))?;
     let root = canonical_root(repository_root)?;
     let journal_path = output_path(&root, &request.resume.journal_path)?;
     let state = fold_journal(request, &root, &journal_path, false)?;
@@ -295,8 +299,47 @@ pub fn append_optimization_resume_events(
             "optimization resume batch must contain at least one event",
         ));
     }
-    let current = load_optimization_resume(request, repository_root)?;
+    request
+        .validate_files(repository_root)
+        .map_err(|source| resume_error(source.to_string()))?;
+    let current = load_optimization_resume_after_request_validation(request, repository_root)?;
+    append_optimization_resume_events_from_validated_state(
+        request,
+        repository_root,
+        &current,
+        events,
+    )
+}
+
+/// Campaign runners validate immutable request and execution authority once at
+/// startup. This hot path still folds the complete journal, authenticates every
+/// event artifact, previews the batch, and durably refolds it, but deliberately
+/// does not recursively decode immutable curriculum ancestors on every append.
+pub(crate) fn append_optimization_resume_events_from_validated_state(
+    request: &OptimizationRequest,
+    repository_root: &Path,
+    current: &OptimizationResumeState,
+    events: Vec<OptimizationResumeEvent>,
+) -> Result<OptimizationResumeState, OptimizationResumeError> {
+    if events.is_empty() {
+        return Err(resume_error(
+            "optimization resume batch must contain at least one event",
+        ));
+    }
+    current.validate()?;
+    if current.request_sha256 != request.content_sha256 {
+        return Err(resume_error(
+            "validated optimization state differs from request authority",
+        ));
+    }
     let root = canonical_root(repository_root)?;
+    let journal_path = output_path(&root, &request.resume.journal_path)?;
+    let folded = fold_journal(request, &root, &journal_path, true)?;
+    if &folded != current {
+        return Err(resume_error(
+            "in-memory optimization state differs from durable journal",
+        ));
+    }
     let mut preview = current.clone();
     let mut sequence = current.next_sequence;
     let mut previous = current.last_record_sha256;
@@ -320,7 +363,6 @@ pub fn append_optimization_resume_events(
             .checked_add(1)
             .ok_or_else(|| resume_error("optimization journal sequence overflowed"))?;
     }
-    let journal_path = output_path(&root, &request.resume.journal_path)?;
     let mut journal = OpenOptions::new()
         .append(true)
         .open(&journal_path)
@@ -330,7 +372,7 @@ pub fn append_optimization_resume_events(
         .map_err(OptimizationResumeError::io)?;
     journal.sync_all().map_err(OptimizationResumeError::io)?;
     drop(journal);
-    load_optimization_resume(request, repository_root)
+    load_optimization_resume_after_request_validation(request, repository_root)
 }
 
 fn apply_preview_event(
@@ -1492,6 +1534,89 @@ mod tests {
         assert_eq!(
             load_optimization_resume(&request, &root.0).unwrap(),
             initial
+        );
+    }
+
+    #[test]
+    fn validated_state_append_rejects_stale_memory() {
+        let (root, request) = fixture(2);
+        let initial = initialize_optimization_resume(&request, &root.0).unwrap();
+        let demonstration = artifact(
+            &root.0,
+            "build/artifacts/fast-demonstration.json",
+            b"demonstration",
+        );
+        let current = append_optimization_resume_events_from_validated_state(
+            &request,
+            &root.0,
+            &initial,
+            vec![OptimizationResumeEvent::DemonstrationSeeded {
+                demonstration,
+                simulated_ticks: 125,
+            }],
+        )
+        .unwrap();
+        let candidate = artifact(&root.0, "build/artifacts/fast.json", b"candidate");
+        let tape = artifact(&root.0, "build/artifacts/fast.tape", b"tape");
+
+        let error = append_optimization_resume_events_from_validated_state(
+            &request,
+            &root.0,
+            &initial,
+            vec![candidate_event(&request, "g0-fast", candidate, tape)],
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("differs from durable journal"));
+        assert_eq!(
+            load_optimization_resume(&request, &root.0).unwrap(),
+            current
+        );
+    }
+
+    #[test]
+    fn validated_state_append_authenticates_durable_event_artifacts() {
+        let (root, request) = fixture(2);
+        let initial = initialize_optimization_resume(&request, &root.0).unwrap();
+        let candidate = artifact(&root.0, "build/artifacts/fast-corrupt.json", b"candidate");
+        let candidate_path = root.0.join(&candidate.path);
+        let tape = artifact(&root.0, "build/artifacts/fast-corrupt.tape", b"tape");
+        let current = append_optimization_resume_events_from_validated_state(
+            &request,
+            &root.0,
+            &initial,
+            vec![candidate_event(
+                &request,
+                "g0-fast-corrupt",
+                candidate,
+                tape,
+            )],
+        )
+        .unwrap();
+        fs::write(candidate_path, b"tampered").unwrap();
+        let result = artifact(
+            &root.0,
+            "build/artifacts/fast-corrupt-result.json",
+            b"result",
+        );
+
+        let error = append_optimization_resume_events_from_validated_state(
+            &request,
+            &root.0,
+            &current,
+            vec![OptimizationResumeEvent::EvaluationCompleted {
+                candidate_id: "g0-fast-corrupt".into(),
+                candidate_sha256: current.candidates[0].candidate_sha256,
+                result,
+                simulated_ticks: 160,
+            }],
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("candidate content digest differs")
         );
     }
 }
