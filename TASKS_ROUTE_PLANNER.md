@@ -2541,11 +2541,13 @@ visual polish or whole-game authoring features.
       schemas. `serve-web` binds only to loopback, embeds the static client,
       exposes the existing service at `/api/service`, applies request-size and
       timeout bounds, and serves a restrictive no-cache response policy.
-- [ ] Build a straightforward application shell with new/open/save/save-as,
+- [x] Build a straightforward application shell with new/open/save/save-as,
       a searchable transition palette, an infinite pan/zoom canvas, and a bottom
-      properties/state panel. Open-project, save-copy, transition search,
-      pan/zoom/fit, draggable layout, and planner-payload details are implemented;
-      new-route and authoritative save/save-as remain open.
+      properties/state panel. The Rust-owned workspace lists built-in and saved
+      projects, supplies a validated blank project, confines IDs to one project
+      root, and performs revision-checked flushed atomic replacement. The browser
+      tracks dirty layout state, warns before discard, persists through Save or
+      Save As, and retains explicit JSON import/export.
 - [ ] Let an author drag a transition onto the canvas and connect it to an exact
       predecessor state. Rust recomputes every downstream state and remains the
       only validation and mutation authority.
@@ -2568,6 +2570,10 @@ visual polish or whole-game authoring features.
       Displacement toward Goron Mines, and a clearly hypothetical component
       rebind. Each must load, validate, edit, save-as, and visibly change its
       propagated state when a transition is removed or replaced.
+      The exact GZ2E01 Fanadi return-place/savewarp mechanics and audited opening
+      and file-selection flow now ship as read-only built-ins that can be saved
+      into the editable workspace; transition editing and the remaining three
+      demonstrations are still open.
 - [ ] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
       saves it, reloads it, and obtains identical semantic identities.

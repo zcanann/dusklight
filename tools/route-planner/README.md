@@ -20,13 +20,14 @@ The independent browser client is served from the same typed runtime boundary:
 cargo run --manifest-path tools/route-planner/Cargo.toml -- serve-web
 ```
 
-Open `http://127.0.0.1:32170` in Brave. The initial canvas accepts a
-`dusklight.route-planner.web-project/v1` JSON document containing a composed
-`catalog`, an optional `route_book`, and optional presentation positions. Graph
-projection still runs through the Rust service; the browser only renders and
-arranges the returned planner-owned nodes and edges. Authoritative route edits,
-workspace persistence, and bundled demonstration projects remain the next web
-slice.
+Open `http://127.0.0.1:32170` in Brave. By default, editable projects are kept
+under `tools/route-planner/projects`; use `--projects DIR` to select another
+workspace. The project picker includes read-only, source-backed Fanadi
+return-place and opening/file-selection demonstrations. Save As creates an
+editable project, while Save performs a revision-checked, flushed atomic update.
+Dragging nodes marks presentation state dirty; JSON import/export remains
+available for interchange. Graph projection still runs through the Rust
+service, and layout metadata never participates in reachability.
 
 The planner CLI currently owns forty operations:
 
@@ -232,9 +233,11 @@ The planner CLI currently owns forty operations:
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
   lines for a future planner editor or other clients, including portable solves.
 - `serve-web` binds only to loopback, serves the independent planner canvas, and
-  exposes the same versioned service envelope over `POST /api/service`. Static
-  assets are embedded in the Rust binary and served with a restrictive content
-  security policy and no cache.
+  exposes the same versioned service envelope over `POST /api/service`. It also
+  owns a path-confined project workspace with list/load/template/save endpoints,
+  immutable built-in demonstrations, and revision-checked atomic persistence.
+  Static assets are embedded in the Rust binary and served with a restrictive
+  content security policy and no cache.
 
 The low-level extraction commands are read-only with respect to `orig/`.
 They write only the explicitly named output and record SHA-256 identities for

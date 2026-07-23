@@ -9,8 +9,12 @@
   <body>
     <header class="toolbar">
       <div class="brand"><span class="mark">D</span><strong>Route Planner</strong></div>
-      <button id="open-project" type="button">Open project</button>
-      <button id="save-project" type="button" disabled>Save copy</button>
+      <select id="project-list" aria-label="Planner project"><option value="">Projects</option></select>
+      <button id="new-project" type="button">New</button>
+      <button id="open-project" type="button">Import</button>
+      <button id="save-project" type="button" disabled>Save</button>
+      <button id="save-as-project" type="button" disabled>Save as</button>
+      <button id="export-project" type="button" disabled>Export</button>
       <input id="project-file" type="file" accept="application/json,.json" hidden>
       <span id="project-name" class="project-name">No project loaded</span>
       <span id="status" class="status">Connecting…</span>

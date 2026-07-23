@@ -14,15 +14,17 @@
 
 * { box-sizing: border-box; }
 html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 button { color: inherit; background: #242b33; border: 1px solid #3a4550; border-radius: 5px; padding: 7px 11px; cursor: pointer; }
 button:hover:not(:disabled) { border-color: #657483; background: #2b333d; }
 button:disabled { opacity: .42; cursor: default; }
 
 .toolbar { height: 48px; display: flex; align-items: center; gap: 9px; padding: 0 12px; border-bottom: 1px solid #303740; background: #15191e; }
+.toolbar select { max-width: 235px; color: inherit; background: #20262e; border: 1px solid #3a4550; border-radius: 5px; padding: 7px 28px 7px 9px; }
 .brand { display: flex; align-items: center; gap: 8px; margin-right: 9px; }
 .mark { display: grid; place-items: center; width: 25px; height: 25px; border: 1px solid var(--accent); color: var(--accent); font-weight: 800; transform: rotate(-4deg); }
 .project-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #b9c1ca; }
+.project-name.dirty::after { content: " *"; color: var(--unknown); }
 .status { margin-left: auto; color: var(--muted); font-size: 12px; }
 .status.good { color: var(--good); }
 .status.bad { color: #ff7d7d; }
@@ -40,6 +42,7 @@ button:disabled { opacity: .42; cursor: default; }
 .canvas-shell { position: relative; min-width: 0; min-height: 0; overflow: hidden; background-color: #11151a; background-image: radial-gradient(#303944 1px, transparent 1px); background-size: 20px 20px; }
 #canvas { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
 .empty-state { position: absolute; inset: 0; display: grid; place-content: center; gap: 8px; text-align: center; color: var(--muted); pointer-events: none; }
+.empty-state[hidden] { display: none; }
 .empty-state strong { color: #dce2e8; font-size: 17px; }
 .zoom-controls { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 5px; }
 .zoom-controls button { min-width: 35px; background: rgba(24, 29, 35, .93); }

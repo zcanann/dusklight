@@ -1,13 +1,14 @@
 const SERVICE_SCHEMA = "dusklight.route-planner.service/v28";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
+const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
 
 const elements = Object.fromEntries([
-  "open-project", "save-project", "project-file", "project-name", "status",
-  "search", "palette-list", "canvas-shell", "canvas", "viewport", "edges",
-  "nodes", "empty-state", "zoom-in", "zoom-out", "fit", "detail-title",
-  "detail-subtitle", "detail-json",
+  "project-list", "new-project", "open-project", "save-project", "save-as-project",
+  "export-project", "project-file", "project-name", "status", "search", "palette-list",
+  "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
+  "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json",
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -17,11 +18,21 @@ const state = {
   selected: null,
   transform: { x: 70, y: 60, scale: 1 },
   gesture: null,
+  revision: null,
+  readOnly: false,
+  dirty: false,
 };
 
+elements["project-list"].addEventListener("change", () => {
+  const id = elements["project-list"].value;
+  if (id) loadStoredProject(id);
+});
+elements["new-project"].addEventListener("click", newProject);
 elements["open-project"].addEventListener("click", () => elements["project-file"].click());
-elements["project-file"].addEventListener("change", openProject);
-elements["save-project"].addEventListener("click", saveProjectCopy);
+elements["project-file"].addEventListener("change", importProject);
+elements["save-project"].addEventListener("click", saveProject);
+elements["save-as-project"].addEventListener("click", saveProjectAs);
+elements["export-project"].addEventListener("click", exportProject);
 elements.search.addEventListener("input", renderPalette);
 elements["zoom-in"].addEventListener("click", () => zoomAt(1.2));
 elements["zoom-out"].addEventListener("click", () => zoomAt(1 / 1.2));
@@ -30,55 +41,130 @@ elements.canvas.addEventListener("wheel", onWheel, { passive: false });
 elements.canvas.addEventListener("pointerdown", beginPan);
 window.addEventListener("pointermove", moveGesture);
 window.addEventListener("pointerup", endGesture);
+window.addEventListener("beforeunload", (event) => {
+  if (!state.dirty) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 
-health();
 applyTransform();
+start();
 
-async function health() {
+async function start() {
   try {
     const response = await fetch("/api/health", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     setStatus("Planner service ready", "good");
+    await refreshProjects(true);
   } catch (error) {
     setStatus(`Planner service unavailable: ${error.message}`, "bad");
   }
 }
 
-async function openProject(event) {
-  const file = event.target.files?.[0];
-  event.target.value = "";
-  if (!file) return;
+async function refreshProjects(openFirst = false, selectedId = null) {
+  const list = await projectApi("/api/projects");
+  elements["project-list"].replaceChildren(new Option("Projects", ""));
+  for (const project of list.projects) {
+    const prefix = project.read_only ? "Demo: " : "";
+    elements["project-list"].append(new Option(`${prefix}${project.label}`, project.id));
+  }
+  if (selectedId && list.projects.some((project) => project.id === selectedId)) {
+    elements["project-list"].value = selectedId;
+  } else if (openFirst && list.projects.length) {
+    elements["project-list"].value = list.projects[0].id;
+    await loadStoredProject(list.projects[0].id, false);
+  }
+}
+
+async function loadStoredProject(id, confirmDiscard = true) {
+  if (confirmDiscard && state.dirty && !confirm("Discard unsaved planner changes?")) {
+    elements["project-list"].value = state.project?.id ?? "";
+    return;
+  }
   try {
-    const project = JSON.parse(await file.text());
-    validateProject(project);
-    setStatus("Projecting graph…");
-    const payload = await service({
-      command: "project_graph",
-      request_id: requestId("project"),
-      catalog: project.catalog,
-      route_book: project.route_book ?? null,
+    const record = await projectApi(`/api/projects/${encodeURIComponent(id)}`);
+    await loadProject(record.project, {
+      revision: record.revision_sha256,
+      readOnly: record.read_only,
+      dirty: false,
+      fit: true,
     });
-    if (payload.kind !== "graph") throw new Error(`Unexpected response ${payload.kind}`);
-    state.project = project;
-    state.graph = payload.graph;
-    state.positions = new Map(Object.entries(project.presentation?.positions ?? {}));
-    ensurePositions();
-    state.selected = null;
-    elements["project-name"].textContent = project.label || file.name;
-    elements["save-project"].disabled = false;
-    elements["empty-state"].hidden = true;
-    render();
-    requestAnimationFrame(fitGraph);
-    setStatus(`${state.graph.nodes.length} nodes · ${state.graph.edges.length} connections`, "good");
+    elements["project-list"].value = id;
   } catch (error) {
     setStatus(error.message, "bad");
   }
 }
 
+async function newProject() {
+  if (state.dirty && !confirm("Discard unsaved planner changes?")) return;
+  try {
+    const record = await projectApi("/api/project-template");
+    const id = prompt("Project ID", "new-route");
+    if (id == null) return;
+    const label = prompt("Project name", "New route");
+    if (label == null) return;
+    record.project.id = id.trim();
+    record.project.label = label.trim();
+    await loadProject(record.project, { revision: null, readOnly: false, dirty: true, fit: true });
+    elements["project-list"].value = "";
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function importProject(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  if (state.dirty && !confirm("Discard unsaved planner changes?")) return;
+  try {
+    const project = JSON.parse(await file.text());
+    if (!project.id) project.id = slug(file.name.replace(/\.json$/i, ""));
+    await loadProject(project, { revision: null, readOnly: false, dirty: true, fit: true });
+    elements["project-list"].value = "";
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function loadProject(project, options) {
+  validateProject(project);
+  setStatus("Projecting graph...");
+  const payload = await service({
+    command: "project_graph",
+    request_id: requestId("project"),
+    catalog: project.catalog,
+    route_book: project.route_book ?? null,
+  });
+  if (payload.kind !== "graph") throw new Error(`Unexpected response ${payload.kind}`);
+  state.project = project;
+  state.graph = payload.graph;
+  state.positions = new Map(Object.entries(project.presentation?.positions ?? {}));
+  state.revision = options.revision;
+  state.readOnly = options.readOnly;
+  state.dirty = options.dirty;
+  state.selected = null;
+  ensurePositions();
+  elements["empty-state"].hidden = true;
+  updateProjectControls();
+  render();
+  if (options.fit) requestAnimationFrame(fitGraph);
+  setStatus(`${state.graph.nodes.length} nodes / ${state.graph.edges.length} connections`, "good");
+}
+
 function validateProject(project) {
   if (!project || project.schema !== PROJECT_SCHEMA) throw new Error(`Expected ${PROJECT_SCHEMA}`);
+  if (!project.id || typeof project.id !== "string") throw new Error("Project has no id");
+  if (!project.label || typeof project.label !== "string") throw new Error("Project has no label");
   if (!project.catalog || typeof project.catalog !== "object") throw new Error("Project has no catalog");
   if (project.route_book != null && typeof project.route_book !== "object") throw new Error("Project route_book is invalid");
+}
+
+async function projectApi(path, options = {}) {
+  const response = await fetch(path, { cache: "no-store", ...options });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error ?? `Project service returned HTTP ${response.status}`);
+  return body;
 }
 
 async function service(request) {
@@ -166,12 +252,16 @@ function renderPalette() {
   elements["palette-list"].replaceChildren();
   if (!state.graph) return;
   const query = elements.search.value.trim().toLowerCase();
-  for (const node of state.graph.nodes.filter((node) => node.payload.kind === "transition" && (!query || `${node.label} ${node.id}`.toLowerCase().includes(query)))) {
+  const matches = state.graph.nodes.filter((node) => node.payload.kind === "transition"
+    && (!query || `${node.label} ${node.id}`.toLowerCase().includes(query)));
+  for (const node of matches) {
     const button = document.createElement("button");
     button.className = "palette-item";
-    button.innerHTML = `<span></span><small></small>`;
-    button.querySelector("span").textContent = node.label;
-    button.querySelector("small").textContent = node.payload.transition_id;
+    const label = document.createElement("span");
+    label.textContent = node.label;
+    const id = document.createElement("small");
+    id.textContent = node.payload.transition_id;
+    button.append(label, id);
     button.addEventListener("click", () => {
       state.selected = { type: "node", value: node };
       centerNode(node.id);
@@ -232,16 +322,18 @@ function moveGesture(event) {
 
 function endGesture(event) {
   if (!state.gesture || event.pointerId !== state.gesture.pointerId) return;
+  const changedLayout = state.gesture.kind === "node"
+    && (event.clientX !== state.gesture.startX || event.clientY !== state.gesture.startY);
   state.gesture = null;
   if (elements.canvas.hasPointerCapture(event.pointerId)) elements.canvas.releasePointerCapture(event.pointerId);
+  if (changedLayout) markDirty();
 }
 
 function onWheel(event) {
   event.preventDefault();
   const bounds = elements.canvas.getBoundingClientRect();
   const point = { x: event.clientX - bounds.left, y: event.clientY - bounds.top };
-  const factor = Math.exp(-event.deltaY * 0.0012);
-  setScale(state.transform.scale * factor, point);
+  setScale(state.transform.scale * Math.exp(-event.deltaY * 0.0012), point);
 }
 
 function zoomAt(factor) {
@@ -250,7 +342,7 @@ function zoomAt(factor) {
 }
 
 function setScale(next, point) {
-  next = Math.min(2.75, Math.max(.18, next));
+  next = Math.min(2.75, Math.max(0.18, next));
   const ratio = next / state.transform.scale;
   state.transform.x = point.x - (point.x - state.transform.x) * ratio;
   state.transform.y = point.y - (point.y - state.transform.y) * ratio;
@@ -265,13 +357,20 @@ function applyTransform() {
 function fitGraph() {
   if (!state.positions.size) return;
   const positions = [...state.positions.values()];
-  const minX = Math.min(...positions.map((p) => p.x));
-  const minY = Math.min(...positions.map((p) => p.y));
-  const maxX = Math.max(...positions.map((p) => p.x + NODE_WIDTH));
-  const maxY = Math.max(...positions.map((p) => p.y + NODE_HEIGHT));
+  const minX = Math.min(...positions.map((position) => position.x));
+  const minY = Math.min(...positions.map((position) => position.y));
+  const maxX = Math.max(...positions.map((position) => position.x + NODE_WIDTH));
+  const maxY = Math.max(...positions.map((position) => position.y + NODE_HEIGHT));
   const bounds = elements.canvas.getBoundingClientRect();
-  const scale = Math.min(1.25, Math.max(.18, Math.min((bounds.width - 90) / Math.max(1, maxX - minX), (bounds.height - 90) / Math.max(1, maxY - minY))));
-  state.transform = { x: (bounds.width - (maxX - minX) * scale) / 2 - minX * scale, y: (bounds.height - (maxY - minY) * scale) / 2 - minY * scale, scale };
+  const scale = Math.min(1.25, Math.max(0.18, Math.min(
+    (bounds.width - 90) / Math.max(1, maxX - minX),
+    (bounds.height - 90) / Math.max(1, maxY - minY),
+  )));
+  state.transform = {
+    x: (bounds.width - (maxX - minX) * scale) / 2 - minX * scale,
+    y: (bounds.height - (maxY - minY) * scale) / 2 - minY * scale,
+    scale,
+  };
   applyTransform();
 }
 
@@ -284,16 +383,90 @@ function centerNode(id) {
   applyTransform();
 }
 
-function saveProjectCopy() {
+function projectWithPresentation(project = state.project) {
+  const validNodes = new Set(state.graph.nodes.map((node) => node.id));
+  const positions = Object.fromEntries([...state.positions.entries()]
+    .filter(([id]) => validNodes.has(id))
+    .sort(([left], [right]) => left.localeCompare(right)));
+  return { ...project, presentation: { ...(project.presentation ?? {}), positions } };
+}
+
+async function persistProject(project, expectedRevision) {
+  return projectApi(`/api/projects/${encodeURIComponent(project.id)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      schema: PROJECT_SAVE_SCHEMA,
+      expected_revision_sha256: expectedRevision,
+      project,
+    }),
+  });
+}
+
+async function saveProject() {
+  if (!state.project || state.readOnly) return;
+  try {
+    const record = await persistProject(projectWithPresentation(), state.revision);
+    state.project = record.project;
+    state.revision = record.revision_sha256;
+    state.readOnly = record.read_only;
+    state.dirty = false;
+    updateProjectControls();
+    await refreshProjects(false, state.project.id);
+    setStatus("Project saved", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function saveProjectAs() {
   if (!state.project) return;
-  const positions = Object.fromEntries([...state.positions.entries()].sort(([a], [b]) => a.localeCompare(b)));
-  const project = { ...state.project, presentation: { ...(state.project.presentation ?? {}), positions } };
+  const suggested = state.readOnly ? state.project.id.replace(/^demo-/, "") : `${state.project.id}-copy`;
+  const id = prompt("New project ID", suggested);
+  if (id == null) return;
+  const label = prompt("Project name", state.project.label);
+  if (label == null) return;
+  try {
+    const copy = projectWithPresentation({ ...state.project, id: id.trim(), label: label.trim() });
+    const record = await persistProject(copy, null);
+    state.project = record.project;
+    state.revision = record.revision_sha256;
+    state.readOnly = false;
+    state.dirty = false;
+    updateProjectControls();
+    await refreshProjects(false, state.project.id);
+    setStatus("Project copy saved", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+function exportProject() {
+  if (!state.project) return;
+  const project = projectWithPresentation();
   const blob = new Blob([`${JSON.stringify(project, null, 2)}\n`], { type: "application/json" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `${slug(project.label || "route")}.planner.json`;
+  link.download = `${slug(project.label)}.planner.json`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 0);
+}
+
+function markDirty() {
+  if (!state.project) return;
+  state.dirty = true;
+  updateProjectControls();
+}
+
+function updateProjectControls() {
+  const loaded = Boolean(state.project);
+  elements["save-project"].disabled = !loaded || state.readOnly || !state.dirty;
+  elements["save-as-project"].disabled = !loaded;
+  elements["export-project"].disabled = !loaded;
+  elements["project-name"].textContent = loaded
+    ? `${state.project.label}${state.readOnly ? " (read-only demo)" : ""}`
+    : "No project loaded";
+  elements["project-name"].className = `project-name${state.dirty ? " dirty" : ""}`;
 }
 
 function connector(source, target) {
@@ -301,7 +474,7 @@ function connector(source, target) {
   const sy = source.y + NODE_HEIGHT / 2;
   const tx = target.x;
   const ty = target.y + NODE_HEIGHT / 2;
-  const bend = Math.max(45, Math.abs(tx - sx) * .45);
+  const bend = Math.max(45, Math.abs(tx - sx) * 0.45);
   return `M ${sx} ${sy} C ${sx + bend} ${sy}, ${tx - bend} ${ty}, ${tx} ${ty}`;
 }
 
@@ -312,7 +485,7 @@ function svg(name, attributes) {
 }
 
 function elide(value, length) {
-  return value.length <= length ? value : `${value.slice(0, length - 1)}…`;
+  return value.length <= length ? value : `${value.slice(0, length - 1)}...`;
 }
 
 function slug(value) {

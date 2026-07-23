@@ -5,6 +5,7 @@
 //! engine's canonical artifacts and returns planner-specific reports.
 
 pub mod inspection;
+pub mod project;
 pub mod service;
 pub mod web;
 

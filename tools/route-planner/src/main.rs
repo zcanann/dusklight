@@ -1404,16 +1404,31 @@ fn serve_stdio(args: &[String]) -> Result<(), Box<dyn Error>> {
 }
 
 fn serve_web_command(args: &[String]) -> Result<(), Box<dyn Error>> {
-    let listen = match args {
-        [] => "127.0.0.1:32170".parse::<SocketAddr>()?,
-        [flag, value] if flag == "--listen" => value.parse::<SocketAddr>()?,
-        _ => return Err("serve-web accepts only --listen HOST:PORT".into()),
-    };
+    let mut listen = "127.0.0.1:32170".parse::<SocketAddr>()?;
+    let mut project_root = PathBuf::from("tools/route-planner/projects");
+    let mut index = 0;
+    while index < args.len() {
+        let value = args
+            .get(index + 1)
+            .ok_or_else(|| format!("{} requires a value", args[index]))?;
+        match args[index].as_str() {
+            "--listen" => listen = value.parse::<SocketAddr>()?,
+            "--projects" => project_root = PathBuf::from(value),
+            flag => return Err(format!("serve-web does not recognize {flag}").into()),
+        }
+        index += 2;
+    }
     if !listen.ip().is_loopback() {
         return Err("serve-web currently accepts only a loopback listen address".into());
     }
-    println!("route planner: http://{listen}");
-    serve_web(PlannerWebConfig { listen })?;
+    println!(
+        "route planner: http://{listen} (projects: {})",
+        project_root.display()
+    );
+    serve_web(PlannerWebConfig {
+        listen,
+        project_root,
+    })?;
     Ok(())
 }
 
@@ -2063,7 +2078,7 @@ fn print_usage() {
             "  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]",
             "  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]",
             "  route-planner serve-stdio",
-            "  route-planner serve-web [--listen 127.0.0.1:32170]",
+            "  route-planner serve-web [--listen 127.0.0.1:32170] [--projects DIR]",
         ]
         .join("\n")
     );
