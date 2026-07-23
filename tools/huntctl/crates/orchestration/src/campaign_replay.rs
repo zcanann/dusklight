@@ -396,7 +396,6 @@ pub(crate) fn build_policy_replay_generation(
     }
 
     let mut candidate_ids = BTreeSet::new();
-    let mut checkpoint_identities = BTreeSet::new();
     let mut sources = Vec::with_capacity(rollouts.len());
     for rollout in rollouts {
         rollout.batch.validate(model_bytes).map_err(replay_error)?;
@@ -459,7 +458,6 @@ pub(crate) fn build_policy_replay_generation(
                 "policy replay rollout differs from its model, request, result, shard, or objective",
             ));
         }
-        checkpoint_identities.insert(rollout.shard.metadata.checkpoint_identity.as_str());
         rollout
             .shard
             .verify_authored_objective(
@@ -478,12 +476,37 @@ pub(crate) fn build_policy_replay_generation(
             parent_entry_sha256: None,
         });
     }
-    if checkpoint_identities.len() != 1 {
+    validate_policy_checkpoint_lanes(
+        usize::from(optimization.execution.workers),
+        rollouts
+            .iter()
+            .map(|rollout| rollout.shard.metadata.checkpoint_identity.as_str()),
+    )?;
+    NativeReplayCorpus::build(Some(previous), &sources).map_err(replay_error)
+}
+
+fn validate_policy_checkpoint_lanes<'a>(
+    workers: usize,
+    checkpoint_identities: impl IntoIterator<Item = &'a str>,
+) -> Result<(), CampaignReplayError> {
+    if workers == 0 {
         return Err(replay_message(
-            "policy replay generation mixes native checkpoint identities",
+            "policy replay generation has no native worker lanes",
         ));
     }
-    NativeReplayCorpus::build(Some(previous), &sources).map_err(replay_error)
+    let mut by_lane = BTreeMap::new();
+    for (rollout, identity) in checkpoint_identities.into_iter().enumerate() {
+        let lane = rollout % workers;
+        if by_lane
+            .insert(lane, identity)
+            .is_some_and(|expected| expected != identity)
+        {
+            return Err(replay_message(
+                "policy replay generation changed checkpoint identity within one native worker lane",
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn load_corpus(
@@ -911,5 +934,26 @@ mod tests {
                 .contains("does not match authored milestone")
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn policy_replay_accepts_lane_local_checkpoints_but_rejects_lane_drift() {
+        validate_policy_checkpoint_lanes(4, ["lane-a", "lane-b", "lane-c", "lane-d"]).unwrap();
+        validate_policy_checkpoint_lanes(
+            4,
+            [
+                "lane-a", "lane-b", "lane-c", "lane-d", "lane-a", "lane-b", "lane-c", "lane-d",
+            ],
+        )
+        .unwrap();
+        assert!(
+            validate_policy_checkpoint_lanes(
+                4,
+                ["lane-a", "lane-b", "lane-c", "lane-d", "lane-a-changed",],
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("within one native worker lane")
+        );
     }
 }
