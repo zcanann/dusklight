@@ -455,9 +455,17 @@ it and emit any legal PAD action for the entire episode.
 - [ ] Use a generous initial horizon or a success-supported adaptive curriculum.
       Retain slow successes and timeouts as experience; contract the horizon only
       after held-out goal reachability is reliable.
-- [ ] Support controlled demonstration modes: absent, replay-only, behavior-
+- [x] Support controlled demonstration modes: absent, replay-only, behavior-
       cloning warm start, and reverse-curriculum checkpoints. Record the active
-      mode in every model, rollout, and comparison artifact.
+      mode in every model, rollout, and comparison artifact. The sealed loop
+      exposes all four treatments: `absent` forbids demonstration entries and
+      classifies the run as from-scratch discovery; `replay_only` admits their
+      trajectories to reachability training but excludes their PAD targets from
+      policy fitting; behavior cloning is the explicit warm start; and reverse
+      curriculum requires both demonstration entries and a sealed curriculum
+      checkpoint authority. Dataset, reachability model, frozen-policy manifest,
+      strict native rollout envelope, collapse comparison, and run summary all
+      bind the selected mode.
 - [ ] Supply a stable generic observation contract containing Link motion/action
       state, camera/PAD history, local collision contacts and geometry, target
       trigger relation, loading/event state, and complete relevant actor sets

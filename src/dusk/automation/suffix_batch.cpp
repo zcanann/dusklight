@@ -348,6 +348,7 @@ bool parse_suffix_batch(
     };
     constexpr std::array FrozenRootKeys{
         std::string_view{"schema"},
+        std::string_view{"demonstration_mode"},
         std::string_view{"source_frame"},
         std::string_view{"source_boundary_fingerprint"},
         std::string_view{"checkpoint_validation"},
@@ -393,6 +394,23 @@ bool parse_suffix_batch(
     }
     parsed.verifyStateHashes = root["verify_state_hashes"].get<bool>();
     if (frozen) {
+        if (!root["demonstration_mode"].is_string()) {
+            error = "suffix batch demonstration mode is invalid";
+            return false;
+        }
+        const auto& mode = root["demonstration_mode"].get_ref<const std::string&>();
+        if (mode == "absent") {
+            parsed.demonstrationMode = SuffixDemonstrationMode::Absent;
+        } else if (mode == "replay_only") {
+            parsed.demonstrationMode = SuffixDemonstrationMode::ReplayOnly;
+        } else if (mode == "behavior_cloning_warm_start") {
+            parsed.demonstrationMode = SuffixDemonstrationMode::BehaviorCloningWarmStart;
+        } else if (mode == "reverse_curriculum_checkpoints") {
+            parsed.demonstrationMode = SuffixDemonstrationMode::ReverseCurriculumCheckpoints;
+        } else {
+            error = "suffix batch demonstration mode is invalid";
+            return false;
+        }
         SuffixBatchFrozenPolicy frozenPolicy;
         if (!parse_frozen_policy(root["frozen_policy"], frozenPolicy)) {
             error = "suffix batch frozen policy is invalid";

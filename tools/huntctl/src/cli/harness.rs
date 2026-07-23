@@ -291,6 +291,17 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             .checked_mul(u64::from(rollouts_per_generation))
             .and_then(|count| count.checked_mul(optimization.budgets.exploration_horizon_ticks))
             .ok_or("native goal learning-loop minimum tick budget overflowed")?;
+        let demonstration_mode_option = option(command_args, "--demonstration-mode");
+        let demonstration_mode = match demonstration_mode_option
+            .as_deref()
+            .unwrap_or("behavior_cloning_warm_start")
+        {
+            "absent" => dusklight_learning::native_replay_corpus::DemonstrationMode::Absent,
+            "replay_only" => dusklight_learning::native_replay_corpus::DemonstrationMode::ReplayOnly,
+            "behavior_cloning_warm_start" => dusklight_learning::native_replay_corpus::DemonstrationMode::BehaviorCloningWarmStart,
+            "reverse_curriculum_checkpoints" => dusklight_learning::native_replay_corpus::DemonstrationMode::ReverseCurriculumCheckpoints,
+            _ => return Err("--demonstration-mode must be absent, replay_only, behavior_cloning_warm_start, or reverse_curriculum_checkpoints".into()),
+        };
         let request = huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopRequest::seal(
             &optimization,
             &execution,
@@ -299,7 +310,10 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             generation_limit,
             rollouts_per_generation,
             u64_option(command_args, "--simulated-tick-budget", minimum_tick_budget)?,
-            NativeGoalTrajectoryConfig::default(),
+            NativeGoalTrajectoryConfig {
+                demonstration_mode,
+                ..NativeGoalTrajectoryConfig::default()
+            },
             NativeGoalReachabilityConfig::default(),
             NativeGoalFrozenPolicyConfig::default(),
             huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopResume {

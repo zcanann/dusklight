@@ -59,6 +59,7 @@ pub struct NativeGoalLearningLoopRunConfig<'a> {
 #[serde(deny_unknown_fields)]
 pub struct NativeGoalLearningLoopRunSummary {
     pub request_sha256: Digest,
+    pub demonstration_mode: dusklight_learning::native_replay_corpus::DemonstrationMode,
     pub optimization_request_sha256: Digest,
     pub native_execution_sha256: Digest,
     pub committed_generations: u16,
@@ -512,11 +513,12 @@ fn prepare_generation(
     let model_path = model_path.canonicalize().map_err(runner_error)?;
     let mut batches = Vec::with_capacity(usize::from(config.request.rollouts_per_generation));
     for rollout in 0..config.request.rollouts_per_generation {
-        let batch = NativeFrozenPolicySuffixBatch::build(
+        let batch = NativeFrozenPolicySuffixBatch::build_with_demonstration_mode(
             &export.model_bytes,
             model_path.to_string_lossy().into_owned(),
             config.optimization.terminal_predicate.definition_sha256,
             format!("goal-policy-g{generation:04}-r{rollout:04}"),
+            config.request.demonstration_mode,
             NativeFactorizedPolicyBatchConfig {
                 source_frame: usize::try_from(config.optimization.route.source_boundary_index)
                     .map_err(runner_error)?,
@@ -828,8 +830,12 @@ fn ingest_executed_generation(
         .iter()
         .map(|rollout| rollout.shard.clone())
         .collect::<Vec<_>>();
-    let collapse = NativePolicyCollapseReport::build(current.generation, &realized_shards)
-        .map_err(runner_error)?;
+    let collapse = NativePolicyCollapseReport::build_for_mode(
+        current.generation,
+        config.request.demonstration_mode,
+        &realized_shards,
+    )
+    .map_err(runner_error)?;
     let collapse_path = generation_root(campaign, current.generation)
         .join(format!("collapse-{}.json", collapse.report_sha256));
     write_exact_or_new(&collapse_path, &pretty_json(&collapse)?).map_err(runner_error)?;
@@ -989,6 +995,7 @@ fn summary(
         .unwrap_or_default();
     Ok(NativeGoalLearningLoopRunSummary {
         request_sha256: config.request.content_sha256,
+        demonstration_mode: config.request.demonstration_mode,
         optimization_request_sha256: config.optimization.content_sha256,
         native_execution_sha256: config.execution.content_sha256,
         committed_generations: state.committed_generations,
@@ -1108,6 +1115,7 @@ mod tests {
             content_sha256: Digest([9; 32]),
             campaign_class:
                 crate::optimization_request::CampaignClass::DemonstrationAssistedDiscovery,
+            demonstration_mode: dusklight_learning::native_replay_corpus::DemonstrationMode::BehaviorCloningWarmStart,
             optimization_request_sha256: optimization.content_sha256,
             native_execution_sha256: execution.content_sha256,
             initial_replay_corpus: reference("missing/corpus", 10),

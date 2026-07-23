@@ -26,6 +26,29 @@ pub enum ReplayExperienceRole {
     AlternateTerminal,
 }
 
+/// Controls how authenticated demonstration experience may influence one
+/// discovery treatment. The replay corpus stays immutable; this mode governs
+/// which parts of the learner are allowed to consume its demonstration rows.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DemonstrationMode {
+    Absent,
+    ReplayOnly,
+    #[default]
+    BehaviorCloningWarmStart,
+    ReverseCurriculumCheckpoints,
+}
+
+impl DemonstrationMode {
+    pub fn imitates_demonstration_actions(self) -> bool {
+        self == Self::BehaviorCloningWarmStart
+    }
+
+    pub fn requires_demonstration_entries(self) -> bool {
+        self != Self::Absent
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeReplayEntry {

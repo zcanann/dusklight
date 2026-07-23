@@ -20,6 +20,7 @@ use crate::native_policy_features::{
     NATIVE_POLICY_FEATURE_SCHEMA_SHA256, NATIVE_POLICY_FEATURE_WIDTH,
     encode_native_policy_observation,
 };
+use crate::native_replay_corpus::{DemonstrationMode, ReplayExperienceRole};
 use dusklight_evidence::native_episode_shard::{NativeEpisodeShard, NativeRawPad};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -145,6 +146,7 @@ pub struct NativeGoalFrozenPolicyManifest {
     pub goal_program_sha256: Digest,
     pub objective_sha256: Digest,
     pub goal_objective_identity: String,
+    pub demonstration_mode: DemonstrationMode,
     pub observation_schema: String,
     pub action_schema: String,
     pub feature_schema_sha256: Digest,
@@ -208,6 +210,7 @@ impl NativeGoalFrozenPolicyExport {
             .validate()
             .map_err(|error| NativeGoalFrozenPolicyError::new(error.to_string()))?;
         if reachability.admission != NativeGoalReachabilityAdmission::GoalConditionedCandidate
+            || reachability.demonstration_mode != dataset.config.demonstration_mode
             || !reachability
                 .source_dataset_sha256
                 .contains(&dataset.dataset_sha256)
@@ -302,6 +305,7 @@ impl NativeGoalFrozenPolicyExport {
             goal_program_sha256: dataset.goal_program_sha256,
             objective_sha256: dataset.goal.definition_sha256,
             goal_objective_identity: dataset.goal_objective_identity.clone(),
+            demonstration_mode: dataset.config.demonstration_mode,
             observation_schema: dataset.observation_schema.clone(),
             action_schema: dataset.action_schema.clone(),
             feature_schema_sha256: Digest(NATIVE_POLICY_FEATURE_SCHEMA_SHA256),
@@ -678,7 +682,13 @@ fn materialize(
                 "trajectory state or consumed PAD differs from its policy source",
             ));
         }
-        if row.success {
+        if row.success
+            && (row.role != ReplayExperienceRole::Demonstration
+                || dataset
+                    .config
+                    .demonstration_mode
+                    .imitates_demonstration_actions())
+        {
             let features = encode_native_policy_observation(&step.pre_input)
                 .map_err(|error| NativeGoalFrozenPolicyError::new(error.to_string()))?
                 .into_iter()
@@ -1214,6 +1224,7 @@ milestone reach_goal {
                     std::slice::from_ref(&shard),
                     &graph,
                     NativeGoalTrajectoryConfig {
+                        demonstration_mode: DemonstrationMode::BehaviorCloningWarmStart,
                         n_step: 2,
                         discount_millionths: 900_000,
                         training_basis_points: 6_000,
@@ -1356,6 +1367,21 @@ milestone reach_goal {
         )
         .unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn replay_only_demonstrations_train_no_policy_action_targets() {
+        let (shard, mut dataset, _) = sources();
+        for row in &mut dataset.rows {
+            if row.success {
+                row.role = ReplayExperienceRole::Demonstration;
+            }
+        }
+        dataset.config.demonstration_mode = DemonstrationMode::ReplayOnly;
+        assert!(materialize(&dataset, std::slice::from_ref(&shard)).is_err());
+
+        dataset.config.demonstration_mode = DemonstrationMode::BehaviorCloningWarmStart;
+        assert!(!materialize(&dataset, &[shard]).unwrap().is_empty());
     }
 
     #[test]

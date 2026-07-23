@@ -15,6 +15,7 @@ use crate::native_policy_features::{
     NATIVE_POLICY_FEATURE_SCHEMA_SHA256, NATIVE_POLICY_FEATURE_WIDTH,
     encode_native_policy_observation,
 };
+use crate::native_replay_corpus::DemonstrationMode;
 use crate::semantic_goal_input::{
     GOAL_METADATA_WIDTH, GOAL_NODE_FEATURE_WIDTH, GOAL_PROJECTION_FEATURE_WIDTH, GoalEdgeRole,
     SemanticGoalInput,
@@ -208,6 +209,7 @@ pub struct NativeGoalReachabilityModel {
     pub source_replay_corpus_sha256: Vec<Digest>,
     pub source_goal_input_sha256: Vec<Digest>,
     pub source_goal_objective_identity: Vec<String>,
+    pub demonstration_mode: DemonstrationMode,
     pub config: NativeGoalReachabilityConfig,
     pub feature_mean: Vec<f64>,
     pub feature_inverse_stddev: Vec<f64>,
@@ -267,9 +269,16 @@ impl NativeGoalReachabilityModel {
             .iter()
             .map(|dataset| dataset.action_schema.as_str())
             .collect::<BTreeSet<_>>();
-        if observation_schemas.len() != 1 || action_schemas.len() != 1 {
+        let demonstration_modes = datasets
+            .iter()
+            .map(|dataset| dataset.config.demonstration_mode)
+            .collect::<BTreeSet<_>>();
+        if observation_schemas.len() != 1
+            || action_schemas.len() != 1
+            || demonstration_modes.len() != 1
+        {
             return Err(NativeGoalReachabilityError::new(
-                "goal reachability datasets mix observation or action schemas",
+                "goal reachability datasets mix observation, action, or demonstration-mode contracts",
             ));
         }
         let rows = materialize(datasets, shards)?;
@@ -420,6 +429,7 @@ impl NativeGoalReachabilityModel {
             source_replay_corpus_sha256,
             source_goal_input_sha256,
             source_goal_objective_identity,
+            demonstration_mode: datasets[0].config.demonstration_mode,
             config,
             feature_mean,
             feature_inverse_stddev,
@@ -1608,6 +1618,7 @@ milestone reach_goal {
         let dataset = (0..10_000_u64)
             .find_map(|split_seed| {
                 let config = NativeGoalTrajectoryConfig {
+                    demonstration_mode: DemonstrationMode::BehaviorCloningWarmStart,
                     n_step: 2,
                     discount_millionths: 900_000,
                     training_basis_points: 6_000,

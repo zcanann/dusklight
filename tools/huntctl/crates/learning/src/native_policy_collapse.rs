@@ -5,6 +5,7 @@
 //! does not infer progress from coordinates or replace terminal outcomes.
 
 use crate::artifact::Digest;
+use crate::native_replay_corpus::DemonstrationMode;
 use dusklight_evidence::native_episode_shard::{NativeEpisodeShard, NativeRawPad};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -35,6 +36,7 @@ pub struct NativePolicyCollapseReport {
     pub schema: String,
     pub report_sha256: Digest,
     pub generation: u16,
+    pub demonstration_mode: DemonstrationMode,
     pub source_shards: Vec<Digest>,
     pub rollouts: u64,
     pub transitions: u64,
@@ -56,6 +58,18 @@ pub struct NativePolicyCollapseReport {
 impl NativePolicyCollapseReport {
     pub fn build(
         generation: u16,
+        shards: &[NativeEpisodeShard],
+    ) -> Result<Self, NativePolicyCollapseError> {
+        Self::build_for_mode(
+            generation,
+            DemonstrationMode::BehaviorCloningWarmStart,
+            shards,
+        )
+    }
+
+    pub fn build_for_mode(
+        generation: u16,
+        demonstration_mode: DemonstrationMode,
         shards: &[NativeEpisodeShard],
     ) -> Result<Self, NativePolicyCollapseError> {
         if generation == 0 || shards.is_empty() {
@@ -172,6 +186,7 @@ impl NativePolicyCollapseReport {
             schema: NATIVE_POLICY_COLLAPSE_REPORT_SCHEMA_V1.into(),
             report_sha256: Digest::ZERO,
             generation,
+            demonstration_mode,
             source_shards,
             rollouts,
             transitions,
@@ -243,6 +258,20 @@ impl NativePolicyCollapseReport {
         if self != &Self::build(generation, shards)? {
             return Err(collapse_message(
                 "policy-collapse report differs from its realized native shards",
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn validate_against_mode(
+        &self,
+        generation: u16,
+        demonstration_mode: DemonstrationMode,
+        shards: &[NativeEpisodeShard],
+    ) -> Result<(), NativePolicyCollapseError> {
+        if self != &Self::build_for_mode(generation, demonstration_mode, shards)? {
+            return Err(collapse_message(
+                "policy-collapse report differs from its demonstration treatment or realized native shards",
             ));
         }
         Ok(())
@@ -361,5 +390,28 @@ mod tests {
         let mut tampered = report.clone();
         tampered.unique_state_identities += 1;
         assert!(tampered.validate_against(3, &[shard]).is_err());
+    }
+
+    #[test]
+    fn comparison_identity_binds_the_demonstration_treatment() {
+        let shard = fixture();
+        let report = NativePolicyCollapseReport::build_for_mode(
+            1,
+            DemonstrationMode::ReplayOnly,
+            std::slice::from_ref(&shard),
+        )
+        .unwrap();
+        report
+            .validate_against_mode(
+                1,
+                DemonstrationMode::ReplayOnly,
+                std::slice::from_ref(&shard),
+            )
+            .unwrap();
+        assert!(
+            report
+                .validate_against_mode(1, DemonstrationMode::BehaviorCloningWarmStart, &[shard],)
+                .is_err()
+        );
     }
 }

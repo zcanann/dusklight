@@ -11,7 +11,9 @@ use crate::native_auxiliary_dataset::{AuxiliaryPadTarget, AuxiliarySplit};
 use crate::native_policy_features::{
     NATIVE_POLICY_FEATURE_SCHEMA_SHA256, encode_native_policy_observation,
 };
-use crate::native_replay_corpus::{NativeReplayCorpus, NativeReplayEntry, ReplayExperienceRole};
+use crate::native_replay_corpus::{
+    DemonstrationMode, NativeReplayCorpus, NativeReplayEntry, ReplayExperienceRole,
+};
 use crate::semantic_goal_input::SemanticGoalInput;
 use dusklight_evidence::native_episode_shard::{
     NativeEpisode, NativeEpisodeShard, NativeRawPad, authored_milestone_objective_identity,
@@ -32,6 +34,8 @@ const MAX_N_STEP: u16 = 4_096;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeGoalTrajectoryConfig {
+    #[serde(default)]
+    pub demonstration_mode: DemonstrationMode,
     pub n_step: u16,
     pub discount_millionths: u32,
     pub training_basis_points: u16,
@@ -42,6 +46,7 @@ pub struct NativeGoalTrajectoryConfig {
 impl Default for NativeGoalTrajectoryConfig {
     fn default() -> Self {
         Self {
+            demonstration_mode: DemonstrationMode::BehaviorCloningWarmStart,
             n_step: 8,
             discount_millionths: 990_000,
             training_basis_points: 8_000,

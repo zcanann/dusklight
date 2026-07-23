@@ -16,7 +16,9 @@ use dusklight_learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
 use dusklight_learning::native_goal_reachability::NativeGoalReachabilityConfig;
 use dusklight_learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
 use dusklight_learning::native_policy_collapse::NativePolicyCollapseReport;
-use dusklight_learning::native_replay_corpus::NativeReplayCorpus;
+use dusklight_learning::native_replay_corpus::{
+    DemonstrationMode, NativeReplayCorpus, ReplayExperienceRole,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
@@ -48,6 +50,8 @@ pub struct NativeGoalLearningLoopRequest {
     pub content_sha256: Digest,
     #[serde(default = "demonstration_assisted_class")]
     pub campaign_class: CampaignClass,
+    #[serde(default)]
+    pub demonstration_mode: DemonstrationMode,
     pub optimization_request_sha256: Digest,
     pub native_execution_sha256: Digest,
     pub initial_replay_corpus: ArtifactReference,
@@ -239,10 +243,17 @@ impl NativeGoalLearningLoopRequest {
         initial_episode_shards.sort_by(|left, right| {
             (left.sha256, left.path.as_str()).cmp(&(right.sha256, right.path.as_str()))
         });
+        let demonstration_mode = trajectory.demonstration_mode;
+        let campaign_class = if demonstration_mode == DemonstrationMode::Absent {
+            CampaignClass::FromScratchDiscovery
+        } else {
+            CampaignClass::DemonstrationAssistedDiscovery
+        };
         let mut request = Self {
             schema: NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
-            campaign_class: CampaignClass::DemonstrationAssistedDiscovery,
+            campaign_class,
+            demonstration_mode,
             optimization_request_sha256: optimization.content_sha256,
             native_execution_sha256: execution.content_sha256,
             initial_replay_corpus,
@@ -265,8 +276,14 @@ impl NativeGoalLearningLoopRequest {
         self.reachability.validate().map_err(loop_error)?;
         self.policy.validate().map_err(loop_error)?;
         validate_artifact_shape("initial replay corpus", &self.initial_replay_corpus)?;
+        let expected_class = if self.demonstration_mode == DemonstrationMode::Absent {
+            CampaignClass::FromScratchDiscovery
+        } else {
+            CampaignClass::DemonstrationAssistedDiscovery
+        };
         if self.schema != NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1
-            || self.campaign_class != CampaignClass::DemonstrationAssistedDiscovery
+            || self.campaign_class != expected_class
+            || self.trajectory.demonstration_mode != self.demonstration_mode
             || self.content_sha256 == Digest::ZERO
             || self.optimization_request_sha256 == Digest::ZERO
             || self.native_execution_sha256 == Digest::ZERO
@@ -343,6 +360,23 @@ impl NativeGoalLearningLoopRequest {
         let corpus: NativeReplayCorpus =
             serde_json::from_slice(&corpus_bytes).map_err(loop_error)?;
         corpus.validate().map_err(loop_error)?;
+        let demonstration_entries = corpus
+            .entries
+            .iter()
+            .filter(|entry| entry.role == ReplayExperienceRole::Demonstration)
+            .count();
+        if self.demonstration_mode.requires_demonstration_entries() != (demonstration_entries > 0) {
+            return Err(loop_message(
+                "learning-loop demonstration mode disagrees with the initial replay corpus",
+            ));
+        }
+        if (self.demonstration_mode == DemonstrationMode::ReverseCurriculumCheckpoints)
+            != optimization.reverse_curriculum.is_some()
+        {
+            return Err(loop_message(
+                "reverse-curriculum demonstration mode and checkpoint authority disagree",
+            ));
+        }
         let mut shard_identities = BTreeSet::new();
         let mut episode_count = 0_u64;
         for reference in &self.initial_episode_shards {
@@ -380,6 +414,7 @@ impl NativeGoalLearningLoopRequest {
             schema: NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1,
             request_sha256: self.content_sha256,
             campaign_class: self.campaign_class,
+            demonstration_mode: self.demonstration_mode,
             optimization_request_sha256: optimization.content_sha256,
             native_execution_sha256: execution.content_sha256,
             initial_corpus_sha256: corpus.corpus_sha256,
@@ -413,6 +448,7 @@ pub struct NativeGoalLearningLoopValidationReport {
     pub schema: &'static str,
     pub request_sha256: Digest,
     pub campaign_class: CampaignClass,
+    pub demonstration_mode: DemonstrationMode,
     pub optimization_request_sha256: Digest,
     pub native_execution_sha256: Digest,
     pub initial_corpus_sha256: Digest,
@@ -831,6 +867,7 @@ fn apply_event(
                 validate_collapse_diagnostics(
                     root,
                     *generation,
+                    request.demonstration_mode,
                     collapse_diagnostics,
                     current
                         .episode_shards
@@ -994,6 +1031,7 @@ fn validate_event_artifacts(
 fn validate_collapse_diagnostics(
     root: &Path,
     generation: u16,
+    demonstration_mode: DemonstrationMode,
     diagnostics: &ArtifactReference,
     shard_references: &[ArtifactReference],
     executed_successes: u16,
@@ -1014,7 +1052,7 @@ fn validate_collapse_diagnostics(
         })
         .collect::<Result<Vec<_>, NativeGoalLearningLoopError>>()?;
     report
-        .validate_against(generation, &shards)
+        .validate_against_mode(generation, demonstration_mode, &shards)
         .map_err(loop_error)?;
     if report.source_shards.len() != shard_references.len()
         || report.rollouts < shard_references.len() as u64
@@ -1258,6 +1296,7 @@ mod tests {
             schema: NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
             campaign_class: CampaignClass::DemonstrationAssistedDiscovery,
+            demonstration_mode: DemonstrationMode::BehaviorCloningWarmStart,
             optimization_request_sha256: Digest([1; 32]),
             native_execution_sha256: Digest([2; 32]),
             initial_replay_corpus: initial_corpus,
@@ -1536,7 +1575,15 @@ mod tests {
     fn collapse_diagnostics_are_recomputed_from_journaled_native_shards() {
         let root = test_root();
         let (references, diagnostics, successes) = generation_policy_evidence(&root, 1);
-        validate_collapse_diagnostics(&root, 1, &diagnostics, &references, successes).unwrap();
+        validate_collapse_diagnostics(
+            &root,
+            1,
+            DemonstrationMode::BehaviorCloningWarmStart,
+            &diagnostics,
+            &references,
+            successes,
+        )
+        .unwrap();
 
         let shards = references
             .iter()
@@ -1549,10 +1596,17 @@ mod tests {
             &pretty_json(&detached).unwrap(),
         );
         assert!(
-            validate_collapse_diagnostics(&root, 1, &detached_reference, &references, successes)
-                .unwrap_err()
-                .to_string()
-                .contains("differs from its realized native shards")
+            validate_collapse_diagnostics(
+                &root,
+                1,
+                DemonstrationMode::BehaviorCloningWarmStart,
+                &detached_reference,
+                &references,
+                successes,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("differs from its demonstration treatment or realized native shards")
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -1670,6 +1724,35 @@ mod tests {
             )
             .is_err()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn request_class_and_trajectory_are_bound_to_each_demonstration_mode() {
+        let root = test_root();
+        for mode in [
+            DemonstrationMode::Absent,
+            DemonstrationMode::ReplayOnly,
+            DemonstrationMode::BehaviorCloningWarmStart,
+            DemonstrationMode::ReverseCurriculumCheckpoints,
+        ] {
+            let mut candidate = request(&root);
+            candidate.demonstration_mode = mode;
+            candidate.trajectory.demonstration_mode = mode;
+            candidate.campaign_class = if mode == DemonstrationMode::Absent {
+                CampaignClass::FromScratchDiscovery
+            } else {
+                CampaignClass::DemonstrationAssistedDiscovery
+            };
+            candidate.content_sha256 = candidate.identity().unwrap();
+            candidate.validate().unwrap();
+
+            candidate.trajectory.demonstration_mode = DemonstrationMode::ReplayOnly;
+            if mode != DemonstrationMode::ReplayOnly {
+                candidate.content_sha256 = candidate.identity().unwrap();
+                assert!(candidate.validate().is_err());
+            }
+        }
         fs::remove_dir_all(root).unwrap();
     }
 }

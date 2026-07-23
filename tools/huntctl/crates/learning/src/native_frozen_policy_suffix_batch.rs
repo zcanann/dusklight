@@ -13,6 +13,7 @@ use crate::frozen_inference::{FrozenActivation, FrozenDenseLayer, FrozenInferenc
 use crate::native_policy_features::{
     NATIVE_POLICY_FEATURE_SCHEMA_SHA256, NATIVE_POLICY_FEATURE_WIDTH,
 };
+use crate::native_replay_corpus::DemonstrationMode;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
@@ -61,6 +62,7 @@ pub fn native_frozen_policy_probe_model(
 #[serde(deny_unknown_fields)]
 pub struct NativeFrozenPolicySuffixBatch {
     pub schema: String,
+    pub demonstration_mode: DemonstrationMode,
     pub source_frame: usize,
     pub source_boundary_fingerprint: String,
     pub checkpoint_validation: NativeCheckpointValidation,
@@ -92,6 +94,24 @@ impl NativeFrozenPolicySuffixBatch {
         model_path: String,
         expected_objective_sha256: Digest,
         candidate_id: String,
+        config: NativeFactorizedPolicyBatchConfig,
+    ) -> Result<Self, NativeFrozenPolicyBatchError> {
+        Self::build_with_demonstration_mode(
+            model_bytes,
+            model_path,
+            expected_objective_sha256,
+            candidate_id,
+            DemonstrationMode::BehaviorCloningWarmStart,
+            config,
+        )
+    }
+
+    pub fn build_with_demonstration_mode(
+        model_bytes: &[u8],
+        model_path: String,
+        expected_objective_sha256: Digest,
+        candidate_id: String,
+        demonstration_mode: DemonstrationMode,
         config: NativeFactorizedPolicyBatchConfig,
     ) -> Result<Self, NativeFrozenPolicyBatchError> {
         if !valid_boundary_fingerprint(&config.source_boundary_fingerprint)
@@ -133,6 +153,7 @@ impl NativeFrozenPolicySuffixBatch {
         let model_xxh3_128 = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(model_bytes));
         Ok(Self {
             schema: NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V5.into(),
+            demonstration_mode,
             source_frame: config.source_frame,
             source_boundary_fingerprint: config.source_boundary_fingerprint,
             checkpoint_validation: NativeCheckpointValidation {
@@ -166,11 +187,12 @@ impl NativeFrozenPolicySuffixBatch {
         }
         let model = FrozenInferenceModel::from_bytes(model_bytes)
             .map_err(|error| NativeFrozenPolicyBatchError::new(error.to_string()))?;
-        let rebuilt = Self::build(
+        let rebuilt = Self::build_with_demonstration_mode(
             model_bytes,
             self.frozen_policy.model_path.clone(),
             model.objective_sha256,
             self.candidates[0].id.clone(),
+            self.demonstration_mode,
             NativeFactorizedPolicyBatchConfig {
                 source_frame: self.source_frame,
                 source_boundary_fingerprint: self.source_boundary_fingerprint.clone(),
@@ -291,6 +313,10 @@ mod tests {
             config(),
         )
         .unwrap();
+        assert_eq!(
+            batch.demonstration_mode,
+            DemonstrationMode::BehaviorCloningWarmStart
+        );
         assert_eq!(batch.schema, NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V5);
         assert_eq!(batch.frozen_policy.policy_head.maximum_duration_ticks, 1);
         assert_eq!(batch.candidates[0].source, "frozen_policy");

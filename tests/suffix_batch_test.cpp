@@ -1,8 +1,10 @@
 #include "dusk/automation/suffix_batch.hpp"
 
+#include <array>
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <utility>
 
 using namespace dusk::automation;
 
@@ -148,7 +150,8 @@ void test_factorized_policy_rows_expand_to_an_online_native_program() {
 
 std::string frozen_policy_batch() {
     return R"({
-        "schema":"dusklight-suffix-batch/v5","source_frame":500,
+        "schema":"dusklight-suffix-batch/v5",
+        "demonstration_mode":"behavior_cloning_warm_start","source_frame":500,
         "source_boundary_fingerprint":"1f849e432274771426236d60fbf7d72f",
         "checkpoint_validation":{"kind":"recorded_replay_window","ticks":2},
         "maximum_ticks":3,"verify_state_hashes":false,
@@ -168,12 +171,36 @@ void test_frozen_policy_is_content_bound_and_one_tick() {
     REQUIRE(parse_suffix_batch(frozen_policy_batch(), batch, error));
     REQUIRE(error.empty());
     REQUIRE(batch.frozenPolicy.has_value());
+    REQUIRE(batch.demonstrationMode == SuffixDemonstrationMode::BehaviorCloningWarmStart);
     REQUIRE(batch.frozenPolicy->modelPath == "build/learning/policy.dsfrozen");
     REQUIRE(batch.frozenPolicy->modelXxh3_128 == "0123456789abcdef0123456789abcdef");
     REQUIRE(batch.frozenPolicy->policyHead.maximumDurationTicks == 1);
     REQUIRE(batch.candidates.size() == 1);
     REQUIRE(batch.candidates[0].frozenPolicy);
     REQUIRE(batch.candidates[0].pads.empty());
+
+    constexpr std::array modes{
+        std::pair{"absent", SuffixDemonstrationMode::Absent},
+        std::pair{"replay_only", SuffixDemonstrationMode::ReplayOnly},
+        std::pair{"behavior_cloning_warm_start",
+            SuffixDemonstrationMode::BehaviorCloningWarmStart},
+        std::pair{"reverse_curriculum_checkpoints",
+            SuffixDemonstrationMode::ReverseCurriculumCheckpoints},
+    };
+    for (const auto& [name, expected] : modes) {
+        std::string treatment = frozen_policy_batch();
+        const std::size_t mode = treatment.find("behavior_cloning_warm_start");
+        REQUIRE(mode != std::string::npos);
+        treatment.replace(mode, std::string("behavior_cloning_warm_start").size(), name);
+        REQUIRE(parse_suffix_batch(treatment, batch, error));
+        REQUIRE(batch.demonstrationMode == expected);
+    }
+
+    std::string invalidMode = frozen_policy_batch();
+    const std::size_t mode = invalidMode.find("behavior_cloning_warm_start");
+    REQUIRE(mode != std::string::npos);
+    invalidMode.replace(mode, std::string("behavior_cloning_warm_start").size(), "uncontrolled");
+    REQUIRE(!parse_suffix_batch(invalidMode, batch, error));
 
     std::string detached = frozen_policy_batch();
     const std::size_t hash = detached.find("0123456789abcdef0123456789abcdef");

@@ -1223,6 +1223,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 usize::from(defaults.validation_basis_points),
             )?;
             let config = NativeGoalTrajectoryConfig {
+                demonstration_mode: defaults.demonstration_mode,
                 n_step: u16::try_from(n_step).map_err(|_| "n-step exceeds u16")?,
                 discount_millionths: u32::try_from(discount_millionths)
                     .map_err(|_| "discount millionths exceed u32")?,

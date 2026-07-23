@@ -29,6 +29,13 @@ enum class SuffixCheckpointValidation : std::uint8_t {
     RecordedReplayWindow = 2,
 };
 
+enum class SuffixDemonstrationMode : std::uint8_t {
+    Absent = 1,
+    ReplayOnly = 2,
+    BehaviorCloningWarmStart = 3,
+    ReverseCurriculumCheckpoints = 4,
+};
+
 struct SuffixBatchCandidate {
     std::string id;
     bool tapePassthrough = false;
@@ -53,6 +60,8 @@ struct SuffixBatchFrozenPolicy {
 struct SuffixBatchDefinition {
     std::size_t sourceFrame = 0;
     std::string sourceBoundaryFingerprint;
+    SuffixDemonstrationMode demonstrationMode =
+        SuffixDemonstrationMode::BehaviorCloningWarmStart;
     SuffixCheckpointValidation checkpointValidation =
         SuffixCheckpointValidation::GameplayReadyFSp103;
     std::size_t validationTicks = 0;
