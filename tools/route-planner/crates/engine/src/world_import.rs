@@ -1818,6 +1818,7 @@ mod tests {
         CONTENT_IDENTITY_SCHEMA, ContentFingerprint, GamePlatform, GameRegion,
         RUNTIME_CONFIGURATION_SCHEMA,
     };
+    use crate::orig_discovery::bundled_supported_build_registry;
     use crate::world_data::{
         CollisionCode, CollisionInventoryRecord, CollisionLoadTrigger, KclAuthoredPrism,
         KclInventoryPrism, KclReconstruction, KclSourceIndices, PlacementKind, PlacementRecord,
@@ -1842,25 +1843,12 @@ mod tests {
     }
 
     fn audited_content() -> ContentIdentity {
-        ContentIdentity {
-            schema: CONTENT_IDENTITY_SCHEMA.into(),
-            id: "gcn-us-1.0-gz2e01".into(),
-            fingerprint: ContentFingerprint {
-                platform: GamePlatform::GameCube,
-                region: GameRegion::Usa,
-                revision: "1.0".into(),
-                product_id: "GZ2E01".into(),
-                executable_sha256: static_digest(
-                    "e7f197436815e66c4a11df3d7bd557d66083b641ff8a8e76439f3caba7ae60e8",
-                ),
-                game_data_sha256: static_digest(
-                    "0bc3bb229279d4b8a8c7cbe962b0bffdfecd35ff21e2d6761ad42e90a070f772",
-                ),
-                resource_manifest_sha256: static_digest(
-                    "2ab36f6c1d9d551c1397e1cf59e13288d2684c973cb7bd0ad6878f5a3b3a2ab1",
-                ),
-            },
-        }
+        bundled_supported_build_registry()
+            .unwrap()
+            .identities
+            .into_iter()
+            .find(|identity| identity.id == "gcn-us-1.0-gz2e01")
+            .unwrap()
     }
 
     fn runtime(content: &ContentIdentity) -> RuntimeConfiguration {

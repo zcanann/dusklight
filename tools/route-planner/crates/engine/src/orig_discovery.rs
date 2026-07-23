@@ -11,7 +11,7 @@ use crate::orig_extraction::{
     ExtractedMessageFlow, ExtractedStageData, extract_unique_rarc_resource,
     list_rarc_resource_names, parse_message_flow, parse_stage_data,
 };
-use crate::{PlannerContractError, canonical_json};
+use crate::{PlannerContractError, canonical_json, require_canonical_json_bytes};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
@@ -410,12 +410,11 @@ impl SupportedBuildRegistry {
     pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
         let registry: Self = serde_json::from_slice(bytes)?;
         registry.validate()?;
-        if registry.canonical_bytes()? != bytes {
-            return Err(PlannerContractError::new(
-                "supported_build_registry",
-                "is not canonical JSON",
-            ));
-        }
+        require_canonical_json_bytes(
+            "supported_build_registry",
+            bytes,
+            &registry.canonical_bytes()?,
+        )?;
         Ok(registry)
     }
 
@@ -1206,6 +1205,23 @@ mod tests {
         assert_eq!(
             registry.canonical_bytes().unwrap(),
             BUNDLED_SUPPORTED_BUILD_REGISTRY
+        );
+
+        let crlf = BUNDLED_SUPPORTED_BUILD_REGISTRY
+            .iter()
+            .flat_map(|byte| {
+                if *byte == b'\n' {
+                    vec![b'\r', b'\n']
+                } else {
+                    vec![*byte]
+                }
+            })
+            .collect::<Vec<_>>();
+        let error = SupportedBuildRegistry::decode_canonical(&crlf).unwrap_err();
+        assert_eq!(error.field(), "supported_build_registry");
+        assert_eq!(
+            error.detail(),
+            "contains carriage returns; canonical JSON must use LF line endings"
         );
     }
 

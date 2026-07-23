@@ -120,3 +120,19 @@ pub(crate) fn canonical_json<T: serde::Serialize>(
     bytes.push(b'\n');
     Ok(bytes)
 }
+
+pub(crate) fn require_canonical_json_bytes(
+    field: &str,
+    bytes: &[u8],
+    canonical: &[u8],
+) -> Result<(), PlannerContractError> {
+    if bytes == canonical {
+        return Ok(());
+    }
+    let detail = if bytes.contains(&b'\r') {
+        "contains carriage returns; canonical JSON must use LF line endings"
+    } else {
+        "is not canonical JSON"
+    };
+    Err(PlannerContractError::new(field, detail))
+}
