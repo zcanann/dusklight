@@ -56,6 +56,9 @@ button:disabled { opacity: .42; cursor: default; }
 .node.goal rect { fill: #25382d; stroke: #61a879; }
 .node.obstruction rect { fill: #3a2929; stroke: #b66767; }
 .node.selected rect { stroke: var(--accent); stroke-width: 2.5; }
+.node.join-accepted rect { stroke: var(--good); stroke-width: 2.5; }
+.node.join-unknown rect { stroke: var(--unknown); stroke-width: 2.5; stroke-dasharray: 5 3; }
+.node.join-rejected rect { stroke: #ff7d7d; stroke-width: 2.5; stroke-dasharray: 5 3; }
 .node text { fill: #edf1f5; font-size: 12px; pointer-events: none; }
 .node .kind { fill: #9ca8b5; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 

@@ -27,7 +27,7 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v30";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v31";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -202,7 +202,13 @@ pub enum PlannerServicePayload {
     },
     TransitionEvaluation {
         assessment: Box<TransitionAssessment>,
+        diagnostics: Box<TransitionJoinDiagnostics>,
         after: Option<Box<PlannerExecutionStateDocument>>,
+    },
+    RejectedTransitionJoin {
+        assessment: Box<TransitionAssessment>,
+        diagnostics: Box<TransitionJoinDiagnostics>,
+        closest_before: Box<PlannerExecutionStateDocument>,
     },
     AppendedTransition {
         book: Box<RouteBook>,
@@ -218,6 +224,15 @@ pub enum PlannerServicePayload {
     PortableSolveReport {
         report: Box<PortableSolveReport>,
     },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransitionJoinDiagnostics {
+    pub active_obstruction_ids: Vec<String>,
+    pub unknown_obstruction_ids: Vec<String>,
+    pub applied_resolver_ids: Vec<String>,
+    pub applicable_technique_ids: Vec<String>,
 }
 
 pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse {
@@ -370,7 +385,7 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
             evidence_mode,
             ..
         } => (*state).into_state().and_then(|mut state| {
-            let assessment = assess_and_apply_transition(
+            let evaluation = assess_and_apply_transition(
                 &mut state,
                 &catalog,
                 &equivalence_sets,
@@ -378,13 +393,15 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 evidence_mode,
                 "web.transition",
             )?;
-            let after = if assessment.classification == TransitionClassification::Executable {
-                Some(Box::new(state.to_document()?))
-            } else {
-                None
-            };
+            let after =
+                if evaluation.assessment.classification == TransitionClassification::Executable {
+                    Some(Box::new(state.to_document()?))
+                } else {
+                    None
+                };
             Ok(PlannerServicePayload::TransitionEvaluation {
-                assessment: Box::new(assessment),
+                assessment: Box::new(evaluation.assessment),
+                diagnostics: Box::new(evaluation.diagnostics),
                 after,
             })
         }),
@@ -486,7 +503,7 @@ fn assess_and_apply_transition(
     transition_id: &str,
     evidence_mode: crate::RuntimeEvidenceMode,
     application_id: &str,
-) -> Result<TransitionAssessment, dusklight_route_planner::PlannerContractError> {
+) -> Result<TransitionEvaluationResult, dusklight_route_planner::PlannerContractError> {
     let transition = catalog
         .mechanics
         .transitions
@@ -503,7 +520,7 @@ fn assess_and_apply_transition(
         crate::RuntimeEvidenceMode::Research => EvidencePolicy::RESEARCH,
     };
     let empty = BTreeSet::new();
-    let assessment = {
+    let (assessment, diagnostics) = {
         let evaluator = PredicateEvaluator::new(
             &state.snapshot,
             &catalog.facts,
@@ -524,12 +541,19 @@ fn assess_and_apply_transition(
                 microtraces: &catalog.mechanics.microtraces,
             },
         );
-        evaluator.assess_transition(
+        let assessment = evaluator.assess_transition(
             transition,
             &resolution.discharged_obligation_ids,
             &resolution.unknown_obligation_ids,
             FeasibilityMode::Modeled,
-        )
+        );
+        let diagnostics = TransitionJoinDiagnostics {
+            active_obstruction_ids: resolution.active_obstruction_ids,
+            unknown_obstruction_ids: resolution.unknown_obstruction_ids,
+            applied_resolver_ids: resolution.applied_resolver_ids,
+            applicable_technique_ids: resolution.applicable_technique_ids,
+        };
+        (assessment, diagnostics)
     };
     if assessment.classification == TransitionClassification::Executable {
         state.apply_operations(
@@ -538,7 +562,15 @@ fn assess_and_apply_transition(
             &transition.activation.effects,
         )?;
     }
-    Ok(assessment)
+    Ok(TransitionEvaluationResult {
+        assessment,
+        diagnostics,
+    })
+}
+
+struct TransitionEvaluationResult {
+    assessment: TransitionAssessment,
+    diagnostics: TransitionJoinDiagnostics,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -585,7 +617,7 @@ fn append_transition_to_route_book(
                     "authored route propagation currently requires transition steps",
                 ));
             };
-            let assessment = assess_and_apply_transition(
+            let evaluation = assess_and_apply_transition(
                 &mut state,
                 catalog,
                 equivalence_sets,
@@ -593,19 +625,19 @@ fn append_transition_to_route_book(
                 evidence_mode,
                 &format!("route.replay-{index:04}"),
             )?;
-            if assessment.classification != TransitionClassification::Executable {
+            if evaluation.assessment.classification != TransitionClassification::Executable {
                 return Err(dusklight_route_planner::PlannerContractError::new(
                     "route_book.steps",
                     format!(
                         "existing step {step_id} no longer composes: {:?}",
-                        assessment.classification
+                        evaluation.assessment.classification
                     ),
                 ));
             }
         }
     }
 
-    let assessment = assess_and_apply_transition(
+    let evaluation = assess_and_apply_transition(
         &mut state,
         catalog,
         equivalence_sets,
@@ -613,14 +645,12 @@ fn append_transition_to_route_book(
         evidence_mode,
         "route.append",
     )?;
-    if assessment.classification != TransitionClassification::Executable {
-        return Err(dusklight_route_planner::PlannerContractError::new(
-            "transition_id",
-            format!(
-                "cannot append a non-executable join: {:?}",
-                assessment.classification
-            ),
-        ));
+    if evaluation.assessment.classification != TransitionClassification::Executable {
+        return Ok(PlannerServicePayload::RejectedTransitionJoin {
+            assessment: Box::new(evaluation.assessment),
+            diagnostics: Box::new(evaluation.diagnostics),
+            closest_before: Box::new(state.to_document()?),
+        });
     }
     let transition = catalog
         .mechanics
@@ -716,7 +746,7 @@ fn append_transition_to_route_book(
         previous_route_book_sha256,
         route_book_sha256,
         step_id,
-        assessment: Box::new(assessment),
+        assessment: Box::new(evaluation.assessment),
         after: Box::new(state.to_document()?),
     })
 }
@@ -1017,13 +1047,19 @@ mod tests {
         let PlannerServiceOutcome::Ok { payload } = response.outcome else {
             panic!("transition evaluation should succeed");
         };
-        let PlannerServicePayload::TransitionEvaluation { assessment, after } = *payload else {
+        let PlannerServicePayload::TransitionEvaluation {
+            assessment,
+            diagnostics,
+            after,
+        } = *payload
+        else {
             panic!("transition evaluation should return its typed payload");
         };
         assert_eq!(
             assessment.classification,
             TransitionClassification::Executable
         );
+        assert!(diagnostics.active_obstruction_ids.is_empty());
         let after = after.unwrap();
         assert_eq!(after.snapshot.environment.location.stage, "D_MN05");
         assert_eq!(after.snapshot.environment.location.room, 1);
@@ -1043,10 +1079,26 @@ mod tests {
             transition_id: "transition.enter-boss".into(),
             evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
         });
-        assert!(matches!(
-            rejected.outcome,
-            PlannerServiceOutcome::Error { ref field, .. } if field == "transition_id"
-        ));
+        let PlannerServiceOutcome::Ok { payload } = rejected.outcome else {
+            panic!("a rejected join is a typed evaluation, not a service failure");
+        };
+        let PlannerServicePayload::RejectedTransitionJoin {
+            assessment,
+            diagnostics,
+            closest_before,
+        } = *payload
+        else {
+            panic!("non-executable append should return rejection diagnostics");
+        };
+        assert_eq!(
+            assessment.classification,
+            TransitionClassification::GuardBlocked
+        );
+        assert!(diagnostics.active_obstruction_ids.is_empty());
+        assert_eq!(
+            closest_before.snapshot.environment.location.stage,
+            "F_SP103"
+        );
 
         let first = handle_request(PlannerServiceRequest::AppendTransition {
             request_id: "request.append-first".into(),

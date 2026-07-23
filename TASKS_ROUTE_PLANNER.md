@@ -63,8 +63,13 @@ a browser-authored route: Rust replays the ordered method from the exact start,
 rejects the first broken join, applies only executable effects, edits the route
 book transactionally, returns the propagated after-state, and lets the existing
 revision-checked project save persist both semantics and layout. Drag-to-connect,
-rich rejection rendering, and all planned demonstrations remain open. Coverage
-is also incomplete, so the current engine is a
+rejected-edge depiction, producer suggestions, and all planned demonstrations
+remain open. Invalid insertion is nevertheless no longer flattened into a
+service error: the v31 response preserves the closest propagated state, exact
+classification, missing and unknown obligation/requirement IDs, context/evidence
+status, and active or unknown obstruction/resolver diagnostics; the browser
+retains and renders that payload without mutating the route book. Coverage is
+also incomplete, so the current engine is a
 causal-reasoning laboratory over selected modeled mechanics rather than a
 whole-game route explorer.
 
@@ -2562,7 +2567,9 @@ visual polish or whole-game authoring features.
       this on selected transitions for projects with a start state. Its Insert
       command additionally replays every prior ordered reference step, rejects a
       broken join without editing, and transactionally adds an executable step
-      plus its propagated after-state. Dragging from a state node remains open.
+      plus its propagated after-state. A rejected v31 append returns the closest
+      propagated before-state and structured assessment/feasibility diagnostics
+      for browser inspection. Dragging from a state node remains open.
 - [ ] Render accepted connections distinctly from rejected or unknown joins.
       Selecting a rejected join must show missing producers, active
       obstructions/resolvers, unknown obligations, or exact-context mismatch;

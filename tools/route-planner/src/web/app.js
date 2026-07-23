@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v30";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v31";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const NODE_WIDTH = 176;
@@ -233,8 +233,9 @@ function renderNodes() {
   elements.nodes.replaceChildren();
   for (const node of state.graph?.nodes ?? []) {
     const position = state.positions.get(node.id);
+    const joinClass = transitionJoinClass(node);
     const group = svg("g", {
-      class: `node ${node.payload.kind}${state.selected?.type === "node" && state.selected.value.id === node.id ? " selected" : ""}`,
+      class: `node ${node.payload.kind}${state.selected?.type === "node" && state.selected.value.id === node.id ? " selected" : ""}${joinClass ? ` ${joinClass}` : ""}`,
       transform: `translate(${position.x} ${position.y})`,
       "data-node-id": node.id,
     });
@@ -320,6 +321,12 @@ async function insertSelectedTransition() {
       transition_id: node.payload.transition_id,
       evidence_mode: "established_only",
     });
+    if (payload.kind === "rejected_transition_join") {
+      state.transitionEvaluation = payload;
+      render();
+      setStatus(joinRejectionSummary(node.label, payload), "bad");
+      return;
+    }
     if (payload.kind !== "appended_transition") {
       throw new Error(`Unexpected response ${payload.kind}`);
     }
@@ -379,6 +386,30 @@ async function evaluateSelectedTransition() {
   } catch (error) {
     setStatus(error.message, "bad");
   }
+}
+
+function transitionJoinClass(node) {
+  if (state.selected?.type !== "node" || state.selected.value.id !== node.id) return "";
+  const classification = state.transitionEvaluation?.assessment?.classification;
+  if (classification === "executable") return "join-accepted";
+  if (classification === "feasibility_unknown") return "join-unknown";
+  return classification ? "join-rejected" : "";
+}
+
+function joinRejectionSummary(label, payload) {
+  const assessment = payload.assessment;
+  const diagnostics = payload.diagnostics;
+  const reasons = [
+    ...assessment.outstanding_obligation_ids.map((id) => `missing ${id}`),
+    ...assessment.unknown_obligation_ids.map((id) => `unknown ${id}`),
+    ...assessment.unknown_requirement_ids.map((id) => `unknown ${id}`),
+    ...diagnostics.active_obstruction_ids.map((id) => `obstructed by ${id}`),
+    ...diagnostics.unknown_obstruction_ids.map((id) => `unknown obstruction ${id}`),
+  ];
+  if (!assessment.scope_applies) reasons.push("exact context does not apply");
+  if (!assessment.evidence_permitted) reasons.push("evidence policy rejects this transition");
+  const detail = reasons.length ? reasons.join(", ") : assessment.classification.replaceAll("_", " ");
+  return `${label} was not inserted: ${detail}`;
 }
 
 function beginPan(event) {
