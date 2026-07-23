@@ -963,9 +963,17 @@ that it blocks the current loop.
 
 ### Narrow-basin discovery
 
-- [ ] Add a quality-diversity archive over relational position, contact/surface,
+- [x] Add a quality-diversity archive over relational position, contact/surface,
       velocity, action phase, actor/item relationships, event changes, and novel
-      displacement.
+      displacement. The native `behavior-archive/v3` keeps one quality elite per
+      authenticated descriptor cell and selects additional episodes by
+      farthest-first novelty. Its cells combine midpoint/terminal position and
+      route signatures with player procedure, event/state-transition, contact
+      surface, actor-relative/population (including item actors), flag,
+      kinematic-extrema, RNG, milestone-boundary, and downstream-state axes.
+      Anchored search derives every semantic axis from sealed native traces and
+      value projections; the regression matrix proves each axis creates a
+      distinct cell.
 - [ ] Adapt archive resolution around empirically sensitive dimensions so rare
       precision basins survive without globally chosen floating-point epsilons.
 - [ ] Combine learned setup, locomotion, interaction, and frame-synchronization
