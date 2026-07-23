@@ -13,6 +13,7 @@ pub mod bite_matrix;
 pub mod builtin_refinement;
 pub mod citation;
 pub mod component_catalog;
+pub mod coverage_report;
 pub mod cutscene;
 pub mod cutscene_corruption;
 pub mod cutscene_import;

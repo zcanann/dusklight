@@ -7,6 +7,7 @@ use dusklight_route_planner::builtin_refinement::{
 };
 use dusklight_route_planner::citation::EvidenceCitationIndex;
 use dusklight_route_planner::component_catalog::ComponentBoundaryCatalog;
+use dusklight_route_planner::coverage_report::ExtractionCoverageReport;
 use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::cutscene_corruption::compile_actor_corruption_hypothesis;
 use dusklight_route_planner::cutscene_import::{
@@ -138,6 +139,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("project-graph") => project_graph(&args[1..]),
         Some("project-authorization-graph") => project_authorization_graph(&args[1..]),
         Some("project-feasibility-diff") => project_feasibility_diff(&args[1..]),
+        Some("report-extraction-coverage") => report_extraction_coverage(&args[1..]),
         Some("serve-stdio") => serve_stdio(&args[1..]),
         Some("serve-web") => serve_web_command(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
@@ -217,6 +219,38 @@ fn export_evidence_citations(args: &[String]) -> Result<(), Box<dyn Error>> {
             "citations": index.citations.len(),
             "fact_catalog_sha256": index.fact_catalog_sha256,
             "mechanics_catalog_sha256": index.mechanics_catalog_sha256,
+        }))?
+    );
+    Ok(())
+}
+
+fn report_extraction_coverage(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let manifest_paths = repeated_option(args, "--manifest");
+    if manifest_paths.is_empty() {
+        return Err("report-extraction-coverage requires at least one --manifest FILE.json".into());
+    }
+    let manifests = manifest_paths
+        .iter()
+        .map(|path| Ok(FactPackManifest::decode_canonical(&fs::read(path)?)?))
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let report = ExtractionCoverageReport::build(&manifests)?;
+    let output = required_path(args, "--output")?;
+    write_file(&output, &report.canonical_bytes()?)?;
+    let unreported_domains = report
+        .contexts
+        .iter()
+        .flat_map(|context| &context.domains)
+        .filter(|domain| !domain.reported)
+        .count();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "sha256": report.digest()?,
+            "contexts": report.contexts.len(),
+            "manifests": manifests.len(),
+            "unreported_domains": unreported_domains,
         }))?
     );
     Ok(())
@@ -2362,6 +2396,7 @@ fn print_usage() {
             "  route-planner project-authorization-graph --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output GRAPH.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--research]",
             "  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]",
             "  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json",
+            "  route-planner report-extraction-coverage --manifest MANIFEST.json [--manifest MANIFEST.json]... --output REPORT.json",
             "  route-planner scan-orig --orig ORIG_ROOT [--product-id ID] --output SCAN.json",
             "  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json",
             "  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)",

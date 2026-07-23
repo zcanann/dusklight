@@ -3025,8 +3025,15 @@ timeline assumptions.
 - [ ] Add tools to identify facts used by many routes but supported weakly.
 - [ ] Report which facts and obligations are exercised by glitchless story, 100%,
       Any%, and hypothetical route suites.
-- [ ] Report extraction coverage separately for topology, hard guards, backing
-      stores, actor lifecycle, and physical feasibility.
+- [x] Report extraction coverage separately for topology, hard guards, backing
+      stores, actor lifecycle, and physical feasibility. The canonical
+      `extraction-coverage-report/v1` groups sealed manifests by exact content
+      identity and always emits the full ordered domain census. Each domain
+      retains per-manifest scope/status/detail plus complete/partial/unavailable
+      counts; an absent claim is explicitly `reported: false` and no neighboring
+      domain implies coverage. `report-extraction-coverage` accepts only
+      canonical validated manifests and exports a content-addressed report. See
+      `docs/route-planner/extraction-coverage-report.md`.
 
 Deliverable: route confidence is mechanically explainable.
 
