@@ -1938,10 +1938,17 @@ evidenced overlays over the generated base rather than silent edits to it.
       encoded SCLS row is not an activation contract and routes every remaining
       actor family to separate guard/parameter work. See
       `docs/route-planner/gz2e01-scene-change-consumer-audit.md`.
-- [ ] Audit message-flow assets, generic node handlers, shared temporary progress
-      bits, normal/abnormal cleanup, and item/event handoffs.
-- [ ] Audit interaction/attention volumes, forced cutscene triggers, player-control
-      gates, and temporal windows for representative NPC setups.
+- [x] Audit message-flow assets, generic node handlers, shared temporary progress
+      bits, normal/abnormal cleanup, and item/event handoffs. Every selected
+      GZ2E01 English resource is structurally imported; known generic handlers,
+      shared raw registers, caller cleanup, event requests, presentation state,
+      and generic item grants are distinct, while unknown handlers remain
+      blocking requirements instead of inferred effects.
+- [x] Audit interaction/attention volumes, forced cutscene triggers, player-control
+      gates, and temporal windows for representative NPC setups. Auru, Uli,
+      Lanayru Spirit, and text-displacement fixtures cover required/excluded and
+      yaw-oriented volumes, attention versus player origin, actor/control state,
+      cutscene-trigger exclusion, and frame-exact interruption obligations.
 - [x] Audit keyed door/gate actor families, their key/boss-key guards, consumption,
       persistent unlock writes, and alternate activation paths.
   - [x] Audit the exact-GZ2E01 `DOOR20` Forest Temple small-key representative,
@@ -2102,7 +2109,10 @@ Deliverable: replayable state evidence that can validate transition rules.
         reference exactly one SCLS record and forbids actor-driven actions from
         fabricating one. Rider/caravan/external-switch families remain explicit
         audited boundaries pending their missing state domains.
-- [ ] Model ordinary item/NPC/event producers.
+- [x] Model ordinary item/NPC/event producers. The ordinary Fishing Rod quest
+      supplies a reusable six-step NPC/event/item chain, and the imported
+      Lanayru/message-entry programs separately prove presentation requests,
+      persistent-event writes, and the shared generic ownership-bit grant.
 - [x] Implement normal bank commit/load and binding changes.
   - [x] Execute typed serialize/restore/bind/rebind operations against independent
         owner stores atomically.
@@ -2138,7 +2148,11 @@ Deliverable: replayable state evidence that can validate transition rules.
         persistent flags, dungeon items, and stage/room switches. They require
         exactly one raw component at the resolved backing and fail atomically on
         missing, ambiguous, non-raw, or out-of-range targets.
-- [ ] Import hard door/actor guards and their state operations where decidable.
+- [x] Import hard door/actor guards and their state operations where decidable.
+      Exact GZ2E01 L1/L5 boss doors, mini-boss doors, key shutters, the Lakebed
+      boss shutter, and memory-switch Koki gates carry their decoded guards and
+      mutations; non-memory, transient, destructive, external-switch, and
+      unaudited variants remain explicit exclusions rather than guessed rules.
   - [x] Import the GZ2E01 L1-family boss-key/current-stage guard and memory-switch
         write, while retaining interaction geometry and actor/event/collision
         phases as separate unresolved obligations.
