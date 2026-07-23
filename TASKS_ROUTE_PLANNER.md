@@ -3724,9 +3724,14 @@ sequence.
         create/execute result, and M_012/M_014/NO_TELOP values on the witnessed
         corruption setup. Until then, do not select actor-allocation failure as
         the explanation merely because source proves it is possible.
-  - [ ] Join decoded generic-actor event-bit effects into ordered cutscene state
+  - [x] Join decoded generic-actor event-bit effects into ordered cutscene state
         operations, while retaining actor creation/execution as a separate
         runtime precondition rather than treating authored commands as executed.
+        The compiler resolves explicit persistent/temporary label byte masks in
+        authored object/command/paragraph/packed-command order and attaches a
+        live actor `executing` predicate to every potential write. Missing,
+        invalid, or extraneous bindings fail closed; exact `demo07_01` produces
+        no event-bit operations rather than inventing an executed effect.
 - [ ] Vary the incoming return place across a witnessed actor-corruption trace;
       the GZ2E01 room-loader call is already proven to preserve it generically,
       but the complete failure suffix is not yet bounded.

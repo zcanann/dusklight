@@ -5,8 +5,11 @@ use crate::identity::ContentIdentity;
 use crate::jstudio_import::{
     JstudioParagraphInterpretation, JstudioStbBlockBody, parse_jstudio_stb,
 };
+use crate::logic::{ComparisonOperator, PredicateExpression, ValueReference};
 use crate::return_place::GZ2E01_CONTENT_SHA256;
-use crate::{PlannerContractError, canonical_json, validate_label};
+use crate::state::{ComponentBindingReference, ComponentKind, StateValue};
+use crate::transition::StateOperation;
+use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
@@ -100,6 +103,179 @@ pub struct DemoActorCoverage {
     pub non_generic_reserved_raw_paragraphs: u32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DemoActorLabelBinding {
+    pub label_index: u16,
+    pub component_kind: ComponentKind,
+    pub binding: ComponentBindingReference,
+    pub byte_offset: u32,
+    pub mask: u8,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DemoActorStreamRuntimeBinding {
+    pub object_block_index: u32,
+    pub actor_instance_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DemoActorOrderedOperation {
+    pub object_block_index: u32,
+    pub command_index: u32,
+    pub paragraph_index: u32,
+    pub command_ordinal: u32,
+    pub actor_execution_required: PredicateExpression,
+    pub operation: StateOperation,
+}
+
+/// Resolves decoded generic-actor event commands into ordered potential state
+/// operations. The result is deliberately not an executable transition: every
+/// operation retains a predicate requiring the separately observed live actor
+/// instance to be executing.
+pub fn compile_ordered_demo_actor_operations(
+    program: &DemoActorProgram,
+    persistent_bindings: &[DemoActorLabelBinding],
+    temporary_bindings: &[DemoActorLabelBinding],
+    stream_bindings: &[DemoActorStreamRuntimeBinding],
+) -> Result<Vec<DemoActorOrderedOperation>, PlannerContractError> {
+    program.validate()?;
+    validate_label_bindings("demo_actor.persistent_bindings", persistent_bindings)?;
+    validate_label_bindings("demo_actor.temporary_bindings", temporary_bindings)?;
+    let mut prior_stream = None;
+    for binding in stream_bindings {
+        validate_stable_id(
+            "demo_actor.stream_bindings.actor_instance_id",
+            &binding.actor_instance_id,
+        )?;
+        if prior_stream.is_some_and(|prior| prior >= binding.object_block_index) {
+            return Err(PlannerContractError::new(
+                "demo_actor.stream_bindings",
+                "must be unique and sorted by object block index",
+            ));
+        }
+        if !program
+            .streams
+            .iter()
+            .any(|stream| stream.object_block_index == binding.object_block_index)
+        {
+            return Err(PlannerContractError::new(
+                "demo_actor.stream_bindings",
+                format!(
+                    "references unknown object block {}",
+                    binding.object_block_index
+                ),
+            ));
+        }
+        prior_stream = Some(binding.object_block_index);
+    }
+
+    let mut output = Vec::new();
+    for stream in &program.streams {
+        let mut ordinal = 0u32;
+        for write in &stream.writes {
+            for command in &write.commands {
+                let binding = match command.effect {
+                    DemoActorEffect::SetPersistentEventBit { label_index } => Some((
+                        label_index,
+                        persistent_bindings,
+                        "demo_actor.persistent_bindings",
+                    )),
+                    DemoActorEffect::SetTemporaryEventBit { label_index } => Some((
+                        label_index,
+                        temporary_bindings,
+                        "demo_actor.temporary_bindings",
+                    )),
+                    DemoActorEffect::Other => None,
+                };
+                let Some((label_index, bindings, field)) = binding else {
+                    ordinal = ordinal.checked_add(1).ok_or_else(|| {
+                        PlannerContractError::new("demo_actor.command_ordinal", "overflowed")
+                    })?;
+                    continue;
+                };
+                let raw = bindings
+                    .iter()
+                    .find(|binding| binding.label_index == label_index)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            field,
+                            format!("has no raw binding for label {label_index}"),
+                        )
+                    })?;
+                let actor = stream_bindings
+                    .iter()
+                    .find(|binding| binding.object_block_index == stream.object_block_index)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "demo_actor.stream_bindings",
+                            format!(
+                                "has no live actor binding for object block {}",
+                                stream.object_block_index
+                            ),
+                        )
+                    })?;
+                let operation = StateOperation::WriteBoundRaw {
+                    component_kind: raw.component_kind.clone(),
+                    binding: raw.binding.clone(),
+                    byte_offset: raw.byte_offset,
+                    mask: vec![raw.mask],
+                    value: vec![raw.mask],
+                };
+                operation.validate()?;
+                output.push(DemoActorOrderedOperation {
+                    object_block_index: stream.object_block_index,
+                    command_index: write.command_index,
+                    paragraph_index: write.paragraph_index,
+                    command_ordinal: ordinal,
+                    actor_execution_required: PredicateExpression::Compare {
+                        left: ValueReference::ActorField {
+                            instance_id: actor.actor_instance_id.clone(),
+                            field: "executing".into(),
+                        },
+                        operator: ComparisonOperator::Equal,
+                        right: ValueReference::Literal {
+                            value: StateValue::Boolean(true),
+                        },
+                    },
+                    operation,
+                });
+                ordinal = ordinal.checked_add(1).ok_or_else(|| {
+                    PlannerContractError::new("demo_actor.command_ordinal", "overflowed")
+                })?;
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn validate_label_bindings(
+    field: &str,
+    bindings: &[DemoActorLabelBinding],
+) -> Result<(), PlannerContractError> {
+    let mut prior = None;
+    for binding in bindings {
+        if binding.mask == 0 {
+            return Err(PlannerContractError::new(field, "contains a zero mask"));
+        }
+        if prior.is_some_and(|prior| prior >= binding.label_index) {
+            return Err(PlannerContractError::new(
+                field,
+                "must be unique and sorted by label index",
+            ));
+        }
+        StateOperation::WriteBoundRaw {
+            component_kind: binding.component_kind.clone(),
+            binding: binding.binding.clone(),
+            byte_offset: binding.byte_offset,
+            mask: vec![binding.mask],
+            value: vec![binding.mask],
+        }
+        .validate()?;
+        prior = Some(binding.label_index);
+    }
+    Ok(())
+}
+
 impl DemoActorProgram {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != DEMO_ACTOR_PROGRAM_SCHEMA {
@@ -161,6 +337,7 @@ impl DemoActorProgram {
                 ));
             }
             prior_stream = Some(stream.object_block_index);
+            let mut prior_write = None;
             for write in &stream.writes {
                 if write.content_sha256 == Digest::ZERO || write.commands.is_empty() {
                     return Err(PlannerContractError::new(
@@ -178,6 +355,14 @@ impl DemoActorProgram {
                         "contain duplicate coordinates",
                     ));
                 }
+                let write_order = (write.command_index, write.paragraph_index);
+                if prior_write.is_some_and(|prior| prior >= write_order) {
+                    return Err(PlannerContractError::new(
+                        "demo_actor_program.streams.writes",
+                        "must preserve unique command and paragraph order",
+                    ));
+                }
+                prior_write = Some(write_order);
                 writes = checked_count(writes, 1)?;
                 commands = checked_count(commands, write.commands.len() as u32)?;
                 for command in &write.commands {
@@ -509,6 +694,40 @@ fn checked_count(value: u32, increment: u32) -> Result<u32, PlannerContractError
 mod tests {
     use super::*;
 
+    fn event_program() -> DemoActorProgram {
+        DemoActorProgram {
+            schema: DEMO_ACTOR_PROGRAM_SCHEMA.into(),
+            content_sha256: Digest([1; 32]),
+            executable_sha256: Digest([2; 32]),
+            source_program_sha256: Digest([3; 32]),
+            source_resource_sha256: Digest([4; 32]),
+            evidence: vec![DemoActorEvidence {
+                source_sha256: Digest([5; 32]),
+                note: "Synthetic ordered generic-actor command fixture.".into(),
+            }],
+            streams: vec![DemoActorStream {
+                object_block_index: 7,
+                object_id: "d_act0".into(),
+                actor_variant: Some(0),
+                writes: vec![DemoActorWrite {
+                    command_index: 2,
+                    paragraph_index: 3,
+                    paragraph_offset: 4,
+                    content_sha256: Digest([6; 32]),
+                    commands: vec![decode_word(0x0001_002d), decode_word(0x0003_0007)],
+                }],
+            }],
+            coverage: DemoActorCoverage {
+                generic_actor_objects: 1,
+                decoded_raw_writes: 1,
+                decoded_commands: 2,
+                persistent_event_bit_writes: 1,
+                temporary_event_bit_writes: 1,
+                non_generic_reserved_raw_paragraphs: 0,
+            },
+        }
+    }
+
     #[test]
     fn decodes_persistent_and_temporary_event_writes_from_backing_words() {
         let commands = decode_raw_write(&[
@@ -538,6 +757,17 @@ mod tests {
                     .all(|command| command.effect == DemoActorEffect::Other)
             );
         }
+
+        let mut program = event_program();
+        program.streams[0].writes[0].commands = vec![decode_word(0x0000_000b)];
+        program.coverage.decoded_commands = 1;
+        program.coverage.persistent_event_bit_writes = 0;
+        program.coverage.temporary_event_bit_writes = 0;
+        assert!(
+            compile_ordered_demo_actor_operations(&program, &[], &[], &[])
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -545,5 +775,95 @@ mod tests {
         assert!(decode_raw_write(&[0x33, 0, 0]).is_err());
         assert!(decode_raw_write(&[0x32, 0, 0, 0, 0]).is_err());
         assert!(decode_raw_write(&[0x33, 0, 0, 0, 0, 1]).is_err());
+    }
+
+    #[test]
+    fn compiles_ordered_raw_operations_but_requires_live_actor_execution() {
+        let persistent = [DemoActorLabelBinding {
+            label_index: 45,
+            component_kind: ComponentKind::PersistentSave,
+            binding: ComponentBindingReference::ActiveRuntimeFile,
+            byte_offset: 6,
+            mask: 0x20,
+        }];
+        let temporary = [DemoActorLabelBinding {
+            label_index: 7,
+            component_kind: ComponentKind::TemporaryFlags,
+            binding: ComponentBindingReference::ActiveRuntimeFile,
+            byte_offset: 1,
+            mask: 0x04,
+        }];
+        let streams = [DemoActorStreamRuntimeBinding {
+            object_block_index: 7,
+            actor_instance_id: "actor.demo-0".into(),
+        }];
+        let operations = compile_ordered_demo_actor_operations(
+            &event_program(),
+            &persistent,
+            &temporary,
+            &streams,
+        )
+        .unwrap();
+        assert_eq!(operations.len(), 2);
+        assert_eq!(operations[0].command_ordinal, 0);
+        assert_eq!(operations[1].command_ordinal, 1);
+        assert!(matches!(
+            operations[0].operation,
+            StateOperation::WriteBoundRaw {
+                byte_offset: 6,
+                ref mask,
+                ref value,
+                ..
+            } if mask == &[0x20] && value == &[0x20]
+        ));
+        assert!(matches!(
+            operations[1].operation,
+            StateOperation::WriteBoundRaw {
+                byte_offset: 1,
+                ref mask,
+                ref value,
+                ..
+            } if mask == &[0x04] && value == &[0x04]
+        ));
+        assert_eq!(
+            operations[0].actor_execution_required,
+            PredicateExpression::Compare {
+                left: ValueReference::ActorField {
+                    instance_id: "actor.demo-0".into(),
+                    field: "executing".into(),
+                },
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal {
+                    value: StateValue::Boolean(true),
+                },
+            }
+        );
+        assert!(
+            compile_ordered_demo_actor_operations(&event_program(), &persistent, &temporary, &[],)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_reordered_authored_writes_and_unknown_stream_bindings() {
+        let mut program = event_program();
+        program.streams[0].writes.push(DemoActorWrite {
+            command_index: 1,
+            paragraph_index: 4,
+            paragraph_offset: 8,
+            content_sha256: Digest([7; 32]),
+            commands: vec![decode_word(0x0000_000b)],
+        });
+        program.coverage.decoded_raw_writes = 2;
+        program.coverage.decoded_commands = 3;
+        assert!(program.validate().is_err());
+
+        let streams = [DemoActorStreamRuntimeBinding {
+            object_block_index: 8,
+            actor_instance_id: "actor.demo-1".into(),
+        }];
+        assert!(
+            compile_ordered_demo_actor_operations(&event_program(), &[], &[], &streams).is_err()
+        );
     }
 }

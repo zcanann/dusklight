@@ -241,6 +241,16 @@ particular, it does not set M_012 through the generic demo actor. Authored raw
 commands on Link and Midna remain counted separately as 41 non-generic raw
 paragraphs because their actor implementations have different consumers.
 
+The planner now compiles decoded generic-actor event-bit effects into potential
+raw state operations in the original object-block, command, paragraph, and
+packed-command order. Each persistent or temporary label must have an explicit
+component byte/mask binding, and each producing stream must have an explicit
+live actor instance. The compiled operation retains the predicate that this
+actor instance is executing; authored data alone never proves the write ran.
+Missing or invalid bindings fail closed. A stream containing only other
+commands compiles to no state writes, which is the exact result for all three
+`demo07_01.stb` generic-actor streams.
+
 After the demo-archive request is rejected, `d_s_room.cpp` clears the archive
 name but continues through room initialization and calls
 `dStage_dt_c_roomReLoader`. That reload walks the static actor placements. Each
