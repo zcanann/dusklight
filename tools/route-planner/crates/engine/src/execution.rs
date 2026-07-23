@@ -3,11 +3,11 @@
 use crate::artifact::Digest;
 use crate::snapshot::StateSnapshot;
 use crate::state::{
-    BackingAttachment, BoundaryDisposition, BoundaryPolicy, ComponentBinding,
+    ActorLifecycle, BackingAttachment, BoundaryDisposition, BoundaryPolicy, ComponentBinding,
     ComponentBindingReference, ComponentKind, ComponentPayload, ComponentProvenance,
-    ComponentSelector, ExecutionContext, PhysicalSlot, ProvenanceSourceKind, RuntimeFile,
-    RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SerializationOwner, StateComponent,
-    StateValue, validate_serialization_owner,
+    ComponentSelector, ExecutionContext, LiveWorldObject, PhysicalSlot, ProvenanceSourceKind,
+    RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SerializationOwner,
+    StateComponent, StateValue, validate_serialization_owner,
 };
 use crate::transition::{StateOperation, TemporalWindow};
 use crate::{PlannerContractError, canonical_json, validate_stable_id};
@@ -984,6 +984,7 @@ impl PlannerExecutionState {
             | StateOperation::SetPlayerMount { .. }
             | StateOperation::SetPlayerControl { .. }
             | StateOperation::SetPlayerAction { .. }
+            | StateOperation::ReconstructActor { .. }
             | StateOperation::SetGate { .. }
             | StateOperation::ClearGate { .. }
             | StateOperation::ScheduleCleanup { .. }
@@ -1969,6 +1970,109 @@ impl PlannerExecutionState {
             }
             StateOperation::SetPlayerAction { action } => {
                 self.snapshot.environment.player.action = action.clone();
+            }
+            StateOperation::ReconstructActor {
+                static_object_id,
+                instance_id,
+                required_layer,
+                initialization_fields,
+            } => {
+                if !matches!(
+                    self.snapshot.environment.execution_context,
+                    ExecutionContext::World
+                ) {
+                    return Err(PlannerContractError::new(
+                        "operation.reconstruct_actor",
+                        "requires active world execution",
+                    ));
+                }
+                let location = &self.snapshot.environment.location;
+                if location.layer != *required_layer {
+                    return Err(PlannerContractError::new(
+                        "operation.reconstruct_actor.required_layer",
+                        "does not match the loaded layer",
+                    ));
+                }
+                let placement = self
+                    .snapshot
+                    .environment
+                    .static_world_objects
+                    .iter()
+                    .find(|object| object.id == *static_object_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "operation.reconstruct_actor.static_object_id",
+                            "references an absent static placement",
+                        )
+                    })?;
+                let placement_selected = match &placement.binding {
+                    ComponentBinding::Stage { stage } => stage == &location.stage,
+                    ComponentBinding::Room { stage, room } => {
+                        stage == &location.stage && *room == location.room
+                    }
+                    _ => false,
+                };
+                if !placement_selected {
+                    return Err(PlannerContractError::new(
+                        "operation.reconstruct_actor.static_object_id",
+                        "placement is not selected by the current stage and room",
+                    ));
+                }
+
+                let mut fields = placement.parameters.clone();
+                if let Some(control) = self
+                    .snapshot
+                    .environment
+                    .persisted_object_controls
+                    .iter()
+                    .find(|control| control.object_id == *static_object_id)
+                {
+                    fields.extend(control.fields.clone());
+                }
+                fields.extend(initialization_fields.clone());
+                let reconstructed = LiveWorldObject {
+                    instance_id: instance_id.clone(),
+                    static_object_id: Some(static_object_id.clone()),
+                    actor_type: placement.actor_type.clone(),
+                    lifecycle: ActorLifecycle::Loaded,
+                    fields,
+                };
+                if let Some(index) = self
+                    .snapshot
+                    .environment
+                    .live_world_objects
+                    .iter()
+                    .position(|object| object.instance_id == *instance_id)
+                {
+                    let existing = &self.snapshot.environment.live_world_objects[index];
+                    if existing.static_object_id.as_deref() != Some(static_object_id)
+                        || existing.actor_type != placement.actor_type
+                    {
+                        return Err(PlannerContractError::new(
+                            "operation.reconstruct_actor.instance_id",
+                            "existing instance does not match the selected placement",
+                        ));
+                    }
+                    if !matches!(
+                        existing.lifecycle,
+                        ActorLifecycle::Unloaded | ActorLifecycle::Destroyed
+                    ) {
+                        return Err(PlannerContractError::new(
+                            "operation.reconstruct_actor.instance_id",
+                            "existing instance is not at a reconstructable lifecycle boundary",
+                        ));
+                    }
+                    self.snapshot.environment.live_world_objects[index] = reconstructed;
+                } else {
+                    self.snapshot
+                        .environment
+                        .live_world_objects
+                        .push(reconstructed);
+                    self.snapshot
+                        .environment
+                        .live_world_objects
+                        .sort_by(|left, right| left.instance_id.cmp(&right.instance_id));
+                }
             }
             StateOperation::Project {
                 source_runtime_file_id,
@@ -3284,6 +3388,7 @@ fn history_event_writes_field(
             | StateOperation::SetPlayerMount { .. }
             | StateOperation::SetPlayerControl { .. }
             | StateOperation::SetPlayerAction { .. }
+            | StateOperation::ReconstructActor { .. }
             | StateOperation::Project { .. }
             | StateOperation::Consume { .. }
             | StateOperation::SetGate { .. }
@@ -3517,8 +3622,9 @@ mod tests {
     use crate::state::{
         BOUNDARY_POLICY_SCHEMA, BackingAttachment, BoundaryKind, ComponentBindingProjection,
         ComponentBindingReference, ComponentBoundaryRule, EXECUTION_ENVIRONMENT_SCHEMA,
-        ExecutionEnvironment, PhysicalSlotId, PlayerForm, PlayerMount, PlayerState, RuntimeFile,
-        RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
+        ExecutionEnvironment, PersistedObjectControl, PhysicalSlotId, PlayerForm, PlayerMount,
+        PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
+        SemanticLifetime, StaticWorldObject,
     };
     use crate::transition::ComponentFieldTarget;
 
@@ -6329,5 +6435,77 @@ mod tests {
                 .iter()
                 .any(|component| component.id == "pending.item")
         );
+    }
+
+    #[test]
+    fn actor_reconstruction_joins_placement_layer_persistence_and_lifecycle_atomically() {
+        let mut source = snapshot();
+        source.environment.location.layer = 3;
+        source.environment.static_world_objects = vec![StaticWorldObject {
+            id: "placement.ordon-gate".into(),
+            actor_type: "obj_gate".into(),
+            placement_sha256: Digest([8; 32]),
+            binding: ComponentBinding::Room {
+                stage: "F_SP103".into(),
+                room: 0,
+            },
+            parameters: BTreeMap::from([
+                ("collision_active".into(), StateValue::Boolean(true)),
+                ("phase".into(), StateValue::Text("placement".into())),
+            ]),
+        }];
+        source.environment.persisted_object_controls = vec![PersistedObjectControl {
+            object_id: "placement.ordon-gate".into(),
+            fields: BTreeMap::from([
+                ("opened".into(), StateValue::Boolean(true)),
+                ("phase".into(), StateValue::Text("persisted".into())),
+            ]),
+        }];
+        source.environment.live_world_objects = vec![LiveWorldObject {
+            instance_id: "actor.ordon-gate.1".into(),
+            static_object_id: Some("placement.ordon-gate".into()),
+            actor_type: "obj_gate".into(),
+            lifecycle: ActorLifecycle::Unloaded,
+            fields: BTreeMap::from([("stale".into(), StateValue::Boolean(true))]),
+        }];
+        let operation = StateOperation::ReconstructActor {
+            static_object_id: "placement.ordon-gate".into(),
+            instance_id: "actor.ordon-gate.1".into(),
+            required_layer: 3,
+            initialization_fields: BTreeMap::from([
+                ("collision_active".into(), StateValue::Boolean(false)),
+                ("phase".into(), StateValue::Text("initialized".into())),
+            ]),
+        };
+        let mut state = PlannerExecutionState::new(source).unwrap();
+        state
+            .apply_operations(
+                "boundary.ordon-room-load",
+                "snapshot.ordon-room-loaded",
+                std::slice::from_ref(&operation),
+            )
+            .unwrap();
+        let actor = &state.snapshot.environment.live_world_objects[0];
+        assert_eq!(actor.lifecycle, ActorLifecycle::Loaded);
+        assert_eq!(
+            actor.fields,
+            BTreeMap::from([
+                ("collision_active".into(), StateValue::Boolean(false)),
+                ("opened".into(), StateValue::Boolean(true)),
+                ("phase".into(), StateValue::Text("initialized".into())),
+            ])
+        );
+
+        let before = state.digest().unwrap();
+        assert!(
+            state
+                .apply_operations(
+                    "boundary.duplicate-room-load",
+                    "snapshot.duplicate-room-load",
+                    &[operation],
+                )
+                .is_err()
+        );
+        assert_eq!(state.digest().unwrap(), before);
     }
 }

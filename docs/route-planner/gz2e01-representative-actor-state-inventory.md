@@ -21,6 +21,17 @@ static placement plus persistent control to create live state. It never derives
 persistent state from a live pose or assumes that a persistent unlock means an
 actor is currently open.
 
+Mechanics catalog v29 makes that reconstruction executable as one atomic state
+operation. It requires active world execution, an exact static placement bound
+to the current stage/room, the authored layer, and either no prior live instance
+or one whose lifecycle is `unloaded` or `destroyed`. The resulting loaded actor
+starts with placement parameters, overlays the matching persisted-control
+fields, and finally overlays the rule's audited initialization fields. A wrong
+room/layer, absent placement, mismatched instance identity/type, or already
+loaded/unloading instance rejects the whole operation without a partial actor.
+Reconstruction rules remain instantiation-boundary evidence and are not exposed
+as freely selectable solver actions.
+
 ## Audited representatives
 
 | Family | Static placement | Persistent control | Transient instance state | Reload reconstruction |

@@ -766,6 +766,15 @@ impl RelevanceBuilder {
             StateOperation::CompletePendingWorldLoad => {
                 self.dependencies.insert(StateDependency::ExecutionContext);
             }
+            StateOperation::ReconstructActor { .. } => {
+                self.dependencies.extend([
+                    StateDependency::ExecutionContext,
+                    StateDependency::LocationStage,
+                    StateDependency::LocationRoom,
+                    StateDependency::LocationLayer,
+                    StateDependency::AnyState,
+                ]);
+            }
             StateOperation::SetLocationFromFields {
                 component_id,
                 stage_field,
@@ -1029,6 +1038,7 @@ pub(crate) fn operation_outputs(operation: &StateOperation) -> Vec<StateDependen
         StateOperation::SetPlayerMount { .. } => vec![StateDependency::PlayerMount],
         StateOperation::SetPlayerControl { .. } => vec![StateDependency::PlayerControl],
         StateOperation::SetPlayerAction { .. } => vec![StateDependency::PlayerAction],
+        StateOperation::ReconstructActor { .. } => vec![StateDependency::AnyState],
         StateOperation::SetGate { gate_id } | StateOperation::ClearGate { gate_id } => {
             vec![StateDependency::GateState {
                 gate_id: gate_id.clone(),

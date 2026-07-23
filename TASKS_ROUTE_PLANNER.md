@@ -2276,8 +2276,14 @@ Deliverable: replayable state evidence that can validate transition rules.
         candidates by raw and decoded digests; explicit locale pairing reports
         per-side group counts and one-sided coverage. Broader decoded domains
         and rule-level semantic equivalence remain open.
-- [ ] Reconstruct live actor behavior from placement, layer, persisted state, and
-      instance lifecycle.
+- [x] Reconstruct live actor behavior from placement, layer, persisted state, and
+      instance lifecycle. Mechanics v29 adds an atomic room-load reconstruction
+      operation: it requires the exact current stage/room/layer and a matching
+      absent, unloaded, or destroyed instance; deterministically overlays static
+      placement parameters, persisted controls, and audited initializer fields;
+      and rejects mismatched or already-live instances without partial state.
+      Reconstruction rules remain instantiation-boundary evidence rather than
+      free solver actions.
 - [x] Implement save/load/title/runtime-file operations. The supported GZ2E01
       context now has transactional save/load/runtime lifetimes, exact title and
       file-select programs, save-time normalization, and distinct normalized

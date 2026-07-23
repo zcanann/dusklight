@@ -1056,7 +1056,7 @@ fn validate_payload(payload: &ComponentPayload) -> Result<(), PlannerContractErr
     Ok(())
 }
 
-fn validate_state_fields(
+pub(crate) fn validate_state_fields(
     fields: &BTreeMap<String, StateValue>,
 ) -> Result<(), PlannerContractError> {
     if fields.len() > 16_384 {

@@ -8,13 +8,14 @@ use crate::state::{
     RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SemanticLifetime, SerializationOwner,
     StateComponent, StateValue, validate_binding as validate_component_binding,
     validate_binding_reference, validate_component_kind, validate_serialization_owner,
+    validate_state_fields,
 };
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v28";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v29";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -348,6 +349,16 @@ pub enum StateOperation {
     },
     SetPlayerAction {
         action: String,
+    },
+    /// Recreates one live actor at a room-load boundary from its exact static
+    /// placement, optional persisted control record, and audited initializer.
+    /// Placement parameters are applied first, persisted fields second, and
+    /// initializer fields last.
+    ReconstructActor {
+        static_object_id: String,
+        instance_id: String,
+        required_layer: i8,
+        initialization_fields: BTreeMap<String, StateValue>,
     },
     Project {
         source_runtime_file_id: String,
@@ -1276,6 +1287,19 @@ impl StateOperation {
             }
             Self::SetPlayerAction { action } => {
                 validate_stable_id("operation.set_player_action.action", action)
+            }
+            Self::ReconstructActor {
+                static_object_id,
+                instance_id,
+                initialization_fields,
+                ..
+            } => {
+                validate_stable_id(
+                    "operation.reconstruct_actor.static_object_id",
+                    static_object_id,
+                )?;
+                validate_stable_id("operation.reconstruct_actor.instance_id", instance_id)?;
+                validate_state_fields(initialization_fields)
             }
             Self::Project {
                 source_runtime_file_id,

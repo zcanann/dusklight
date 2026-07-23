@@ -258,7 +258,7 @@ selected physical slot, writes the selected zero-based `mDataNum`, clears
 `mNoFile`, and retains the live runtime lifetime. Result 2 enters the error path
 without changing a slot or either header field.
 
-Mechanics v28 selects exclusive identity/event-clear and
+Mechanics v29 selects exclusive identity/event-clear and
 identity/missing-lantern branches from the recovery, stolen/dropped,
 acquisition, slot-1 and meter-backup values. Projection-safe operations mutate a
 private clone only, so the card image receives the exact temporary repairs while

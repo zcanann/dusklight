@@ -1,6 +1,6 @@
 # Feasibility obligation stages
 
-Mechanics catalog v28 assigns every `FeasibilityObligation` exactly one stage:
+Mechanics catalog v29 assigns every `FeasibilityObligation` exactly one stage:
 
 | Stage | Question answered | Typical detail |
 | --- | --- | --- |
