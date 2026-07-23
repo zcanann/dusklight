@@ -2647,10 +2647,14 @@ visual polish or whole-game authoring features.
       location, execution context, runtime file, player state, component/fact
       counts, and typed delta classes above the complete raw payload. Dedicated
       execution-state nodes remain open.
-- [ ] Support named visual regions with collapse and double-click/breadcrumb
+- [x] Support named visual regions with collapse and double-click/breadcrumb
       navigation. Regions are flat-graph encapsulation only: grouping never
       creates a goal, macro transition, alternative implementation, or new
-      reachability semantics.
+      reachability semantics. The browser consumes planner-projected region IDs,
+      parents, owners, names, kinds, and default-collapse hints; region controls
+      collapse presentation only, owner-node double-click enters a region, and
+      breadcrumbs return through the exact parent chain. No region UI edits the
+      projected nodes, edges, route book, or solver state.
 - [ ] Ship several small editable demonstrations from already modeled mechanics:
       a keyed door, Fanadi return-place locking, Auru recent-item transfer, Text
       Displacement toward Goron Mines, and a clearly hypothetical component
@@ -2707,7 +2711,7 @@ visual polish or whole-game authoring features.
       command surface.
 - [ ] Share or extract UI/infrastructure code only after a domain-independent seam
       is demonstrated; visual consistency does not depend on shared graph models.
-- [ ] Add route canvas, alternatives, pin/ban/prefer, and collapse controls.
+- [x] Add route canvas, alternatives, pin/ban/prefer, and collapse controls.
   - [x] Define validated route-book directives and collapse policies and expose
         plan alternatives through the planner graph/service contracts.
   - [x] Add revision-checked mutation commands for goals, constraints,

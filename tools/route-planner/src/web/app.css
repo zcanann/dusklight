@@ -48,6 +48,16 @@ button:disabled { opacity: .42; cursor: default; }
 .empty-state strong { color: #dce2e8; font-size: 17px; }
 .zoom-controls { position: absolute; right: 12px; bottom: 12px; display: flex; gap: 5px; }
 .zoom-controls button { min-width: 35px; background: rgba(24, 29, 35, .93); }
+.region-nav { position: absolute; top: 10px; left: 10px; max-width: min(520px, calc(100% - 20px)); padding: 7px; border: 1px solid #38434e; border-radius: 6px; background: rgba(19, 24, 29, .94); box-shadow: 0 5px 18px rgba(0, 0, 0, .24); }
+.region-nav[hidden] { display: none; }
+.region-breadcrumbs, .region-children { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.region-children { margin-top: 5px; padding-top: 5px; border-top: 1px solid #303943; }
+.region-nav button { margin: 0; padding: 4px 7px; font-size: 10px; background: #20272e; }
+.region-nav button.current { color: var(--accent); border-color: #4d819f; }
+.region-row { display: inline-flex; }
+.region-row .collapse-region { padding-inline: 5px; border-left: 0; border-radius: 0 4px 4px 0; color: var(--muted); }
+.region-row .enter-region { border-radius: 4px 0 0 4px; }
+.region-row.collapsed .enter-region { color: var(--muted); }
 
 .graph-edge { fill: none; stroke: #586573; stroke-width: 1.5; opacity: .72; vector-effect: non-scaling-stroke; }
 .graph-edge.selected { stroke: var(--accent); stroke-width: 2.4; opacity: 1; }

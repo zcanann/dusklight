@@ -11,6 +11,7 @@ const elements = Object.fromEntries([
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
   "contract-inspector",
+  "region-nav", "region-breadcrumbs", "region-children",
   "evaluate-transition", "insert-transition", "replace-step", "remove-step",
   "pin-selection", "ban-selection", "prefer-selection", "select-method",
 ].map((id) => [id, document.getElementById(id)]));
@@ -28,6 +29,9 @@ const state = {
   transitionEvaluation: null,
   replacementStep: null,
   transitionSearch: new Map(),
+  activeRegionId: null,
+  collapsedRegionIds: new Set(),
+  knownRegionIds: new Set(),
 };
 
 elements["project-list"].addEventListener("change", () => {
@@ -163,6 +167,9 @@ async function loadProject(project, options) {
   state.selected = null;
   state.transitionEvaluation = null;
   state.replacementStep = null;
+  state.activeRegionId = null;
+  state.collapsedRegionIds = new Set();
+  state.knownRegionIds = new Set();
   state.transitionSearch = new Map(project.catalog.mechanics.transitions.map((transition) => [
     transition.id,
     transitionSearchText(transition),
@@ -209,6 +216,7 @@ function requestId(prefix) {
 }
 
 function ensurePositions() {
+  synchronizeRegions();
   const columns = new Map();
   for (const node of state.graph.nodes) {
     if (state.positions.has(node.id)) continue;
@@ -221,6 +229,7 @@ function ensurePositions() {
 }
 
 function render() {
+  renderRegionNavigation();
   renderEdges();
   renderNodes();
   renderPalette();
@@ -229,8 +238,10 @@ function render() {
 
 function renderEdges() {
   elements.edges.replaceChildren();
+  const visible = new Set(visibleNodes().map((node) => node.id));
   const nodesById = new Map((state.graph?.nodes ?? []).map((node) => [node.id, node]));
   for (const edge of state.graph?.edges ?? []) {
+    if (!visible.has(edge.source_node_id) || !visible.has(edge.target_node_id)) continue;
     const source = state.positions.get(edge.source_node_id);
     const target = state.positions.get(edge.target_node_id);
     if (!source || !target) continue;
@@ -266,7 +277,8 @@ function renderRejectedRouteJoin() {
     node.payload.kind === "reference_step" && node.payload.step_id === frontierStepId);
   const source = sourceNode ? state.positions.get(sourceNode.id) : null;
   const target = state.positions.get(state.selected.value.id);
-  if (!source || !target) return;
+  const visible = new Set(visibleNodes().map((node) => node.id));
+  if (!source || !target || !visible.has(sourceNode.id) || !visible.has(state.selected.value.id)) return;
   const classification = state.transitionEvaluation.assessment.classification;
   const joinClass = classification === "feasibility_unknown" ? "route-unknown" : "route-rejected";
   elements.edges.append(svg("path", {
@@ -278,7 +290,7 @@ function renderRejectedRouteJoin() {
 
 function renderNodes() {
   elements.nodes.replaceChildren();
-  for (const node of state.graph?.nodes ?? []) {
+  for (const node of visibleNodes()) {
     const position = state.positions.get(node.id);
     const joinClass = transitionJoinClass(node);
     const preferenceClass = routePreferenceClass(node);
@@ -299,6 +311,12 @@ function renderNodes() {
       state.selected = { type: "node", value: node };
       state.transitionEvaluation = null;
       render();
+    });
+    group.addEventListener("dblclick", (event) => {
+      const owned = state.graph.regions.find((region) => region.owner_node_id === node.id);
+      if (!owned) return;
+      event.stopPropagation();
+      enterRegion(owned.id);
     });
     elements.nodes.append(group);
   }
@@ -333,6 +351,7 @@ function renderPalette() {
     button.addEventListener("click", () => {
       state.selected = { type: "node", value: node };
       state.transitionEvaluation = null;
+      revealNode(node);
       centerNode(node.id);
       render();
     });
@@ -345,6 +364,118 @@ function renderPalette() {
     }
     elements["palette-list"].append(button);
   }
+}
+
+function synchronizeRegions() {
+  const valid = new Set((state.graph?.regions ?? []).map((region) => region.id));
+  for (const region of state.graph?.regions ?? []) {
+    if (!state.knownRegionIds.has(region.id) && region.collapsed_by_default) {
+      state.collapsedRegionIds.add(region.id);
+    }
+  }
+  state.knownRegionIds = valid;
+  state.collapsedRegionIds = new Set(
+    [...state.collapsedRegionIds].filter((id) => valid.has(id)),
+  );
+  if (state.activeRegionId && !valid.has(state.activeRegionId)) state.activeRegionId = null;
+}
+
+function visibleNodes() {
+  if (!state.graph) return [];
+  if (state.activeRegionId) {
+    return state.graph.nodes.filter((node) => node.region_id === state.activeRegionId);
+  }
+  return state.graph.nodes.filter((node) => {
+    let regionId = node.region_id;
+    const visited = new Set();
+    while (regionId && !visited.has(regionId)) {
+      if (state.collapsedRegionIds.has(regionId)) return false;
+      visited.add(regionId);
+      regionId = state.graph.regions.find((region) => region.id === regionId)?.parent_region_id ?? null;
+    }
+    return true;
+  });
+}
+
+function renderRegionNavigation() {
+  const nav = elements["region-nav"];
+  const regions = state.graph?.regions ?? [];
+  nav.hidden = !regions.length;
+  elements["region-breadcrumbs"].replaceChildren();
+  elements["region-children"].replaceChildren();
+  if (!regions.length) return;
+  const all = document.createElement("button");
+  all.type = "button";
+  all.textContent = "All regions";
+  all.classList.toggle("current", !state.activeRegionId);
+  all.addEventListener("click", () => enterRegion(null));
+  elements["region-breadcrumbs"].append(all);
+  for (const region of activeRegionPath()) {
+    const separator = document.createElement("span");
+    separator.textContent = "›";
+    separator.setAttribute("aria-hidden", "true");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = region.label;
+    button.classList.toggle("current", region.id === state.activeRegionId);
+    button.addEventListener("click", () => enterRegion(region.id));
+    elements["region-breadcrumbs"].append(separator, button);
+  }
+  const children = regions.filter((region) =>
+    (region.parent_region_id ?? null) === state.activeRegionId);
+  for (const region of children) {
+    const row = document.createElement("span");
+    row.className = `region-row${state.collapsedRegionIds.has(region.id) ? " collapsed" : ""}`;
+    const enter = document.createElement("button");
+    enter.type = "button";
+    enter.className = "enter-region";
+    enter.textContent = region.label;
+    enter.title = "Enter region";
+    enter.addEventListener("click", () => enterRegion(region.id));
+    const collapse = document.createElement("button");
+    collapse.type = "button";
+    collapse.className = "collapse-region";
+    const collapsed = state.collapsedRegionIds.has(region.id);
+    collapse.textContent = collapsed ? "+" : "−";
+    collapse.title = collapsed ? "Expand region in the full graph" : "Collapse region in the full graph";
+    collapse.addEventListener("click", () => toggleRegionCollapse(region.id));
+    row.append(enter, collapse);
+    elements["region-children"].append(row);
+  }
+}
+
+function activeRegionPath() {
+  const path = [];
+  let region = state.graph?.regions.find((candidate) => candidate.id === state.activeRegionId);
+  const visited = new Set();
+  while (region && !visited.has(region.id)) {
+    path.unshift(region);
+    visited.add(region.id);
+    region = state.graph.regions.find((candidate) => candidate.id === region.parent_region_id);
+  }
+  return path;
+}
+
+function enterRegion(regionId) {
+  state.activeRegionId = regionId;
+  if (regionId) state.collapsedRegionIds.delete(regionId);
+  state.selected = null;
+  state.transitionEvaluation = null;
+  render();
+  requestAnimationFrame(fitGraph);
+}
+
+function toggleRegionCollapse(regionId) {
+  if (state.collapsedRegionIds.has(regionId)) state.collapsedRegionIds.delete(regionId);
+  else state.collapsedRegionIds.add(regionId);
+  render();
+  requestAnimationFrame(fitGraph);
+}
+
+function revealNode(node) {
+  if (!node.region_id) return;
+  state.activeRegionId = node.region_id;
+  state.collapsedRegionIds.delete(node.region_id);
 }
 
 function allowTransitionDrop(event) {
@@ -1171,8 +1302,8 @@ function applyTransform() {
 }
 
 function fitGraph() {
-  if (!state.positions.size) return;
-  const positions = [...state.positions.values()];
+  const positions = visibleNodes().map((node) => state.positions.get(node.id)).filter(Boolean);
+  if (!positions.length) return;
   const minX = Math.min(...positions.map((position) => position.x));
   const minY = Math.min(...positions.map((position) => position.y));
   const maxX = Math.max(...positions.map((position) => position.x + NODE_WIDTH));
