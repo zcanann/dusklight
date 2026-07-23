@@ -10,7 +10,39 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const ORIG_BUNDLE_DIFF_SCHEMA: &str = "dusklight.route-planner.orig-bundle-diff/v1";
+pub const ORIG_BUNDLE_DIFF_SCHEMA: &str = "dusklight.route-planner.orig-bundle-diff/v2";
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrigDiffDomain {
+    StageArchives,
+    MessageFlowArchives,
+    IgnoredArchives,
+    ExecutableCode,
+    RuntimeLanguageSelection,
+    ActorSemantics,
+    CutsceneSemantics,
+    RuleSemantics,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrigDomainCoverageStatus {
+    Compared,
+    EmptyOnBoth,
+    UncoveredOnLeft,
+    UncoveredOnRight,
+    NotRepresented,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OrigDomainCoverage {
+    pub domain: OrigDiffDomain,
+    pub status: OrigDomainCoverageStatus,
+    pub left_records: Option<u32>,
+    pub right_records: Option<u32>,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +98,7 @@ pub struct OrigBundleDiff {
     pub stages: Vec<OrigRecordDiff>,
     pub message_flows: Vec<OrigRecordDiff>,
     pub ignored_archives: Vec<OrigRecordDiff>,
+    pub domain_coverage: Vec<OrigDomainCoverage>,
     pub summary: OrigDiffSummary,
 }
 
@@ -118,6 +151,7 @@ pub fn compare_orig_bundles(
         )?,
     };
     let summary = summarize(stages.iter().chain(&message_flows).chain(&ignored_archives));
+    let domain_coverage = domain_coverage(&stages, &message_flows, &ignored_archives)?;
     let diff = OrigBundleDiff {
         schema: ORIG_BUNDLE_DIFF_SCHEMA.into(),
         left_bundle_sha256: left.digest()?,
@@ -128,6 +162,7 @@ pub fn compare_orig_bundles(
         stages,
         message_flows,
         ignored_archives,
+        domain_coverage,
         summary,
     };
     diff.validate()?;
@@ -162,6 +197,14 @@ impl OrigBundleDiff {
         validate_diff_records("orig_diff.stages", &self.stages)?;
         validate_diff_records("orig_diff.message_flows", &self.message_flows)?;
         validate_diff_records("orig_diff.ignored_archives", &self.ignored_archives)?;
+        if self.domain_coverage
+            != domain_coverage(&self.stages, &self.message_flows, &self.ignored_archives)?
+        {
+            return Err(PlannerContractError::new(
+                "orig_diff.domain_coverage",
+                "does not match represented and absent comparison domains",
+            ));
+        }
         if self.summary
             != summarize(
                 self.stages
@@ -357,6 +400,52 @@ fn compare_records(
 
 fn semantic_digest(value: &impl Serialize) -> Result<Digest, PlannerContractError> {
     Ok(Digest(Sha256::digest(canonical_json(value)?).into()))
+}
+
+fn domain_coverage(
+    stages: &[OrigRecordDiff],
+    message_flows: &[OrigRecordDiff],
+    ignored_archives: &[OrigRecordDiff],
+) -> Result<Vec<OrigDomainCoverage>, PlannerContractError> {
+    let compared = |domain, records: &[OrigRecordDiff]| -> Result<_, PlannerContractError> {
+        let left_records = side_count(records, true)?;
+        let right_records = side_count(records, false)?;
+        let status = match (left_records, right_records) {
+            (0, 0) => OrigDomainCoverageStatus::EmptyOnBoth,
+            (0, _) => OrigDomainCoverageStatus::UncoveredOnLeft,
+            (_, 0) => OrigDomainCoverageStatus::UncoveredOnRight,
+            _ => OrigDomainCoverageStatus::Compared,
+        };
+        Ok(OrigDomainCoverage {
+            domain,
+            status,
+            left_records: Some(left_records),
+            right_records: Some(right_records),
+        })
+    };
+    let mut output = vec![
+        compared(OrigDiffDomain::StageArchives, stages)?,
+        compared(OrigDiffDomain::MessageFlowArchives, message_flows)?,
+        compared(OrigDiffDomain::IgnoredArchives, ignored_archives)?,
+    ];
+    output.extend(
+        [
+            OrigDiffDomain::ExecutableCode,
+            OrigDiffDomain::RuntimeLanguageSelection,
+            OrigDiffDomain::ActorSemantics,
+            OrigDiffDomain::CutsceneSemantics,
+            OrigDiffDomain::RuleSemantics,
+        ]
+        .into_iter()
+        .map(|domain| OrigDomainCoverage {
+            domain,
+            status: OrigDomainCoverageStatus::NotRepresented,
+            left_records: None,
+            right_records: None,
+        }),
+    );
+    output.sort_by_key(|row| row.domain);
+    Ok(output)
 }
 
 fn summarize<'a>(records: impl Iterator<Item = &'a OrigRecordDiff>) -> OrigDiffSummary {
@@ -577,6 +666,32 @@ mod tests {
             records[0].status,
             OrigRecordDiffStatus::RawChangedSemanticEqual
         );
+    }
+
+    #[test]
+    fn coverage_never_implies_equivalence_for_unrepresented_domains() {
+        let records = compare_messages(
+            vec![message("files/res/Msgfr/bmgres1.arc", "fr", 1, 1, 2)],
+            Vec::new(),
+            Some(("fr", "de")),
+        );
+        let coverage = domain_coverage(&[], &records, &[]).unwrap();
+        let messages = coverage
+            .iter()
+            .find(|row| row.domain == OrigDiffDomain::MessageFlowArchives)
+            .unwrap();
+        assert_eq!(messages.status, OrigDomainCoverageStatus::UncoveredOnRight);
+        for domain in [
+            OrigDiffDomain::ExecutableCode,
+            OrigDiffDomain::RuntimeLanguageSelection,
+            OrigDiffDomain::ActorSemantics,
+            OrigDiffDomain::CutsceneSemantics,
+            OrigDiffDomain::RuleSemantics,
+        ] {
+            let row = coverage.iter().find(|row| row.domain == domain).unwrap();
+            assert_eq!(row.status, OrigDomainCoverageStatus::NotRepresented);
+            assert_eq!((row.left_records, row.right_records), (None, None));
+        }
     }
 
     #[test]

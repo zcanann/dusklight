@@ -2276,6 +2276,11 @@ Deliverable: replayable state evidence that can validate transition rules.
         candidates by raw and decoded digests; explicit locale pairing reports
         per-side group counts and one-sided coverage. Broader decoded domains
         and rule-level semantic equivalence remain open.
+  - [x] Seal the comparison-domain boundary itself. `orig-bundle-diff/v2`
+        recomputes per-side coverage for represented archive domains and marks
+        executable code, runtime language selection, actor semantics, cutscene
+        semantics, and rule semantics `not_represented`; absent comparison data
+        can no longer be mistaken for equality.
 - [x] Reconstruct live actor behavior from placement, layer, persisted state, and
       instance lifecycle. Mechanics v29 adds an atomic room-load reconstruction
       operation: it requires the exact current stage/room/layer and a matching
@@ -2963,8 +2968,12 @@ visual polish or whole-game authoring features.
       route edit, state inspection/diff, and revision-checked route-book edit;
       its local logic is limited to search, layout, navigation, summaries, and
       command enablement over the returned contracts.
-- [ ] Share or extract UI/infrastructure code only after a domain-independent seam
+- [x] Share or extract UI/infrastructure code only after a domain-independent seam
       is demonstrated; visual consistency does not depend on shared graph models.
+      No TAS graph model or running workbench component was imported: the
+      planner owns its Rust service contracts, browser canvas, visual grammar,
+      and project persistence. The independent seam is now the typed loopback
+      request/response boundary, not a shared domain object graph.
 - [x] Add route canvas, alternatives, pin/ban/prefer, and collapse controls.
   - [x] Define validated route-book directives and collapse policies and expose
         plan alternatives through the planner graph/service contracts.

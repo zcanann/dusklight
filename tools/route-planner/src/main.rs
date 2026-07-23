@@ -643,6 +643,7 @@ fn diff_orig(args: &[String]) -> Result<(), Box<dyn Error>> {
             "left_content_sha256": diff.left_content_sha256,
             "right_content_sha256": diff.right_content_sha256,
             "locale_comparison": diff.locale_comparison,
+            "domain_coverage": diff.domain_coverage,
             "summary": diff.summary,
         }))?
     );
