@@ -1093,8 +1093,9 @@ mod tests {
         NativeAttentionCandidatesObservation, NativeEventActorReferenceObservation,
         NativeEventQueueObservation, NativeMessageFlowObservation,
         NativePendingEventOrderObservation, NativePhysicalSlotObservation,
-        NativePlayerActionObservation, NativePlayerRelationshipsObservation,
-        NativeReturnPlaceWriterObservation, NativeRuntimeFileObservation,
+        NativePlayerActionObservation, NativePlayerControlObservation,
+        NativePlayerRelationshipsObservation, NativeReturnPlaceWriterObservation,
+        NativeRuntimeFileObservation,
     };
 
     fn context(sequence: u64) -> NativeSnapshotContext {
@@ -1442,6 +1443,81 @@ mod tests {
             fields["talk_actor_runtime_generation"],
             StateValue::Unsigned(7)
         );
+    }
+
+    #[test]
+    fn projects_complete_event_handoff_without_collapsing_storage_lifetimes() {
+        let mut observation = observation();
+        observation.temporary_event_bytes.as_mut().unwrap()[5] = 0xa5;
+        let handoff = observation.event_handoff.as_mut().unwrap();
+        handoff.pre_item_no = 0x90;
+        handoff.get_item_no = 0x4a;
+        handoff.event_name_status = NativeChannelStatus::Present;
+        handoff.event_name = Some("DEFAULT_GETITEM".into());
+        handoff.message_cut_status = NativeChannelStatus::Present;
+        handoff.message_flow.as_mut().unwrap().cut_name_hash = 0x1234_5678;
+        handoff.pending_cleanup_status = NativeChannelStatus::Present;
+        handoff.pending_cleanup_flags = Some(0xa5a5_5a5a);
+        handoff.player_control_status = NativeChannelStatus::Present;
+        handoff.player_control = Some(NativePlayerControlObservation {
+            mode_flags: 0x1020_3040,
+            do_status: 7,
+        });
+        handoff.item_partner = NativeActorIdentity {
+            present: true,
+            runtime_generation: 11,
+            actor_name: 0x123,
+        };
+
+        let snapshot = snapshot_native_observation(&observation, context(1)).unwrap();
+        let structured = |id: &str| {
+            let component = snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == id)
+                .unwrap();
+            let ComponentPayload::Structured { fields } = &component.payload else {
+                panic!("{id} must be structured")
+            };
+            fields
+        };
+        let event = structured("event-handoff");
+        assert_eq!(event["pre_item_no"], StateValue::Unsigned(0x90));
+        assert_eq!(event["flow_id"], StateValue::Unsigned(7));
+        assert_eq!(event["node_index"], StateValue::Unsigned(2));
+        assert_eq!(event["cut_name_hash"], StateValue::Unsigned(0x1234_5678));
+        assert_eq!(
+            event["event_name"],
+            StateValue::Text("DEFAULT_GETITEM".into())
+        );
+        assert_eq!(
+            event["pending_cleanup_flags"],
+            StateValue::Unsigned(0xa5a5_5a5a)
+        );
+        assert_eq!(
+            event["player_mode_flags"],
+            StateValue::Unsigned(0x1020_3040)
+        );
+        assert_eq!(event["player_do_status"], StateValue::Unsigned(7));
+        assert_eq!(
+            event["item_partner_runtime_generation"],
+            StateValue::Unsigned(11)
+        );
+        assert!(!event.contains_key("get_item_no"));
+
+        let recent = structured("event-recent-item");
+        assert_eq!(recent["get_item_no"], StateValue::Unsigned(0x4a));
+        let temporary = snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "flags.temporary-event-registers")
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &temporary.payload else {
+            panic!("temporary message progress must retain raw bytes")
+        };
+        assert_eq!(bytes[5], 0xa5);
     }
 
     #[test]

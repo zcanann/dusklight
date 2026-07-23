@@ -2024,8 +2024,13 @@ Deliverable: one validated runtime representation independent of authoring forma
         exact `NO_TELOP`/event/switch guard evaluations (native observation v14).
   - [ ] Audit and observe other return/restart writers and produce traces that
         distinguish eligible SavMem execution from an actual value change.
-- [ ] Record `mGtItm`, `mPreItemNo`, current flow/node/cut, message-progress bits,
+- [x] Record `mGtItm`, `mPreItemNo`, current flow/node/cut, message-progress bits,
       pending cleanup, item partner, event name, and player-control transitions.
+      Native event-handoff projection retains the action-lived pre-item,
+      flow/node/cut, cleanup, participant, event, and control fields; session
+      `mGtItm` remains a separate component, message-progress bytes retain their
+      raw stage-load backing, and snapshot chains expose field transitions rather
+      than folding these lifetimes into one dialogue Boolean.
 - [ ] Produce semantic and raw diffs across room load, stage load, save, load,
       void, title, BiT, and BiTE boundaries.
 - [x] Make unsupported/unobserved fields explicit rather than defaulting false.
