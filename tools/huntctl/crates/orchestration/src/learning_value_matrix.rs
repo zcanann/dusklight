@@ -8,7 +8,16 @@ use crate::learning_value_comparison::{
     LearningValueCheckpoint, LearningValueComparisonPlan, LearningValueTreatment,
     LearningValueTreatmentKind,
 };
+use crate::native_goal_learning_loop::{
+    NativeGoalLearningLoopRequest, NativeGoalLearningLoopResume,
+};
+use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
+use dusklight_harness_contracts::objective_suite::ArtifactReference;
+use dusklight_learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
+use dusklight_learning::native_goal_reachability::NativeGoalReachabilityConfig;
+use dusklight_learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
+use dusklight_learning::native_replay_corpus::DemonstrationMode;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
@@ -132,6 +141,89 @@ pub fn materialize_learning_cell_optimization(
     Ok(request)
 }
 
+#[allow(clippy::too_many_arguments)]
+pub fn materialize_learning_cell_loop_request(
+    plan: &LearningValueComparisonPlan,
+    checkpoint_id: &str,
+    deterministic_seed: u64,
+    treatment_kind: LearningValueTreatmentKind,
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    initial_replay_corpus: ArtifactReference,
+    initial_episode_shards: Vec<ArtifactReference>,
+    repository_root: &Path,
+) -> Result<NativeGoalLearningLoopRequest, LearningValueMatrixError> {
+    plan.validate_files(repository_root).map_err(matrix_error)?;
+    optimization
+        .validate_files(repository_root)
+        .map_err(matrix_error)?;
+    execution
+        .validate_files(repository_root, optimization)
+        .map_err(matrix_error)?;
+
+    if !plan.deterministic_seeds.contains(&deterministic_seed) {
+        return Err(matrix_message(
+            "learning-value cell seed is absent from the sealed plan",
+        ));
+    }
+    let checkpoint = plan
+        .held_out_checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.id == checkpoint_id)
+        .ok_or_else(|| {
+            matrix_message("learning-value cell checkpoint is absent from the sealed plan")
+        })?;
+    let treatment = plan
+        .treatments
+        .iter()
+        .find(|treatment| treatment.kind() == treatment_kind)
+        .ok_or_else(|| {
+            matrix_message("learning-value cell treatment is absent from the sealed plan")
+        })?;
+    let (generation_limit, rollouts_per_generation, demonstration_mode) =
+        learning_loop_dimensions(treatment)?;
+    validate_base(plan, checkpoint, optimization)?;
+
+    let expected_id = cell_id(&plan.id, checkpoint_id, treatment_kind, deterministic_seed)?;
+    if optimization.id != expected_id
+        || optimization.budgets.simulated_tick_budget
+            != treatment.budget().discovery_simulated_ticks
+        || optimization.execution.workers != 1
+        || optimization.execution.deterministic_seeds != [deterministic_seed]
+        || optimization.execution.repetitions != plan.repetitions_per_cell
+        || optimization.proposal.critic_ranking.is_some()
+        || optimization.horizon_tightening.is_some()
+        || optimization.reverse_curriculum.is_some()
+    {
+        return Err(matrix_message(
+            "learning-loop optimization differs from its plan-owned cell dimensions",
+        ));
+    }
+
+    let resume_root = format!("build/campaigns/{expected_id}/learning-loop");
+    NativeGoalLearningLoopRequest::seal(
+        optimization,
+        execution,
+        initial_replay_corpus,
+        initial_episode_shards,
+        generation_limit,
+        rollouts_per_generation,
+        treatment.budget().discovery_simulated_ticks,
+        NativeGoalTrajectoryConfig {
+            demonstration_mode,
+            ..NativeGoalTrajectoryConfig::default()
+        },
+        NativeGoalReachabilityConfig::default(),
+        NativeGoalFrozenPolicyConfig::default(),
+        NativeGoalLearningLoopResume {
+            journal_path: format!("{resume_root}/journal.jsonl"),
+            state_path: format!("{resume_root}/state.json"),
+            artifact_root: format!("{resume_root}/artifacts"),
+        },
+    )
+    .map_err(matrix_error)
+}
+
 pub fn residual_treatment_from_slug(
     value: &str,
 ) -> Result<LearningValueTreatmentKind, LearningValueMatrixError> {
@@ -177,6 +269,48 @@ fn baseline_optimizer(
         }
         _ => Err(matrix_message(
             "only plan-owned residual baseline treatments can materialize residual cells",
+        )),
+    }
+}
+
+fn learning_loop_dimensions(
+    treatment: &LearningValueTreatment,
+) -> Result<(u16, u16, DemonstrationMode), LearningValueMatrixError> {
+    match treatment {
+        LearningValueTreatment::DemonstrationAssistedStateReactive {
+            generation_limit,
+            rollouts_per_generation,
+            budget,
+        } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks == 0 => {
+            Ok((
+                *generation_limit,
+                *rollouts_per_generation,
+                DemonstrationMode::BehaviorCloningWarmStart,
+            ))
+        }
+        LearningValueTreatment::FromScratchStateReactive {
+            generation_limit,
+            rollouts_per_generation,
+            budget,
+        } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks == 0 => {
+            Ok((
+                *generation_limit,
+                *rollouts_per_generation,
+                DemonstrationMode::Absent,
+            ))
+        }
+        LearningValueTreatment::LearnedThenResidualRefinement {
+            generation_limit,
+            rollouts_per_generation,
+            budget,
+            ..
+        } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks > 0 => Ok((
+            *generation_limit,
+            *rollouts_per_generation,
+            DemonstrationMode::BehaviorCloningWarmStart,
+        )),
+        _ => Err(matrix_message(
+            "only plan-owned state-reactive treatments can materialize a learning loop",
         )),
     }
 }
@@ -309,6 +443,34 @@ mod tests {
             })
             .unwrap(),
             1_024
+        );
+    }
+
+    #[test]
+    fn learning_loop_dimensions_are_plan_owned() {
+        let budget = crate::learning_value_comparison::LearningValuePhaseBudget {
+            discovery_simulated_ticks: 327_680,
+            refinement_simulated_ticks: 0,
+        };
+        assert_eq!(
+            learning_loop_dimensions(
+                &LearningValueTreatment::DemonstrationAssistedStateReactive {
+                    budget,
+                    generation_limit: 64,
+                    rollouts_per_generation: 32,
+                }
+            )
+            .unwrap(),
+            (64, 32, DemonstrationMode::BehaviorCloningWarmStart)
+        );
+        assert_eq!(
+            learning_loop_dimensions(&LearningValueTreatment::FromScratchStateReactive {
+                budget,
+                generation_limit: 64,
+                rollouts_per_generation: 32,
+            })
+            .unwrap(),
+            (64, 32, DemonstrationMode::Absent)
         );
     }
 

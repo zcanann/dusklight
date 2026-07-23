@@ -23,6 +23,84 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("materialize-learning-value-loop-cell") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let plan_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--plan")?,
+            "learning-value comparison plan",
+        )?;
+        let optimization_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "learning-value optimization request",
+        )?;
+        let execution_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--execution")?,
+            "learning-value native execution",
+        )?;
+        let plan: huntctl::search_evaluator::learning_value_comparison::LearningValueComparisonPlan =
+            serde_json::from_slice(&fs::read(plan_path)?)?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(optimization_path)?)?;
+        let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
+            serde_json::from_slice(&fs::read(execution_path)?)?;
+        let checkpoint_id =
+            option(command_args, "--checkpoint").ok_or("missing required --checkpoint <id>")?;
+        let deterministic_seed = option(command_args, "--seed")
+            .ok_or("missing required --seed <u64>")?
+            .parse()?;
+        let treatment =
+            huntctl::search_evaluator::learning_value_matrix::learning_treatment_from_slug(
+                &option(command_args, "--treatment").ok_or(
+                    "missing required --treatment <demonstration-assisted-state-reactive|from-scratch-state-reactive|learned-then-residual-refinement>",
+                )?,
+            )?;
+        let initial_replay_corpus = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--initial-corpus")?,
+            "initial replay corpus",
+        )?;
+        let shard_paths = repeated_option(command_args, "--input");
+        if shard_paths.is_empty() {
+            return Err(
+                "learning-value loop cell requires at least one --input EPISODES.dseps".into(),
+            );
+        }
+        let initial_episode_shards = shard_paths
+            .iter()
+            .map(|path| {
+                repository_artifact(
+                    &repository_root,
+                    Path::new(path),
+                    "initial native episode shard",
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let request = huntctl::search_evaluator::learning_value_matrix::materialize_learning_cell_loop_request(
+            &plan,
+            &checkpoint_id,
+            deterministic_seed,
+            treatment,
+            &optimization,
+            &execution,
+            initial_replay_corpus,
+            initial_episode_shards,
+            &repository_root,
+        )?;
+        let report = request.validate_files(&repository_root, &optimization, &execution)?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "learning-value loop cell request",
+        )?;
+        refuse_existing_output(&output, "learning-value loop cell request")?;
+        write_new_file(&output, request.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("materialize-learning-value-learning-cell") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;

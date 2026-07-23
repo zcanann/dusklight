@@ -788,8 +788,12 @@ revalidated crash-safe journal/state chain.
       and reseals the result against repository artifacts. State-reactive cells
       likewise derive an isolated one-seed native checkpoint authority with the
       exact discovery phase cap for demonstration-assisted, from-scratch, and
-      learned-then-refined treatments; the learning-loop seal remains the
-      separate authority for demonstration mode, generations, and rollouts.
+      learned-then-refined treatments. The plan-owned loop materializer now
+      binds that optimization and its native execution to the exact planned
+      demonstration mode, generation count, rollout count, discovery tick cap,
+      and isolated resume namespace; it rejects seed, checkpoint, terminal,
+      critic, curriculum, or phase-budget drift before sealing the native shard
+      corpus.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
       The predeclared report verdict is implemented but remains unchecked until
