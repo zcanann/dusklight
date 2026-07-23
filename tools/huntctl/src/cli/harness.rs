@@ -1365,9 +1365,9 @@ fn learning_value_cell_draft_from_directory(
                 &path("execution/execution.json"),
                 "learning-value residual execution binding",
             )?,
-            final_checkpoint: artifact(
-                &path("state.json"),
-                "learning-value residual final checkpoint",
+            final_checkpoint: latest_residual_checkpoint(
+                repository_root,
+                &cell_root.join(path("checkpoints")),
             )?,
         })
     };
@@ -1387,6 +1387,31 @@ fn learning_value_cell_draft_from_directory(
         treatment,
         phases,
     })
+}
+
+fn latest_residual_checkpoint(
+    repository_root: &Path,
+    checkpoint_root: &Path,
+) -> Result<ArtifactReference, Box<dyn Error>> {
+    let mut paths = fs::read_dir(checkpoint_root)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.retain(|path| {
+        path.is_file()
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("checkpoint-") && name.ends_with(".json"))
+    });
+    paths.sort();
+    let path = paths
+        .last()
+        .ok_or("learning-value residual phase has no numbered campaign checkpoint")?;
+    repository_artifact(
+        repository_root,
+        path,
+        "learning-value residual final checkpoint",
+    )
 }
 
 fn repository_build_output(
@@ -1529,13 +1554,15 @@ mod tests {
         for path in [
             "request.json",
             "execution/execution.json",
-            "state.json",
+            "checkpoints/checkpoint-00000001.json",
+            "checkpoints/checkpoint-00000002.json",
             "learning-loop/request.json",
             "learning-loop/state.json",
             "learning-loop/checkpoint-report.json",
             "refinement/request.json",
             "refinement/execution/execution.json",
-            "refinement/state.json",
+            "refinement/checkpoints/checkpoint-00000001.json",
+            "refinement/checkpoints/checkpoint-00000002.json",
         ] {
             let path = root.join(path);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -1559,7 +1586,7 @@ mod tests {
         assert!(matches!(
             &learned.phases[1],
             LearningValuePhaseSource::Residual { final_checkpoint, .. }
-                if final_checkpoint.path.ends_with("/refinement/state.json")
+                if final_checkpoint.path.ends_with("/refinement/checkpoints/checkpoint-00000002.json")
         ));
 
         let residual = learning_value_cell_draft_from_directory(
@@ -1573,7 +1600,7 @@ mod tests {
         assert!(matches!(
             &residual.phases[0],
             LearningValuePhaseSource::Residual { final_checkpoint, .. }
-                if final_checkpoint.path.ends_with("/state.json")
+                if final_checkpoint.path.ends_with("/checkpoints/checkpoint-00000002.json")
                     && !final_checkpoint.path.contains("/refinement/")
         ));
         fs::remove_dir_all(root).unwrap();
