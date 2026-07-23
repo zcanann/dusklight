@@ -2464,8 +2464,13 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
   - [x] Derive discharged obligations from applicable resolvers and techniques,
         retain active/unknown obstruction IDs, and keep introduced obligations
         outstanding.
-  - [ ] Evaluate authored obstruction/resolver catalogs and obligation details to
+  - [x] Evaluate authored obstruction/resolver catalogs and obligation details to
         derive discharged-obligation sets rather than accepting them as input.
+        Snapshot evaluation derives predicate/spatial/temporal satisfaction,
+        then independently applies active scoped resolvers and techniques; the
+        solver retains derived discharged, outstanding, and unknown sets plus
+        microtrace provenance in every proof rather than accepting a caller's
+        readiness claim.
     - [x] Derive predicate obligations from propagated state with distinct false,
           unknown, unsupported-scope, and disallowed-evidence outcomes; recompute
           after setup operations before transition assessment.
@@ -3135,7 +3140,12 @@ slice into release criteria only when it exercises a missing core semantic law.
 
 #### 11A. Fishing Rod
 
-- [ ] Model ordinary vine/hawk/cradle/Uli producers.
+- [x] Model ordinary vine/hawk/cradle/Uli producers. The reusable ordinary-rod
+      profile compiles six causal candidates from vine guidance through hawk
+      displacement, cradle carry/return, and Uli's generic item-bit grant. Every
+      unaudited physical activation remains a staged obligation; upper-bound
+      search reaches the rod while modeled search reports the first missing
+      interaction instead of inventing feasibility.
 - [ ] Model chicken vine bypass, OOB, cradle carry state, reload, and Uli reward.
 - [ ] Permit compatible mixing where real predicates allow it.
 - [ ] Model Auru's session-level recent-item grant as an alternate producer, with
