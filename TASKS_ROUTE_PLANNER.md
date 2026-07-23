@@ -2512,15 +2512,27 @@ Deliverable: researchers can extend the model without editing core code.
         selected exact context, requiring one start state per expanded context
         and returning per-context proofs plus a fail-closed aggregate status.
 - [ ] Add multi-objective cost and K-alternative plan search.
-- [ ] Keep graph-region encapsulation outside solver reachability semantics.
-  - [ ] Preserve stable state/transition/boundary identities so solved or authored
+- [x] Keep graph-region encapsulation outside solver reachability semantics.
+  - [x] Preserve stable state/transition/boundary identities so solved or authored
         regions can be selected and projected without synthesizing macro edges.
-  - [ ] Reevaluate every enclosed transition when a saved region is copied or
+        Project v2 stores only existing graph node IDs and derivation provenance;
+        graph projection/digest regression remains byte-identical, and the graph
+        relation contract has no macro-edge or region-transition variant.
+  - [x] Reevaluate every enclosed transition when a saved region is copied or
         referenced after a different state; grouping must grant no authority.
-  - [ ] Support cycles and leave-and-return paths in the underlying graph without
-        interpreting nesting as recursive goal decomposition.
-  - [ ] Preserve every continuation-distinct state even when its containing region
-        is visually collapsed.
+        Snapshot views and dynamic references resolve the original transition
+        node IDs. Evaluation still submits that transition plus the currently
+        selected exact execution state to service v36; no region field enters
+        assessment, application, frontier replay, or solve requests.
+  - [x] Support cycles and leave-and-return paths in the underlying graph without
+        interpreting nesting as recursive goal decomposition. Presentation
+        parents affect only visibility/breadcrumb traversal, while every original
+        directed edge remains in the graph and the solver receives no region
+        projection. Only malformed visual parent/derivation cycles fail closed.
+  - [x] Preserve every continuation-distinct state even when its containing region
+        is visually collapsed. Collapse is a browser-local visibility set over
+        the complete graph; execution-state nodes, route precondition/result
+        edges, state digests, and solver continuation identities remain intact.
 - [x] Return reachable, unreachable-under-model, or unknown.
   - [x] Expose canonical fact/mechanics/execution-state artifacts through a
         standalone planner runtime boundary, isolated from huntctl's TAS CLI and

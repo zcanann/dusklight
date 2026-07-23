@@ -271,6 +271,10 @@ The planner CLI currently owns forty operations:
   reverse usage inspection. Every derivation binds its source region/version;
   references resolve the source view dynamically while other derivations seal a
   sorted node-identity snapshot. Legacy v1 projects migrate on load.
+  Region nesting and collapse never enter service solve/evaluate requests and
+  never create graph relations. Cyclic or leave-and-return mechanics retain all
+  directed edges, exact execution states, and continuation identities even when
+  a browser view hides them.
   Static assets are embedded in the Rust binary and served with a restrictive
   content security policy and no cache.
 
