@@ -1819,8 +1819,16 @@ evidenced overlays over the generated base rather than silent edits to it.
 
 ### Phase 0 — Evidence inventory and terminology
 
-- [ ] Catalogue exact supported builds, revisions, disc/executable/resource
+- [x] Catalogue exact supported builds, revisions, disc/executable/resource
       digests, available language bundles, and stable content IDs.
+      `supported-contexts.json` now catalogues every and only registry-supported
+      build. Its GZ2E01 row seals the canonical 1,459,978,240-byte ISO,
+      executable, normalized game-data, resource-manifest, stable content ID,
+      English runtime/profile, and all nine selected base/numbered `Msgus`
+      archives. Engine validation cross-checks the row one-to-one against the
+      build registry and exact bundled English import profile, rejects metadata
+      drift, and leaves PAL/Wii/HD explicitly unsupported. See
+      `docs/route-planner/supported-context-catalog.md`.
   - [x] Register the locally reproduced GZ2E01 GameCube USA revision-0 tree as
         `gcn-us-1.0-gz2e01` with complete executable, normalized game-data, and
         resource-manifest digests. Other retail builds and language/configuration

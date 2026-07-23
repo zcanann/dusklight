@@ -38,6 +38,7 @@ pub mod route_book;
 pub mod snapshot;
 pub mod solver;
 pub mod state;
+pub mod supported_context;
 pub mod title_boundary;
 pub mod transition;
 pub mod world_data;
