@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v27";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v28";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -479,6 +479,18 @@ pub enum ObligationKind {
     Other,
 }
 
+/// The point in a candidate action at which a feasibility obligation must be
+/// discharged. This prevents reachability, activation, committed effects, and
+/// interruption timing from being treated as interchangeable evidence.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObligationStage {
+    Reach,
+    Activate,
+    Effect,
+    Interrupt,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct VolumeReference {
@@ -565,6 +577,7 @@ pub struct FeasibilityObligation {
     pub label: String,
     pub scope: ContextScope,
     pub obligation_kind: ObligationKind,
+    pub stage: ObligationStage,
     pub detail: ObligationDetail,
     pub evidence: RuleEvidence,
 }
@@ -1540,6 +1553,14 @@ impl MechanicsCatalog {
                 &transition.activation.physical_obligation_ids,
                 &obligation_ids,
             )?;
+            for obligation_id in &transition.activation.physical_obligation_ids {
+                let obligation = self
+                    .obligations
+                    .iter()
+                    .find(|obligation| obligation.id == *obligation_id)
+                    .expect("known obligation IDs were checked above");
+                validate_transition_obligation_binding(transition, obligation)?;
+            }
         }
 
         let writer_ids = validate_sorted_records(
@@ -1668,6 +1689,17 @@ fn validate_obligation(obligation: &FeasibilityObligation) -> Result<(), Planner
     validate_stable_id("obligations.id", &obligation.id)?;
     validate_label("obligations.label", &obligation.label)?;
     obligation.scope.validate("obligations.scope")?;
+    if obligation.stage == ObligationStage::Interrupt
+        && !matches!(
+            obligation.detail,
+            ObligationDetail::Temporal { .. } | ObligationDetail::Unresolved { .. }
+        )
+    {
+        return Err(PlannerContractError::new(
+            "obligations.stage",
+            "interrupt obligations must be temporal or explicitly unresolved",
+        ));
+    }
     match &obligation.detail {
         ObligationDetail::Predicate { predicate } => predicate.validate()?,
         ObligationDetail::Interaction {
@@ -1754,6 +1786,27 @@ fn validate_obligation(obligation: &FeasibilityObligation) -> Result<(), Planner
         }
     }
     obligation.evidence.validate("obligations.evidence")
+}
+
+fn validate_transition_obligation_binding(
+    transition: &CandidateTransition,
+    obligation: &FeasibilityObligation,
+) -> Result<(), PlannerContractError> {
+    if obligation.stage == ObligationStage::Effect && transition.activation.effects.is_empty() {
+        return Err(PlannerContractError::new(
+            "transitions.activation.physical_obligation_ids",
+            "an effect obligation requires a state-producing transition",
+        ));
+    }
+    if let ObligationDetail::Geometry { approach_id, .. } = &obligation.detail {
+        if transition.approach_id != *approach_id {
+            return Err(PlannerContractError::new(
+                "transitions.activation.physical_obligation_ids",
+                "geometry obligations must name the transition's exact approach",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_writer(writer: &WriterRule) -> Result<(), PlannerContractError> {
@@ -2179,6 +2232,7 @@ mod tests {
                 label: "Reach the front of the locked door".into(),
                 scope: scope(),
                 obligation_kind: ObligationKind::Geometry,
+                stage: crate::transition::ObligationStage::Reach,
                 detail: ObligationDetail::Geometry {
                     approach_id: "approach.front".into(),
                     source_region_id: "forest.room-0".into(),

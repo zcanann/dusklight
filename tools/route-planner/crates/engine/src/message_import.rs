@@ -803,6 +803,7 @@ fn compile_entry_mechanics(
             ),
             scope: scope.clone(),
             obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Effect,
             detail: ObligationDetail::Unresolved {
                 research_question: format!(
                     "Prove that the presentation item actor for item 0x{:02x} exists, reaches its grant frame, and does not suppress execItemGet",

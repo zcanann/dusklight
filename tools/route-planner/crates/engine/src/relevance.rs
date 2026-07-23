@@ -1600,6 +1600,7 @@ mod tests {
                 label: "Witness the exact interruption".into(),
                 scope: scope(),
                 obligation_kind: ObligationKind::Timing,
+                stage: crate::transition::ObligationStage::Interrupt,
                 detail: ObligationDetail::Temporal {
                     requirement: TemporalRequirement {
                         action_id: "dialogue.overwrite".into(),

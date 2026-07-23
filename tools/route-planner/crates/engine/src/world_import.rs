@@ -280,6 +280,7 @@ impl ExtractedWorldFacts {
                     ),
                     scope: scope.clone(),
                     obligation_kind: ObligationKind::Geometry,
+                    stage: crate::transition::ObligationStage::Reach,
                     detail: ObligationDetail::Geometry {
                         approach_id: approach_id.clone(),
                         source_region_id: stable_token(
@@ -1065,6 +1066,7 @@ fn import_gz2e01_boss_door(
                             label: format!("Satisfy {} form-specific actor-local area checks", placement.name),
                             scope: scope.clone(),
                             obligation_kind: ObligationKind::Interaction,
+                            stage: crate::transition::ObligationStage::Activate,
                             detail: ObligationDetail::CompoundInteraction {
                                 actor_instance_id: object_id.clone(),
                                 interaction_mode: "door".into(),
@@ -1101,6 +1103,7 @@ fn import_gz2e01_boss_door(
                             label: format!("Face {} within binary-angle delta 0x4000", placement.name),
                             scope: scope.clone(),
                             obligation_kind: ObligationKind::Interaction,
+                            stage: crate::transition::ObligationStage::Activate,
                             detail: ObligationDetail::Facing {
                                 yaw: ValueReference::PlayerRotationY,
                                 target_yaw: placement.angle[1].wrapping_sub(0x7fff),
@@ -1158,6 +1161,7 @@ fn import_gz2e01_boss_door(
                             ),
                             scope: scope.clone(),
                             obligation_kind: ObligationKind::Interaction,
+                            stage: crate::transition::ObligationStage::Activate,
                             detail: ObligationDetail::Interaction {
                                 actor_instance_id: object_id.clone(),
                                 interaction_mode: "door".into(),
@@ -1179,6 +1183,7 @@ fn import_gz2e01_boss_door(
                             ),
                             scope: scope.clone(),
                             obligation_kind: ObligationKind::Geometry,
+                            stage: crate::transition::ObligationStage::Reach,
                             detail: ObligationDetail::PlaneSide {
                                 plane_id,
                                 relation: crate::state::PlaneRelation::Positive,
@@ -1193,6 +1198,7 @@ fn import_gz2e01_boss_door(
                             ),
                             scope: scope.clone(),
                             obligation_kind: ObligationKind::Interaction,
+                            stage: crate::transition::ObligationStage::Activate,
                             detail: ObligationDetail::Facing {
                                 yaw: ValueReference::PlayerRotationY,
                                 target_yaw: placement.angle[1].wrapping_sub(0x7fff),
@@ -1213,6 +1219,7 @@ fn import_gz2e01_boss_door(
         ),
         scope: scope.clone(),
         obligation_kind: ObligationKind::ActorState,
+        stage: crate::transition::ObligationStage::Effect,
         detail: ObligationDetail::Unresolved {
             research_question: actor_question.into(),
         },
@@ -2016,6 +2023,7 @@ fn keyed_actor_obligations(
                 label: format!("Run the loaded {} unlock/open phases", placement.name),
                 scope: scope.clone(),
                 obligation_kind: ObligationKind::ActorState,
+                stage: crate::transition::ObligationStage::Effect,
                 detail: ObligationDetail::Unresolved {
                     research_question: actor_question.into(),
                 },
@@ -2026,6 +2034,7 @@ fn keyed_actor_obligations(
                 label: format!("Reach and activate {}", placement.name),
                 scope: scope.clone(),
                 obligation_kind: ObligationKind::Interaction,
+                stage: crate::transition::ObligationStage::Activate,
                 detail: ObligationDetail::Unresolved {
                     research_question: interaction_question.into(),
                 },

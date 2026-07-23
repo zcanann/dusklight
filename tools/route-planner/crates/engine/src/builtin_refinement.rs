@@ -68,6 +68,7 @@ fn ordinary_movement_pack() -> Result<RefinementPack, PlannerContractError> {
                         label: "Reach the authored approach by ordinary controlled movement".into(),
                         scope: scope.clone(),
                         obligation_kind: ObligationKind::Geometry,
+                        stage: crate::transition::ObligationStage::Reach,
                         detail: ObligationDetail::Unresolved {
                             research_question: "Does the authored approach use ordinary traversable collision from the propagated source state?".into(),
                         },
@@ -251,6 +252,7 @@ fn technique_obligation_rule(
                 label: label.into(),
                 scope: scope.clone(),
                 obligation_kind: ObligationKind::Geometry,
+                stage: crate::transition::ObligationStage::Reach,
                 detail: ObligationDetail::Unresolved {
                     research_question: question.into(),
                 },

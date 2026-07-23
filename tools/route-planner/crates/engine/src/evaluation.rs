@@ -2695,6 +2695,7 @@ mod tests {
             label: "State-derived wall condition".into(),
             scope: scope(&snapshot),
             obligation_kind: ObligationKind::Twilight,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::Predicate {
                 predicate: fact("story.faron.twilight"),
             },
@@ -2828,6 +2829,7 @@ mod tests {
             label: "Talk to Auru without entering his cutscene trigger".into(),
             scope: scope(&snapshot),
             obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::Interaction {
                 actor_instance_id: "actor.auru".into(),
                 interaction_mode: "talk".into(),
@@ -3007,6 +3009,7 @@ mod tests {
             label: "Reach the exit region".into(),
             scope: scope(&snapshot),
             obligation_kind: ObligationKind::Geometry,
+            stage: crate::transition::ObligationStage::Reach,
             detail: ObligationDetail::Geometry {
                 approach_id: "approach.front".into(),
                 source_region_id: "region.before-wall".into(),
@@ -3019,6 +3022,7 @@ mod tests {
             label: "Remain on the non-void side".into(),
             scope: scope(&snapshot),
             obligation_kind: ObligationKind::VoidPlane,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::PlaneSide {
                 plane_id: "void.room-0".into(),
                 relation: PlaneRelation::NonNegative,
@@ -3031,6 +3035,7 @@ mod tests {
             label: "Face the door across the signed binary-angle wrap".into(),
             scope: scope(&snapshot),
             obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::Facing {
                 yaw: ValueReference::PlayerRotationY,
                 target_yaw: i16::MAX,
@@ -3177,6 +3182,7 @@ mod tests {
             label: format!("Inside {volume_id}"),
             scope: obligation_scope.clone(),
             obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::Interaction {
                 actor_instance_id: "actor.test".into(),
                 interaction_mode: "talk".into(),
@@ -3312,6 +3318,7 @@ mod tests {
             label: "Satisfy form-specific boss-door area checks".into(),
             scope: scope(&snapshot),
             obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::CompoundInteraction {
                 actor_instance_id: "actor.boss-door".into(),
                 interaction_mode: "door".into(),

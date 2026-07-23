@@ -2412,9 +2412,16 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
       their exact triangle, plane, and computed bounds; same-room player spawns
       are linked as candidates, never asserted paths. Degenerate reconstruction
       stays explicitly unavailable and no geometry implies connectivity.
-- [ ] Define obligations for reaching/activating each candidate transition.
-- [ ] Define obligations for state-producing interactions and interruptions, not
-      only final map transitions.
+- [x] Define obligations for reaching/activating each candidate transition.
+      Mechanics v28 gives every feasibility obligation an explicit `reach`,
+      `activate`, `effect`, or `interrupt` stage. Catalog validation rejects
+      effect obligations on transitions with no state operation and rejects
+      geometry obligations bound across different approach identities.
+- [x] Define obligations for state-producing interactions and interruptions, not
+      only final map transitions. The canonical obligation-coverage v1 artifact
+      inventories every candidate transition, including message/item/actor
+      producers, separates effect and interruption obligations, and names both
+      inline interrupt actions and matching witnessed microtraces.
 - [x] Support required talk/attention volumes, excluded cutscene-trigger volumes,
       facing/control predicates, and temporal windows.
   - [x] Validate evidenced axis-aligned world volumes and derive required-inside,

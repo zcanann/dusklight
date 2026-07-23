@@ -2687,6 +2687,7 @@ mod tests {
             label: "Interrupt Auru during the item dialogue window".into(),
             scope: scope(),
             obligation_kind: ObligationKind::Timing,
+            stage: crate::transition::ObligationStage::Interrupt,
             detail: ObligationDetail::Temporal {
                 requirement: requirement.clone(),
                 precondition: PredicateExpression::True,
@@ -2812,6 +2813,7 @@ mod tests {
             label: "Reach the exit past the wall".into(),
             scope: exact_scope.clone(),
             obligation_kind: ObligationKind::Geometry,
+            stage: crate::transition::ObligationStage::Reach,
             detail: ObligationDetail::Geometry {
                 approach_id: "approach.front".into(),
                 source_region_id: "region.before-wall".into(),

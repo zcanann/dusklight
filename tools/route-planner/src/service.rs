@@ -2869,6 +2869,7 @@ mod tests {
             label: "Reach test door".into(),
             scope: mechanics.transitions[0].scope.clone(),
             obligation_kind: ObligationKind::Geometry,
+            stage: dusklight_route_planner::transition::ObligationStage::Reach,
             detail: ObligationDetail::Unresolved {
                 research_question: "Can the test door be approached?".into(),
             },

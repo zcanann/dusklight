@@ -43,6 +43,7 @@ use dusklight_route_planner::message_import::{
     CompiledMessageFlowEntrySet, CompiledMessageFlowSet, MessageFlowEntryContractSet,
     MessageFlowResourceOverlaySet,
 };
+use dusklight_route_planner::obligation_coverage::ObligationCoverageReport;
 use dusklight_route_planner::orig_diff::compare_orig_bundles;
 use dusklight_route_planner::orig_discovery::{
     EXTRACTED_ORIG_BUNDLE_SCHEMA, OrigSupportStatus, SupportedBuildRegistry,
@@ -149,6 +150,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("project-authorization-graph") => project_authorization_graph(&args[1..]),
         Some("project-feasibility-diff") => project_feasibility_diff(&args[1..]),
         Some("report-extraction-coverage") => report_extraction_coverage(&args[1..]),
+        Some("report-obligation-coverage") => report_obligation_coverage(&args[1..]),
         Some("report-route-evidence-coverage") => report_route_evidence_coverage(&args[1..]),
         Some("report-route-suite-coverage") => report_route_suite_coverage(&args[1..]),
         Some("match-route-observations") => match_route_observations(&args[1..]),
@@ -265,6 +267,37 @@ fn report_extraction_coverage(args: &[String]) -> Result<(), Box<dyn Error>> {
             "contexts": report.contexts.len(),
             "manifests": manifests.len(),
             "unreported_domains": unreported_domains,
+        }))?
+    );
+    Ok(())
+}
+
+fn report_obligation_coverage(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let mechanics = match (option(args, "--catalog"), option(args, "--mechanics")) {
+        (Some(path), None) => ComposedPlannerCatalog::decode_canonical(&fs::read(path)?)?.mechanics,
+        (None, Some(path)) => MechanicsCatalog::decode_canonical(&fs::read(path)?)?,
+        _ => {
+            return Err(
+                "report-obligation-coverage requires exactly one of --catalog CATALOG.json or --mechanics MECHANICS.json"
+                    .into(),
+            );
+        }
+    };
+    let report = ObligationCoverageReport::build(&mechanics)?;
+    let output = required_path(args, "--output")?;
+    write_file(&output, &report.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "sha256": report.digest()?,
+            "transitions": report.transitions.len(),
+            "reach_obligations": report.transitions.iter().map(|row| row.reach_obligation_ids.len()).sum::<usize>(),
+            "activation_obligations": report.transitions.iter().map(|row| row.activation_obligation_ids.len()).sum::<usize>(),
+            "effect_obligations": report.transitions.iter().map(|row| row.effect_obligation_ids.len()).sum::<usize>(),
+            "interruption_obligations": report.transitions.iter().map(|row| row.interruption_obligation_ids.len()).sum::<usize>(),
+            "state_producers": report.transitions.iter().filter(|row| row.effect_operation_count > 0).count(),
         }))?
     );
     Ok(())
@@ -2583,6 +2616,7 @@ fn print_usage() {
             "  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]",
             "  route-planner project-graph (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--route-book BOOK.json] --output GRAPH.json",
             "  route-planner report-extraction-coverage --manifest MANIFEST.json [--manifest MANIFEST.json]... --output REPORT.json",
+            "  route-planner report-obligation-coverage (--catalog CATALOG.json | --mechanics MECHANICS.json) --output REPORT.json",
             "  route-planner report-route-evidence-coverage --catalog CATALOG.json --route-book BOOK.json [--route-book BOOK.json]... --output REPORT.json [--minimum-route-count N]",
             "  route-planner report-route-suite-coverage --catalog CATALOG.json [--glitchless BOOK.json]... [--hundred-percent BOOK.json]... [--any-percent BOOK.json]... [--hypothetical BOOK.json]... --output REPORT.json",
             "  route-planner match-route-observations --catalog CATALOG.json --route-book BOOK.json --manifest OBSERVATIONS.json --snapshot SNAPSHOT.json [--snapshot SNAPSHOT.json]... --output REPORT.json",

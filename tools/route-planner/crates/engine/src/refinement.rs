@@ -1845,6 +1845,7 @@ mod tests {
             label: "Reach the exit".into(),
             scope: scope(),
             obligation_kind: ObligationKind::Geometry,
+            stage: crate::transition::ObligationStage::Reach,
             detail: ObligationDetail::Unresolved {
                 research_question: "Can the exit be reached?".into(),
             },
@@ -2070,6 +2071,7 @@ mod tests {
                             label: "Reach the far side of the wall".into(),
                             scope: scope(),
                             obligation_kind: ObligationKind::Geometry,
+                            stage: crate::transition::ObligationStage::Reach,
                             detail: ObligationDetail::Unresolved {
                                 research_question: "Can the wall be crossed?".into(),
                             },

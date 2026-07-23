@@ -34,6 +34,7 @@ pub mod message_flow;
 pub mod message_import;
 pub mod native_observation;
 pub mod native_snapshot;
+pub mod obligation_coverage;
 pub mod orig_diff;
 pub mod orig_discovery;
 pub mod orig_extraction;

@@ -4034,6 +4034,7 @@ mod tests {
             label: "Reach the loading zone past the blocker".into(),
             scope: scope(snapshot),
             obligation_kind: ObligationKind::Geometry,
+            stage: crate::transition::ObligationStage::Reach,
             detail: ObligationDetail::Geometry {
                 approach_id: "approach.front".into(),
                 source_region_id: "region.a".into(),
@@ -4213,6 +4214,7 @@ mod tests {
                 label: "State-dependent physical activation".into(),
                 scope: scope(&snapshot),
                 obligation_kind: ObligationKind::Geometry,
+                stage: crate::transition::ObligationStage::Reach,
                 detail: ObligationDetail::Predicate {
                     predicate: PredicateExpression::Compare {
                         left: ValueReference::RawBits {
@@ -4234,6 +4236,7 @@ mod tests {
                 label: "Unmodeled physical activation".into(),
                 scope: scope(&snapshot),
                 obligation_kind: ObligationKind::Geometry,
+                stage: crate::transition::ObligationStage::Reach,
                 detail: ObligationDetail::Unresolved {
                     research_question: "geometry has not been imported".into(),
                 },
@@ -4404,6 +4407,7 @@ mod tests {
             label: "Gate state is open".into(),
             scope: scope(&snapshot),
             obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::Predicate {
                 predicate: gate_is("gate.path-open", true),
             },
@@ -5136,6 +5140,7 @@ mod tests {
             label: "Temple of Time local path is open".into(),
             scope: exact_scope.clone(),
             obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::Predicate {
                 predicate: PredicateExpression::Fact {
                     fact_id: "path.tot-open".into(),
@@ -5318,6 +5323,7 @@ mod tests {
             label: "Interrupt the dialogue within its input window".into(),
             scope: scope(&snapshot),
             obligation_kind: ObligationKind::Timing,
+            stage: crate::transition::ObligationStage::Interrupt,
             detail: ObligationDetail::Temporal {
                 requirement: TemporalRequirement {
                     action_id: "dialogue.test".into(),
@@ -6880,6 +6886,7 @@ mod tests {
                 label: "Reach Auru's talk volume outside his cutscene trigger with control".into(),
                 scope: exact_scope.clone(),
                 obligation_kind: ObligationKind::Interaction,
+                stage: crate::transition::ObligationStage::Activate,
                 detail: ObligationDetail::Interaction {
                     actor_instance_id: "actor.auru".into(),
                     interaction_mode: "talk".into(),
@@ -7272,6 +7279,7 @@ mod tests {
             label: "Interrupt Auru's memo overwrite on the witnessed frame".into(),
             scope: scope.clone(),
             obligation_kind: ObligationKind::Timing,
+            stage: crate::transition::ObligationStage::Interrupt,
             detail: ObligationDetail::Temporal {
                 requirement: crate::transition::TemporalRequirement {
                     action_id: "auru.memo-overwrite-dialogue".into(),
@@ -9734,6 +9742,7 @@ mod tests {
             label: "Cross the active Faron twilight barrier".into(),
             scope: scope(&start),
             obligation_kind: ObligationKind::Twilight,
+            stage: crate::transition::ObligationStage::Activate,
             detail: ObligationDetail::Predicate {
                 predicate: PredicateExpression::Not {
                     term: Box::new(gate_is("story.faron-twilight", true)),
@@ -10287,6 +10296,7 @@ mod tests {
                 label: "Stand in Auru's talk volume but outside his cutscene trigger".into(),
                 scope: exact_scope.clone(),
                 obligation_kind: ObligationKind::Interaction,
+                stage: crate::transition::ObligationStage::Activate,
                 detail: ObligationDetail::Interaction {
                     actor_instance_id: "actor.auru".into(),
                     interaction_mode: "talk".into(),
@@ -10325,6 +10335,7 @@ mod tests {
                 label: "Pull Ooccoo on the one frame after Coro's bottle text".into(),
                 scope: exact_scope.clone(),
                 obligation_kind: ObligationKind::Timing,
+                stage: crate::transition::ObligationStage::Interrupt,
                 detail: ObligationDetail::Temporal {
                     requirement: TemporalRequirement {
                         action_id: "dialogue.coro-after-bottle".into(),
@@ -10343,6 +10354,7 @@ mod tests {
                 label: "Pull Ooccoo on the lethal frame of the first introduction".into(),
                 scope: exact_scope.clone(),
                 obligation_kind: ObligationKind::Timing,
+                stage: crate::transition::ObligationStage::Interrupt,
                 detail: ObligationDetail::Temporal {
                     requirement: TemporalRequirement {
                         action_id: "dialogue.ooccoo-first-warp-on-death".into(),
@@ -10361,6 +10373,7 @@ mod tests {
                 label: "Open the map on the first Yeta talk frame and roll away".into(),
                 scope: exact_scope.clone(),
                 obligation_kind: ObligationKind::Timing,
+                stage: crate::transition::ObligationStage::Interrupt,
                 detail: ObligationDetail::Temporal {
                     requirement: TemporalRequirement {
                         action_id: "dialogue.yeta-first-talk".into(),
@@ -11010,6 +11023,7 @@ mod tests {
                 label: label.into(),
                 scope: exact_scope.clone(),
                 obligation_kind: ObligationKind::ActorState,
+                stage: crate::transition::ObligationStage::Activate,
                 detail: ObligationDetail::Predicate { predicate },
                 evidence: evidence(TruthStatus::Established),
             };
