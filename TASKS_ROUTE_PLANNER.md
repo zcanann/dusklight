@@ -2708,9 +2708,13 @@ visual polish or whole-game authoring features.
         the planner graph without adding mechanics or inferred losses.
   - [ ] Project solver proofs/frontiers into those regions and prove collapse
         safety from continuation equivalence or explicit residual differences.
-- [ ] Keep fact resolution, validation, solver/proof work, graph projection, and
+- [x] Keep fact resolution, validation, solver/proof work, graph projection, and
       authoritative mutations in Rust; keep the browser a typed rendering and
-      command surface.
+      command surface. The browser submits typed service envelopes for every
+      catalog/route projection, transition assessment/application, propagated
+      route edit, state inspection/diff, and revision-checked route-book edit;
+      its local logic is limited to search, layout, navigation, summaries, and
+      command enablement over the returned contracts.
 - [ ] Share or extract UI/infrastructure code only after a domain-independent seam
       is demonstrated; visual consistency does not depend on shared graph models.
 - [x] Add route canvas, alternatives, pin/ban/prefer, and collapse controls.
