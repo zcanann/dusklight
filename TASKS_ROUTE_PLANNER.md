@@ -2529,8 +2529,16 @@ Deliverable: researchers can extend the model without editing core code.
         Required route predicates, pinned actions, and every action plus
         pre/postcondition in a required/selected method are independent roots,
         so route-book solves use the same pruning without losing authored work.
-  - [ ] Add the remaining route/path constraints before treating this as the
-        production solver.
+  - [x] Add the remaining route/path constraints before treating this as the
+        production solver. Route-book v7 adds `maintain_predicate` invariants
+        checked at the start and after every action plus exact required/forbidden
+        transition constraints. Together with existing terminal predicates,
+        technique bans, evidence thresholds, and cost ceilings, these encode
+        never-save, preserve-twilight, remain-on-file-0, witnessed-only,
+        hypothetical-permitted, and bounded-cost routes without terminal-state
+        approximations. Unknown invariants cannot pass as preserved; transition
+        constraints participate in relevance and continuation progress. See
+        `docs/route-planner/path-constraints.md`.
 - [x] Support OR producers, AND requirements, and ordered writer/gate/read setups.
   - Backward expansion retains every matching producer and terminates through
     causal cycles. Forward search evaluates nested predicates and preserves

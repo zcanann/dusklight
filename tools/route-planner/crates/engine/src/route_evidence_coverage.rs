@@ -232,9 +232,18 @@ fn collect_route_fact_ids(book: &RouteBook, mechanics: &MechanicsCatalog) -> BTr
     for constraint in &book.constraints {
         match &constraint.constraint {
             PathConstraint::RequirePredicate { predicate }
-            | PathConstraint::ForbidPredicate { predicate } => {
+            | PathConstraint::ForbidPredicate { predicate }
+            | PathConstraint::MaintainPredicate { predicate } => {
                 collect_predicate(predicate, &mut facts)
             }
+            PathConstraint::RequireTransition { transition_id }
+            | PathConstraint::ForbidTransition { transition_id } => collect_action(
+                &RouteActionRef::Transition {
+                    transition_id: transition_id.clone(),
+                },
+                mechanics,
+                &mut facts,
+            ),
             PathConstraint::RequireTechnique { technique_id }
             | PathConstraint::ForbidTechnique { technique_id } => collect_action(
                 &RouteActionRef::Technique {

@@ -72,6 +72,7 @@ fn compile_route_policy(
         banned_actions: BTreeSet::new(),
         required_predicates: Vec::new(),
         forbidden_predicates: Vec::new(),
+        maintained_predicates: Vec::new(),
         required_sequences: Vec::new(),
         banned_sequences: Vec::new(),
         action_preferences: Vec::new(),
@@ -94,6 +95,19 @@ fn compile_route_policy(
             }
             PathConstraint::ForbidPredicate { predicate } => {
                 policy.forbidden_predicates.push(predicate.clone());
+            }
+            PathConstraint::MaintainPredicate { predicate } => {
+                policy.maintained_predicates.push(predicate.clone());
+            }
+            PathConstraint::RequireTransition { transition_id } => {
+                policy.required_actions.insert(RouteActionRef::Transition {
+                    transition_id: transition_id.clone(),
+                });
+            }
+            PathConstraint::ForbidTransition { transition_id } => {
+                policy.banned_actions.insert(RouteActionRef::Transition {
+                    transition_id: transition_id.clone(),
+                });
             }
             PathConstraint::RequireTechnique { technique_id } => {
                 policy.required_actions.insert(RouteActionRef::Technique {
@@ -1297,6 +1311,7 @@ struct RouteSearchPolicy {
     banned_actions: BTreeSet<RouteActionRef>,
     required_predicates: Vec<PredicateExpression>,
     forbidden_predicates: Vec<PredicateExpression>,
+    maintained_predicates: Vec<PredicateExpression>,
     required_sequences: Vec<RouteActionSequence>,
     banned_sequences: Vec<RouteActionSequence>,
     action_preferences: Vec<ActionPreference>,
@@ -1483,6 +1498,7 @@ impl<'a> ForwardSolver<'a> {
         let mut backward_action_roots = BTreeSet::new();
         if let Some(policy) = &route_policy {
             backward_predicate_roots.extend(policy.required_predicates.iter().cloned());
+            backward_predicate_roots.extend(policy.maintained_predicates.iter().cloned());
             backward_action_roots.extend(policy.required_actions.iter().cloned());
             for sequence in &policy.required_sequences {
                 for step in &sequence.steps {
@@ -1634,6 +1650,24 @@ impl<'a> ForwardSolver<'a> {
                     }
                 }
                 if forbidden {
+                    continue;
+                }
+                let mut invariant_failed = false;
+                for predicate in &policy.maintained_predicates {
+                    match evaluator.evaluate(predicate) {
+                        EvaluatedTruth::True => {}
+                        EvaluatedTruth::False => {
+                            invariant_failed = true;
+                            break;
+                        }
+                        EvaluatedTruth::Unknown => {
+                            saw_unknown_goal = true;
+                            invariant_failed = true;
+                            break;
+                        }
+                    }
+                }
+                if invariant_failed {
                     continue;
                 }
             }
@@ -5779,6 +5813,93 @@ mod tests {
             admitted.route_costs,
             BTreeMap::from([("difficulty".into(), 2)])
         );
+    }
+
+    #[test]
+    fn maintained_predicates_and_transition_constraints_apply_to_the_whole_path() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(vec![
+            transition(
+                &snapshot,
+                "transition.a-to-b",
+                "STAGE_A",
+                "STAGE_B",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.a-to-c",
+                "STAGE_A",
+                "STAGE_C",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.b-to-g",
+                "STAGE_B",
+                "STAGE_G",
+                Vec::new(),
+            ),
+            transition(
+                &snapshot,
+                "transition.c-to-g",
+                "STAGE_C",
+                "STAGE_G",
+                Vec::new(),
+            ),
+        ]);
+        mechanics.goals = vec![goal("goal.g", "STAGE_G")];
+        let facts = facts();
+        let mut book = route_book(&snapshot, Vec::new());
+        book.goal_ids = vec!["goal.g".into()];
+        book.constraints = vec![
+            RouteConstraint {
+                id: "constraint.maintain-outside-b".into(),
+                scope: scope(&snapshot),
+                constraint: PathConstraint::MaintainPredicate {
+                    predicate: PredicateExpression::Not {
+                        term: Box::new(stage_is("STAGE_B")),
+                    },
+                },
+            },
+            RouteConstraint {
+                id: "constraint.require-c-to-g".into(),
+                scope: scope(&snapshot),
+                constraint: PathConstraint::RequireTransition {
+                    transition_id: "transition.c-to-g".into(),
+                },
+            },
+        ];
+        let solve = |book: &RouteBook| {
+            ForwardSolver::new_with_route_book(
+                &facts,
+                &mechanics,
+                &[],
+                SolverOptions::default(),
+                book,
+            )
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &stage_is("STAGE_G"),
+            )
+            .unwrap()
+        };
+        let admitted = solve(&book);
+        assert_eq!(admitted.status, SearchStatus::Reached);
+        assert_eq!(
+            admitted
+                .steps
+                .iter()
+                .map(|step| step.action_id.as_str())
+                .collect::<Vec<_>>(),
+            ["transition.a-to-c", "transition.c-to-g"]
+        );
+
+        book.constraints[1].constraint = PathConstraint::ForbidTransition {
+            transition_id: "transition.c-to-g".into(),
+        };
+        assert_eq!(solve(&book).status, SearchStatus::UnreachableUnderModel);
     }
 
     #[test]

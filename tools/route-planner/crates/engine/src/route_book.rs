@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const ROUTE_BOOK_SCHEMA: &str = "dusklight.route-planner.route-book/v6";
-pub const ROUTE_BOOK_EDIT_BATCH_SCHEMA: &str = "dusklight.route-planner.route-book-edit-batch/v6";
+pub const ROUTE_BOOK_SCHEMA: &str = "dusklight.route-planner.route-book/v7";
+pub const ROUTE_BOOK_EDIT_BATCH_SCHEMA: &str = "dusklight.route-planner.route-book-edit-batch/v7";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -846,7 +846,12 @@ fn sort_route_book(book: &mut RouteBook) {
 fn validate_constraint(constraint: &PathConstraint) -> Result<(), PlannerContractError> {
     match constraint {
         PathConstraint::RequirePredicate { predicate }
-        | PathConstraint::ForbidPredicate { predicate } => predicate.validate(),
+        | PathConstraint::ForbidPredicate { predicate }
+        | PathConstraint::MaintainPredicate { predicate } => predicate.validate(),
+        PathConstraint::RequireTransition { transition_id }
+        | PathConstraint::ForbidTransition { transition_id } => {
+            validate_stable_id("constraints.transition_id", transition_id)
+        }
         PathConstraint::RequireTechnique { technique_id }
         | PathConstraint::ForbidTechnique { technique_id } => {
             validate_stable_id("constraints.technique_id", technique_id)
@@ -1019,9 +1024,34 @@ fn validate_constraint_against(
 ) -> Result<(), PlannerContractError> {
     match constraint {
         PathConstraint::RequirePredicate { predicate }
-        | PathConstraint::ForbidPredicate { predicate } => {
+        | PathConstraint::ForbidPredicate { predicate }
+        | PathConstraint::MaintainPredicate { predicate } => {
             validate_predicate_facts(Some(predicate), known_facts)?;
             validate_predicate_scopes(Some(predicate), required_scope, facts)
+        }
+        PathConstraint::RequireTransition { transition_id }
+        | PathConstraint::ForbidTransition { transition_id } => {
+            if mechanics
+                .transitions
+                .iter()
+                .any(|record| record.id == *transition_id)
+            {
+                require_scope_subset(
+                    "constraints.scope",
+                    required_scope,
+                    action_scope(
+                        &RouteActionRef::Transition {
+                            transition_id: transition_id.clone(),
+                        },
+                        mechanics,
+                    )?,
+                )
+            } else {
+                Err(PlannerContractError::new(
+                    "constraints.transition_id",
+                    format!("references unknown transition {transition_id}"),
+                ))
+            }
         }
         PathConstraint::RequireTechnique { technique_id }
         | PathConstraint::ForbidTechnique { technique_id } => {

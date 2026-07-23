@@ -666,6 +666,9 @@ pub struct Goal {
 pub enum PathConstraint {
     RequirePredicate { predicate: PredicateExpression },
     ForbidPredicate { predicate: PredicateExpression },
+    MaintainPredicate { predicate: PredicateExpression },
+    RequireTransition { transition_id: String },
+    ForbidTransition { transition_id: String },
     RequireTechnique { technique_id: String },
     ForbidTechnique { technique_id: String },
     EvidenceAtLeast { minimum: String },

@@ -164,16 +164,28 @@ fn collect_route_obligations(
     obligations: &mut BTreeSet<String>,
 ) {
     for constraint in &book.constraints {
-        if let PathConstraint::RequireTechnique { technique_id }
-        | PathConstraint::ForbidTechnique { technique_id } = &constraint.constraint
-        {
-            collect_action_obligations(
+        match &constraint.constraint {
+            PathConstraint::RequireTechnique { technique_id }
+            | PathConstraint::ForbidTechnique { technique_id } => collect_action_obligations(
                 &RouteActionRef::Technique {
                     technique_id: technique_id.clone(),
                 },
                 mechanics,
                 obligations,
-            );
+            ),
+            PathConstraint::RequireTransition { transition_id }
+            | PathConstraint::ForbidTransition { transition_id } => collect_action_obligations(
+                &RouteActionRef::Transition {
+                    transition_id: transition_id.clone(),
+                },
+                mechanics,
+                obligations,
+            ),
+            PathConstraint::RequirePredicate { .. }
+            | PathConstraint::ForbidPredicate { .. }
+            | PathConstraint::MaintainPredicate { .. }
+            | PathConstraint::EvidenceAtLeast { .. }
+            | PathConstraint::CostAtMost { .. } => {}
         }
     }
     for directive in &book.directives {

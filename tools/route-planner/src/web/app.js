@@ -1,8 +1,8 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v43";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v44";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v2";
 const LEGACY_PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
-const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v6";
+const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
 
