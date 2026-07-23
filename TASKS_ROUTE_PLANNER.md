@@ -2494,9 +2494,14 @@ Deliverable: researchers can extend the model without editing core code.
         labels; incomparable cost vectors remain independently explorable, zero
         axes are canonicalized away, and proof retention is bounded by the
         declared state limit rather than becoming an unbounded side channel.
-- [ ] Support exact content/language, evidence, technique, runtime-file, and path
+- [x] Support exact content/language, evidence, technique, runtime-file, and path
       constraints; validate portable plans independently over every selected
       context using only appropriately scoped/equivalent rules.
+      Exact/equivalent context expansion fixes content and mutable language/
+      settings per solve; typed predicates cover runtime-file and state paths,
+      route constraints/directives cover evidence and techniques, and every
+      selected context receives an independent proof with no cross-context rule
+      reuse outside an explicit evidence-backed equivalence set.
   - [x] Apply scoped require/forbid predicates and techniques plus pin/ban
         executable-action directives during forward search, with route-book
         identity retained in standalone reports.
