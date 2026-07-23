@@ -483,10 +483,23 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .ok_or("missing required --checkpoint-identity VALUE")?;
             let boundary = option(learn_args, "--source-boundary-fingerprint")
                 .ok_or("missing required --source-boundary-fingerprint VALUE")?;
+            let model_bytes = fs::read(&model_path)?;
+            let batch = option(learn_args, "--batch")
+                .map(
+                    |path| -> Result<NativeFrozenPolicySuffixBatch, Box<dyn Error>> {
+                        let batch: NativeFrozenPolicySuffixBatch =
+                            serde_json::from_slice(&fs::read(path)?)?;
+                        batch.validate(&model_bytes)?;
+                        Ok(batch)
+                    },
+                )
+                .transpose()?;
             let shard = NativeEpisodeShard::read(&shard_path)?;
             let report = verify_native_frozen_policy_reinference(
-                &fs::read(&model_path)?,
-                None,
+                &model_bytes,
+                batch
+                    .as_ref()
+                    .and_then(|batch| batch.frozen_policy.rollout_exploration.as_ref()),
                 &shard,
                 objective,
                 &checkpoint,

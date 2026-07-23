@@ -252,7 +252,7 @@ fn print_usage() {
         "  huntctl learn frozen-policy-probe-model --objective-sha256 SHA256 --output MODEL.dsfrozen"
     );
     eprintln!(
-        "  huntctl learn verify-frozen-policy --model MODEL.dsfrozen --input EPISODES.dseps --objective-sha256 SHA256 --checkpoint-identity VALUE --source-boundary-fingerprint VALUE --output REPORT.json"
+        "  huntctl learn verify-frozen-policy --model MODEL.dsfrozen --input EPISODES.dseps --objective-sha256 SHA256 --checkpoint-identity VALUE --source-boundary-fingerprint VALUE --output REPORT.json [--batch BATCH.json]"
     );
     eprintln!(
         "  huntctl learn verify-frozen-policy-cold-replay --result RESULT.json --reinference REINFERENCE.json --source-tape SOURCE.tape --realized-tape REALIZED.tape --input EPISODES.dseps --live-trace LIVE.trace --cold-trace COLD.trace --cold-milestone RESULT.json --episode-id ID --output REPORT.json"

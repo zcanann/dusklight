@@ -830,8 +830,11 @@ revalidated crash-safe journal/state chain.
       receives a unique, paired deterministic seed for bounded stick deltas and
       gameplay-button flips. Native execution and independent Rust reinference
       apply the same integer transform, and the v7 result binds the exact
-      exploration configuration. Whether this removes the measured collapse
-      remains an empirical comparison, not an assumed framework verdict.
+      exploration configuration. The rebuilt native runner has executed a real
+      160-tick v7 exploratory episode with zero fallback ticks; the standalone
+      verifier can now accept the sealed batch so independent reinference uses
+      the identical exploration contract. Whether this removes the measured
+      collapse remains an empirical comparison, not an assumed framework verdict.
   - observation insufficiency;
   - lossy or unsupported action surface;
   - sparse terminal coverage or poor credit assignment;
