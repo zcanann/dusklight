@@ -27,7 +27,7 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v31";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v32";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -111,6 +111,15 @@ pub enum PlannerServiceRequest {
         transition_id: String,
         evidence_mode: crate::RuntimeEvidenceMode,
     },
+    RemoveAuthoredStep {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        route_book: Box<RouteBook>,
+        step_id: String,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
     Solve {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
@@ -145,6 +154,7 @@ impl PlannerServiceRequest {
             | Self::DiffState { request_id, .. }
             | Self::EvaluateTransition { request_id, .. }
             | Self::AppendTransition { request_id, .. }
+            | Self::RemoveAuthoredStep { request_id, .. }
             | Self::Solve { request_id, .. }
             | Self::SolvePortable { request_id, .. } => request_id,
         }
@@ -206,6 +216,20 @@ pub enum PlannerServicePayload {
         after: Option<Box<PlannerExecutionStateDocument>>,
     },
     RejectedTransitionJoin {
+        assessment: Box<TransitionAssessment>,
+        diagnostics: Box<TransitionJoinDiagnostics>,
+        closest_before: Box<PlannerExecutionStateDocument>,
+    },
+    RemovedAuthoredStep {
+        book: Option<Box<RouteBook>>,
+        previous_route_book_sha256: Digest,
+        route_book_sha256: Option<Digest>,
+        step_id: String,
+        after: Box<PlannerExecutionStateDocument>,
+    },
+    RejectedRouteEdit {
+        step_id: String,
+        failed_step_id: String,
         assessment: Box<TransitionAssessment>,
         diagnostics: Box<TransitionJoinDiagnostics>,
         closest_before: Box<PlannerExecutionStateDocument>,
@@ -424,6 +448,24 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 route_book_id,
                 route_book_label,
                 &transition_id,
+                evidence_mode,
+            )
+        }),
+        PlannerServiceRequest::RemoveAuthoredStep {
+            state,
+            catalog,
+            equivalence_sets,
+            route_book,
+            step_id,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            remove_authored_step_from_route_book(
+                state,
+                &catalog,
+                &equivalence_sets,
+                *route_book,
+                &step_id,
                 evidence_mode,
             )
         }),
@@ -748,6 +790,106 @@ fn append_transition_to_route_book(
         step_id,
         assessment: Box::new(evaluation.assessment),
         after: Box::new(state.to_document()?),
+    })
+}
+
+fn remove_authored_step_from_route_book(
+    mut state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: RouteBook,
+    step_id: &str,
+    evidence_mode: crate::RuntimeEvidenceMode,
+) -> Result<PlannerServicePayload, dusklight_route_planner::PlannerContractError> {
+    route_book.validate_against_composed(catalog)?;
+    let previous_route_book_sha256 = route_book.digest()?;
+    let method = route_book
+        .methods
+        .iter()
+        .find(|method| method.id == AUTHORED_METHOD_ID)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "route_book.methods",
+                "does not contain the browser-authored route method",
+            )
+        })?;
+    if !method.step_ids.iter().any(|candidate| candidate == step_id) {
+        return Err(dusklight_route_planner::PlannerContractError::new(
+            "step_id",
+            "does not name a step in the browser-authored route method",
+        ));
+    }
+
+    for (index, surviving_step_id) in method
+        .step_ids
+        .iter()
+        .filter(|candidate| candidate.as_str() != step_id)
+        .enumerate()
+    {
+        let step = route_book
+            .steps
+            .iter()
+            .find(|step| &step.id == surviving_step_id)
+            .expect("validated route method references existing steps");
+        let RouteActionRef::Transition { transition_id } = &step.action else {
+            return Err(dusklight_route_planner::PlannerContractError::new(
+                "route_book.steps.action",
+                "authored route propagation currently requires transition steps",
+            ));
+        };
+        let evaluation = assess_and_apply_transition(
+            &mut state,
+            catalog,
+            equivalence_sets,
+            transition_id,
+            evidence_mode,
+            &format!("route.remove-replay-{index:04}"),
+        )?;
+        if evaluation.assessment.classification != TransitionClassification::Executable {
+            return Ok(PlannerServicePayload::RejectedRouteEdit {
+                step_id: step_id.into(),
+                failed_step_id: surviving_step_id.clone(),
+                assessment: Box::new(evaluation.assessment),
+                diagnostics: Box::new(evaluation.diagnostics),
+                closest_before: Box::new(state.to_document()?),
+            });
+        }
+    }
+    let after = Box::new(state.to_document()?);
+    if method.step_ids.len() == 1 {
+        return Ok(PlannerServicePayload::RemovedAuthoredStep {
+            book: None,
+            previous_route_book_sha256,
+            route_book_sha256: None,
+            step_id: step_id.into(),
+            after,
+        });
+    }
+
+    let mut edited_method = method.clone();
+    edited_method
+        .step_ids
+        .retain(|candidate| candidate != step_id);
+    let book = RouteBookEditBatch {
+        schema: ROUTE_BOOK_EDIT_BATCH_SCHEMA.into(),
+        expected_route_book_sha256: previous_route_book_sha256,
+        edits: vec![
+            RouteBookEdit::UpsertMethod {
+                method: edited_method,
+            },
+            RouteBookEdit::RemoveStep {
+                step_id: step_id.into(),
+            },
+        ],
+    }
+    .apply_composed(&route_book, catalog)?;
+    let route_book_sha256 = book.digest()?;
+    Ok(PlannerServicePayload::RemovedAuthoredStep {
+        book: Some(Box::new(book)),
+        previous_route_book_sha256,
+        route_book_sha256: Some(route_book_sha256),
+        step_id: step_id.into(),
+        after,
     })
 }
 
@@ -1132,8 +1274,8 @@ mod tests {
 
         let second = handle_request(PlannerServiceRequest::AppendTransition {
             request_id: "request.append-second".into(),
-            state: Box::new(state),
-            catalog: Box::new(catalog),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
             equivalence_sets: Vec::new(),
             route_book: Some(book),
             route_book_id: "route.test".into(),
@@ -1159,6 +1301,82 @@ mod tests {
             book.methods[0].step_ids,
             ["step.route-0000", "step.route-0001"]
         );
+
+        let rejected_remove = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
+            request_id: "request.remove-producer".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: Box::new((*book).clone()),
+            step_id: "step.route-0000".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = rejected_remove.outcome else {
+            panic!("a broken downstream join should be a typed edit rejection");
+        };
+        let PlannerServicePayload::RejectedRouteEdit {
+            step_id,
+            failed_step_id,
+            assessment,
+            closest_before,
+            ..
+        } = *payload
+        else {
+            panic!("producer removal should identify its broken consumer");
+        };
+        assert_eq!(step_id, "step.route-0000");
+        assert_eq!(failed_step_id, "step.route-0001");
+        assert_eq!(
+            assessment.classification,
+            TransitionClassification::GuardBlocked
+        );
+        assert_eq!(
+            closest_before.snapshot.environment.location.stage,
+            "F_SP103"
+        );
+
+        let removed_consumer = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
+            request_id: "request.remove-consumer".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: book,
+            step_id: "step.route-0001".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = removed_consumer.outcome else {
+            panic!("removing the terminal consumer should preserve its producer");
+        };
+        let PlannerServicePayload::RemovedAuthoredStep {
+            book: Some(book),
+            after,
+            ..
+        } = *payload
+        else {
+            panic!("one surviving step should retain the authored route book");
+        };
+        assert_eq!(book.methods[0].step_ids, ["step.route-0000"]);
+        assert_eq!(after.snapshot.environment.location.stage, "D_MN05");
+
+        let removed_last = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
+            request_id: "request.remove-last".into(),
+            state: Box::new(state),
+            catalog: Box::new(catalog),
+            equivalence_sets: Vec::new(),
+            route_book: book,
+            step_id: "step.route-0000".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = removed_last.outcome else {
+            panic!("removing the last authored step should restore an empty route");
+        };
+        let PlannerServicePayload::RemovedAuthoredStep {
+            book: None, after, ..
+        } = *payload
+        else {
+            panic!("an empty authored route should not preserve a hollow route book");
+        };
+        assert_eq!(after.snapshot.environment.location.stage, "F_SP103");
     }
 
     #[test]

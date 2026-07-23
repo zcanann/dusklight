@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v31";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v32";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const NODE_WIDTH = 176;
@@ -9,7 +9,7 @@ const elements = Object.fromEntries([
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json",
-  "evaluate-transition", "insert-transition",
+  "evaluate-transition", "insert-transition", "remove-step",
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -41,6 +41,7 @@ elements["zoom-out"].addEventListener("click", () => zoomAt(1 / 1.2));
 elements.fit.addEventListener("click", fitGraph);
 elements["evaluate-transition"].addEventListener("click", evaluateSelectedTransition);
 elements["insert-transition"].addEventListener("click", insertSelectedTransition);
+elements["remove-step"].addEventListener("click", removeSelectedRouteStep);
 elements.canvas.addEventListener("wheel", onWheel, { passive: false });
 elements.canvas.addEventListener("pointerdown", beginPan);
 window.addEventListener("pointermove", moveGesture);
@@ -288,13 +289,16 @@ function renderDetails() {
     elements["detail-json"].textContent = "{}";
     elements["evaluate-transition"].disabled = true;
     elements["insert-transition"].disabled = true;
+    elements["remove-step"].disabled = true;
     return;
   }
   elements["detail-title"].textContent = selected.type === "node" ? selected.value.label : selected.value.relation;
   elements["detail-subtitle"].textContent = selected.value.id;
   const transition = selected.type === "node" && selected.value.payload.kind === "transition";
+  const routeStep = selected.type === "node" && selected.value.payload.kind === "reference_step";
   elements["evaluate-transition"].disabled = !transition || !state.project?.start_state;
   elements["insert-transition"].disabled = !transition || !state.project?.start_state || state.readOnly;
+  elements["remove-step"].disabled = !routeStep || !state.project?.start_state || state.readOnly;
   elements["evaluate-transition"].title = state.project?.start_state
     ? "Run the authoritative transition evaluator"
     : "This project has no exact start state";
@@ -302,6 +306,54 @@ function renderDetails() {
     selection: selected.value,
     ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
   }, null, 2);
+}
+
+async function removeSelectedRouteStep() {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  if (node?.payload.kind !== "reference_step" || !state.project?.start_state
+    || !state.project?.route_book || state.readOnly) return;
+  try {
+    setStatus(`Replaying route without ${node.label}...`);
+    const payload = await service({
+      command: "remove_authored_step",
+      request_id: requestId("remove-step"),
+      state: state.project.start_state,
+      catalog: state.project.catalog,
+      equivalence_sets: state.project.equivalence_sets ?? [],
+      route_book: state.project.route_book,
+      step_id: node.payload.step_id,
+      evidence_mode: "established_only",
+    });
+    if (payload.kind === "rejected_route_edit") {
+      state.transitionEvaluation = payload;
+      render();
+      setStatus(
+        `${joinRejectionSummary(node.label, payload)}; first broken downstream step ${payload.failed_step_id}`,
+        "bad",
+      );
+      return;
+    }
+    if (payload.kind !== "removed_authored_step") {
+      throw new Error(`Unexpected response ${payload.kind}`);
+    }
+    state.project.route_book = payload.book ?? null;
+    const projected = await service({
+      command: "project_graph",
+      request_id: requestId("project-after-remove"),
+      catalog: state.project.catalog,
+      route_book: state.project.route_book,
+    });
+    if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
+    state.graph = projected.graph;
+    state.selected = null;
+    state.transitionEvaluation = null;
+    ensurePositions();
+    markDirty();
+    render();
+    setStatus(`${node.label} removed; downstream state replayed; save to persist`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 async function insertSelectedTransition() {

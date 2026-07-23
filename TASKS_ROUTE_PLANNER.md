@@ -65,7 +65,7 @@ book transactionally, returns the propagated after-state, and lets the existing
 revision-checked project save persist both semantics and layout. Drag-to-connect,
 rejected-edge depiction, producer suggestions, and most planned demonstrations
 remain open. Invalid insertion is nevertheless no longer flattened into a
-service error: the v31 response preserves the closest propagated state, exact
+service error: the v32 response preserves the closest propagated state, exact
 classification, missing and unknown obligation/requirement IDs, context/evidence
 status, and active or unknown obstruction/resolver diagnostics; the browser
 retains and renders that payload without mutating the route book. The built-in
@@ -76,16 +76,20 @@ by insertion propagates from F_SP103 to R_SP107 room 3 through the modeled
 savewarp reader. The opening project likewise carries an exact reset-ready world
 state and goal; its first transition writes the restart-room parameter and enters
 `PROC_OPENING_SCENE` with the audited F_SP102 pending load without pretending the
-world load completed. The remaining planned demonstrations, deeper file-selection
-continuation, and removal/replacement editing remain open. Coverage is also
-incomplete, so the current engine is a
+world load completed. The v32 Remove command replays every surviving step from
+the exact start before changing semantics: a producer removal that breaks a
+later join returns that first rejected step and closest state without mutation,
+while a valid removal transactionally edits (or empties) the route book and
+returns the new final state. The remaining planned demonstrations, deeper
+file-selection continuation, and replacement editing remain open. Coverage is
+also incomplete, so the current engine is a
 causal-reasoning laboratory over selected modeled mechanics rather than a
 whole-game route explorer.
 
 Current Windows health is green. Planner-owned canonical JSON and source-evidence
 files are forced to LF checkout, and the workspace declares both crates as
 default members. The normal planner test command now runs the engine rather than
-hiding it behind a green wrapper-only suite: 234 engine tests, 14 runtime
+hiding it behind a green wrapper-only suite: 234 engine tests, 16 runtime
 library tests, one runtime binary test, and both doc-test targets pass.
 
 ---
@@ -2570,26 +2574,31 @@ visual polish or whole-game authoring features.
 - [ ] Let an author drag a transition onto the canvas and connect it to an exact
       predecessor state. Rust recomputes every downstream state and remains the
       only validation and mutation authority.
-      The v30 service now evaluates one catalog transition against an exact
+      The v32 service evaluates one catalog transition against an exact
       execution-state document, resolves modeled obligations and evidence, and
       applies effects transactionally only for `executable`; the browser exposes
       this on selected transitions for projects with a start state. Its Insert
       command additionally replays every prior ordered reference step, rejects a
       broken join without editing, and transactionally adds an executable step
-      plus its propagated after-state. A rejected v31 append returns the closest
+      plus its propagated after-state. A rejected v32 append returns the closest
       propagated before-state and structured assessment/feasibility diagnostics
-      for browser inspection. Dragging from a state node remains open.
+      for browser inspection. A selected authored step can also be removed;
+      Rust replays all survivors and either returns a typed downstream rejection
+      without mutation or a transactionally edited route. Dragging from a state
+      node remains open.
 - [ ] Render accepted connections distinctly from rejected or unknown joins.
       Selecting a rejected join must show missing producers, active
       obstructions/resolvers, unknown obligations, or exact-context mismatch;
       there is no force-connect operation.
 - [x] Save route semantics and presentation metadata through revision-checked
       route-book edits. Node positions, viewport, and visual grouping may persist
-      but must never affect solver reachability. Append-transition v30 creates or
+      but must never affect solver reachability. Append-transition v32 creates or
       revision-checks the browser-authored route book, applies a sealed upsert-step
       plus ordered-method edit, and reprojects the graph. The browser marks the
       semantic edit dirty; the existing atomic revision-checked project save then
-      persists the route book and presentation positions independently.
+      persists the route book and presentation positions independently. Valid
+      v32 removals use the same digest-checked edit batch, and removing the sole
+      step restores an explicitly empty route rather than a hollow method.
 - [ ] Selecting a state or transition shows exact before/after location,
       inventory, flags/components, bindings, provenance, effects, requirements,
       and evidence in the bottom panel.
@@ -2609,7 +2618,9 @@ visual polish or whole-game authoring features.
       validates, inserts, and visibly changes the propagated location to
       R_SP107 room 3. The opening project now also executes its reset prefix from
       an exact start, writes `restart.room_param = 0`, and exposes the pending
-      F_SP102 opening-process load. Removal/replacement, deeper file-selection
+      F_SP102 opening-process load. Selected steps can now be removed with
+      authoritative downstream replay and a typed rejection when the removed
+      step remains a required producer. Replacement, deeper file-selection
       continuation, and the remaining three demonstrations are still open.
 - [ ] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
