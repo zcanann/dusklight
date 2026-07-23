@@ -31,6 +31,7 @@ use crate::residual_campaign_runner::{
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
+use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_search::residual_action::extend_tape_with_released_input;
 use dusklight_search::residual_retention::{
     ResidualGenerationEvaluation, ResidualOutcomeArchive, rank_residual_generation,
@@ -654,6 +655,7 @@ fn load_native_evaluation(
     execution: &NativeResidualExecutionBinding,
     row: &crate::optimization_resume::OptimizationResumeCandidate,
     candidate: &PreparedCandidate,
+    artifact_cache: &mut NativeAttemptArtifactCache,
 ) -> Result<NativeResidualCampaignEvaluation, NativeResidualCampaignRunnerError> {
     let reference = row
         .result
@@ -665,7 +667,7 @@ fn load_native_evaluation(
     evaluation
         .validate(optimization, execution, &candidate.envelope)
         .map_err(native_error)?;
-    validate_evaluation_artifacts(root, optimization, &evaluation)?;
+    validate_evaluation_artifacts_cached(root, optimization, &evaluation, artifact_cache)?;
     Ok(evaluation)
 }
 
@@ -674,13 +676,27 @@ fn validate_evaluation_artifacts(
     optimization: &OptimizationRequest,
     evaluation: &NativeResidualCampaignEvaluation,
 ) -> Result<(), NativeResidualCampaignRunnerError> {
+    validate_evaluation_artifacts_cached(
+        root,
+        optimization,
+        evaluation,
+        &mut NativeAttemptArtifactCache::default(),
+    )
+}
+
+fn validate_evaluation_artifacts_cached(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    evaluation: &NativeResidualCampaignEvaluation,
+    artifact_cache: &mut NativeAttemptArtifactCache,
+) -> Result<(), NativeResidualCampaignRunnerError> {
     let terminal = NativeTerminalBinding {
         goal: optimization.terminal_predicate.goal.clone(),
         program_sha256: optimization.terminal_predicate.program_sha256,
         definition_sha256: optimization.terminal_predicate.definition_sha256,
     };
     for attempt in &evaluation.attempts {
-        validate_attempt_artifacts(root, &terminal, attempt)?;
+        validate_attempt_artifacts_cached(root, &terminal, attempt, artifact_cache)?;
     }
     let expected = optimization
         .alternate_terminal_predicates(root)
@@ -713,7 +729,7 @@ fn validate_evaluation_artifacts(
     }
     for alternate in &evaluation.alternate_terminals {
         for attempt in &alternate.attempts {
-            validate_attempt_artifacts(root, &alternate.terminal, attempt)?;
+            validate_attempt_artifacts_cached(root, &alternate.terminal, attempt, artifact_cache)?;
         }
     }
     Ok(())
@@ -724,27 +740,81 @@ pub(crate) fn validate_attempt_artifacts(
     terminal: &NativeTerminalBinding,
     attempt: &NativeResidualAttempt,
 ) -> Result<(), NativeResidualCampaignRunnerError> {
-    let batch: NativeSuffixBatch =
-        serde_json::from_slice(&read_artifact(root, &attempt.batch_request).map_err(native_error)?)
+    validate_attempt_artifacts_cached(
+        root,
+        terminal,
+        attempt,
+        &mut NativeAttemptArtifactCache::default(),
+    )
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct NativeAttemptArtifactCacheKey {
+    batch_request_path: String,
+    batch_request_sha256: Digest,
+    batch_result_path: String,
+    batch_result_sha256: Digest,
+    terminal_goal: String,
+    terminal_program_sha256: Digest,
+    terminal_definition_sha256: Digest,
+}
+
+#[derive(Clone, Debug)]
+struct CachedNativeAttemptArtifacts {
+    validated: ValidatedNativeSuffixBatch,
+    episode: ArtifactReference,
+}
+
+type NativeAttemptArtifactCache =
+    BTreeMap<NativeAttemptArtifactCacheKey, CachedNativeAttemptArtifacts>;
+
+fn validate_attempt_artifacts_cached(
+    root: &Path,
+    terminal: &NativeTerminalBinding,
+    attempt: &NativeResidualAttempt,
+    artifact_cache: &mut NativeAttemptArtifactCache,
+) -> Result<(), NativeResidualCampaignRunnerError> {
+    let cache_key = NativeAttemptArtifactCacheKey {
+        batch_request_path: attempt.batch_request.path.clone(),
+        batch_request_sha256: attempt.batch_request.sha256,
+        batch_result_path: attempt.batch_result.path.clone(),
+        batch_result_sha256: attempt.batch_result.sha256,
+        terminal_goal: terminal.goal.clone(),
+        terminal_program_sha256: terminal.program_sha256,
+        terminal_definition_sha256: terminal.definition_sha256,
+    };
+    if !artifact_cache.contains_key(&cache_key) {
+        let batch: NativeSuffixBatch = serde_json::from_slice(
+            &read_artifact(root, &attempt.batch_request).map_err(native_error)?,
+        )
+        .map_err(native_error)?;
+        let result_path = root.join(&attempt.batch_result.path);
+        if artifact_reference(root, &result_path).map_err(native_error)? != attempt.batch_result {
+            return Err(native_message(
+                "native residual batch result artifact digest differs",
+            ));
+        }
+        let validated = validate_native_suffix_artifacts(&batch, &result_path, terminal)
             .map_err(native_error)?;
-    let result_path = root.join(&attempt.batch_result.path);
-    if artifact_reference(root, &result_path).map_err(native_error)? != attempt.batch_result {
-        return Err(native_message(
-            "native residual batch result artifact digest differs",
-        ));
+        let episode = artifact_reference(root, Path::new(&validated.episode_shard_path))
+            .map_err(native_error)?;
+        artifact_cache.insert(
+            cache_key.clone(),
+            CachedNativeAttemptArtifacts { validated, episode },
+        );
     }
-    let validated =
-        validate_native_suffix_artifacts(&batch, &result_path, terminal).map_err(native_error)?;
-    let candidate = validated
+    let cached = artifact_cache
+        .get(&cache_key)
+        .expect("validated native attempt artifacts were cached");
+    let candidate = cached
+        .validated
         .candidates
         .iter()
         .find(|candidate| candidate.id == attempt.wire_candidate_id)
         .ok_or_else(|| native_message("native residual attempt is absent from its batch"))?;
-    let episode =
-        artifact_reference(root, Path::new(&validated.episode_shard_path)).map_err(native_error)?;
-    if episode != attempt.episode_shard
-        || validated.restore_identity != attempt.restore_identity
-        || validated.checkpoint_bytes != attempt.checkpoint_bytes
+    if cached.episode != attempt.episode_shard
+        || cached.validated.restore_identity != attempt.restore_identity
+        || cached.validated.checkpoint_bytes != attempt.checkpoint_bytes
         || candidate.simulated_ticks != attempt.simulated_ticks
         || candidate.first_hit_tick != attempt.first_hit_tick
         || candidate.terminal_boundary_fingerprint != attempt.terminal_boundary_fingerprint
@@ -805,12 +875,19 @@ fn replay_completed(
     resume: &OptimizationResumeState,
     archive: &mut ResidualOutcomeArchive,
 ) -> Result<(), NativeResidualCampaignRunnerError> {
+    let mut artifact_cache = NativeAttemptArtifactCache::default();
     for row in resume.candidates.iter().filter(|row| row.result.is_some()) {
         ensure_not_cancelled(config)?;
         let candidate = load_candidate(root, config.optimization, parent, parent_bytes, row)
             .map_err(native_error)?;
-        let evaluation =
-            load_native_evaluation(root, config.optimization, config.execution, row, &candidate)?;
+        let evaluation = load_native_evaluation(
+            root,
+            config.optimization,
+            config.execution,
+            row,
+            &candidate,
+            &mut artifact_cache,
+        )?;
         archive
             .record(&candidate.compiled, evaluation.evidence)
             .map_err(native_error)?;
@@ -1121,6 +1198,7 @@ fn evaluate_generation(
     }
     *resume = append_optimization_resume_events(config.optimization, root, events)
         .map_err(native_error)?;
+    let mut artifact_cache = NativeAttemptArtifactCache::default();
     for candidate in &candidates {
         if let Some(row) = resume
             .candidates
@@ -1134,6 +1212,7 @@ fn evaluate_generation(
                 config.execution,
                 row,
                 candidate,
+                &mut artifact_cache,
             )?;
             archive
                 .record(&candidate.compiled, evaluation.evidence)
@@ -1186,6 +1265,7 @@ fn generation_rank(
         generation,
     )
     .map_err(native_error)?;
+    let mut artifact_cache = NativeAttemptArtifactCache::default();
     let evaluations = candidates
         .iter()
         .map(|candidate| {
@@ -1194,7 +1274,14 @@ fn generation_rank(
                 .iter()
                 .find(|row| row.id == candidate.envelope.id)
                 .ok_or_else(|| native_message("ranked native candidate is not journaled"))?;
-            load_native_evaluation(root, config.optimization, config.execution, row, candidate)
+            load_native_evaluation(
+                root,
+                config.optimization,
+                config.execution,
+                row,
+                candidate,
+                &mut artifact_cache,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     let inputs = candidates
@@ -1237,6 +1324,7 @@ fn append_generation_replay(
         BTreeSet::from([generation])
     };
     let mut evaluations = Vec::new();
+    let mut artifact_cache = NativeAttemptArtifactCache::default();
     for generation in generations {
         let candidates = load_generation(
             root,
@@ -1260,6 +1348,7 @@ fn append_generation_replay(
                     config.execution,
                     row,
                     candidate,
+                    &mut artifact_cache,
                 )?);
             }
         }
@@ -1560,10 +1649,18 @@ fn validate_checkpoint_replay(
         })
         .collect::<BTreeSet<_>>();
     let mut authenticated_alternates = BTreeSet::new();
+    let mut artifact_cache = NativeAttemptArtifactCache::default();
     for row in resume.candidates.iter().filter(|row| row.result.is_some()) {
         let candidate =
             load_candidate(root, optimization, parent, parent_bytes, row).map_err(native_error)?;
-        let evaluation = load_native_evaluation(root, optimization, execution, row, &candidate)?;
+        let evaluation = load_native_evaluation(
+            root,
+            optimization,
+            execution,
+            row,
+            &candidate,
+            &mut artifact_cache,
+        )?;
         for alternate in &evaluation.alternate_terminals {
             for attempt in alternate
                 .attempts
