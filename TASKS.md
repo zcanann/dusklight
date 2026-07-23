@@ -755,13 +755,23 @@ revalidated crash-safe journal/state chain.
 
 ## 4. Prove that learning adds value
 
-- [ ] Freeze equal simulated-tick budgets and identical initial-state
+- [x] Freeze equal simulated-tick budgets and identical initial-state
       distributions for:
   - independent random residual search;
   - CEM residual optimization;
   - demonstration-assisted state-reactive discovery;
   - from-scratch state-reactive discovery;
   - learned proposals followed by the same post-discovery residual refinement.
+      `campaign seal-learning-value-comparison-plan` now makes the seed and
+      held-out checkpoint cross-product, terminal identity, repetitions, and
+      per-cell simulated-tick cap common to all treatments. Plan validation
+      requires exactly the five treatments, at least three sorted unique seeds
+      and two sorted held-out checkpoints, an exact per-treatment phase-budget
+      sum, and byte-identical CEM configuration for the continuous baseline and
+      learned method's post-discovery refinement. The sealed Ordon v1 matrix has
+      four seeds, two held-out tapes, five treatments, 40 cells, 327,680 ticks
+      per cell, a 13,107,200-tick declared cap, and no promotion authority:
+      `routes/Glitch Exhibition/intro/benchmarks/ordon-gate4-learning-value-comparison.plan.json`.
 - [ ] Evaluate across several deterministic seeds and held-out checkpoints.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.

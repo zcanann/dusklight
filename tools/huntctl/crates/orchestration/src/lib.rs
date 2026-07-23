@@ -5,6 +5,7 @@
 mod anchored_search;
 mod campaign_replay;
 pub mod harness;
+pub mod learning_value_comparison;
 pub mod native_goal_learning_loop;
 pub mod native_goal_learning_loop_runner;
 pub mod native_residual_campaign;

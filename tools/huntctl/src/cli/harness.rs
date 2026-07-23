@@ -23,6 +23,42 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("seal-learning-value-comparison-plan") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let input = repository_file(
+            &repository_root,
+            &required_path(command_args, "--input")?,
+            "learning-value comparison plan draft",
+        )?;
+        let draft: huntctl::search_evaluator::learning_value_comparison::LearningValueComparisonPlan =
+            serde_json::from_slice(&fs::read(input)?)?;
+        let plan = draft.seal(&repository_root)?;
+        let report = plan.validate_files(&repository_root)?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "learning-value comparison plan",
+        )?;
+        refuse_existing_output(&output, "learning-value comparison plan")?;
+        write_new_file(&output, plan.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("validate-learning-value-comparison-plan") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let input = repository_file(
+            &repository_root,
+            &required_path(command_args, "--input")?,
+            "learning-value comparison plan",
+        )?;
+        let plan: huntctl::search_evaluator::learning_value_comparison::LearningValueComparisonPlan =
+            serde_json::from_slice(&fs::read(input)?)?;
+        let report = plan.validate_files(&repository_root)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("validate-residual-winner-minimization") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;
