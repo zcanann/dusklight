@@ -785,7 +785,11 @@ revalidated crash-safe journal/state chain.
       checkpoint request: the materializer selects only a plan-owned random or
       CEM arm, isolates one seed/worker and resume namespace, installs the exact
       optimizer/candidate count and tick cap, strips critic/curriculum drift,
-      and reseals the result against repository artifacts.
+      and reseals the result against repository artifacts. State-reactive cells
+      likewise derive an isolated one-seed native checkpoint authority with the
+      exact discovery phase cap for demonstration-assisted, from-scratch, and
+      learned-then-refined treatments; the learning-loop seal remains the
+      separate authority for demonstration mode, generations, and rollouts.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
       The predeclared report verdict is implemented but remains unchecked until

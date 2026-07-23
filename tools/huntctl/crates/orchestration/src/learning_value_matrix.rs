@@ -72,6 +72,66 @@ pub fn materialize_residual_cell_request(
     Ok(request)
 }
 
+pub fn materialize_learning_cell_optimization(
+    plan: &LearningValueComparisonPlan,
+    checkpoint_id: &str,
+    deterministic_seed: u64,
+    treatment_kind: LearningValueTreatmentKind,
+    base: &OptimizationRequest,
+    repository_root: &Path,
+) -> Result<OptimizationRequest, LearningValueMatrixError> {
+    plan.validate_files(repository_root).map_err(matrix_error)?;
+    base.validate_files(repository_root).map_err(matrix_error)?;
+    if !plan.deterministic_seeds.contains(&deterministic_seed) {
+        return Err(matrix_message(
+            "learning-value cell seed is absent from the sealed plan",
+        ));
+    }
+    let checkpoint = plan
+        .held_out_checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.id == checkpoint_id)
+        .ok_or_else(|| {
+            matrix_message("learning-value cell checkpoint is absent from the sealed plan")
+        })?;
+    let treatment = plan
+        .treatments
+        .iter()
+        .find(|treatment| treatment.kind() == treatment_kind)
+        .ok_or_else(|| {
+            matrix_message("learning-value cell treatment is absent from the sealed plan")
+        })?;
+    if !matches!(
+        treatment,
+        LearningValueTreatment::DemonstrationAssistedStateReactive { .. }
+            | LearningValueTreatment::FromScratchStateReactive { .. }
+            | LearningValueTreatment::LearnedThenResidualRefinement { .. }
+    ) || treatment.budget().discovery_simulated_ticks == 0
+    {
+        return Err(matrix_message(
+            "only plan-owned state-reactive treatments can materialize learning authority",
+        ));
+    }
+    validate_base(plan, checkpoint, base)?;
+
+    let mut request = base.clone();
+    request.id = cell_id(&plan.id, checkpoint_id, treatment_kind, deterministic_seed)?;
+    request.budgets.simulated_tick_budget = treatment.budget().discovery_simulated_ticks;
+    request.execution.workers = 1;
+    request.execution.deterministic_seeds = vec![deterministic_seed];
+    request.execution.repetitions = plan.repetitions_per_cell;
+    request.proposal.critic_ranking = None;
+    request.resume.state_path = format!("build/campaigns/{}/residual-state.json", request.id);
+    request.resume.journal_path = format!("build/campaigns/{}/residual-journal.jsonl", request.id);
+    request.horizon_tightening = None;
+    request.reverse_curriculum = None;
+    request.refresh_content_sha256().map_err(matrix_error)?;
+    request
+        .validate_files(repository_root)
+        .map_err(matrix_error)?;
+    Ok(request)
+}
+
 pub fn residual_treatment_from_slug(
     value: &str,
 ) -> Result<LearningValueTreatmentKind, LearningValueMatrixError> {
@@ -82,6 +142,25 @@ pub fn residual_treatment_from_slug(
         "cem-residual" | "cem_residual" => Ok(LearningValueTreatmentKind::CemResidual),
         _ => Err(matrix_message(
             "residual cell treatment must be independent-random-residual or cem-residual",
+        )),
+    }
+}
+
+pub fn learning_treatment_from_slug(
+    value: &str,
+) -> Result<LearningValueTreatmentKind, LearningValueMatrixError> {
+    match value {
+        "demonstration-assisted-state-reactive" | "demonstration_assisted_state_reactive" => {
+            Ok(LearningValueTreatmentKind::DemonstrationAssistedStateReactive)
+        }
+        "from-scratch-state-reactive" | "from_scratch_state_reactive" => {
+            Ok(LearningValueTreatmentKind::FromScratchStateReactive)
+        }
+        "learned-then-residual-refinement" | "learned_then_residual_refinement" => {
+            Ok(LearningValueTreatmentKind::LearnedThenResidualRefinement)
+        }
+        _ => Err(matrix_message(
+            "learning cell treatment must be demonstration-assisted-state-reactive, from-scratch-state-reactive, or learned-then-residual-refinement",
         )),
     }
 }
@@ -149,11 +228,9 @@ fn cell_id(
     let treatment = match treatment {
         LearningValueTreatmentKind::IndependentRandomResidual => "random",
         LearningValueTreatmentKind::CemResidual => "cem",
-        _ => {
-            return Err(matrix_message(
-                "state-reactive treatment cannot materialize a residual baseline request",
-            ));
-        }
+        LearningValueTreatmentKind::DemonstrationAssistedStateReactive => "demo",
+        LearningValueTreatmentKind::FromScratchStateReactive => "scratch",
+        LearningValueTreatmentKind::LearnedThenResidualRefinement => "learned",
     };
     let id = format!("{plan_id}-{checkpoint_id}-{treatment}-{seed}");
     if id.len() > 128 {
@@ -198,6 +275,23 @@ mod tests {
             LearningValueTreatmentKind::CemResidual
         );
         assert!(residual_treatment_from_slug("learned-then-residual-refinement").is_err());
+    }
+
+    #[test]
+    fn learning_treatment_slugs_are_explicit() {
+        assert_eq!(
+            learning_treatment_from_slug("demonstration-assisted-state-reactive").unwrap(),
+            LearningValueTreatmentKind::DemonstrationAssistedStateReactive
+        );
+        assert_eq!(
+            learning_treatment_from_slug("from-scratch-state-reactive").unwrap(),
+            LearningValueTreatmentKind::FromScratchStateReactive
+        );
+        assert_eq!(
+            learning_treatment_from_slug("learned-then-residual-refinement").unwrap(),
+            LearningValueTreatmentKind::LearnedThenResidualRefinement
+        );
+        assert!(learning_treatment_from_slug("cem-residual").is_err());
     }
 
     #[test]
