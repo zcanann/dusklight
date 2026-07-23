@@ -65,7 +65,7 @@ book transactionally, returns the propagated after-state, and lets the existing
 revision-checked project save persist both semantics and layout. Drag-to-connect,
 rejected-edge depiction, producer suggestions, and most planned demonstrations
 remain open. Invalid insertion is nevertheless no longer flattened into a
-service error: the v32 response preserves the closest propagated state, exact
+service error: the v33 response preserves the closest propagated state, exact
 classification, missing and unknown obligation/requirement IDs, context/evidence
 status, and active or unknown obstruction/resolver diagnostics; the browser
 retains and renders that payload without mutating the route book. The built-in
@@ -76,12 +76,15 @@ by insertion propagates from F_SP103 to R_SP107 room 3 through the modeled
 savewarp reader. The opening project likewise carries an exact reset-ready world
 state and goal; its first transition writes the restart-room parameter and enters
 `PROC_OPENING_SCENE` with the audited F_SP102 pending load without pretending the
-world load completed. The v32 Remove command replays every surviving step from
+world load completed. The v33 Remove command replays every surviving step from
 the exact start before changing semantics: a producer removal that breaks a
 later join returns that first rejected step and closest state without mutation,
 while a valid removal transactionally edits (or empties) the route book and
-returns the new final state. The remaining planned demonstrations, deeper
-file-selection continuation, and replacement editing remain open. Coverage is
+returns the new final state. The v33 Replace command preserves the stable step
+identity while replaying the proposed transition and every downstream step;
+failed replacements return the first rejected join without mutation, and valid
+replacements commit one digest-checked step upsert. The remaining planned
+demonstrations and deeper file-selection continuation remain open. Coverage is
 also incomplete, so the current engine is a
 causal-reasoning laboratory over selected modeled mechanics rather than a
 whole-game route explorer.
@@ -2574,31 +2577,36 @@ visual polish or whole-game authoring features.
 - [ ] Let an author drag a transition onto the canvas and connect it to an exact
       predecessor state. Rust recomputes every downstream state and remains the
       only validation and mutation authority.
-      The v32 service evaluates one catalog transition against an exact
+      The v33 service evaluates one catalog transition against an exact
       execution-state document, resolves modeled obligations and evidence, and
       applies effects transactionally only for `executable`; the browser exposes
       this on selected transitions for projects with a start state. Its Insert
       command additionally replays every prior ordered reference step, rejects a
       broken join without editing, and transactionally adds an executable step
-      plus its propagated after-state. A rejected v32 append returns the closest
+      plus its propagated after-state. A rejected v33 append returns the closest
       propagated before-state and structured assessment/feasibility diagnostics
       for browser inspection. A selected authored step can also be removed;
       Rust replays all survivors and either returns a typed downstream rejection
-      without mutation or a transactionally edited route. Dragging from a state
-      node remains open.
+      without mutation or a transactionally edited route. A browser-selected
+      authored step can now nominate any palette transition as its replacement;
+      Rust preserves the step identity, replays the entire proposed route, and
+      commits only when the replacement and every downstream join execute.
+      Dragging from a state node remains open.
 - [ ] Render accepted connections distinctly from rejected or unknown joins.
       Selecting a rejected join must show missing producers, active
       obstructions/resolvers, unknown obligations, or exact-context mismatch;
       there is no force-connect operation.
 - [x] Save route semantics and presentation metadata through revision-checked
       route-book edits. Node positions, viewport, and visual grouping may persist
-      but must never affect solver reachability. Append-transition v32 creates or
+      but must never affect solver reachability. Append-transition v33 creates or
       revision-checks the browser-authored route book, applies a sealed upsert-step
       plus ordered-method edit, and reprojects the graph. The browser marks the
       semantic edit dirty; the existing atomic revision-checked project save then
       persists the route book and presentation positions independently. Valid
-      v32 removals use the same digest-checked edit batch, and removing the sole
-      step restores an explicitly empty route rather than a hollow method.
+      v33 removals and replacements use the same digest-checked edit authority;
+      removing the sole step restores an explicitly empty route rather than a
+      hollow method, while replacement retains the ordered method and stable
+      step ID.
 - [ ] Selecting a state or transition shows exact before/after location,
       inventory, flags/components, bindings, provenance, effects, requirements,
       and evidence in the bottom panel.
@@ -2620,8 +2628,10 @@ visual polish or whole-game authoring features.
       an exact start, writes `restart.room_param = 0`, and exposes the pending
       F_SP102 opening-process load. Selected steps can now be removed with
       authoritative downstream replay and a typed rejection when the removed
-      step remains a required producer. Replacement, deeper file-selection
-      continuation, and the remaining three demonstrations are still open.
+      step remains a required producer. They can also be replaced through the
+      transition palette with the same replay/rejection semantics. Deeper
+      file-selection continuation and the remaining three demonstrations are
+      still open.
 - [ ] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
       saves it, reloads it, and obtains identical semantic identities.

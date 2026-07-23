@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v32";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v33";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const NODE_WIDTH = 176;
@@ -9,7 +9,7 @@ const elements = Object.fromEntries([
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json",
-  "evaluate-transition", "insert-transition", "remove-step",
+  "evaluate-transition", "insert-transition", "replace-step", "remove-step",
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -23,6 +23,7 @@ const state = {
   readOnly: false,
   dirty: false,
   transitionEvaluation: null,
+  replacementStep: null,
 };
 
 elements["project-list"].addEventListener("change", () => {
@@ -41,6 +42,7 @@ elements["zoom-out"].addEventListener("click", () => zoomAt(1 / 1.2));
 elements.fit.addEventListener("click", fitGraph);
 elements["evaluate-transition"].addEventListener("click", evaluateSelectedTransition);
 elements["insert-transition"].addEventListener("click", insertSelectedTransition);
+elements["replace-step"].addEventListener("click", replaceSelectedRouteStep);
 elements["remove-step"].addEventListener("click", removeSelectedRouteStep);
 elements.canvas.addEventListener("wheel", onWheel, { passive: false });
 elements.canvas.addEventListener("pointerdown", beginPan);
@@ -150,6 +152,7 @@ async function loadProject(project, options) {
   state.dirty = options.dirty;
   state.selected = null;
   state.transitionEvaluation = null;
+  state.replacementStep = null;
   ensurePositions();
   elements["empty-state"].hidden = true;
   updateProjectControls();
@@ -289,6 +292,7 @@ function renderDetails() {
     elements["detail-json"].textContent = "{}";
     elements["evaluate-transition"].disabled = true;
     elements["insert-transition"].disabled = true;
+    elements["replace-step"].disabled = true;
     elements["remove-step"].disabled = true;
     return;
   }
@@ -298,12 +302,18 @@ function renderDetails() {
   const routeStep = selected.type === "node" && selected.value.payload.kind === "reference_step";
   elements["evaluate-transition"].disabled = !transition || !state.project?.start_state;
   elements["insert-transition"].disabled = !transition || !state.project?.start_state || state.readOnly;
+  elements["replace-step"].disabled = (!routeStep && !(transition && state.replacementStep))
+    || !state.project?.start_state || state.readOnly;
+  elements["replace-step"].textContent = transition && state.replacementStep
+    ? `Replace ${state.replacementStep.label}`
+    : "Choose replacement transition";
   elements["remove-step"].disabled = !routeStep || !state.project?.start_state || state.readOnly;
   elements["evaluate-transition"].title = state.project?.start_state
     ? "Run the authoritative transition evaluator"
     : "This project has no exact start state";
   elements["detail-json"].textContent = JSON.stringify({
     selection: selected.value,
+    ...(state.replacementStep ? { replacement_target: state.replacementStep } : {}),
     ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
   }, null, 2);
 }
@@ -328,7 +338,7 @@ async function removeSelectedRouteStep() {
       state.transitionEvaluation = payload;
       render();
       setStatus(
-        `${joinRejectionSummary(node.label, payload)}; first broken downstream step ${payload.failed_step_id}`,
+        `${joinRejectionSummary(node.label, payload, "removed")}; first broken downstream step ${payload.failed_step_id}`,
         "bad",
       );
       return;
@@ -337,6 +347,7 @@ async function removeSelectedRouteStep() {
       throw new Error(`Unexpected response ${payload.kind}`);
     }
     state.project.route_book = payload.book ?? null;
+    if (state.replacementStep?.step_id === node.payload.step_id) state.replacementStep = null;
     const projected = await service({
       command: "project_graph",
       request_id: requestId("project-after-remove"),
@@ -351,6 +362,73 @@ async function removeSelectedRouteStep() {
     markDirty();
     render();
     setStatus(`${node.label} removed; downstream state replayed; save to persist`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function replaceSelectedRouteStep() {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  if (!node || !state.project?.start_state || !state.project?.route_book || state.readOnly) return;
+  if (node.payload.kind === "reference_step") {
+    state.replacementStep = { step_id: node.payload.step_id, label: node.label };
+    state.transitionEvaluation = null;
+    render();
+    setStatus(`Choose a transition to replace ${node.label}`);
+    return;
+  }
+  if (node.payload.kind !== "transition" || !state.replacementStep) return;
+  const replacement = state.replacementStep;
+  try {
+    setStatus(`Replaying route with ${node.label} replacing ${replacement.label}...`);
+    const payload = await service({
+      command: "replace_authored_step",
+      request_id: requestId("replace-step"),
+      state: state.project.start_state,
+      catalog: state.project.catalog,
+      equivalence_sets: state.project.equivalence_sets ?? [],
+      route_book: state.project.route_book,
+      step_id: replacement.step_id,
+      transition_id: node.payload.transition_id,
+      evidence_mode: "established_only",
+    });
+    if (payload.kind === "rejected_route_edit") {
+      state.transitionEvaluation = payload;
+      render();
+      setStatus(
+        `${joinRejectionSummary(node.label, payload, "used as a replacement")}; first broken step ${payload.failed_step_id}`,
+        "bad",
+      );
+      return;
+    }
+    if (payload.kind !== "replaced_authored_step") {
+      throw new Error(`Unexpected response ${payload.kind}`);
+    }
+    state.project.route_book = payload.book;
+    const projected = await service({
+      command: "project_graph",
+      request_id: requestId("project-after-replace"),
+      catalog: state.project.catalog,
+      route_book: state.project.route_book,
+    });
+    if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
+    state.graph = projected.graph;
+    state.transitionEvaluation = {
+      kind: payload.kind,
+      step_id: payload.step_id,
+      transition_id: payload.transition_id,
+      route_book_sha256: payload.route_book_sha256,
+      assessment: payload.assessment,
+      after: payload.after,
+    };
+    state.replacementStep = null;
+    ensurePositions();
+    const stepNode = state.graph.nodes.find((candidate) =>
+      candidate.payload.kind === "reference_step" && candidate.payload.step_id === payload.step_id);
+    state.selected = stepNode ? { type: "node", value: stepNode } : null;
+    markDirty();
+    render();
+    setStatus(`${replacement.label} replaced with ${node.label}; downstream state replayed; save to persist`, "good");
   } catch (error) {
     setStatus(error.message, "bad");
   }
@@ -448,7 +526,7 @@ function transitionJoinClass(node) {
   return classification ? "join-rejected" : "";
 }
 
-function joinRejectionSummary(label, payload) {
+function joinRejectionSummary(label, payload, action = "inserted") {
   const assessment = payload.assessment;
   const diagnostics = payload.diagnostics;
   const reasons = [
@@ -461,7 +539,7 @@ function joinRejectionSummary(label, payload) {
   if (!assessment.scope_applies) reasons.push("exact context does not apply");
   if (!assessment.evidence_permitted) reasons.push("evidence policy rejects this transition");
   const detail = reasons.length ? reasons.join(", ") : assessment.classification.replaceAll("_", " ");
-  return `${label} was not inserted: ${detail}`;
+  return `${label} was not ${action}: ${detail}`;
 }
 
 function beginPan(event) {

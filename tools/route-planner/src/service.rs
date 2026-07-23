@@ -27,7 +27,7 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v32";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v33";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -120,6 +120,16 @@ pub enum PlannerServiceRequest {
         step_id: String,
         evidence_mode: crate::RuntimeEvidenceMode,
     },
+    ReplaceAuthoredStep {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        route_book: Box<RouteBook>,
+        step_id: String,
+        transition_id: String,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
     Solve {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
@@ -155,6 +165,7 @@ impl PlannerServiceRequest {
             | Self::EvaluateTransition { request_id, .. }
             | Self::AppendTransition { request_id, .. }
             | Self::RemoveAuthoredStep { request_id, .. }
+            | Self::ReplaceAuthoredStep { request_id, .. }
             | Self::Solve { request_id, .. }
             | Self::SolvePortable { request_id, .. } => request_id,
         }
@@ -225,6 +236,15 @@ pub enum PlannerServicePayload {
         previous_route_book_sha256: Digest,
         route_book_sha256: Option<Digest>,
         step_id: String,
+        after: Box<PlannerExecutionStateDocument>,
+    },
+    ReplacedAuthoredStep {
+        book: Box<RouteBook>,
+        previous_route_book_sha256: Digest,
+        route_book_sha256: Digest,
+        step_id: String,
+        transition_id: String,
+        assessment: Box<TransitionAssessment>,
         after: Box<PlannerExecutionStateDocument>,
     },
     RejectedRouteEdit {
@@ -466,6 +486,26 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 &equivalence_sets,
                 *route_book,
                 &step_id,
+                evidence_mode,
+            )
+        }),
+        PlannerServiceRequest::ReplaceAuthoredStep {
+            state,
+            catalog,
+            equivalence_sets,
+            route_book,
+            step_id,
+            transition_id,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            replace_authored_step_in_route_book(
+                state,
+                &catalog,
+                &equivalence_sets,
+                *route_book,
+                &step_id,
+                &transition_id,
                 evidence_mode,
             )
         }),
@@ -893,6 +933,116 @@ fn remove_authored_step_from_route_book(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn replace_authored_step_in_route_book(
+    mut state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: RouteBook,
+    step_id: &str,
+    transition_id: &str,
+    evidence_mode: crate::RuntimeEvidenceMode,
+) -> Result<PlannerServicePayload, dusklight_route_planner::PlannerContractError> {
+    route_book.validate_against_composed(catalog)?;
+    let previous_route_book_sha256 = route_book.digest()?;
+    let method = route_book
+        .methods
+        .iter()
+        .find(|method| method.id == AUTHORED_METHOD_ID)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "route_book.methods",
+                "does not contain the browser-authored route method",
+            )
+        })?;
+    if !method.step_ids.iter().any(|candidate| candidate == step_id) {
+        return Err(dusklight_route_planner::PlannerContractError::new(
+            "step_id",
+            "does not name a step in the browser-authored route method",
+        ));
+    }
+    let transition = catalog
+        .mechanics
+        .transitions
+        .iter()
+        .find(|transition| transition.id == transition_id)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "transition_id",
+                "does not name a transition in the composed catalog",
+            )
+        })?;
+    let mut replacement = route_book
+        .steps
+        .iter()
+        .find(|step| step.id == step_id)
+        .expect("validated route method references existing steps")
+        .clone();
+    replacement.label = transition.label.clone();
+    replacement.scope = transition.scope.clone();
+    replacement.action = RouteActionRef::Transition {
+        transition_id: transition_id.into(),
+    };
+
+    let mut replacement_assessment = None;
+    for (index, replay_step_id) in method.step_ids.iter().enumerate() {
+        let step = route_book
+            .steps
+            .iter()
+            .find(|step| &step.id == replay_step_id)
+            .expect("validated route method references existing steps");
+        let replay_transition_id = if replay_step_id == step_id {
+            transition_id
+        } else {
+            let RouteActionRef::Transition { transition_id } = &step.action else {
+                return Err(dusklight_route_planner::PlannerContractError::new(
+                    "route_book.steps.action",
+                    "authored route propagation currently requires transition steps",
+                ));
+            };
+            transition_id
+        };
+        let evaluation = assess_and_apply_transition(
+            &mut state,
+            catalog,
+            equivalence_sets,
+            replay_transition_id,
+            evidence_mode,
+            &format!("route.replace-replay-{index:04}"),
+        )?;
+        if evaluation.assessment.classification != TransitionClassification::Executable {
+            return Ok(PlannerServicePayload::RejectedRouteEdit {
+                step_id: step_id.into(),
+                failed_step_id: replay_step_id.clone(),
+                assessment: Box::new(evaluation.assessment),
+                diagnostics: Box::new(evaluation.diagnostics),
+                closest_before: Box::new(state.to_document()?),
+            });
+        }
+        if replay_step_id == step_id {
+            replacement_assessment = Some(evaluation.assessment);
+        }
+    }
+    let assessment = replacement_assessment.expect("authored method contains replacement step");
+    let after = Box::new(state.to_document()?);
+    let book = RouteBookEditBatch {
+        schema: ROUTE_BOOK_EDIT_BATCH_SCHEMA.into(),
+        expected_route_book_sha256: previous_route_book_sha256,
+        edits: vec![RouteBookEdit::UpsertStep { step: replacement }],
+    }
+    .apply_composed(&route_book, catalog)?;
+    let route_book_sha256 = book.digest()?;
+    Ok(PlannerServicePayload::ReplacedAuthoredStep {
+        book: Box::new(book),
+        previous_route_book_sha256,
+        route_book_sha256,
+        step_id: step_id.into(),
+        transition_id: transition_id.into(),
+        assessment: Box::new(assessment),
+        after,
+    })
+}
+
 fn next_authored_step_id(book: Option<&RouteBook>) -> String {
     let mut index = book.map_or(0, |book| book.steps.len());
     loop {
@@ -1124,6 +1274,41 @@ mod tests {
                 }],
             },
         });
+        mechanics.transitions.push(CandidateTransition {
+            id: "transition.enter-side-room".into(),
+            label: "Enter Side Room".into(),
+            scope: mechanics.transitions[0].scope.clone(),
+            transition_kind: TransitionKind::Door,
+            approach_id: "approach.side-room".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::Compare {
+                    left: ValueReference::LocationStage,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("D_MN05".into()),
+                    },
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: "D_MN07".into(),
+                        room: 2,
+                        layer: 0,
+                        spawn: 1,
+                    },
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: RuleEvidence {
+                truth: TruthStatus::Established,
+                records: vec![EvidenceRecord {
+                    id: "source.test.side-room".into(),
+                    kind: EvidenceKind::SourceAudited,
+                    source_sha256: Some(Digest([4; 32])),
+                    note: "Test replacement transition.".into(),
+                }],
+            },
+        });
         mechanics
             .transitions
             .sort_by(|left, right| left.id.cmp(&right.id));
@@ -1300,6 +1485,86 @@ mod tests {
         assert_eq!(
             book.methods[0].step_ids,
             ["step.route-0000", "step.route-0001"]
+        );
+
+        let replaced_consumer = handle_request(PlannerServiceRequest::ReplaceAuthoredStep {
+            request_id: "request.replace-consumer".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: Box::new((*book).clone()),
+            step_id: "step.route-0001".into(),
+            transition_id: "transition.enter-side-room".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = replaced_consumer.outcome else {
+            panic!("an executable replacement should replay the complete route");
+        };
+        let PlannerServicePayload::ReplacedAuthoredStep {
+            book: replaced_book,
+            step_id,
+            transition_id,
+            assessment,
+            after,
+            ..
+        } = *payload
+        else {
+            panic!("replacement should return its edited route and propagated state");
+        };
+        assert_eq!(step_id, "step.route-0001");
+        assert_eq!(transition_id, "transition.enter-side-room");
+        assert_eq!(
+            assessment.classification,
+            TransitionClassification::Executable
+        );
+        assert_eq!(after.snapshot.environment.location.stage, "D_MN07");
+        assert_eq!(
+            replaced_book.methods[0].step_ids,
+            ["step.route-0000", "step.route-0001"]
+        );
+        assert!(matches!(
+            &replaced_book
+                .steps
+                .iter()
+                .find(|step| step.id == "step.route-0001")
+                .unwrap()
+                .action,
+            RouteActionRef::Transition { transition_id }
+                if transition_id == "transition.enter-side-room"
+        ));
+
+        let rejected_replace = handle_request(PlannerServiceRequest::ReplaceAuthoredStep {
+            request_id: "request.replace-producer".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: Box::new((*book).clone()),
+            step_id: "step.route-0000".into(),
+            transition_id: "transition.enter-boss".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = rejected_replace.outcome else {
+            panic!("a rejected replacement should remain a typed edit result");
+        };
+        let PlannerServicePayload::RejectedRouteEdit {
+            step_id,
+            failed_step_id,
+            assessment,
+            closest_before,
+            ..
+        } = *payload
+        else {
+            panic!("replacement should identify the first non-executable join");
+        };
+        assert_eq!(step_id, "step.route-0000");
+        assert_eq!(failed_step_id, "step.route-0000");
+        assert_eq!(
+            assessment.classification,
+            TransitionClassification::GuardBlocked
+        );
+        assert_eq!(
+            closest_before.snapshot.environment.location.stage,
+            "F_SP103"
         );
 
         let rejected_remove = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
