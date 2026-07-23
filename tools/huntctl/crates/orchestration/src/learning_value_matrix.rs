@@ -22,6 +22,16 @@ use std::error::Error;
 use std::fmt;
 use std::path::Path;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LearningValueLoopPlanConfig {
+    pub generation_limit: u16,
+    pub rollouts_per_generation: u16,
+    pub simulated_tick_budget: u64,
+    pub trajectory: NativeGoalTrajectoryConfig,
+    pub reachability: NativeGoalReachabilityConfig,
+    pub policy: NativeGoalFrozenPolicyConfig,
+}
+
 pub fn materialize_residual_cell_request(
     plan: &LearningValueComparisonPlan,
     checkpoint_id: &str,
@@ -180,8 +190,7 @@ pub fn materialize_learning_cell_loop_request(
         .ok_or_else(|| {
             matrix_message("learning-value cell treatment is absent from the sealed plan")
         })?;
-    let (generation_limit, rollouts_per_generation, demonstration_mode) =
-        learning_loop_dimensions(treatment)?;
+    let loop_config = planned_learning_loop_config(treatment, deterministic_seed)?;
     validate_base(plan, checkpoint, optimization)?;
 
     let expected_id = cell_id(&plan.id, checkpoint_id, treatment_kind, deterministic_seed)?;
@@ -206,15 +215,12 @@ pub fn materialize_learning_cell_loop_request(
         execution,
         initial_replay_corpus,
         initial_episode_shards,
-        generation_limit,
-        rollouts_per_generation,
-        treatment.budget().discovery_simulated_ticks,
-        NativeGoalTrajectoryConfig {
-            demonstration_mode,
-            ..NativeGoalTrajectoryConfig::default()
-        },
-        NativeGoalReachabilityConfig::default(),
-        NativeGoalFrozenPolicyConfig::default(),
+        loop_config.generation_limit,
+        loop_config.rollouts_per_generation,
+        loop_config.simulated_tick_budget,
+        loop_config.trajectory,
+        loop_config.reachability,
+        loop_config.policy,
         NativeGoalLearningLoopResume {
             journal_path: format!("{resume_root}/journal.jsonl"),
             state_path: format!("{resume_root}/state.json"),
@@ -273,45 +279,87 @@ fn baseline_optimizer(
     }
 }
 
-fn learning_loop_dimensions(
+pub fn planned_learning_loop_config(
     treatment: &LearningValueTreatment,
-) -> Result<(u16, u16, DemonstrationMode), LearningValueMatrixError> {
-    match treatment {
-        LearningValueTreatment::DemonstrationAssistedStateReactive {
-            generation_limit,
-            rollouts_per_generation,
-            budget,
-        } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks == 0 => {
-            Ok((
+    deterministic_seed: u64,
+) -> Result<LearningValueLoopPlanConfig, LearningValueMatrixError> {
+    let (generation_limit, rollouts_per_generation, demonstration_mode, simulated_tick_budget) =
+        match treatment {
+            LearningValueTreatment::DemonstrationAssistedStateReactive {
+                generation_limit,
+                rollouts_per_generation,
+                budget,
+            } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks == 0 => {
+                (
+                    *generation_limit,
+                    *rollouts_per_generation,
+                    DemonstrationMode::BehaviorCloningWarmStart,
+                    budget.discovery_simulated_ticks,
+                )
+            }
+            LearningValueTreatment::FromScratchStateReactive {
+                generation_limit,
+                rollouts_per_generation,
+                budget,
+            } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks == 0 => {
+                (
+                    *generation_limit,
+                    *rollouts_per_generation,
+                    DemonstrationMode::Absent,
+                    budget.discovery_simulated_ticks,
+                )
+            }
+            LearningValueTreatment::LearnedThenResidualRefinement {
+                generation_limit,
+                rollouts_per_generation,
+                budget,
+                ..
+            } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks > 0 => (
                 *generation_limit,
                 *rollouts_per_generation,
                 DemonstrationMode::BehaviorCloningWarmStart,
-            ))
-        }
-        LearningValueTreatment::FromScratchStateReactive {
-            generation_limit,
-            rollouts_per_generation,
-            budget,
-        } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks == 0 => {
-            Ok((
-                *generation_limit,
-                *rollouts_per_generation,
-                DemonstrationMode::Absent,
-            ))
-        }
-        LearningValueTreatment::LearnedThenResidualRefinement {
-            generation_limit,
-            rollouts_per_generation,
-            budget,
-            ..
-        } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks > 0 => Ok((
-            *generation_limit,
-            *rollouts_per_generation,
-            DemonstrationMode::BehaviorCloningWarmStart,
-        )),
-        _ => Err(matrix_message(
-            "only plan-owned state-reactive treatments can materialize a learning loop",
-        )),
+                budget.discovery_simulated_ticks,
+            ),
+            _ => {
+                return Err(matrix_message(
+                    "only plan-owned state-reactive treatments can materialize a learning loop",
+                ));
+            }
+        };
+
+    let mut trajectory = NativeGoalTrajectoryConfig {
+        demonstration_mode,
+        ..NativeGoalTrajectoryConfig::default()
+    };
+    trajectory.split_seed = matrix_cell_seed(
+        trajectory.split_seed,
+        deterministic_seed,
+        0x7472_616a_6563_7401,
+    );
+    let mut reachability = NativeGoalReachabilityConfig::default();
+    reachability.seed =
+        matrix_cell_seed(reachability.seed, deterministic_seed, 0x7265_6163_6861_6201);
+    let mut policy = NativeGoalFrozenPolicyConfig::default();
+    policy.seed = matrix_cell_seed(policy.seed, deterministic_seed, 0x706f_6c69_6379_0001);
+    Ok(LearningValueLoopPlanConfig {
+        generation_limit,
+        rollouts_per_generation,
+        simulated_tick_budget,
+        trajectory,
+        reachability,
+        policy,
+    })
+}
+
+fn matrix_cell_seed(base_seed: u64, deterministic_seed: u64, domain: u64) -> u64 {
+    let mut value = base_seed ^ deterministic_seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ domain;
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^= value >> 31;
+    if value == 0 {
+        domain ^ 0xa076_1d64_78bd_642f
+    } else {
+        value
     }
 }
 
@@ -452,26 +500,54 @@ mod tests {
             discovery_simulated_ticks: 327_680,
             refinement_simulated_ticks: 0,
         };
+        let demonstration = LearningValueTreatment::DemonstrationAssistedStateReactive {
+            budget,
+            generation_limit: 64,
+            rollouts_per_generation: 32,
+        };
+        let scratch = LearningValueTreatment::FromScratchStateReactive {
+            budget,
+            generation_limit: 64,
+            rollouts_per_generation: 32,
+        };
+        let demo_config = planned_learning_loop_config(&demonstration, 104_729).unwrap();
+        let scratch_config = planned_learning_loop_config(&scratch, 104_729).unwrap();
+        assert_eq!(demo_config.generation_limit, 64);
+        assert_eq!(demo_config.rollouts_per_generation, 32);
+        assert_eq!(demo_config.simulated_tick_budget, 327_680);
         assert_eq!(
-            learning_loop_dimensions(
-                &LearningValueTreatment::DemonstrationAssistedStateReactive {
-                    budget,
-                    generation_limit: 64,
-                    rollouts_per_generation: 32,
-                }
-            )
-            .unwrap(),
-            (64, 32, DemonstrationMode::BehaviorCloningWarmStart)
+            demo_config.trajectory.demonstration_mode,
+            DemonstrationMode::BehaviorCloningWarmStart
         );
         assert_eq!(
-            learning_loop_dimensions(&LearningValueTreatment::FromScratchStateReactive {
+            scratch_config.trajectory.demonstration_mode,
+            DemonstrationMode::Absent
+        );
+        assert_eq!(
+            demo_config.trajectory.split_seed,
+            scratch_config.trajectory.split_seed
+        );
+        assert_eq!(
+            demo_config.reachability.seed,
+            scratch_config.reachability.seed
+        );
+        assert_eq!(demo_config.policy.seed, scratch_config.policy.seed);
+
+        let other_seed = planned_learning_loop_config(
+            &LearningValueTreatment::FromScratchStateReactive {
                 budget,
                 generation_limit: 64,
                 rollouts_per_generation: 32,
-            })
-            .unwrap(),
-            (64, 32, DemonstrationMode::Absent)
+            },
+            130_363,
+        )
+        .unwrap();
+        assert_ne!(
+            demo_config.trajectory.split_seed,
+            other_seed.trajectory.split_seed
         );
+        assert_ne!(demo_config.reachability.seed, other_seed.reachability.seed);
+        assert_ne!(demo_config.policy.seed, other_seed.policy.seed);
     }
 
     #[test]

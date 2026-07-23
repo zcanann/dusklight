@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-learning-value-comparison-plan/v1",
-  "content_sha256": "2940a869f35fa5c9b2cae1ab5841ebe293e31d7e338d329c180c077a745006ab",
+  "content_sha256": "95154b913af7211ab4cd8df719874817ed579d9e50395666fb5e56d7bf9a2a92",
   "id": "ordon-gate4-learning-value-v1",
   "terminal_program_sha256": "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169",
   "terminal_definition_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
@@ -64,8 +64,8 @@
         "discovery_simulated_ticks": 327680,
         "refinement_simulated_ticks": 0
       },
-      "generation_limit": 64,
-      "rollouts_per_generation": 32
+      "generation_limit": 8,
+      "rollouts_per_generation": 256
     },
     {
       "kind": "from_scratch_state_reactive",
@@ -73,8 +73,8 @@
         "discovery_simulated_ticks": 327680,
         "refinement_simulated_ticks": 0
       },
-      "generation_limit": 64,
-      "rollouts_per_generation": 32
+      "generation_limit": 8,
+      "rollouts_per_generation": 256
     },
     {
       "kind": "learned_then_residual_refinement",
@@ -82,8 +82,8 @@
         "discovery_simulated_ticks": 163840,
         "refinement_simulated_ticks": 163840
       },
-      "generation_limit": 32,
-      "rollouts_per_generation": 32,
+      "generation_limit": 4,
+      "rollouts_per_generation": 256,
       "refinement_optimizer": {
         "kind": "cem",
         "population": 64,

@@ -4,6 +4,7 @@ use crate::learning_value_comparison::{
     LearningValueCheckpoint, LearningValueComparisonPlan, LearningValueTreatment,
     LearningValueTreatmentKind,
 };
+use crate::learning_value_matrix::planned_learning_loop_config;
 use crate::native_goal_learning_loop::{
     NativeGoalLearningCheckpointReport, NativeGoalLearningLoopRequest, NativeGoalLearningLoopState,
 };
@@ -408,6 +409,7 @@ fn evaluate_learning_phase(
     state.validate().map_err(evidence_error)?;
     let report: NativeGoalLearningCheckpointReport = read_json(root, checkpoint_report)?;
     report.validate().map_err(evidence_error)?;
+    let planned_loop = planned_learning_loop_config(treatment, seed).map_err(evidence_error)?;
     if state.request_sha256 != request.content_sha256
         || report.source_loop_state_sha256 != state.state_sha256
         || request.resume.state_path != loop_state.path
@@ -415,6 +417,12 @@ fn evaluate_learning_phase(
         || optimization.execution.deterministic_seeds != [seed]
         || optimization.execution.repetitions != plan.repetitions_per_cell
         || request.simulated_tick_budget != treatment.budget().discovery_simulated_ticks
+        || request.generation_limit != planned_loop.generation_limit
+        || request.rollouts_per_generation != planned_loop.rollouts_per_generation
+        || request.simulated_tick_budget != planned_loop.simulated_tick_budget
+        || request.trajectory != planned_loop.trajectory
+        || request.reachability != planned_loop.reachability
+        || request.policy != planned_loop.policy
         || optimization.terminal_predicate.program_sha256 != plan.terminal_program_sha256
         || optimization.terminal_predicate.definition_sha256 != plan.terminal_definition_sha256
         || !optimization_matches_checkpoint(&optimization, checkpoint)

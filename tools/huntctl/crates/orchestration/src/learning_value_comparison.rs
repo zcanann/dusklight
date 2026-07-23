@@ -20,6 +20,8 @@ pub const LEARNING_VALUE_COMPARISON_PLAN_SCHEMA_V1: &str =
 
 const MIN_SEEDS: usize = 3;
 const MIN_HELD_OUT_CHECKPOINTS: usize = 2;
+const MAX_LEARNING_GENERATIONS: u16 = 1_024;
+const MAX_LEARNING_ROLLOUTS_PER_GENERATION: u16 = 256;
 const MAX_SIMULATED_TICKS_PER_CELL: u64 = 1_000_000_000_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -293,7 +295,9 @@ impl LearningValueComparisonPlan {
                     ..
                 } => {
                     if *generation_limit < 3
+                        || *generation_limit > MAX_LEARNING_GENERATIONS
                         || *rollouts_per_generation == 0
+                        || *rollouts_per_generation > MAX_LEARNING_ROLLOUTS_PER_GENERATION
                         || budget.discovery_simulated_ticks == 0
                         || budget.refinement_simulated_ticks != 0
                     {
@@ -309,7 +313,9 @@ impl LearningValueComparisonPlan {
                     ..
                 } => {
                     if *generation_limit < 3
+                        || *generation_limit > MAX_LEARNING_GENERATIONS
                         || *rollouts_per_generation == 0
+                        || *rollouts_per_generation > MAX_LEARNING_ROLLOUTS_PER_GENERATION
                         || budget.discovery_simulated_ticks == 0
                         || budget.refinement_simulated_ticks == 0
                         || !matches!(refinement_optimizer, ResidualOptimizerConfig::Cem { .. })
@@ -647,6 +653,20 @@ mod tests {
                 generations: 4,
                 smoothing_millionths: 500_000,
             };
+        }
+        assert!(draft.seal(&root).is_err());
+        fs::remove_dir_all(root).expect("remove fixture");
+    }
+
+    #[test]
+    fn rejects_learning_dimensions_the_native_loop_cannot_execute() {
+        let (root, mut draft) = fixture();
+        if let LearningValueTreatment::DemonstrationAssistedStateReactive {
+            rollouts_per_generation,
+            ..
+        } = &mut draft.treatments[2]
+        {
+            *rollouts_per_generation = MAX_LEARNING_ROLLOUTS_PER_GENERATION + 1;
         }
         assert!(draft.seal(&root).is_err());
         fs::remove_dir_all(root).expect("remove fixture");

@@ -772,6 +772,10 @@ revalidated crash-safe journal/state chain.
       four seeds, two held-out tapes, five treatments, 40 cells, 327,680 ticks
       per cell, a 13,107,200-tick declared cap, and no promotion authority:
       `routes/Glitch Exhibition/intro/benchmarks/ordon-gate4-learning-value-comparison.plan.json`.
+      Full-budget learners use eight 256-rollout online generations; the
+      half-budget learned-plus-refinement arm uses four. This preserves the
+      exact 160-tick phase budgets while avoiding eight times as many redundant
+      full-corpus retrains as the original 32-rollout draft.
 - [ ] Evaluate across several deterministic seeds and held-out checkpoints.
       The matrix evidence boundary is implemented but this item remains open
       until all 40 real cells exist. Each cell now reopens its optimization,
@@ -793,7 +797,10 @@ revalidated crash-safe journal/state chain.
       demonstration mode, generation count, rollout count, discovery tick cap,
       and isolated resume namespace; it rejects seed, checkpoint, terminal,
       critic, curriculum, or phase-budget drift before sealing the native shard
-      corpus.
+      corpus. The planned cell seed is domain-separated into the trajectory
+      split/exploration seed and both model initialization seeds, so treatments
+      remain paired within one replicate while the four declared replicates are
+      genuinely distinct; cell evidence independently recomputes those bindings.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
       The predeclared report verdict is implemented but remains unchecked until
