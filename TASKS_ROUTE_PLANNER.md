@@ -2031,8 +2031,12 @@ Deliverable: one validated runtime representation independent of authoring forma
       `mGtItm` remains a separate component, message-progress bytes retain their
       raw stage-load backing, and snapshot chains expose field transitions rather
       than folding these lifetimes into one dialogue Boolean.
-- [ ] Produce semantic and raw diffs across room load, stage load, save, load,
-      void, title, BiT, and BiTE boundaries.
+- [x] Produce semantic and raw diffs across room load, stage load, save, load,
+      void, title, BiT, and BiTE boundaries. `StateDiff` now validates,
+      canonically serializes, strictly decodes, and hashes these artifacts; the
+      explicit matrix round-trips raw knownness, binding, and semantic changes
+      for every named family, with stable custom identities for compound BiT and
+      BiTE procedures.
 - [x] Make unsupported/unobserved fields explicit rather than defaulting false.
 
 Deliverable: replayable state evidence that can validate transition rules.

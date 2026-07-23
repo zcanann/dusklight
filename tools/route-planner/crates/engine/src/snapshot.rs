@@ -321,6 +321,27 @@ impl StateDiff {
                 .map(|delta| delta.fact_id.as_str()),
         )
     }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn decode_canonical(bytes: &[u8]) -> Result<Self, PlannerContractError> {
+        let diff: Self = serde_json::from_slice(bytes)?;
+        diff.validate()?;
+        if diff.canonical_bytes()? != bytes {
+            return Err(PlannerContractError::new(
+                "state_diff",
+                "is not canonical JSON",
+            ));
+        }
+        Ok(diff)
+    }
+
+    pub fn digest(&self) -> Result<Digest, PlannerContractError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
 }
 
 impl SnapshotChain {
@@ -748,6 +769,64 @@ mod tests {
         );
         assert_eq!(diff.component_deltas[0].provenance_after.len(), 2);
         assert_eq!(diff.semantic_deltas[0].after, Some(ObservationStatus::True));
+    }
+
+    #[test]
+    fn boundary_diff_matrix_round_trips_raw_semantic_and_binding_changes() {
+        let boundaries = [
+            BoundaryKind::RoomTransition,
+            BoundaryKind::StageTransition,
+            BoundaryKind::SaveRuntimeToSlot,
+            BoundaryKind::LoadPhysicalSlot,
+            BoundaryKind::VoidReload,
+            BoundaryKind::TitleReturn,
+            BoundaryKind::SaveWarp,
+            BoundaryKind::Custom {
+                id: "bit-title-file-zero-entry".into(),
+            },
+            BoundaryKind::Custom {
+                id: "bite-component-splice".into(),
+            },
+        ];
+        let mut digests = BTreeSet::new();
+        for boundary in boundaries {
+            let before = snapshot(
+                1,
+                component(
+                    vec![0x10, 0x20],
+                    vec![0xff, 0x00],
+                    ComponentBinding::Stage {
+                        stage: "F_SP103".into(),
+                    },
+                ),
+            );
+            let mut after = snapshot(
+                2,
+                component(
+                    vec![0x10, 0x21],
+                    vec![0xff, 0xff],
+                    ComponentBinding::Stage {
+                        stage: "D_MN09".into(),
+                    },
+                ),
+            );
+            after.semantic_observations[0].status = ObservationStatus::True;
+            let diff = StateDiff::between(&before, &after, boundary.clone()).unwrap();
+            assert_eq!(diff.boundary, boundary);
+            assert_eq!(diff.component_deltas[0].raw_byte_deltas.len(), 1);
+            assert_ne!(
+                diff.component_deltas[0].binding_before,
+                diff.component_deltas[0].binding_after
+            );
+            assert_eq!(diff.semantic_deltas.len(), 1);
+            let bytes = diff.canonical_bytes().unwrap();
+            assert_eq!(StateDiff::decode_canonical(&bytes).unwrap(), diff);
+            assert!(digests.insert(diff.digest().unwrap()));
+            let mut noncanonical = bytes;
+            noncanonical.push(b'\n');
+            assert!(StateDiff::decode_canonical(&noncanonical).is_err());
+        }
+        assert_eq!(digests.len(), 9);
     }
 
     #[test]
