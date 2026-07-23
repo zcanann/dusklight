@@ -27,7 +27,7 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v34";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v35";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -74,6 +74,14 @@ pub enum PlannerServiceRequest {
         state: Box<PlannerExecutionStateDocument>,
         catalog: Box<ComposedPlannerCatalog>,
         equivalence_sets: Vec<EquivalenceSet>,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
+    InspectRouteFrontier {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        route_book: Option<Box<RouteBook>>,
         evidence_mode: crate::RuntimeEvidenceMode,
     },
     InspectState {
@@ -168,6 +176,7 @@ impl PlannerServiceRequest {
             | Self::Compose { request_id, .. }
             | Self::ProjectGraph { request_id, .. }
             | Self::ProjectFeasibilityDiff { request_id, .. }
+            | Self::InspectRouteFrontier { request_id, .. }
             | Self::InspectState { request_id, .. }
             | Self::DiffState { request_id, .. }
             | Self::EvaluateTransition { request_id, .. }
@@ -223,6 +232,11 @@ pub enum PlannerServicePayload {
     FeasibilityGraphDiff {
         diff: Box<PlannerFeasibilityGraphDiff>,
         diff_sha256: Digest,
+    },
+    RouteFrontier {
+        frontier_state: Box<PlannerExecutionStateDocument>,
+        frontier: Box<StateInspection>,
+        transitions: Vec<RouteFrontierTransition>,
     },
     StateInspection {
         inspection: Box<StateInspection>,
@@ -289,6 +303,14 @@ pub struct TransitionJoinDiagnostics {
     pub unknown_obstruction_ids: Vec<String>,
     pub applied_resolver_ids: Vec<String>,
     pub applicable_technique_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteFrontierTransition {
+    pub transition_id: String,
+    pub assessment: TransitionAssessment,
+    pub diagnostics: TransitionJoinDiagnostics,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -428,6 +450,22 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                     diff_sha256,
                 })
             })
+        }),
+        PlannerServiceRequest::InspectRouteFrontier {
+            state,
+            catalog,
+            equivalence_sets,
+            route_book,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            inspect_route_frontier(
+                state,
+                &catalog,
+                &equivalence_sets,
+                route_book.map(|book| *book),
+                evidence_mode,
+            )
         }),
         PlannerServiceRequest::InspectState {
             state,
@@ -720,6 +758,83 @@ fn assess_and_apply_transition(
 struct TransitionEvaluationResult {
     assessment: TransitionAssessment,
     diagnostics: TransitionJoinDiagnostics,
+}
+
+fn inspect_route_frontier(
+    mut state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: Option<RouteBook>,
+    evidence_mode: crate::RuntimeEvidenceMode,
+) -> Result<PlannerServicePayload, dusklight_route_planner::PlannerContractError> {
+    if let Some(route_book) = route_book {
+        route_book.validate_against_composed(catalog)?;
+        if let Some(method) = route_book
+            .methods
+            .iter()
+            .find(|method| method.id == AUTHORED_METHOD_ID)
+        {
+            for (index, step_id) in method.step_ids.iter().enumerate() {
+                let step = route_book
+                    .steps
+                    .iter()
+                    .find(|step| &step.id == step_id)
+                    .ok_or_else(|| {
+                        dusklight_route_planner::PlannerContractError::new(
+                            "route_book.methods.step_ids",
+                            "references a missing authored step",
+                        )
+                    })?;
+                let RouteActionRef::Transition { transition_id } = &step.action else {
+                    return Err(dusklight_route_planner::PlannerContractError::new(
+                        "route_book.steps.action",
+                        "route-frontier inspection currently requires transition steps",
+                    ));
+                };
+                let evaluation = assess_and_apply_transition(
+                    &mut state,
+                    catalog,
+                    equivalence_sets,
+                    transition_id,
+                    evidence_mode,
+                    &format!("route.frontier-replay-{index:04}"),
+                )?;
+                if evaluation.assessment.classification != TransitionClassification::Executable {
+                    return Err(dusklight_route_planner::PlannerContractError::new(
+                        "route_book.methods.step_ids",
+                        format!(
+                            "authored step {step_id} is {:?} at its replay boundary",
+                            evaluation.assessment.classification
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    let frontier = inspect_state(&state, &catalog.facts, equivalence_sets, evidence_mode)?;
+    let frontier_state = state.to_document()?;
+    let mut transitions = Vec::with_capacity(catalog.mechanics.transitions.len());
+    for transition in &catalog.mechanics.transitions {
+        let mut candidate_state = state.clone();
+        let evaluation = assess_and_apply_transition(
+            &mut candidate_state,
+            catalog,
+            equivalence_sets,
+            &transition.id,
+            evidence_mode,
+            &format!("route.frontier-candidate.{}", transition.id),
+        )?;
+        transitions.push(RouteFrontierTransition {
+            transition_id: transition.id.clone(),
+            assessment: evaluation.assessment,
+            diagnostics: evaluation.diagnostics,
+        });
+    }
+    Ok(PlannerServicePayload::RouteFrontier {
+        frontier_state: Box::new(frontier_state),
+        frontier: Box::new(frontier),
+        transitions,
+    })
 }
 
 fn inspect_authored_route(
@@ -1566,6 +1681,60 @@ mod tests {
         let after = after.unwrap();
         assert_eq!(after.snapshot.environment.location.stage, "D_MN05");
         assert_eq!(after.snapshot.environment.location.room, 1);
+    }
+
+    #[test]
+    fn route_frontier_replays_authored_steps_before_listing_applicable_transitions() {
+        let (state, catalog) = executable_transition_fixture();
+        let appended = handle_request(PlannerServiceRequest::AppendTransition {
+            request_id: "request.frontier-append".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: None,
+            route_book_id: "route.frontier".into(),
+            route_book_label: "Frontier route".into(),
+            transition_id: "transition.enter-forest".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = appended.outcome else {
+            panic!("frontier producer should append");
+        };
+        let PlannerServicePayload::AppendedTransition { book, .. } = *payload else {
+            panic!("append should return a route book");
+        };
+        let response = handle_request(PlannerServiceRequest::InspectRouteFrontier {
+            request_id: "request.frontier".into(),
+            state: Box::new(state),
+            catalog: Box::new(catalog),
+            equivalence_sets: Vec::new(),
+            route_book: Some(book),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("route frontier inspection should succeed");
+        };
+        let PlannerServicePayload::RouteFrontier {
+            frontier_state,
+            frontier,
+            transitions,
+        } = *payload
+        else {
+            panic!("frontier inspection should return its typed payload");
+        };
+        assert_eq!(frontier_state.snapshot.environment.location.stage, "D_MN05");
+        assert_eq!(frontier.state.snapshot.environment.location.stage, "D_MN05");
+        for transition_id in ["transition.enter-boss", "transition.enter-side-room"] {
+            assert_eq!(
+                transitions
+                    .iter()
+                    .find(|record| record.transition_id == transition_id)
+                    .unwrap()
+                    .assessment
+                    .classification,
+                TransitionClassification::Executable
+            );
+        }
     }
 
     #[test]

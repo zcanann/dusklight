@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v34";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v35";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v6";
@@ -33,6 +33,7 @@ const state = {
   collapsedRegionIds: new Set(),
   knownRegionIds: new Set(),
   routeStepInspections: new Map(),
+  routeFrontier: null,
 };
 
 elements["project-list"].addEventListener("change", () => {
@@ -169,6 +170,7 @@ async function loadProject(project, options) {
   state.transitionEvaluation = null;
   state.replacementStep = null;
   state.routeStepInspections = new Map();
+  state.routeFrontier = null;
   state.activeRegionId = null;
   state.collapsedRegionIds = new Set();
   state.knownRegionIds = new Set();
@@ -336,6 +338,10 @@ function renderPalette() {
   elements["palette-list"].replaceChildren();
   if (!state.graph) return;
   const query = elements.search.value.trim().toLowerCase();
+  const frontierTransitions = new Map((state.routeFrontier?.transitions ?? []).map((record) => [
+    record.transition_id,
+    record,
+  ]));
   const matches = state.graph.nodes.filter((node) => {
     const transition = node.payload.kind === "transition";
     const fact = node.payload.kind === "alias" || node.payload.kind === "derived_fact";
@@ -345,6 +351,13 @@ function renderPalette() {
       ? state.transitionSearch.get(node.payload.transition_id)
       : transitionSearchText(contract);
     return !query || `${node.label} ${node.id} ${contractText ?? ""}`.toLowerCase().includes(query);
+  }).sort((left, right) => {
+    const rank = (node) => {
+      if (node.payload.kind !== "transition") return 3;
+      const classification = frontierTransitions.get(node.payload.transition_id)?.assessment.classification;
+      return classification === "executable" ? 0 : classification === "feasibility_unknown" ? 1 : 2;
+    };
+    return rank(left) - rank(right) || left.label.localeCompare(right.label);
   });
   for (const node of matches) {
     const button = document.createElement("button");
@@ -354,8 +367,9 @@ function renderPalette() {
     const label = document.createElement("span");
     label.textContent = node.label;
     const id = document.createElement("small");
+    const frontier = transition ? frontierTransitions.get(node.payload.transition_id) : null;
     id.textContent = transition
-      ? node.payload.transition_id
+      ? `${frontier?.assessment.classification?.replaceAll("_", " ") ?? "not assessed"} · ${node.payload.transition_id}`
       : `${node.payload.kind.replaceAll("_", " ")} · ${node.payload.fact_id}`;
     button.append(label, id);
     button.addEventListener("click", () => {
@@ -385,7 +399,22 @@ function selectNode(node) {
 
 async function refreshAuthoredRouteInspections() {
   state.routeStepInspections = new Map();
-  if (!state.project?.start_state || !state.project?.route_book?.methods.some((method) =>
+  state.routeFrontier = null;
+  if (!state.project?.start_state) return;
+  const frontier = await service({
+    command: "inspect_route_frontier",
+    request_id: requestId("inspect-route-frontier"),
+    state: state.project.start_state,
+    catalog: state.project.catalog,
+    equivalence_sets: state.project.equivalence_sets ?? [],
+    route_book: state.project.route_book ?? null,
+    evidence_mode: projectEvidenceMode(),
+  });
+  if (frontier.kind !== "route_frontier") {
+    throw new Error(`Unexpected response ${frontier.kind}`);
+  }
+  state.routeFrontier = frontier;
+  if (!state.project.route_book?.methods.some((method) =>
     method.id === "method.authored-route")) return;
   const payload = await service({
     command: "inspect_authored_route",
@@ -1185,13 +1214,14 @@ async function insertSelectedTransition() {
 
 async function evaluateSelectedTransition() {
   const node = state.selected?.type === "node" ? state.selected.value : null;
-  if (node?.payload.kind !== "transition" || !state.project?.start_state) return;
+  const frontierState = state.routeFrontier?.frontier_state ?? state.project?.start_state;
+  if (node?.payload.kind !== "transition" || !frontierState) return;
   try {
     setStatus(`Evaluating ${node.label}...`);
     const payload = await service({
       command: "evaluate_transition",
       request_id: requestId("transition"),
-      state: state.project.start_state,
+      state: frontierState,
       catalog: state.project.catalog,
       equivalence_sets: state.project.equivalence_sets ?? [],
       transition_id: node.payload.transition_id,
@@ -1203,7 +1233,7 @@ async function evaluateSelectedTransition() {
     state.transitionEvaluation = {
       ...payload,
       state_change: await inspectStateChange(
-        state.project.start_state,
+        frontierState,
         payload.after ?? null,
         "evaluate-transition",
       ),
@@ -1211,7 +1241,7 @@ async function evaluateSelectedTransition() {
     renderDetails();
     const accepted = payload.assessment.classification === "executable";
     setStatus(
-      accepted ? `${node.label} is executable from the exact start state`
+      accepted ? `${node.label} is executable from the exact route frontier`
         : `${node.label}: ${payload.assessment.classification.replaceAll("_", " ")}`,
       accepted ? "good" : "bad",
     );

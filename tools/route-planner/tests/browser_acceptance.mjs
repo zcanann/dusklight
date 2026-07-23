@@ -146,7 +146,7 @@ try {
       search.value = ${JSON.stringify(transition)};
       search.dispatchEvent(new Event("input", { bubbles: true }));
       const item = [...document.querySelectorAll("#palette-list .palette-item")]
-        .find((button) => button.querySelector("small")?.textContent === ${JSON.stringify(transition)});
+        .find((button) => button.querySelector("small")?.textContent.endsWith(${JSON.stringify(`· ${transition}`)}));
       if (!item) throw new Error("transition is absent from the browser palette");
       item.click();
       document.getElementById("insert-transition").click();

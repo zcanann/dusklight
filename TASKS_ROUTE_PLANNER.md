@@ -65,7 +65,7 @@ book transactionally, returns the propagated after-state, and lets the existing
 revision-checked project save persist both semantics and layout. Drag-to-connect,
 rejected-edge depiction, producer suggestions, and most planned demonstrations
 remain open. Invalid insertion is nevertheless no longer flattened into a
-service error: the v34 response preserves the closest propagated state, exact
+service error: the v35 response preserves the closest propagated state, exact
 classification, missing and unknown obligation/requirement IDs, context/evidence
 status, and active or unknown obstruction/resolver diagnostics; the browser
 retains and renders that payload without mutating the route book. The built-in
@@ -76,11 +76,11 @@ by insertion propagates from F_SP103 to R_SP107 room 3 through the modeled
 savewarp reader. The opening project likewise carries an exact reset-ready world
 state and goal; its first transition writes the restart-room parameter and enters
 `PROC_OPENING_SCENE` with the audited F_SP102 pending load without pretending the
-world load completed. The v34 Remove command replays every surviving step from
+world load completed. The v35 Remove command replays every surviving step from
 the exact start before changing semantics: a producer removal that breaks a
 later join returns that first rejected step and closest state without mutation,
 while a valid removal transactionally edits (or empties) the route book and
-returns the new final state. The v34 Replace command preserves the stable step
+returns the new final state. The v35 Replace command preserves the stable step
 identity while replaying the proposed transition and every downstream step;
 failed replacements return the first rejected join without mutation, and valid
 replacements commit one digest-checked step upsert. The remaining planned
@@ -98,7 +98,7 @@ JavaScript. Dedicated state-node selection remains open.
 
 Transitions in the searchable palette are now draggable. Dropping one on the
 canvas or the current authored-route frontier repositions its presentation node
-and invokes the authoritative v34 append, which replays the exact ordered route
+and invokes the authoritative v35 append, which replays the exact ordered route
 from its start state before committing. A drop on an earlier authored step is
 rejected as ambiguous instead of silently changing route order; replacement has
 its own explicit workflow.
@@ -2598,13 +2598,13 @@ visual polish or whole-game authoring features.
 - [x] Let an author drag a transition onto the canvas and connect it to an exact
       predecessor state. Rust recomputes every downstream state and remains the
       only validation and mutation authority.
-      The v34 service evaluates one catalog transition against an exact
+      The v35 service evaluates one catalog transition against an exact
       execution-state document, resolves modeled obligations and evidence, and
       applies effects transactionally only for `executable`; the browser exposes
       this on selected transitions for projects with a start state. Its Insert
       command additionally replays every prior ordered reference step, rejects a
       broken join without editing, and transactionally adds an executable step
-      plus its propagated after-state. A rejected v34 append returns the closest
+      plus its propagated after-state. A rejected v35 append returns the closest
       propagated before-state and structured assessment/feasibility diagnostics
       for browser inspection. A selected authored step can also be removed;
       Rust replays all survivors and either returns a typed downstream rejection
@@ -2628,12 +2628,12 @@ visual polish or whole-game authoring features.
       propagated state, and diagnostics remain selected in the detail panel.
 - [x] Save route semantics and presentation metadata through revision-checked
       route-book edits. Node positions, viewport, and visual grouping may persist
-      but must never affect solver reachability. Append-transition v34 creates or
+      but must never affect solver reachability. Append-transition v35 creates or
       revision-checks the browser-authored route book, applies a sealed upsert-step
       plus ordered-method edit, and reprojects the graph. The browser marks the
       semantic edit dirty; the existing atomic revision-checked project save then
       persists the route book and presentation positions independently. Valid
-      v34 removals and replacements use the same digest-checked edit authority;
+      v35 removals and replacements use the same digest-checked edit authority;
       removing the sole step restores an explicitly empty route rather than a
       hollow method, while replacement retains the ordered method and stable
       step ID.
@@ -2768,6 +2768,11 @@ visual polish or whole-game authoring features.
 - [ ] Make transition insertion the primary authoring operation.
   - [ ] From a selected state node, list applicable physical, event, warp,
         reload, title/file, and technique transitions.
+        Service v35 now replays the complete authored method from its exact start,
+        returns the authoritative frontier state/inspection, evaluates every
+        transition there, and makes executable joins lead the browser palette.
+        Transition evaluation now uses that frontier rather than silently using
+        the project start. Dedicated selectable execution-state nodes remain open.
   - [x] Permit searching providers by desired destination or postcondition while
         retaining the actual entry contract and effects. Palette search indexes
         the complete authoritative transition document, including destinations,
@@ -2803,7 +2808,7 @@ visual polish or whole-game authoring features.
         typed delta categories while retaining the full inspection JSON.
   - [x] Keep it available on every accepted node and closest rejected-join
         witness in the active graph, including nodes inside expanded regions.
-        Service v34 replays the persisted authored method on load and after each
+        Service v35 replays the persisted authored method on load and after each
         edit, returning an independently inspected before/after/diff for every
         accepted reference step plus the closest prefix witness for the first
         rejection. Selection resolves these by stable step ID regardless of the
