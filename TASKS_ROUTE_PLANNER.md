@@ -2697,9 +2697,18 @@ visual polish or whole-game authoring features.
       author through the same replay-safe service, inherit the common Save As
       path, and expose typed propagated-state changes and broken joins. Deeper
       file-selection continuation remains a separate opening-demo enhancement.
-- [ ] Add one browser-driven acceptance test that opens a demonstration, removes
+- [x] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
       saves it, reloads it, and obtains identical semantic identities.
+      `tests/browser_acceptance.mjs`, launched by the Rust integration test,
+      starts the real loopback service and a clean headless Brave profile. It
+      opens the keyed-door built-in through the rendered picker, uses Save As,
+      inserts all nine transitions through the browser palette, navigates into
+      the planner-projected authored-route region, removes the terminal close
+      step, observes authoritative downstream replay, saves, reloads through the
+      picker, and compares the persisted project revision plus ordered action
+      identities. Hosts without the documented Brave installation skip this
+      optional system integration; the checked macOS environment executes it.
 
 #### Extended editor
 
