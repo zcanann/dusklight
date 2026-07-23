@@ -13,7 +13,8 @@ export, compose, replace, or omit them with the same rules as any external pack.
 Every manifest and rule is scoped to the exact supported content and runtime
 configuration digests. The Epona OOB and rupee-clip records discharge only their
 method-specific obligations; they do not erase collision, approach, or timing
-facts globally. EMS performs the one modeled state change—setting human form
+facts globally. Both Epona-backed methods require player control, human form,
+the Epona mount, and an explicit non-twilight state. EMS performs the one modeled state change—setting human form
 while the Faron-twilight gate is active—and does not invent inventory or story
 writes.
 

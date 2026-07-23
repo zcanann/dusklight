@@ -175,6 +175,9 @@ fn selected_sequence_break_pack() -> Result<RefinementPack, PlannerContractError
                                 ValueReference::PlayerMount,
                                 StateValue::Text("epona".into()),
                             ),
+                            PredicateExpression::Not {
+                                term: Box::new(gate_is("story.faron-twilight", true)),
+                            },
                         ],
                     },
                     operations: Vec::new(),
@@ -208,6 +211,13 @@ fn selected_sequence_break_pack() -> Result<RefinementPack, PlannerContractError
                         terms: vec![
                             player_controlled(),
                             equals(ValueReference::PlayerForm, StateValue::Text("human".into())),
+                            equals(
+                                ValueReference::PlayerMount,
+                                StateValue::Text("epona".into()),
+                            ),
+                            PredicateExpression::Not {
+                                term: Box::new(gate_is("story.faron-twilight", true)),
+                            },
                         ],
                     },
                     operations: Vec::new(),
@@ -395,6 +405,38 @@ mod tests {
             assert_eq!(technique.evidence.truth, TruthStatus::Contested);
             assert_eq!(technique.discharged_obligation_ids.len(), 1);
             assert!(technique.operations.is_empty());
+        }
+        for technique in techniques.iter().filter(|technique| {
+            technique.id.contains("epona-oob") || technique.id.contains("rupee-clip")
+        }) {
+            let PredicateExpression::All { terms } = &technique.prerequisites else {
+                panic!("Epona-backed techniques require conjunctive setup");
+            };
+            assert!(terms.iter().any(|term| matches!(
+                term,
+                PredicateExpression::Compare {
+                    left: ValueReference::PlayerMount,
+                    operator: ComparisonOperator::Equal,
+                    right,
+                } if *right == ValueReference::Literal {
+                    value: StateValue::Text("epona".into())
+                }
+            )));
+            assert!(terms.iter().any(|term| matches!(
+                term,
+                PredicateExpression::Not { term }
+                    if matches!(
+                        term.as_ref(),
+                        PredicateExpression::Compare {
+                            left: ValueReference::GateState { gate_id },
+                            operator: ComparisonOperator::Equal,
+                            right,
+                        } if gate_id == "story.faron-twilight"
+                            && *right == ValueReference::Literal {
+                                value: StateValue::Boolean(true)
+                            }
+                    )
+            )));
         }
     }
 

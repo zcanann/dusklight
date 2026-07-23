@@ -3242,8 +3242,14 @@ slice into release criteria only when it exercises a missing core semantic law.
 - [ ] Produce upper-bound logic path.
 - [ ] Introduce geometry/twilight/form/mount obstructions.
 - [ ] Encode standard EMS setup.
-- [ ] Encode Epona OOB non-twilight constraint.
-- [ ] Encode rupee clip as a scoped replacement for the charge-attack approach.
+- [x] Encode Epona OOB non-twilight constraint. The bundled technique now
+      requires player control, human form, Epona mount, and the explicit
+      negation of the Faron-twilight gate before it can discharge its single
+      named collision-boundary obligation.
+- [x] Encode rupee clip as a scoped replacement for the charge-attack approach.
+      Its bundled record discharges only the named charge-attack-approach
+      obligation and now requires the same controlled human/Epona/non-twilight
+      setup instead of acting as a global wall bypass.
 - [ ] Show how route results refine as obstruction knowledge is enabled.
 
 #### 11D. Local-bank rebind
