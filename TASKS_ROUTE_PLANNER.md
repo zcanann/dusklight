@@ -2991,8 +2991,17 @@ visual polish or whole-game authoring features.
       summarizes populated record families, unresolved obligations, evidence
       truth counts, and every declared technique cost axis. Read-only projects
       keep their policy selector locked; saved copies persist policy changes.
-- [ ] Add semantic build/language comparison and prevent silent closest-build
-      fallback.
+- [x] Add semantic build/language comparison and prevent silent closest-build
+      fallback. `semantic-context-comparison/v1` independently evaluates both
+      exact states/catalogs, retains content/runtime/configuration/catalog/pack
+      identities, joins facts only by stable semantic ID with raw-binding and
+      scope visibility, and content-compares every mechanics family. One-sided
+      and inapplicable coverage is explicit, equivalence sets are opt-in per
+      side, and `fallback_used` is structurally false. The standalone
+      `compare-semantic-contexts` command exports the typed report; a regression
+      proves a French runtime over the English-only GZ2E01 catalog makes every
+      fact inapplicable instead of borrowing English results. See
+      `docs/route-planner/semantic-context-comparison.md`.
 - [x] Keep route annotations in route books as non-semantic targets/text,
       separate from mechanics refinement packs.
 

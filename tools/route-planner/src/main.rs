@@ -64,6 +64,7 @@ use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use dusklight_route_planner::world_data::{WorldContext, WorldInventory};
 use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
+use dusklight_route_planner_runtime::context_compare::compare_semantic_contexts;
 use dusklight_route_planner_runtime::inspection::{inspect_state, inspect_state_diff};
 use dusklight_route_planner_runtime::service::{
     PlannerServiceEnvelope, error_response, handle_envelope,
@@ -106,6 +107,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("compile-title-boundary-mechanics") => compile_title_boundary_mechanics(&args[1..]),
         Some("construct-message-flows") => construct_message_flows(&args[1..]),
         Some("compose") => compose(&args[1..]),
+        Some("compare-semantic-contexts") => compare_semantic_contexts_command(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
         Some("diagnose-refinement-packs") => diagnose_refinement_packs_command(&args[1..]),
         Some("extract-binary-range-evidence") => extract_binary_range_evidence(&args[1..]),
@@ -1577,6 +1579,63 @@ fn diff_state_command(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn compare_semantic_contexts_command(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let left_state = PlannerExecutionStateDocument::decode_canonical(&fs::read(required_path(
+        args,
+        "--left-state",
+    )?)?)?
+    .into_state()?;
+    let right_state = PlannerExecutionStateDocument::decode_canonical(&fs::read(required_path(
+        args,
+        "--right-state",
+    )?)?)?
+    .into_state()?;
+    let left_catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(required_path(
+        args,
+        "--left-catalog",
+    )?)?)?;
+    let right_catalog = ComposedPlannerCatalog::decode_canonical(&fs::read(required_path(
+        args,
+        "--right-catalog",
+    )?)?)?;
+    let load_equivalence_sets = |name: &str| {
+        repeated_option(args, name)
+            .into_iter()
+            .map(|path| Ok(EquivalenceSet::decode_canonical(&fs::read(path)?)?))
+            .collect::<Result<Vec<_>, Box<dyn Error>>>()
+    };
+    let report = compare_semantic_contexts(
+        &left_state,
+        &left_catalog,
+        &load_equivalence_sets("--left-equivalence-set")?,
+        &right_state,
+        &right_catalog,
+        &load_equivalence_sets("--right-equivalence-set")?,
+        if flag(args, "--research") {
+            RuntimeEvidenceMode::Research
+        } else {
+            RuntimeEvidenceMode::EstablishedOnly
+        },
+    )?;
+    let output = required_path(args, "--output")?;
+    let bytes = serde_json::to_vec_pretty(&report)?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "relation": report.relation,
+            "fallback_used": report.fallback_used,
+            "facts": report.facts.len(),
+            "mechanics": report.mechanics.len(),
+            "left_inapplicable_facts": report.summary.left_inapplicable_fact_ids.len(),
+            "right_inapplicable_facts": report.summary.right_inapplicable_fact_ids.len(),
+        }))?
+    );
+    Ok(())
+}
+
 fn serve_stdio(args: &[String]) -> Result<(), Box<dyn Error>> {
     if !args.is_empty() {
         return Err("serve-stdio does not accept arguments".into());
@@ -2247,6 +2306,7 @@ fn print_usage() {
             "  route-planner compile-title-boundary-mechanics --content-identity CONTENT.json --runtime-configuration RUNTIME.json --output MECHANICS.json",
             "  route-planner construct-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json --output PROGRAMS.json",
             "  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--message-flow-set MESSAGE.json]... [--message-entry-set ENTRIES.json]... [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json",
+            "  route-planner compare-semantic-contexts --left-state STATE.json --left-catalog CATALOG.json [--left-equivalence-set SET.json]... --right-state STATE.json --right-catalog CATALOG.json [--right-equivalence-set SET.json]... --output REPORT.json [--research]",
             "  route-planner diff-orig --left LEFT.json --right RIGHT.json [--left-locale LOCALE --right-locale LOCALE] --output DIFF.json",
             "  route-planner diagnose-refinement-packs --pack PACK.json [--pack PACK.json]... [--output REPORT.json]",
             "  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]",

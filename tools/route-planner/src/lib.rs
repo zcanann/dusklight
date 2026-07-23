@@ -4,6 +4,7 @@
 //! workbench, playback graph, or browser protocol. It consumes the planner
 //! engine's canonical artifacts and returns planner-specific reports.
 
+pub mod context_compare;
 pub mod inspection;
 pub mod project;
 pub mod service;

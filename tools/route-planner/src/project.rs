@@ -2680,6 +2680,7 @@ fn project_error(message: impl Into<String>) -> ProjectError {
 mod tests {
     use super::*;
     use crate::RuntimeEvidenceMode;
+    use crate::context_compare::{ContextRelation, compare_semantic_contexts};
     use crate::service::{
         PlannerServiceOutcome, PlannerServicePayload, PlannerServiceRequest, handle_request,
     };
@@ -2749,6 +2750,51 @@ mod tests {
             8
         );
         assert_eq!(text_displacement.project.catalog.mechanics.readers.len(), 4);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn semantic_context_comparison_never_falls_back_to_a_nearby_language() {
+        let root = temporary_root("semantic-context-comparison");
+        let store = ProjectStore::open(&root).unwrap();
+        let project = store
+            .load("demo-text-displacement-goron-mines")
+            .unwrap()
+            .project;
+        let left = project.start_state.clone().unwrap().into_state().unwrap();
+        let mut right_document = project.start_state.unwrap();
+        right_document
+            .snapshot
+            .environment
+            .runtime_configuration
+            .language = "fr".into();
+        let right = right_document.into_state().unwrap();
+        let report = compare_semantic_contexts(
+            &left,
+            &project.catalog,
+            &[],
+            &right,
+            &project.catalog,
+            &[],
+            RuntimeEvidenceMode::EstablishedOnly,
+        )
+        .unwrap();
+
+        assert_eq!(
+            report.relation,
+            ContextRelation::SameContentDifferentRuntime
+        );
+        assert!(!report.fallback_used);
+        assert_eq!(report.left.runtime_configuration.language, "en");
+        assert_eq!(report.right.runtime_configuration.language, "fr");
+        assert!(report.summary.left_inapplicable_fact_ids.is_empty());
+        assert_eq!(
+            report.summary.right_inapplicable_fact_ids.len(),
+            project.catalog.facts.aliases.len() + project.catalog.facts.derived_facts.len()
+        );
+        assert!(report.mechanics.iter().all(|row| {
+            row.comparison == crate::context_compare::MechanicsComparisonKind::Equivalent
+        }));
         fs::remove_dir_all(root).unwrap();
     }
 
