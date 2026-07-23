@@ -956,17 +956,32 @@ that it blocks the current loop.
 
 ### Stateful tactics
 
-- [ ] Allow a policy to invoke bounded tactics through the native input boundary
+- [x] Allow a policy to invoke bounded tactics through the native input boundary
       while recording every generated PAD frame and read-only query.
-- [ ] Begin with generic control primitives only: maintain relative heading or
+      `NativeGenericTacticCandidate` binds each learned option descriptor to one
+      executable plan; `select_and_execute_generic` rejects catalog drift, consumes
+      contiguous phase-correct native pre-input rows, records the exact boundary,
+      state identity, fields, values, and portable actor match queried on every
+      tick, and seals every emitted PAD in the existing `OptionExecution` tape
+      range. Missing observations and incomplete/ambiguous actor results fail
+      closed.
+- [x] Begin with generic control primitives only: maintain relative heading or
       offset, seek a coordinate or portable actor identity, compose a short curve,
       control camera while moving, and synchronize a button edge with an observed
-      action phase.
-- [ ] Treat tactics as optional action parameterizations, never gameplay writes or
-      terminal authorities.
-- [ ] Learn or mine useful tactic initiation/termination conditions from
+      action phase. Native generic-tactic v1 implements exactly those six bounded
+      families; the synchronized edge is generated only when an observed native
+      action-animation lane crosses the requested phase.
+- [x] Treat tactics as optional action parameterizations, never gameplay writes or
+      terminal authorities. The execution artifact explicitly records false
+      gameplay-write, terminal, and promotion authority; the only output is a
+      canonical port-0 PAD frame, and ordinary exact tape replay remains the
+      outcome authority.
+- [x] Learn or mine useful tactic initiation/termination conditions from
       experience instead of embedding route coordinates or published glitch
-      procedures.
+      procedures. `mine_tactic_conditions` derives discriminating stage, room,
+      procedure, mode, and contact predicates from successful and comparative
+      native experience; its versioned artifact explicitly excludes coordinate
+      literals and published procedures.
 
 ### Narrow-basin discovery
 
