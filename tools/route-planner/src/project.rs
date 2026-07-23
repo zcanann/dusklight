@@ -515,7 +515,19 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
     let (keyed_door, keyed_door_start) = keyed_door_demo(&facts, runtime.clone())?;
     let (rebind, rebind_start) = hypothetical_rebind_demo(runtime.clone())?;
     let (auru, auru_start) = auru_recent_item_demo(runtime.clone())?;
+    let (text_displacement, text_displacement_start) = text_displacement_demo(runtime.clone())?;
     let projects = vec![
+        PlannerWebProject {
+            schema: WEB_PROJECT_SCHEMA.into(),
+            id: "demo-text-displacement-goron-mines".into(),
+            label: "Text Displacement toward Goron Mines".into(),
+            catalog: text_displacement,
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+            route_book: None,
+            start_state: Some(text_displacement_start),
+            equivalence_sets: Vec::new(),
+            presentation: ProjectPresentation::default(),
+        },
         PlannerWebProject {
             schema: WEB_PROJECT_SCHEMA.into(),
             id: "demo-auru-recent-item-transfer".into(),
@@ -576,6 +588,389 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
         project.validate()?;
     }
     Ok(projects)
+}
+
+fn text_displacement_demo(
+    runtime_configuration: RuntimeConfiguration,
+) -> Result<(ComposedPlannerCatalog, PlannerExecutionStateDocument), ProjectError> {
+    const FLOW_A: u8 = 0x04;
+    const FLOW_B: u8 = 0x02;
+    const FLOW_C: u8 = 0x01;
+    const M029: u8 = 0x04;
+    const M031: u8 = 0x01;
+    const TEMP_ID: &str = "temporary.event-flags";
+    const SAVE_ID: &str = "persistent.event-flags";
+    let scope = ContextScope {
+        selectors: vec![ContextSelector::Exact {
+            context: runtime_configuration.exact_context()?,
+        }],
+    };
+    let established = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![EvidenceRecord {
+            id: "source.text-displacement-message-state-audit".into(),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(Digest([0x81; 32])),
+            note: "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing.".into(),
+        }],
+    };
+    let alias = |id: &str,
+                 label: &str,
+                 component_kind: ComponentKind,
+                 binding: ComponentBinding,
+                 byte_offset: u32,
+                 mask: u8| FriendlyAlias {
+        id: id.into(),
+        label: label.into(),
+        scope: scope.clone(),
+        raw: RawFactBinding {
+            component_kind,
+            binding: ComponentBindingReference::Exact { binding },
+            byte_offset,
+            mask: vec![mask],
+            expected: vec![mask],
+        },
+        evidence: established.clone(),
+    };
+    let facts = FactCatalog {
+        schema: FACT_CATALOG_SCHEMA.into(),
+        aliases: vec![
+            alias(
+                "event.gor-coron-won",
+                "M029: won Gor Coron match",
+                ComponentKind::PersistentSave,
+                ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                7,
+                M029,
+            ),
+            alias(
+                "event.goron-mines-clear",
+                "M031: Goron Mines clear",
+                ComponentKind::PersistentSave,
+                ComponentBinding::RuntimeFile {
+                    runtime_file_id: "file-0".into(),
+                },
+                7,
+                M031,
+            ),
+            alias(
+                "message.flow-a",
+                "Shared message flow-control A",
+                ComponentKind::TemporaryFlags,
+                ComponentBinding::Session {
+                    session_id: "process".into(),
+                },
+                0,
+                FLOW_A,
+            ),
+            alias(
+                "message.flow-b",
+                "Shared message flow-control B",
+                ComponentKind::TemporaryFlags,
+                ComponentBinding::Session {
+                    session_id: "process".into(),
+                },
+                0,
+                FLOW_B,
+            ),
+            alias(
+                "message.flow-c",
+                "Shared message flow-control C",
+                ComponentKind::TemporaryFlags,
+                ComponentBinding::Session {
+                    session_id: "process".into(),
+                },
+                0,
+                FLOW_C,
+            ),
+        ],
+        derived_facts: Vec::new(),
+    };
+    let stage_is = |stage: &str| PredicateExpression::Compare {
+        left: ValueReference::LocationStage,
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Text(stage.into()),
+        },
+    };
+    let room_is = |room: i64| PredicateExpression::Compare {
+        left: ValueReference::LocationRoom,
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Signed(room),
+        },
+    };
+    let layer_is = |layer: i64| PredicateExpression::Compare {
+        left: ValueReference::LocationLayer,
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Signed(layer),
+        },
+    };
+    let fact = |id: &str| PredicateExpression::Fact { fact_id: id.into() };
+    let write_raw =
+        |component_id: &str, byte_offset: u32, mask: u8, value: u8| StateOperation::WriteRaw {
+            component_id: component_id.into(),
+            byte_offset,
+            mask: vec![mask],
+            value: vec![value],
+        };
+    let candidate = |id: &str,
+                     label: &str,
+                     guards: PredicateExpression,
+                     effects: Vec<StateOperation>| CandidateTransition {
+        id: id.into(),
+        label: label.into(),
+        scope: scope.clone(),
+        transition_kind: TransitionKind::MessageAction,
+        approach_id: "approach.text-displacement-goron-coron".into(),
+        activation: ActivationContract {
+            hard_guards: guards,
+            physical_obligation_ids: Vec::new(),
+            effects,
+            unknown_requirements: Vec::new(),
+        },
+        evidence: established.clone(),
+    };
+    let producer = |id: &str, label: &str| {
+        candidate(
+            id,
+            label,
+            PredicateExpression::All {
+                terms: vec![
+                    stage_is("TEXT_SETUP"),
+                    PredicateExpression::Not {
+                        term: Box::new(fact("message.flow-b")),
+                    },
+                ],
+            },
+            vec![write_raw(TEMP_ID, 0, FLOW_B, FLOW_B)],
+        )
+    };
+    let mut mechanics = empty_mechanics();
+    mechanics.transitions = vec![
+        candidate(
+            "transition.enter-r-sp110-with-displaced-bit",
+            "Carry displaced B into the Goron Elder hall",
+            PredicateExpression::All {
+                terms: vec![stage_is("TEXT_SETUP"), fact("message.flow-b")],
+            },
+            vec![StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: "R_SP110".into(),
+                    room: 0,
+                    layer: 1,
+                    spawn: 0,
+                },
+            }],
+        ),
+        candidate(
+            "transition.gor-coron-flow6-b-to-c",
+            "First Gor Coron talk reads displaced B and sets C",
+            PredicateExpression::All {
+                terms: vec![
+                    stage_is("R_SP110"),
+                    room_is(0),
+                    layer_is(1),
+                    PredicateExpression::Not {
+                        term: Box::new(fact("event.goron-mines-clear")),
+                    },
+                    fact("message.flow-b"),
+                    PredicateExpression::Not {
+                        term: Box::new(fact("message.flow-c")),
+                    },
+                ],
+            },
+            vec![write_raw(TEMP_ID, 0, FLOW_C, FLOW_C)],
+        ),
+        candidate(
+            "transition.gor-coron-flow9-prime-a",
+            "Second Gor Coron talk follows C and primes A",
+            PredicateExpression::All {
+                terms: vec![
+                    stage_is("R_SP110"),
+                    room_is(0),
+                    layer_is(1),
+                    fact("message.flow-c"),
+                    PredicateExpression::Not {
+                        term: Box::new(fact("message.flow-a")),
+                    },
+                ],
+            },
+            vec![write_raw(TEMP_ID, 0, FLOW_A, FLOW_A)],
+        ),
+        candidate(
+            "transition.gor-coron-flow9-write-m029",
+            "Third Gor Coron talk consumes A/C and writes M029",
+            PredicateExpression::All {
+                terms: vec![
+                    stage_is("R_SP110"),
+                    room_is(0),
+                    layer_is(1),
+                    fact("message.flow-a"),
+                    fact("message.flow-c"),
+                ],
+            },
+            vec![
+                write_raw(SAVE_ID, 7, M029, M029),
+                write_raw(TEMP_ID, 0, FLOW_A | FLOW_B | FLOW_C, 0),
+            ],
+        ),
+        producer(
+            "transition.td-producer-auru",
+            "Retain displaced B through Auru's two-talk producer",
+        ),
+        producer(
+            "transition.td-producer-coro",
+            "Retain displaced B through Coro's bottle-text interruption",
+        ),
+        producer(
+            "transition.td-producer-ooccoo",
+            "Retain displaced B through Zombie Ooccoo's two-step producer",
+        ),
+        producer(
+            "transition.td-producer-yeta",
+            "Retain displaced B through Yeta's map-talk interruption",
+        ),
+    ];
+    mechanics
+        .transitions
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    let raw_source = |component_id: &str, byte_offset: u32, mask: u8| ValueReference::RawBits {
+        component_id: component_id.into(),
+        byte_offset,
+        byte_width: 1,
+        mask: u64::from(mask),
+    };
+    mechanics.readers = vec![
+        ReaderRule {
+            id: "reader.gor-coron-b-to-c-b".into(),
+            scope: scope.clone(),
+            source: raw_source(TEMP_ID, 0, FLOW_B),
+            consuming_transition_id: "transition.gor-coron-flow6-b-to-c".into(),
+            interpretation_fact_id: Some("message.flow-b".into()),
+            evidence: established.clone(),
+        },
+        ReaderRule {
+            id: "reader.gor-coron-prime-a-c".into(),
+            scope: scope.clone(),
+            source: raw_source(TEMP_ID, 0, FLOW_C),
+            consuming_transition_id: "transition.gor-coron-flow9-prime-a".into(),
+            interpretation_fact_id: Some("message.flow-c".into()),
+            evidence: established.clone(),
+        },
+        ReaderRule {
+            id: "reader.gor-coron-write-m029-a".into(),
+            scope: scope.clone(),
+            source: raw_source(TEMP_ID, 0, FLOW_A),
+            consuming_transition_id: "transition.gor-coron-flow9-write-m029".into(),
+            interpretation_fact_id: Some("message.flow-a".into()),
+            evidence: established.clone(),
+        },
+        ReaderRule {
+            id: "reader.gor-coron-write-m029-c".into(),
+            scope: scope.clone(),
+            source: raw_source(TEMP_ID, 0, FLOW_C),
+            consuming_transition_id: "transition.gor-coron-flow9-write-m029".into(),
+            interpretation_fact_id: Some("message.flow-c".into()),
+            evidence: established.clone(),
+        },
+    ];
+    mechanics.goals.push(Goal {
+        id: "goal.text-displacement-write-m029".into(),
+        label: "Use displaced text state to write Gor Coron M029".into(),
+        predicate: fact("event.gor-coron-won"),
+    });
+    let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &[])?;
+    let mut components = vec![
+        StateComponent {
+            id: SAVE_ID.into(),
+            component_kind: ComponentKind::PersistentSave,
+            payload: ComponentPayload::Raw {
+                bytes: vec![0; 32],
+                known_mask: vec![0xff; 32],
+            },
+            binding: ComponentBinding::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            },
+            lifetime: SemanticLifetime::RuntimeFile,
+            serialization_owner: SerializationOwner::RuntimeFile {
+                runtime_file_id: "file-0".into(),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::ExtractedFact,
+                source_id: "gz2e01.persistent-event-backing".into(),
+                source_sha256: Some(Digest([0x82; 32])),
+                transition_id: None,
+            }],
+        },
+        StateComponent {
+            id: TEMP_ID.into(),
+            component_kind: ComponentKind::TemporaryFlags,
+            payload: ComponentPayload::Raw {
+                bytes: vec![0; 8],
+                known_mask: vec![0xff; 8],
+            },
+            binding: ComponentBinding::Session {
+                session_id: "process".into(),
+            },
+            lifetime: SemanticLifetime::Session,
+            serialization_owner: SerializationOwner::None,
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::ExtractedFact,
+                source_id: "gz2e01.temporary-event-backing".into(),
+                source_sha256: Some(Digest([0x83; 32])),
+                transition_id: None,
+            }],
+        },
+    ];
+    components.sort_by(|left, right| left.id.cmp(&right.id));
+    let snapshot = StateSnapshot {
+        schema: STATE_SNAPSHOT_SCHEMA.into(),
+        id: "snapshot.text-displacement-producer-selection".into(),
+        sequence: 0,
+        environment: ExecutionEnvironment {
+            schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+            runtime_configuration,
+            active_runtime_file: RuntimeFile {
+                id: "file-0".into(),
+                origin: RuntimeFileOrigin::NewFile,
+                backing: BackingAttachment::MemoryOnly,
+                allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                lifecycle: RuntimeFileLifecycle::Active,
+            },
+            inactive_runtime_files: Vec::new(),
+            physical_slots: Vec::new(),
+            physical_slot_observations: Vec::new(),
+            execution_context: ExecutionContext::World,
+            location: SceneLocation {
+                stage: "TEXT_SETUP".into(),
+                room: 0,
+                layer: 0,
+                spawn: 0,
+            },
+            player: PlayerState {
+                form: PlayerForm::Human,
+                mount: None,
+                position: [0.0; 3],
+                rotation: [0; 3],
+                has_control: Some(true),
+                action: "talk".into(),
+            },
+            components,
+            static_world_objects: Vec::new(),
+            spatial_volumes: Vec::new(),
+            spatial_connections: Vec::new(),
+            spatial_planes: Vec::new(),
+            persisted_object_controls: Vec::new(),
+            live_world_objects: Vec::new(),
+        },
+        semantic_observations: Vec::new(),
+    };
+    let document = PlannerExecutionState::new(snapshot)?.to_document()?;
+    Ok((catalog, document))
 }
 
 fn auru_recent_item_demo(
@@ -1889,7 +2284,7 @@ mod tests {
         let root = temporary_root("builtins");
         let store = ProjectStore::open(&root).unwrap();
         let list = store.list().unwrap();
-        assert_eq!(list.projects.len(), 5);
+        assert_eq!(list.projects.len(), 6);
         assert!(list.projects.iter().all(|project| project.read_only));
         assert!(
             list.projects
@@ -1912,6 +2307,111 @@ mod tests {
         let auru = store.load("demo-auru-recent-item-transfer").unwrap();
         assert_eq!(auru.project.evidence_mode, RuntimeEvidenceMode::Research);
         assert_eq!(auru.project.catalog.mechanics.transitions.len(), 4);
+        let text_displacement = store.load("demo-text-displacement-goron-mines").unwrap();
+        assert_eq!(
+            text_displacement
+                .project
+                .catalog
+                .mechanics
+                .transitions
+                .len(),
+            8
+        );
+        assert_eq!(text_displacement.project.catalog.mechanics.readers.len(), 4);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn text_displacement_demo_replays_each_raw_consumer_in_order() {
+        let root = temporary_root("text-displacement");
+        let store = ProjectStore::open(&root).unwrap();
+        let project = store
+            .load("demo-text-displacement-goron-mines")
+            .unwrap()
+            .project;
+        let start = project.start_state.unwrap();
+        for producer in [
+            "transition.td-producer-auru",
+            "transition.td-producer-coro",
+            "transition.td-producer-ooccoo",
+            "transition.td-producer-yeta",
+        ] {
+            let response = handle_request(PlannerServiceRequest::EvaluateTransition {
+                request_id: format!("request.evaluate-{producer}"),
+                state: Box::new(start.clone()),
+                catalog: Box::new(project.catalog.clone()),
+                equivalence_sets: Vec::new(),
+                transition_id: producer.into(),
+                evidence_mode: project.evidence_mode,
+            });
+            let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+                panic!("{producer} should be independently executable");
+            };
+            let PlannerServicePayload::TransitionEvaluation { assessment, .. } = *payload else {
+                panic!("producer evaluation should return a typed assessment");
+            };
+            assert_eq!(
+                assessment.classification,
+                dusklight_route_planner::evaluation::TransitionClassification::Executable
+            );
+        }
+        let mut route_book = None;
+        let mut final_state = None;
+        for transition_id in [
+            "transition.td-producer-coro",
+            "transition.enter-r-sp110-with-displaced-bit",
+            "transition.gor-coron-flow6-b-to-c",
+            "transition.gor-coron-flow9-prime-a",
+            "transition.gor-coron-flow9-write-m029",
+        ] {
+            let response = handle_request(PlannerServiceRequest::AppendTransition {
+                request_id: format!("request.{transition_id}"),
+                state: Box::new(start.clone()),
+                catalog: Box::new(project.catalog.clone()),
+                equivalence_sets: Vec::new(),
+                route_book,
+                route_book_id: "route.text-displacement-demo".into(),
+                route_book_label: "Text Displacement demo route".into(),
+                transition_id: transition_id.into(),
+                evidence_mode: project.evidence_mode,
+            });
+            let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+                panic!("{transition_id} should append after replaying its raw-bit prefix");
+            };
+            let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
+                panic!("Text Displacement demo should append an ordinary transition");
+            };
+            final_state = Some(after);
+            route_book = Some(book);
+        }
+        let final_state = final_state.unwrap();
+        let persistent = final_state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "persistent.event-flags")
+            .unwrap();
+        let ComponentPayload::Raw { bytes, .. } = &persistent.payload else {
+            panic!("persistent events should remain raw byte-backed state");
+        };
+        assert_ne!(bytes[7] & 0x04, 0);
+        let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
+            request_id: "request.remove-text-displacement-producer".into(),
+            state: Box::new(start),
+            catalog: Box::new(project.catalog),
+            equivalence_sets: Vec::new(),
+            route_book: route_book.unwrap(),
+            step_id: "step.route-0000".into(),
+            evidence_mode: project.evidence_mode,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("removing the producer should preserve the rejected edit witness");
+        };
+        let PlannerServicePayload::RejectedRouteEdit { failed_step_id, .. } = *payload else {
+            panic!("the hall entry must require an actual displaced bit producer");
+        };
+        assert_eq!(failed_step_id, "step.route-0001");
         fs::remove_dir_all(root).unwrap();
     }
 

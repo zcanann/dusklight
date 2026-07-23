@@ -28,8 +28,9 @@ Open `http://127.0.0.1:32170` in Brave. By default, editable projects are kept
 under `tools/route-planner/projects`; use `--projects DIR` to select another
 workspace. The project picker includes read-only, source-backed Fanadi
 return-place, opening/file-selection, GZ2E01 Forest Temple keyed-door, Auru
-recent-item-transfer, and clearly labeled hypothetical local-bank-rebind
-demonstrations. The keyed-door project exposes the audited event offer, one-time
+recent-item-transfer, Text Displacement toward Goron Mines, and clearly labeled
+hypothetical local-bank-rebind demonstrations. The keyed-door project exposes
+the audited event offer, one-time
 unlock/key delta, keyhole, collision, animation, crossing, and close phases as
 nine independently editable transitions. The Auru project keeps the established
 session item store, file-lifetime handoff, and generic item grant separate from

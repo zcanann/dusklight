@@ -2655,7 +2655,7 @@ visual polish or whole-game authoring features.
       collapse presentation only, owner-node double-click enters a region, and
       breadcrumbs return through the exact parent chain. No region UI edits the
       projected nodes, edges, route book, or solver state.
-- [ ] Ship several small editable demonstrations from already modeled mechanics:
+- [x] Ship several small editable demonstrations from already modeled mechanics:
       a keyed door, Fanadi return-place locking, Auru recent-item transfer, Text
       Displacement toward Goron Mines, and a clearly hypothetical component
       rebind. Each must load, validate, edit, save-as, and visibly change its
@@ -2671,8 +2671,8 @@ visual polish or whole-game authoring features.
       authoritative downstream replay and a typed rejection when the removed
       step remains a required producer. They can also be replaced through the
       transition palette with the same replay/rejection semantics. Deeper
-      file-selection continuation and the remaining demonstration are
-      still open. The exact GZ2E01 Forest Temple `Door[1]` demonstration now
+      file-selection continuation remains open. The exact GZ2E01 Forest Temple
+      `Door[1]` demonstration now
       ships too: its nine source-audited DOOR20 phases author and replay through
       the ordinary browser route API, retain the one-update separation between
       persistent unlock and key consumption, and expose the typed broken join
@@ -2680,8 +2680,9 @@ visual polish or whole-game authoring features.
       ships as a typed `Technique` transition whose `Preserve` plus `Rebind`
       operations leave its raw payload byte-for-byte stable, change only its
       backing interpretation, and thereby enable an unchanged Temple-of-Time
-      consumer. Planner projects persist their evidence mode; this demo alone
-      defaults to research, while ordinary projects remain established-only.
+      consumer. Planner projects persist their evidence mode; the rebind and
+      Auru setup demos default to research, while ordinary projects remain
+      established-only.
       Removing the rebind yields the expected typed rejection at its consumer.
       The Auru demo now exposes four independently editable steps: an established
       Fishing Rod presentation on file A, a runtime-file lifetime handoff that
@@ -2689,8 +2690,13 @@ visual polish or whole-game authoring features.
       inventory, a clearly hypothetical GCN geometry setup, and the unchanged
       established `DEFAULT_GETITEM` consumer on file B. Removing the original
       presentation rejects the file-boundary continuation before any item can be
-      invented. Text Displacement and deeper file-selection continuation remain
-      open.
+      invented. The Text Displacement demo exposes Coro, Auru, Yeta, and Ooccoo
+      as independent raw-B producers, then replays the exact B-to-C, C-to-A, and
+      A/C-to-M029 Gor Coron talks. Removing the selected producer rejects the hall
+      entry. All built-ins load and validate through the same project store,
+      author through the same replay-safe service, inherit the common Save As
+      path, and expose typed propagated-state changes and broken joins. Deeper
+      file-selection continuation remains a separate opening-demo enhancement.
 - [ ] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
       saves it, reloads it, and obtains identical semantic identities.
