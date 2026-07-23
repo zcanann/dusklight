@@ -599,7 +599,7 @@ it and emit any legal PAD action for the entire episode.
       directly. Its separately sealed manifest preserves dataset, replay, critic,
       goal, feature, action, split-episode, training, metric, and frozen-byte
       lineage; `inspect-frozen-goal-policy` verifies both artifacts together.
-- [ ] Execute the frozen policy online from pre-input state, ingest its realized
+- [x] Execute the frozen policy online from pre-input state, ingest its realized
       episodes, refit, and repeat until the declared budget or stopping rule is
       reached. The persistent native worker boundary now accepts exact frozen
       policy v5 batches as well as residual batches, pins every refit to the same
@@ -615,8 +615,26 @@ it and emit any legal PAD action for the entire episode.
       independently reinfers every PAD, ingests policy-role replay, refits, and
       materializes each consumed policy suffix as an ordinary cold-replayable
       process-boot tape before stopping explicitly on held-out rejection or its
-      sealed limit. A real admitted campaign must still complete three generations
-      before this item and Gate 3 are proven complete.
+      sealed limit. The admitted q131 v2 campaign now proves the complete path:
+      one unattended command committed three generations and exactly 1,920
+      charged native ticks, grew the authenticated corpus from 1,037 entries /
+      144,793 transitions at generation 18 to 1,049 / 146,713 at generation 21,
+      emitted and independently reinferred twelve cold-replayable policy tapes,
+      and stopped with `generation_limit_reached` plus proposal source
+      `frozen_goal_policy`. Its three frozen model identities are
+      `20a8a0eaa03a674431295018f5732440`,
+      `cdb3e450fb8e6de5268c825f4c0586b6`, and
+      `9c6a3e8f7a310198b45bf2c3133ae1d5`; the associated terminal behaviors are
+      distinct across generations even though the four deterministic repetitions
+      within each generation correctly trigger collapse warnings. Generation 3
+      retains admitted reachability model
+      `0546dae27b63c0595ad830d09b5e97b524fa2ff830bf0b8100e4cc917472ed17`
+      and admitted policy manifest
+      `bd7c34ea3fcf33cb2ddfdf0bbc713187e41432bdfd2f046acf96cf06765f99e4`.
+      The validated 10-record journal is
+      `e6847699dc3d22d850fa3631dfbce5b8f301ab4e8caa5ef41c3fbf82cb7e1872`
+      and its final state is
+      `f20fdaf22213bb2e62edcef37fafe6d164aa393ba9b9b8d27ac26140952a6634`.
 - [x] Preserve policy, dataset, checkpoint, objective, feature, action, proposal,
       and parent-generation lineage across the loop. The loop request binds the
       optimization proposal and native execution authorities; each journal phase
@@ -688,7 +706,10 @@ it and emit any legal PAD action for the entire episode.
 **Gate 3:** one unattended command performs at least three real
 collect/train/freeze/native-execute/ingest generations in persistent workers,
 survives resume, and emits cold-replayable candidates without manual artifact
-conversion.
+conversion. Passed by the authenticated q131 v2 campaign above: three committed
+generations, twelve native policy executions/cold tapes, 1,920 charged ticks,
+three distinct fitted frozen models, a generation-limit stop, and a fully
+revalidated crash-safe journal/state chain.
 
 ## 4. Prove that learning adds value
 
