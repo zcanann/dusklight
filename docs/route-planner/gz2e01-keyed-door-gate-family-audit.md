@@ -9,7 +9,7 @@ revision, platform, or language bundle.
 The earlier `DOOR20`, L1-family boss-door, and L5 boss-door audits remain the
 authoritative family-specific records for those actors. This document covers
 the remaining exact-build census and records which semantics are executable in
-`extracted-world-facts/v13` and which remain explicit boundaries.
+`extracted-world-facts/v14` and which remain explicit boundaries.
 
 ## Census method and source identities
 
@@ -54,7 +54,7 @@ hard guard checks only the boss key, yet its `UNLOCK` cut still queues a small-
 key decrement. Counts 1 through 100 lose one, zero clamps back to zero, and a
 raw count above 100 clamps to 99.
 
-The v13 candidate effect is the ordinary eventual committed-count equivalent,
+The v14 candidate effect is the ordinary eventual committed-count equivalent,
 not a claim that the transient queue and raw byte change simultaneously. Its
 actor-state obligation includes an uncontended pending delta. V9 splits zero,
 normal-range, and high-raw-count outcomes so the final committed byte remains
@@ -136,7 +136,7 @@ F_SP121 room 3 switch `0x82` and room 15 switch `0x81`. Its ordinary keyed path
 uses the same key/facing/local-box test, queues `-1`, and writes the switch.
 Persistent event-bit label 68 is M_035 at raw persistent-file coordinate
 `0x0810`; it suppresses the key event and forces both leaves fully open without
-a key or switch write. V13 imports all 14 F_SP109 copies as mutually exclusive
+a key or switch write. V14 imports all 14 F_SP109 copies as mutually exclusive
 locked-key, set-switch passage, and M_035 forced-open passage branches. The
 F_SP121 switches belong to an unmodeled non-memory domain and remain excluded.
 
@@ -144,8 +144,10 @@ F_SP121 switches belong to an unmodeled non-memory domain and remain excluded.
 parameters `0xffffffff`. Its accepted key event requires a key, facing, and
 distance below 200, then queues `-1`, but writes no persistent unlock switch.
 The pair opens transiently. A separate boar/event collision path destroys or
-opens it without a key. It remains unimported until paired live state and the
-destructive bypass can be represented without falsely persisting an unlock.
+opens it without a key. V14 imports normal/high-count key branches whose only
+persistent effect is the eventual decrement, plus a state-neutral boar bypass.
+Parent/child creation, transient paired opening, and the destructive collision
+conditions remain staged obligations; no branch fabricates an unlock switch.
 
 The lone `dr` placement in D_MN07 room 6 maps to `L7demo_dr` and has two
 separate branches. Outside layer 3, `key_count > 0` plus world X in
@@ -172,9 +174,9 @@ selected retail cuts:
 | `f68b5c754d2ccefc5f80f74e05fb659898e2f12c568260d4ad39237a02ce63a9` | `c8684156665423d1a133dc0b102098d8ec3be838dd6abe117dbafedf0144ab83` | `KOKI_GATE_OPEN00` contains `UNLOCK` before `OPEN` |
 | `a3700cf327a2469195fa93860b69dbada71cbff64bb846b0ee7cf0d932bb4e92` | `95582d74d858aeb5b01a9f1beb6c0c1bd6761b619b75f57d1d60d906f73ea856` | `RIDER_GATE_OPEN00` contains `UNLOCK` |
 
-## Executable v13 boundary
+## Executable v14 boundary
 
-For exact GZ2E01 content, `extracted-world-facts/v13` imports:
+For exact GZ2E01 content, `extracted-world-facts/v14` imports:
 
 - the six front-side option-2 mini-boss placements as distinct first-open and
   already-unlocked `Door` branches joined to their unique SCLS destinations;
@@ -185,7 +187,10 @@ For exact GZ2E01 content, `extracted-world-facts/v13` imports:
   with the pre-bridge key guard kept distinct from the layer-3 switch writer;
   and
 - all 14 layer-specific F_SP109 rider gates, splitting normal/high-count keyed
-  unlocks from set-switch pushing and M_035's state-neutral forced-open bypass.
+  unlocks from set-switch pushing and M_035's state-neutral forced-open bypass;
+  and
+- both F_SP118 caravan-gate parents with transient key openings and a separate
+  running-boar destruction bypass.
 
 The hard predicates resolve the source stage/room/layer, current-stage switch,
 small-key count, and boss-key bit from exact raw backing. Effects retain switch
@@ -194,12 +199,12 @@ Interaction geometry, resource/event completion, keyhole behavior, collision
 release, restart handling, and post-unlock pushing remain named feasibility
 obligations.
 
-V13 associates every world-imported transition that changes location with
+V14 associates every world-imported transition that changes location with
 exactly one encoded SCLS record, including actor-driven scene requests. In-room
 actor actions without a location effect must not be attached to a fabricated
 exit, and encoded-map/door transitions must still contain a location change.
 
-For L1 and L5 boss doors, v13 replaces the former prose-only interaction
+For L1 and L5 boss doors, v14 replaces the former prose-only interaction
 boundary with placement-derived typed observations: yaw-oriented actor-local
 `checkArea` rectangles and shortest-circular binary-angle facing obligations.
 L5 adds its positive-local-Z front plane. L1 uses form-selected compound
@@ -208,7 +213,7 @@ X strip remain distinct; a missing attention capture evaluates unknown. The
 loaded actor/event/collision/scene-change phase remains unresolved.
 
 The importer intentionally excludes F_SP121's non-memory-switch rider gates,
-caravan gates, externally switched `vshuter`, absent/non-memory switches,
+externally switched `vshuter`, absent/non-memory switches,
 Koki-gate types without exact retail evidence, and the zero-placement generic
 `bdoor` family. Those exclusions are tested. Adding them requires modeling the
 specific event-bit, switch-domain, paired/transient, destructive, or placement

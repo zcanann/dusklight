@@ -2118,8 +2118,8 @@ Deliverable: replayable state evidence that can validate transition rules.
         shutter's zero/normal/high-small-key outcomes, and layer-sensitive type-0
         Koki-gate unlock actions. V9 requires encoded-map/door transitions to
         reference exactly one SCLS record and forbids actor-driven actions from
-        fabricating one. Caravan, F_SP121 rider, and external-switch families
-        remain explicit audited boundaries pending their missing state domains.
+        fabricating one. F_SP121 rider and external-switch families remain
+        explicit audited boundaries pending their missing state domains.
   - [x] Import the exact D_MN07 room-6 `dr` bridge demo as two distinct
         SCLS-backed actor transitions. The pre-bridge branch requires a key but
         never consumes it and selects SCLS 6; the layer-3 destruction branch
@@ -2131,6 +2131,12 @@ Deliverable: replayable state evidence that can validate transition rules.
         branches. Bind M_035 to persistent-event raw coordinate `0x0810`, keep
         the key decrement and switch `0x6b` write on the accepted key branch
         only, and retain F_SP121's non-memory switches as explicit exclusions.
+  - [x] Import the exact F_SP118 room-1 and room-2 caravan-gate parents as
+        transient paired actions. Normal/high-count key branches consume one
+        key without inventing an unlock switch; the running-boar destruction
+        path is a separate state-neutral bypass whose pair creation, collision,
+        event, speed/distance, and destruction completion stay explicit
+        obligations.
 - [x] Model ordinary item/NPC/event producers. The ordinary Fishing Rod quest
       supplies a reusable six-step NPC/event/item chain, and the imported
       Lanayru/message-entry programs separately prove presentation requests,
@@ -2484,7 +2490,7 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 ### Phase 5 — Physical feasibility and obstructions
 
 - [x] Derive approach geometry from collision and spawn data where possible.
-      World facts v13 attaches one typed approach-geometry record to every
+      World facts v14 attaches one typed approach-geometry record to every
       collision-derived encoded-map candidate. Reconstructed KCL prisms retain
       their exact triangle, plane, and computed bounds; same-room player spawns
       are linked as candidates, never asserted paths. Degenerate reconstruction
@@ -3863,8 +3869,8 @@ These should remain explicit unknowns until evidence closes them:
 - Whether any existing technique can preserve/rebind live stage memory across a
   context that normally replaces it.
 - Complete semantic mapping for stage, zone, dungeon, and temporary flag banks.
-- Executable F_SP121 rider/caravan/external-switch gate modeling after their
-  audited switch-domain, paired/transient, and destructive state is added;
+- Executable F_SP121 rider/external-switch gate modeling after their audited
+  switch-domain and external-writer state is added;
   cross-build keyed-family equivalence also remains unproved.
 - Exact Fanadi/Ooccoo glitch sequence, `NO_TELOP` lifetime, clear conditions, and
   build support.

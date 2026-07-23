@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v13";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v14";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1433,6 +1433,7 @@ fn import_gz2e01_keyed_actor_actions(
         }
         "K_Gate" => import_gz2e01_koki_gate(inventory, placement, scope, inventory_sha256),
         "R_Gate" => import_gz2e01_rider_gate(inventory, placement, scope, inventory_sha256),
+        "CrvGate" => import_gz2e01_caravan_gate(inventory, placement, scope, inventory_sha256),
         _ => Ok(None),
     }
 }
@@ -2106,6 +2107,158 @@ fn import_gz2e01_rider_gate(
     Ok(Some(ImportedKeyedActorActions {
         exit_record_id: None,
         transitions: vec![ordinary, high, unlocked_passage, event_bypass],
+        obligations,
+    }))
+}
+
+fn import_gz2e01_caravan_gate(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedKeyedActorActions>, PlannerContractError> {
+    let Some(room @ (1 | 2)) = placement.scope.room else {
+        return Ok(None);
+    };
+    if inventory.stage != "F_SP118" || placement.parameters != u32::MAX {
+        return Ok(None);
+    }
+    let family = "caravan-gate";
+    let token = stable_token(
+        "keyed",
+        &[
+            family.as_bytes(),
+            inventory.stage.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    let mut evidence_records = vec![
+        EvidenceRecord {
+            id: format!("evidence.source.actor.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "f0916a79d3b157454dd2263307567e472d4f394d61ad8ece9153500d91943697",
+            )),
+            note: "d_a_obj_crvgate.cpp: parent/child creation, key/facing/distance offer guard, queued decrement, transient paired opening, and boar/event destruction path.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.source.name-map.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "5c46ffc79e891b59b02455b837d9966d05c147d8d95c91c65cc845dd848d32ad",
+            )),
+            note: "d_stage.cpp: CrvGate maps to the caravan-gate actor process.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.world.inventory.{token}"),
+            kind: EvidenceKind::Extracted,
+            source_sha256: Some(inventory_sha256),
+            note: format!(
+                "Authenticated F_SP118 room-{room} caravan-gate parent placement {}.",
+                placement.stable_id
+            ),
+        },
+    ];
+    evidence_records.sort_by(|left, right| left.id.cmp(&right.id));
+    let evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: evidence_records,
+    };
+    let unknown_evidence = RuleEvidence {
+        truth: TruthStatus::Unknown,
+        records: evidence.records.clone(),
+    };
+    let actor_id = format!("obligation.actor-state.{token}");
+    let interaction_id = format!("obligation.interaction.{token}");
+    let boar_id = format!("obligation.interaction.{token}.boar-destruction");
+    let obligations = vec![
+        FeasibilityObligation {
+            id: actor_id.clone(),
+            label: format!("Complete the paired room-{room} caravan-gate key event"),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Effect,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Confirm parent creation, child lookup, accepted demo command, uncontended queued key-delta commit, camera reset, and transient SetOpen on both leaves complete without interruption.".into(),
+            },
+            evidence: unknown_evidence.clone(),
+        },
+        FeasibilityObligation {
+            id: interaction_id.clone(),
+            label: format!("Reach and activate the room-{room} caravan gate"),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Reach within 200 world-XZ units with player/gate facing delta at least 0x5000 while the parent owns its door command.".into(),
+            },
+            evidence: unknown_evidence.clone(),
+        },
+        FeasibilityObligation {
+            id: boar_id.clone(),
+            label: format!("Destroy the room-{room} caravan-gate pair with the running boar"),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
+            detail: ObligationDetail::Unresolved {
+                research_question: "During a running event, collide the ridden E_WB boar with a gate sphere inside the 490-unit bound at nonzero speed, then witness both paired leaves enter and complete their destruction/open state.".into(),
+            },
+            evidence: unknown_evidence,
+        },
+    ];
+    let location = placement_location_guard(inventory, placement, room);
+    let ordinary = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "key-open",
+        &format!("F_SP118 room {room} caravan-gate transient key opening"),
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                location.clone(),
+                small_key_guard(ComparisonOperator::GreaterThan, 0),
+                small_key_guard(ComparisonOperator::LessThanOrEqual, 100),
+            ],
+        },
+        vec![small_key_adjust(-1)],
+        &[actor_id.clone(), interaction_id.clone()],
+        &evidence,
+    );
+    let high = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "key-open-high-key-clamp",
+        &format!(
+            "F_SP118 room {room} caravan-gate transient opening with high raw keys clamped to 99"
+        ),
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                location.clone(),
+                small_key_guard(ComparisonOperator::GreaterThan, 100),
+            ],
+        },
+        vec![small_key_write(99)],
+        &[actor_id, interaction_id],
+        &evidence,
+    );
+    let boar_bypass = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "boar-destruction-bypass",
+        &format!("F_SP118 room {room} caravan-gate boar destruction bypass"),
+        TransitionKind::ActorDriven,
+        location,
+        Vec::new(),
+        &[boar_id],
+        &evidence,
+    );
+    Ok(Some(ImportedKeyedActorActions {
+        exit_record_id: None,
+        transitions: vec![ordinary, high, boar_bypass],
         obligations,
     }))
 }
@@ -3344,6 +3497,40 @@ mod tests {
         )
     }
 
+    fn caravan_gate_inventory() -> WorldInventory {
+        let source =
+            static_digest("1f60355fcaab8b2b0c4d32b62ac638049952d36f5fb3bc7a81472708402639a4");
+        replace_room_actor(
+            boss_door_inventory(1),
+            "F_SP118",
+            1,
+            PlacementRecord {
+                stable_id: format!("dzr-sha256:{source}/chunk/ACT0/record/23"),
+                source_sha256: source,
+                scope: SourceScope {
+                    kind: SourceKind::Room,
+                    room: Some(1),
+                },
+                chunk_tag: "ACT0".into(),
+                record_index: 23,
+                layer: Some(0),
+                kind: PlacementKind::Actor,
+                name: "CrvGate".into(),
+                parameters: u32::MAX,
+                position: Vec3 {
+                    x: 2150.0,
+                    y: 0.0,
+                    z: -450.0,
+                },
+                angle: [0, -32768, 0],
+                set_id: 0xffff,
+                scale_raw: None,
+                raw_hex: "4372764761746500ffffffff4506600000000000c3e10000000080000000ffff".into(),
+            },
+            false,
+        )
+    }
+
     fn l7_bridge_demo_inventory() -> WorldInventory {
         let source =
             static_digest("a7014eb0a33bb9a57af75caff72605f6725273909f5bd2cf61c465c140fe6a6e");
@@ -4328,6 +4515,84 @@ mod tests {
     }
 
     #[test]
+    fn imports_fsp118_caravan_key_opening_and_boar_bypass_as_transient_branches() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let inventory = caravan_gate_inventory();
+        inventory.validate().unwrap();
+        let context = world_context(content.fingerprint.game_data_sha256, &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+
+        assert_eq!(facts.mechanics.transitions.len(), 3);
+        assert_eq!(facts.mechanics.obligations.len(), 3);
+        let ordinary = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.ends_with("transient key opening"))
+            .unwrap();
+        assert!(has_small_key_comparison(
+            ordinary,
+            ComparisonOperator::GreaterThan,
+            0,
+        ));
+        assert!(matches!(
+            ordinary.activation.effects.as_slice(),
+            [StateOperation::AdjustBoundRawUnsigned {
+                byte_offset: 0x1c,
+                delta: -1,
+                ..
+            }]
+        ));
+        assert!(
+            !ordinary
+                .activation
+                .effects
+                .iter()
+                .any(|effect| matches!(effect, StateOperation::WriteBoundRaw { .. }))
+        );
+
+        let high = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("clamped to 99"))
+            .unwrap();
+        assert!(writes_small_key(high, 99));
+        let boar = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("boar destruction bypass"))
+            .unwrap();
+        assert!(boar.activation.effects.is_empty());
+        assert!(!has_small_key_comparison(
+            boar,
+            ComparisonOperator::GreaterThan,
+            0,
+        ));
+        assert_eq!(boar.activation.physical_obligation_ids.len(), 1);
+
+        let mut unrelated = inventory;
+        unrelated.stage = "F_SP117".into();
+        let context = world_context(content.fingerprint.game_data_sha256, &unrelated);
+        let excluded = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&unrelated),
+        )
+        .unwrap();
+        assert!(excluded.mechanics.transitions.is_empty());
+    }
+
+    #[test]
     fn imports_l7_bridge_demo_as_two_distinct_scls_backed_actor_transitions() {
         let content = audited_content();
         let runtime = runtime(&content);
@@ -4499,7 +4764,7 @@ mod tests {
         };
         let inventory = regular_key_shutter_inventory();
         let mut placement = inventory.placements[0].clone();
-        for name in ["CrvGate", "vshuter"] {
+        for name in ["vshuter"] {
             placement.name = name.into();
             assert!(
                 import_gz2e01_keyed_actor_actions(
