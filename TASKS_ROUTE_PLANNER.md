@@ -96,6 +96,13 @@ state, components and bindings, provenance, backing-store and gate histories,
 friendly facts, and their causal deltas without recreating planner semantics in
 JavaScript. Dedicated state-node selection remains open.
 
+Transitions in the searchable palette are now draggable. Dropping one on the
+canvas or the current authored-route frontier repositions its presentation node
+and invokes the authoritative v33 append, which replays the exact ordered route
+from its start state before committing. A drop on an earlier authored step is
+rejected as ambiguous instead of silently changing route order; replacement has
+its own explicit workflow.
+
 Current Windows health is green. Planner-owned canonical JSON and source-evidence
 files are forced to LF checkout, and the workspace declares both crates as
 default members. The normal planner test command now runs the engine rather than
@@ -2581,7 +2588,7 @@ visual polish or whole-game authoring features.
       root, and performs revision-checked flushed atomic replacement. The browser
       tracks dirty layout state, warns before discard, persists through Save or
       Save As, and retains explicit JSON import/export.
-- [ ] Let an author drag a transition onto the canvas and connect it to an exact
+- [x] Let an author drag a transition onto the canvas and connect it to an exact
       predecessor state. Rust recomputes every downstream state and remains the
       only validation and mutation authority.
       The v33 service evaluates one catalog transition against an exact
@@ -2598,7 +2605,12 @@ visual polish or whole-game authoring features.
       authored step can now nominate any palette transition as its replacement;
       Rust preserves the step identity, replays the entire proposed route, and
       commits only when the replacement and every downstream join execute.
-      Dragging from a state node remains open.
+      Palette transitions are now native drag sources. A drop on the canvas or
+      current ordered frontier repositions the presentation node and executes
+      this exact replay/append path; dropping on an earlier step fails visibly
+      rather than inventing middle-insertion semantics. Explicit graph-handle
+      wiring remains extended-editor polish rather than a prerequisite for the
+      first usable authoring slice.
 - [ ] Render accepted connections distinctly from rejected or unknown joins.
       Selecting a rejected join must show missing producers, active
       obstructions/resolvers, unknown obligations, or exact-context mismatch;

@@ -46,6 +46,8 @@ elements["replace-step"].addEventListener("click", replaceSelectedRouteStep);
 elements["remove-step"].addEventListener("click", removeSelectedRouteStep);
 elements.canvas.addEventListener("wheel", onWheel, { passive: false });
 elements.canvas.addEventListener("pointerdown", beginPan);
+elements.canvas.addEventListener("dragover", allowTransitionDrop);
+elements.canvas.addEventListener("drop", dropTransitionAtRouteFrontier);
 window.addEventListener("pointermove", moveGesture);
 window.addEventListener("pointerup", endGesture);
 window.addEventListener("beforeunload", (event) => {
@@ -269,6 +271,7 @@ function renderPalette() {
   for (const node of matches) {
     const button = document.createElement("button");
     button.className = "palette-item";
+    button.draggable = true;
     const label = document.createElement("span");
     label.textContent = node.label;
     const id = document.createElement("small");
@@ -280,8 +283,55 @@ function renderPalette() {
       centerNode(node.id);
       render();
     });
+    button.addEventListener("dragstart", (event) => {
+      event.dataTransfer.effectAllowed = "copy";
+      event.dataTransfer.setData("text/plain", node.id);
+      setStatus(`Drop ${node.label} on the canvas or current route frontier`);
+    });
     elements["palette-list"].append(button);
   }
+}
+
+function allowTransitionDrop(event) {
+  if (!state.project?.start_state || state.readOnly) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+}
+
+async function dropTransitionAtRouteFrontier(event) {
+  if (!state.project?.start_state || state.readOnly) return;
+  event.preventDefault();
+  const nodeId = event.dataTransfer.getData("text/plain");
+  const node = state.graph?.nodes.find((candidate) =>
+    candidate.id === nodeId && candidate.payload.kind === "transition");
+  if (!node) {
+    setStatus("The dropped palette item is not a projected transition", "bad");
+    return;
+  }
+  const targetElement = event.target.closest?.(".node.reference_step");
+  if (targetElement && state.project.route_book) {
+    const targetNode = state.graph.nodes.find((candidate) =>
+      candidate.id === targetElement.dataset.nodeId);
+    const method = state.project.route_book.methods.find((candidate) =>
+      candidate.id === "method.authored-route");
+    const frontierStepId = method?.step_ids.at(-1);
+    if (targetNode?.payload.step_id !== frontierStepId) {
+      setStatus(
+        `Drop on the current route frontier ${frontierStepId ?? "or the empty canvas"}; middle insertion is ambiguous`,
+        "bad",
+      );
+      return;
+    }
+  }
+  const bounds = elements.canvas.getBoundingClientRect();
+  state.positions.set(node.id, {
+    x: (event.clientX - bounds.left - state.transform.x) / state.transform.scale - NODE_WIDTH / 2,
+    y: (event.clientY - bounds.top - state.transform.y) / state.transform.scale - NODE_HEIGHT / 2,
+  });
+  state.selected = { type: "node", value: node };
+  state.transitionEvaluation = null;
+  render();
+  await insertSelectedTransition();
 }
 
 function renderDetails() {
