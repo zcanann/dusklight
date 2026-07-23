@@ -23,6 +23,60 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("seal-learning-value-cell-evidence") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let plan_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--plan")?,
+            "learning-value comparison plan",
+        )?;
+        let draft_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--input")?,
+            "learning-value cell draft",
+        )?;
+        let plan: huntctl::search_evaluator::learning_value_comparison::LearningValueComparisonPlan =
+            serde_json::from_slice(&fs::read(plan_path)?)?;
+        let draft: huntctl::search_evaluator::learning_value_evidence::LearningValueCellDraft =
+            serde_json::from_slice(&fs::read(draft_path)?)?;
+        let evidence =
+            huntctl::search_evaluator::learning_value_evidence::LearningValueCellEvidence::seal(
+                draft,
+                &plan,
+                &repository_root,
+            )?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "learning-value cell evidence",
+        )?;
+        refuse_existing_output(&output, "learning-value cell evidence")?;
+        write_new_file(&output, evidence.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&evidence)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("validate-learning-value-cell-evidence") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let plan_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--plan")?,
+            "learning-value comparison plan",
+        )?;
+        let input_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--input")?,
+            "learning-value cell evidence",
+        )?;
+        let plan: huntctl::search_evaluator::learning_value_comparison::LearningValueComparisonPlan =
+            serde_json::from_slice(&fs::read(plan_path)?)?;
+        let evidence: huntctl::search_evaluator::learning_value_evidence::LearningValueCellEvidence =
+            serde_json::from_slice(&fs::read(input_path)?)?;
+        evidence.validate_files(&plan, &repository_root)?;
+        println!("{}", serde_json::to_string_pretty(&evidence)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("seal-learning-value-comparison-plan") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;
