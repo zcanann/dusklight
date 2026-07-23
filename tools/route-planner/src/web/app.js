@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v36";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v37";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v2";
 const LEGACY_PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";

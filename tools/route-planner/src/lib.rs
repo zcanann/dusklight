@@ -22,8 +22,8 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v8";
-pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v7";
+pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v9";
+pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v8";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -45,8 +45,14 @@ pub struct RuntimeSolveOptions {
     pub max_depth: usize,
     pub max_states: usize,
     pub max_resolution_combinations: usize,
+    #[serde(default = "default_max_plans")]
+    pub max_plans: usize,
     pub feasibility_mode: RuntimeFeasibilityMode,
     pub evidence_mode: RuntimeEvidenceMode,
+}
+
+const fn default_max_plans() -> usize {
+    1
 }
 
 impl Default for RuntimeSolveOptions {
@@ -56,6 +62,7 @@ impl Default for RuntimeSolveOptions {
             max_depth: solver.max_depth,
             max_states: solver.max_states,
             max_resolution_combinations: solver.max_resolution_combinations,
+            max_plans: default_max_plans(),
             feasibility_mode: RuntimeFeasibilityMode::Modeled,
             evidence_mode: RuntimeEvidenceMode::EstablishedOnly,
         }
@@ -192,9 +199,9 @@ fn solve_catalog_goal_inner(
             solver_options,
             book,
         )?
-        .solve(state, &goal.predicate)?,
+        .solve_alternatives(state, &goal.predicate, options.max_plans)?,
         None => ForwardSolver::new(facts, mechanics, equivalence_sets, solver_options)?
-            .solve(state, &goal.predicate)?,
+            .solve_alternatives(state, &goal.predicate, options.max_plans)?,
     };
     Ok(SolveReport {
         schema: SOLVE_REPORT_SCHEMA.into(),

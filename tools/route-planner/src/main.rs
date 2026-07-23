@@ -1961,6 +1961,7 @@ fn solve_options(args: &[String]) -> Result<RuntimeSolveOptions, Box<dyn Error>>
             "--max-resolution-combinations",
             defaults.max_resolution_combinations,
         )?,
+        max_plans: usize_option(args, "--max-plans", defaults.max_plans)?,
         feasibility_mode: if flag(args, "--upper-bound") {
             RuntimeFeasibilityMode::UpperBound
         } else {
@@ -2075,8 +2076,8 @@ fn print_usage() {
             "  route-planner scan-orig --orig ORIG_ROOT [--product-id ID] --output SCAN.json",
             "  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json",
             "  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)",
-            "  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]",
-            "  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]",
+            "  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--max-plans N] [--upper-bound] [--research]",
+            "  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--max-plans N] [--upper-bound] [--research]",
             "  route-planner serve-stdio",
             "  route-planner serve-web [--listen 127.0.0.1:32170] [--projects DIR]",
         ]

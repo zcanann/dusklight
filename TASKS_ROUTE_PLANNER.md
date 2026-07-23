@@ -2511,7 +2511,14 @@ Deliverable: researchers can extend the model without editing core code.
   - [x] Validate portable multi-context route books independently in every
         selected exact context, requiring one start state per expanded context
         and returning per-context proofs plus a fail-closed aggregate status.
-- [ ] Add multi-objective cost and K-alternative plan search.
+- [x] Add multi-objective cost and K-alternative plan search.
+      `solve_alternatives` now completes one bounded causal search, retains
+      incomparable goal labels across route depth, every named technique-cost
+      axis, and route-book preference score, removes strictly dominated plans,
+      and returns a deterministic primary plus up to K-1 typed alternatives.
+      The CLI/service option `max_plans` defaults to one for compatibility;
+      multi-plan reports preserve an explicit search-limit flag rather than
+      claiming the returned Pareto set is complete after a bounded cutoff.
 - [x] Keep graph-region encapsulation outside solver reachability semantics.
   - [x] Preserve stable state/transition/boundary identities so solved or authored
         regions can be selected and projected without synthesizing macro edges.

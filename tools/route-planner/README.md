@@ -229,6 +229,11 @@ The planner CLI currently owns forty operations:
   Gated writer rules execute as their own searchable action type; transition
   proofs retain attached reader values, and missing in-scope readers fail
   unknown instead of being skipped.
+  `--max-plans N` completes the same bounded search and returns up to `N`
+  deterministic nondominated goal plans. Search depth and every named cost axis
+  are minimized while route-book preference score is maximized; incomparable
+  tradeoffs are retained in `alternative_plans`, and a hit search bound remains
+  explicit even when at least one goal plan was found.
   Catalog-goal solves first expand backward from the goal through all typed
   producers and requirements, then restrict forward exploration to that causal
   slice. The solve report retains the full relevance frontier and whether

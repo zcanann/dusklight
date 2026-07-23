@@ -577,6 +577,10 @@ pub struct SearchResult {
     pub preference_score: u64,
     pub satisfied_preference_ids: Vec<String>,
     pub route_costs: BTreeMap<String, u64>,
+    /// Additional nondominated goal plans, ordered by the same deterministic
+    /// presentation order as the primary plan. The legacy fields above remain
+    /// the primary plan so single-plan consumers do not need a second shape.
+    pub alternative_plans: Vec<SearchPlan>,
     pub minimum_evidence: Option<TruthStatus>,
     pub unknown_transition_ids: Vec<String>,
     pub unknown_writer_ids: Vec<String>,
@@ -585,6 +589,44 @@ pub struct SearchResult {
     pub blocked_writer_witnesses: Vec<BlockedWriterWitness>,
     pub continuation_merge_proofs: Vec<ContinuationMergeProof>,
     pub failed_producer_cuts: Vec<FailedProducerCut>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SearchPlan {
+    pub result_state_sha256: Digest,
+    pub steps: Vec<SearchStep>,
+    pub preference_score: u64,
+    pub satisfied_preference_ids: Vec<String>,
+    pub route_costs: BTreeMap<String, u64>,
+}
+
+impl SearchPlan {
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.result_state_sha256 == Digest::ZERO
+            || self
+                .steps
+                .last()
+                .is_some_and(|step| step.result_state_sha256 != self.result_state_sha256)
+        {
+            return Err(PlannerContractError::new(
+                "solver.search_plan.result_state_sha256",
+                "must identify the final reached state",
+            ));
+        }
+        let mut prior = None;
+        for id in &self.satisfied_preference_ids {
+            validate_stable_id("solver.search_plan.satisfied_preference_ids", id)?;
+            if prior.is_some_and(|candidate: &String| candidate >= id) {
+                return Err(PlannerContractError::new(
+                    "solver.search_plan.satisfied_preference_ids",
+                    "must be unique and sorted",
+                ));
+            }
+            prior = Some(id);
+        }
+        resource_label(self.steps.len(), &self.route_costs).validate()
+    }
 }
 
 /// Everything that can change whether an otherwise identical live state may
@@ -814,6 +856,56 @@ fn strictly_dominates(left: &SearchResourceLabel, right: &SearchResourceLabel) -
     strict
 }
 
+fn plan_strictly_dominates(left: &SearchPlan, right: &SearchPlan) -> bool {
+    let left_resources = resource_label(left.steps.len(), &left.route_costs);
+    let right_resources = resource_label(right.steps.len(), &right.route_costs);
+    let resources_no_worse = left_resources.depth <= right_resources.depth
+        && left_resources
+            .route_costs
+            .keys()
+            .chain(right_resources.route_costs.keys())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .all(|axis| {
+                left_resources.route_costs.get(axis).copied().unwrap_or(0)
+                    <= right_resources.route_costs.get(axis).copied().unwrap_or(0)
+            });
+    resources_no_worse
+        && left.preference_score >= right.preference_score
+        && (strictly_dominates(&left_resources, &right_resources)
+            || left.preference_score > right.preference_score)
+}
+
+fn search_plan_signature(plan: &SearchPlan) -> Vec<(SearchActionKind, String)> {
+    plan.steps
+        .iter()
+        .map(|step| (step.action_kind, step.action_id.clone()))
+        .collect()
+}
+
+fn retain_nondominated_plan(plans: &mut Vec<SearchPlan>, candidate: SearchPlan) {
+    if plans
+        .iter()
+        .any(|plan| plan == &candidate || plan_strictly_dominates(plan, &candidate))
+    {
+        return;
+    }
+    plans.retain(|plan| !plan_strictly_dominates(&candidate, plan));
+    plans.push(candidate);
+}
+
+fn order_search_plans(plans: &mut [SearchPlan]) {
+    plans.sort_by(|left, right| {
+        left.steps
+            .len()
+            .cmp(&right.steps.len())
+            .then_with(|| right.preference_score.cmp(&left.preference_score))
+            .then_with(|| left.route_costs.cmp(&right.route_costs))
+            .then_with(|| search_plan_signature(left).cmp(&search_plan_signature(right)))
+            .then_with(|| left.result_state_sha256.cmp(&right.result_state_sha256))
+    });
+}
+
 struct RouteSearchPolicy {
     required_actions: BTreeSet<RouteActionRef>,
     banned_actions: BTreeSet<RouteActionRef>,
@@ -884,7 +976,26 @@ impl<'a> ForwardSolver<'a> {
         start: PlannerExecutionState,
         goal: &PredicateExpression,
     ) -> Result<SearchResult, PlannerContractError> {
-        self.solve_internal(start, goal, &[], None)
+        self.solve_internal(start, goal, &[], None, 1)
+    }
+
+    /// Complete the bounded search and return up to `max_plans` deterministic
+    /// Pareto plans. Depth and every named route-cost axis are minimized while
+    /// route-book preference score is maximized. Incomparable tradeoffs remain
+    /// alternatives; strictly dominated goal plans are omitted.
+    pub fn solve_alternatives(
+        &self,
+        start: PlannerExecutionState,
+        goal: &PredicateExpression,
+        max_plans: usize,
+    ) -> Result<SearchResult, PlannerContractError> {
+        if max_plans == 0 {
+            return Err(PlannerContractError::new(
+                "solver.max_plans",
+                "must be nonzero",
+            ));
+        }
+        self.solve_internal(start, goal, &[], None, max_plans)
     }
 
     /// Enumerate the bounded, permissive authorization graph without a goal-
@@ -939,6 +1050,7 @@ impl<'a> ForwardSolver<'a> {
             &PredicateExpression::False,
             &action_roots,
             Some(&mut recorder),
+            1,
         )?;
         let mut equivalence_set_sha256 = self
             .equivalence_sets
@@ -966,6 +1078,7 @@ impl<'a> ForwardSolver<'a> {
         goal: &PredicateExpression,
         additional_action_roots: &[RouteActionRef],
         mut authorization: Option<&mut AuthorizationRecorder>,
+        max_plans: usize,
     ) -> Result<SearchResult, PlannerContractError> {
         start.validate()?;
         let start_evaluator = PredicateEvaluator::new(
@@ -1052,6 +1165,7 @@ impl<'a> ForwardSolver<'a> {
         let mut saw_unknown_goal = false;
         let mut hit_search_limit = false;
         let mut generated_id = 0_u64;
+        let mut reached_plans = Vec::new();
 
         while let Some(QueueEntry { node, .. }) = queue.pop() {
             let state_identity = node.state.semantic_digest()?;
@@ -1155,6 +1269,21 @@ impl<'a> ForwardSolver<'a> {
                         && required_sequences_satisfied
                         && !node.route_condition_unknown =>
                 {
+                    if max_plans > 1 {
+                        let plan = SearchPlan {
+                            result_state_sha256: state_identity,
+                            steps: node.steps,
+                            preference_score: node.preference_score,
+                            satisfied_preference_ids: node
+                                .satisfied_preference_ids
+                                .into_iter()
+                                .collect(),
+                            route_costs: node.route_costs,
+                        };
+                        plan.validate()?;
+                        retain_nondominated_plan(&mut reached_plans, plan);
+                        continue;
+                    }
                     return Ok(SearchResult {
                         backward_relevance,
                         backward_pruning_applied,
@@ -1168,6 +1297,7 @@ impl<'a> ForwardSolver<'a> {
                             .into_iter()
                             .collect(),
                         route_costs: node.route_costs,
+                        alternative_plans: Vec::new(),
                         minimum_evidence: route_policy
                             .as_ref()
                             .and_then(|policy| policy.minimum_evidence),
@@ -1809,6 +1939,34 @@ impl<'a> ForwardSolver<'a> {
             }
         }
 
+        if !reached_plans.is_empty() {
+            order_search_plans(&mut reached_plans);
+            reached_plans.truncate(max_plans);
+            let primary = reached_plans.remove(0);
+            return Ok(SearchResult {
+                backward_relevance,
+                backward_pruning_applied,
+                status: SearchStatus::Reached,
+                steps: primary.steps,
+                explored_states: visited.len(),
+                hit_search_limit,
+                preference_score: primary.preference_score,
+                satisfied_preference_ids: primary.satisfied_preference_ids,
+                route_costs: primary.route_costs,
+                alternative_plans: reached_plans,
+                minimum_evidence: route_policy
+                    .as_ref()
+                    .and_then(|policy| policy.minimum_evidence),
+                unknown_transition_ids: unknown_transition_ids.into_iter().collect(),
+                unknown_writer_ids: unknown_writer_ids.into_iter().collect(),
+                execution_error_ids: execution_error_ids.into_iter().collect(),
+                blocked_transition_witnesses: Vec::new(),
+                blocked_writer_witnesses: Vec::new(),
+                continuation_merge_proofs,
+                failed_producer_cuts: Vec::new(),
+            });
+        }
+
         let unknown = hit_search_limit
             || saw_unknown_goal
             || !unknown_transition_ids.is_empty()
@@ -1839,6 +1997,7 @@ impl<'a> ForwardSolver<'a> {
             preference_score: 0,
             satisfied_preference_ids: Vec::new(),
             route_costs: BTreeMap::new(),
+            alternative_plans: Vec::new(),
             minimum_evidence: route_policy
                 .as_ref()
                 .and_then(|policy| policy.minimum_evidence),
@@ -4830,6 +4989,69 @@ mod tests {
                 route_costs: BTreeMap::from([("difficulty".into(), 3), ("time".into(), 1),]),
             },
         ));
+    }
+
+    #[test]
+    fn bounded_alternative_search_returns_only_nondominated_goal_plans() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(Vec::new());
+        mechanics.techniques = vec![
+            location_technique(
+                &snapshot,
+                "technique.dominated",
+                "STAGE_G",
+                &[("difficulty", 4), ("time", 4)],
+            ),
+            location_technique(
+                &snapshot,
+                "technique.low-difficulty",
+                "STAGE_G",
+                &[("difficulty", 1), ("time", 3)],
+            ),
+            location_technique(
+                &snapshot,
+                "technique.low-time",
+                "STAGE_G",
+                &[("difficulty", 3), ("time", 1)],
+            ),
+        ];
+        mechanics.goals = vec![goal("goal.g", "STAGE_G")];
+        let facts = facts();
+        let solver = ForwardSolver::new(&facts, &mechanics, &[], SolverOptions::default()).unwrap();
+        let result = solver
+            .solve_alternatives(
+                PlannerExecutionState::new(snapshot.clone()).unwrap(),
+                &stage_is("STAGE_G"),
+                3,
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SearchStatus::Reached);
+        assert!(!result.hit_search_limit);
+        assert_eq!(result.steps[0].action_id, "technique.low-difficulty");
+        assert_eq!(
+            result.route_costs,
+            BTreeMap::from([("difficulty".into(), 1), ("time".into(), 3)])
+        );
+        assert_eq!(result.alternative_plans.len(), 1);
+        assert_eq!(
+            result.alternative_plans[0].steps[0].action_id,
+            "technique.low-time"
+        );
+        assert_eq!(
+            result.alternative_plans[0].route_costs,
+            BTreeMap::from([("difficulty".into(), 3), ("time".into(), 1)])
+        );
+        result.alternative_plans[0].validate().unwrap();
+        assert!(
+            solver
+                .solve_alternatives(
+                    PlannerExecutionState::new(snapshot).unwrap(),
+                    &stage_is("STAGE_G"),
+                    0,
+                )
+                .is_err()
+        );
     }
 
     #[test]
