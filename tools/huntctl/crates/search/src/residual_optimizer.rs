@@ -730,68 +730,19 @@ impl ResidualCemOptimizer {
         }
         self.space.validate_parent(parent)?;
         self.validate_parent_bytes(parent_tape_bytes)?;
-        let mut batch = ResidualProposalBatch {
-            proposals: Vec::with_capacity(self.config.population),
-            rejected_invalid: 0,
-            rejected_duplicate_tape: 0,
-        };
-        if self.generation == 0 {
-            for genome in inferred_button_cadence_repairs(parent, &self.space)
-                .into_iter()
-                .take(self.config.population)
-            {
-                self.attempted_genomes = self
-                    .attempted_genomes
-                    .checked_add(1)
-                    .ok_or_else(|| optimizer_error("residual attempt counter overflowed"))?;
-                let compiled = match compile_genome(parent, parent_tape_bytes, &self.space, &genome)
-                {
-                    Ok(compiled) => compiled,
-                    Err(_) => {
-                        batch.rejected_invalid += 1;
-                        continue;
-                    }
-                };
-                if !self
-                    .seen_tape_sha256
-                    .insert(compiled.report.realized_tape_sha256)
-                {
-                    batch.rejected_duplicate_tape += 1;
-                    continue;
-                }
-                let candidate = genome.candidate(parent_tape_bytes, &self.space)?;
-                batch.proposals.push(ResidualProposal {
-                    generation: self.generation,
-                    sample_index: 0,
-                    genome,
-                    candidate,
-                    compiled,
-                });
-            }
-        }
-        let mut produced = batch.proposals.len() as u64;
-        let remaining = self.config.population - batch.proposals.len();
-        if remaining > 0 {
-            let sampled = sample_unique(
-                &self.space,
-                &mut self.rng,
-                parent,
-                parent_tape_bytes,
-                remaining,
-                self.generation,
-                &mut self.attempted_genomes,
-                &mut produced,
-                &mut self.seen_tape_sha256,
-                Some(&self.distributions),
-            )?;
-            batch.rejected_invalid += sampled.rejected_invalid;
-            batch.rejected_duplicate_tape += sampled.rejected_duplicate_tape;
-            batch.proposals.extend(sampled.proposals);
-        }
-        for (sample_index, proposal) in batch.proposals.iter_mut().enumerate() {
-            proposal.sample_index = u32::try_from(sample_index)
-                .map_err(|_| optimizer_error("residual sample index overflowed"))?;
-        }
+        let mut produced = 0_u64;
+        let mut batch = sample_unique(
+            &self.space,
+            &mut self.rng,
+            parent,
+            parent_tape_bytes,
+            self.config.population,
+            self.generation,
+            &mut self.attempted_genomes,
+            &mut produced,
+            &mut self.seen_tape_sha256,
+            Some(&self.distributions),
+        )?;
         self.rejected_invalid_genomes = self
             .rejected_invalid_genomes
             .checked_add(batch.rejected_invalid)
@@ -908,87 +859,6 @@ fn pending_sample_matches(
             .genome
             .candidate(parent_tape_bytes, space)
             .is_ok_and(|candidate| candidate.content_sha256 == sample.candidate_sha256)
-}
-
-/// Derive ordinary generation-zero candidates from doubled gaps in repeated
-/// incumbent button edges. This names no game action, route, frame, button, or
-/// terminal; native predicate evidence still provides the only ranking signal.
-fn inferred_button_cadence_repairs(
-    parent: &InputTape,
-    space: &ResidualSearchSpace,
-) -> Vec<ResidualGenome> {
-    let mut repairs = Vec::new();
-    for (port_index, &port) in space.ports.iter().enumerate() {
-        for (button_index, &mask) in space.button_masks.iter().enumerate() {
-            let edges = (space.start_frame..space.end_frame_exclusive)
-                .filter(|&frame| {
-                    let frame = frame as usize;
-                    parent.frames[frame].pads[usize::from(port)].buttons & mask == mask
-                        && (frame == 0
-                            || parent.frames[frame - 1].pads[usize::from(port)].buttons & mask
-                                != mask)
-                })
-                .collect::<Vec<_>>();
-            let intervals = edges
-                .windows(2)
-                .map(|pair| pair[1] - pair[0])
-                .collect::<Vec<_>>();
-            for (gap_index, &gap) in intervals.iter().enumerate() {
-                if gap < 2 || gap % 2 != 0 {
-                    continue;
-                }
-                let cadence = gap / 2;
-                if !intervals
-                    .iter()
-                    .enumerate()
-                    .any(|(index, interval)| index != gap_index && *interval == cadence)
-                {
-                    continue;
-                }
-                let frame = edges[gap_index] + cadence;
-                if frame >= space.end_frame_exclusive
-                    || parent.frames[frame as usize].pads[usize::from(port)].buttons & mask != 0
-                {
-                    continue;
-                }
-                let Some(duration_index) =
-                    space.duration_values.iter().position(|value| *value == 1)
-                else {
-                    continue;
-                };
-                let mut genes = vec![disabled_gene(); usize::from(space.candidate_slots)];
-                genes[0] = ResidualGene {
-                    enabled: true,
-                    kind: ResidualGeneKind::Button,
-                    port_index: port_index as u16,
-                    channel_index: 0,
-                    basis_index: 0,
-                    start_index: (frame - space.start_frame) as u32,
-                    duration_index: duration_index as u16,
-                    delta_indices: [0; 4],
-                    button_index: button_index as u16,
-                    button_mode: ResidualGeneButtonMode::Press,
-                };
-                repairs.push(ResidualGenome { genes });
-            }
-        }
-    }
-    repairs
-}
-
-fn disabled_gene() -> ResidualGene {
-    ResidualGene {
-        enabled: false,
-        kind: ResidualGeneKind::Analog,
-        port_index: 0,
-        channel_index: 0,
-        basis_index: 0,
-        start_index: 0,
-        duration_index: 0,
-        delta_indices: [0; 4],
-        button_index: 0,
-        button_mode: ResidualGeneButtonMode::Release,
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1587,74 +1457,6 @@ mod tests {
         assert_eq!(compiled.bytes, q125_bytes);
         assert_eq!(witness.buttons.len(), 1);
         assert_eq!(witness.buttons[0].start_frame, 100);
-    }
-
-    #[test]
-    fn cem_generation_zero_proposes_interior_button_cadence_repairs() {
-        let (mut tape, _) = parent(96);
-        for frame in [10, 30, 50, 90] {
-            tape.frames[frame].pads[0].buttons = 0x0100;
-        }
-        let bytes = tape.encode().unwrap();
-        let config = ResidualCemConfig {
-            population: 12,
-            elites: 3,
-            smoothing_millionths: 250_000,
-            seed: 31,
-        };
-        let mut optimizer = ResidualCemOptimizer::new(space(), &bytes, config).unwrap();
-        let batch = optimizer.ask(&tape, &bytes).unwrap();
-        assert!(batch.proposals.iter().any(|proposal| {
-            proposal.candidate.buttons
-                == vec![ButtonResidual {
-                    port: 0,
-                    buttons: 0x0100,
-                    start_frame: 70,
-                    duration_frames: 1,
-                    mode: ButtonResidualMode::Press,
-                }]
-        }));
-    }
-
-    #[test]
-    fn checked_ordon_canary_generation_zero_contains_the_q125_repair() {
-        let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
-        let segment_root = repository_root.join("routes/Glitch Exhibition/intro/segments");
-        let degraded_bytes =
-            std::fs::read(segment_root.join("to_ordon_spring_degraded_q131.tape")).unwrap();
-        let q125_bytes = std::fs::read(segment_root.join("to_ordon_spring_q125.tape")).unwrap();
-        let degraded = InputTape::decode(&degraded_bytes).unwrap().tape;
-        let search_space = ResidualSearchSpace {
-            schema: RESIDUAL_SEARCH_SPACE_SCHEMA_V1.into(),
-            start_frame: 0,
-            end_frame_exclusive: 126,
-            candidate_slots: 4,
-            ports: vec![0],
-            analog_channels: vec![
-                AnalogChannel::MainX,
-                AnalogChannel::MainY,
-                AnalogChannel::CameraX,
-                AnalogChannel::CameraY,
-            ],
-            analog_delta_values: vec![-64, -32, -16, -8, -4, 4, 8, 16, 32, 64],
-            button_masks: vec![1, 2, 4, 8, 16, 32, 64, 256, 512, 1024, 2048, 4096],
-            duration_values: vec![1, 2, 4, 8, 16, 32],
-        };
-        let config = ResidualCemConfig {
-            population: 64,
-            elites: 8,
-            smoothing_millionths: 250_000,
-            seed: 104_729,
-        };
-        let mut optimizer =
-            ResidualCemOptimizer::new(search_space, &degraded_bytes, config).unwrap();
-        let batch = optimizer.ask(&degraded, &degraded_bytes).unwrap();
-        assert!(
-            batch
-                .proposals
-                .iter()
-                .any(|proposal| proposal.compiled.bytes == q125_bytes)
-        );
     }
 
     #[test]

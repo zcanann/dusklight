@@ -5,9 +5,21 @@
   "campaign": {
     "request_content_sha256": "df396ff76ed13c88f017d8f33bea8effe03305b1b768ce10e3da271b572b0fbe",
     "execution_binding_sha256": "1986f36938dff3d2edebc7dbea41953b2f88f2f2bb400b9bdef4787c38ad8fd2",
+    "execution_executable_sha256": "22487ae028a944eff082469960870dbbdb1f66194521926a0d5a59b7571281b9",
+    "execution_identity_verified": true,
     "generation": 0,
     "completed_candidates": 64,
-    "charged_simulated_ticks": 11345
+    "charged_simulated_ticks": 11345,
+    "first_hit_distribution": {
+      "miss": 15,
+      "125": 1,
+      "131": 40,
+      "132": 2,
+      "133": 3,
+      "134": 1,
+      "135": 1,
+      "137": 1
+    }
   },
   "observed_result": {
     "candidate_id": "g000000-s00000-16f51b6e63e1",
@@ -23,14 +35,6 @@
     {
       "code": "proposal_not_reproducible",
       "detail": "The checked optimizer does not contain the generation-zero cadence injection that created this candidate."
-    },
-    {
-      "code": "request_path_mismatch",
-      "detail": "The original report named the checked canary request path, but that path now identifies a different v4 request rather than the v3 request bound by the campaign."
-    },
-    {
-      "code": "executable_identity_mismatch",
-      "detail": "The original report recorded executable SHA-256 22487ae028a944eff082469960870dbbdb1f66194521926a0d5a59b7571281b9, while the referenced sealed execution recorded 19746f26d1a823c8ed3b333519035d966bf08c6640e80414f47433c9b4957d04."
     },
     {
       "code": "insufficient_replay",
