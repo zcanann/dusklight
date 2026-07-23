@@ -50,6 +50,7 @@ pub mod native_episode_history;
 pub mod native_frozen_policy_cold_replay;
 pub mod native_frozen_policy_reinference;
 pub mod native_frozen_policy_suffix_batch;
+pub mod native_generic_observation;
 pub mod native_geometry_view;
 pub mod native_goal_frozen_policy;
 pub mod native_goal_reachability;

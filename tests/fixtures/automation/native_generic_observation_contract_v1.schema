@@ -1,0 +1,11 @@
+schema dusklight-native-generic-observation-contract/v1
+observation dusklight-learning-observation/v27
+action dusklight-raw-pad-action/v2
+history bounded-past-only-complete-observation-and-consumed-pad
+player motion action procedure mode form resources relationships
+camera full-pose-yaw-with-explicit-status
+collision contacts background-planes local-surfaces solver dynamic-colliders
+target scene-exit-signed-distance complete-actor-trigger-volumes
+loading event-transition process-lifecycle room-load warp resource-load
+actors complete-runtime-generation-set-untruncated
+missingness present absent unavailable not-sampled

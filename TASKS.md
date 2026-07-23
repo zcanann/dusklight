@@ -479,10 +479,18 @@ it and emit any legal PAD action for the entire episode.
       checkpoint authority. Dataset, reachability model, frozen-policy manifest,
       strict native rollout envelope, collapse comparison, and run summary all
       bind the selected mode.
-- [ ] Supply a stable generic observation contract containing Link motion/action
+- [x] Supply a stable generic observation contract containing Link motion/action
       state, camera/PAD history, local collision contacts and geometry, target
       trigger relation, loading/event state, and complete relevant actor sets
-      with explicit missingness.
+      with explicit missingness. The content-hashed generic observation v1
+      contract fixes learning-observation v27 plus raw-PAD v2, requires bounded
+      past-only complete-observation/action history, and rejects unsampled camera,
+      player-action, collision, scene-exit, lifecycle, event-transition, room,
+      warp, resource, or relationship channels. It also requires untruncated
+      runtime-generation actor sets and finite scene-exit/trigger geometry.
+      Learning-loop validation reports the contract, history, observation, and
+      actor counts, and every newly executed policy shard must pass it before
+      replay ingestion.
 - [x] Separate authoritative rewards from diagnostics. Terminal success and
       per-tick cost define the task; navigation-aware potential, novelty,
       contacts, and learned reachability may shape exploration but cannot declare

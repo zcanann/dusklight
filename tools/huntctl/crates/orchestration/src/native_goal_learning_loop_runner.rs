@@ -24,6 +24,7 @@ use dusklight_learning::compiled_goal_graph::CompiledGoalGraph;
 use dusklight_learning::factorized_policy_suffix_batch::NativeFactorizedPolicyBatchConfig;
 use dusklight_learning::native_frozen_policy_reinference::realize_native_frozen_policy_tape;
 use dusklight_learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
+use dusklight_learning::native_generic_observation::validate_native_generic_observation_shard;
 use dusklight_learning::native_goal_frozen_policy::{
     NativeGoalFrozenPolicyAdmission, NativeGoalFrozenPolicyExport, NativeGoalFrozenPolicyManifest,
 };
@@ -645,6 +646,7 @@ fn execute_prepared_generation(
         let shard_path = Path::new(&output.validated.execution.episode_shard_path);
         episode_shards.push(artifact_reference(root, shard_path).map_err(runner_error)?);
         let shard = NativeEpisodeShard::read(shard_path).map_err(runner_error)?;
+        validate_native_generic_observation_shard(&shard).map_err(runner_error)?;
         let episode_id = output
             .validated
             .execution

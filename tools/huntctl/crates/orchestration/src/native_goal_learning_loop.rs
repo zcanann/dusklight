@@ -12,6 +12,10 @@ use crate::optimization_request::{CampaignClass, OptimizationRequest};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
+use dusklight_learning::native_generic_observation::{
+    NATIVE_GENERIC_OBSERVATION_HISTORY_DEPTH, native_generic_observation_contract_sha256,
+    validate_native_generic_observation_shard,
+};
 use dusklight_learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
 use dusklight_learning::native_goal_reachability::NativeGoalReachabilityConfig;
 use dusklight_learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
@@ -390,6 +394,8 @@ impl NativeGoalLearningLoopRequest {
         }
         let mut shard_identities = BTreeSet::new();
         let mut episode_count = 0_u64;
+        let mut observation_count = 0_u64;
+        let mut actor_observation_count = 0_u64;
         for reference in &self.initial_episode_shards {
             let path = referenced_path(&root, reference)?;
             let shard = NativeEpisodeShard::read(path).map_err(loop_error)?;
@@ -398,10 +404,17 @@ impl NativeGoalLearningLoopRequest {
                     "initial episode shard content identity differs from its artifact reference",
                 ));
             }
+            let generic = validate_native_generic_observation_shard(&shard).map_err(loop_error)?;
             shard_identities.insert(shard.content_sha256);
             episode_count = episode_count
                 .checked_add(shard.episodes.len() as u64)
                 .ok_or_else(|| loop_message("initial episode count overflowed"))?;
+            observation_count = observation_count
+                .checked_add(generic.observations as u64)
+                .ok_or_else(|| loop_message("initial observation count overflowed"))?;
+            actor_observation_count = actor_observation_count
+                .checked_add(generic.actor_observations as u64)
+                .ok_or_else(|| loop_message("initial actor observation count overflowed"))?;
         }
         if corpus
             .entries
@@ -433,6 +446,10 @@ impl NativeGoalLearningLoopRequest {
             initial_entries: corpus.report.entries as u64,
             initial_episode_shards: self.initial_episode_shards.len() as u64,
             initial_episodes: episode_count,
+            generic_observation_contract_sha256: native_generic_observation_contract_sha256(),
+            generic_observation_history_depth: NATIVE_GENERIC_OBSERVATION_HISTORY_DEPTH,
+            initial_observations: observation_count,
+            initial_actor_observations: actor_observation_count,
             generation_limit: self.generation_limit,
             rollouts_per_generation: self.rollouts_per_generation,
             simulated_tick_budget: self.simulated_tick_budget,
@@ -471,6 +488,10 @@ pub struct NativeGoalLearningLoopValidationReport {
     pub initial_entries: u64,
     pub initial_episode_shards: u64,
     pub initial_episodes: u64,
+    pub generic_observation_contract_sha256: Digest,
+    pub generic_observation_history_depth: usize,
+    pub initial_observations: u64,
+    pub initial_actor_observations: u64,
     pub generation_limit: u16,
     pub rollouts_per_generation: u16,
     pub simulated_tick_budget: u64,
