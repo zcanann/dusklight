@@ -6,6 +6,7 @@
 
 pub mod inspection;
 pub mod service;
+pub mod web;
 
 use dusklight_route_planner::PlannerContractError;
 use dusklight_route_planner::artifact::Digest;

@@ -14,6 +14,20 @@ planner must be initiated downstream by that project.
 cargo run --manifest-path tools/route-planner/Cargo.toml -- help
 ```
 
+The independent browser client is served from the same typed runtime boundary:
+
+```text
+cargo run --manifest-path tools/route-planner/Cargo.toml -- serve-web
+```
+
+Open `http://127.0.0.1:32170` in Brave. The initial canvas accepts a
+`dusklight.route-planner.web-project/v1` JSON document containing a composed
+`catalog`, an optional `route_book`, and optional presentation positions. Graph
+projection still runs through the Rust service; the browser only renders and
+arranges the returned planner-owned nodes and edges. Authoritative route edits,
+workspace persistence, and bundled demonstration projects remain the next web
+slice.
+
 The planner CLI currently owns forty operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
@@ -217,6 +231,10 @@ The planner CLI currently owns forty operations:
   independently, and reports whether the route reaches its goal everywhere.
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
   lines for a future planner editor or other clients, including portable solves.
+- `serve-web` binds only to loopback, serves the independent planner canvas, and
+  exposes the same versioned service envelope over `POST /api/service`. Static
+  assets are embedded in the Rust binary and served with a restrictive content
+  security policy and no cache.
 
 The low-level extraction commands are read-only with respect to `orig/`.
 They write only the explicitly named output and record SHA-256 identities for

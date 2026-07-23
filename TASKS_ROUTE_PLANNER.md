@@ -53,11 +53,15 @@ service all exist. Selected validation cases exercise Text Displacement, Auru's
 recent-item mechanism, Fanadi return-place locking, dungeon-key semantics,
 Faron-twilight returns, and hypothetical component rebinding.
 
-The usable planner application does not yet exist. There is no browser canvas
-for dragging transitions, connecting them through validated state flow, saving
-route books, or inspecting propagated state. Coverage is also incomplete, so
-the current engine is a causal-reasoning laboratory over selected modeled
-mechanics rather than a whole-game route explorer.
+The first independent browser boundary now exists. A loopback-only Rust host
+serves an embedded blueprint canvas and the typed planner service; the client can
+open a typed project, project its authoritative graph, search transitions,
+pan/zoom/fit, drag layout nodes, inspect planner-owned payloads, and export a copy
+with presentation positions. It cannot yet insert validated route steps, inspect
+propagated before/after state, save authoritatively into the workspace, or load
+bundled demonstrations. Coverage is also incomplete, so the current engine is a
+causal-reasoning laboratory over selected modeled mechanics rather than a
+whole-game route explorer.
 
 Current Windows health is green. Planner-owned canonical JSON and source-evidence
 files are forced to LF checkout, and the workspace declares both crates as
@@ -2532,12 +2536,16 @@ visual polish or whole-game authoring features.
 
 #### First web slice
 
-- [ ] Add a local planner web host around the typed Rust service and serve a
+- [x] Add a local planner web host around the typed Rust service and serve a
       versioned browser client without coupling it to Huntctl or TAS timeline
-      schemas.
+      schemas. `serve-web` binds only to loopback, embeds the static client,
+      exposes the existing service at `/api/service`, applies request-size and
+      timeout bounds, and serves a restrictive no-cache response policy.
 - [ ] Build a straightforward application shell with new/open/save/save-as,
       a searchable transition palette, an infinite pan/zoom canvas, and a bottom
-      properties/state panel.
+      properties/state panel. Open-project, save-copy, transition search,
+      pan/zoom/fit, draggable layout, and planner-payload details are implemented;
+      new-route and authoritative save/save-as remain open.
 - [ ] Let an author drag a transition onto the canvas and connect it to an exact
       predecessor state. Rust recomputes every downstream state and remains the
       only validation and mutation authority.
@@ -2566,7 +2574,7 @@ visual polish or whole-game authoring features.
 
 #### Extended editor
 
-- [ ] Define an independent versioned planner graph-projection schema and Rust
+- [x] Define an independent versioned planner graph-projection schema and Rust
       crate/server API; do not overload timeline `WorkbenchGraph` or playback
       segment semantics.
   - [x] Establish `tools/route-planner` as a separate Cargo workspace, library
@@ -2578,7 +2586,8 @@ visual polish or whole-game authoring features.
         composition, graph projection, and solving.
   - [x] Add revision-checked, atomic authoritative route-book edit commands to
         the planner CLI and typed service.
-  - [ ] Add an HTTP/WebSocket adapter if the browser client requires one.
+  - [x] Add the browser's loopback HTTP adapter over the same typed service
+        envelope; no WebSocket is needed for the current request/response flow.
 - [ ] Define the planner's own visual grammar and navigation conventions for
       colors, spacing, node anatomy, camera controls, breadcrumbs, selection,
       grouping, and detail panes. Existing TAS screenshots may inform this work,

@@ -62,6 +62,7 @@ use dusklight_route_planner_runtime::inspection::{inspect_state, inspect_state_d
 use dusklight_route_planner_runtime::service::{
     PlannerServiceEnvelope, error_response, handle_envelope,
 };
+use dusklight_route_planner_runtime::web::{PlannerWebConfig, serve_web};
 use dusklight_route_planner_runtime::{
     RuntimeEvidenceMode, RuntimeFeasibilityMode, RuntimeSolveOptions, solve_catalog_goal,
     solve_catalog_portable_route_book_goal, solve_catalog_route_book_goal,
@@ -74,6 +75,7 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -122,6 +124,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("project-authorization-graph") => project_authorization_graph(&args[1..]),
         Some("project-feasibility-diff") => project_feasibility_diff(&args[1..]),
         Some("serve-stdio") => serve_stdio(&args[1..]),
+        Some("serve-web") => serve_web_command(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
         Some("validate-route-book") => validate_route_book(&args[1..]),
         Some("solve") => solve(&args[1..]),
@@ -1400,6 +1403,20 @@ fn serve_stdio(args: &[String]) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+fn serve_web_command(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let listen = match args {
+        [] => "127.0.0.1:32170".parse::<SocketAddr>()?,
+        [flag, value] if flag == "--listen" => value.parse::<SocketAddr>()?,
+        _ => return Err("serve-web accepts only --listen HOST:PORT".into()),
+    };
+    if !listen.ip().is_loopback() {
+        return Err("serve-web currently accepts only a loopback listen address".into());
+    }
+    println!("route planner: http://{listen}");
+    serve_web(PlannerWebConfig { listen })?;
+    Ok(())
+}
+
 fn project_graph(args: &[String]) -> Result<(), Box<dyn Error>> {
     let output = required_path(args, "--output")?;
     let route_book = if let Some(path) = option(args, "--route-book") {
@@ -2046,6 +2063,7 @@ fn print_usage() {
             "  route-planner solve --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--route-book BOOK.json] [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]",
             "  route-planner solve-portable --state STATE.json [--state STATE.json]... [--equivalence-set SET.json]... --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --goal ID --output REPORT.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--upper-bound] [--research]",
             "  route-planner serve-stdio",
+            "  route-planner serve-web [--listen 127.0.0.1:32170]",
         ]
         .join("\n")
     );

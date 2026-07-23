@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dusklight Route Planner</title>
+    <link rel="stylesheet" href="/app.css">
+  </head>
+  <body>
+    <header class="toolbar">
+      <div class="brand"><span class="mark">D</span><strong>Route Planner</strong></div>
+      <button id="open-project" type="button">Open project</button>
+      <button id="save-project" type="button" disabled>Save copy</button>
+      <input id="project-file" type="file" accept="application/json,.json" hidden>
+      <span id="project-name" class="project-name">No project loaded</span>
+      <span id="status" class="status">Connecting…</span>
+    </header>
+    <main class="workspace">
+      <aside class="palette">
+        <label for="search">Transitions</label>
+        <input id="search" type="search" placeholder="Search transitions" autocomplete="off">
+        <div id="palette-list" class="palette-list"></div>
+      </aside>
+      <section id="canvas-shell" class="canvas-shell" aria-label="Route graph canvas">
+        <svg id="canvas" xmlns="http://www.w3.org/2000/svg">
+          <g id="viewport">
+            <g id="edges"></g>
+            <g id="nodes"></g>
+          </g>
+        </svg>
+        <div id="empty-state" class="empty-state">
+          <strong>Open a planner project</strong>
+          <span>Pan with drag, zoom with the wheel, and drag nodes to arrange the graph.</span>
+        </div>
+        <div class="zoom-controls">
+          <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+          <button id="fit" type="button">Fit</button>
+          <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+        </div>
+      </section>
+      <section class="details">
+        <div>
+          <span class="eyebrow">Selection</span>
+          <h2 id="detail-title">Nothing selected</h2>
+          <p id="detail-subtitle">Choose a node or connection to inspect its planner-owned identity.</p>
+        </div>
+        <pre id="detail-json">{}</pre>
+      </section>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
