@@ -229,7 +229,7 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         } else if (source == "frozen_policy" && allowFrozenPolicy) {
             output = {.id = id, .frozenPolicy = true};
         } else {
-            error = "candidate source must be tape or a v5 frozen_policy";
+            error = "candidate source must be tape or a v6 frozen_policy";
             return false;
         }
         return true;
@@ -349,6 +349,7 @@ bool parse_suffix_batch(
     constexpr std::array FrozenRootKeys{
         std::string_view{"schema"},
         std::string_view{"demonstration_mode"},
+        std::string_view{"action_authority"},
         std::string_view{"source_frame"},
         std::string_view{"source_boundary_fingerprint"},
         std::string_view{"checkpoint_validation"},
@@ -396,6 +397,11 @@ bool parse_suffix_batch(
     if (frozen) {
         if (!root["demonstration_mode"].is_string()) {
             error = "suffix batch demonstration mode is invalid";
+            return false;
+        }
+        if (!root["action_authority"].is_string() ||
+            root["action_authority"].get_ref<const std::string&>() != "episode_policy") {
+            error = "suffix batch action authority must be episode_policy";
             return false;
         }
         const auto& mode = root["demonstration_mode"].get_ref<const std::string&>();

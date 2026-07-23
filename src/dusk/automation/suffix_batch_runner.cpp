@@ -1435,6 +1435,12 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         {"source_frame", mDefinition.sourceFrame},
         {"policy_model", mDefinition.frozenPolicy.has_value()
             ? nlohmann::json{{"schema", FrozenPolicySchema},
+                  {"action_authority", "episode_policy"},
+                  {"policy_controlled_ticks", std::accumulate(mResults.begin(), mResults.end(),
+                      std::size_t{0}, [](const std::size_t total, const CandidateResult& result) {
+                          return total + result.ticksExecuted;
+                      })},
+                  {"fallback_ticks", 0},
                   {"model_xxh3_128", mDefinition.frozenPolicy->modelXxh3_128},
                   {"feature_schema_sha256", digest_hex(
                       mFrozenPolicyModel.featureSchemaSha256())},

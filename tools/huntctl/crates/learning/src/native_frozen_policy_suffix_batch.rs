@@ -19,7 +19,13 @@ use std::error::Error;
 use std::fmt;
 
 pub const NATIVE_FROZEN_POLICY_SCHEMA_V1: &str = "dusklight-native-frozen-policy/v1";
-pub const NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V5: &str = "dusklight-suffix-batch/v5";
+pub const NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V6: &str = "dusklight-suffix-batch/v6";
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativePolicyActionAuthority {
+    EpisodePolicy,
+}
 
 /// Build a tiny deterministic policy for exercising the complete native online
 /// inference boundary. It drives forward only while a player is present and
@@ -63,6 +69,7 @@ pub fn native_frozen_policy_probe_model(
 pub struct NativeFrozenPolicySuffixBatch {
     pub schema: String,
     pub demonstration_mode: DemonstrationMode,
+    pub action_authority: NativePolicyActionAuthority,
     pub source_frame: usize,
     pub source_boundary_fingerprint: String,
     pub checkpoint_validation: NativeCheckpointValidation,
@@ -152,8 +159,9 @@ impl NativeFrozenPolicySuffixBatch {
         }
         let model_xxh3_128 = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(model_bytes));
         Ok(Self {
-            schema: NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V5.into(),
+            schema: NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V6.into(),
             demonstration_mode,
+            action_authority: NativePolicyActionAuthority::EpisodePolicy,
             source_frame: config.source_frame,
             source_boundary_fingerprint: config.source_boundary_fingerprint,
             checkpoint_validation: NativeCheckpointValidation {
@@ -317,7 +325,11 @@ mod tests {
             batch.demonstration_mode,
             DemonstrationMode::BehaviorCloningWarmStart
         );
-        assert_eq!(batch.schema, NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V5);
+        assert_eq!(batch.schema, NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V6);
+        assert_eq!(
+            batch.action_authority,
+            NativePolicyActionAuthority::EpisodePolicy
+        );
         assert_eq!(batch.frozen_policy.policy_head.maximum_duration_ticks, 1);
         assert_eq!(batch.candidates[0].source, "frozen_policy");
         assert_eq!(batch.frozen_policy.model_xxh3_128.len(), 32);

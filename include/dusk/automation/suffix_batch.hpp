@@ -16,7 +16,7 @@ namespace dusk::automation {
 inline constexpr std::string_view LegacySuffixBatchSchema = "dusklight-suffix-batch/v2";
 inline constexpr std::string_view PreviousSuffixBatchSchema = "dusklight-suffix-batch/v3";
 inline constexpr std::string_view FactorizedSuffixBatchSchema = "dusklight-suffix-batch/v4";
-inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v5";
+inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v6";
 inline constexpr std::string_view FrozenPolicySchema = "dusklight-native-frozen-policy/v1";
 inline constexpr std::size_t SuffixBatchMaximumBytes = 64 * 1024 * 1024;
 inline constexpr std::size_t SuffixBatchMaximumCandidates = 16384;
@@ -34,6 +34,10 @@ enum class SuffixDemonstrationMode : std::uint8_t {
     ReplayOnly = 2,
     BehaviorCloningWarmStart = 3,
     ReverseCurriculumCheckpoints = 4,
+};
+
+enum class SuffixPolicyActionAuthority : std::uint8_t {
+    EpisodePolicy = 1,
 };
 
 struct SuffixBatchCandidate {
@@ -62,6 +66,8 @@ struct SuffixBatchDefinition {
     std::string sourceBoundaryFingerprint;
     SuffixDemonstrationMode demonstrationMode =
         SuffixDemonstrationMode::BehaviorCloningWarmStart;
+    SuffixPolicyActionAuthority policyActionAuthority =
+        SuffixPolicyActionAuthority::EpisodePolicy;
     SuffixCheckpointValidation checkpointValidation =
         SuffixCheckpointValidation::GameplayReadyFSp103;
     std::size_t validationTicks = 0;

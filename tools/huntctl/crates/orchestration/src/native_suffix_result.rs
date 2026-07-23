@@ -4,7 +4,7 @@ use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::RawPadState;
 use dusklight_learning::frozen_inference::FrozenInferenceModel;
 use dusklight_learning::native_frozen_policy_suffix_batch::{
-    NATIVE_FROZEN_POLICY_SCHEMA_V1, NativeFrozenPolicySuffixBatch,
+    NATIVE_FROZEN_POLICY_SCHEMA_V1, NativeFrozenPolicySuffixBatch, NativePolicyActionAuthority,
 };
 use dusklight_search::suffix_batch::{NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch};
 use serde::{Deserialize, Serialize};
@@ -322,6 +322,9 @@ impl NativeSuffixBatchResult {
             || !self.timing.verified
             || self.timing.schema != "dusklight-suffix-batch-timing/v2"
             || policy.get("schema").and_then(Value::as_str) != Some(NATIVE_FROZEN_POLICY_SCHEMA_V1)
+            || request.action_authority != NativePolicyActionAuthority::EpisodePolicy
+            || policy.get("action_authority").and_then(Value::as_str) != Some("episode_policy")
+            || policy.get("fallback_ticks").and_then(Value::as_u64) != Some(0)
             || policy.get("model_xxh3_128").and_then(Value::as_str)
                 != Some(request.frozen_policy.model_xxh3_128.as_str())
             || policy.get("feature_schema_sha256").and_then(Value::as_str)
@@ -379,6 +382,15 @@ impl NativeSuffixBatchResult {
         if self.timing.candidate_ticks != simulated_ticks {
             return Err(result_error(
                 "native frozen policy timing does not charge every simulated tick",
+            ));
+        }
+        if policy
+            .get("policy_controlled_ticks")
+            .and_then(Value::as_u64)
+            != Some(simulated_ticks)
+        {
+            return Err(result_error(
+                "native frozen policy did not control every executed episode tick",
             ));
         }
         let winner = self
@@ -795,6 +807,9 @@ mod tests {
         result.episode_shard.schema = NATIVE_EPISODE_SHARD_SCHEMA_V3.into();
         result.policy_model = Some(serde_json::json!({
             "schema": NATIVE_FROZEN_POLICY_SCHEMA_V1,
+            "action_authority": "episode_policy",
+            "policy_controlled_ticks": result.timing.candidate_ticks,
+            "fallback_ticks": 0,
             "model_xxh3_128": request.frozen_policy.model_xxh3_128,
             "feature_schema_sha256": model.feature_schema_sha256,
             "action_schema_sha256": model.action_schema_sha256,
@@ -870,6 +885,22 @@ mod tests {
 
         let mut tampered = frozen_result(&bytes, &request);
         tampered.episode_shard.schema = NATIVE_EPISODE_SHARD_SCHEMA_V2.into();
+        assert!(
+            tampered
+                .validate_frozen_against(&request, &bytes, &terminal())
+                .is_err()
+        );
+
+        let mut tampered = frozen_result(&bytes, &request);
+        tampered.policy_model.as_mut().unwrap()["policy_controlled_ticks"] = Value::from(1);
+        assert!(
+            tampered
+                .validate_frozen_against(&request, &bytes, &terminal())
+                .is_err()
+        );
+
+        let mut tampered = frozen_result(&bytes, &request);
+        tampered.policy_model.as_mut().unwrap()["fallback_ticks"] = Value::from(1);
         assert!(
             tampered
                 .validate_frozen_against(&request, &bytes, &terminal())

@@ -449,9 +449,15 @@ it and emit any legal PAD action for the entire episode.
       `from_scratch_discovery`. Residual-request validation rejects either
       discovery label, and the learning loop rejects a non-refinement source
       authority. Checked requests and validation reports carry the class.
-- [ ] Give the native policy episode-long state-reactive action authority. Do not
+- [x] Give the native policy episode-long state-reactive action authority. Do not
       end its proposal window at the demonstration's terminal frame or fall back
-      to released incumbent input after that point.
+      to released incumbent input after that point. Frozen-policy v6 batches now
+      seal `episode_policy` authority independently of demonstration mode and use
+      the exploration horizon rather than the demonstration hit. Native execution
+      performs fresh pre-input inference, decodes and consumes that PAD on every
+      nonterminal episode tick, and its result authenticates the exact policy-
+      controlled tick count plus zero fallback ticks; Rust rejects any missing,
+      shortened, or fallback authority evidence.
 - [ ] Use a generous initial horizon or a success-supported adaptive curriculum.
       Retain slow successes and timeouts as experience; contract the horizon only
       after held-out goal reachability is reliable.
