@@ -2476,7 +2476,14 @@ verified route.
 - [x] Encode exact setup, component operations, discharged obligations, and cost.
 - [x] Allow a pack to supply a witnessed microtrace with exact pre/post state and
       timing rather than a global named Boolean.
-- [ ] Add built-in packs for ordinary movement and selected sequence breaks.
+- [x] Add built-in packs for ordinary movement and selected sequence breaks.
+  - The exact-context built-in registry exports canonical, opt-in ordinary
+    controlled-movement and selected-sequence-break packs. Ordinary movement
+    discharges only a transition's explicitly named approach obligation; EMS
+    performs its modeled human-form state change, while Epona OOB and rupee clip
+    remain contested research techniques that discharge only method-specific
+    obligations. CLI list/export commands expose stable digests and canonical
+    bytes, and composed reports retain the normal refinement-stack identity.
 - [x] Add route-local and ephemeral what-if overlays.
   - Refinement-stack entries identify `enabled_pack`, `route_local`, or
     `ephemeral_what_if` provenance. Layer order dominates a pack's local

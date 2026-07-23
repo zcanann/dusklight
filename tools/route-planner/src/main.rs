@@ -2,6 +2,9 @@ use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::binary_evidence::{
     extract_dol_function_evidence, extract_dol_range_evidence,
 };
+use dusklight_route_planner::builtin_refinement::{
+    bundled_refinement_pack, bundled_refinement_pack_ids,
+};
 use dusklight_route_planner::component_catalog::ComponentBoundaryCatalog;
 use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::cutscene_corruption::compile_actor_corruption_hypothesis;
@@ -117,10 +120,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("extract-resource") => extract_resource(&args[1..]),
         Some("extract-stage-data") => extract_stage_data(&args[1..]),
         Some("extract-world") => extract_world(&args[1..]),
+        Some("export-builtin-refinement-pack") => export_builtin_refinement_pack(&args[1..]),
         Some("edit-route-book") => edit_route_book(&args[1..]),
         Some("inspect-state") => inspect_state_command(&args[1..]),
         Some("identify-orig") => identify_orig(&args[1..]),
         Some("list-archive-resources") => list_archive_resources(&args[1..]),
+        Some("list-builtin-refinement-packs") => list_builtin_refinement_packs(),
         Some("materialize-fact-pack") => materialize_fact_pack(&args[1..]),
         Some("diff-state") => diff_state_command(&args[1..]),
         Some("project-graph") => project_graph(&args[1..]),
@@ -146,6 +151,46 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn list_builtin_refinement_packs() -> Result<(), Box<dyn Error>> {
+    let packs = bundled_refinement_pack_ids()
+        .into_iter()
+        .map(|id| {
+            let pack = bundled_refinement_pack(id)?;
+            Ok(json!({
+                "id": id,
+                "version": pack.manifest.version,
+                "sha256": pack.digest()?,
+                "rules": pack.rules.len(),
+                "scope": pack.manifest.scope,
+            }))
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({ "packs": packs }))?
+    );
+    Ok(())
+}
+
+fn export_builtin_refinement_pack(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let id = option(args, "--id").ok_or("missing required --id ID")?;
+    let output = required_path(args, "--output")?;
+    let pack = bundled_refinement_pack(&id)?;
+    let bytes = pack.canonical_bytes()?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "id": pack.manifest.id,
+            "version": pack.manifest.version,
+            "sha256": pack.digest()?,
+            "rules": pack.rules.len(),
+            "output": output,
+        }))?
+    );
+    Ok(())
 }
 
 fn catalog_state_boundaries(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -2149,9 +2194,11 @@ fn print_usage() {
             "  route-planner extract-resource --archive ARCHIVE.arc --resource FILE --output FILE",
             "  route-planner extract-stage-data --archive ARCHIVE.arc --resource stage.dzs|room.dzr --output STAGE.json",
             "  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json",
+            "  route-planner export-builtin-refinement-pack --id ID --output PACK.json",
             "  route-planner identify-orig --orig ORIG_ROOT [--registry REGISTRY.json] [--content-id ID] --output IDENTIFICATION.json",
             "  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]",
             "  route-planner list-archive-resources --archive ARCHIVE.arc --output RESOURCES.json",
+            "  route-planner list-builtin-refinement-packs",
             "  route-planner materialize-fact-pack --cache CACHE --manifest-sha256 SHA256 --payload PAYLOAD.json --manifest MANIFEST.json",
             "  route-planner project-authorization-graph --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output GRAPH.json [--max-depth N] [--max-states N] [--max-resolution-combinations N] [--research]",
             "  route-planner project-feasibility-diff --state STATE.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) [--equivalence-set SET.json]... --output DIFF.json [--research]",
