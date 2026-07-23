@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v12";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v13";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1432,6 +1432,7 @@ fn import_gz2e01_keyed_actor_actions(
             import_gz2e01_key_shutter(inventory, placement, scope, inventory_sha256)
         }
         "K_Gate" => import_gz2e01_koki_gate(inventory, placement, scope, inventory_sha256),
+        "R_Gate" => import_gz2e01_rider_gate(inventory, placement, scope, inventory_sha256),
         _ => Ok(None),
     }
 }
@@ -1895,6 +1896,220 @@ fn import_gz2e01_koki_gate(
     }))
 }
 
+fn import_gz2e01_rider_gate(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedKeyedActorActions>, PlannerContractError> {
+    let Some(room) = placement.scope.room else {
+        return Ok(None);
+    };
+    let switch_id = placement.parameters as u8;
+    if inventory.stage != "F_SP109" || room != 0 || switch_id != 0x6b {
+        return Ok(None);
+    }
+    let family = "rider-gate";
+    let token = stable_token(
+        "keyed",
+        &[
+            family.as_bytes(),
+            inventory.stage.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    let mut evidence_records = vec![
+        EvidenceRecord {
+            id: format!("evidence.source.actor.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "eb644962c9c9596514d552e2f87015f1c68786bf998ff79d41a606276750bffb",
+            )),
+            note: "d_a_obj_rgate.cpp: key/facing/box offer guard, queued decrement, switch writer, M_035 bypass, event completion, and post-unlock pushing.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.source.event.{token}"),
+            kind: EvidenceKind::Extracted,
+            source_sha256: Some(static_digest(
+                "95582d74d858aeb5b01a9f1beb6c0c1bd6761b619b75f57d1d60d906f73ea856",
+            )),
+            note: "M_RGate00/event_list.dat: RIDER_GATE_OPEN00 contains UNLOCK before OPEN.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.source.event-label.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "8804d987bb1da08281c143d96d46a2832f02650f4b9777b010f196ed20847a14",
+            )),
+            note: "d_save_bit_labels.inc: saveBitLabels[68] is M_035 at packed persistent-event coordinate 0x0810.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.source.name-map.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "5c46ffc79e891b59b02455b837d9966d05c147d8d95c91c65cc845dd848d32ad",
+            )),
+            note: "d_stage.cpp: R_Gate maps to the rider-gate actor process.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.world.inventory.{token}"),
+            kind: EvidenceKind::Extracted,
+            source_sha256: Some(inventory_sha256),
+            note: format!(
+                "Authenticated F_SP109 room-0 layered rider-gate placement {} with memory switch 0x6b.",
+                placement.stable_id
+            ),
+        },
+    ];
+    evidence_records.sort_by(|left, right| left.id.cmp(&right.id));
+    let evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: evidence_records,
+    };
+    let unknown_evidence = RuleEvidence {
+        truth: TruthStatus::Unknown,
+        records: evidence.records.clone(),
+    };
+    let actor_id = format!("obligation.actor-state.{token}");
+    let interaction_id = format!("obligation.interaction.{token}");
+    let passage_id = format!("obligation.interaction.{token}.passage");
+    let obligations = vec![
+        FeasibilityObligation {
+            id: actor_id.clone(),
+            label: format!("Complete {} keyed event and committed key delta", placement.name),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Effect,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Confirm the accepted door command, RIDER_GATE_OPEN00 cuts, event reset, and uncontended queued key-delta commit complete without interruption.".into(),
+            },
+            evidence: unknown_evidence.clone(),
+        },
+        FeasibilityObligation {
+            id: interaction_id.clone(),
+            label: format!("Reach and activate {} keyed side", placement.name),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Reach actor-local x in [-100, 100] and z in [0, 100] with the required facing while the gate owns its door event.".into(),
+            },
+            evidence: unknown_evidence.clone(),
+        },
+        FeasibilityObligation {
+            id: passage_id.clone(),
+            label: format!("Traverse the physically open {}", placement.name),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Witness sufficient leaf opening and collision clearance under either the set-switch push behavior or the M_035 forced-open bypass.".into(),
+            },
+            evidence: unknown_evidence,
+        },
+    ];
+    let location = placement_location_guard(inventory, placement, room);
+    let locked = PredicateExpression::All {
+        terms: vec![
+            location.clone(),
+            memory_switch_guard(switch_id, false),
+            persistent_event_bit_guard(0x0810, false),
+        ],
+    };
+    let ordinary = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "unlock",
+        &format!(
+            "{} {} layer {} keyed rider-gate unlock",
+            inventory.stage,
+            placement.name,
+            placement.layer.unwrap_or_default()
+        ),
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                locked.clone(),
+                small_key_guard(ComparisonOperator::GreaterThan, 0),
+                small_key_guard(ComparisonOperator::LessThanOrEqual, 100),
+            ],
+        },
+        vec![small_key_adjust(-1), memory_switch_write(switch_id)],
+        &[actor_id.clone(), interaction_id.clone()],
+        &evidence,
+    );
+    let high = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "unlock-high-key-clamp",
+        &format!(
+            "{} {} layer {} rider-gate unlock with high raw keys clamped to 99",
+            inventory.stage,
+            placement.name,
+            placement.layer.unwrap_or_default()
+        ),
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                locked,
+                small_key_guard(ComparisonOperator::GreaterThan, 100),
+            ],
+        },
+        vec![small_key_write(99), memory_switch_write(switch_id)],
+        &[actor_id, interaction_id],
+        &evidence,
+    );
+    let unlocked_passage = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "set-switch-passage",
+        &format!(
+            "{} {} layer {} set-switch physical passage",
+            inventory.stage,
+            placement.name,
+            placement.layer.unwrap_or_default()
+        ),
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                location.clone(),
+                memory_switch_guard(switch_id, true),
+                persistent_event_bit_guard(0x0810, false),
+            ],
+        },
+        Vec::new(),
+        std::slice::from_ref(&passage_id),
+        &evidence,
+    );
+    let event_bypass = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "m035-forced-open-passage",
+        &format!(
+            "{} {} layer {} M_035 forced-open passage",
+            inventory.stage,
+            placement.name,
+            placement.layer.unwrap_or_default()
+        ),
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![location, persistent_event_bit_guard(0x0810, true)],
+        },
+        Vec::new(),
+        &[passage_id],
+        &evidence,
+    );
+    Ok(Some(ImportedKeyedActorActions {
+        exit_record_id: None,
+        transitions: vec![ordinary, high, unlocked_passage, event_bypass],
+        obligations,
+    }))
+}
+
 struct ImportedSceneActorActions {
     transitions: Vec<(String, CandidateTransition)>,
     obligations: Vec<FeasibilityObligation>,
@@ -2153,6 +2368,26 @@ fn memory_switch_guard(switch_id: u8, set: bool) -> PredicateExpression {
         left: ValueReference::BoundRawBits {
             component_kind: ComponentKind::DungeonMemory,
             binding: ComponentBindingReference::CurrentStage,
+            byte_offset,
+            byte_width: 1,
+            mask: u64::from(mask),
+        },
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Unsigned(if set { u64::from(mask) } else { 0 }),
+        },
+    }
+}
+
+fn persistent_event_bit_guard(packed_coordinate: u16, set: bool) -> PredicateExpression {
+    let byte_offset = u32::from(packed_coordinate >> 8);
+    let mask = packed_coordinate as u8;
+    PredicateExpression::Compare {
+        left: ValueReference::BoundRawBits {
+            component_kind: ComponentKind::Custom {
+                id: "persistent-event-registers".into(),
+            },
+            binding: ComponentBindingReference::ActiveRuntimeFile,
             byte_offset,
             byte_width: 1,
             mask: u64::from(mask),
@@ -3075,6 +3310,40 @@ mod tests {
         )
     }
 
+    fn rider_gate_inventory() -> WorldInventory {
+        let source =
+            static_digest("22482b0344bcbb4a068562e088684590a3c27190ebfcc2d5c41a9a51c7b109f6");
+        replace_room_actor(
+            boss_door_inventory(0),
+            "F_SP109",
+            0,
+            PlacementRecord {
+                stable_id: format!("dzr-sha256:{source}/chunk/ACT0/record/10"),
+                source_sha256: source,
+                scope: SourceScope {
+                    kind: SourceKind::Room,
+                    room: Some(0),
+                },
+                chunk_tag: "ACT0".into(),
+                record_index: 10,
+                layer: Some(0),
+                kind: PlacementKind::Actor,
+                name: "R_Gate".into(),
+                parameters: 0x0ff2_ff6b,
+                position: Vec3 {
+                    x: -8055.0,
+                    y: 780.0,
+                    z: -8235.0,
+                },
+                angle: [0, -16384, 0],
+                set_id: 0xffff,
+                scale_raw: None,
+                raw_hex: "525f4761746500000ff2ff6bc5fbb80044430000c600ac000000c0000000ffff".into(),
+            },
+            false,
+        )
+    }
+
     fn l7_bridge_demo_inventory() -> WorldInventory {
         let source =
             static_digest("a7014eb0a33bb9a57af75caff72605f6725273909f5bd2cf61c465c140fe6a6e");
@@ -3183,6 +3452,31 @@ mod tests {
             PredicateExpression::Not { term } => {
                 predicate_has_layer_comparison(term, expected_operator, expected_layer)
             }
+            _ => false,
+        }
+    }
+
+    fn predicate_has_persistent_event_bit(predicate: &PredicateExpression, set: bool) -> bool {
+        match predicate {
+            PredicateExpression::Compare {
+                left:
+                    ValueReference::BoundRawBits {
+                        component_kind: ComponentKind::Custom { id },
+                        binding: ComponentBindingReference::ActiveRuntimeFile,
+                        byte_offset: 0x08,
+                        byte_width: 1,
+                        mask: 0x10,
+                    },
+                operator: ComparisonOperator::Equal,
+                right:
+                    ValueReference::Literal {
+                        value: StateValue::Unsigned(value),
+                    },
+            } => id == "persistent-event-registers" && *value == if set { 0x10 } else { 0 },
+            PredicateExpression::All { terms } | PredicateExpression::Any { terms } => terms
+                .iter()
+                .any(|term| predicate_has_persistent_event_bit(term, set)),
+            PredicateExpression::Not { term } => predicate_has_persistent_event_bit(term, set),
             _ => false,
         }
     }
@@ -3940,6 +4234,100 @@ mod tests {
     }
 
     #[test]
+    fn imports_fsp109_rider_gate_unlock_and_m035_bypass_without_conflating_them() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let inventory = rider_gate_inventory();
+        inventory.validate().unwrap();
+        let context = world_context(content.fingerprint.game_data_sha256, &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+
+        assert_eq!(facts.mechanics.transitions.len(), 4);
+        assert_eq!(facts.mechanics.obligations.len(), 3);
+        let ordinary = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| {
+                transition.label.contains("keyed rider-gate unlock")
+                    && transition.activation.effects.iter().any(|effect| {
+                        matches!(effect, StateOperation::AdjustBoundRawUnsigned { .. })
+                    })
+            })
+            .unwrap();
+        assert!(predicate_has_persistent_event_bit(
+            &ordinary.activation.hard_guards,
+            false,
+        ));
+        assert!(has_small_key_comparison(
+            ordinary,
+            ComparisonOperator::GreaterThan,
+            0,
+        ));
+        assert!(matches!(
+            ordinary.activation.effects.as_slice(),
+            [
+                StateOperation::AdjustBoundRawUnsigned {
+                    byte_offset: 0x1c,
+                    delta: -1,
+                    ..
+                },
+                StateOperation::WriteBoundRaw {
+                    byte_offset: 0x16,
+                    mask,
+                    value,
+                    ..
+                },
+            ] if mask == &[0x08] && value == &[0x08]
+        ));
+
+        let event_bypass = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("M_035 forced-open"))
+            .unwrap();
+        assert!(event_bypass.activation.effects.is_empty());
+        assert!(predicate_has_persistent_event_bit(
+            &event_bypass.activation.hard_guards,
+            true,
+        ));
+        assert!(!has_small_key_comparison(
+            event_bypass,
+            ComparisonOperator::GreaterThan,
+            0,
+        ));
+
+        let unlocked = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("set-switch physical passage"))
+            .unwrap();
+        assert!(unlocked.activation.effects.is_empty());
+        assert!(predicate_has_persistent_event_bit(
+            &unlocked.activation.hard_guards,
+            false,
+        ));
+
+        let mut fsp121 = inventory;
+        fsp121.stage = "F_SP121".into();
+        fsp121.placements[0].parameters = (fsp121.placements[0].parameters & !0xff) | 0x82;
+        let context = world_context(content.fingerprint.game_data_sha256, &fsp121);
+        let excluded =
+            ExtractedWorldFacts::build(&content, &runtime, &context, std::slice::from_ref(&fsp121))
+                .unwrap();
+        assert!(excluded.mechanics.transitions.is_empty());
+        assert!(excluded.mechanics.obligations.is_empty());
+    }
+
+    #[test]
     fn imports_l7_bridge_demo_as_two_distinct_scls_backed_actor_transitions() {
         let content = audited_content();
         let runtime = runtime(&content);
@@ -4111,7 +4499,7 @@ mod tests {
         };
         let inventory = regular_key_shutter_inventory();
         let mut placement = inventory.placements[0].clone();
-        for name in ["R_Gate", "CrvGate", "vshuter"] {
+        for name in ["CrvGate", "vshuter"] {
             placement.name = name.into();
             assert!(
                 import_gz2e01_keyed_actor_actions(
