@@ -38,7 +38,7 @@ use huntctl::learning::native_frozen_policy_suffix_batch::{
     NativeFrozenPolicySuffixBatch, native_frozen_policy_probe_model,
 };
 use huntctl::learning::native_goal_frozen_policy::{
-    NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V2, NativeGoalFrozenPolicyConfig,
+    NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V3, NativeGoalFrozenPolicyConfig,
     NativeGoalFrozenPolicyExport, NativeGoalFrozenPolicyManifest,
 };
 use huntctl::learning::native_goal_reachability::{
@@ -1484,7 +1484,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             println!(
                 "{}",
                 serde_json::to_string_pretty(&json!({
-                    "schema": NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V2,
+                    "schema": NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V3,
                     "manifest_sha256": export.manifest.manifest_sha256,
                     "frozen_artifact_sha256": export.manifest.frozen_artifact_sha256,
                     "source_dataset_sha256": export.manifest.source_dataset_sha256,

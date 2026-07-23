@@ -29,8 +29,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V2: &str =
-    "dusklight-native-goal-frozen-policy-manifest/v2";
+pub const NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V3: &str =
+    "dusklight-native-goal-frozen-policy-manifest/v3";
 const MAX_ROWS: usize = 1_000_000;
 const MAX_HIDDEN_WIDTH: usize = 256;
 const MAX_EPOCHS: usize = 2_048;
@@ -38,7 +38,9 @@ const MAX_GRADIENT_UPDATES: usize = 100_000_000;
 const CONTINUOUS_HEADS: usize = 8;
 const BUTTON_HEAD_START: usize = 8;
 const BUTTON_HEAD_END: usize = 24;
-const FAILURE_CONTRAST_WEIGHT: f64 = -0.01;
+const FAILURE_CONTRAST_STRENGTH: f64 = 0.01;
+const FAILURE_CONTINUOUS_MARGIN: f64 = 0.10;
+const FAILURE_BUTTON_PROBABILITY_MARGIN: f64 = 0.10;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -159,7 +161,9 @@ pub struct NativeGoalFrozenPolicyManifest {
     pub training_successful_episode_sha256: Vec<Digest>,
     pub training_successful_rows: usize,
     pub training_failed_rows: usize,
-    pub failure_contrast_weight: f64,
+    pub failure_contrast_strength: f64,
+    pub failure_continuous_margin: f64,
+    pub failure_button_probability_margin: f64,
     pub gradient_updates: u64,
     pub training: NativeGoalFrozenPolicyMetrics,
     pub validation: NativeGoalFrozenPolicyMetrics,
@@ -258,12 +262,12 @@ impl NativeGoalFrozenPolicyExport {
         for _ in 0..config.epochs {
             rng.shuffle(&mut order);
             for index in order.iter().copied() {
-                let weight = if rows[index].success {
-                    1.0
-                } else {
-                    FAILURE_CONTRAST_WEIGHT
-                };
-                network.update(&normalized[index], &rows[index].target, weight, config)?;
+                network.update(
+                    &normalized[index],
+                    &rows[index].target,
+                    rows[index].success,
+                    config,
+                )?;
             }
         }
         if usize::try_from(network.gradient_updates).ok() != Some(work) {
@@ -316,7 +320,7 @@ impl NativeGoalFrozenPolicyExport {
             .filter(|row| row.split == AuxiliarySplit::Training && !row.success)
             .count();
         let mut manifest = NativeGoalFrozenPolicyManifest {
-            schema: NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V2.into(),
+            schema: NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V3.into(),
             source_dataset_sha256: dataset.dataset_sha256,
             source_replay_corpus_sha256: dataset.replay_corpus_sha256,
             source_reachability_model_sha256: reachability.model_sha256,
@@ -335,7 +339,9 @@ impl NativeGoalFrozenPolicyExport {
             training_successful_episode_sha256,
             training_successful_rows,
             training_failed_rows,
-            failure_contrast_weight: FAILURE_CONTRAST_WEIGHT,
+            failure_contrast_strength: FAILURE_CONTRAST_STRENGTH,
+            failure_continuous_margin: FAILURE_CONTINUOUS_MARGIN,
+            failure_button_probability_margin: FAILURE_BUTTON_PROBABILITY_MARGIN,
             gradient_updates: network.gradient_updates,
             training,
             validation,
@@ -392,7 +398,7 @@ impl NativeGoalFrozenPolicyManifest {
         ]
         .iter()
         .all(|digest| *digest != Digest::ZERO);
-        if self.schema != NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V2
+        if self.schema != NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V3
             || !sources_valid
             || !is_lower_hex(&self.goal_objective_identity, 32)
             || self.observation_schema.is_empty()
@@ -423,7 +429,9 @@ impl NativeGoalFrozenPolicyManifest {
             || !self.test.validate()
             || self.training_successful_episode_sha256.len() != self.training.episodes
             || self.training_successful_rows != self.training.rows
-            || self.failure_contrast_weight != FAILURE_CONTRAST_WEIGHT
+            || self.failure_contrast_strength != FAILURE_CONTRAST_STRENGTH
+            || self.failure_continuous_margin != FAILURE_CONTINUOUS_MARGIN
+            || self.failure_button_probability_margin != FAILURE_BUTTON_PROBABILITY_MARGIN
             || self.gradient_updates
                 != u64::try_from(
                     self.training_successful_rows
@@ -465,7 +473,7 @@ impl NativeGoalFrozenPolicyManifest {
         let mut canonical = self.clone();
         canonical.manifest_sha256 = Digest::ZERO;
         canonical_digest(
-            b"dusklight.native-goal-frozen-policy-manifest/v2\0",
+            b"dusklight.native-goal-frozen-policy-manifest/v3\0",
             &canonical,
         )
     }
@@ -515,28 +523,30 @@ impl PolicyNetwork {
         &mut self,
         features: &[f64],
         target: &[f64; FACTORIZED_PAD_POLICY_HEAD_WIDTH],
-        sample_weight: f64,
+        successful_sample: bool,
         config: NativeGoalFrozenPolicyConfig,
     ) -> Result<(), NativeGoalFrozenPolicyError> {
-        if !sample_weight.is_finite() || sample_weight == 0.0 || sample_weight.abs() > 1.0 {
-            return Err(NativeGoalFrozenPolicyError::new(
-                "goal policy sample weight is invalid",
-            ));
-        }
         let hidden_width = usize::from(config.hidden_width);
         let input_width = features.len();
         let forward = self.forward(features, hidden_width);
         let output_weights_before = self.output_weights.clone();
         let mut d_output = [0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH];
         for head in 0..FACTORIZED_PAD_POLICY_HEAD_WIDTH {
-            let gradient = sample_weight
-                * if (BUTTON_HEAD_START..BUTTON_HEAD_END).contains(&head) {
+            let gradient = if successful_sample {
+                if (BUTTON_HEAD_START..BUTTON_HEAD_END).contains(&head) {
                     (logistic(forward.output[head]) - target[head]) / 16.0
                 } else if head < CONTINUOUS_HEADS {
                     2.0 * (forward.output[head] - target[head]) / CONTINUOUS_HEADS as f64
                 } else {
                     forward.output[head] - target[head]
-                };
+                }
+            } else if (BUTTON_HEAD_START..BUTTON_HEAD_END).contains(&head) {
+                bounded_button_contrast_gradient(forward.output[head], target[head])
+            } else if head < CONTINUOUS_HEADS {
+                bounded_continuous_contrast_gradient(forward.output[head], target[head])
+            } else {
+                0.0
+            };
             d_output[head] = clip(gradient, config.gradient_clip);
             for (hidden, value) in forward.hidden.iter().copied().enumerate() {
                 let parameter = head * hidden_width + hidden;
@@ -641,6 +651,36 @@ impl PolicyNetwork {
         )
         .map_err(|error| NativeGoalFrozenPolicyError::new(error.to_string()))
     }
+}
+
+fn bounded_continuous_contrast_gradient(output: f64, target: f64) -> f64 {
+    let difference = output - target;
+    let distance = difference.abs();
+    if distance >= FAILURE_CONTINUOUS_MARGIN {
+        return 0.0;
+    }
+    let away = if difference > 0.0 {
+        1.0
+    } else if difference < 0.0 {
+        -1.0
+    } else if target >= 0.0 {
+        -1.0
+    } else {
+        1.0
+    };
+    let remaining = (FAILURE_CONTINUOUS_MARGIN - distance) / FAILURE_CONTINUOUS_MARGIN;
+    -FAILURE_CONTRAST_STRENGTH * 2.0 * away * remaining / CONTINUOUS_HEADS as f64
+}
+
+fn bounded_button_contrast_gradient(logit: f64, target: f64) -> f64 {
+    let difference = logistic(logit) - target;
+    let distance = difference.abs();
+    if distance >= FAILURE_BUTTON_PROBABILITY_MARGIN {
+        return 0.0;
+    }
+    let remaining =
+        (FAILURE_BUTTON_PROBABILITY_MARGIN - distance) / FAILURE_BUTTON_PROBABILITY_MARGIN;
+    -FAILURE_CONTRAST_STRENGTH * difference * remaining / 16.0
 }
 
 fn materialize(
@@ -1450,7 +1490,9 @@ milestone reach_goal {
         .unwrap();
         contrast.validate().unwrap();
         assert!(contrast.manifest.training_failed_rows > 0);
-        assert_eq!(contrast.manifest.failure_contrast_weight, -0.01);
+        assert_eq!(contrast.manifest.failure_contrast_strength, 0.01);
+        assert_eq!(contrast.manifest.failure_continuous_margin, 0.10);
+        assert_eq!(contrast.manifest.failure_button_probability_margin, 0.10);
         assert_eq!(
             contrast.manifest.admission,
             NativeGoalFrozenPolicyAdmission::FrozenPolicyCandidate,
@@ -1462,6 +1504,23 @@ milestone reach_goal {
             baseline.manifest.frozen_artifact_sha256,
             contrast.manifest.frozen_artifact_sha256
         );
+    }
+
+    #[test]
+    fn failed_action_contrast_is_directional_and_stops_at_its_margin() {
+        assert!(bounded_continuous_contrast_gradient(0.5, 0.5) > 0.0);
+        assert!(bounded_continuous_contrast_gradient(-0.25, -0.25) < 0.0);
+        assert_eq!(
+            bounded_continuous_contrast_gradient(0.7, 0.5),
+            0.0
+        );
+
+        let near_pressed = logit(0.95);
+        let near_released = logit(0.05);
+        assert!(bounded_button_contrast_gradient(near_pressed, 1.0) > 0.0);
+        assert!(bounded_button_contrast_gradient(near_released, 0.0) < 0.0);
+        assert_eq!(bounded_button_contrast_gradient(logit(0.8), 1.0), 0.0);
+        assert_eq!(bounded_button_contrast_gradient(logit(0.2), 0.0), 0.0);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 mod algorithms;
 mod commands;
 
-pub(super) const MAX_LEARN_INPUT_CORPORA: usize = 64;
+pub(super) const MAX_LEARN_INPUT_CORPORA: usize = 256;
 
 pub use algorithms::{
     command_ensemble_q, command_iql, command_option_values, command_prioritized_q,
