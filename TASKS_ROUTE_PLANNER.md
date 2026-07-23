@@ -2671,7 +2671,7 @@ visual polish or whole-game authoring features.
       authoritative downstream replay and a typed rejection when the removed
       step remains a required producer. They can also be replaced through the
       transition palette with the same replay/rejection semantics. Deeper
-      file-selection continuation and the remaining two demonstrations are
+      file-selection continuation and the remaining demonstration are
       still open. The exact GZ2E01 Forest Temple `Door[1]` demonstration now
       ships too: its nine source-audited DOOR20 phases author and replay through
       the ordinary browser route API, retain the one-update separation between
@@ -2683,8 +2683,14 @@ visual polish or whole-game authoring features.
       consumer. Planner projects persist their evidence mode; this demo alone
       defaults to research, while ordinary projects remain established-only.
       Removing the rebind yields the expected typed rejection at its consumer.
-      Auru recent-item transfer, Text Displacement, and deeper file-selection
-      continuation remain open.
+      The Auru demo now exposes four independently editable steps: an established
+      Fishing Rod presentation on file A, a runtime-file lifetime handoff that
+      preserves the session-owned recent-item component while rekeying file-owned
+      inventory, a clearly hypothetical GCN geometry setup, and the unchanged
+      established `DEFAULT_GETITEM` consumer on file B. Removing the original
+      presentation rejects the file-boundary continuation before any item can be
+      invented. Text Displacement and deeper file-selection continuation remain
+      open.
 - [ ] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
       saves it, reloads it, and obtains identical semantic identities.

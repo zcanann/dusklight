@@ -451,7 +451,7 @@ mod tests {
         );
         assert_eq!(list.status, 200);
         let list: serde_json::Value = serde_json::from_slice(&list.body).unwrap();
-        assert_eq!(list["projects"].as_array().unwrap().len(), 4);
+        assert_eq!(list["projects"].as_array().unwrap().len(), 5);
 
         let template = dispatch(
             HttpRequest {

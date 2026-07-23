@@ -29,7 +29,7 @@ use dusklight_route_planner::state::{
 use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
 use dusklight_route_planner::transition::{
     ActivationContract, ActorReconstructionRule, CandidateTransition, ComponentFieldTarget, Goal,
-    MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, StateOperation, TransitionKind,
+    MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, ReaderRule, StateOperation, TransitionKind,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -514,7 +514,19 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
     let opening = ComposedPlannerCatalog::compose(&facts, &opening_mechanics, &[])?;
     let (keyed_door, keyed_door_start) = keyed_door_demo(&facts, runtime.clone())?;
     let (rebind, rebind_start) = hypothetical_rebind_demo(runtime.clone())?;
+    let (auru, auru_start) = auru_recent_item_demo(runtime.clone())?;
     let projects = vec![
+        PlannerWebProject {
+            schema: WEB_PROJECT_SCHEMA.into(),
+            id: "demo-auru-recent-item-transfer".into(),
+            label: "Auru recent-item transfer".into(),
+            catalog: auru,
+            evidence_mode: crate::RuntimeEvidenceMode::Research,
+            route_book: None,
+            start_state: Some(auru_start),
+            equivalence_sets: Vec::new(),
+            presentation: ProjectPresentation::default(),
+        },
         PlannerWebProject {
             schema: WEB_PROJECT_SCHEMA.into(),
             id: "demo-forest-keyed-door".into(),
@@ -564,6 +576,310 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
         project.validate()?;
     }
     Ok(projects)
+}
+
+fn auru_recent_item_demo(
+    runtime_configuration: RuntimeConfiguration,
+) -> Result<(ComposedPlannerCatalog, PlannerExecutionStateDocument), ProjectError> {
+    const ROD_ITEM_ID: u64 = 0x4a;
+    const RECENT_ITEM_ID: &str = "event.recent-item";
+    const INVENTORY_ID: &str = "inventory.active";
+    const AURU_ID: &str = "actor.auru";
+    let scope = ContextScope {
+        selectors: vec![ContextSelector::Exact {
+            context: runtime_configuration.exact_context()?,
+        }],
+    };
+    let established = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![EvidenceRecord {
+            id: "source.auru-recent-item-store-audit".into(),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(Digest([0x71; 32])),
+            note: "Generic presentation state is session-owned and DEFAULT_GETITEM consumes its current item ID.".into(),
+        }],
+    };
+    let hypothetical = RuleEvidence {
+        truth: TruthStatus::Hypothetical,
+        records: vec![EvidenceRecord {
+            id: "hypothesis.auru-gcn-interaction-geometry".into(),
+            kind: EvidenceKind::Theorycraft,
+            source_sha256: None,
+            note: "No enabled GCN setup currently proves the required talk-volume/outside-trigger geometry.".into(),
+        }],
+    };
+    let compare_field =
+        |component_id: &str, field: &str, value: StateValue| PredicateExpression::Compare {
+            left: ValueReference::ComponentField {
+                component_id: component_id.into(),
+                field: field.into(),
+            },
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal { value },
+        };
+    let candidate = |id: &str,
+                     label: &str,
+                     transition_kind: TransitionKind,
+                     hard_guards: PredicateExpression,
+                     effects: Vec<StateOperation>,
+                     evidence: RuleEvidence| CandidateTransition {
+        id: id.into(),
+        label: label.into(),
+        scope: scope.clone(),
+        transition_kind,
+        approach_id: "approach.auru-recent-item-transfer".into(),
+        activation: ActivationContract {
+            hard_guards,
+            physical_obligation_ids: Vec::new(),
+            effects,
+            unknown_requirements: Vec::new(),
+        },
+        evidence,
+    };
+    let mut mechanics = empty_mechanics();
+    mechanics.transitions = vec![
+        candidate(
+            "transition.auru-demo-01-present-fishing-rod",
+            "Present the Fishing Rod on file A",
+            TransitionKind::ItemAcquisition,
+            compare_field(RECENT_ITEM_ID, "get_item_no", StateValue::Unsigned(0xff)),
+            vec![StateOperation::Write {
+                target: ComponentFieldTarget {
+                    component_id: RECENT_ITEM_ID.into(),
+                    field: "get_item_no".into(),
+                },
+                value: StateValue::Unsigned(ROD_ITEM_ID),
+            }],
+            established.clone(),
+        ),
+        candidate(
+            "transition.auru-demo-02-begin-file-b",
+            "Begin file B while preserving session recent-item state",
+            TransitionKind::SaveLoad,
+            compare_field(
+                RECENT_ITEM_ID,
+                "get_item_no",
+                StateValue::Unsigned(ROD_ITEM_ID),
+            ),
+            vec![StateOperation::BeginRuntimeFileLifetime {
+                destination_id_suffix: "file-b".into(),
+                origin: RuntimeFileOrigin::LoadedSlot {
+                    slot: PhysicalSlotId(1),
+                },
+                backing: BackingAttachment::CardBacked {
+                    slot: PhysicalSlotId(1),
+                },
+                allowed_serialization_targets: vec![PhysicalSlotId(1)],
+            }],
+            established.clone(),
+        ),
+        candidate(
+            "transition.auru-demo-03-hypothetical-gcn-geometry",
+            "Hypothetically resolve Auru's GCN interaction geometry",
+            TransitionKind::Technique,
+            PredicateExpression::All {
+                terms: vec![
+                    compare_field(AURU_ID, "live", StateValue::Boolean(true)),
+                    compare_field(AURU_ID, "activation_ready", StateValue::Boolean(false)),
+                    PredicateExpression::Compare {
+                        left: ValueReference::PlayerControl,
+                        operator: ComparisonOperator::Equal,
+                        right: ValueReference::Literal {
+                            value: StateValue::Boolean(true),
+                        },
+                    },
+                    PredicateExpression::Compare {
+                        left: ValueReference::PlayerAction,
+                        operator: ComparisonOperator::Equal,
+                        right: ValueReference::Literal {
+                            value: StateValue::Text("talk".into()),
+                        },
+                    },
+                ],
+            },
+            vec![StateOperation::Write {
+                target: ComponentFieldTarget {
+                    component_id: AURU_ID.into(),
+                    field: "activation_ready".into(),
+                },
+                value: StateValue::Boolean(true),
+            }],
+            hypothetical,
+        ),
+        candidate(
+            "transition.auru-demo-04-generic-get-item",
+            "Consume the session recent item through Auru DEFAULT_GETITEM",
+            TransitionKind::ItemAcquisition,
+            PredicateExpression::All {
+                terms: vec![
+                    compare_field(
+                        RECENT_ITEM_ID,
+                        "get_item_no",
+                        StateValue::Unsigned(ROD_ITEM_ID),
+                    ),
+                    compare_field(AURU_ID, "activation_ready", StateValue::Boolean(true)),
+                ],
+            },
+            vec![StateOperation::SetBitFromValue {
+                source: ComponentFieldTarget {
+                    component_id: RECENT_ITEM_ID.into(),
+                    field: "get_item_no".into(),
+                },
+                target: ComponentFieldTarget {
+                    component_id: INVENTORY_ID.into(),
+                    field: "owned_item_ids".into(),
+                },
+            }],
+            established.clone(),
+        ),
+    ];
+    mechanics.readers = vec![ReaderRule {
+        id: "reader.auru-default-get-item-recent-item".into(),
+        scope: scope.clone(),
+        source: ValueReference::ComponentField {
+            component_id: RECENT_ITEM_ID.into(),
+            field: "get_item_no".into(),
+        },
+        consuming_transition_id: "transition.auru-demo-04-generic-get-item".into(),
+        interpretation_fact_id: None,
+        evidence: established.clone(),
+    }];
+    let mut rod_mask = vec![0; 32];
+    rod_mask[ROD_ITEM_ID as usize / 8] = 1 << (ROD_ITEM_ID % 8);
+    mechanics.goals.push(Goal {
+        id: "goal.auru-grant-fishing-rod-on-file-b".into(),
+        label: "Grant file B the Fishing Rod through Auru's shared consumer".into(),
+        predicate: PredicateExpression::Compare {
+            left: ValueReference::ComponentField {
+                component_id: INVENTORY_ID.into(),
+                field: "owned_item_ids".into(),
+            },
+            operator: ComparisonOperator::ContainsBits,
+            right: ValueReference::Literal {
+                value: StateValue::Bytes(rod_mask),
+            },
+        },
+    });
+    let facts = FactCatalog {
+        schema: FACT_CATALOG_SCHEMA.into(),
+        aliases: Vec::new(),
+        derived_facts: Vec::new(),
+    };
+    let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &[])?;
+    let snapshot = StateSnapshot {
+        schema: STATE_SNAPSHOT_SCHEMA.into(),
+        id: "snapshot.auru-recent-item-file-a".into(),
+        sequence: 0,
+        environment: ExecutionEnvironment {
+            schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+            runtime_configuration,
+            active_runtime_file: RuntimeFile {
+                id: "file-a".into(),
+                origin: RuntimeFileOrigin::NewFile,
+                backing: BackingAttachment::MemoryOnly,
+                allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                lifecycle: RuntimeFileLifecycle::Active,
+            },
+            inactive_runtime_files: Vec::new(),
+            physical_slots: Vec::new(),
+            physical_slot_observations: Vec::new(),
+            execution_context: ExecutionContext::World,
+            location: SceneLocation {
+                stage: "AURU_SITE".into(),
+                room: 0,
+                layer: 0,
+                spawn: 0,
+            },
+            player: PlayerState {
+                form: PlayerForm::Human,
+                mount: None,
+                position: [0.0; 3],
+                rotation: [0; 3],
+                has_control: Some(true),
+                action: "talk".into(),
+            },
+            components: {
+                let mut components = vec![
+                    StateComponent {
+                        id: RECENT_ITEM_ID.into(),
+                        component_kind: ComponentKind::Session,
+                        payload: ComponentPayload::Structured {
+                            fields: BTreeMap::from([(
+                                "get_item_no".into(),
+                                StateValue::Unsigned(0xff),
+                            )]),
+                        },
+                        binding: ComponentBinding::Session {
+                            session_id: "session-1".into(),
+                        },
+                        lifetime: SemanticLifetime::Session,
+                        serialization_owner: SerializationOwner::None,
+                        provenance: vec![ComponentProvenance {
+                            source_kind: ProvenanceSourceKind::Initialized,
+                            source_id: "d_com_inf_game:mgtitm".into(),
+                            source_sha256: Some(Digest([0x72; 32])),
+                            transition_id: None,
+                        }],
+                    },
+                    StateComponent {
+                        id: INVENTORY_ID.into(),
+                        component_kind: ComponentKind::Inventory,
+                        payload: ComponentPayload::Structured {
+                            fields: BTreeMap::from([(
+                                "owned_item_ids".into(),
+                                StateValue::Bytes(vec![0; 32]),
+                            )]),
+                        },
+                        binding: ComponentBinding::RuntimeFile {
+                            runtime_file_id: "file-a".into(),
+                        },
+                        lifetime: SemanticLifetime::RuntimeFile,
+                        serialization_owner: SerializationOwner::RuntimeFile {
+                            runtime_file_id: "file-a".into(),
+                        },
+                        provenance: vec![ComponentProvenance {
+                            source_kind: ProvenanceSourceKind::Initialized,
+                            source_id: "fixture.file-a-empty-inventory".into(),
+                            source_sha256: Some(Digest([0x73; 32])),
+                            transition_id: None,
+                        }],
+                    },
+                    StateComponent {
+                        id: AURU_ID.into(),
+                        component_kind: ComponentKind::ActorInstance,
+                        payload: ComponentPayload::Structured {
+                            fields: BTreeMap::from([
+                                ("activation_ready".into(), StateValue::Boolean(false)),
+                                ("live".into(), StateValue::Boolean(true)),
+                            ]),
+                        },
+                        binding: ComponentBinding::Actor {
+                            instance_id: AURU_ID.into(),
+                        },
+                        lifetime: SemanticLifetime::RoomLoad,
+                        serialization_owner: SerializationOwner::None,
+                        provenance: vec![ComponentProvenance {
+                            source_kind: ProvenanceSourceKind::ExtractedFact,
+                            source_id: "actor.auru-shared-consumer".into(),
+                            source_sha256: Some(Digest([0x74; 32])),
+                            transition_id: None,
+                        }],
+                    },
+                ];
+                components.sort_by(|left, right| left.id.cmp(&right.id));
+                components
+            },
+            static_world_objects: Vec::new(),
+            spatial_volumes: Vec::new(),
+            spatial_connections: Vec::new(),
+            spatial_planes: Vec::new(),
+            persisted_object_controls: Vec::new(),
+            live_world_objects: Vec::new(),
+        },
+        semantic_observations: Vec::new(),
+    };
+    let document = PlannerExecutionState::new(snapshot)?.to_document()?;
+    Ok((catalog, document))
 }
 
 fn hypothetical_rebind_demo(
@@ -1573,7 +1889,7 @@ mod tests {
         let root = temporary_root("builtins");
         let store = ProjectStore::open(&root).unwrap();
         let list = store.list().unwrap();
-        assert_eq!(list.projects.len(), 4);
+        assert_eq!(list.projects.len(), 5);
         assert!(list.projects.iter().all(|project| project.read_only));
         assert!(
             list.projects
@@ -1593,6 +1909,95 @@ mod tests {
         let rebind = store.load("demo-hypothetical-local-bank-rebind").unwrap();
         assert_eq!(rebind.project.evidence_mode, RuntimeEvidenceMode::Research);
         assert_eq!(rebind.project.catalog.mechanics.transitions.len(), 2);
+        let auru = store.load("demo-auru-recent-item-transfer").unwrap();
+        assert_eq!(auru.project.evidence_mode, RuntimeEvidenceMode::Research);
+        assert_eq!(auru.project.catalog.mechanics.transitions.len(), 4);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn auru_demo_preserves_session_item_across_runtime_file_lifetimes() {
+        let root = temporary_root("auru-recent-item");
+        let store = ProjectStore::open(&root).unwrap();
+        let project = store
+            .load("demo-auru-recent-item-transfer")
+            .unwrap()
+            .project;
+        let start = project.start_state.unwrap();
+        let mut route_book = None;
+        let mut final_state = None;
+        for transition_id in [
+            "transition.auru-demo-01-present-fishing-rod",
+            "transition.auru-demo-02-begin-file-b",
+            "transition.auru-demo-03-hypothetical-gcn-geometry",
+            "transition.auru-demo-04-generic-get-item",
+        ] {
+            let response = handle_request(PlannerServiceRequest::AppendTransition {
+                request_id: format!("request.{transition_id}"),
+                state: Box::new(start.clone()),
+                catalog: Box::new(project.catalog.clone()),
+                equivalence_sets: project.equivalence_sets.clone(),
+                route_book,
+                route_book_id: "route.auru-recent-item-demo".into(),
+                route_book_label: "Auru recent-item demo route".into(),
+                transition_id: transition_id.into(),
+                evidence_mode: project.evidence_mode,
+            });
+            let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+                panic!("{transition_id} should append after replaying its prefix");
+            };
+            let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
+                panic!("Auru demo should return an appended transition");
+            };
+            final_state = Some(after);
+            route_book = Some(book);
+        }
+        let final_state = final_state.unwrap();
+        assert_ne!(
+            final_state.snapshot.environment.active_runtime_file.id,
+            "file-a"
+        );
+        let recent_item = final_state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "event.recent-item")
+            .unwrap();
+        assert!(matches!(
+            recent_item.binding,
+            ComponentBinding::Session { .. }
+        ));
+        let inventory = final_state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "inventory.active")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &inventory.payload else {
+            panic!("inventory should remain structured");
+        };
+        let StateValue::Bytes(items) = &fields["owned_item_ids"] else {
+            panic!("owned item set should remain byte-backed");
+        };
+        assert_ne!(items[0x4a / 8] & (1 << (0x4a % 8)), 0);
+        let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
+            request_id: "request.remove-auru-producer".into(),
+            state: Box::new(start),
+            catalog: Box::new(project.catalog),
+            equivalence_sets: project.equivalence_sets,
+            route_book: route_book.unwrap(),
+            step_id: "step.route-0000".into(),
+            evidence_mode: project.evidence_mode,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("removing the recent-item producer should return a typed rejection");
+        };
+        let PlannerServicePayload::RejectedRouteEdit { failed_step_id, .. } = *payload else {
+            panic!("file B must not inherit a Fishing Rod that was never presented");
+        };
+        assert_eq!(failed_step_id, "step.route-0001");
         fs::remove_dir_all(root).unwrap();
     }
 
