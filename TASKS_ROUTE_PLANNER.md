@@ -2722,8 +2722,11 @@ visual polish or whole-game authoring features.
 - [ ] Make transition insertion the primary authoring operation.
   - [ ] From a selected state node, list applicable physical, event, warp,
         reload, title/file, and technique transitions.
-  - [ ] Permit searching providers by desired destination or postcondition while
-        retaining the actual entry contract and effects.
+  - [x] Permit searching providers by desired destination or postcondition while
+        retaining the actual entry contract and effects. Palette search indexes
+        the complete authoritative transition document, including destinations,
+        requirements, obligations, operations, and fact IDs; selecting a result
+        shows that exact contract rather than a browser-derived surrogate.
   - [x] Reject invalid joins and show the missing state producers, active
         obstruction resolvers, unknown obligations, or exact-context mismatch.
         Do not implement a force-connect operation. Rejected appends and route

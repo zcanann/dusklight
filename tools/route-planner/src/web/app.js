@@ -26,6 +26,7 @@ const state = {
   dirty: false,
   transitionEvaluation: null,
   replacementStep: null,
+  transitionSearch: new Map(),
 };
 
 elements["project-list"].addEventListener("change", () => {
@@ -161,6 +162,10 @@ async function loadProject(project, options) {
   state.selected = null;
   state.transitionEvaluation = null;
   state.replacementStep = null;
+  state.transitionSearch = new Map(project.catalog.mechanics.transitions.map((transition) => [
+    transition.id,
+    transitionSearchText(transition),
+  ]));
   ensurePositions();
   elements["empty-state"].hidden = true;
   updateProjectControls();
@@ -303,7 +308,8 @@ function renderPalette() {
   if (!state.graph) return;
   const query = elements.search.value.trim().toLowerCase();
   const matches = state.graph.nodes.filter((node) => node.payload.kind === "transition"
-    && (!query || `${node.label} ${node.id}`.toLowerCase().includes(query)));
+    && (!query || `${node.label} ${node.id} ${state.transitionSearch.get(node.payload.transition_id) ?? ""}`
+      .toLowerCase().includes(query)));
   for (const node of matches) {
     const button = document.createElement("button");
     button.className = "palette-item";
@@ -402,10 +408,32 @@ function renderDetails() {
     : "This project has no exact start state";
   elements["detail-json"].textContent = JSON.stringify({
     selection: selected.value,
+    ...(transition ? {
+      transition_contract: state.project.catalog.mechanics.transitions.find((candidate) =>
+        candidate.id === selected.value.payload.transition_id),
+    } : {}),
     ...(state.replacementStep ? { replacement_target: state.replacementStep } : {}),
     ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
   }, null, 2);
   renderStateInspector();
+}
+
+function transitionSearchText(transition) {
+  const tokens = [];
+  const visit = (value) => {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      tokens.push(String(value));
+    } else if (Array.isArray(value)) {
+      value.forEach(visit);
+    } else if (value && typeof value === "object") {
+      for (const [key, child] of Object.entries(value)) {
+        tokens.push(key.replaceAll("_", " "));
+        visit(child);
+      }
+    }
+  };
+  visit(transition);
+  return tokens.join(" ");
 }
 
 function updateDirectiveControls(node) {
