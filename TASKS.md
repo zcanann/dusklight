@@ -997,8 +997,14 @@ that it blocks the current loop.
 
 ### Broader information coverage
 
-- [ ] Continue the bootable-world and complete-actor survey as background coverage,
-      not as a prerequisite for controlling Link in Ordon.
+- [x] Continue the bootable-world and complete-actor survey as background coverage,
+      not as a prerequisite for controlling Link in Ordon. The resumable stage
+      survey owns neutral, directional-contact, loading, and generic factorized
+      PAD probes over the boot catalog, finalizes each entry independently, and
+      keeps missing/failed artifacts explicit. Its stage/profile report verifies
+      complete learner actor populations and typed field variation without raw
+      value retention. Scheduling resumes only unfinished cells, so this bounded
+      coverage lane can continue independently while Ordon campaigns run.
 - [x] Use Skybook and other catalogs only to identify reusable missing observation,
       action, history, and proof capabilities. Do not translate published setups
       into learner routes or rewards. The revision-bound 483-page manifest is an
