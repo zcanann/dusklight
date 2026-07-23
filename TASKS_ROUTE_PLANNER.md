@@ -73,8 +73,12 @@ Fanadi project is now an executable demonstration rather than only
 a catalog view: its exact GZ2E01 runtime state contains a provenance-bearing
 stored return-place component and a concrete location goal, so Save As followed
 by insertion propagates from F_SP103 to R_SP107 room 3 through the modeled
-savewarp reader. The remaining planned demonstrations and removal/replacement
-editing remain open. Coverage is also incomplete, so the current engine is a
+savewarp reader. The opening project likewise carries an exact reset-ready world
+state and goal; its first transition writes the restart-room parameter and enters
+`PROC_OPENING_SCENE` with the audited F_SP102 pending load without pretending the
+world load completed. The remaining planned demonstrations, deeper file-selection
+continuation, and removal/replacement editing remain open. Coverage is also
+incomplete, so the current engine is a
 causal-reasoning laboratory over selected modeled mechanics rather than a
 whole-game route explorer.
 
@@ -2603,8 +2607,10 @@ visual polish or whole-game authoring features.
       into the editable workspace. The Fanadi project now includes an exact
       start state and concrete goal; after Save As, its savewarp transition
       validates, inserts, and visibly changes the propagated location to
-      R_SP107 room 3. Removal/replacement, an executable opening-flow state, and
-      the remaining three demonstrations are still open.
+      R_SP107 room 3. The opening project now also executes its reset prefix from
+      an exact start, writes `restart.room_param = 0`, and exposes the pending
+      F_SP102 opening-process load. Removal/replacement, deeper file-selection
+      continuation, and the remaining three demonstrations are still open.
 - [ ] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
       saves it, reloads it, and obtains identical semantic identities.

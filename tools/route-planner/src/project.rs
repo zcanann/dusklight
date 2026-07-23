@@ -476,11 +476,30 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
         },
     });
     let fanadi = ComposedPlannerCatalog::compose(&facts, &fanadi_mechanics, &[])?;
-    let opening = ComposedPlannerCatalog::compose(
-        &facts,
-        &gz2e01_reset_to_opening_mechanics(&content, &runtime)?,
-        &[],
-    )?;
+    let mut opening_mechanics = gz2e01_reset_to_opening_mechanics(&content, &runtime)?;
+    opening_mechanics.goals.push(Goal {
+        id: "goal.enter-opening-process".into(),
+        label: "Enter the opening process with its exact pending load".into(),
+        predicate: PredicateExpression::All {
+            terms: vec![
+                PredicateExpression::Compare {
+                    left: ValueReference::ExecutionProcess,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("PROC_OPENING_SCENE".into()),
+                    },
+                },
+                PredicateExpression::Compare {
+                    left: ValueReference::PendingWorldLoadStage,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("F_SP102".into()),
+                    },
+                },
+            ],
+        },
+    });
+    let opening = ComposedPlannerCatalog::compose(&facts, &opening_mechanics, &[])?;
     let projects = vec![
         PlannerWebProject {
             schema: WEB_PROJECT_SCHEMA.into(),
@@ -498,7 +517,7 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             label: "Opening and file-selection flow".into(),
             catalog: opening,
             route_book: None,
-            start_state: None,
+            start_state: Some(opening_start_state(runtime)?),
             equivalence_sets: Vec::new(),
             presentation: ProjectPresentation::default(),
         },
@@ -572,6 +591,102 @@ fn fanadi_start_state(
                 action: "idle".into(),
             },
             components: vec![return_place],
+            static_world_objects: Vec::new(),
+            spatial_volumes: Vec::new(),
+            spatial_connections: Vec::new(),
+            spatial_planes: Vec::new(),
+            persisted_object_controls: Vec::new(),
+            live_world_objects: Vec::new(),
+        },
+        semantic_observations: Vec::new(),
+    };
+    PlannerExecutionState::new(snapshot)
+        .and_then(|state| state.to_document())
+        .map_err(ProjectError::from)
+}
+
+fn opening_start_state(
+    runtime_configuration: RuntimeConfiguration,
+) -> Result<PlannerExecutionStateDocument, ProjectError> {
+    let runtime_file_id = "file-0".to_owned();
+    let component = |id: &str,
+                     component_kind: ComponentKind,
+                     fields: BTreeMap<String, StateValue>,
+                     binding: ComponentBinding,
+                     lifetime: SemanticLifetime,
+                     serialization_owner: SerializationOwner| StateComponent {
+        id: id.into(),
+        component_kind,
+        payload: ComponentPayload::Structured { fields },
+        binding,
+        lifetime,
+        serialization_owner,
+        provenance: vec![ComponentProvenance {
+            source_kind: ProvenanceSourceKind::ExtractedFact,
+            source_id: "demo.opening-reset".into(),
+            source_sha256: None,
+            transition_id: None,
+        }],
+    };
+    let reset_control = component(
+        "reset-control",
+        ComponentKind::Session,
+        BTreeMap::from([
+            ("fader_status".into(), StateValue::Unsigned(1)),
+            ("reset_requested".into(), StateValue::Boolean(true)),
+            ("return_to_menu".into(), StateValue::Boolean(false)),
+        ]),
+        ComponentBinding::Session {
+            session_id: "process".into(),
+        },
+        SemanticLifetime::Session,
+        SerializationOwner::None,
+    );
+    let restart = component(
+        "restart",
+        ComponentKind::Restart,
+        BTreeMap::from([("room_param".into(), StateValue::Unsigned(0xc9))]),
+        ComponentBinding::RuntimeFile {
+            runtime_file_id: runtime_file_id.clone(),
+        },
+        SemanticLifetime::RuntimeFile,
+        SerializationOwner::RuntimeFile {
+            runtime_file_id: runtime_file_id.clone(),
+        },
+    );
+    let snapshot = StateSnapshot {
+        schema: STATE_SNAPSHOT_SCHEMA.into(),
+        id: "snapshot.opening-before-reset".into(),
+        sequence: 0,
+        environment: ExecutionEnvironment {
+            schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+            runtime_configuration,
+            active_runtime_file: RuntimeFile {
+                id: runtime_file_id,
+                origin: RuntimeFileOrigin::NewFile,
+                backing: BackingAttachment::MemoryOnly,
+                allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                lifecycle: RuntimeFileLifecycle::Active,
+            },
+            inactive_runtime_files: Vec::new(),
+            physical_slots: Vec::new(),
+            physical_slot_observations: Vec::new(),
+            execution_context: ExecutionContext::World,
+            location: SceneLocation {
+                stage: "R_SP107".into(),
+                room: 3,
+                layer: 0,
+                spawn: 0,
+            },
+            player: PlayerState {
+                form: PlayerForm::Wolf,
+                mount: None,
+                position: [0.0; 3],
+                rotation: [0; 3],
+                has_control: Some(true),
+                action: "idle".into(),
+            },
+            components: vec![reset_control, restart],
             static_world_objects: Vec::new(),
             spatial_volumes: Vec::new(),
             spatial_connections: Vec::new(),
@@ -699,6 +814,9 @@ mod tests {
         let fanadi = store.load("demo-fanadi-return-place").unwrap();
         assert!(fanadi.project.start_state.is_some());
         assert_eq!(fanadi.project.catalog.mechanics.goals.len(), 1);
+        let opening = store.load("demo-opening-flow").unwrap();
+        assert!(opening.project.start_state.is_some());
+        assert_eq!(opening.project.catalog.mechanics.goals.len(), 1);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -729,6 +847,56 @@ mod tests {
         assert_eq!(after.snapshot.environment.location.room, 3);
         assert_eq!(after.snapshot.environment.location.layer, -1);
         assert_eq!(after.snapshot.environment.location.spawn, 1);
+        assert_eq!(book.methods[0].step_ids, ["step.route-0000"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn opening_demo_reset_propagates_into_the_pending_opening_process() {
+        let root = temporary_root("opening-propagation");
+        let store = ProjectStore::open(&root).unwrap();
+        let record = store.load("demo-opening-flow").unwrap();
+        let project = record.project;
+        let response = handle_request(PlannerServiceRequest::AppendTransition {
+            request_id: "request.opening-reset".into(),
+            state: Box::new(project.start_state.unwrap()),
+            catalog: Box::new(project.catalog),
+            equivalence_sets: project.equivalence_sets,
+            route_book: None,
+            route_book_id: "route.opening-demo".into(),
+            route_book_label: "Opening demo route".into(),
+            transition_id: "transition.gz2e01.reset-to-opening".into(),
+            evidence_mode: RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("opening reset should be executable from its checked start state");
+        };
+        let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
+            panic!("opening demo should append one propagated transition");
+        };
+        assert_eq!(
+            after.snapshot.environment.execution_context,
+            ExecutionContext::Process {
+                process_name: "PROC_OPENING_SCENE".into(),
+                pending_world_load: Some(SceneLocation {
+                    stage: "F_SP102".into(),
+                    room: 0,
+                    layer: 10,
+                    spawn: 100,
+                }),
+            }
+        );
+        let restart = after
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "restart")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &restart.payload else {
+            panic!("opening restart component should remain structured");
+        };
+        assert_eq!(fields["room_param"], StateValue::Unsigned(0));
         assert_eq!(book.methods[0].step_ids, ["step.route-0000"]);
         fs::remove_dir_all(root).unwrap();
     }
