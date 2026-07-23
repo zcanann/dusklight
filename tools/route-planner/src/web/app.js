@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v33";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v34";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v6";
@@ -32,6 +32,7 @@ const state = {
   activeRegionId: null,
   collapsedRegionIds: new Set(),
   knownRegionIds: new Set(),
+  routeStepInspections: new Map(),
 };
 
 elements["project-list"].addEventListener("change", () => {
@@ -167,6 +168,7 @@ async function loadProject(project, options) {
   state.selected = null;
   state.transitionEvaluation = null;
   state.replacementStep = null;
+  state.routeStepInspections = new Map();
   state.activeRegionId = null;
   state.collapsedRegionIds = new Set();
   state.knownRegionIds = new Set();
@@ -174,6 +176,7 @@ async function loadProject(project, options) {
     transition.id,
     transitionSearchText(transition),
   ]));
+  await refreshAuthoredRouteInspections();
   ensurePositions();
   elements["empty-state"].hidden = true;
   updateProjectControls();
@@ -308,8 +311,7 @@ function renderNodes() {
     group.addEventListener("pointerdown", (event) => beginNodeDrag(event, node));
     group.addEventListener("click", (event) => {
       event.stopPropagation();
-      state.selected = { type: "node", value: node };
-      state.transitionEvaluation = null;
+      selectNode(node);
       render();
     });
     group.addEventListener("dblclick", (event) => {
@@ -363,6 +365,51 @@ function renderPalette() {
       });
     }
     elements["palette-list"].append(button);
+  }
+}
+
+function selectNode(node) {
+  state.selected = { type: "node", value: node };
+  state.transitionEvaluation = node.payload.kind === "reference_step"
+    ? state.routeStepInspections.get(node.payload.step_id) ?? null
+    : null;
+}
+
+async function refreshAuthoredRouteInspections() {
+  state.routeStepInspections = new Map();
+  if (!state.project?.start_state || !state.project?.route_book?.methods.some((method) =>
+    method.id === "method.authored-route")) return;
+  const payload = await service({
+    command: "inspect_authored_route",
+    request_id: requestId("inspect-authored-route"),
+    state: state.project.start_state,
+    catalog: state.project.catalog,
+    equivalence_sets: state.project.equivalence_sets ?? [],
+    route_book: state.project.route_book,
+    evidence_mode: "established_only",
+  });
+  if (payload.kind !== "authored_route_inspection") {
+    throw new Error(`Unexpected response ${payload.kind}`);
+  }
+  for (const step of payload.inspection.steps) {
+    state.routeStepInspections.set(step.step_id, {
+      kind: "authored_route_step_inspection",
+      step_id: step.step_id,
+      transition_id: step.transition_id,
+      assessment: step.assessment,
+      state_change: step.state_change,
+    });
+  }
+  const rejection = payload.inspection.rejection;
+  if (rejection) {
+    state.routeStepInspections.set(rejection.failed_step_id, {
+      kind: "rejected_authored_route_step",
+      failed_step_id: rejection.failed_step_id,
+      transition_id: rejection.transition_id,
+      assessment: rejection.assessment,
+      diagnostics: rejection.diagnostics,
+      state_change: rejection.prefix_state_change,
+    });
   }
 }
 
@@ -966,6 +1013,7 @@ async function removeSelectedRouteStep() {
     });
     if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
     state.graph = projected.graph;
+    await refreshAuthoredRouteInspections();
     state.selected = null;
     state.transitionEvaluation = null;
     ensurePositions();
@@ -1045,10 +1093,12 @@ async function replaceSelectedRouteStep() {
       state_change: stateChange,
     };
     state.replacementStep = null;
+    await refreshAuthoredRouteInspections();
     ensurePositions();
     const stepNode = state.graph.nodes.find((candidate) =>
       candidate.payload.kind === "reference_step" && candidate.payload.step_id === payload.step_id);
-    state.selected = stepNode ? { type: "node", value: stepNode } : null;
+    if (stepNode) selectNode(stepNode);
+    else state.selected = null;
     markDirty();
     render();
     setStatus(`${replacement.label} replaced with ${node.label}; downstream state replayed; save to persist`, "good");
@@ -1112,10 +1162,11 @@ async function insertSelectedTransition() {
     });
     if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
     state.graph = projected.graph;
+    await refreshAuthoredRouteInspections();
     ensurePositions();
     const stepNode = state.graph.nodes.find((candidate) =>
       candidate.payload.kind === "reference_step" && candidate.payload.step_id === payload.step_id);
-    state.selected = stepNode ? { type: "node", value: stepNode } : state.selected;
+    if (stepNode) selectNode(stepNode);
     markDirty();
     render();
     setStatus(`${node.label} inserted as ${payload.step_id}; save to persist`, "good");
@@ -1243,8 +1294,7 @@ function beginNodeDrag(event, node) {
   event.stopPropagation();
   elements.canvas.setPointerCapture(event.pointerId);
   const position = state.positions.get(node.id);
-  state.selected = { type: "node", value: node };
-  state.transitionEvaluation = null;
+  selectNode(node);
   state.gesture = { kind: "node", pointerId: event.pointerId, nodeId: node.id, startX: event.clientX, startY: event.clientY, x: position.x, y: position.y };
   renderDetails();
 }

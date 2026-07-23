@@ -27,7 +27,7 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v33";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v34";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -130,6 +130,14 @@ pub enum PlannerServiceRequest {
         transition_id: String,
         evidence_mode: crate::RuntimeEvidenceMode,
     },
+    InspectAuthoredRoute {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        route_book: Box<RouteBook>,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
     Solve {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
@@ -166,6 +174,7 @@ impl PlannerServiceRequest {
             | Self::AppendTransition { request_id, .. }
             | Self::RemoveAuthoredStep { request_id, .. }
             | Self::ReplaceAuthoredStep { request_id, .. }
+            | Self::InspectAuthoredRoute { request_id, .. }
             | Self::Solve { request_id, .. }
             | Self::SolvePortable { request_id, .. } => request_id,
         }
@@ -254,6 +263,9 @@ pub enum PlannerServicePayload {
         diagnostics: Box<TransitionJoinDiagnostics>,
         closest_before: Box<PlannerExecutionStateDocument>,
     },
+    AuthoredRouteInspection {
+        inspection: Box<AuthoredRouteInspection>,
+    },
     AppendedTransition {
         book: Box<RouteBook>,
         previous_route_book_sha256: Option<Digest>,
@@ -277,6 +289,40 @@ pub struct TransitionJoinDiagnostics {
     pub unknown_obstruction_ids: Vec<String>,
     pub applied_resolver_ids: Vec<String>,
     pub applicable_technique_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredRouteInspection {
+    pub steps: Vec<AuthoredRouteStepInspection>,
+    pub rejection: Option<AuthoredRouteRejectionInspection>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredRouteStepInspection {
+    pub step_id: String,
+    pub transition_id: String,
+    pub assessment: TransitionAssessment,
+    pub state_change: AuthoredRouteStateChange,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredRouteRejectionInspection {
+    pub failed_step_id: String,
+    pub transition_id: String,
+    pub assessment: TransitionAssessment,
+    pub diagnostics: TransitionJoinDiagnostics,
+    pub prefix_state_change: AuthoredRouteStateChange,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredRouteStateChange {
+    pub before: StateInspection,
+    pub after: StateInspection,
+    pub diff: StateInspectionDiff,
 }
 
 pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse {
@@ -509,6 +555,27 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 evidence_mode,
             )
         }),
+        PlannerServiceRequest::InspectAuthoredRoute {
+            state,
+            catalog,
+            equivalence_sets,
+            route_book,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            inspect_authored_route(
+                state,
+                &catalog,
+                &equivalence_sets,
+                *route_book,
+                evidence_mode,
+            )
+            .map(
+                |inspection| PlannerServicePayload::AuthoredRouteInspection {
+                    inspection: Box::new(inspection),
+                },
+            )
+        }),
         PlannerServiceRequest::Solve {
             state,
             catalog,
@@ -653,6 +720,115 @@ fn assess_and_apply_transition(
 struct TransitionEvaluationResult {
     assessment: TransitionAssessment,
     diagnostics: TransitionJoinDiagnostics,
+}
+
+fn inspect_authored_route(
+    mut state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: RouteBook,
+    evidence_mode: crate::RuntimeEvidenceMode,
+) -> Result<AuthoredRouteInspection, dusklight_route_planner::PlannerContractError> {
+    route_book.validate_against_composed(catalog)?;
+    let method = route_book
+        .methods
+        .iter()
+        .find(|method| method.id == AUTHORED_METHOD_ID)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "route_book.methods",
+                "does not contain the browser-authored route method",
+            )
+        })?;
+    let initial = state.clone();
+    let mut steps = Vec::with_capacity(method.step_ids.len());
+    for (index, step_id) in method.step_ids.iter().enumerate() {
+        let step = route_book
+            .steps
+            .iter()
+            .find(|step| &step.id == step_id)
+            .ok_or_else(|| {
+                dusklight_route_planner::PlannerContractError::new(
+                    "route_book.methods.step_ids",
+                    "references a missing authored step",
+                )
+            })?;
+        let RouteActionRef::Transition { transition_id } = &step.action else {
+            return Err(dusklight_route_planner::PlannerContractError::new(
+                "route_book.steps.action",
+                "authored route inspection currently requires transition steps",
+            ));
+        };
+        let before = state.clone();
+        let evaluation = assess_and_apply_transition(
+            &mut state,
+            catalog,
+            equivalence_sets,
+            transition_id,
+            evidence_mode,
+            &format!("route.inspect-{index:04}"),
+        )?;
+        if evaluation.assessment.classification != TransitionClassification::Executable {
+            return Ok(AuthoredRouteInspection {
+                steps,
+                rejection: Some(AuthoredRouteRejectionInspection {
+                    failed_step_id: step_id.clone(),
+                    transition_id: transition_id.clone(),
+                    assessment: evaluation.assessment,
+                    diagnostics: evaluation.diagnostics,
+                    prefix_state_change: inspect_route_state_change(
+                        &initial,
+                        &before,
+                        catalog,
+                        equivalence_sets,
+                        evidence_mode,
+                        &format!("route.inspect-rejection-{index:04}"),
+                    )?,
+                }),
+            });
+        }
+        steps.push(AuthoredRouteStepInspection {
+            step_id: step_id.clone(),
+            transition_id: transition_id.clone(),
+            assessment: evaluation.assessment,
+            state_change: inspect_route_state_change(
+                &before,
+                &state,
+                catalog,
+                equivalence_sets,
+                evidence_mode,
+                &format!("route.inspect-step-{index:04}"),
+            )?,
+        });
+    }
+    Ok(AuthoredRouteInspection {
+        steps,
+        rejection: None,
+    })
+}
+
+fn inspect_route_state_change(
+    before: &PlannerExecutionState,
+    after: &PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    evidence_mode: crate::RuntimeEvidenceMode,
+    boundary_id: &str,
+) -> Result<AuthoredRouteStateChange, dusklight_route_planner::PlannerContractError> {
+    Ok(AuthoredRouteStateChange {
+        before: inspect_state(before, &catalog.facts, equivalence_sets, evidence_mode)?,
+        after: inspect_state(after, &catalog.facts, equivalence_sets, evidence_mode)?,
+        diff: inspect_state_diff(
+            before,
+            after,
+            BoundaryKind::Custom {
+                id: boundary_id.into(),
+            },
+            &catalog.facts,
+            equivalence_sets,
+            evidence_mode,
+        )?,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1485,6 +1661,64 @@ mod tests {
         assert_eq!(
             book.methods[0].step_ids,
             ["step.route-0000", "step.route-0001"]
+        );
+
+        let inspected = handle_request(PlannerServiceRequest::InspectAuthoredRoute {
+            request_id: "request.inspect-route".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: Box::new((*book).clone()),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = inspected.outcome else {
+            panic!("authored route inspection should replay every accepted step");
+        };
+        let PlannerServicePayload::AuthoredRouteInspection { inspection } = *payload else {
+            panic!("route inspection should return typed state changes");
+        };
+        assert!(inspection.rejection.is_none());
+        assert_eq!(inspection.steps.len(), 2);
+        assert_eq!(inspection.steps[0].step_id, "step.route-0000");
+        assert_eq!(
+            inspection.steps[0]
+                .state_change
+                .before
+                .state
+                .snapshot
+                .environment
+                .location
+                .stage,
+            "F_SP103"
+        );
+        assert_eq!(
+            inspection.steps[0]
+                .state_change
+                .after
+                .state
+                .snapshot
+                .environment
+                .location
+                .stage,
+            "D_MN05"
+        );
+        assert_eq!(
+            inspection.steps[1]
+                .state_change
+                .after
+                .state
+                .snapshot
+                .environment
+                .location
+                .stage,
+            "D_MN06"
+        );
+        assert!(
+            inspection.steps[1]
+                .state_change
+                .diff
+                .state_diff
+                .location_changed
         );
 
         let replaced_consumer = handle_request(PlannerServiceRequest::ReplaceAuthoredStep {
