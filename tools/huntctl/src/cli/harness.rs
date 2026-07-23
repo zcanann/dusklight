@@ -160,13 +160,26 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             &required_path(command_args, "--checkpoint")?,
             "reverse curriculum source checkpoint",
         )?;
+        let source_checkpoint_bytes = fs::read(repository_root.join(&source_checkpoint.path))?;
         let optimization: OptimizationRequest =
             serde_json::from_slice(&fs::read(repository_root.join(&source_request.path))?)?;
         let execution: huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding =
             serde_json::from_slice(&fs::read(repository_root.join(&source_execution.path))?)?;
         execution.validate_files(&repository_root, &optimization)?;
         let checkpoint: huntctl::search_evaluator::residual_campaign::ResidualCampaignCheckpoint =
-            serde_json::from_slice(&fs::read(repository_root.join(&source_checkpoint.path))?)?;
+            serde_json::from_slice(&source_checkpoint_bytes)?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "expanded reverse curriculum request",
+        )?;
+        refuse_existing_output(&output, "expanded reverse curriculum request")?;
+        let pinned_source_checkpoint = pin_curriculum_source_checkpoint(
+            &repository_root,
+            &output,
+            &source_checkpoint,
+            &source_checkpoint_bytes,
+        )?;
         let incumbent = optimization
             .incumbent
             .as_ref()
@@ -177,7 +190,7 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             &optimization,
             source_request,
             source_execution,
-            source_checkpoint,
+            pinned_source_checkpoint,
             &checkpoint,
             &incumbent_tape,
             &incumbent_bytes,
@@ -185,12 +198,6 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .ok_or("reverse curriculum expansion requires --id NEW_ID")?,
         )?;
         let report = child.validate_files(&repository_root)?;
-        let output = repository_build_output(
-            &repository_root,
-            &required_path(command_args, "--output")?,
-            "expanded reverse curriculum request",
-        )?;
-        refuse_existing_output(&output, "expanded reverse curriculum request")?;
         write_new_file(&output, child.to_pretty_json()?)?;
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -870,4 +877,86 @@ fn write_new_file(path: &Path, bytes: Vec<u8>) -> Result<(), Box<dyn Error>> {
     file.write_all(&bytes)?;
     file.flush()?;
     Ok(())
+}
+
+fn pin_curriculum_source_checkpoint(
+    repository_root: &Path,
+    output: &Path,
+    source: &ArtifactReference,
+    bytes: &[u8],
+) -> Result<ArtifactReference, Box<dyn Error>> {
+    let output_name = output
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("expanded reverse curriculum output name is not UTF-8")?;
+    let pinned = output.with_file_name(format!(
+        "{output_name}.source-checkpoint-{}.json",
+        source.sha256
+    ));
+    if pinned.exists() {
+        let metadata = fs::symlink_metadata(&pinned)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() || fs::read(&pinned)? != bytes {
+            return Err(format!(
+                "pinned reverse curriculum checkpoint differs: {}",
+                pinned.display()
+            )
+            .into());
+        }
+    } else {
+        write_new_file(&pinned, bytes.to_vec())?;
+    }
+    repository_artifact(
+        repository_root,
+        pinned.strip_prefix(repository_root)?,
+        "pinned reverse curriculum source checkpoint",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn curriculum_checkpoint_pin_survives_source_pruning_and_reuses_exact_bytes() {
+        let repository_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = repository_root.join("build").join(format!(
+            "curriculum-pin-test-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let source_path = root.join("live-checkpoint.json");
+        let output = root.join("child.request.json");
+        let bytes = br#"{"checkpoint":"durable"}"#;
+        fs::write(&source_path, bytes).unwrap();
+        let source = repository_artifact(
+            &repository_root,
+            source_path.strip_prefix(&repository_root).unwrap(),
+            "test checkpoint",
+        )
+        .unwrap();
+
+        let pinned =
+            pin_curriculum_source_checkpoint(&repository_root, &output, &source, bytes).unwrap();
+        fs::remove_file(source_path).unwrap();
+        assert_eq!(fs::read(repository_root.join(&pinned.path)).unwrap(), bytes);
+        assert_eq!(pinned.sha256, source.sha256);
+        assert_eq!(
+            pin_curriculum_source_checkpoint(&repository_root, &output, &source, bytes,).unwrap(),
+            pinned
+        );
+
+        fs::write(repository_root.join(&pinned.path), b"tampered").unwrap();
+        assert!(
+            pin_curriculum_source_checkpoint(&repository_root, &output, &source, bytes,).is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 }
