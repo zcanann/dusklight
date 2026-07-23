@@ -5,11 +5,12 @@ use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
 use dusklight_route_planner::graph::PlannerGraph;
 use dusklight_route_planner::identity::{
-    CONTENT_IDENTITY_SCHEMA, ContentFingerprint, ContentIdentity, EquivalenceSet, GamePlatform,
-    GameRegion, RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
+    CONTENT_IDENTITY_SCHEMA, ContentFingerprint, ContentIdentity, ContextSelector, EquivalenceSet,
+    GamePlatform, GameRegion, RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
 };
 use dusklight_route_planner::logic::{
-    ComparisonOperator, FACT_CATALOG_SCHEMA, FactCatalog, PredicateExpression, ValueReference,
+    ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA,
+    FactCatalog, PredicateExpression, RuleEvidence, TruthStatus, ValueReference,
 };
 use dusklight_route_planner::refinement::ComposedPlannerCatalog;
 use dusklight_route_planner::return_place::{
@@ -18,14 +19,17 @@ use dusklight_route_planner::return_place::{
 use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
 use dusklight_route_planner::state::{
-    BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
-    EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment, PhysicalSlotId,
-    PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
-    RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, StateComponent,
-    StateValue,
+    BackingAttachment, ComponentBinding, ComponentBindingReference, ComponentKind,
+    ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext,
+    ExecutionEnvironment, PhysicalSlotId, PlayerForm, PlayerState, ProvenanceSourceKind,
+    RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
+    SerializationOwner, StateComponent, StateValue,
 };
 use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
-use dusklight_route_planner::transition::{Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog};
+use dusklight_route_planner::transition::{
+    ActivationContract, ActorReconstructionRule, CandidateTransition, ComponentFieldTarget, Goal,
+    MECHANICS_CATALOG_SCHEMA, MechanicsCatalog, StateOperation, TransitionKind,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -500,7 +504,18 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
         },
     });
     let opening = ComposedPlannerCatalog::compose(&facts, &opening_mechanics, &[])?;
+    let (keyed_door, keyed_door_start) = keyed_door_demo(&facts, runtime.clone())?;
     let projects = vec![
+        PlannerWebProject {
+            schema: WEB_PROJECT_SCHEMA.into(),
+            id: "demo-forest-keyed-door".into(),
+            label: "Forest Temple small-key door".into(),
+            catalog: keyed_door,
+            route_book: None,
+            start_state: Some(keyed_door_start),
+            equivalence_sets: Vec::new(),
+            presentation: ProjectPresentation::default(),
+        },
         PlannerWebProject {
             schema: WEB_PROJECT_SCHEMA.into(),
             id: "demo-fanadi-return-place".into(),
@@ -526,6 +541,522 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
         project.validate()?;
     }
     Ok(projects)
+}
+
+fn keyed_door_demo(
+    facts: &FactCatalog,
+    runtime_configuration: RuntimeConfiguration,
+) -> Result<(ComposedPlannerCatalog, PlannerExecutionStateDocument), ProjectError> {
+    const ACTOR_ID: &str = "actor.gz2e01-d-mn05-door-1";
+    const DUNGEON_ID: &str = "dungeon.d-mn05-memory";
+    const KEY_DELTA_ID: &str = "session.pending-key-delta";
+    let scope = ContextScope {
+        selectors: vec![ContextSelector::Exact {
+            context: runtime_configuration.exact_context()?,
+        }],
+    };
+    let evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![EvidenceRecord {
+            id: "source.gz2e01-forest-door-1-audit".into(),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(
+                "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4"
+                    .parse()
+                    .map_err(|_| project_error("keyed-door evidence digest is invalid"))?,
+            ),
+            note: "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit.".into(),
+        }],
+    };
+    let actor_field = |field: &str| ValueReference::ComponentField {
+        component_id: ACTOR_ID.into(),
+        field: field.into(),
+    };
+    let dungeon_field = |field: &str| ValueReference::BoundComponentField {
+        component_kind: ComponentKind::DungeonMemory,
+        binding: ComponentBindingReference::Exact {
+            binding: ComponentBinding::Dungeon {
+                dungeon: "forest-temple".into(),
+            },
+        },
+        field: field.into(),
+    };
+    let compare = |left: ValueReference, operator: ComparisonOperator, value: StateValue| {
+        PredicateExpression::Compare {
+            left,
+            operator,
+            right: ValueReference::Literal { value },
+        }
+    };
+    let actor_is = |field: &str, value: StateValue| {
+        compare(actor_field(field), ComparisonOperator::Equal, value)
+    };
+    let dungeon_is = |field: &str, value: StateValue| {
+        compare(dungeon_field(field), ComparisonOperator::Equal, value)
+    };
+    let stage_is = || {
+        compare(
+            ValueReference::LocationStage,
+            ComparisonOperator::Equal,
+            StateValue::Text("D_MN05".into()),
+        )
+    };
+    let room_is = |room: i64| {
+        compare(
+            ValueReference::LocationRoom,
+            ComparisonOperator::Equal,
+            StateValue::Signed(room),
+        )
+    };
+    let at_front = || PredicateExpression::All {
+        terms: vec![stage_is(), room_is(1)],
+    };
+    let target = |component_id: &str, field: &str| ComponentFieldTarget {
+        component_id: component_id.into(),
+        field: field.into(),
+    };
+    let candidate = |id: &str,
+                     label: &str,
+                     hard_guards: PredicateExpression,
+                     effects: Vec<StateOperation>| CandidateTransition {
+        id: id.into(),
+        label: label.into(),
+        scope: scope.clone(),
+        transition_kind: TransitionKind::Door,
+        approach_id: "approach.gz2e01-d-mn05-door1-front".into(),
+        activation: ActivationContract {
+            hard_guards,
+            physical_obligation_ids: Vec::new(),
+            effects,
+            unknown_requirements: Vec::new(),
+        },
+        evidence: evidence.clone(),
+    };
+
+    let mut mechanics = empty_mechanics();
+    mechanics.transitions = vec![
+        candidate(
+            "transition.gz2e01-door1-01-offer-event",
+            "Offer the front-side shutter event",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("adjoining_room_loaded", StateValue::Boolean(true)),
+                    actor_is("approach_permitted", StateValue::Boolean(true)),
+                    actor_is("event_offered", StateValue::Boolean(false)),
+                    PredicateExpression::Any {
+                        terms: vec![
+                            dungeon_is("switch_0b", StateValue::Boolean(true)),
+                            compare(
+                                dungeon_field("small_keys"),
+                                ComparisonOperator::GreaterThan,
+                                StateValue::Unsigned(0),
+                            ),
+                        ],
+                    },
+                ],
+            },
+            vec![StateOperation::Write {
+                target: target(ACTOR_ID, "event_offered"),
+                value: StateValue::Boolean(true),
+            }],
+        ),
+        candidate(
+            "transition.gz2e01-door1-02-demo-action8",
+            "Run keyed shutter demo action 8",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("event_offered", StateValue::Boolean(true)),
+                    actor_is("front_option", StateValue::Unsigned(2)),
+                    actor_is("locked", StateValue::Boolean(true)),
+                    dungeon_is("switch_0b", StateValue::Boolean(false)),
+                    compare(
+                        dungeon_field("small_keys"),
+                        ComparisonOperator::GreaterThan,
+                        StateValue::Unsigned(0),
+                    ),
+                    compare(
+                        ValueReference::ComponentField {
+                            component_id: KEY_DELTA_ID.into(),
+                            field: "pending_delta".into(),
+                        },
+                        ComparisonOperator::Equal,
+                        StateValue::Signed(0),
+                    ),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: target(DUNGEON_ID, "switch_0b"),
+                    value: StateValue::Boolean(true),
+                },
+                StateOperation::Write {
+                    target: target(KEY_DELTA_ID, "pending_delta"),
+                    value: StateValue::Signed(-1),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "keyhole_animation"),
+                    value: StateValue::Text("keyhole-opening".into()),
+                },
+            ],
+        ),
+        candidate(
+            "transition.gz2e01-door1-03-finish-keyhole",
+            "Finish the keyhole child animation",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    dungeon_is("switch_0b", StateValue::Boolean(true)),
+                    actor_is("locked", StateValue::Boolean(true)),
+                    actor_is(
+                        "keyhole_animation",
+                        StateValue::Text("keyhole-opening".into()),
+                    ),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "locked"),
+                    value: StateValue::Boolean(false),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "keyhole_animation"),
+                    value: StateValue::Text("open".into()),
+                },
+            ],
+        ),
+        candidate(
+            "transition.gz2e01-door1-04-flush-key-delta",
+            "Apply the pending key delta to active stage memory",
+            compare(
+                ValueReference::ComponentField {
+                    component_id: KEY_DELTA_ID.into(),
+                    field: "pending_delta".into(),
+                },
+                ComparisonOperator::Equal,
+                StateValue::Signed(-1),
+            ),
+            vec![
+                StateOperation::Adjust {
+                    target: target(DUNGEON_ID, "small_keys"),
+                    delta: -1,
+                },
+                StateOperation::Write {
+                    target: target(KEY_DELTA_ID, "pending_delta"),
+                    value: StateValue::Signed(0),
+                },
+            ],
+        ),
+        candidate(
+            "transition.gz2e01-door1-05-open-init",
+            "Release shutter collision and select room 2",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("event_offered", StateValue::Boolean(true)),
+                    actor_is("locked", StateValue::Boolean(false)),
+                    actor_is("collision_registered", StateValue::Boolean(true)),
+                    actor_is("door_animation", StateValue::Text("closed".into())),
+                    dungeon_is("switch_0b", StateValue::Boolean(true)),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "collision_registered"),
+                    value: StateValue::Boolean(false),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "door_animation"),
+                    value: StateValue::Text("opening".into()),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "next_room"),
+                    value: StateValue::Unsigned(2),
+                },
+            ],
+        ),
+        candidate(
+            "transition.gz2e01-door1-06-open-proc",
+            "Finish the wooden shutter opening animation",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("collision_registered", StateValue::Boolean(false)),
+                    actor_is("door_animation", StateValue::Text("opening".into())),
+                ],
+            },
+            vec![StateOperation::Write {
+                target: target(ACTOR_ID, "door_animation"),
+                value: StateValue::Text("open".into()),
+            }],
+        ),
+        candidate(
+            "transition.gz2e01-door1-07-cross-room-adjacency",
+            "Cross the encoded room-1 to room-2 adjacency",
+            PredicateExpression::All {
+                terms: vec![
+                    at_front(),
+                    actor_is("next_room", StateValue::Unsigned(2)),
+                    actor_is("collision_registered", StateValue::Boolean(false)),
+                    actor_is("door_animation", StateValue::Text("open".into())),
+                ],
+            },
+            vec![StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: "D_MN05".into(),
+                    room: 2,
+                    layer: 0,
+                    spawn: 0,
+                },
+            }],
+        ),
+        candidate(
+            "transition.gz2e01-door1-08-close-init",
+            "Re-register shutter collision after crossing",
+            PredicateExpression::All {
+                terms: vec![
+                    stage_is(),
+                    room_is(2),
+                    actor_is("collision_registered", StateValue::Boolean(false)),
+                    actor_is("door_animation", StateValue::Text("open".into())),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "collision_registered"),
+                    value: StateValue::Boolean(true),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "door_animation"),
+                    value: StateValue::Text("closing".into()),
+                },
+            ],
+        ),
+        candidate(
+            "transition.gz2e01-door1-09-close-end",
+            "Finish closing the unlocked shutter",
+            PredicateExpression::All {
+                terms: vec![
+                    stage_is(),
+                    room_is(2),
+                    actor_is("collision_registered", StateValue::Boolean(true)),
+                    actor_is("door_animation", StateValue::Text("closing".into())),
+                ],
+            },
+            vec![
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "door_animation"),
+                    value: StateValue::Text("closed".into()),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "keyhole_present"),
+                    value: StateValue::Boolean(false),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "keyhole_animation"),
+                    value: StateValue::Text("deleted".into()),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "event_offered"),
+                    value: StateValue::Boolean(false),
+                },
+            ],
+        ),
+    ];
+    let reconstruct =
+        |id: &str, unlocked: bool, locked: bool, keyhole: bool| ActorReconstructionRule {
+            id: id.into(),
+            label: format!(
+                "Reconstruct GZ2E01 Forest door 1 as {}",
+                if unlocked { "unlocked" } else { "locked" }
+            ),
+            scope: scope.clone(),
+            actor_type: "door20".into(),
+            instantiate_when: dungeon_is("switch_0b", StateValue::Boolean(unlocked)),
+            initialization_operations: vec![
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "locked"),
+                    value: StateValue::Boolean(locked),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "keyhole_present"),
+                    value: StateValue::Boolean(keyhole),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "collision_registered"),
+                    value: StateValue::Boolean(true),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "door_animation"),
+                    value: StateValue::Text("closed".into()),
+                },
+                StateOperation::Write {
+                    target: target(ACTOR_ID, "keyhole_animation"),
+                    value: StateValue::Text(if keyhole { "closed" } else { "deleted" }.into()),
+                },
+            ],
+            evidence: evidence.clone(),
+        };
+    mechanics.reconstruction_rules = vec![
+        reconstruct("reconstruct.gz2e01-door1-locked", false, true, true),
+        reconstruct("reconstruct.gz2e01-door1-unlocked", true, false, false),
+    ];
+    mechanics.goals.push(Goal {
+        id: "goal.gz2e01-forest-door1-complete".into(),
+        label: "Cross and close Forest Temple door 1".into(),
+        predicate: PredicateExpression::All {
+            terms: vec![
+                stage_is(),
+                room_is(2),
+                dungeon_is("switch_0b", StateValue::Boolean(true)),
+                dungeon_is("small_keys", StateValue::Unsigned(0)),
+                actor_is("collision_registered", StateValue::Boolean(true)),
+                actor_is("door_animation", StateValue::Text("closed".into())),
+                actor_is("keyhole_present", StateValue::Boolean(false)),
+            ],
+        },
+    });
+    let catalog = ComposedPlannerCatalog::compose(facts, &mechanics, &[])?;
+    let snapshot = keyed_door_start_snapshot(runtime_configuration);
+    let document = PlannerExecutionState::new(snapshot)?.to_document()?;
+    Ok((catalog, document))
+}
+
+fn keyed_door_start_snapshot(runtime_configuration: RuntimeConfiguration) -> StateSnapshot {
+    const ACTOR_ID: &str = "actor.gz2e01-d-mn05-door-1";
+    let runtime_file_id = "file-0".to_owned();
+    StateSnapshot {
+        schema: STATE_SNAPSHOT_SCHEMA.into(),
+        id: "snapshot.gz2e01-d-mn05-r01-door1-closed".into(),
+        sequence: 0,
+        environment: ExecutionEnvironment {
+            schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+            runtime_configuration,
+            active_runtime_file: RuntimeFile {
+                id: runtime_file_id.clone(),
+                origin: RuntimeFileOrigin::LoadedSlot {
+                    slot: PhysicalSlotId(1),
+                },
+                backing: BackingAttachment::CardBacked {
+                    slot: PhysicalSlotId(1),
+                },
+                allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                lifecycle: RuntimeFileLifecycle::Active,
+            },
+            inactive_runtime_files: Vec::new(),
+            physical_slots: Vec::new(),
+            physical_slot_observations: Vec::new(),
+            execution_context: ExecutionContext::World,
+            location: SceneLocation {
+                stage: "D_MN05".into(),
+                room: 1,
+                layer: 0,
+                spawn: 0,
+            },
+            player: PlayerState {
+                form: PlayerForm::Human,
+                mount: None,
+                position: [10436.0, 3752.0, 4870.0],
+                rotation: [0, -16384, 0],
+                has_control: Some(true),
+                action: "door-approach".into(),
+            },
+            components: vec![
+                StateComponent {
+                    id: ACTOR_ID.into(),
+                    component_kind: ComponentKind::ActorInstance,
+                    payload: ComponentPayload::Structured {
+                        fields: BTreeMap::from([
+                            ("adjoining_room_loaded".into(), StateValue::Boolean(true)),
+                            ("approach_permitted".into(), StateValue::Boolean(true)),
+                            ("back_option".into(), StateValue::Unsigned(0)),
+                            ("back_room".into(), StateValue::Unsigned(2)),
+                            ("collision_registered".into(), StateValue::Boolean(true)),
+                            ("door_animation".into(), StateValue::Text("closed".into())),
+                            ("event_offered".into(), StateValue::Boolean(false)),
+                            ("front_option".into(), StateValue::Unsigned(2)),
+                            ("front_room".into(), StateValue::Unsigned(1)),
+                            (
+                                "keyhole_animation".into(),
+                                StateValue::Text("closed".into()),
+                            ),
+                            ("keyhole_present".into(), StateValue::Boolean(true)),
+                            ("kind".into(), StateValue::Unsigned(1)),
+                            ("locked".into(), StateValue::Boolean(true)),
+                            ("next_room".into(), StateValue::Unsigned(1)),
+                            ("parameters".into(), StateValue::Unsigned(0x6c10_2201)),
+                            ("unlock_switch".into(), StateValue::Unsigned(0x0b)),
+                        ]),
+                    },
+                    binding: ComponentBinding::Actor {
+                        instance_id: ACTOR_ID.into(),
+                    },
+                    lifetime: SemanticLifetime::RoomLoad,
+                    serialization_owner: SerializationOwner::None,
+                    provenance: vec![ComponentProvenance {
+                        source_kind: ProvenanceSourceKind::ExtractedFact,
+                        source_id: "gz2e01:d_mn05/stage.dzs/door/1".into(),
+                        source_sha256: Some(
+                            "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4"
+                                .parse()
+                                .expect("checked keyed-door source digest"),
+                        ),
+                        transition_id: None,
+                    }],
+                },
+                StateComponent {
+                    id: "dungeon.d-mn05-memory".into(),
+                    component_kind: ComponentKind::DungeonMemory,
+                    payload: ComponentPayload::Structured {
+                        fields: BTreeMap::from([
+                            ("small_keys".into(), StateValue::Unsigned(1)),
+                            ("switch_0b".into(), StateValue::Boolean(false)),
+                        ]),
+                    },
+                    binding: ComponentBinding::Dungeon {
+                        dungeon: "forest-temple".into(),
+                    },
+                    lifetime: SemanticLifetime::StageLoad,
+                    serialization_owner: SerializationOwner::StageBank {
+                        runtime_file_id: runtime_file_id.clone(),
+                        stage: "D_MN05".into(),
+                    },
+                    provenance: vec![ComponentProvenance {
+                        source_kind: ProvenanceSourceKind::TraceObservation,
+                        source_id: "gz2e01:dsv-memory/d-mn05".into(),
+                        source_sha256: Some(Digest([0x45; 32])),
+                        transition_id: None,
+                    }],
+                },
+                StateComponent {
+                    id: "session.pending-key-delta".into(),
+                    component_kind: ComponentKind::Session,
+                    payload: ComponentPayload::Structured {
+                        fields: BTreeMap::from([("pending_delta".into(), StateValue::Signed(0))]),
+                    },
+                    binding: ComponentBinding::Session {
+                        session_id: "session-1".into(),
+                    },
+                    lifetime: SemanticLifetime::Session,
+                    serialization_owner: SerializationOwner::None,
+                    provenance: vec![ComponentProvenance {
+                        source_kind: ProvenanceSourceKind::Initialized,
+                        source_id: "gz2e01:dcomifgp-item-key-delta".into(),
+                        source_sha256: Some(Digest([0x46; 32])),
+                        transition_id: None,
+                    }],
+                },
+            ],
+            static_world_objects: Vec::new(),
+            spatial_volumes: Vec::new(),
+            spatial_connections: Vec::new(),
+            spatial_planes: Vec::new(),
+            persisted_object_controls: Vec::new(),
+            live_world_objects: Vec::new(),
+        },
+        semantic_observations: Vec::new(),
+    }
 }
 
 fn fanadi_start_state(
@@ -804,7 +1335,7 @@ mod tests {
         let root = temporary_root("builtins");
         let store = ProjectStore::open(&root).unwrap();
         let list = store.list().unwrap();
-        assert_eq!(list.projects.len(), 2);
+        assert_eq!(list.projects.len(), 3);
         assert!(list.projects.iter().all(|project| project.read_only));
         assert!(
             list.projects
@@ -817,6 +1348,94 @@ mod tests {
         let opening = store.load("demo-opening-flow").unwrap();
         assert!(opening.project.start_state.is_some());
         assert_eq!(opening.project.catalog.mechanics.goals.len(), 1);
+        let keyed_door = store.load("demo-forest-keyed-door").unwrap();
+        assert!(keyed_door.project.start_state.is_some());
+        assert_eq!(keyed_door.project.catalog.mechanics.transitions.len(), 9);
+        assert_eq!(keyed_door.project.catalog.mechanics.goals.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn keyed_door_demo_replays_every_audited_actor_phase() {
+        let root = temporary_root("keyed-door-propagation");
+        let store = ProjectStore::open(&root).unwrap();
+        let project = store.load("demo-forest-keyed-door").unwrap().project;
+        let start = project.start_state.unwrap();
+        let mut route_book = None;
+        let mut final_state = None;
+        for transition_id in [
+            "transition.gz2e01-door1-01-offer-event",
+            "transition.gz2e01-door1-02-demo-action8",
+            "transition.gz2e01-door1-03-finish-keyhole",
+            "transition.gz2e01-door1-04-flush-key-delta",
+            "transition.gz2e01-door1-05-open-init",
+            "transition.gz2e01-door1-06-open-proc",
+            "transition.gz2e01-door1-07-cross-room-adjacency",
+            "transition.gz2e01-door1-08-close-init",
+            "transition.gz2e01-door1-09-close-end",
+        ] {
+            let response = handle_request(PlannerServiceRequest::AppendTransition {
+                request_id: format!("request.{transition_id}"),
+                state: Box::new(start.clone()),
+                catalog: Box::new(project.catalog.clone()),
+                equivalence_sets: project.equivalence_sets.clone(),
+                route_book,
+                route_book_id: "route.keyed-door-demo".into(),
+                route_book_label: "Forest keyed-door demo route".into(),
+                transition_id: transition_id.into(),
+                evidence_mode: RuntimeEvidenceMode::EstablishedOnly,
+            });
+            let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+                panic!("{transition_id} should append after replaying its exact prefix");
+            };
+            let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
+                panic!("keyed-door demo should return an appended transition");
+            };
+            route_book = Some(book);
+            final_state = Some(after);
+        }
+        let final_state = final_state.unwrap();
+        assert_eq!(final_state.snapshot.environment.location.stage, "D_MN05");
+        assert_eq!(final_state.snapshot.environment.location.room, 2);
+        let dungeon = final_state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "dungeon.d-mn05-memory")
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &dungeon.payload else {
+            panic!("dungeon memory should remain structured");
+        };
+        assert_eq!(fields["small_keys"], StateValue::Unsigned(0));
+        assert_eq!(fields["switch_0b"], StateValue::Boolean(true));
+        let route_book = route_book.unwrap();
+        assert_eq!(route_book.methods[0].step_ids.len(), 9);
+        let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
+            request_id: "request.remove-keyed-action8".into(),
+            state: Box::new(start),
+            catalog: Box::new(project.catalog),
+            equivalence_sets: project.equivalence_sets,
+            route_book,
+            step_id: "step.route-0001".into(),
+            evidence_mode: RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("removing the unlock producer should return a typed rejection");
+        };
+        let PlannerServicePayload::RejectedRouteEdit {
+            failed_step_id,
+            assessment,
+            ..
+        } = *payload
+        else {
+            panic!("the keyed-door continuation should reject without action 8");
+        };
+        assert_eq!(failed_step_id, "step.route-0002");
+        assert_eq!(
+            assessment.classification,
+            dusklight_route_planner::evaluation::TransitionClassification::GuardBlocked
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

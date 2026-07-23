@@ -27,8 +27,11 @@ rules and do not add reachability semantics.
 Open `http://127.0.0.1:32170` in Brave. By default, editable projects are kept
 under `tools/route-planner/projects`; use `--projects DIR` to select another
 workspace. The project picker includes read-only, source-backed Fanadi
-return-place and opening/file-selection demonstrations. Save As creates an
-editable project, while Save performs a revision-checked, flushed atomic update.
+return-place, opening/file-selection, and GZ2E01 Forest Temple keyed-door
+demonstrations. The keyed-door project exposes the audited event offer, one-time
+unlock/key delta, keyhole, collision, animation, crossing, and close phases as
+nine independently editable transitions. Save As creates an editable project,
+while Save performs a revision-checked, flushed atomic update.
 Dragging nodes marks presentation state dirty; JSON import/export remains
 available for interchange. Graph projection still runs through the Rust
 service, and layout metadata never participates in reachability.
