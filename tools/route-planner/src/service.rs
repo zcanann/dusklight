@@ -34,7 +34,7 @@ use dusklight_route_planner::transition::{MechanicsCatalog, StateOperation};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v45";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v46";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -380,6 +380,8 @@ pub enum PlannerServicePayload {
     },
     SolveReport {
         report: Box<SolveReport>,
+        proof_graph: Box<PlannerGraph>,
+        proof_graph_sha256: Digest,
     },
     PortableSolveReport {
         report: Box<PortableSolveReport>,
@@ -977,12 +979,17 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
             route_book,
             ..
         } => (*state).into_state().and_then(|state| {
-            let report = match route_book {
+            let mut proof_graph = if let Some(book) = route_book.as_deref() {
+                PlannerGraph::project_composed_with_route_book(&catalog, book)?
+            } else {
+                PlannerGraph::project_composed(&catalog)?
+            };
+            let report = match route_book.as_deref() {
                 Some(book) => solve_composed_route_book_goal(
                     state,
                     &catalog,
                     &equivalence_sets,
-                    &book,
+                    book,
                     &goal_id,
                     options,
                 ),
@@ -994,8 +1001,31 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                     options,
                 ),
             }?;
+            let proof_initial_state_sha256 =
+                report
+                    .result
+                    .steps
+                    .first()
+                    .map(|step| step.source_state_sha256)
+                    .or_else(|| {
+                        report.result.alternative_plans.iter().find_map(|plan| {
+                            plan.steps.first().map(|step| step.source_state_sha256)
+                        })
+                    })
+                    .or_else(|| {
+                        report
+                            .result
+                            .result_continuation
+                            .as_ref()
+                            .map(|continuation| continuation.state_sha256)
+                    })
+                    .unwrap_or(report.execution_state_sha256);
+            proof_graph.attach_solver_proof(proof_initial_state_sha256, &report.result)?;
+            let proof_graph_sha256 = proof_graph.digest()?;
             Ok(PlannerServicePayload::SolveReport {
                 report: Box::new(report),
+                proof_graph: Box::new(proof_graph),
+                proof_graph_sha256,
             })
         }),
         PlannerServiceRequest::SolvePortable {
@@ -2192,6 +2222,93 @@ mod tests {
         assert_eq!(response.request_id.as_deref(), Some("request.graph"));
         assert_eq!(graph.nodes.len(), 0);
         assert_eq!(graph.regions.len(), 2);
+    }
+
+    #[test]
+    fn solve_response_projects_the_authoritative_plan_into_proof_regions() {
+        let (state, catalog) = executable_transition_fixture();
+        let response = handle_request(PlannerServiceRequest::Solve {
+            request_id: "request.solve-proof".into(),
+            state: Box::new(state),
+            catalog: Box::new(catalog),
+            equivalence_sets: Vec::new(),
+            goal_id: "goal.boss-room".into(),
+            options: RuntimeSolveOptions {
+                max_depth: 8,
+                max_states: 256,
+                max_resolution_combinations: 64,
+                max_plans: 4,
+                feasibility_mode: crate::RuntimeFeasibilityMode::Modeled,
+                evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+            },
+            route_book: None,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!(
+                "solve should return a proof projection: {}",
+                serde_json::to_string(&response).unwrap()
+            );
+        };
+        let PlannerServicePayload::SolveReport {
+            report,
+            proof_graph,
+            proof_graph_sha256,
+        } = *payload
+        else {
+            panic!("solve should include its planner graph");
+        };
+        assert_eq!(
+            report.result.status,
+            dusklight_route_planner::solver::SearchStatus::Reached
+        );
+        assert_eq!(proof_graph.digest().unwrap(), proof_graph_sha256);
+        assert!(proof_graph.regions.iter().any(|region| {
+            region.id == "region.proof.plan.primary"
+                && region.region_kind == dusklight_route_planner::graph::PlannerRegionKind::Proof
+        }));
+        assert!(proof_graph.nodes.iter().any(|node| {
+            matches!(
+                node.payload,
+                dusklight_route_planner::graph::PlannerNodePayload::ProofPlan { primary: true, .. }
+            )
+        }));
+
+        let (mut already_reached, catalog) = executable_transition_fixture();
+        already_reached.snapshot.environment.location.stage = "D_MN06".into();
+        let response = handle_request(PlannerServiceRequest::Solve {
+            request_id: "request.solve-zero-step-proof".into(),
+            state: Box::new(already_reached),
+            catalog: Box::new(catalog),
+            equivalence_sets: Vec::new(),
+            goal_id: "goal.boss-room".into(),
+            options: RuntimeSolveOptions {
+                max_depth: 8,
+                max_states: 256,
+                max_resolution_combinations: 64,
+                max_plans: 4,
+                feasibility_mode: crate::RuntimeFeasibilityMode::Modeled,
+                evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+            },
+            route_book: None,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("an already reached goal should project a zero-step proof");
+        };
+        let PlannerServicePayload::SolveReport {
+            report,
+            proof_graph,
+            ..
+        } = *payload
+        else {
+            panic!("zero-step solve should retain the proof graph");
+        };
+        assert!(report.result.steps.is_empty());
+        assert!(proof_graph.nodes.iter().any(|node| {
+            matches!(
+                node.payload,
+                dusklight_route_planner::graph::PlannerNodePayload::ProofState { ordinal: 0, .. }
+            )
+        }));
     }
 
     #[test]

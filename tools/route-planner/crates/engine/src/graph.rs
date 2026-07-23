@@ -7,16 +7,22 @@ use crate::evaluation::{
 };
 use crate::execution::PlannerExecutionState;
 use crate::identity::EquivalenceSet;
-use crate::logic::{ComparisonOperator, FactCatalog, PredicateExpression, ValueReference};
+use crate::logic::{
+    ComparisonOperator, FactCatalog, PredicateExpression, TruthStatus, ValueReference,
+};
 use crate::refinement::ComposedPlannerCatalog;
 use crate::route_book::{CollapsePolicy, RouteActionRef, RouteBook};
+use crate::solver::{
+    ContinuationIdentity, SearchActionKind, SearchPlan, SearchResourceLabel, SearchResult,
+    SearchStatus, SearchStep,
+};
 use crate::transition::{MechanicsCatalog, ObligationDetail, ResolutionKind};
 use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v9";
+pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v10";
 pub const PLANNER_FEASIBILITY_DIFF_SCHEMA: &str =
     "dusklight.route-planner.feasibility-graph-diff/v1";
 
@@ -123,6 +129,35 @@ pub enum PlannerNodePayload {
         snapshot_sha256: Digest,
         route_step_id: Option<String>,
     },
+    ProofPlan {
+        plan_id: String,
+        primary: bool,
+        result_state_sha256: Digest,
+        continuation: ContinuationIdentity,
+        preference_score: u64,
+        satisfied_preference_ids: Vec<String>,
+        route_costs: BTreeMap<String, u64>,
+        weakest_evidence: Option<TruthStatus>,
+    },
+    ProofStep {
+        plan_id: String,
+        ordinal: u32,
+        action_kind: SearchActionKind,
+        action_id: String,
+        source_state_sha256: Digest,
+        result_state_sha256: Digest,
+    },
+    ProofState {
+        plan_id: String,
+        ordinal: u32,
+        state_sha256: Digest,
+    },
+    ContinuationMerge {
+        state_sha256: Digest,
+        dominating: SearchResourceLabel,
+        dominated: SearchResourceLabel,
+        satisfied_preference_ids: Vec<String>,
+    },
     ExternalAction {
         action_id: String,
     },
@@ -203,6 +238,7 @@ pub struct PlannerGraphRegion {
     pub owner_node_id: Option<String>,
     pub region_kind: PlannerRegionKind,
     pub collapsed_by_default: bool,
+    pub collapse_evidence: Option<PlannerCollapseEvidence>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -212,6 +248,66 @@ pub enum PlannerRegionKind {
     Mechanics,
     Predicate,
     Plan,
+    Proof,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlannerCollapseEvidence {
+    ContinuationEquivalent {
+        reference_plan_id: String,
+        continuation: ContinuationIdentity,
+        dominating: SearchResourceLabel,
+        dominated: SearchResourceLabel,
+    },
+    ResidualDifferences {
+        reference_plan_id: String,
+        differences: Vec<PlannerResidualDifference>,
+    },
+    ProvenContinuationMerges {
+        merge_count: usize,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlannerResidualDifference {
+    ResultState {
+        primary: Digest,
+        alternative: Digest,
+    },
+    SatisfiedRequiredActions {
+        primary: Vec<RouteActionRef>,
+        alternative: Vec<RouteActionRef>,
+    },
+    RequiredSequenceProgress {
+        primary: Vec<usize>,
+        alternative: Vec<usize>,
+    },
+    BannedSequenceProgress {
+        primary: Vec<usize>,
+        alternative: Vec<usize>,
+    },
+    PreferredSequenceProgress {
+        primary: Vec<usize>,
+        alternative: Vec<usize>,
+    },
+    SatisfiedPreferences {
+        primary: Vec<String>,
+        alternative: Vec<String>,
+    },
+    RouteConditionUnknown {
+        primary: bool,
+        alternative: bool,
+    },
+    ResourceLabel {
+        primary: SearchResourceLabel,
+        alternative: SearchResourceLabel,
+    },
+    WeakestEvidence {
+        primary: Option<TruthStatus>,
+        alternative: Option<TruthStatus>,
+    },
 }
 
 impl PlannerGraph {
@@ -433,6 +529,253 @@ impl PlannerGraph {
         }
         self.nodes.sort_by(|left, right| left.id.cmp(&right.id));
         self.edges.sort_by(|left, right| left.id.cmp(&right.id));
+        self.validate()
+    }
+
+    /// Projects reached plans and exact continuation-merge proofs into nested
+    /// proof regions. Alternative regions collapse only when their terminal
+    /// continuation identity matches the primary plan and the primary resource
+    /// label is no worse on depth or any cost axis. Otherwise the region stays
+    /// expanded with explicit residual differences.
+    pub fn attach_solver_proof(
+        &mut self,
+        initial_state_sha256: Digest,
+        result: &SearchResult,
+    ) -> Result<(), PlannerContractError> {
+        if initial_state_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "solver_proof.initial_state_sha256",
+                "must be nonzero",
+            ));
+        }
+        if self
+            .regions
+            .iter()
+            .any(|region| region.id == "region.proof")
+        {
+            return Err(PlannerContractError::new(
+                "solver_proof",
+                "is already attached to this graph",
+            ));
+        }
+        self.regions.push(PlannerGraphRegion {
+            id: "region.proof".into(),
+            label: "Solver proof".into(),
+            parent_region_id: None,
+            owner_node_id: None,
+            region_kind: PlannerRegionKind::Proof,
+            collapsed_by_default: false,
+            collapse_evidence: None,
+        });
+
+        let mut plans = Vec::new();
+        if result.status == SearchStatus::Reached {
+            let continuation = result.result_continuation.clone().ok_or_else(|| {
+                PlannerContractError::new(
+                    "solver_proof.result_continuation",
+                    "a reached result must retain its exact terminal continuation",
+                )
+            })?;
+            let primary = SearchPlan {
+                result_state_sha256: result
+                    .steps
+                    .last()
+                    .map_or(initial_state_sha256, |step| step.result_state_sha256),
+                continuation,
+                steps: result.steps.clone(),
+                preference_score: result.preference_score,
+                satisfied_preference_ids: result.satisfied_preference_ids.clone(),
+                route_costs: result.route_costs.clone(),
+            };
+            primary.validate()?;
+            plans.push(("primary".to_owned(), true, primary));
+            for (index, plan) in result.alternative_plans.iter().enumerate() {
+                plan.validate()?;
+                plans.push((format!("alternative-{index:03}"), false, plan.clone()));
+            }
+        } else if result.result_continuation.is_some()
+            || !result.steps.is_empty()
+            || !result.alternative_plans.is_empty()
+        {
+            return Err(PlannerContractError::new(
+                "solver_proof",
+                "an unreached result cannot contain reached plan steps",
+            ));
+        }
+
+        let primary = plans.first().map(|(_, _, plan)| plan.clone());
+        for (plan_id, is_primary, plan) in &plans {
+            validate_search_step_chain(initial_state_sha256, &plan.steps)?;
+            let weakest_evidence = plan
+                .steps
+                .iter()
+                .filter_map(|step| step.weakest_evidence)
+                .max();
+            let resource_label = SearchResourceLabel {
+                depth: plan.steps.len(),
+                route_costs: plan.route_costs.clone(),
+            };
+            resource_label.validate()?;
+            let (collapsed_by_default, collapse_evidence) = if *is_primary {
+                (false, None)
+            } else {
+                let reference = primary.as_ref().expect("an alternative has a primary plan");
+                proof_plan_collapse(reference, plan, weakest_evidence)
+            };
+            let region_id = format!("region.proof.plan.{plan_id}");
+            let plan_node_id = format!("proof-plan/{plan_id}");
+            self.nodes.push(PlannerGraphNode {
+                id: plan_node_id.clone(),
+                label: if *is_primary {
+                    "Primary solver plan".into()
+                } else {
+                    format!("Alternative solver plan {}", &plan_id[12..])
+                },
+                region_id: Some(region_id.clone()),
+                payload: PlannerNodePayload::ProofPlan {
+                    plan_id: plan_id.clone(),
+                    primary: *is_primary,
+                    result_state_sha256: plan.result_state_sha256,
+                    continuation: plan.continuation.clone(),
+                    preference_score: plan.preference_score,
+                    satisfied_preference_ids: plan.satisfied_preference_ids.clone(),
+                    route_costs: plan.route_costs.clone(),
+                    weakest_evidence,
+                },
+            });
+            self.regions.push(PlannerGraphRegion {
+                id: region_id.clone(),
+                label: if *is_primary {
+                    "Primary plan".into()
+                } else {
+                    format!("Alternative {}", &plan_id[12..])
+                },
+                parent_region_id: Some("region.proof".into()),
+                owner_node_id: Some(plan_node_id.clone()),
+                region_kind: PlannerRegionKind::Proof,
+                collapsed_by_default,
+                collapse_evidence,
+            });
+
+            let mut state_sha256 = initial_state_sha256;
+            for ordinal in 0..=plan.steps.len() {
+                let state_node_id = format!("proof-state/{plan_id}/{ordinal:04}");
+                self.nodes.push(PlannerGraphNode {
+                    id: state_node_id.clone(),
+                    label: if ordinal == 0 {
+                        "Plan start".into()
+                    } else {
+                        format!("State after step {ordinal}")
+                    },
+                    region_id: Some(region_id.clone()),
+                    payload: PlannerNodePayload::ProofState {
+                        plan_id: plan_id.clone(),
+                        ordinal: ordinal as u32,
+                        state_sha256,
+                    },
+                });
+                push_graph_edge(
+                    &mut self.edges,
+                    &plan_node_id,
+                    &state_node_id,
+                    PlannerGraphRelation::Contains,
+                    Some((ordinal * 2) as u32),
+                )?;
+                let Some(step) = plan.steps.get(ordinal) else {
+                    continue;
+                };
+                let step_node_id = format!("proof-step/{plan_id}/{ordinal:04}");
+                self.nodes.push(PlannerGraphNode {
+                    id: step_node_id.clone(),
+                    label: format!(
+                        "{} · {}",
+                        action_kind_label(step.action_kind),
+                        step.action_id
+                    ),
+                    region_id: Some(region_id.clone()),
+                    payload: PlannerNodePayload::ProofStep {
+                        plan_id: plan_id.clone(),
+                        ordinal: ordinal as u32,
+                        action_kind: step.action_kind,
+                        action_id: step.action_id.clone(),
+                        source_state_sha256: step.source_state_sha256,
+                        result_state_sha256: step.result_state_sha256,
+                    },
+                });
+                let action_node = search_action_node_id(step.action_kind, &step.action_id);
+                if !self.nodes.iter().any(|node| node.id == action_node) {
+                    return Err(PlannerContractError::new(
+                        "solver_proof.steps.action_id",
+                        format!("references unprojected action {}", step.action_id),
+                    ));
+                }
+                push_graph_edge(
+                    &mut self.edges,
+                    &plan_node_id,
+                    &step_node_id,
+                    PlannerGraphRelation::Contains,
+                    Some((ordinal * 2 + 1) as u32),
+                )?;
+                push_graph_edge(
+                    &mut self.edges,
+                    &state_node_id,
+                    &step_node_id,
+                    PlannerGraphRelation::RoutePrecondition,
+                    Some(ordinal as u32),
+                )?;
+                push_graph_edge(
+                    &mut self.edges,
+                    &step_node_id,
+                    &format!("proof-state/{plan_id}/{:04}", ordinal + 1),
+                    PlannerGraphRelation::RouteResult,
+                    Some(ordinal as u32),
+                )?;
+                push_graph_edge(
+                    &mut self.edges,
+                    &step_node_id,
+                    &action_node,
+                    PlannerGraphRelation::SelectsAction,
+                    None,
+                )?;
+                state_sha256 = step.result_state_sha256;
+            }
+        }
+
+        if !result.continuation_merge_proofs.is_empty() {
+            let region_id = "region.proof.continuation-merges";
+            self.regions.push(PlannerGraphRegion {
+                id: region_id.into(),
+                label: "Proven continuation merges".into(),
+                parent_region_id: Some("region.proof".into()),
+                owner_node_id: None,
+                region_kind: PlannerRegionKind::Proof,
+                collapsed_by_default: true,
+                collapse_evidence: Some(PlannerCollapseEvidence::ProvenContinuationMerges {
+                    merge_count: result.continuation_merge_proofs.len(),
+                }),
+            });
+            for (index, proof) in result.continuation_merge_proofs.iter().enumerate() {
+                proof.validate()?;
+                self.nodes.push(PlannerGraphNode {
+                    id: format!("continuation-merge/{index:04}"),
+                    label: format!("Dominated frontier label {}", index + 1),
+                    region_id: Some(region_id.into()),
+                    payload: PlannerNodePayload::ContinuationMerge {
+                        state_sha256: proof.continuation.state_sha256,
+                        dominating: proof.dominating.clone(),
+                        dominated: proof.dominated.clone(),
+                        satisfied_preference_ids: proof
+                            .continuation
+                            .satisfied_preference_ids
+                            .clone(),
+                    },
+                });
+            }
+        }
+
+        self.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+        self.edges.sort_by(|left, right| left.id.cmp(&right.id));
+        self.regions.sort_by(|left, right| left.id.cmp(&right.id));
         self.validate()
     }
 
@@ -663,6 +1006,7 @@ impl GraphBuilder {
                     owner_node_id: None,
                     region_kind: PlannerRegionKind::Facts,
                     collapsed_by_default: true,
+                    collapse_evidence: None,
                 },
                 PlannerGraphRegion {
                     id: "region.mechanics".into(),
@@ -671,6 +1015,7 @@ impl GraphBuilder {
                     owner_node_id: None,
                     region_kind: PlannerRegionKind::Mechanics,
                     collapsed_by_default: false,
+                    collapse_evidence: None,
                 },
             ],
             node_ids: BTreeSet::new(),
@@ -1023,6 +1368,7 @@ impl GraphBuilder {
             owner_node_id: None,
             region_kind: PlannerRegionKind::Plan,
             collapsed_by_default: false,
+            collapse_evidence: None,
         });
         for region in &book.regions {
             let node_id = format!("plan-region/{}", region.id);
@@ -1052,6 +1398,7 @@ impl GraphBuilder {
                 // projection can prove continuation equivalence or attach
                 // residual differences. The catalog projection stays expanded.
                 collapsed_by_default: false,
+                collapse_evidence: None,
             });
         }
         for method in &book.methods {
@@ -1211,6 +1558,7 @@ impl GraphBuilder {
             owner_node_id: Some(owner.into()),
             region_kind: PlannerRegionKind::Predicate,
             collapsed_by_default: true,
+            collapse_evidence: None,
         });
         let root = self.add_predicate_node(owner, role, "root", expression, &region_id)?;
         self.add_edge(owner, &root, relation, None)
@@ -1373,6 +1721,190 @@ fn action_node_id(action: &RouteActionRef) -> String {
     }
 }
 
+fn search_action_node_id(kind: SearchActionKind, action_id: &str) -> String {
+    match kind {
+        SearchActionKind::Transition => format!("transition/{action_id}"),
+        SearchActionKind::Technique => format!("technique/{action_id}"),
+        SearchActionKind::Writer => format!("writer/{action_id}"),
+    }
+}
+
+fn action_kind_label(kind: SearchActionKind) -> &'static str {
+    match kind {
+        SearchActionKind::Transition => "Transition",
+        SearchActionKind::Technique => "Technique",
+        SearchActionKind::Writer => "Writer",
+    }
+}
+
+fn validate_search_step_chain(
+    initial_state_sha256: Digest,
+    steps: &[SearchStep],
+) -> Result<(), PlannerContractError> {
+    let mut expected = initial_state_sha256;
+    for step in steps {
+        validate_stable_id("solver_proof.steps.action_id", &step.action_id)?;
+        if step.source_state_sha256 != expected || step.result_state_sha256 == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "solver_proof.steps",
+                "must form one contiguous nonzero state-identity chain",
+            ));
+        }
+        expected = step.result_state_sha256;
+    }
+    Ok(())
+}
+
+fn proof_plan_collapse(
+    primary: &SearchPlan,
+    alternative: &SearchPlan,
+    alternative_weakest_evidence: Option<TruthStatus>,
+) -> (bool, Option<PlannerCollapseEvidence>) {
+    let primary_label = SearchResourceLabel {
+        depth: primary.steps.len(),
+        route_costs: primary.route_costs.clone(),
+    };
+    let alternative_label = SearchResourceLabel {
+        depth: alternative.steps.len(),
+        route_costs: alternative.route_costs.clone(),
+    };
+    let primary_weakest_evidence = primary
+        .steps
+        .iter()
+        .filter_map(|step| step.weakest_evidence)
+        .max();
+    let same_continuation = primary.continuation == alternative.continuation;
+    if same_continuation && resource_no_worse(&primary_label, &alternative_label) {
+        return (
+            true,
+            Some(PlannerCollapseEvidence::ContinuationEquivalent {
+                reference_plan_id: "primary".into(),
+                continuation: primary.continuation.clone(),
+                dominating: primary_label,
+                dominated: alternative_label,
+            }),
+        );
+    }
+
+    let mut differences = Vec::new();
+    if primary.continuation.state_sha256 != alternative.continuation.state_sha256 {
+        differences.push(PlannerResidualDifference::ResultState {
+            primary: primary.continuation.state_sha256,
+            alternative: alternative.continuation.state_sha256,
+        });
+    }
+    if primary.continuation.satisfied_required_actions
+        != alternative.continuation.satisfied_required_actions
+    {
+        differences.push(PlannerResidualDifference::SatisfiedRequiredActions {
+            primary: primary.continuation.satisfied_required_actions.clone(),
+            alternative: alternative.continuation.satisfied_required_actions.clone(),
+        });
+    }
+    if primary.continuation.required_sequence_progress
+        != alternative.continuation.required_sequence_progress
+    {
+        differences.push(PlannerResidualDifference::RequiredSequenceProgress {
+            primary: primary.continuation.required_sequence_progress.clone(),
+            alternative: alternative.continuation.required_sequence_progress.clone(),
+        });
+    }
+    if primary.continuation.banned_sequence_progress
+        != alternative.continuation.banned_sequence_progress
+    {
+        differences.push(PlannerResidualDifference::BannedSequenceProgress {
+            primary: primary.continuation.banned_sequence_progress.clone(),
+            alternative: alternative.continuation.banned_sequence_progress.clone(),
+        });
+    }
+    if primary.continuation.preferred_sequence_progress
+        != alternative.continuation.preferred_sequence_progress
+    {
+        differences.push(PlannerResidualDifference::PreferredSequenceProgress {
+            primary: primary.continuation.preferred_sequence_progress.clone(),
+            alternative: alternative.continuation.preferred_sequence_progress.clone(),
+        });
+    }
+    if primary.continuation.satisfied_preference_ids
+        != alternative.continuation.satisfied_preference_ids
+    {
+        differences.push(PlannerResidualDifference::SatisfiedPreferences {
+            primary: primary.continuation.satisfied_preference_ids.clone(),
+            alternative: alternative.continuation.satisfied_preference_ids.clone(),
+        });
+    }
+    if primary.continuation.route_condition_unknown
+        != alternative.continuation.route_condition_unknown
+    {
+        differences.push(PlannerResidualDifference::RouteConditionUnknown {
+            primary: primary.continuation.route_condition_unknown,
+            alternative: alternative.continuation.route_condition_unknown,
+        });
+    }
+    if !resource_no_worse(&primary_label, &alternative_label) {
+        differences.push(PlannerResidualDifference::ResourceLabel {
+            primary: primary_label.clone(),
+            alternative: alternative_label.clone(),
+        });
+    }
+    if primary_weakest_evidence != alternative_weakest_evidence {
+        differences.push(PlannerResidualDifference::WeakestEvidence {
+            primary: primary_weakest_evidence,
+            alternative: alternative_weakest_evidence,
+        });
+    }
+    if differences.is_empty() {
+        differences.push(PlannerResidualDifference::ResourceLabel {
+            primary: primary_label,
+            alternative: alternative_label,
+        });
+    }
+    (
+        false,
+        Some(PlannerCollapseEvidence::ResidualDifferences {
+            reference_plan_id: "primary".into(),
+            differences,
+        }),
+    )
+}
+
+fn resource_no_worse(left: &SearchResourceLabel, right: &SearchResourceLabel) -> bool {
+    left.depth <= right.depth
+        && left
+            .route_costs
+            .keys()
+            .chain(right.route_costs.keys())
+            .all(|axis| {
+                left.route_costs.get(axis).copied().unwrap_or(0)
+                    <= right.route_costs.get(axis).copied().unwrap_or(0)
+            })
+}
+
+fn push_graph_edge(
+    edges: &mut Vec<PlannerGraphEdge>,
+    source: &str,
+    target: &str,
+    relation: PlannerGraphRelation,
+    ordinal: Option<u32>,
+) -> Result<(), PlannerContractError> {
+    let identity = serde_json::to_vec(&(source, target, relation, ordinal))?;
+    let id = format!("edge.{}", encode_hex(&Sha256::digest(identity)));
+    if edges.iter().any(|edge| edge.id == id) {
+        return Err(PlannerContractError::new(
+            "edges.id",
+            format!("duplicate projected edge {id}"),
+        ));
+    }
+    edges.push(PlannerGraphEdge {
+        id,
+        source_node_id: source.into(),
+        target_node_id: target.into(),
+        relation,
+        ordinal,
+    });
+    Ok(())
+}
+
 fn comparison_label(operator: ComparisonOperator) -> String {
     format!("{operator:?} comparison")
 }
@@ -1451,6 +1983,7 @@ fn validate_regions(
     for region in regions {
         validate_graph_id("regions.id", &region.id)?;
         validate_label("regions.label", &region.label)?;
+        validate_collapse_evidence(region)?;
         if !ids.insert(region.id.as_str())
             || previous.is_some_and(|prior: &str| prior >= region.id.as_str())
         {
@@ -1494,6 +2027,168 @@ fn validate_regions(
         }
     }
     Ok(ids)
+}
+
+fn validate_collapse_evidence(region: &PlannerGraphRegion) -> Result<(), PlannerContractError> {
+    if region.region_kind != PlannerRegionKind::Proof {
+        if region.collapse_evidence.is_some() {
+            return Err(PlannerContractError::new(
+                "regions.collapse_evidence",
+                "is reserved for solver proof regions",
+            ));
+        }
+        return Ok(());
+    }
+    match &region.collapse_evidence {
+        None if region.collapsed_by_default => Err(PlannerContractError::new(
+            "regions.collapse_evidence",
+            "a collapsed proof region requires explicit safety evidence",
+        )),
+        None => Ok(()),
+        Some(PlannerCollapseEvidence::ContinuationEquivalent {
+            reference_plan_id,
+            continuation,
+            dominating,
+            dominated,
+        }) => {
+            if !region.collapsed_by_default {
+                return Err(PlannerContractError::new(
+                    "regions.collapse_evidence",
+                    "continuation equivalence requires a collapsed region",
+                ));
+            }
+            validate_stable_id(
+                "regions.collapse_evidence.reference_plan_id",
+                reference_plan_id,
+            )?;
+            continuation.validate()?;
+            if continuation.route_condition_unknown {
+                return Err(PlannerContractError::new(
+                    "regions.collapse_evidence.continuation",
+                    "a reached-plan collapse cannot retain unknown route conditions",
+                ));
+            }
+            dominating.validate()?;
+            dominated.validate()?;
+            if !resource_no_worse(dominating, dominated) {
+                return Err(PlannerContractError::new(
+                    "regions.collapse_evidence",
+                    "dominating resource label is worse than the collapsed alternative",
+                ));
+            }
+            Ok(())
+        }
+        Some(PlannerCollapseEvidence::ResidualDifferences {
+            reference_plan_id,
+            differences,
+        }) => {
+            if region.collapsed_by_default || differences.is_empty() {
+                return Err(PlannerContractError::new(
+                    "regions.collapse_evidence",
+                    "residual differences require an expanded region and at least one difference",
+                ));
+            }
+            validate_stable_id(
+                "regions.collapse_evidence.reference_plan_id",
+                reference_plan_id,
+            )?;
+            validate_residual_differences(differences)?;
+            Ok(())
+        }
+        Some(PlannerCollapseEvidence::ProvenContinuationMerges { merge_count }) => {
+            if !region.collapsed_by_default || *merge_count == 0 {
+                return Err(PlannerContractError::new(
+                    "regions.collapse_evidence",
+                    "continuation-merge evidence requires a collapsed region and nonzero proof count",
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_residual_differences(
+    differences: &[PlannerResidualDifference],
+) -> Result<(), PlannerContractError> {
+    let mut kinds = BTreeSet::new();
+    for difference in differences {
+        let (kind, differs) = match difference {
+            PlannerResidualDifference::ResultState {
+                primary,
+                alternative,
+            } => (
+                "result_state",
+                *primary != Digest::ZERO && *alternative != Digest::ZERO && primary != alternative,
+            ),
+            PlannerResidualDifference::SatisfiedRequiredActions {
+                primary,
+                alternative,
+            } => {
+                for actions in [primary, alternative] {
+                    ContinuationIdentity {
+                        state_sha256: Digest([1; 32]),
+                        satisfied_required_actions: actions.clone(),
+                        required_sequence_progress: Vec::new(),
+                        banned_sequence_progress: Vec::new(),
+                        preferred_sequence_progress: Vec::new(),
+                        satisfied_preference_ids: Vec::new(),
+                        route_condition_unknown: false,
+                    }
+                    .validate()?;
+                }
+                ("satisfied_required_actions", primary != alternative)
+            }
+            PlannerResidualDifference::RequiredSequenceProgress {
+                primary,
+                alternative,
+            } => ("required_sequence_progress", primary != alternative),
+            PlannerResidualDifference::BannedSequenceProgress {
+                primary,
+                alternative,
+            } => ("banned_sequence_progress", primary != alternative),
+            PlannerResidualDifference::PreferredSequenceProgress {
+                primary,
+                alternative,
+            } => ("preferred_sequence_progress", primary != alternative),
+            PlannerResidualDifference::SatisfiedPreferences {
+                primary,
+                alternative,
+            } => {
+                validate_sorted_ids(
+                    "regions.collapse_evidence.satisfied_preferences.primary",
+                    primary,
+                )?;
+                validate_sorted_ids(
+                    "regions.collapse_evidence.satisfied_preferences.alternative",
+                    alternative,
+                )?;
+                ("satisfied_preferences", primary != alternative)
+            }
+            PlannerResidualDifference::RouteConditionUnknown {
+                primary,
+                alternative,
+            } => ("route_condition_unknown", primary != alternative),
+            PlannerResidualDifference::ResourceLabel {
+                primary,
+                alternative,
+            } => {
+                primary.validate()?;
+                alternative.validate()?;
+                ("resource_label", !resource_no_worse(primary, alternative))
+            }
+            PlannerResidualDifference::WeakestEvidence {
+                primary,
+                alternative,
+            } => ("weakest_evidence", primary != alternative),
+        };
+        if !differs || !kinds.insert(kind) {
+            return Err(PlannerContractError::new(
+                "regions.collapse_evidence.differences",
+                "must contain unique differences whose primary and alternative values differ",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_nodes<'a>(
@@ -1615,6 +2310,99 @@ fn validate_node_payload(payload: &PlannerNodePayload) -> Result<(), PlannerCont
             }
             None
         }
+        PlannerNodePayload::ProofPlan {
+            plan_id,
+            result_state_sha256,
+            continuation,
+            satisfied_preference_ids,
+            route_costs,
+            ..
+        } => {
+            validate_stable_id("nodes.payload.plan_id", plan_id)?;
+            if *result_state_sha256 == Digest::ZERO {
+                return Err(PlannerContractError::new(
+                    "nodes.payload.result_state_sha256",
+                    "must be nonzero",
+                ));
+            }
+            continuation.validate()?;
+            if continuation.state_sha256 != *result_state_sha256
+                || continuation.satisfied_preference_ids != *satisfied_preference_ids
+                || continuation.route_condition_unknown
+            {
+                return Err(PlannerContractError::new(
+                    "nodes.payload.continuation",
+                    "must match the proof plan result and preference identity",
+                ));
+            }
+            validate_sorted_ids(
+                "nodes.payload.satisfied_preference_ids",
+                satisfied_preference_ids,
+            )?;
+            SearchResourceLabel {
+                depth: 0,
+                route_costs: route_costs.clone(),
+            }
+            .validate()?;
+            None
+        }
+        PlannerNodePayload::ProofStep {
+            plan_id,
+            action_id,
+            source_state_sha256,
+            result_state_sha256,
+            ..
+        } => {
+            validate_stable_id("nodes.payload.plan_id", plan_id)?;
+            validate_stable_id("nodes.payload.action_id", action_id)?;
+            if *source_state_sha256 == Digest::ZERO || *result_state_sha256 == Digest::ZERO {
+                return Err(PlannerContractError::new(
+                    "nodes.payload.proof_step",
+                    "contains a zero state identity",
+                ));
+            }
+            None
+        }
+        PlannerNodePayload::ProofState {
+            plan_id,
+            state_sha256,
+            ..
+        } => {
+            validate_stable_id("nodes.payload.plan_id", plan_id)?;
+            if *state_sha256 == Digest::ZERO {
+                return Err(PlannerContractError::new(
+                    "nodes.payload.proof_state",
+                    "contains a zero state identity",
+                ));
+            }
+            None
+        }
+        PlannerNodePayload::ContinuationMerge {
+            state_sha256,
+            dominating,
+            dominated,
+            satisfied_preference_ids,
+        } => {
+            if *state_sha256 == Digest::ZERO {
+                return Err(PlannerContractError::new(
+                    "nodes.payload.continuation_merge",
+                    "contains a zero state identity",
+                ));
+            }
+            dominating.validate()?;
+            dominated.validate()?;
+            if !resource_no_worse(dominating, dominated) {
+                return Err(PlannerContractError::new(
+                    "nodes.payload.continuation_merge",
+                    "does not contain a dominating resource label",
+                ));
+            }
+            validate_sorted_ids(
+                "nodes.payload.satisfied_preference_ids",
+                satisfied_preference_ids,
+            )?;
+            None
+        }
         PlannerNodePayload::ExternalAction { action_id } => {
             Some(("nodes.payload.action_id", action_id))
         }
@@ -1658,11 +2446,13 @@ mod tests {
         ContextScope, DerivedFact, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, RuleEvidence,
         TruthStatus,
     };
+    use crate::relevance::{BACKWARD_RELEVANCE_SCHEMA, BackwardRelevance};
     use crate::route_book::{
         CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_SCHEMA, ReferenceStep, RouteActionRef,
         RouteBook, RouteBookManifest,
     };
     use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
+    use crate::solver::{ContinuationIdentity, ContinuationMergeProof};
     use crate::state::{
         BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm,
         PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
@@ -2137,6 +2927,171 @@ mod tests {
                     region.region_kind == PlannerRegionKind::Plan && region.id != "region.plans"
                 })
                 .all(|region| !region.collapsed_by_default)
+        );
+    }
+
+    #[test]
+    fn solver_proof_regions_collapse_only_safe_continuations_and_keep_residuals() {
+        let (facts, mechanics) = catalogs();
+        let mut graph = PlannerGraph::project(&facts, &mechanics).unwrap();
+        let initial = Digest([10; 32]);
+        let reached = Digest([11; 32]);
+        let residual = Digest([12; 32]);
+        let step = |result_state_sha256| SearchStep {
+            action_kind: SearchActionKind::Technique,
+            action_id: "technique.ordon-return".into(),
+            selected_resolver_ids: Vec::new(),
+            selected_technique_ids: Vec::new(),
+            active_obstruction_ids: Vec::new(),
+            unknown_obstruction_ids: Vec::new(),
+            discharged_obligation_ids: Vec::new(),
+            outstanding_obligation_ids: Vec::new(),
+            unknown_obligation_ids: Vec::new(),
+            supporting_microtrace_ids: Vec::new(),
+            introduced_obligation_ids: Vec::new(),
+            reader_results: Vec::new(),
+            unknown_reader_ids: Vec::new(),
+            evidence_dependencies: Vec::new(),
+            weakest_evidence: Some(TruthStatus::Established),
+            action_derivations: Vec::new(),
+            obligation_derivations: Vec::new(),
+            source_state_sha256: initial,
+            result_state_sha256,
+        };
+        let continuation = |state_sha256| ContinuationIdentity {
+            state_sha256,
+            satisfied_required_actions: Vec::new(),
+            required_sequence_progress: Vec::new(),
+            banned_sequence_progress: Vec::new(),
+            preferred_sequence_progress: Vec::new(),
+            satisfied_preference_ids: Vec::new(),
+            route_condition_unknown: false,
+        };
+        let alternative = |result_state_sha256| SearchPlan {
+            result_state_sha256,
+            continuation: continuation(result_state_sha256),
+            steps: vec![step(result_state_sha256)],
+            preference_score: 0,
+            satisfied_preference_ids: Vec::new(),
+            route_costs: BTreeMap::new(),
+        };
+        let mut continuation_distinct = alternative(reached);
+        continuation_distinct.continuation.banned_sequence_progress = vec![1];
+        let result = SearchResult {
+            backward_relevance: BackwardRelevance {
+                schema: BACKWARD_RELEVANCE_SCHEMA.into(),
+                dependencies: Vec::new(),
+                frontier_dependencies: Vec::new(),
+                transition_ids: Vec::new(),
+                writer_ids: Vec::new(),
+                technique_ids: vec!["technique.ordon-return".into()],
+                obstruction_ids: Vec::new(),
+                resolver_ids: Vec::new(),
+                obligation_ids: Vec::new(),
+                gate_ids: Vec::new(),
+                reader_ids: Vec::new(),
+                reconstruction_rule_ids: Vec::new(),
+                microtrace_ids: Vec::new(),
+            },
+            backward_pruning_applied: true,
+            status: SearchStatus::Reached,
+            steps: vec![step(reached)],
+            explored_states: 4,
+            hit_search_limit: false,
+            preference_score: 0,
+            satisfied_preference_ids: Vec::new(),
+            route_costs: BTreeMap::new(),
+            result_continuation: Some(continuation(reached)),
+            alternative_plans: vec![
+                alternative(reached),
+                continuation_distinct,
+                alternative(residual),
+            ],
+            minimum_evidence: Some(TruthStatus::Established),
+            unknown_transition_ids: Vec::new(),
+            unknown_writer_ids: Vec::new(),
+            execution_error_ids: Vec::new(),
+            blocked_transition_witnesses: Vec::new(),
+            blocked_writer_witnesses: Vec::new(),
+            blocked_technique_witnesses: Vec::new(),
+            blocked_resolver_witnesses: Vec::new(),
+            blocked_reconstruction_witnesses: Vec::new(),
+            continuation_merge_proofs: vec![ContinuationMergeProof {
+                continuation: ContinuationIdentity {
+                    state_sha256: reached,
+                    satisfied_required_actions: Vec::new(),
+                    required_sequence_progress: Vec::new(),
+                    banned_sequence_progress: Vec::new(),
+                    preferred_sequence_progress: Vec::new(),
+                    satisfied_preference_ids: Vec::new(),
+                    route_condition_unknown: false,
+                },
+                dominating: SearchResourceLabel {
+                    depth: 1,
+                    route_costs: BTreeMap::new(),
+                },
+                dominated: SearchResourceLabel {
+                    depth: 2,
+                    route_costs: BTreeMap::new(),
+                },
+            }],
+            failed_producer_cuts: Vec::new(),
+            failed_producer_cut_sets: Vec::new(),
+            failed_producer_cut_sets_complete: true,
+        };
+
+        graph.attach_solver_proof(initial, &result).unwrap();
+        let equivalent = graph
+            .regions
+            .iter()
+            .find(|region| region.id == "region.proof.plan.alternative-000")
+            .unwrap();
+        assert!(equivalent.collapsed_by_default);
+        assert!(matches!(
+            equivalent.collapse_evidence,
+            Some(PlannerCollapseEvidence::ContinuationEquivalent { .. })
+        ));
+        let distinct = graph
+            .regions
+            .iter()
+            .find(|region| region.id == "region.proof.plan.alternative-001")
+            .unwrap();
+        assert!(!distinct.collapsed_by_default);
+        assert!(matches!(
+            distinct.collapse_evidence,
+            Some(PlannerCollapseEvidence::ResidualDifferences { .. })
+        ));
+        let Some(PlannerCollapseEvidence::ResidualDifferences { differences, .. }) =
+            &distinct.collapse_evidence
+        else {
+            unreachable!()
+        };
+        assert!(differences.iter().any(|difference| matches!(
+            difference,
+            PlannerResidualDifference::BannedSequenceProgress {
+                primary,
+                alternative
+            } if primary.is_empty() && alternative == &[1]
+        )));
+        assert!(graph.regions.iter().any(|region| {
+            region.id == "region.proof.continuation-merges"
+                && region.collapsed_by_default
+                && matches!(
+                    region.collapse_evidence,
+                    Some(PlannerCollapseEvidence::ProvenContinuationMerges { merge_count: 1 })
+                )
+        }));
+        assert!(graph.nodes.iter().any(|node| {
+            node.id == "proof-state/alternative-002/0001"
+                && matches!(
+                    node.payload,
+                    PlannerNodePayload::ProofState { state_sha256, .. }
+                        if state_sha256 == residual
+                )
+        }));
+        assert_eq!(
+            PlannerGraph::decode_canonical(&graph.canonical_bytes().unwrap()).unwrap(),
+            graph
         );
     }
 }

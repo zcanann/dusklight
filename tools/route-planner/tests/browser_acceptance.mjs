@@ -448,6 +448,21 @@ try {
     `document.getElementById("status").textContent.includes("Removed 1 theorycraft overlay")
       && !document.getElementById("model-context-body").textContent.includes("what-if.browser-component-rebind")`,
   );
+  await evaluate(`(() => {
+    const goal = document.querySelector("#nodes .node.goal");
+    if (!goal) throw new Error("planner graph has no selectable goal");
+    goal.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const solve = document.getElementById("solve-goal");
+    if (solve.disabled) throw new Error("selected goal did not enable the solve control");
+    solve.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "nested solver proof navigation",
+    `document.getElementById("region-breadcrumbs").textContent.includes("Solver proof")
+      && document.getElementById("detail-json").textContent.includes('"solve_report"')`,
+    20_000,
+  );
   socket.close();
 } finally {
   await Promise.all([stopChild(brave, true), stopChild(planner)]);

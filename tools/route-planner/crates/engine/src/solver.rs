@@ -800,6 +800,7 @@ pub struct SearchResult {
     pub preference_score: u64,
     pub satisfied_preference_ids: Vec<String>,
     pub route_costs: BTreeMap<String, u64>,
+    pub result_continuation: Option<ContinuationIdentity>,
     /// Additional nondominated goal plans, ordered by the same deterministic
     /// presentation order as the primary plan. The legacy fields above remain
     /// the primary plan so single-plan consumers do not need a second shape.
@@ -823,6 +824,7 @@ pub struct SearchResult {
 #[serde(deny_unknown_fields)]
 pub struct SearchPlan {
     pub result_state_sha256: Digest,
+    pub continuation: ContinuationIdentity,
     pub steps: Vec<SearchStep>,
     pub preference_score: u64,
     pub satisfied_preference_ids: Vec<String>,
@@ -840,6 +842,16 @@ impl SearchPlan {
             return Err(PlannerContractError::new(
                 "solver.search_plan.result_state_sha256",
                 "must identify the final reached state",
+            ));
+        }
+        self.continuation.validate()?;
+        if self.continuation.state_sha256 != self.result_state_sha256
+            || self.continuation.satisfied_preference_ids != self.satisfied_preference_ids
+            || self.continuation.route_condition_unknown
+        {
+            return Err(PlannerContractError::new(
+                "solver.search_plan.continuation",
+                "must be the exact known terminal continuation for this reached plan",
             ));
         }
         let mut prior = None;
@@ -861,7 +873,7 @@ impl SearchPlan {
 /// continue through the remainder of one solve. Resource totals and elapsed
 /// search depth are deliberately separate so a Pareto-better label can safely
 /// dominate a worse route to this exact continuation.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ContinuationIdentity {
     pub state_sha256: Digest,
@@ -910,7 +922,7 @@ impl ContinuationIdentity {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchResourceLabel {
     pub depth: usize,
@@ -1613,7 +1625,7 @@ impl<'a> ForwardSolver<'a> {
                 break;
             }
             visited.insert(search_identity);
-            let labels = resource_frontier.entry(continuation).or_default();
+            let labels = resource_frontier.entry(continuation.clone()).or_default();
             labels.retain(|label| !strictly_dominates(&candidate_resources, label));
             labels.push(candidate_resources);
             if let Some(recorder) = authorization.as_deref_mut() {
@@ -1699,6 +1711,7 @@ impl<'a> ForwardSolver<'a> {
                     if max_plans > 1 {
                         let plan = SearchPlan {
                             result_state_sha256: state_identity,
+                            continuation: continuation.clone(),
                             steps: node.steps,
                             preference_score: node.preference_score,
                             satisfied_preference_ids: node
@@ -1724,6 +1737,7 @@ impl<'a> ForwardSolver<'a> {
                             .into_iter()
                             .collect(),
                         route_costs: node.route_costs,
+                        result_continuation: Some(continuation),
                         alternative_plans: Vec::new(),
                         minimum_evidence: route_policy
                             .as_ref()
@@ -2542,6 +2556,7 @@ impl<'a> ForwardSolver<'a> {
                 preference_score: primary.preference_score,
                 satisfied_preference_ids: primary.satisfied_preference_ids,
                 route_costs: primary.route_costs,
+                result_continuation: Some(primary.continuation),
                 alternative_plans: reached_plans,
                 minimum_evidence: route_policy
                     .as_ref()
@@ -2600,6 +2615,7 @@ impl<'a> ForwardSolver<'a> {
             preference_score: 0,
             satisfied_preference_ids: Vec::new(),
             route_costs: BTreeMap::new(),
+            result_continuation: None,
             alternative_plans: Vec::new(),
             minimum_evidence: route_policy
                 .as_ref()

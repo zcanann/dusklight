@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v45";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v46";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v3";
 const LEGACY_PROJECT_SCHEMAS = new Set([
   "dusklight.route-planner.web-project/v1",
@@ -17,7 +17,7 @@ const elements = Object.fromEntries([
   "contract-inspector",
   "model-context", "model-context-body",
   "region-nav", "region-breadcrumbs", "region-children",
-  "evaluate-transition", "insert-transition", "suggest-transition-chain", "replace-step", "remove-step",
+  "evaluate-transition", "solve-goal", "insert-transition", "suggest-transition-chain", "replace-step", "remove-step",
   "group-selection", "copy-region", "fork-region", "reference-region", "version-region",
   "replace-region", "region-usage", "pin-selection", "ban-selection", "prefer-selection", "select-method",
 ].map((id) => [id, document.getElementById(id)]));
@@ -42,6 +42,7 @@ const state = {
   executionStateInspections: new Map(),
   routeFrontier: null,
   selectedStateFeasibility: null,
+  solveReport: null,
   groupSelection: new Set(),
 };
 
@@ -60,6 +61,7 @@ elements["zoom-in"].addEventListener("click", () => zoomAt(1.2));
 elements["zoom-out"].addEventListener("click", () => zoomAt(1 / 1.2));
 elements.fit.addEventListener("click", fitGraph);
 elements["evaluate-transition"].addEventListener("click", evaluateSelectedTransition);
+elements["solve-goal"].addEventListener("click", solveSelectedGoal);
 elements["insert-transition"].addEventListener("click", insertSelectedTransition);
 elements["suggest-transition-chain"].addEventListener("click", suggestOrInsertSelectedTransitionChain);
 elements["replace-step"].addEventListener("click", replaceSelectedRouteStep);
@@ -190,6 +192,7 @@ async function loadProject(project, options) {
   state.executionStateInspections = new Map();
   state.routeFrontier = null;
   state.selectedStateFeasibility = null;
+  state.solveReport = null;
   state.groupSelection = new Set();
   state.activeRegionId = null;
   state.collapsedRegionIds = new Set();
@@ -629,6 +632,7 @@ async function editTheorycraftOverlays(edit) {
     });
     if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
     state.graph = projected.graph;
+    state.solveReport = null;
     state.transitionSearch = new Map(state.project.catalog.mechanics.transitions.map((transition) => [
       transition.id,
       transitionSearchText(transition),
@@ -1313,6 +1317,7 @@ function renderDetails() {
     elements["detail-subtitle"].textContent = "Choose a node or connection to inspect its planner-owned identity.";
     elements["detail-json"].textContent = "{}";
     elements["evaluate-transition"].disabled = true;
+    elements["solve-goal"].disabled = true;
     elements["insert-transition"].disabled = true;
     elements["suggest-transition-chain"].disabled = true;
     elements["suggest-transition-chain"].textContent = "Find producer chain";
@@ -1328,8 +1333,10 @@ function renderDetails() {
     : selected.value.relation;
   elements["detail-subtitle"].textContent = selected.value.id;
   const transition = selected.type === "node" && selected.value.payload.kind === "transition";
+  const goal = selected.type === "node" && selected.value.payload.kind === "goal";
   const routeStep = selected.type === "node" && selected.value.payload.kind === "reference_step";
   elements["evaluate-transition"].disabled = !transition || !state.project?.start_state;
+  elements["solve-goal"].disabled = !goal || !state.project?.start_state;
   elements["insert-transition"].disabled = !transition || !state.project?.start_state || state.readOnly;
   const suggestion = state.transitionEvaluation?.suggestion;
   const rejectedJoin = state.transitionEvaluation?.kind === "rejected_transition_join";
@@ -1354,6 +1361,7 @@ function renderDetails() {
     ...(contract ? { authoritative_contract: contract } : {}),
     ...(state.replacementStep ? { replacement_target: state.replacementStep } : {}),
     ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
+    ...(state.solveReport ? { solve_report: state.solveReport } : {}),
   }, null, 2);
   renderContractInspector(contract);
   renderStateInspector();
@@ -1756,6 +1764,7 @@ async function editRouteBook(edits, message) {
     });
     if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
     state.graph = projected.graph;
+    state.solveReport = null;
     ensurePositions();
     const selected = state.graph.nodes.find((candidate) => candidate.id === selectedId);
     state.selected = selected ? { type: "node", value: selected } : null;
@@ -1902,6 +1911,7 @@ async function removeSelectedRouteStep() {
     });
     if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
     state.graph = projected.graph;
+    state.solveReport = null;
     await refreshAuthoredRouteInspections();
     state.selected = null;
     state.transitionEvaluation = null;
@@ -1972,6 +1982,7 @@ async function replaceSelectedRouteStep() {
     });
     if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
     state.graph = projected.graph;
+    state.solveReport = null;
     state.transitionEvaluation = {
       kind: payload.kind,
       step_id: payload.step_id,
@@ -2051,6 +2062,7 @@ async function insertSelectedTransition() {
     });
     if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
     state.graph = projected.graph;
+    state.solveReport = null;
     await refreshAuthoredRouteInspections();
     ensurePositions();
     const stepNode = state.graph.nodes.find((candidate) =>
@@ -2140,6 +2152,7 @@ async function insertSuggestedTransitionChain(suggestion) {
     });
     if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
     state.graph = projected.graph;
+    state.solveReport = null;
     await refreshAuthoredRouteInspections();
     ensurePositions();
     const stepNode = state.graph.nodes.find((candidate) =>
@@ -2186,6 +2199,54 @@ async function evaluateSelectedTransition() {
       accepted ? `${node.label} is executable from the exact route frontier`
         : `${node.label}: ${payload.assessment.classification.replaceAll("_", " ")}`,
       accepted ? "good" : "bad",
+    );
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function solveSelectedGoal() {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  if (node?.payload.kind !== "goal" || !state.project?.start_state) return;
+  try {
+    setStatus(`Solving ${node.label}...`);
+    const payload = await service({
+      command: "solve",
+      request_id: requestId("solve-goal"),
+      state: state.project.start_state,
+      catalog: state.project.catalog,
+      equivalence_sets: state.project.equivalence_sets ?? [],
+      goal_id: node.payload.goal_id,
+      options: {
+        max_depth: 64,
+        max_states: 50_000,
+        max_resolution_combinations: 256,
+        max_plans: 8,
+        feasibility_mode: "modeled",
+        evidence_mode: projectEvidenceMode(),
+      },
+      route_book: state.project.route_book ?? null,
+    });
+    if (payload.kind !== "solve_report") {
+      throw new Error(`Unexpected response ${payload.kind}`);
+    }
+    state.graph = payload.proof_graph;
+    state.solveReport = payload.report;
+    state.transitionEvaluation = null;
+    state.activeRegionId = "region.proof";
+    state.collapsedRegionIds = new Set();
+    state.knownRegionIds = new Set();
+    ensurePositions();
+    const selected = state.graph.nodes.find((candidate) => candidate.id === node.id);
+    state.selected = selected ? { type: "node", value: selected } : null;
+    render();
+    requestAnimationFrame(fitGraph);
+    const plans = 1 + (payload.report.summary.alternative_plans?.length ?? 0);
+    setStatus(
+      payload.report.summary.status === "reached"
+        ? `${node.label} reached; projected ${plans} solver plan${plans === 1 ? "" : "s"}`
+        : `${node.label}: ${payload.report.summary.status.replaceAll("_", " ")}`,
+      payload.report.summary.status === "reached" ? "good" : "bad",
     );
   } catch (error) {
     setStatus(error.message, "bad");
@@ -2366,7 +2427,9 @@ function centerNode(id) {
 function projectWithPresentation(project = state.project) {
   const allNodes = new Set(state.graph.nodes.map((node) => node.id));
   const positionNodes = new Set(state.graph.nodes
-    .filter((node) => node.payload.kind !== "execution_state")
+    .filter((node) => ![
+      "execution_state", "proof_plan", "proof_step", "proof_state", "continuation_merge",
+    ].includes(node.payload.kind))
     .map((node) => node.id));
   const positions = Object.fromEntries([...state.positions.entries()]
     .filter(([id]) => positionNodes.has(id))

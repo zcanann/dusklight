@@ -86,6 +86,10 @@ button:disabled { opacity: .42; cursor: default; }
 .node rect { fill: #222933; stroke: #56616d; stroke-width: 1.25; rx: 5; vector-effect: non-scaling-stroke; }
 .node.transition rect { fill: #1d3040; stroke: #4d91b7; }
 .node.execution_state rect { fill: #203832; stroke: #63a68e; }
+.node.proof_plan rect { fill: #2f2940; stroke: #a887d4; }
+.node.proof_step rect { fill: #252f43; stroke: #789bd4; }
+.node.proof_state rect { fill: #20353a; stroke: #63a8b2; }
+.node.continuation_merge rect { fill: #353326; stroke: #b9a45c; stroke-dasharray: 4 2; }
 .node.goal rect { fill: #25382d; stroke: #61a879; }
 .node.obstruction rect { fill: #3a2929; stroke: #b66767; }
 .node.selected rect { stroke: var(--accent); stroke-width: 2.5; }

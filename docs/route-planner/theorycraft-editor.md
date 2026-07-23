@@ -8,7 +8,7 @@ the **Model context** panel:
 - Assume one catalogued obstruction absent through a typed resolver.
 
 The browser never authors raw catalog records. It sends a typed edit to planner
-service v45. Rust derives an exact `ContextScope` from the start state's content
+service v46. Rust derives an exact `ContextScope` from the start state's content
 and runtime-configuration digests, emits a `refinement-pack/v15` whose evidence
 is explicitly `hypothetical` / `theorycraft`, and composes it as an
 `ephemeral_what_if` layer. Component-copy ownership is derived from the source

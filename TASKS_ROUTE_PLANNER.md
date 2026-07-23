@@ -2863,14 +2863,23 @@ visual polish or whole-game authoring features.
       required. `tools/route-planner/VISUAL_GRAMMAR.md` now fixes these
       conventions, their accessibility cues, and the browser/Rust authority
       boundary against the implemented canvas.
-- [ ] Implement nested proof/plan regions with familiar subgraph navigation while
+- [x] Implement nested proof/plan regions with familiar subgraph navigation while
       preserving planner-specific AND/OR, cycles, and continuation-distinct
-      frontier states.
+      frontier states. Graph v10 adds per-plan proof regions, per-plan state
+      boundaries, ordered action proofs, explicit continuation-merge records,
+      and typed collapse evidence; service v46 returns the projection and the
+      Workbench can solve a selected goal directly into its nested proof view.
   - [x] Define and validate nested route-book regions, alternative methods,
         ordered reference steps, and typed action references; project them into
         the planner graph without adding mechanics or inferred losses.
-  - [ ] Project solver proofs/frontiers into those regions and prove collapse
+  - [x] Project solver proofs/frontiers into those regions and prove collapse
         safety from continuation equivalence or explicit residual differences.
+        Alternatives collapse only when the full terminal continuation identity
+        (state, required actions, required/banned/preferred sequence progress,
+        preferences, and route-condition knownness) matches and the primary
+        depth/cost label is no worse. Otherwise the region stays expanded with
+        typed continuation, resource, and evidence residuals. Exact solver
+        Pareto-merge proofs form their own validated collapsed region.
 - [x] Keep fact resolution, validation, solver/proof work, graph projection, and
       authoritative mutations in Rust; keep the browser a typed rendering and
       command surface. The browser submits typed service envelopes for every
@@ -2989,7 +2998,7 @@ visual polish or whole-game authoring features.
       reconstruction, microtrace, or goal now resolves the exact composed
       mechanics record, summarizes its scope/evidence/related action/effects,
       and retains the full authoritative contract in the detail payload.
-- [x] Add theorycraft component-transfer and bypass editor. Planner service v45
+- [x] Add theorycraft component-transfer and bypass editor. Planner service v46
       turns typed copy/rebind/bypass edits into exact-context hypothetical
       refinement packs, while the engine accepts only component transforms and
       assumed-absent resolvers at this incremental boundary. Web project v3

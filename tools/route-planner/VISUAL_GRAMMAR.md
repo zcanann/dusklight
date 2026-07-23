@@ -26,6 +26,9 @@ the browser.
 | Pinned preference | violet | heavier solid node outline |
 | Preferred action/method | amber | solid node outline |
 | Selected method | green | solid node outline |
+| Solver plan | violet | `proof plan` type eyebrow |
+| Solver action/state | blue/teal | `proof step` / `proof state` type eyebrow |
+| Proven frontier merge | ochre | dashed outline plus typed dominance payload |
 | Ordinary causal relation | slate | thin solid edge |
 
 Color is never the only carrier of status: rejected and unknown joins are dashed,
@@ -55,6 +58,10 @@ and diagnostics.
   action or modifies solver state.
 - Palette selection reveals the selected node's projected region before centering
   it, so facts inside a default-collapsed region remain discoverable.
+- Solver alternatives may begin collapsed only when graph v10 carries typed
+  continuation-equivalence and no-worse-resource evidence. Residual-difference
+  alternatives remain expanded; browser containment or color never supplies the
+  collapse proof.
 
 ## Selection and authoring
 
