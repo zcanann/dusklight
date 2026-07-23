@@ -2534,7 +2534,7 @@ Deliverable: researchers can extend the model without editing core code.
         referenced after a different state; grouping must grant no authority.
         Snapshot views and dynamic references resolve the original transition
         node IDs. Evaluation still submits that transition plus the currently
-        selected exact execution state to service v39; no region field enters
+        selected exact execution state to service v40; no region field enters
         assessment, application, frontier replay, or solve requests.
   - [x] Support cycles and leave-and-return paths in the underlying graph without
         interpreting nesting as recursive goal decomposition. Presentation
@@ -2581,7 +2581,12 @@ Deliverable: a headless query API and deterministic fixture suite.
         transition/writer witnesses retain the underlying guard or activation,
         effects, obligation/unknown-requirement definitions, writer operation,
         and applicable gate rules rather than only flattened IDs.
-- [ ] Explain derived lockouts as failed producer cuts.
+- [x] Explain derived lockouts as failed producer cuts. Solve-report v12 exposes
+      each validated conservative cut in the collapsed summary as the exact
+      missing state dependency plus every alternative transition/writer producer,
+      typed blocker classification, and source-state witness. The expanded view
+      retains the same records with full blocker derivations; bounded or
+      unsupported-producer cases remain explicitly without a cut.
 - [x] Explain active/unknown obstructions and the resolver/technique chosen for
       each reached approach; retain the closest unresolved witness on failure.
 - [x] Show component transformation and provenance histories.
@@ -2601,7 +2606,7 @@ Deliverable: a headless query API and deterministic fixture suite.
     `RuleEvidence`, and `weakest_evidence` makes contested, hypothetical, or
     unknown support directly filterable without rejoining the catalog.
 - [x] Generate concise collapsed summaries and fully expanded research views.
-      Solve-report v11 derives a presentation-only summary with primary and
+      Solve-report v12 derives a presentation-only summary with primary and
       alternative action sequences, costs, preference/evidence strength, bounds,
       unknown IDs, and blocker/merge/cut counts. The complete typed search result
       remains adjacent as the expanded view with every step dependency, state

@@ -18,14 +18,15 @@ use dusklight_route_planner::logic::{FactCatalog, TruthStatus};
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementStackEntry};
 use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::solver::{
-    ForwardSolver, SearchActionKind, SearchPlan, SearchResult, SearchStatus, SolverOptions,
+    FailedProducerCut, ForwardSolver, SearchActionKind, SearchPlan, SearchResult, SearchStatus,
+    SolverOptions,
 };
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v11";
-pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v10";
+pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v12";
+pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v11";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -107,6 +108,7 @@ pub struct SolveSummary {
     pub blocked_writer_count: usize,
     pub continuation_merge_count: usize,
     pub failed_producer_cut_count: usize,
+    pub failed_producer_cuts: Vec<FailedProducerCut>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -163,6 +165,7 @@ impl SolveSummary {
             blocked_writer_count: result.blocked_writer_witnesses.len(),
             continuation_merge_count: result.continuation_merge_proofs.len(),
             failed_producer_cut_count: result.failed_producer_cuts.len(),
+            failed_producer_cuts: result.failed_producer_cuts.clone(),
         }
     }
 }
@@ -682,6 +685,7 @@ mod tests {
             vec![]
         );
         assert!(report.summary.alternative_plans.is_empty());
+        assert!(report.summary.failed_producer_cuts.is_empty());
         assert_eq!(
             report.summary.explored_states,
             report.result.explored_states

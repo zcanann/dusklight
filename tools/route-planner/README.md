@@ -249,7 +249,7 @@ The planner CLI currently owns forty operations:
   entry's layer, pack ID, digest, and local precedence. Reached steps and blocked
   witnesses embed all contributing rule/fact evidence and report their weakest
   evidence level, so hypothetical support cannot be hidden behind an established
-  transition label. Solve-report v11 also derives a compact `summary` containing
+  transition label. Solve-report v12 also derives a compact `summary` containing
   primary/alternative action sequences, costs, weakest evidence, search bounds,
   unknowns, blocker counts, merge counts, and producer-cut counts; the complete
   `result` remains alongside it as the expanded research/proof view.
@@ -258,6 +258,10 @@ The planner CLI currently owns forty operations:
   and transition boundary, plus the complete referenced obligation records.
   Failed transition/writer witnesses likewise retain their guard/activation,
   operation, obligation/unknown-requirement, and gate-rule definitions.
+  Exhaustive known failures surface each conservative `FailedProducerCut`
+  directly in that summary: the exact missing state dependency is paired with
+  every catalog transition/writer alternative and its typed blocker/source-state
+  witness. Search-limit or unsupported-producer cases omit the claim.
 - `solve-portable` expands a route book's exact/equivalent context scope,
   requires one explicit start state per exact context, solves each context
   independently, and reports whether the route reaches its goal everywhere.
