@@ -373,6 +373,28 @@ try {
     "evidence-policy edit",
     `document.getElementById("status").textContent.includes("Evidence policy changed to research")`,
   );
+  await evaluate(`(async () => {
+    const record = await fetch("/api/projects/browser-keyed-door").then((response) => response.json());
+    const component = record.project.start_state.snapshot.environment.components[0];
+    if (!component) throw new Error("keyed-door start state has no component to theorycraft");
+    const answers = [component.id, "global", "Browser component rebind", "what-if.browser-component-rebind"];
+    window.prompt = () => answers.shift() ?? null;
+    window.confirm = () => true;
+    const button = [...document.querySelectorAll(".context-actions button")]
+      .find((candidate) => candidate.textContent === "Rebind");
+    if (!button) throw new Error("theorycraft rebind control is absent");
+    button.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "theorycraft component rebind",
+    `(() => {
+      const status = document.getElementById("status");
+      if (status.classList.contains("bad")) throw new Error(status.textContent);
+      return status.textContent.includes("Enabled what-if.browser-component-rebind")
+        && document.getElementById("model-context-body").textContent.includes("what-if.browser-component-rebind");
+    })()`,
+  );
   await evaluate(`document.getElementById("save-project").click()`);
   await browserUntil("saved browser edit", `document.getElementById("status").textContent === "Project saved"`);
   const beforeReload = await evaluate(`fetch("/api/projects/browser-keyed-door")
@@ -381,6 +403,8 @@ try {
       revision: record.revision_sha256,
       actions: record.project.route_book.steps.map((step) => step.action.transition_id),
       evidenceMode: record.project.evidence_mode,
+      overlays: record.project.theorycraft_overlays.map((pack) => pack.manifest.id),
+      hasTheorycraftBase: record.project.theorycraft_base_catalog != null,
     }))`);
   await evaluate(`(() => {
     const list = document.getElementById("project-list");
@@ -399,13 +423,31 @@ try {
       revision: record.revision_sha256,
       actions: record.project.route_book.steps.map((step) => step.action.transition_id),
       evidenceMode: record.project.evidence_mode,
+      overlays: record.project.theorycraft_overlays.map((pack) => pack.manifest.id),
+      hasTheorycraftBase: record.project.theorycraft_base_catalog != null,
     }))`);
   if (beforeReload.revision !== afterReload.revision
     || JSON.stringify(beforeReload.actions) !== JSON.stringify(afterReload.actions)
     || beforeReload.evidenceMode !== "research"
-    || afterReload.evidenceMode !== "research") {
+    || afterReload.evidenceMode !== "research"
+    || JSON.stringify(beforeReload.overlays) !== JSON.stringify(["what-if.browser-component-rebind"])
+    || JSON.stringify(afterReload.overlays) !== JSON.stringify(beforeReload.overlays)
+    || !beforeReload.hasTheorycraftBase
+    || !afterReload.hasTheorycraftBase) {
     throw new Error("saved and reloaded browser project identities differ");
   }
+  await evaluate(`(() => {
+    const button = [...document.querySelectorAll(".context-pack-remove")]
+      .find((candidate) => candidate.getAttribute("aria-label")?.includes("what-if.browser-component-rebind"));
+    if (!button) throw new Error("saved theorycraft overlay has no remove control");
+    button.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "reversible theorycraft removal",
+    `document.getElementById("status").textContent.includes("Removed 1 theorycraft overlay")
+      && !document.getElementById("model-context-body").textContent.includes("what-if.browser-component-rebind")`,
+  );
   socket.close();
 } finally {
   await Promise.all([stopChild(brave, true), stopChild(planner)]);

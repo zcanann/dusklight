@@ -13,7 +13,7 @@ use dusklight_route_planner::logic::{
     FACT_CATALOG_SCHEMA, FactCatalog, FriendlyAlias, PredicateExpression, RawFactBinding,
     RuleEvidence, TruthStatus, ValueReference,
 };
-use dusklight_route_planner::refinement::ComposedPlannerCatalog;
+use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementPack};
 use dusklight_route_planner::return_place::{
     GZ2E01_CONTENT_SHA256, gz2e01_tower_return_place_mechanics,
 };
@@ -43,8 +43,11 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const WEB_PROJECT_SCHEMA: &str = "dusklight.route-planner.web-project/v2";
-const LEGACY_WEB_PROJECT_SCHEMA: &str = "dusklight.route-planner.web-project/v1";
+pub const WEB_PROJECT_SCHEMA: &str = "dusklight.route-planner.web-project/v3";
+const LEGACY_WEB_PROJECT_SCHEMAS: &[&str] = &[
+    "dusklight.route-planner.web-project/v1",
+    "dusklight.route-planner.web-project/v2",
+];
 pub const WEB_PROJECT_LIST_SCHEMA: &str = "dusklight.route-planner.web-project-list/v1";
 pub const WEB_PROJECT_RECORD_SCHEMA: &str = "dusklight.route-planner.web-project-record/v1";
 pub const WEB_PROJECT_SAVE_SCHEMA: &str = "dusklight.route-planner.web-project-save/v1";
@@ -57,6 +60,10 @@ pub struct PlannerWebProject {
     pub id: String,
     pub label: String,
     pub catalog: ComposedPlannerCatalog,
+    #[serde(default)]
+    pub theorycraft_base_catalog: Option<Box<ComposedPlannerCatalog>>,
+    #[serde(default)]
+    pub theorycraft_overlays: Vec<RefinementPack>,
     #[serde(default = "established_evidence_mode")]
     pub evidence_mode: crate::RuntimeEvidenceMode,
     #[serde(default)]
@@ -180,6 +187,8 @@ impl PlannerWebProject {
             id: id.into(),
             label: label.into(),
             catalog,
+            theorycraft_base_catalog: None,
+            theorycraft_overlays: Vec::new(),
             evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: None,
@@ -197,6 +206,30 @@ impl PlannerWebProject {
         validate_project_id(&self.id)?;
         validate_label(&self.label)?;
         self.catalog.validate()?;
+        match (
+            &self.theorycraft_base_catalog,
+            self.theorycraft_overlays.is_empty(),
+        ) {
+            (None, true) => {}
+            (None, false) => {
+                return Err(project_error(
+                    "theorycraft overlays require their immutable base catalog",
+                ));
+            }
+            (Some(_), true) => {
+                return Err(project_error(
+                    "theorycraft base catalog must be absent when no overlays are active",
+                ));
+            }
+            (Some(base), false) => {
+                let recomposed = base.extend_ephemeral_what_if(&self.theorycraft_overlays)?;
+                if recomposed != self.catalog {
+                    return Err(project_error(
+                        "catalog does not match its persisted theorycraft base and overlays",
+                    ));
+                }
+            }
+        }
         if let Some(book) = &self.route_book {
             book.validate_against_composed(&self.catalog)?;
         }
@@ -516,7 +549,7 @@ fn read_project(path: &Path) -> Result<PlannerWebProject, ProjectError> {
     let bytes = fs::read(path).map_err(ProjectError::io)?;
     let mut project: PlannerWebProject =
         serde_json::from_slice(&bytes).map_err(ProjectError::json)?;
-    if project.schema == LEGACY_WEB_PROJECT_SCHEMA {
+    if LEGACY_WEB_PROJECT_SCHEMAS.contains(&project.schema.as_str()) {
         project.schema = WEB_PROJECT_SCHEMA.into();
     }
     project.validate()?;
@@ -710,6 +743,8 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             id: "demo-text-displacement-goron-mines".into(),
             label: "Text Displacement toward Goron Mines".into(),
             catalog: text_displacement,
+            theorycraft_base_catalog: None,
+            theorycraft_overlays: Vec::new(),
             evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: Some(text_displacement_start),
@@ -721,6 +756,8 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             id: "demo-auru-recent-item-transfer".into(),
             label: "Auru recent-item transfer".into(),
             catalog: auru,
+            theorycraft_base_catalog: None,
+            theorycraft_overlays: Vec::new(),
             evidence_mode: crate::RuntimeEvidenceMode::Research,
             route_book: None,
             start_state: Some(auru_start),
@@ -732,6 +769,8 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             id: "demo-forest-keyed-door".into(),
             label: "Forest Temple small-key door".into(),
             catalog: keyed_door,
+            theorycraft_base_catalog: None,
+            theorycraft_overlays: Vec::new(),
             evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: Some(keyed_door_start),
@@ -743,6 +782,8 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             id: "demo-hypothetical-local-bank-rebind".into(),
             label: "Hypothetical local-bank rebind".into(),
             catalog: rebind,
+            theorycraft_base_catalog: None,
+            theorycraft_overlays: Vec::new(),
             evidence_mode: crate::RuntimeEvidenceMode::Research,
             route_book: None,
             start_state: Some(rebind_start),
@@ -754,6 +795,8 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             id: "demo-fanadi-return-place".into(),
             label: "Fanadi return-place locking".into(),
             catalog: fanadi,
+            theorycraft_base_catalog: None,
+            theorycraft_overlays: Vec::new(),
             evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: Some(fanadi_start_state(runtime.clone())?),
@@ -765,6 +808,8 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             id: "demo-opening-flow".into(),
             label: "Opening and file-selection flow".into(),
             catalog: opening,
+            theorycraft_base_catalog: None,
+            theorycraft_overlays: Vec::new(),
             evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: Some(opening_start_state(runtime)?),
@@ -2682,7 +2727,8 @@ mod tests {
     use crate::RuntimeEvidenceMode;
     use crate::context_compare::{ContextRelation, compare_semantic_contexts};
     use crate::service::{
-        PlannerServiceOutcome, PlannerServicePayload, PlannerServiceRequest, handle_request,
+        ComponentTransferDestination, PlannerServiceOutcome, PlannerServicePayload,
+        PlannerServiceRequest, TheorycraftOverlayEdit, handle_request,
     };
     use dusklight_route_planner::evaluation::EvidencePolicy;
     use dusklight_route_planner::route_evidence_coverage::RouteEvidenceCoverageReport;
@@ -3569,7 +3615,7 @@ mod tests {
             graph_sha256
         );
         let mut legacy = decoded.clone();
-        legacy.schema = LEGACY_WEB_PROJECT_SCHEMA.into();
+        legacy.schema = LEGACY_WEB_PROJECT_SCHEMAS[1].into();
         legacy.id = "legacy-presentation-region".into();
         fs::write(
             root.join("legacy-presentation-region.json"),
@@ -3593,6 +3639,73 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("cycle")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn theorycraft_overlay_base_and_pack_survive_save_and_reload() {
+        let root = temporary_root("theorycraft-save");
+        let store = ProjectStore::open(&root).unwrap();
+        let mut project = builtin_projects()
+            .unwrap()
+            .into_iter()
+            .find(|project| project.id == "demo-hypothetical-local-bank-rebind")
+            .unwrap();
+        project.id = "theorycraft-save".into();
+        project.label = "Theorycraft save".into();
+        let base = project.catalog.clone();
+        let state = project.start_state.clone().unwrap();
+        let source = state.snapshot.environment.components[0].id.clone();
+        let response = handle_request(PlannerServiceRequest::EditTheorycraftOverlays {
+            request_id: "project.theorycraft-save".into(),
+            base_catalog: Box::new(base.clone()),
+            overlays: Vec::new(),
+            state: Box::new(state),
+            route_book: None,
+            edit: TheorycraftOverlayEdit::AddComponentTransfer {
+                pack_id: "what-if.saved-rebind".into(),
+                label: "Saved exact-context rebind".into(),
+                source_component_id: source,
+                destination: ComponentTransferDestination::Rebind {
+                    binding: ComponentBinding::Stage {
+                        stage: "D_MN06".into(),
+                    },
+                },
+            },
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("theorycraft overlay should compose");
+        };
+        let PlannerServicePayload::TheorycraftOverlaysEdited {
+            base_catalog,
+            overlays,
+            catalog,
+            ..
+        } = *payload
+        else {
+            panic!("theorycraft edit should return persisted ingredients");
+        };
+        project.catalog = *catalog;
+        project.theorycraft_base_catalog = Some(base_catalog);
+        project.theorycraft_overlays = overlays;
+        project.validate().unwrap();
+        let created = store
+            .save(
+                &project.id.clone(),
+                ProjectSaveRequest {
+                    schema: WEB_PROJECT_SAVE_SCHEMA.into(),
+                    expected_revision_sha256: None,
+                    project,
+                },
+            )
+            .unwrap();
+        let reloaded = store.load("theorycraft-save").unwrap().project;
+        assert_eq!(reloaded, created.project);
+        assert_eq!(reloaded.theorycraft_overlays.len(), 1);
+        assert_eq!(
+            reloaded.theorycraft_base_catalog.as_ref().unwrap().as_ref(),
+            &base
         );
         fs::remove_dir_all(root).unwrap();
     }

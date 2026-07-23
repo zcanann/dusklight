@@ -833,6 +833,104 @@ impl ComposedPlannerCatalog {
         Ok(composed)
     }
 
+    /// Extends an already composed catalog with additive, explicitly
+    /// hypothetical editor overlays. This deliberately does not attempt to
+    /// reconstruct the source packs behind the existing stack: the current
+    /// catalog is the immutable base, and only the two bounded theorycraft
+    /// operations accepted by the workbench may be appended.
+    pub fn extend_ephemeral_what_if(
+        &self,
+        packs: &[RefinementPack],
+    ) -> Result<Self, PlannerContractError> {
+        self.validate()?;
+        let mut composed = self.clone();
+        for pack in packs {
+            pack.validate()?;
+            for rule in &pack.rules {
+                if !matches!(
+                    rule.operation,
+                    RefinementOperation::ComponentTransform { .. }
+                        | RefinementOperation::AssumeObstructionAbsent { .. }
+                ) {
+                    return Err(PlannerContractError::new(
+                        "rules.operation",
+                        "ephemeral editor overlays may only transform components or assume an obstruction absent",
+                    ));
+                }
+            }
+
+            let entries = &composed.refinement_stack.entries;
+            if entries
+                .iter()
+                .any(|entry| entry.pack_id == pack.manifest.id)
+            {
+                return Err(PlannerContractError::new(
+                    "manifest.id",
+                    format!("duplicate pack ID {}", pack.manifest.id),
+                ));
+            }
+            if let Some(conflict) = pack.manifest.conflicts.iter().find(|id| {
+                entries
+                    .iter()
+                    .any(|entry| entry.pack_id.as_str() == id.as_str())
+            }) {
+                return Err(PlannerContractError::new(
+                    "manifest.conflicts",
+                    format!(
+                        "pack {} conflicts with active pack {conflict}",
+                        pack.manifest.id
+                    ),
+                ));
+            }
+            for dependency in &pack.manifest.dependencies {
+                let entry = entries
+                    .iter()
+                    .find(|entry| entry.pack_id == dependency.pack_id)
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "manifest.dependencies",
+                            format!("missing pack {}", dependency.pack_id),
+                        )
+                    })?;
+                if entry.pack_sha256 != dependency.pack_sha256 {
+                    return Err(PlannerContractError::new(
+                        "manifest.dependencies",
+                        format!("digest mismatch for pack {}", dependency.pack_id),
+                    ));
+                }
+            }
+            if composed
+                .refinement_stack
+                .entries
+                .iter()
+                .filter(|entry| entry.layer == RefinementLayer::EphemeralWhatIf)
+                .any(|entry| entry.precedence >= pack.manifest.precedence)
+            {
+                return Err(PlannerContractError::new(
+                    "manifest.precedence",
+                    "must be greater than every active ephemeral what-if overlay",
+                ));
+            }
+
+            for rule in &pack.rules {
+                apply_addition(pack, rule, &mut composed.facts, &mut composed.mechanics)?;
+            }
+            composed
+                .refinement_stack
+                .entries
+                .push(RefinementStackEntry {
+                    layer: RefinementLayer::EphemeralWhatIf,
+                    precedence: pack.manifest.precedence,
+                    pack_id: pack.manifest.id.clone(),
+                    pack_sha256: pack.digest()?,
+                });
+            composed.refinement_stack.entries.sort();
+            sort_catalogs(&mut composed.facts, &mut composed.mechanics);
+            composed.validate()?;
+        }
+        Ok(composed)
+    }
+
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != COMPOSED_CATALOG_SCHEMA {
             return Err(PlannerContractError::new("schema", "is unsupported"));
@@ -1868,6 +1966,75 @@ mod tests {
         let mut value = serde_json::to_value(pack).unwrap();
         value["browser_only"] = serde_json::json!(true);
         assert!(serde_json::from_value::<RefinementPack>(value).is_err());
+    }
+
+    #[test]
+    fn composed_catalog_accepts_only_additive_ephemeral_editor_overlays() {
+        let (facts, mechanics) = empty_catalogs();
+        let base = ComposedPlannerCatalog::compose(&facts, &mechanics, &[]).unwrap();
+        let first = pack(
+            "what-if.rebind",
+            1_000,
+            RefinementOperation::ComponentTransform {
+                prerequisite: PredicateExpression::True,
+                operations: vec![StateOperation::Preserve {
+                    selector: crate::state::ComponentSelector::Id {
+                        component_id: "component.stage-bank".into(),
+                    },
+                }],
+            },
+        );
+        let extended = base
+            .extend_ephemeral_what_if(std::slice::from_ref(&first))
+            .unwrap();
+        assert!(base.mechanics.techniques.is_empty());
+        assert_eq!(extended.mechanics.techniques[0].id, "what-if.rebind.rule");
+        assert_eq!(
+            extended.refinement_stack.entries[0].layer,
+            RefinementLayer::EphemeralWhatIf
+        );
+
+        let mut second = pack(
+            "what-if.copy",
+            1_001,
+            RefinementOperation::ComponentTransform {
+                prerequisite: PredicateExpression::True,
+                operations: vec![StateOperation::Preserve {
+                    selector: crate::state::ComponentSelector::Id {
+                        component_id: "component.session".into(),
+                    },
+                }],
+            },
+        );
+        second.manifest.dependencies.push(PackDependency {
+            pack_id: first.manifest.id.clone(),
+            pack_sha256: first.digest().unwrap(),
+        });
+        assert_eq!(
+            extended
+                .extend_ephemeral_what_if(std::slice::from_ref(&second))
+                .unwrap()
+                .mechanics
+                .techniques
+                .len(),
+            2
+        );
+
+        let forbidden = pack(
+            "what-if.writer",
+            1_002,
+            RefinementOperation::SuppressWriter {
+                writer_id: "writer.any".into(),
+                when: PredicateExpression::True,
+            },
+        );
+        assert_eq!(
+            extended
+                .extend_ephemeral_what_if(&[forbidden])
+                .unwrap_err()
+                .field(),
+            "rules.operation"
+        );
     }
 
     #[test]

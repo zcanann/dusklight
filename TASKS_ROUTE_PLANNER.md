@@ -2989,7 +2989,16 @@ visual polish or whole-game authoring features.
       reconstruction, microtrace, or goal now resolves the exact composed
       mechanics record, summarizes its scope/evidence/related action/effects,
       and retains the full authoritative contract in the detail payload.
-- [ ] Add theorycraft component-transfer and bypass editor.
+- [x] Add theorycraft component-transfer and bypass editor. Planner service v45
+      turns typed copy/rebind/bypass edits into exact-context hypothetical
+      refinement packs, while the engine accepts only component transforms and
+      assumed-absent resolvers at this incremental boundary. Web project v3
+      persists the immutable base plus reviewable overlays, independently
+      recomposes them on validation, previews component binding changes, and
+      supports individual removal or full reset without hiding assumptions in
+      browser state. Rust regressions cover exact scope, add/remove composition,
+      save/reload stability, and the Brave acceptance flow persists and removes
+      a component rebind.
 - [x] Show active packs, overlays, exact content identity, mutable language/config,
       provenance, coverage, confidence, and route costs. The always-available
       model-context panel separates the exact start-state content digest from

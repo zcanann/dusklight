@@ -1,6 +1,9 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v44";
-const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v2";
-const LEGACY_PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v45";
+const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v3";
+const LEGACY_PROJECT_SCHEMAS = new Set([
+  "dusklight.route-planner.web-project/v1",
+  "dusklight.route-planner.web-project/v2",
+]);
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
@@ -205,11 +208,14 @@ async function loadProject(project, options) {
 }
 
 function validateProject(project) {
-  if (project?.schema === LEGACY_PROJECT_SCHEMA) project.schema = PROJECT_SCHEMA;
+  if (LEGACY_PROJECT_SCHEMAS.has(project?.schema)) project.schema = PROJECT_SCHEMA;
   if (!project || project.schema !== PROJECT_SCHEMA) throw new Error(`Expected ${PROJECT_SCHEMA}`);
   if (!project.id || typeof project.id !== "string") throw new Error("Project has no id");
   if (!project.label || typeof project.label !== "string") throw new Error("Project has no label");
   if (!project.catalog || typeof project.catalog !== "object") throw new Error("Project has no catalog");
+  project.theorycraft_base_catalog ??= null;
+  project.theorycraft_overlays ??= [];
+  if (!Array.isArray(project.theorycraft_overlays)) throw new Error("Project theorycraft_overlays is invalid");
   if (project.route_book != null && typeof project.route_book !== "object") throw new Error("Project route_book is invalid");
   project.evidence_mode ??= "established_only";
   if (!["established_only", "research"].includes(project.evidence_mode)) {
@@ -337,10 +343,55 @@ function renderModelContext() {
       detail.textContent = `${taggedValue(entry.layer)} · priority ${entry.precedence} · ${shortDigest(entry.pack_sha256)}`;
       detail.title = entry.pack_sha256;
       pack.append(name, detail);
+      if (!state.readOnly && state.project.theorycraft_overlays.some((overlay) =>
+        overlay.manifest.id === entry.pack_id)) {
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "context-pack-remove";
+        remove.textContent = "Remove";
+        remove.setAttribute("aria-label", `Remove theorycraft overlay ${entry.pack_id}`);
+        remove.addEventListener("click", () => editTheorycraftOverlays({
+          kind: "remove",
+          pack_id: entry.pack_id,
+        }));
+        pack.append(remove);
+      }
       packs.append(pack);
     }
   }
   container.append(packs);
+
+  const theorycraft = document.createElement("section");
+  theorycraft.className = "context-section theorycraft-controls";
+  const theorycraftTitle = document.createElement("h3");
+  theorycraftTitle.textContent = "Theorycraft sandbox";
+  const theorycraftHelp = document.createElement("p");
+  theorycraftHelp.className = "context-empty";
+  theorycraftHelp.textContent = "Add exact-context hypothetical transforms; each edit remains a removable refinement pack.";
+  const actions = document.createElement("div");
+  actions.className = "context-actions";
+  for (const [label, action] of [
+    ["Rebind", () => addComponentTransfer("rebind")],
+    ["Copy", () => addComponentTransfer("copy")],
+    ["Bypass", addObstructionBypass],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.disabled = state.readOnly || !state.project.start_state;
+    button.addEventListener("click", action);
+    actions.append(button);
+  }
+  if (state.project.theorycraft_overlays.length) {
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.textContent = "Clear all";
+    clear.disabled = state.readOnly;
+    clear.addEventListener("click", () => editTheorycraftOverlays({ kind: "clear" }));
+    actions.append(clear);
+  }
+  theorycraft.append(theorycraftTitle, theorycraftHelp, actions);
+  container.append(theorycraft);
 
   const coverage = catalogCoverage(catalog);
   container.append(contextMetrics("Coverage", [
@@ -378,6 +429,224 @@ function contextMetrics(titleText, rows) {
   }
   section.append(title, metrics);
   return section;
+}
+
+async function addComponentTransfer(mode) {
+  if (!state.project?.start_state || state.readOnly) return;
+  const components = state.project.start_state.snapshot.environment.components ?? [];
+  if (!components.length) {
+    setStatus("The exact start state has no live components to transfer", "bad");
+    return;
+  }
+  const sourceId = prompt(
+    `Source component ID\n\nAvailable: ${components.map((component) => component.id).join(", ")}`,
+    components[0].id,
+  );
+  if (sourceId == null) return;
+  const source = components.find((component) => component.id === sourceId.trim());
+  if (!source) {
+    setStatus(`Component ${sourceId.trim()} is not in the exact start state`, "bad");
+    return;
+  }
+  const binding = promptComponentBinding(source.binding);
+  if (!binding) return;
+  const defaultLabel = mode === "copy"
+    ? `Copy ${source.id} into ${bindingSummary(binding)}`
+    : `Rebind ${source.id} to ${bindingSummary(binding)}`;
+  const label = prompt("Theorycraft assumption label", defaultLabel);
+  if (label == null) return;
+  const packId = prompt(
+    "Refinement pack ID",
+    `what-if.${slug(label).slice(0, 54)}-${Date.now().toString(36)}`,
+  );
+  if (packId == null) return;
+  const destination = mode === "copy"
+    ? (() => {
+      const destinationId = prompt("New component ID", `${source.id}.what-if-copy`);
+      return destinationId == null ? null : {
+        kind: "copy",
+        destination_component_id: destinationId.trim(),
+        binding,
+      };
+    })()
+    : { kind: "rebind", binding };
+  if (!destination) return;
+  const preview = mode === "copy"
+    ? `${source.id} (${bindingSummary(source.binding)}) will be copied as ${destination.destination_component_id} (${bindingSummary(binding)}).`
+    : `${source.id} will retain its payload and change binding from ${bindingSummary(source.binding)} to ${bindingSummary(binding)}.`;
+  if (!confirm(`Preview hypothetical component transfer:\n\n${preview}\n\nEnable this exact-context assumption?`)) return;
+  await editTheorycraftOverlays({
+    kind: "add_component_transfer",
+    pack_id: packId.trim(),
+    label: label.trim(),
+    source_component_id: source.id,
+    destination,
+  });
+}
+
+async function addObstructionBypass() {
+  if (!state.project?.start_state || state.readOnly) return;
+  const obstructions = state.project.catalog.mechanics.obstructions ?? [];
+  if (!obstructions.length) {
+    setStatus("The composed catalog has no obstruction to bypass", "bad");
+    return;
+  }
+  const selected = state.selected?.type === "node" && state.selected.value.payload.kind === "obstruction"
+    ? state.selected.value.payload.obstruction_id
+    : obstructions[0].id;
+  const obstructionId = prompt(
+    `Obstruction ID\n\nAvailable: ${obstructions.map((record) => record.id).join(", ")}`,
+    selected,
+  );
+  if (obstructionId == null) return;
+  const obstruction = obstructions.find((record) => record.id === obstructionId.trim());
+  if (!obstruction) {
+    setStatus(`Obstruction ${obstructionId.trim()} is not in the composed catalog`, "bad");
+    return;
+  }
+  const label = prompt("Theorycraft assumption label", `Assume ${obstruction.label} absent`);
+  if (label == null) return;
+  const packId = prompt(
+    "Refinement pack ID",
+    `what-if.${slug(label).slice(0, 54)}-${Date.now().toString(36)}`,
+  );
+  if (packId == null) return;
+  if (!confirm(`Enable an exact-context hypothetical resolver that assumes ${obstruction.label} absent?`)) return;
+  await editTheorycraftOverlays({
+    kind: "add_obstruction_bypass",
+    pack_id: packId.trim(),
+    label: label.trim(),
+    obstruction_id: obstruction.id,
+  });
+}
+
+function promptComponentBinding(current) {
+  const kind = prompt(
+    "Destination binding kind: global, stage, room, zone, dungeon, runtime_file, actor, session, unbound, or custom",
+    current?.kind === "unbound" ? "unbound" : current?.kind ?? "stage",
+  );
+  if (kind == null) return null;
+  const value = (message, fallback = "") => {
+    const entered = prompt(message, fallback);
+    return entered == null ? null : entered.trim();
+  };
+  const integer = (message, fallback) => {
+    const entered = value(message, String(fallback));
+    if (entered == null) return null;
+    const parsed = Number(entered);
+    if (!Number.isInteger(parsed)) throw new Error(`${message} must be an integer`);
+    return parsed;
+  };
+  try {
+    switch (kind.trim()) {
+      case "global": return { kind: "global" };
+      case "stage": {
+        const stage = value("Stage ID", current?.stage ?? state.project.start_state.snapshot.environment.location.stage);
+        return stage == null ? null : { kind: "stage", stage };
+      }
+      case "room": {
+        const stage = value("Stage ID", current?.stage ?? state.project.start_state.snapshot.environment.location.stage);
+        if (stage == null) return null;
+        const room = integer("Room", current?.room ?? state.project.start_state.snapshot.environment.location.room);
+        return room == null ? null : { kind: "room", stage, room };
+      }
+      case "zone": {
+        const stage = value("Stage ID", current?.stage ?? state.project.start_state.snapshot.environment.location.stage);
+        if (stage == null) return null;
+        const zone = integer("Zone", current?.zone ?? 0);
+        return zone == null ? null : { kind: "zone", stage, zone };
+      }
+      case "dungeon": {
+        const dungeon = value("Dungeon ID", current?.dungeon ?? "");
+        return dungeon == null ? null : { kind: "dungeon", dungeon };
+      }
+      case "runtime_file": {
+        const runtimeFileId = value("Runtime file ID", current?.runtime_file_id ?? state.project.start_state.snapshot.environment.active_runtime_file.id);
+        return runtimeFileId == null ? null : { kind: "runtime_file", runtime_file_id: runtimeFileId };
+      }
+      case "actor": {
+        const instanceId = value("Actor instance ID", current?.instance_id ?? "");
+        return instanceId == null ? null : { kind: "actor", instance_id: instanceId };
+      }
+      case "session": {
+        const sessionId = value("Session ID", current?.session_id ?? "session.what-if");
+        return sessionId == null ? null : { kind: "session", session_id: sessionId };
+      }
+      case "unbound": return { kind: "unbound" };
+      case "custom": {
+        const kindId = value("Custom binding kind ID", current?.kind_id ?? "binding.what-if");
+        if (kindId == null) return null;
+        const contextId = value("Custom context ID", current?.context_id ?? "context.what-if");
+        return contextId == null ? null : { kind: "custom", kind_id: kindId, context_id: contextId };
+      }
+      default:
+        setStatus(`Unknown component binding kind ${kind.trim()}`, "bad");
+        return null;
+    }
+  } catch (error) {
+    setStatus(error.message, "bad");
+    return null;
+  }
+}
+
+function bindingSummary(binding) {
+  if (!binding || typeof binding !== "object") return "unknown binding";
+  const detail = Object.entries(binding)
+    .filter(([key]) => key !== "kind")
+    .map(([, value]) => String(value))
+    .join("/");
+  return detail ? `${binding.kind}:${detail}` : binding.kind;
+}
+
+async function editTheorycraftOverlays(edit) {
+  if (!state.project?.start_state || state.readOnly) return;
+  if (edit.kind === "clear" && !confirm("Remove every authored theorycraft overlay from this project?")) return;
+  try {
+    setStatus("Recomposing theorycraft sandbox...");
+    const baseCatalog = state.project.theorycraft_base_catalog ?? state.project.catalog;
+    const payload = await service({
+      command: "edit_theorycraft_overlays",
+      request_id: requestId("theorycraft"),
+      base_catalog: baseCatalog,
+      overlays: state.project.theorycraft_overlays,
+      state: state.project.start_state,
+      route_book: state.project.route_book ?? null,
+      edit,
+    });
+    if (payload.kind !== "theorycraft_overlays_edited") {
+      throw new Error(`Unexpected response ${payload.kind}`);
+    }
+    const selectedId = state.selected?.type === "node" ? state.selected.value.id : null;
+    state.project.catalog = payload.catalog;
+    state.project.theorycraft_overlays = payload.overlays;
+    state.project.theorycraft_base_catalog = payload.overlays.length ? payload.base_catalog : null;
+    state.project.route_book = payload.route_book;
+    const projected = await service({
+      command: "project_graph",
+      request_id: requestId("project-after-theorycraft"),
+      catalog: state.project.catalog,
+      route_book: state.project.route_book ?? null,
+    });
+    if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
+    state.graph = projected.graph;
+    state.transitionSearch = new Map(state.project.catalog.mechanics.transitions.map((transition) => [
+      transition.id,
+      transitionSearchText(transition),
+    ]));
+    ensurePositions();
+    const selected = state.graph.nodes.find((candidate) => candidate.id === selectedId);
+    state.selected = selected ? { type: "node", value: selected } : null;
+    state.transitionEvaluation = null;
+    await refreshAuthoredRouteInspections();
+    markDirty();
+    render();
+    const action = payload.added_pack
+      ? `Enabled ${payload.added_pack.manifest.id}`
+      : `Removed ${payload.removed_pack_ids.length} theorycraft overlay${payload.removed_pack_ids.length === 1 ? "" : "s"}`;
+    setStatus(`${action}; save to persist`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 function shortDigest(value) {

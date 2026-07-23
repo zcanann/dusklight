@@ -46,6 +46,9 @@ button:disabled { opacity: .42; cursor: default; }
 .context-pack { padding: 5px 6px; border-left: 2px solid #56768d; background: #192027; font-size: 10px; }
 .context-pack strong, .context-pack small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .context-pack small { margin-top: 2px; color: var(--muted); }
+.context-pack .context-pack-remove { margin-top: 5px; padding: 3px 6px; font-size: 9px; }
+.context-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.context-actions button { padding: 4px 6px; font-size: 9px; }
 .context-empty { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .palette-list { overflow: auto; display: flex; flex-direction: column; gap: 5px; }
 .palette-item { text-align: left; padding: 8px; border: 1px solid transparent; background: transparent; }

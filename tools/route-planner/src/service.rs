@@ -16,27 +16,63 @@ use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecution
 use dusklight_route_planner::graph::{
     PlannerExecutionPathState, PlannerFeasibilityGraphDiff, PlannerGraph,
 };
-use dusklight_route_planner::identity::EquivalenceSet;
-use dusklight_route_planner::logic::{FactCatalog, PredicateExpression};
+use dusklight_route_planner::identity::{ContextSelector, EquivalenceSet};
+use dusklight_route_planner::logic::{
+    ContextScope, EvidenceKind, EvidenceRecord, FactCatalog, PredicateExpression, RuleEvidence,
+    TruthStatus,
+};
 use dusklight_route_planner::refinement::{
-    ComposedPlannerCatalog, RefinementLayers, RefinementPack,
+    ComposedPlannerCatalog, PackDependency, REFINEMENT_PACK_SCHEMA, RefinementLayers,
+    RefinementOperation, RefinementPack, RefinementPackManifest, RefinementRule,
 };
 use dusklight_route_planner::route_book::{
     CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_EDIT_BATCH_SCHEMA, ROUTE_BOOK_SCHEMA,
     ReferenceStep, RouteActionRef, RouteBook, RouteBookEdit, RouteBookEditBatch, RouteBookManifest,
 };
-use dusklight_route_planner::state::BoundaryKind;
-use dusklight_route_planner::transition::MechanicsCatalog;
+use dusklight_route_planner::state::{BoundaryKind, ComponentBinding, ComponentSelector};
+use dusklight_route_planner::transition::{MechanicsCatalog, StateOperation};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v44";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v45";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannerServiceEnvelope {
     pub schema: String,
     pub request: PlannerServiceRequest,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TheorycraftOverlayEdit {
+    AddComponentTransfer {
+        pack_id: String,
+        label: String,
+        source_component_id: String,
+        destination: ComponentTransferDestination,
+    },
+    AddObstructionBypass {
+        pack_id: String,
+        label: String,
+        obstruction_id: String,
+    },
+    Remove {
+        pack_id: String,
+    },
+    Clear,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ComponentTransferDestination {
+    Rebind {
+        binding: ComponentBinding,
+    },
+    Copy {
+        destination_component_id: String,
+        binding: ComponentBinding,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -66,6 +102,14 @@ pub enum PlannerServiceRequest {
         route_local_overlays: Vec<RefinementPack>,
         #[serde(default)]
         ephemeral_what_if_overlays: Vec<RefinementPack>,
+    },
+    EditTheorycraftOverlays {
+        request_id: String,
+        base_catalog: Box<ComposedPlannerCatalog>,
+        overlays: Vec<RefinementPack>,
+        state: Box<PlannerExecutionStateDocument>,
+        route_book: Option<Box<RouteBook>>,
+        edit: TheorycraftOverlayEdit,
     },
     ProjectGraph {
         request_id: String,
@@ -196,6 +240,7 @@ impl PlannerServiceRequest {
             | Self::ValidateRouteBook { request_id, .. }
             | Self::EditRouteBook { request_id, .. }
             | Self::Compose { request_id, .. }
+            | Self::EditTheorycraftOverlays { request_id, .. }
             | Self::ProjectGraph { request_id, .. }
             | Self::ProjectFeasibilityDiff { request_id, .. }
             | Self::InspectRouteFrontier { request_id, .. }
@@ -248,6 +293,15 @@ pub enum PlannerServicePayload {
     ComposedCatalog {
         catalog: Box<ComposedPlannerCatalog>,
         catalog_sha256: Digest,
+    },
+    TheorycraftOverlaysEdited {
+        base_catalog: Box<ComposedPlannerCatalog>,
+        overlays: Vec<RefinementPack>,
+        catalog: Box<ComposedPlannerCatalog>,
+        catalog_sha256: Digest,
+        route_book: Option<Box<RouteBook>>,
+        added_pack: Option<Box<RefinementPack>>,
+        removed_pack_ids: Vec<String>,
     },
     Graph {
         graph: Box<PlannerGraph>,
@@ -386,6 +440,231 @@ pub struct AuthoredRouteStateChange {
     pub diff: StateInspectionDiff,
 }
 
+fn edit_theorycraft_overlays(
+    base_catalog: ComposedPlannerCatalog,
+    mut overlays: Vec<RefinementPack>,
+    state: PlannerExecutionStateDocument,
+    route_book: Option<RouteBook>,
+    edit: TheorycraftOverlayEdit,
+) -> Result<PlannerServicePayload, dusklight_route_planner::PlannerContractError> {
+    base_catalog.validate()?;
+    state.clone().into_state()?;
+    overlays.sort_by(|left, right| {
+        left.manifest
+            .precedence
+            .cmp(&right.manifest.precedence)
+            .then_with(|| left.manifest.id.cmp(&right.manifest.id))
+    });
+    let current = base_catalog.extend_ephemeral_what_if(&overlays)?;
+    let mut added_pack = None;
+    let mut removed_pack_ids = Vec::new();
+
+    match edit {
+        TheorycraftOverlayEdit::AddComponentTransfer {
+            pack_id,
+            label,
+            source_component_id,
+            destination,
+        } => {
+            let source = state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == source_component_id)
+                .ok_or_else(|| {
+                    dusklight_route_planner::PlannerContractError::new(
+                        "edit.source_component_id",
+                        format!("component {source_component_id} is absent from the start state"),
+                    )
+                })?;
+            let operations = match destination {
+                ComponentTransferDestination::Rebind { binding } => vec![
+                    StateOperation::Preserve {
+                        selector: ComponentSelector::Id {
+                            component_id: source_component_id.clone(),
+                        },
+                    },
+                    StateOperation::Rebind {
+                        selector: ComponentSelector::Id {
+                            component_id: source_component_id,
+                        },
+                        binding,
+                    },
+                ],
+                ComponentTransferDestination::Copy {
+                    destination_component_id,
+                    binding,
+                } => vec![StateOperation::Copy {
+                    source: ComponentSelector::Id {
+                        component_id: source_component_id,
+                    },
+                    destination_component_id,
+                    binding,
+                    serialization_owner: source.serialization_owner.clone(),
+                }],
+            };
+            let pack = theorycraft_pack(
+                &base_catalog,
+                &current,
+                &state,
+                pack_id,
+                label,
+                RefinementOperation::ComponentTransform {
+                    prerequisite: PredicateExpression::True,
+                    operations,
+                },
+            )?;
+            overlays.push(pack.clone());
+            added_pack = Some(Box::new(pack));
+        }
+        TheorycraftOverlayEdit::AddObstructionBypass {
+            pack_id,
+            label,
+            obstruction_id,
+        } => {
+            if !current
+                .mechanics
+                .obstructions
+                .iter()
+                .any(|obstruction| obstruction.id == obstruction_id)
+            {
+                return Err(dusklight_route_planner::PlannerContractError::new(
+                    "edit.obstruction_id",
+                    format!("obstruction {obstruction_id} is absent from the composed catalog"),
+                ));
+            }
+            let pack = theorycraft_pack(
+                &base_catalog,
+                &current,
+                &state,
+                pack_id,
+                label,
+                RefinementOperation::AssumeObstructionAbsent {
+                    obstruction_id,
+                    when: PredicateExpression::True,
+                },
+            )?;
+            overlays.push(pack.clone());
+            added_pack = Some(Box::new(pack));
+        }
+        TheorycraftOverlayEdit::Remove { pack_id } => {
+            let before = overlays.len();
+            overlays.retain(|pack| pack.manifest.id != pack_id);
+            if overlays.len() == before {
+                return Err(dusklight_route_planner::PlannerContractError::new(
+                    "edit.pack_id",
+                    format!("theorycraft overlay {pack_id} is not active"),
+                ));
+            }
+            removed_pack_ids.push(pack_id);
+        }
+        TheorycraftOverlayEdit::Clear => {
+            removed_pack_ids = overlays
+                .iter()
+                .map(|pack| pack.manifest.id.clone())
+                .collect();
+            overlays.clear();
+        }
+    }
+
+    overlays.sort_by(|left, right| {
+        left.manifest
+            .precedence
+            .cmp(&right.manifest.precedence)
+            .then_with(|| left.manifest.id.cmp(&right.manifest.id))
+    });
+    let catalog = base_catalog.extend_ephemeral_what_if(&overlays)?;
+    let mut route_book = route_book;
+    if let Some(book) = &mut route_book {
+        if book.manifest.refinement_stack_sha256.is_some() {
+            book.manifest.refinement_stack_sha256 = Some(catalog.refinement_stack.digest()?);
+        }
+        book.validate_against_composed(&catalog)?;
+    }
+    let catalog_sha256 = catalog.digest()?;
+    Ok(PlannerServicePayload::TheorycraftOverlaysEdited {
+        base_catalog: Box::new(base_catalog),
+        overlays,
+        catalog: Box::new(catalog),
+        catalog_sha256,
+        route_book: route_book.map(Box::new),
+        added_pack,
+        removed_pack_ids,
+    })
+}
+
+fn theorycraft_pack(
+    base_catalog: &ComposedPlannerCatalog,
+    current: &ComposedPlannerCatalog,
+    state: &PlannerExecutionStateDocument,
+    pack_id: String,
+    label: String,
+    operation: RefinementOperation,
+) -> Result<RefinementPack, dusklight_route_planner::PlannerContractError> {
+    let runtime = &state.snapshot.environment.runtime_configuration;
+    let scope = ContextScope {
+        selectors: vec![ContextSelector::Exact {
+            context: runtime.exact_context()?,
+        }],
+    };
+    let precedence = current
+        .refinement_stack
+        .entries
+        .iter()
+        .filter(|entry| {
+            entry.layer == dusklight_route_planner::refinement::RefinementLayer::EphemeralWhatIf
+        })
+        .map(|entry| entry.precedence)
+        .max()
+        .unwrap_or(999)
+        .checked_add(1)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "manifest.precedence",
+                "ephemeral overlay precedence is exhausted",
+            )
+        })?;
+    let dependencies = base_catalog
+        .refinement_stack
+        .entries
+        .iter()
+        .map(|entry| PackDependency {
+            pack_id: entry.pack_id.clone(),
+            pack_sha256: entry.pack_sha256,
+        })
+        .collect();
+    let pack = RefinementPack {
+        schema: REFINEMENT_PACK_SCHEMA.into(),
+        manifest: RefinementPackManifest {
+            id: pack_id.clone(),
+            version: "1.0.0".into(),
+            author: "Route Workbench".into(),
+            source: "Explicit theorycraft editor assumption".into(),
+            scope,
+            precedence,
+            dependencies,
+            conflicts: Vec::new(),
+        },
+        rules: vec![RefinementRule {
+            id: format!("{pack_id}.effect"),
+            label,
+            operation,
+            evidence: RuleEvidence {
+                truth: TruthStatus::Hypothetical,
+                records: vec![EvidenceRecord {
+                    id: format!("{pack_id}.evidence"),
+                    kind: EvidenceKind::Theorycraft,
+                    source_sha256: None,
+                    note: "User-authored what-if; this is not a claim about game behavior.".into(),
+                }],
+            },
+        }],
+    };
+    pack.validate()?;
+    Ok(pack)
+}
+
 pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse {
     let request_id = request.request_id().to_owned();
     if let Err(detail) = validate_request_id(&request_id) {
@@ -447,6 +726,20 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 catalog_sha256,
             })
         }),
+        PlannerServiceRequest::EditTheorycraftOverlays {
+            base_catalog,
+            overlays,
+            state,
+            route_book,
+            edit,
+            ..
+        } => edit_theorycraft_overlays(
+            *base_catalog,
+            overlays,
+            *state,
+            route_book.map(|book| *book),
+            edit,
+        ),
         PlannerServiceRequest::ProjectGraph {
             catalog,
             route_book,
@@ -1655,12 +1948,15 @@ mod tests {
     };
     use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use dusklight_route_planner::state::{
-        BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment,
-        PhysicalSlotId, PlayerForm, PlayerState, RuntimeFile, RuntimeFileLifecycle,
-        RuntimeFileOrigin, SceneLocation, StateValue,
+        BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
+        EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment, PhysicalSlotId,
+        PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
+        RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, StateComponent,
+        StateValue,
     };
     use dusklight_route_planner::transition::{
-        ActivationContract, CandidateTransition, Goal, MECHANICS_CATALOG_SCHEMA, StateOperation,
+        ActivationContract, CandidateTransition, FeasibilityObligation, Goal,
+        MECHANICS_CATALOG_SCHEMA, ObligationDetail, ObligationKind, Obstruction, StateOperation,
         TransitionKind,
     };
     use std::collections::BTreeMap;
@@ -1903,7 +2199,7 @@ mod tests {
         let (state, catalog) = executable_transition_fixture();
         let response = handle_request(PlannerServiceRequest::EvaluateTransition {
             request_id: "request.transition".into(),
-            state: Box::new(state),
+            state: Box::new(state.clone()),
             catalog: Box::new(catalog),
             equivalence_sets: Vec::new(),
             transition_id: "transition.enter-forest".into(),
@@ -1952,7 +2248,7 @@ mod tests {
         };
         let response = handle_request(PlannerServiceRequest::InspectRouteFrontier {
             request_id: "request.frontier".into(),
-            state: Box::new(state),
+            state: Box::new(state.clone()),
             catalog: Box::new(catalog),
             equivalence_sets: Vec::new(),
             route_book: Some(book),
@@ -2351,6 +2647,153 @@ mod tests {
             panic!("an empty authored route should not preserve a hollow route book");
         };
         assert_eq!(after.snapshot.environment.location.stage, "F_SP103");
+    }
+
+    #[test]
+    fn theorycraft_component_overlay_is_exact_scoped_and_reversible() {
+        let (mut state, base) = executable_transition_fixture();
+        state.snapshot.environment.components.push(StateComponent {
+            id: "component.stage-bank".into(),
+            component_kind: ComponentKind::StageMemory,
+            payload: ComponentPayload::Unknown {
+                expected_bytes: Some(32),
+            },
+            binding: ComponentBinding::Stage {
+                stage: "F_SP103".into(),
+            },
+            lifetime: SemanticLifetime::StageLoad,
+            serialization_owner: SerializationOwner::StageBank {
+                runtime_file_id: "file-0".into(),
+                stage: "F_SP103".into(),
+            },
+            provenance: vec![ComponentProvenance {
+                source_kind: ProvenanceSourceKind::TraceObservation,
+                source_id: "source.stage-bank".into(),
+                source_sha256: Some(Digest([7; 32])),
+                transition_id: None,
+            }],
+        });
+
+        let response = handle_request(PlannerServiceRequest::EditTheorycraftOverlays {
+            request_id: "request.theorycraft-add".into(),
+            base_catalog: Box::new(base.clone()),
+            overlays: Vec::new(),
+            state: Box::new(state.clone()),
+            route_book: None,
+            edit: TheorycraftOverlayEdit::AddComponentTransfer {
+                pack_id: "what-if.stage-bank-rebind".into(),
+                label: "Rebind stage bank to Forest Temple".into(),
+                source_component_id: "component.stage-bank".into(),
+                destination: ComponentTransferDestination::Rebind {
+                    binding: ComponentBinding::Stage {
+                        stage: "D_MN05".into(),
+                    },
+                },
+            },
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("valid theorycraft edit should succeed");
+        };
+        let PlannerServicePayload::TheorycraftOverlaysEdited {
+            base_catalog,
+            overlays,
+            catalog,
+            added_pack: Some(pack),
+            ..
+        } = *payload
+        else {
+            panic!("theorycraft edit should return its reversible composition");
+        };
+        assert_eq!(pack.rules[0].evidence.truth, TruthStatus::Hypothetical);
+        assert_eq!(pack.manifest.scope.selectors.len(), 1);
+        assert_eq!(overlays, vec![(*pack).clone()]);
+        assert_eq!(catalog.mechanics.techniques.len(), 1);
+        assert_eq!(base_catalog.as_ref(), &base);
+
+        let response = handle_request(PlannerServiceRequest::EditTheorycraftOverlays {
+            request_id: "request.theorycraft-remove".into(),
+            base_catalog,
+            overlays,
+            state: Box::new(state.clone()),
+            route_book: None,
+            edit: TheorycraftOverlayEdit::Remove {
+                pack_id: "what-if.stage-bank-rebind".into(),
+            },
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("removing a theorycraft edit should succeed");
+        };
+        let PlannerServicePayload::TheorycraftOverlaysEdited {
+            overlays,
+            catalog,
+            removed_pack_ids,
+            ..
+        } = *payload
+        else {
+            panic!("removal should return the recomposed base catalog");
+        };
+        assert!(overlays.is_empty());
+        assert_eq!(*catalog, base);
+        assert_eq!(removed_pack_ids, ["what-if.stage-bank-rebind"]);
+
+        let mut mechanics = base.mechanics.clone();
+        let obstruction_evidence = RuleEvidence {
+            truth: TruthStatus::Established,
+            records: vec![EvidenceRecord {
+                id: "source.test-obstruction".into(),
+                kind: EvidenceKind::SourceAudited,
+                source_sha256: Some(Digest([8; 32])),
+                note: "Test obstruction.".into(),
+            }],
+        };
+        mechanics.obligations.push(FeasibilityObligation {
+            id: "obligation.test-door".into(),
+            label: "Reach test door".into(),
+            scope: mechanics.transitions[0].scope.clone(),
+            obligation_kind: ObligationKind::Geometry,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Can the test door be approached?".into(),
+            },
+            evidence: obstruction_evidence.clone(),
+        });
+        mechanics.obstructions.push(Obstruction {
+            id: "obstruction.test-door".into(),
+            label: "Test door obstruction".into(),
+            scope: mechanics.transitions[0].scope.clone(),
+            blocked_action_id: mechanics.transitions[0].id.clone(),
+            approach_id: mechanics.transitions[0].approach_id.clone(),
+            active_when: PredicateExpression::True,
+            obligation_ids: vec!["obligation.test-door".into()],
+            evidence: obstruction_evidence,
+        });
+        mechanics
+            .obstructions
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        let obstructed_base =
+            ComposedPlannerCatalog::compose(&base.facts, &mechanics, &[]).unwrap();
+        let response = handle_request(PlannerServiceRequest::EditTheorycraftOverlays {
+            request_id: "request.theorycraft-bypass".into(),
+            base_catalog: Box::new(obstructed_base),
+            overlays: Vec::new(),
+            state: Box::new(state),
+            route_book: None,
+            edit: TheorycraftOverlayEdit::AddObstructionBypass {
+                pack_id: "what-if.test-door-absent".into(),
+                label: "Assume test door absent".into(),
+                obstruction_id: "obstruction.test-door".into(),
+            },
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("catalogued obstruction bypass should succeed");
+        };
+        let PlannerServicePayload::TheorycraftOverlaysEdited { catalog, .. } = *payload else {
+            panic!("bypass should return a recomposed catalog");
+        };
+        assert_eq!(catalog.mechanics.resolvers.len(), 1);
+        assert_eq!(
+            catalog.mechanics.resolvers[0].obstruction_id,
+            "obstruction.test-door"
+        );
     }
 
     #[test]
