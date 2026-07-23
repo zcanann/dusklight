@@ -89,6 +89,13 @@ also incomplete, so the current engine is a
 causal-reasoning laboratory over selected modeled mechanics rather than a
 whole-game route explorer.
 
+Accepted transition evaluation, append, and replacement now attach Rust-owned
+full before/after state inspections and an ownership-aware typed diff to the
+browser detail panel. The UI therefore exposes exact location, runtime/file
+state, components and bindings, provenance, backing-store and gate histories,
+friendly facts, and their causal deltas without recreating planner semantics in
+JavaScript. Dedicated state-node selection remains open.
+
 Current Windows health is green. Planner-owned canonical JSON and source-evidence
 files are forced to LF checkout, and the workspace declares both crates as
 default members. The normal planner test command now runs the engine rather than
@@ -2610,6 +2617,11 @@ visual polish or whole-game authoring features.
 - [ ] Selecting a state or transition shows exact before/after location,
       inventory, flags/components, bindings, provenance, effects, requirements,
       and evidence in the bottom panel.
+      Transition evaluation, append, and replacement now load authoritative full
+      start/after inspections plus a typed state diff into the panel. Rejections
+      retain their closest full state and structured join assessment. Dedicated
+      execution-state nodes and a summarized presentation above the raw typed
+      payload remain open.
 - [ ] Support named visual regions with collapse and double-click/breadcrumb
       navigation. Regions are flat-graph encapsulation only: grouping never
       creates a goal, macro transition, alternative implementation, or new

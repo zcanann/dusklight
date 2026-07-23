@@ -405,6 +405,11 @@ async function replaceSelectedRouteStep() {
       throw new Error(`Unexpected response ${payload.kind}`);
     }
     state.project.route_book = payload.book;
+    const stateChange = await inspectStateChange(
+      state.project.start_state,
+      payload.after,
+      "replace-transition",
+    );
     const projected = await service({
       command: "project_graph",
       request_id: requestId("project-after-replace"),
@@ -420,6 +425,7 @@ async function replaceSelectedRouteStep() {
       route_book_sha256: payload.route_book_sha256,
       assessment: payload.assessment,
       after: payload.after,
+      state_change: stateChange,
     };
     state.replacementStep = null;
     ensurePositions();
@@ -461,12 +467,18 @@ async function insertSelectedTransition() {
       throw new Error(`Unexpected response ${payload.kind}`);
     }
     state.project.route_book = payload.book;
+    const stateChange = await inspectStateChange(
+      state.project.start_state,
+      payload.after,
+      "append-transition",
+    );
     state.transitionEvaluation = {
       kind: payload.kind,
       step_id: payload.step_id,
       route_book_sha256: payload.route_book_sha256,
       assessment: payload.assessment,
       after: payload.after,
+      state_change: stateChange,
     };
     const projected = await service({
       command: "project_graph",
@@ -505,7 +517,14 @@ async function evaluateSelectedTransition() {
     if (payload.kind !== "transition_evaluation") {
       throw new Error(`Unexpected response ${payload.kind}`);
     }
-    state.transitionEvaluation = payload;
+    state.transitionEvaluation = {
+      ...payload,
+      state_change: await inspectStateChange(
+        state.project.start_state,
+        payload.after ?? null,
+        "evaluate-transition",
+      ),
+    };
     renderDetails();
     const accepted = payload.assessment.classification === "executable";
     setStatus(
@@ -516,6 +535,50 @@ async function evaluateSelectedTransition() {
   } catch (error) {
     setStatus(error.message, "bad");
   }
+}
+
+async function inspectStateChange(before, after, id) {
+  const beforePayload = await service({
+    command: "inspect_state",
+    request_id: requestId(`${id}-before`),
+    state: before,
+    catalog: state.project.catalog,
+    equivalence_sets: state.project.equivalence_sets ?? [],
+    evidence_mode: "established_only",
+  });
+  if (beforePayload.kind !== "state_inspection") {
+    throw new Error(`Unexpected response ${beforePayload.kind}`);
+  }
+  if (!after) return { before: beforePayload.inspection, after: null, diff: null };
+  const afterPayload = await service({
+    command: "inspect_state",
+    request_id: requestId(`${id}-after`),
+    state: after,
+    catalog: state.project.catalog,
+    equivalence_sets: state.project.equivalence_sets ?? [],
+    evidence_mode: "established_only",
+  });
+  if (afterPayload.kind !== "state_inspection") {
+    throw new Error(`Unexpected response ${afterPayload.kind}`);
+  }
+  const diffPayload = await service({
+    command: "diff_state",
+    request_id: requestId(`${id}-diff`),
+    before,
+    after,
+    boundary: { kind: "custom", id: `browser.${id}` },
+    catalog: state.project.catalog,
+    equivalence_sets: state.project.equivalence_sets ?? [],
+    evidence_mode: "established_only",
+  });
+  if (diffPayload.kind !== "state_inspection_diff") {
+    throw new Error(`Unexpected response ${diffPayload.kind}`);
+  }
+  return {
+    before: beforePayload.inspection,
+    after: afterPayload.inspection,
+    diff: diffPayload.inspection_diff,
+  };
 }
 
 function transitionJoinClass(node) {
