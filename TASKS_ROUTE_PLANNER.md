@@ -1911,7 +1911,16 @@ evidenced overlays over the generated base rather than silent edits to it.
         The seven top-level branch functions are exact-DOL sealed; callee
         decoding and witnessed traces remain open. See
         `docs/route-planner/gz2e01-void-death-source-audit.md`.
-- [ ] Audit SCLS and actor-driven transition consumers.
+- [x] Audit SCLS and actor-driven transition consumers. The reproducible
+      `audit-scene-change-consumers` source census now seals exact file digests,
+      lines, symbols, and six semantically distinct dispatch families without
+      retaining source text or host paths. Exact GZ2E01 has 138 recognized
+      occurrences across 68 files: 80 direct indexed SCLS, two collision-indexed,
+      two event-indexed, 11 player-latched, three player-latched jump, and 40
+      direct-destination calls that bypass SCLS. The audit explains why an
+      encoded SCLS row is not an activation contract and routes every remaining
+      actor family to separate guard/parameter work. See
+      `docs/route-planner/gz2e01-scene-change-consumer-audit.md`.
 - [ ] Audit message-flow assets, generic node handlers, shared temporary progress
       bits, normal/abnormal cleanup, and item/event handoffs.
 - [ ] Audit interaction/attention volumes, forced cutscene triggers, player-control

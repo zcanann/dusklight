@@ -51,6 +51,7 @@ use dusklight_route_planner::refinement::{
 };
 use dusklight_route_planner::return_place::gz2e01_tower_return_place_mechanics;
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
+use dusklight_route_planner::scene_change_audit::SceneChangeConsumerAudit;
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::solver::{ForwardSolver, SolverOptions};
 use dusklight_route_planner::state::BoundaryKind;
@@ -130,6 +131,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("solve") => solve(&args[1..]),
         Some("solve-portable") => solve_portable(&args[1..]),
         Some("scan-orig") => scan_orig(&args[1..]),
+        Some("audit-scene-change-consumers") => audit_scene_change_consumers(&args[1..]),
+        Some("validate-scene-change-consumer-audit") => {
+            validate_scene_change_consumer_audit(&args[1..])
+        }
         Some("help" | "--help" | "-h") | None => {
             print_usage();
             Ok(())
@@ -139,6 +144,44 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn audit_scene_change_consumers(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let source_root = required_path(args, "--source-root")?;
+    let content: ContentIdentity =
+        serde_json::from_slice(&fs::read(required_path(args, "--content-identity")?)?)?;
+    let output = required_path(args, "--output")?;
+    let audit = SceneChangeConsumerAudit::extract(&source_root, content)?;
+    write_file(&output, &audit.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": audit.schema,
+            "content_sha256": audit.content_sha256,
+            "source_files": audit.source_files.len(),
+            "call_sites": audit.counts.iter().map(|row| row.call_sites).sum::<u64>(),
+            "counts": audit.counts,
+            "output": output,
+        }))?
+    );
+    Ok(())
+}
+
+fn validate_scene_change_consumer_audit(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let input = required_path(args, "--input")?;
+    let audit = SceneChangeConsumerAudit::decode_canonical(&fs::read(&input)?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": audit.schema,
+            "content_sha256": audit.content_sha256,
+            "source_files": audit.source_files.len(),
+            "call_sites": audit.counts.iter().map(|row| row.call_sites).sum::<u64>(),
+            "counts": audit.counts,
+            "input": input,
+        }))?
+    );
+    Ok(())
 }
 
 fn diff_orig(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -1751,7 +1794,7 @@ fn extract_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                 domain: CoverageDomain::Topology,
                 scope: "world".into(),
                 status: CoverageStatus::Partial,
-                detail: "SCLS records and collision/SCLS joins are imported; actor-driven transitions remain unaudited.".into(),
+                detail: "SCLS records and collision/SCLS joins are imported; exact actor/event/player consumers are source-censused, while unaudited activation contracts remain explicit.".into(),
             },
             FactPackCoverage {
                 domain: CoverageDomain::ActorPlacements,
@@ -2040,6 +2083,8 @@ fn print_usage() {
         "{}",
         [
             "Independent TP route planner:",
+            "  route-planner audit-scene-change-consumers --source-root SOURCE --content-identity CONTENT.json --output AUDIT.json",
+            "  route-planner validate-scene-change-consumer-audit --input AUDIT.json",
             "  route-planner cache-fact-pack --cache CACHE --payload PAYLOAD.json --manifest MANIFEST.json --receipt RECEIPT.json",
             "  route-planner compile-cutscene --program PROGRAM.json --output TRANSITIONS.json",
             "  route-planner compile-message-entries --bundle BUNDLE.json --message-flow-set COMPILED.json --contracts ENTRIES.json --output COMPILED_ENTRIES.json --manifest MANIFEST.json",

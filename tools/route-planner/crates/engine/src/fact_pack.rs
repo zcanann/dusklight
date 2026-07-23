@@ -283,7 +283,7 @@ mod tests {
                     domain: CoverageDomain::Topology,
                     scope: "world".into(),
                     status: CoverageStatus::Partial,
-                    detail: "SCLS records are extracted; actor exits remain unaudited.".into(),
+                    detail: "SCLS records are extracted and exact consumer call sites are source-censused; actor activation contracts remain selectively audited.".into(),
                 },
             ],
             "route-facts/v1",
