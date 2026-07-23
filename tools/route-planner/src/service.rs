@@ -2,7 +2,8 @@
 
 use crate::inspection::{StateInspection, StateInspectionDiff, inspect_state, inspect_state_diff};
 use crate::{
-    PortableSolveReport, RuntimeSolveOptions, SolveReport, solve_composed_catalog_goal,
+    PortableSolveReport, RuntimeSolveOptions, SolveReport, SuspiciousStateQueryReport,
+    query_composed_suspicious_state, solve_composed_catalog_goal,
     solve_composed_portable_route_book_goal, solve_composed_route_book_goal,
 };
 use dusklight_route_planner::artifact::Digest;
@@ -29,7 +30,7 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v40";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v41";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -178,6 +179,14 @@ pub enum PlannerServiceRequest {
         goal_id: String,
         options: RuntimeSolveOptions,
     },
+    QuerySuspiciousState {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        predicate: PredicateExpression,
+        options: RuntimeSolveOptions,
+    },
 }
 
 impl PlannerServiceRequest {
@@ -199,7 +208,8 @@ impl PlannerServiceRequest {
             | Self::ReplaceAuthoredStep { request_id, .. }
             | Self::InspectAuthoredRoute { request_id, .. }
             | Self::Solve { request_id, .. }
-            | Self::SolvePortable { request_id, .. } => request_id,
+            | Self::SolvePortable { request_id, .. }
+            | Self::QuerySuspiciousState { request_id, .. } => request_id,
         }
     }
 }
@@ -319,6 +329,9 @@ pub enum PlannerServicePayload {
     },
     PortableSolveReport {
         report: Box<PortableSolveReport>,
+    },
+    SuspiciousStateQueryReport {
+        report: Box<SuspiciousStateQueryReport>,
     },
 }
 
@@ -717,6 +730,19 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
             .map(|report| PlannerServicePayload::PortableSolveReport {
                 report: Box::new(report),
             }),
+        PlannerServiceRequest::QuerySuspiciousState {
+            state,
+            catalog,
+            equivalence_sets,
+            predicate,
+            options,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            query_composed_suspicious_state(state, &catalog, &equivalence_sets, predicate, options)
+                .map(|report| PlannerServicePayload::SuspiciousStateQueryReport {
+                    report: Box::new(report),
+                })
+        }),
     };
     match result {
         Ok(payload) => success_response(Some(request_id), payload),

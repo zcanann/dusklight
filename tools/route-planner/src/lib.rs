@@ -14,7 +14,7 @@ use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::evaluation::{EvidencePolicy, FeasibilityMode};
 use dusklight_route_planner::execution::PlannerExecutionState;
 use dusklight_route_planner::identity::{ContextSelector, EquivalenceSet, ExactContext};
-use dusklight_route_planner::logic::{FactCatalog, TruthStatus};
+use dusklight_route_planner::logic::{FactCatalog, PredicateExpression, TruthStatus};
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementStackEntry};
 use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::solver::{
@@ -27,6 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v12";
 pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v11";
+pub const SUSPICIOUS_STATE_QUERY_SCHEMA: &str = "dusklight.route-planner.suspicious-state-query/v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -216,6 +217,84 @@ pub struct PortableSolveReport {
     pub route_book_sha256: Digest,
     pub status: PortableSearchStatus,
     pub contexts: Vec<PortableContextSolveReport>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SuspiciousStateTriage {
+    ModelBugCandidate,
+    ResearchLead,
+    Inconclusive,
+    UnsupportedUnderCatalog,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SuspiciousStateQueryReport {
+    pub schema: String,
+    pub predicate: PredicateExpression,
+    pub execution_state_sha256: Digest,
+    pub refinement_stack_sha256: Digest,
+    pub equivalence_set_count: usize,
+    pub triage: SuspiciousStateTriage,
+    pub modeled_established: SearchResult,
+    pub permissive_research: SearchResult,
+}
+
+/// Triage one bounded suspicious-state predicate without granting either pass
+/// promotion authority. A modeled established route is a model-bug candidate;
+/// a route found only after upper-bound/research relaxation is a research lead.
+pub fn query_composed_suspicious_state(
+    state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    predicate: PredicateExpression,
+    options: RuntimeSolveOptions,
+) -> Result<SuspiciousStateQueryReport, PlannerContractError> {
+    state.validate()?;
+    catalog.validate()?;
+    let solver_options = |feasibility_mode, evidence_policy| SolverOptions {
+        max_depth: options.max_depth,
+        max_states: options.max_states,
+        max_resolution_combinations: options.max_resolution_combinations,
+        feasibility_mode,
+        evidence_policy,
+    };
+    let modeled_established = ForwardSolver::new(
+        &catalog.facts,
+        &catalog.mechanics,
+        equivalence_sets,
+        solver_options(FeasibilityMode::Modeled, EvidencePolicy::ESTABLISHED_ONLY),
+    )?
+    .solve_alternatives(state.clone(), &predicate, options.max_plans)?;
+    let permissive_research = ForwardSolver::new(
+        &catalog.facts,
+        &catalog.mechanics,
+        equivalence_sets,
+        solver_options(FeasibilityMode::UpperBound, EvidencePolicy::RESEARCH),
+    )?
+    .solve_alternatives(state.clone(), &predicate, options.max_plans)?;
+    let triage = if modeled_established.status == SearchStatus::Reached {
+        SuspiciousStateTriage::ModelBugCandidate
+    } else if permissive_research.status == SearchStatus::Reached {
+        SuspiciousStateTriage::ResearchLead
+    } else if modeled_established.status == SearchStatus::Unknown
+        || permissive_research.status == SearchStatus::Unknown
+    {
+        SuspiciousStateTriage::Inconclusive
+    } else {
+        SuspiciousStateTriage::UnsupportedUnderCatalog
+    };
+    Ok(SuspiciousStateQueryReport {
+        schema: SUSPICIOUS_STATE_QUERY_SCHEMA.into(),
+        predicate,
+        execution_state_sha256: state.digest()?,
+        refinement_stack_sha256: catalog.refinement_stack.digest()?,
+        equivalence_set_count: equivalence_sets.len(),
+        triage,
+        modeled_established,
+        permissive_research,
+    })
 }
 
 pub fn solve_catalog_goal(
@@ -1084,6 +1163,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(research.result.status, SearchStatus::Reached);
+        let suspicious = query_composed_suspicious_state(
+            start.clone(),
+            &composed,
+            &[],
+            mechanics.goals[0].predicate.clone(),
+            RuntimeSolveOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(suspicious.schema, SUSPICIOUS_STATE_QUERY_SCHEMA);
+        assert_eq!(suspicious.triage, SuspiciousStateTriage::ResearchLead);
+        assert_ne!(suspicious.modeled_established.status, SearchStatus::Reached);
+        assert_eq!(suspicious.permissive_research.status, SearchStatus::Reached);
+        let already_reached = query_composed_suspicious_state(
+            start.clone(),
+            &composed,
+            &[],
+            PredicateExpression::Compare {
+                left: ValueReference::LocationStage,
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal {
+                    value: StateValue::Text("ForestTemple".into()),
+                },
+            },
+            RuntimeSolveOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            already_reached.triage,
+            SuspiciousStateTriage::ModelBugCandidate
+        );
         assert_eq!(
             research.refinement_pack_ids,
             vec!["what-if.local-bank-rebind"]

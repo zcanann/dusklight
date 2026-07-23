@@ -2534,7 +2534,7 @@ Deliverable: researchers can extend the model without editing core code.
         referenced after a different state; grouping must grant no authority.
         Snapshot views and dynamic references resolve the original transition
         node IDs. Evaluation still submits that transition plus the currently
-        selected exact execution state to service v40; no region field enters
+        selected exact execution state to service v41; no region field enters
         assessment, application, frontier replay, or solve requests.
   - [x] Support cycles and leave-and-return paths in the underlying graph without
         interpreting nesting as recursive goal decomposition. Presentation
@@ -2563,8 +2563,14 @@ Deliverable: researchers can extend the model without editing core code.
         reconstruction producer or a hit search limit suppresses the claim.
         Extending the cut algebra through those unsupported producer families
         and nested goal boolean structure remains open.
-- [ ] Add bounded suspicious-state queries and retain complete proof objects for
-      model-bug versus research-lead triage.
+- [x] Add bounded suspicious-state queries and retain complete proof objects for
+      model-bug versus research-lead triage. Suspicious-state query v1 evaluates
+      the identical typed predicate and bounds under modeled/established and
+      upper-bound/research policies. It retains both full `SearchResult` proofs
+      and classifies established reachability as `model_bug_candidate`,
+      permissive-only reachability as `research_lead`, unknown evidence/bounds as
+      `inconclusive`, or two exhausted searches as `unsupported_under_catalog`,
+      without granting the triage result promotion authority.
 
 Deliverable: a headless query API and deterministic fixture suite.
 

@@ -265,6 +265,13 @@ The planner CLI currently owns forty operations:
 - `solve-portable` expands a route book's exact/equivalent context scope,
   requires one explicit start state per exact context, solves each context
   independently, and reports whether the route reaches its goal everywhere.
+- `query_composed_suspicious_state` and the service's
+  `query_suspicious_state` command run one bounded predicate under both
+  modeled/established and upper-bound/research policies. Both complete proof
+  objects are retained; established reachability is classified as a model-bug
+  candidate, permissive-only reachability as a research lead, unknown evidence
+  or bounds as inconclusive, and two exhausted searches as unsupported under
+  the current catalog. The classification grants no promotion authority.
 - `serve-stdio` exposes typed validate/compose/project/solve requests as JSON
   lines for a future planner editor or other clients, including portable solves.
 - `serve-web` binds only to loopback, serves the independent planner canvas, and
