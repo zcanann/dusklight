@@ -155,6 +155,32 @@ impl BackwardRelevance {
     }
 }
 
+/// Resolve only the state inputs named by one predicate leaf (including alias
+/// and derived-fact expansion), without pulling in producer guards or effects.
+/// The solver uses this narrower view when combining failed producer cuts
+/// through the goal's boolean structure.
+pub(crate) fn predicate_leaf_dependencies(
+    facts: &FactCatalog,
+    predicate: &PredicateExpression,
+) -> Result<Vec<StateDependency>, PlannerContractError> {
+    facts.validate()?;
+    predicate.validate()?;
+    let mut analysis = RelevanceBuilder::default();
+    analysis.add_predicate(predicate);
+    loop {
+        let before = analysis.cardinality();
+        analysis.expand_facts(facts);
+        if analysis.cardinality() == before {
+            break;
+        }
+    }
+    Ok(analysis
+        .dependencies
+        .into_iter()
+        .filter(|dependency| !matches!(dependency, StateDependency::Fact { .. }))
+        .collect())
+}
+
 #[derive(Default)]
 struct RelevanceBuilder {
     dependencies: BTreeSet<StateDependency>,

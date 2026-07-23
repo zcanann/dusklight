@@ -18,15 +18,15 @@ use dusklight_route_planner::logic::{FactCatalog, PredicateExpression, TruthStat
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementStackEntry};
 use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::solver::{
-    FailedProducerCut, ForwardSolver, SearchActionKind, SearchPlan, SearchResult, SearchStatus,
-    SolverOptions,
+    FailedProducerCut, FailedProducerCutSet, ForwardSolver, SearchActionKind, SearchPlan,
+    SearchResult, SearchStatus, SolverOptions,
 };
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v13";
-pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v12";
+pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v14";
+pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v13";
 pub const SUSPICIOUS_STATE_QUERY_SCHEMA: &str = "dusklight.route-planner.suspicious-state-query/v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -113,6 +113,9 @@ pub struct SolveSummary {
     pub continuation_merge_count: usize,
     pub failed_producer_cut_count: usize,
     pub failed_producer_cuts: Vec<FailedProducerCut>,
+    pub failed_producer_cut_set_count: usize,
+    pub failed_producer_cut_sets_complete: bool,
+    pub failed_producer_cut_sets: Vec<FailedProducerCutSet>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -173,6 +176,9 @@ impl SolveSummary {
             continuation_merge_count: result.continuation_merge_proofs.len(),
             failed_producer_cut_count: result.failed_producer_cuts.len(),
             failed_producer_cuts: result.failed_producer_cuts.clone(),
+            failed_producer_cut_set_count: result.failed_producer_cut_sets.len(),
+            failed_producer_cut_sets_complete: result.failed_producer_cut_sets_complete,
+            failed_producer_cut_sets: result.failed_producer_cut_sets.clone(),
         }
     }
 }

@@ -2549,11 +2549,11 @@ Deliverable: researchers can extend the model without editing core code.
   - [x] Expose canonical fact/mechanics/execution-state artifacts through a
         standalone planner runtime boundary, isolated from huntctl's TAS CLI and
         workbench implementation.
-- [ ] Report minimal missing obligations/assumptions where practical.
+- [x] Report minimal missing obligations/assumptions where practical.
   - [x] Retain a deterministic closest blocker witness per transition with guard
         truth, active/unknown obstructions, selected setup, discharged and
         outstanding obligations, unknown requirements, and source-state digest.
-  - [ ] Compute minimal failed-producer cuts across multiple upstream actions.
+  - [x] Compute minimal failed-producer cuts across multiple upstream actions.
         Exhaustive bounded solves now emit validated `FailedProducerCut` records
         for concrete state dependencies when every catalog producer is accounted
         for and none executed. Cuts now keep transitions, writers, inactive
@@ -2564,9 +2564,15 @@ Deliverable: researchers can extend the model without editing core code.
         rule witness and appear as explicit missing instantiation-boundary
         assumptions. Successful transition setup records resolver/technique
         execution so an actually used producer suppresses a false cut; search
-        limits still suppress incomplete claims. Two-way OR producers and every
-        catalog producer family are covered. Conservatively minimizing cut sets
-        through nested goal boolean structure remains open.
+        limits still suppress incomplete claims. Dependencies with no catalog
+        producer retain an explicit no-producer assumption rather than silently
+        disappearing. Solve-report v14 additionally emits canonical minimal cut
+        sets through nested AND/OR/NOT goal structure. The combination follows
+        truth observed across explored states, not syntax alone: if separate
+        leaves were each attained but never jointly compatible, the result is
+        explicitly incomplete instead of inventing a causal cut. Unknown leaf
+        truth, search limits, and the bounded 256-set expansion likewise fail
+        closed through `failed_producer_cut_sets_complete`.
 - [x] Add bounded suspicious-state queries and retain complete proof objects for
       model-bug versus research-lead triage. Suspicious-state query v1 evaluates
       the identical typed predicate and bounds under modeled/established and
