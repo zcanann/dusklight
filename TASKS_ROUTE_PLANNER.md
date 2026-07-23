@@ -1949,8 +1949,15 @@ evidenced overlays over the generated base rather than silent edits to it.
         transient-pair, destructive, external-switch, and `STAFF_SHUTTER`
         alternate paths without generalizing them into one door rule. See
         `docs/route-planner/gz2e01-keyed-door-gate-family-audit.md`.
-- [ ] Inventory static placement, persistent control, and transient instance state
-      for representative actor families.
+- [x] Inventory static placement, persistent control, and transient instance state
+      for representative actor families. The exact-GZ2E01 representative
+      inventory separates immutable placement, bound save/runtime control,
+      live actor/process state, and reload reconstruction for `DOOR20`, L1/L5
+      boss doors, mini-boss doors, key shutters, Koki/rider/caravan gates, and
+      the Lakebed bridge demo. It records the pending-key-delta and collision
+      timing boundaries and leaves family-specific geometry/event unknowns
+      explicit. See
+      `docs/route-planner/gz2e01-representative-actor-state-inventory.md`.
 - [ ] Audit SavMem placements, guards, and all return/restart-place writers.
 - [ ] Record known BiT, BiTE, Auru duplication, wrong-flags respawn, Fanadi lock,
       Text Displacement, and Ordon/twilight route evidence without prematurely
