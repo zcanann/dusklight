@@ -2982,8 +2982,15 @@ visual polish or whole-game authoring features.
       mechanics record, summarizes its scope/evidence/related action/effects,
       and retains the full authoritative contract in the detail payload.
 - [ ] Add theorycraft component-transfer and bypass editor.
-- [ ] Show active packs, overlays, exact content identity, mutable language/config,
-      provenance, coverage, confidence, and route costs.
+- [x] Show active packs, overlays, exact content identity, mutable language/config,
+      provenance, coverage, confidence, and route costs. The always-available
+      model-context panel separates the exact start-state content digest from
+      its language/settings, exposes the editable evidence policy, names every
+      enabled/route-local/ephemeral pack with precedence and content digest,
+      retains both base-catalog digests and obstruction-binding count, and
+      summarizes populated record families, unresolved obligations, evidence
+      truth counts, and every declared technique cost axis. Read-only projects
+      keep their policy selector locked; saved copies persist policy changes.
 - [ ] Add semantic build/language comparison and prevent silent closest-build
       fallback.
 - [x] Keep route annotations in route books as non-semantic targets/text,

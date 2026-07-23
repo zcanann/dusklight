@@ -138,6 +138,22 @@ try {
     "keyed-door demonstration",
     `document.getElementById("project-name").textContent.includes("Forest Temple small-key door")`,
   );
+  await browserUntil(
+    "exact model context",
+    `(() => {
+      const panel = document.getElementById("model-context-body");
+      const text = panel.textContent;
+      return text.includes("Exact runtime")
+        && text.includes("Language")
+        && text.includes("en")
+        && text.includes("Catalog provenance")
+        && text.includes("Active packs & overlays")
+        && text.includes("Coverage")
+        && text.includes("Confidence")
+        && text.includes("Route-cost model")
+        && panel.querySelector('select[aria-label="Evidence policy"]').disabled;
+    })()`,
+  );
   await evaluate(`(() => {
     const answers = ["browser-keyed-door", "Browser keyed-door acceptance"];
     window.prompt = () => answers.shift() ?? null;
@@ -346,6 +362,17 @@ try {
     "downstream state replay after removal",
     `document.getElementById("status").textContent.includes("removed; downstream state replayed")`,
   );
+  await evaluate(`(() => {
+    const policy = document.querySelector('select[aria-label="Evidence policy"]');
+    if (!policy || policy.disabled) throw new Error("editable evidence policy is absent");
+    policy.value = "research";
+    policy.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await browserUntil(
+    "evidence-policy edit",
+    `document.getElementById("status").textContent.includes("Evidence policy changed to research")`,
+  );
   await evaluate(`document.getElementById("save-project").click()`);
   await browserUntil("saved browser edit", `document.getElementById("status").textContent === "Project saved"`);
   const beforeReload = await evaluate(`fetch("/api/projects/browser-keyed-door")
@@ -353,6 +380,7 @@ try {
     .then((record) => ({
       revision: record.revision_sha256,
       actions: record.project.route_book.steps.map((step) => step.action.transition_id),
+      evidenceMode: record.project.evidence_mode,
     }))`);
   await evaluate(`(() => {
     const list = document.getElementById("project-list");
@@ -370,9 +398,12 @@ try {
     .then((record) => ({
       revision: record.revision_sha256,
       actions: record.project.route_book.steps.map((step) => step.action.transition_id),
+      evidenceMode: record.project.evidence_mode,
     }))`);
   if (beforeReload.revision !== afterReload.revision
-    || JSON.stringify(beforeReload.actions) !== JSON.stringify(afterReload.actions)) {
+    || JSON.stringify(beforeReload.actions) !== JSON.stringify(afterReload.actions)
+    || beforeReload.evidenceMode !== "research"
+    || afterReload.evidenceMode !== "research") {
     throw new Error("saved and reloaded browser project identities differ");
   }
   socket.close();

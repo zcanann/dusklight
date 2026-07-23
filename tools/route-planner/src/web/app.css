@@ -34,6 +34,19 @@ button:disabled { opacity: .42; cursor: default; }
 .palette label, .eyebrow { text-transform: uppercase; letter-spacing: .13em; color: var(--muted); font-size: 10px; font-weight: 700; }
 .palette input { width: 100%; padding: 8px 9px; color: inherit; background: #11151a; border: 1px solid #38414b; border-radius: 5px; outline: none; }
 .palette input:focus { border-color: var(--accent); }
+.model-context { flex: 0 0 auto; border: 1px solid #303943; border-radius: 6px; background: #11151a; }
+.model-context summary { padding: 8px 9px; cursor: pointer; color: #cbd4dc; font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+.model-context-body { max-height: min(43vh, 390px); overflow: auto; padding: 0 9px 9px; display: flex; flex-direction: column; gap: 8px; }
+.context-section { min-width: 0; padding-top: 7px; border-top: 1px solid #29313a; }
+.context-section h3 { margin: 0 0 5px; color: var(--muted); font-size: 9px; letter-spacing: .12em; text-transform: uppercase; }
+.context-section dl { margin: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 7px; font-size: 10px; }
+.context-section dt { color: var(--muted); }
+.context-section dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-section select { width: 100%; color: inherit; background: #20262e; border: 1px solid #3a4550; border-radius: 4px; padding: 5px 7px; font-size: 10px; }
+.context-pack { padding: 5px 6px; border-left: 2px solid #56768d; background: #192027; font-size: 10px; }
+.context-pack strong, .context-pack small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-pack small { margin-top: 2px; color: var(--muted); }
+.context-empty { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.4; }
 .palette-list { overflow: auto; display: flex; flex-direction: column; gap: 5px; }
 .palette-item { text-align: left; padding: 8px; border: 1px solid transparent; background: transparent; }
 .palette-item:hover { background: #21272e; border-color: #38414b; }

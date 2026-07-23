@@ -12,6 +12,7 @@ const elements = Object.fromEntries([
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
   "contract-inspector",
+  "model-context", "model-context-body",
   "region-nav", "region-breadcrumbs", "region-children",
   "evaluate-transition", "insert-transition", "suggest-transition-chain", "replace-step", "remove-step",
   "group-selection", "copy-region", "fork-region", "reference-region", "version-region",
@@ -263,11 +264,200 @@ function ensurePositions() {
 }
 
 function render() {
+  renderModelContext();
   renderRegionNavigation();
   renderEdges();
   renderNodes();
   renderPalette();
   renderDetails();
+}
+
+function renderModelContext() {
+  const container = elements["model-context-body"];
+  container.replaceChildren();
+  if (!state.project) {
+    const empty = document.createElement("p");
+    empty.className = "context-empty";
+    empty.textContent = "Open a project to inspect its exact model context.";
+    container.append(empty);
+    return;
+  }
+
+  const catalog = state.project.catalog;
+  const runtime = state.project.start_state?.snapshot?.environment?.runtime_configuration ?? null;
+  const identityRows = runtime ? [
+    ["Content", shortDigest(runtime.content_sha256)],
+    ["Language", runtime.language],
+    ["Settings", Object.keys(runtime.settings ?? {}).length
+      ? Object.entries(runtime.settings).map(([key, value]) => `${key}=${String(value)}`).join(", ")
+      : "none"],
+  ] : [["Runtime", "no exact start state"]];
+  container.append(contextMetrics("Exact runtime", identityRows));
+
+  const policy = document.createElement("section");
+  policy.className = "context-section";
+  const policyTitle = document.createElement("h3");
+  policyTitle.textContent = "Evidence policy";
+  const policySelect = document.createElement("select");
+  policySelect.setAttribute("aria-label", "Evidence policy");
+  policySelect.append(
+    new Option("Established only", "established_only"),
+    new Option("Research", "research"),
+  );
+  policySelect.value = projectEvidenceMode();
+  policySelect.disabled = state.readOnly;
+  policySelect.addEventListener("change", () => changeEvidenceMode(policySelect.value));
+  policy.append(policyTitle, policySelect);
+  container.append(policy);
+
+  container.append(contextMetrics("Catalog provenance", [
+    ["Facts", shortDigest(catalog.base_fact_catalog_sha256)],
+    ["Mechanics", shortDigest(catalog.base_mechanics_catalog_sha256)],
+    ["Bindings", catalog.obstruction_bindings?.length ?? 0],
+  ]));
+
+  const stack = catalog.refinement_stack?.entries ?? [];
+  const packs = document.createElement("section");
+  packs.className = "context-section";
+  const packsTitle = document.createElement("h3");
+  packsTitle.textContent = `Active packs & overlays · ${stack.length}`;
+  packs.append(packsTitle);
+  if (!stack.length) {
+    const empty = document.createElement("p");
+    empty.className = "context-empty";
+    empty.textContent = "Base catalogs only; no refinement layer is active.";
+    packs.append(empty);
+  } else {
+    for (const entry of stack) {
+      const pack = document.createElement("div");
+      pack.className = "context-pack";
+      const name = document.createElement("strong");
+      name.textContent = entry.pack_id;
+      const detail = document.createElement("small");
+      detail.textContent = `${taggedValue(entry.layer)} · priority ${entry.precedence} · ${shortDigest(entry.pack_sha256)}`;
+      detail.title = entry.pack_sha256;
+      pack.append(name, detail);
+      packs.append(pack);
+    }
+  }
+  container.append(packs);
+
+  const coverage = catalogCoverage(catalog);
+  container.append(contextMetrics("Coverage", [
+    ["Facts", `${coverage.facts} records`],
+    ["Mechanics", `${coverage.mechanics} records`],
+    ["Families", `${coverage.populatedFamilies}/${coverage.familyCount}`],
+    ["Unresolved", coverage.unresolved],
+  ]));
+  const confidence = catalogConfidence(catalog);
+  container.append(contextMetrics("Confidence", [
+    ["Established", confidence.established ?? 0],
+    ["Contested", confidence.contested ?? 0],
+    ["Hypothetical", confidence.hypothetical ?? 0],
+    ["Unknown", confidence.unknown ?? 0],
+  ]));
+  const costs = catalogCostAxes(catalog);
+  container.append(contextMetrics("Route-cost model", costs.length
+    ? costs.map(([axis, range]) => [axis, range])
+    : [["Axes", "none declared"]]));
+}
+
+function contextMetrics(titleText, rows) {
+  const section = document.createElement("section");
+  section.className = "context-section";
+  const title = document.createElement("h3");
+  title.textContent = titleText;
+  const metrics = document.createElement("dl");
+  for (const [name, value] of rows) {
+    const term = document.createElement("dt");
+    term.textContent = name;
+    const detail = document.createElement("dd");
+    detail.textContent = String(value);
+    detail.title = String(value);
+    metrics.append(term, detail);
+  }
+  section.append(title, metrics);
+  return section;
+}
+
+function shortDigest(value) {
+  return typeof value === "string" && value.length > 16
+    ? `${value.slice(0, 8)}…${value.slice(-8)}`
+    : value ?? "none";
+}
+
+function catalogCoverage(catalog) {
+  const families = [catalog.facts?.aliases, catalog.facts?.derived_facts];
+  for (const [name, records] of Object.entries(catalog.mechanics ?? {})) {
+    if (name !== "schema" && Array.isArray(records)) families.push(records);
+  }
+  const facts = (catalog.facts?.aliases?.length ?? 0) + (catalog.facts?.derived_facts?.length ?? 0);
+  const mechanics = families.slice(2).reduce((sum, records) => sum + records.length, 0);
+  const unresolved = (catalog.mechanics?.obligations ?? []).filter((record) =>
+    record.detail?.kind === "unresolved").length;
+  return {
+    facts,
+    mechanics,
+    familyCount: families.length,
+    populatedFamilies: families.filter((records) => records.length).length,
+    unresolved,
+  };
+}
+
+function catalogConfidence(catalog) {
+  const counts = {};
+  const visit = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    if (value.evidence && typeof value.evidence.truth === "string") {
+      counts[value.evidence.truth] = (counts[value.evidence.truth] ?? 0) + 1;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (key !== "evidence") visit(child);
+    }
+  };
+  visit(catalog.facts);
+  visit(catalog.mechanics);
+  return counts;
+}
+
+function catalogCostAxes(catalog) {
+  const values = new Map();
+  for (const technique of catalog.mechanics?.techniques ?? []) {
+    for (const [axis, value] of Object.entries(technique.cost?.axes ?? {})) {
+      const range = values.get(axis) ?? { minimum: value, maximum: value, count: 0 };
+      range.minimum = Math.min(range.minimum, value);
+      range.maximum = Math.max(range.maximum, value);
+      range.count += 1;
+      values.set(axis, range);
+    }
+  }
+  return [...values.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([axis, range]) => [
+    axis,
+    `${range.minimum === range.maximum ? range.minimum : `${range.minimum}…${range.maximum}`} · ${range.count} technique(s)`,
+  ]);
+}
+
+async function changeEvidenceMode(mode) {
+  if (!state.project || state.readOnly || mode === state.project.evidence_mode) return;
+  const previous = state.project.evidence_mode;
+  state.project.evidence_mode = mode;
+  try {
+    setStatus(`Applying ${taggedValue(mode)} evidence policy...`);
+    await refreshAuthoredRouteInspections();
+    state.selected = null;
+    state.transitionEvaluation = null;
+    markDirty();
+    render();
+    setStatus(`Evidence policy changed to ${taggedValue(mode)}; save to persist`, "good");
+  } catch (error) {
+    state.project.evidence_mode = previous;
+    render();
+    setStatus(error.message, "bad");
+  }
 }
 
 function renderEdges() {
