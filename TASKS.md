@@ -560,7 +560,7 @@ it and emit any legal PAD action for the entire episode.
       their authoritative outcome rather than being reclassified. Replay
       checkpoints authenticate every role back to its native shard and reject
       missing, extra, failed, or request-detached terminal experience.
-- [ ] Train a goal-conditioned estimate of terminal reachability and time-to-go
+- [x] Train a goal-conditioned estimate of terminal reachability and time-to-go
       from complete trajectories using tick cost, real terminal outcomes, n-step
       returns, replay, target isolation, and uncertainty.
       An immutable goal-trajectory dataset now authenticates replay entries back
@@ -577,8 +577,18 @@ it and emit any legal PAD action for the entire episode.
       heads against training-mean baselines plus an uncertainty ceiling; test is
       reported only after that decision. The sealed model preserves dataset,
       replay, goal, observation, feature, and action lineage and has no promotion
-      authority. A real campaign corpus still needs to satisfy the split gate and
-      produce an admitted model before this item is complete.
+      authority. The real q131 cumulative campaign corpus now admits model
+      `c115c3fbda4221e1c7aa7c5d176f6373e90714ff4f02f13ee56443aa765da327`
+      as a `goal_conditioned_candidate`. Its 98-episode validation split improves
+      reachability Brier by 0.631332, successful time MAE by 0.943045,
+      discounted-return RMSE by 0.562950, and discounted tick-cost MAE by
+      0.816112 over training-mean baselines, with mean reachability disagreement
+      0.029794. The separately reported 110-episode test split improves the same
+      four heads by 0.651620, 0.955051, 0.594426, and 0.827435. The model remains
+      diagnostic-only and binds dataset
+      `b8aeea2eaba9a290b36ad87e89f8f0d7ec56d842f3efb919fde2e4ef0e827faf`
+      and replay corpus
+      `3de1412e3ab4d1dd75a55c7dbe83b0c61c7a684e4bdc9c7f7aca5d190099efd0`.
 - [x] Export the trained policy into the native frozen format without a manual
       translation step. `huntctl learn fit-frozen-goal-policy` now authenticates
       successful trajectory actions back to native pre-input observations,
