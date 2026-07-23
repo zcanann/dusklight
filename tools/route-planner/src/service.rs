@@ -11,20 +11,23 @@ use dusklight_route_planner::evaluation::{
     FeasibilityMode, FeasibilitySelection, PredicateEvaluator, TransitionAssessment,
     TransitionClassification,
 };
-use dusklight_route_planner::execution::PlannerExecutionStateDocument;
+use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
 use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::EquivalenceSet;
-use dusklight_route_planner::logic::FactCatalog;
+use dusklight_route_planner::logic::{FactCatalog, PredicateExpression};
 use dusklight_route_planner::refinement::{
     ComposedPlannerCatalog, RefinementLayers, RefinementPack,
 };
-use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
+use dusklight_route_planner::route_book::{
+    CollapsePolicy, PlanMethod, PlanRegion, ROUTE_BOOK_EDIT_BATCH_SCHEMA, ROUTE_BOOK_SCHEMA,
+    ReferenceStep, RouteActionRef, RouteBook, RouteBookEdit, RouteBookEditBatch, RouteBookManifest,
+};
 use dusklight_route_planner::state::BoundaryKind;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v29";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v30";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -97,6 +100,17 @@ pub enum PlannerServiceRequest {
         transition_id: String,
         evidence_mode: crate::RuntimeEvidenceMode,
     },
+    AppendTransition {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        route_book: Option<Box<RouteBook>>,
+        route_book_id: String,
+        route_book_label: String,
+        transition_id: String,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
     Solve {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
@@ -130,6 +144,7 @@ impl PlannerServiceRequest {
             | Self::InspectState { request_id, .. }
             | Self::DiffState { request_id, .. }
             | Self::EvaluateTransition { request_id, .. }
+            | Self::AppendTransition { request_id, .. }
             | Self::Solve { request_id, .. }
             | Self::SolvePortable { request_id, .. } => request_id,
         }
@@ -188,6 +203,14 @@ pub enum PlannerServicePayload {
     TransitionEvaluation {
         assessment: Box<TransitionAssessment>,
         after: Option<Box<PlannerExecutionStateDocument>>,
+    },
+    AppendedTransition {
+        book: Box<RouteBook>,
+        previous_route_book_sha256: Option<Digest>,
+        route_book_sha256: Digest,
+        step_id: String,
+        assessment: Box<TransitionAssessment>,
+        after: Box<PlannerExecutionStateDocument>,
     },
     SolveReport {
         report: Box<SolveReport>,
@@ -347,56 +370,15 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
             evidence_mode,
             ..
         } => (*state).into_state().and_then(|mut state| {
-            let transition = catalog
-                .mechanics
-                .transitions
-                .iter()
-                .find(|transition| transition.id == transition_id)
-                .ok_or_else(|| {
-                    dusklight_route_planner::PlannerContractError::new(
-                        "transition_id",
-                        "does not name a transition in the composed catalog",
-                    )
-                })?;
-            let policy = match evidence_mode {
-                crate::RuntimeEvidenceMode::EstablishedOnly => EvidencePolicy::ESTABLISHED_ONLY,
-                crate::RuntimeEvidenceMode::Research => EvidencePolicy::RESEARCH,
-            };
-            let empty = BTreeSet::new();
-            let assessment = {
-                let evaluator = PredicateEvaluator::new(
-                    &state.snapshot,
-                    &catalog.facts,
-                    &equivalence_sets,
-                    &state.gate_states,
-                    policy,
-                )?;
-                let resolution = evaluator.resolve_feasibility(
-                    transition,
-                    &catalog.mechanics.obligations,
-                    &catalog.mechanics.obstructions,
-                    &catalog.mechanics.resolvers,
-                    &catalog.mechanics.techniques,
-                    FeasibilitySelection {
-                        resolver_ids: &empty,
-                        technique_ids: &empty,
-                        already_discharged: &empty,
-                        microtraces: &catalog.mechanics.microtraces,
-                    },
-                );
-                evaluator.assess_transition(
-                    transition,
-                    &resolution.discharged_obligation_ids,
-                    &resolution.unknown_obligation_ids,
-                    FeasibilityMode::Modeled,
-                )
-            };
+            let assessment = assess_and_apply_transition(
+                &mut state,
+                &catalog,
+                &equivalence_sets,
+                &transition_id,
+                evidence_mode,
+                "web.transition",
+            )?;
             let after = if assessment.classification == TransitionClassification::Executable {
-                state.apply_operations(
-                    "web.transition",
-                    "web.after-transition",
-                    &transition.activation.effects,
-                )?;
                 Some(Box::new(state.to_document()?))
             } else {
                 None
@@ -405,6 +387,28 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 assessment: Box::new(assessment),
                 after,
             })
+        }),
+        PlannerServiceRequest::AppendTransition {
+            state,
+            catalog,
+            equivalence_sets,
+            route_book,
+            route_book_id,
+            route_book_label,
+            transition_id,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            append_transition_to_route_book(
+                state,
+                &catalog,
+                &equivalence_sets,
+                route_book.map(|book| *book),
+                route_book_id,
+                route_book_label,
+                &transition_id,
+                evidence_mode,
+            )
         }),
         PlannerServiceRequest::Solve {
             state,
@@ -472,6 +476,262 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
     }
 }
 
+const AUTHORED_REGION_ID: &str = "region.authored-route";
+const AUTHORED_METHOD_ID: &str = "method.authored-route";
+
+fn assess_and_apply_transition(
+    state: &mut PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    transition_id: &str,
+    evidence_mode: crate::RuntimeEvidenceMode,
+    application_id: &str,
+) -> Result<TransitionAssessment, dusklight_route_planner::PlannerContractError> {
+    let transition = catalog
+        .mechanics
+        .transitions
+        .iter()
+        .find(|transition| transition.id == transition_id)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "transition_id",
+                "does not name a transition in the composed catalog",
+            )
+        })?;
+    let policy = match evidence_mode {
+        crate::RuntimeEvidenceMode::EstablishedOnly => EvidencePolicy::ESTABLISHED_ONLY,
+        crate::RuntimeEvidenceMode::Research => EvidencePolicy::RESEARCH,
+    };
+    let empty = BTreeSet::new();
+    let assessment = {
+        let evaluator = PredicateEvaluator::new(
+            &state.snapshot,
+            &catalog.facts,
+            equivalence_sets,
+            &state.gate_states,
+            policy,
+        )?;
+        let resolution = evaluator.resolve_feasibility(
+            transition,
+            &catalog.mechanics.obligations,
+            &catalog.mechanics.obstructions,
+            &catalog.mechanics.resolvers,
+            &catalog.mechanics.techniques,
+            FeasibilitySelection {
+                resolver_ids: &empty,
+                technique_ids: &empty,
+                already_discharged: &empty,
+                microtraces: &catalog.mechanics.microtraces,
+            },
+        );
+        evaluator.assess_transition(
+            transition,
+            &resolution.discharged_obligation_ids,
+            &resolution.unknown_obligation_ids,
+            FeasibilityMode::Modeled,
+        )
+    };
+    if assessment.classification == TransitionClassification::Executable {
+        state.apply_operations(
+            application_id,
+            &format!("{application_id}.after"),
+            &transition.activation.effects,
+        )?;
+    }
+    Ok(assessment)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_transition_to_route_book(
+    mut state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: Option<RouteBook>,
+    route_book_id: String,
+    route_book_label: String,
+    transition_id: &str,
+    evidence_mode: crate::RuntimeEvidenceMode,
+) -> Result<PlannerServicePayload, dusklight_route_planner::PlannerContractError> {
+    let previous_route_book_sha256 = route_book.as_ref().map(RouteBook::digest).transpose()?;
+    if let Some(book) = &route_book {
+        book.validate_against_composed(catalog)?;
+        let method = book
+            .methods
+            .iter()
+            .find(|method| method.id == AUTHORED_METHOD_ID)
+            .ok_or_else(|| {
+                dusklight_route_planner::PlannerContractError::new(
+                    "route_book.methods",
+                    "does not contain the browser-authored route method",
+                )
+            })?;
+        for (index, step_id) in method.step_ids.iter().enumerate() {
+            let step = book
+                .steps
+                .iter()
+                .find(|step| &step.id == step_id)
+                .ok_or_else(|| {
+                    dusklight_route_planner::PlannerContractError::new(
+                        "route_book.methods.step_ids",
+                        "references a missing authored step",
+                    )
+                })?;
+            let RouteActionRef::Transition {
+                transition_id: replay_id,
+            } = &step.action
+            else {
+                return Err(dusklight_route_planner::PlannerContractError::new(
+                    "route_book.steps.action",
+                    "authored route propagation currently requires transition steps",
+                ));
+            };
+            let assessment = assess_and_apply_transition(
+                &mut state,
+                catalog,
+                equivalence_sets,
+                replay_id,
+                evidence_mode,
+                &format!("route.replay-{index:04}"),
+            )?;
+            if assessment.classification != TransitionClassification::Executable {
+                return Err(dusklight_route_planner::PlannerContractError::new(
+                    "route_book.steps",
+                    format!(
+                        "existing step {step_id} no longer composes: {:?}",
+                        assessment.classification
+                    ),
+                ));
+            }
+        }
+    }
+
+    let assessment = assess_and_apply_transition(
+        &mut state,
+        catalog,
+        equivalence_sets,
+        transition_id,
+        evidence_mode,
+        "route.append",
+    )?;
+    if assessment.classification != TransitionClassification::Executable {
+        return Err(dusklight_route_planner::PlannerContractError::new(
+            "transition_id",
+            format!(
+                "cannot append a non-executable join: {:?}",
+                assessment.classification
+            ),
+        ));
+    }
+    let transition = catalog
+        .mechanics
+        .transitions
+        .iter()
+        .find(|transition| transition.id == transition_id)
+        .expect("assessment resolved the transition");
+    let step_id = next_authored_step_id(route_book.as_ref());
+    let step = ReferenceStep {
+        id: step_id.clone(),
+        label: transition.label.clone(),
+        scope: transition.scope.clone(),
+        action: RouteActionRef::Transition {
+            transition_id: transition_id.into(),
+        },
+        precondition: None,
+        postcondition: None,
+        region_id: Some(AUTHORED_REGION_ID.into()),
+        annotation_ids: Vec::new(),
+    };
+    let book = if let Some(book) = route_book {
+        let mut method = book
+            .methods
+            .iter()
+            .find(|method| method.id == AUTHORED_METHOD_ID)
+            .expect("validated authored method")
+            .clone();
+        method.step_ids.push(step_id.clone());
+        RouteBookEditBatch {
+            schema: ROUTE_BOOK_EDIT_BATCH_SCHEMA.into(),
+            expected_route_book_sha256: book.digest()?,
+            edits: vec![
+                RouteBookEdit::UpsertStep { step },
+                RouteBookEdit::UpsertMethod { method },
+            ],
+        }
+        .apply_composed(&book, catalog)?
+    } else {
+        let refinement_stack_sha256 = Some(catalog.refinement_stack.digest()?);
+        let scope = transition.scope.clone();
+        let goal_id = catalog
+            .mechanics
+            .goals
+            .first()
+            .map(|goal| goal.id.clone())
+            .ok_or_else(|| {
+                dusklight_route_planner::PlannerContractError::new(
+                    "catalog.mechanics.goals",
+                    "must contain a goal before creating an authored route",
+                )
+            })?;
+        let book = RouteBook {
+            schema: ROUTE_BOOK_SCHEMA.into(),
+            manifest: RouteBookManifest {
+                id: route_book_id,
+                version: "1.0.0".into(),
+                label: route_book_label,
+                author: "Route Planner".into(),
+                source: "Browser-authored exact transition sequence".into(),
+                scope: scope.clone(),
+                refinement_stack_sha256,
+            },
+            goal_ids: vec![goal_id],
+            constraints: Vec::new(),
+            directives: Vec::new(),
+            steps: vec![step],
+            methods: vec![PlanMethod {
+                id: AUTHORED_METHOD_ID.into(),
+                label: "Authored route".into(),
+                scope: scope.clone(),
+                region_id: AUTHORED_REGION_ID.into(),
+                step_ids: vec![step_id.clone()],
+            }],
+            regions: vec![PlanRegion {
+                id: AUTHORED_REGION_ID.into(),
+                label: "Authored route".into(),
+                scope,
+                parent_region_id: None,
+                entry_predicate: None,
+                outcome_predicate: PredicateExpression::True,
+                method_ids: vec![AUTHORED_METHOD_ID.into()],
+                selected_method_id: Some(AUTHORED_METHOD_ID.into()),
+                collapse_policy: CollapsePolicy::Never,
+            }],
+            annotations: Vec::new(),
+        };
+        book.validate_against_composed(catalog)?;
+        book
+    };
+    let route_book_sha256 = book.digest()?;
+    Ok(PlannerServicePayload::AppendedTransition {
+        book: Box::new(book),
+        previous_route_book_sha256,
+        route_book_sha256,
+        step_id,
+        assessment: Box::new(assessment),
+        after: Box::new(state.to_document()?),
+    })
+}
+
+fn next_authored_step_id(book: Option<&RouteBook>) -> String {
+    let mut index = book.map_or(0, |book| book.steps.len());
+    loop {
+        let candidate = format!("step.route-{index:04}");
+        if book.is_none_or(|book| book.steps.iter().all(|step| step.id != candidate)) {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
 pub fn handle_envelope(envelope: PlannerServiceEnvelope) -> PlannerServiceResponse {
     if envelope.schema != PLANNER_SERVICE_SCHEMA {
         return error_response(
@@ -530,17 +790,17 @@ mod tests {
     use dusklight_route_planner::execution::PlannerExecutionState;
     use dusklight_route_planner::identity::{RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
     use dusklight_route_planner::logic::{
-        ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, PredicateExpression,
-        RuleEvidence, TruthStatus,
+        ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA,
+        PredicateExpression, RuleEvidence, TruthStatus, ValueReference,
     };
     use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
     use dusklight_route_planner::state::{
         BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment,
         PhysicalSlotId, PlayerForm, PlayerState, RuntimeFile, RuntimeFileLifecycle,
-        RuntimeFileOrigin, SceneLocation,
+        RuntimeFileOrigin, SceneLocation, StateValue,
     };
     use dusklight_route_planner::transition::{
-        ActivationContract, CandidateTransition, MECHANICS_CATALOG_SCHEMA, StateOperation,
+        ActivationContract, CandidateTransition, Goal, MECHANICS_CATALOG_SCHEMA, StateOperation,
         TransitionKind,
     };
     use std::collections::BTreeMap;
@@ -657,6 +917,55 @@ mod tests {
                 }],
             },
         });
+        mechanics.transitions.push(CandidateTransition {
+            id: "transition.enter-boss".into(),
+            label: "Enter Boss Room".into(),
+            scope: mechanics.transitions[0].scope.clone(),
+            transition_kind: TransitionKind::Door,
+            approach_id: "approach.boss".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::Compare {
+                    left: ValueReference::LocationStage,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("D_MN05".into()),
+                    },
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: "D_MN06".into(),
+                        room: 0,
+                        layer: 0,
+                        spawn: 0,
+                    },
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: RuleEvidence {
+                truth: TruthStatus::Established,
+                records: vec![EvidenceRecord {
+                    id: "source.test.boss".into(),
+                    kind: EvidenceKind::SourceAudited,
+                    source_sha256: Some(Digest([3; 32])),
+                    note: "Test downstream transition.".into(),
+                }],
+            },
+        });
+        mechanics
+            .transitions
+            .sort_by(|left, right| left.id.cmp(&right.id));
+        mechanics.goals.push(Goal {
+            id: "goal.boss-room".into(),
+            label: "Reach boss room".into(),
+            predicate: PredicateExpression::Compare {
+                left: ValueReference::LocationStage,
+                operator: ComparisonOperator::Equal,
+                right: ValueReference::Literal {
+                    value: StateValue::Text("D_MN06".into()),
+                },
+            },
+        });
         let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &[]).unwrap();
         (state, catalog)
     }
@@ -718,6 +1027,86 @@ mod tests {
         let after = after.unwrap();
         assert_eq!(after.snapshot.environment.location.stage, "D_MN05");
         assert_eq!(after.snapshot.environment.location.room, 1);
+    }
+
+    #[test]
+    fn append_transition_replays_and_propagates_the_authored_route() {
+        let (state, catalog) = executable_transition_fixture();
+        let rejected = handle_request(PlannerServiceRequest::AppendTransition {
+            request_id: "request.reject-join".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: None,
+            route_book_id: "route.test".into(),
+            route_book_label: "Test route".into(),
+            transition_id: "transition.enter-boss".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        assert!(matches!(
+            rejected.outcome,
+            PlannerServiceOutcome::Error { ref field, .. } if field == "transition_id"
+        ));
+
+        let first = handle_request(PlannerServiceRequest::AppendTransition {
+            request_id: "request.append-first".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: None,
+            route_book_id: "route.test".into(),
+            route_book_label: "Test route".into(),
+            transition_id: "transition.enter-forest".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = first.outcome else {
+            panic!(
+                "first append should succeed: {}",
+                serde_json::to_string(&first).unwrap()
+            );
+        };
+        let PlannerServicePayload::AppendedTransition {
+            book,
+            previous_route_book_sha256,
+            after,
+            ..
+        } = *payload
+        else {
+            panic!("append should return route semantics and propagated state");
+        };
+        assert!(previous_route_book_sha256.is_none());
+        assert_eq!(after.snapshot.environment.location.stage, "D_MN05");
+        assert_eq!(book.methods[0].step_ids, ["step.route-0000"]);
+
+        let second = handle_request(PlannerServiceRequest::AppendTransition {
+            request_id: "request.append-second".into(),
+            state: Box::new(state),
+            catalog: Box::new(catalog),
+            equivalence_sets: Vec::new(),
+            route_book: Some(book),
+            route_book_id: "route.test".into(),
+            route_book_label: "Test route".into(),
+            transition_id: "transition.enter-boss".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = second.outcome else {
+            panic!("downstream append should succeed after replaying its producer");
+        };
+        let PlannerServicePayload::AppendedTransition {
+            book,
+            previous_route_book_sha256,
+            after,
+            ..
+        } = *payload
+        else {
+            panic!("second append should return the edited route book");
+        };
+        assert!(previous_route_book_sha256.is_some());
+        assert_eq!(after.snapshot.environment.location.stage, "D_MN06");
+        assert_eq!(
+            book.methods[0].step_ids,
+            ["step.route-0000", "step.route-0001"]
+        );
     }
 
     #[test]

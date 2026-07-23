@@ -58,18 +58,20 @@ serves an embedded blueprint canvas and the typed planner service; the client ca
 open a typed project, project its authoritative graph, search transitions,
 pan/zoom/fit, drag layout nodes, inspect planner-owned payloads, and export a copy
 with presentation positions. A selected transition can now be assessed against
-an exact project start state by the Rust evaluator; executable effects return a
-typed after-state, while rejected evaluations retain their guard, obligation,
-and scope classification. The browser cannot yet insert that validated step into
-a propagated route, save route semantics authoritatively, or load all planned
-demonstrations. Coverage is also incomplete, so the current engine is a
+an exact project start state by the Rust evaluator. It can also be inserted into
+a browser-authored route: Rust replays the ordered method from the exact start,
+rejects the first broken join, applies only executable effects, edits the route
+book transactionally, returns the propagated after-state, and lets the existing
+revision-checked project save persist both semantics and layout. Drag-to-connect,
+rich rejection rendering, and all planned demonstrations remain open. Coverage
+is also incomplete, so the current engine is a
 causal-reasoning laboratory over selected modeled mechanics rather than a
 whole-game route explorer.
 
 Current Windows health is green. Planner-owned canonical JSON and source-evidence
 files are forced to LF checkout, and the workspace declares both crates as
 default members. The normal planner test command now runs the engine rather than
-hiding it behind a green wrapper-only suite: 233 engine tests, seven runtime
+hiding it behind a green wrapper-only suite: 234 engine tests, 14 runtime
 library tests, one runtime binary test, and both doc-test targets pass.
 
 ---
@@ -2554,18 +2556,24 @@ visual polish or whole-game authoring features.
 - [ ] Let an author drag a transition onto the canvas and connect it to an exact
       predecessor state. Rust recomputes every downstream state and remains the
       only validation and mutation authority.
-      The v29 service now evaluates one catalog transition against an exact
+      The v30 service now evaluates one catalog transition against an exact
       execution-state document, resolves modeled obligations and evidence, and
       applies effects transactionally only for `executable`; the browser exposes
-      this on selected transitions for projects with a start state. Persisted
-      step insertion and downstream route propagation remain open.
+      this on selected transitions for projects with a start state. Its Insert
+      command additionally replays every prior ordered reference step, rejects a
+      broken join without editing, and transactionally adds an executable step
+      plus its propagated after-state. Dragging from a state node remains open.
 - [ ] Render accepted connections distinctly from rejected or unknown joins.
       Selecting a rejected join must show missing producers, active
       obstructions/resolvers, unknown obligations, or exact-context mismatch;
       there is no force-connect operation.
-- [ ] Save route semantics and presentation metadata through revision-checked
+- [x] Save route semantics and presentation metadata through revision-checked
       route-book edits. Node positions, viewport, and visual grouping may persist
-      but must never affect solver reachability.
+      but must never affect solver reachability. Append-transition v30 creates or
+      revision-checks the browser-authored route book, applies a sealed upsert-step
+      plus ordered-method edit, and reprojects the graph. The browser marks the
+      semantic edit dirty; the existing atomic revision-checked project save then
+      persists the route book and presentation positions independently.
 - [ ] Selecting a state or transition shows exact before/after location,
       inventory, flags/components, bindings, provenance, effects, requirements,
       and evidence in the bottom panel.

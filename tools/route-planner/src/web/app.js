@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v29";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v30";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const NODE_WIDTH = 176;
@@ -9,7 +9,7 @@ const elements = Object.fromEntries([
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json",
-  "evaluate-transition",
+  "evaluate-transition", "insert-transition",
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -40,6 +40,7 @@ elements["zoom-in"].addEventListener("click", () => zoomAt(1.2));
 elements["zoom-out"].addEventListener("click", () => zoomAt(1 / 1.2));
 elements.fit.addEventListener("click", fitGraph);
 elements["evaluate-transition"].addEventListener("click", evaluateSelectedTransition);
+elements["insert-transition"].addEventListener("click", insertSelectedTransition);
 elements.canvas.addEventListener("wheel", onWheel, { passive: false });
 elements.canvas.addEventListener("pointerdown", beginPan);
 window.addEventListener("pointermove", moveGesture);
@@ -285,12 +286,14 @@ function renderDetails() {
     elements["detail-subtitle"].textContent = "Choose a node or connection to inspect its planner-owned identity.";
     elements["detail-json"].textContent = "{}";
     elements["evaluate-transition"].disabled = true;
+    elements["insert-transition"].disabled = true;
     return;
   }
   elements["detail-title"].textContent = selected.type === "node" ? selected.value.label : selected.value.relation;
   elements["detail-subtitle"].textContent = selected.value.id;
   const transition = selected.type === "node" && selected.value.payload.kind === "transition";
   elements["evaluate-transition"].disabled = !transition || !state.project?.start_state;
+  elements["insert-transition"].disabled = !transition || !state.project?.start_state || state.readOnly;
   elements["evaluate-transition"].title = state.project?.start_state
     ? "Run the authoritative transition evaluator"
     : "This project has no exact start state";
@@ -298,6 +301,54 @@ function renderDetails() {
     selection: selected.value,
     ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
   }, null, 2);
+}
+
+async function insertSelectedTransition() {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  if (node?.payload.kind !== "transition" || !state.project?.start_state || state.readOnly) return;
+  try {
+    setStatus(`Propagating and inserting ${node.label}...`);
+    const payload = await service({
+      command: "append_transition",
+      request_id: requestId("append-transition"),
+      state: state.project.start_state,
+      catalog: state.project.catalog,
+      equivalence_sets: state.project.equivalence_sets ?? [],
+      route_book: state.project.route_book ?? null,
+      route_book_id: `route.${slug(state.project.id)}`,
+      route_book_label: state.project.label,
+      transition_id: node.payload.transition_id,
+      evidence_mode: "established_only",
+    });
+    if (payload.kind !== "appended_transition") {
+      throw new Error(`Unexpected response ${payload.kind}`);
+    }
+    state.project.route_book = payload.book;
+    state.transitionEvaluation = {
+      kind: payload.kind,
+      step_id: payload.step_id,
+      route_book_sha256: payload.route_book_sha256,
+      assessment: payload.assessment,
+      after: payload.after,
+    };
+    const projected = await service({
+      command: "project_graph",
+      request_id: requestId("project-after-append"),
+      catalog: state.project.catalog,
+      route_book: state.project.route_book,
+    });
+    if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
+    state.graph = projected.graph;
+    ensurePositions();
+    const stepNode = state.graph.nodes.find((candidate) =>
+      candidate.payload.kind === "reference_step" && candidate.payload.step_id === payload.step_id);
+    state.selected = stepNode ? { type: "node", value: stepNode } : state.selected;
+    markDirty();
+    render();
+    setStatus(`${node.label} inserted as ${payload.step_id}; save to persist`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 async function evaluateSelectedTransition() {
