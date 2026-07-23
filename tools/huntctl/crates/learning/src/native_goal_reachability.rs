@@ -319,7 +319,7 @@ impl NativeGoalReachabilityModel {
             ));
         }
         let mut rng = Rng::new(config.seed);
-        let mut members = Vec::with_capacity(usize::from(config.members));
+        let mut member_jobs = Vec::with_capacity(usize::from(config.members));
         for member_index in 0..usize::from(config.members) {
             let selected_groups = (0..group_ids.len())
                 .map(|_| group_ids[(rng.next_u64() % group_ids.len() as u64) as usize])
@@ -328,36 +328,75 @@ impl NativeGoalReachabilityModel {
                 .iter()
                 .flat_map(|group| grouped[group].iter().copied())
                 .collect::<Vec<_>>();
-            let mut member_rng = Rng::new(derive_seed(config.seed, member_index as u64));
-            let mut member = ReachabilityMember::initialized(
-                input_width,
-                usize::from(config.hidden_width),
-                selected_groups,
-                &mut member_rng,
-            );
-            let mut order = selected_rows;
-            for _ in 0..config.epochs {
-                let target = member.clone();
-                member_rng.shuffle(&mut order);
-                for row_index in order.iter().copied() {
-                    let targets = targets(
-                        &rows[row_index],
-                        &target,
-                        &normalized,
-                        &by_identity,
-                        usize::from(config.hidden_width),
-                    )?;
-                    member.update(&normalized[row_index], targets, config, input_width)?;
-                }
-                member.target_synchronizations = member
-                    .target_synchronizations
-                    .checked_add(1)
-                    .ok_or_else(|| {
-                        NativeGoalReachabilityError::new("target synchronization overflowed")
-                    })?;
-            }
-            members.push(member);
+            member_jobs.push((member_index, selected_groups, selected_rows));
         }
+        // Bootstrap members are statistically and computationally independent.
+        // Select their samples above in canonical member order, then train them
+        // concurrently without changing any seed, shuffle, or output ordering.
+        let mut members = std::thread::scope(|scope| {
+            let handles = member_jobs
+                .into_iter()
+                .map(|(member_index, selected_groups, selected_rows)| {
+                    let rows = &rows;
+                    let normalized = &normalized;
+                    let by_identity = &by_identity;
+                    scope.spawn(move || {
+                        let mut member_rng =
+                            Rng::new(derive_seed(config.seed, member_index as u64));
+                        let mut member = ReachabilityMember::initialized(
+                            input_width,
+                            usize::from(config.hidden_width),
+                            selected_groups,
+                            &mut member_rng,
+                        );
+                        let mut order = selected_rows;
+                        for _ in 0..config.epochs {
+                            let target = member.clone();
+                            member_rng.shuffle(&mut order);
+                            for row_index in order.iter().copied() {
+                                let targets = targets(
+                                    &rows[row_index],
+                                    &target,
+                                    normalized,
+                                    by_identity,
+                                    usize::from(config.hidden_width),
+                                )?;
+                                member.update(
+                                    &normalized[row_index],
+                                    targets,
+                                    config,
+                                    input_width,
+                                )?;
+                            }
+                            member.target_synchronizations = member
+                                .target_synchronizations
+                                .checked_add(1)
+                                .ok_or_else(|| {
+                                    NativeGoalReachabilityError::new(
+                                        "target synchronization overflowed",
+                                    )
+                                })?;
+                        }
+                        Ok::<_, NativeGoalReachabilityError>((member_index, member))
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|handle| {
+                    handle.join().map_err(|_| {
+                        NativeGoalReachabilityError::new(
+                            "goal reachability training worker panicked",
+                        )
+                    })?
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })?;
+        members.sort_by_key(|(member_index, _)| *member_index);
+        let members = members
+            .into_iter()
+            .map(|(_, member)| member)
+            .collect::<Vec<_>>();
         let baseline = TrainingBaseline::from_rows(&rows, &training_indices)?;
         let training = evaluate(
             &rows,
