@@ -887,7 +887,8 @@ Before claiming completeness, inventory:
   and spawn point.
 - All SavMem actor placements and their event/switch guards.
 - Normal stage load/commit order and failure/void/reload paths.
-- BiT/BiTE preservation and clearing behavior per build.
+- BiT/BiTE preservation and clearing behavior for builds and variants beyond
+  the sealed GZ2E01 standard selected-file matrix.
 - Known wrong-flags respawns beyond BiTE.
 - Exact Auru broken-flow branch, `mGtItm` initialization/lifetime per executable
   build, normal memo overwrite point, and the HD versus SD interaction/trigger
@@ -2366,12 +2367,16 @@ Deliverable: the intentionally permissive logic graph with honest uncertainty.
     are explicit one-boundary overrides. The boundary executor applies exactly
     one matching rule or the declared default to every live component, rejects
     overlapping selectors, and fails the whole atomic transition on `Unknown`.
-- [ ] Encode an evidence-backed BiTE preservation matrix.
+- [x] Encode an evidence-backed BiTE preservation matrix.
   - [x] Add a generic checked carry manifest to physical-slot load. Only named,
         runtime-lifetime, source-owned, non-stage-bank components are rekeyed;
         the manifest must be sorted, unique, disjoint from the card image, and
         every omitted source-runtime component/store is removed atomically.
-        Concrete BiTE component membership and activation evidence remain open.
+        The sealed exact-GZ2E01 standard matrix now derives six selected-file
+        restores and three explicit BiT-runtime carries from executable title
+        mechanics, and separately classifies outside-lifetime, removed, backing,
+        compatibility, and visible-state subjects. Exact native overlap timing
+        and the King Bulblin destination splice remain explicit unknown rows.
 - [x] Encode the shared Auru recent-item store/writer/consumer mechanism separately
       from build-specific activation feasibility and external HD evidence.
   - Native event observations project the recent get-item ID into its own
@@ -3042,8 +3047,8 @@ slice into release criteria only when it exercises a missing core semantic law.
 - [ ] Model BiTE as a selected component splice into an existing file.
   - [x] Implement the generic selected runtime-component splice into a freshly
         loaded existing file, with destination ownership and mixed provenance.
-        The evidence-backed BiTE preservation matrix and setup transitions remain
-        open.
+        The evidence-backed standard BiTE matrix is encoded; setup transitions
+        remain open until exact native activation evidence lands.
 - [ ] Allow an unsaved file-0 goal and hypothetical escape overlay.
 - [x] Explain exactly which components die when a file-0 lifetime ends.
   - State inspection diffs derive the complete ownership cut from the actual
@@ -3549,7 +3554,8 @@ Also require:
 These should remain explicit unknowns until evidence closes them:
 
 - Exact file-0 component initialization and every build difference.
-- Exact BiTE preservation/clearing matrix and whether multiple setups share it.
+- BiTE preservation/clearing matrices beyond standard GZ2E01 and whether
+  multiple setup variants share one matrix.
 - Other known respawn-with-wrong-flags or wrong-bank glitches.
 - Whether any existing technique can preserve/rebind live stage memory across a
   context that normally replaces it.

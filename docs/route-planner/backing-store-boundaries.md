@@ -109,8 +109,10 @@ selected components are rekeyed to the fresh destination runtime with transition
 provenance. Unselected source-runtime metadata and every source-owned serialized
 store are removed. A missing, duplicate, unsorted, card-overlapping, session,
 stage-bank, or otherwise invalid carry entry fails the whole load atomically.
-This is the generic splice required for BiTE-like preservation; which concrete
-components a retail BiTE setup carries remains an evidence-matrix task.
+This is the generic splice required for BiTE-like preservation. The exact
+GZ2E01 standard selected-file membership is now sealed in
+`gz2e01-bite-preservation-matrix.md`; other builds and variants still require
+their own evidence matrices.
 The source-audited GZ2E01 file-select transitions also use an active-runtime
 form of the load. It resolves the persistent identity and complete sealed
 manifest from the selected populated slot, derives the destination runtime ID
