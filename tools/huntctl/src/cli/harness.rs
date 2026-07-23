@@ -332,15 +332,49 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             &required_path(command_args, "--plan")?,
             "learning-value comparison plan",
         )?;
-        let draft_path = repository_file(
-            &repository_root,
-            &required_path(command_args, "--input")?,
-            "learning-value cell draft",
-        )?;
         let plan: huntctl::search_evaluator::learning_value_comparison::LearningValueComparisonPlan =
             serde_json::from_slice(&fs::read(plan_path)?)?;
-        let draft: huntctl::search_evaluator::learning_value_evidence::LearningValueCellDraft =
-            serde_json::from_slice(&fs::read(draft_path)?)?;
+        let draft_input = option(command_args, "--input");
+        let cell_root = option(command_args, "--cell-root");
+        let draft = match (draft_input, cell_root) {
+            (Some(path), None) => {
+                let draft_path = repository_file(
+                    &repository_root,
+                    Path::new(&path),
+                    "learning-value cell draft",
+                )?;
+                serde_json::from_slice(&fs::read(draft_path)?)?
+            }
+            (None, Some(path)) => {
+                let checkpoint_id = option(command_args, "--checkpoint")
+                    .ok_or("directory-backed learning-value evidence requires --checkpoint <id>")?;
+                let deterministic_seed = option(command_args, "--seed")
+                    .ok_or("directory-backed learning-value evidence requires --seed <u64>")?
+                    .parse()?;
+                let treatment = option(command_args, "--treatment").ok_or(
+                    "directory-backed learning-value evidence requires --treatment <kind>",
+                )?;
+                let treatment =
+                    serde_json::from_value(serde_json::Value::String(treatment.replace('-', "_")))?;
+                learning_value_cell_draft_from_directory(
+                    &repository_root,
+                    Path::new(&path),
+                    checkpoint_id,
+                    deterministic_seed,
+                    treatment,
+                )?
+            }
+            (Some(_), Some(_)) => {
+                return Err(
+                    "learning-value evidence accepts exactly one of --input or --cell-root".into(),
+                );
+            }
+            (None, None) => {
+                return Err(
+                    "learning-value evidence requires --input DRAFT.json or --cell-root DIR".into(),
+                );
+            }
+        };
         let evidence =
             huntctl::search_evaluator::learning_value_evidence::LearningValueCellEvidence::seal(
                 draft,
@@ -848,6 +882,12 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
             .into());
         }
         fs::create_dir_all(&output)?;
+        let pinned_executable = output.join(
+            executable
+                .file_name()
+                .ok_or("game executable path has no file name")?,
+        );
+        fs::copy(&executable, &pinned_executable)?;
         let tape_path = output.join("process-route.tape");
         let program_path = output.join("terminal.dmsp");
         let binding_path = output.join("execution.json");
@@ -868,7 +908,7 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
         let binding = huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding::seal(
             &repository_root,
             &optimization,
-            &executable,
+            &pinned_executable,
             &game_data,
             &tape_path,
             &program_path,
@@ -1261,6 +1301,94 @@ fn repository_artifact(
     })
 }
 
+fn learning_value_cell_draft_from_directory(
+    repository_root: &Path,
+    cell_root: &Path,
+    checkpoint_id: String,
+    deterministic_seed: u64,
+    treatment: huntctl::search_evaluator::learning_value_comparison::LearningValueTreatmentKind,
+) -> Result<
+    huntctl::search_evaluator::learning_value_evidence::LearningValueCellDraft,
+    Box<dyn Error>,
+> {
+    use huntctl::search_evaluator::learning_value_comparison::LearningValueTreatmentKind;
+    use huntctl::search_evaluator::learning_value_evidence::{
+        LEARNING_VALUE_CELL_DRAFT_SCHEMA_V1, LearningValueCellDraft, LearningValuePhaseSource,
+    };
+
+    if cell_root.is_absolute()
+        || cell_root
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        || !cell_root.starts_with("build")
+    {
+        return Err(
+            "learning-value cell root must be a repository-relative build/ directory".into(),
+        );
+    }
+    let cell_root = repository_root.join(cell_root).canonicalize()?;
+    if !cell_root.starts_with(repository_root) || !cell_root.is_dir() {
+        return Err("learning-value cell root must resolve to a repository directory".into());
+    }
+    let artifact = |relative: &str, label: &str| {
+        repository_artifact(repository_root, &cell_root.join(relative), label)
+    };
+    let learning = || -> Result<LearningValuePhaseSource, Box<dyn Error>> {
+        Ok(LearningValuePhaseSource::StateReactive {
+            loop_request: artifact("learning-loop/request.json", "learning-value loop request")?,
+            optimization_request: artifact("request.json", "learning-value optimization request")?,
+            execution_binding: artifact(
+                "execution/execution.json",
+                "learning-value execution binding",
+            )?,
+            loop_state: artifact("learning-loop/state.json", "learning-value loop state")?,
+            checkpoint_report: artifact(
+                "learning-loop/checkpoint-report.json",
+                "learning-value checkpoint report",
+            )?,
+        })
+    };
+    let residual = |prefix: &str| -> Result<LearningValuePhaseSource, Box<dyn Error>> {
+        let path = |suffix: &str| {
+            if prefix.is_empty() {
+                suffix.to_owned()
+            } else {
+                format!("{prefix}/{suffix}")
+            }
+        };
+        Ok(LearningValuePhaseSource::Residual {
+            optimization_request: artifact(
+                &path("request.json"),
+                "learning-value residual request",
+            )?,
+            execution_binding: artifact(
+                &path("execution/execution.json"),
+                "learning-value residual execution binding",
+            )?,
+            final_checkpoint: artifact(
+                &path("state.json"),
+                "learning-value residual final checkpoint",
+            )?,
+        })
+    };
+    let phases = match treatment {
+        LearningValueTreatmentKind::IndependentRandomResidual
+        | LearningValueTreatmentKind::CemResidual => vec![residual("")?],
+        LearningValueTreatmentKind::DemonstrationAssistedStateReactive
+        | LearningValueTreatmentKind::FromScratchStateReactive => vec![learning()?],
+        LearningValueTreatmentKind::LearnedThenResidualRefinement => {
+            vec![learning()?, residual("refinement")?]
+        }
+    };
+    Ok(LearningValueCellDraft {
+        schema: LEARNING_VALUE_CELL_DRAFT_SCHEMA_V1.into(),
+        checkpoint_id,
+        deterministic_seed,
+        treatment,
+        phases,
+    })
+}
+
 fn repository_build_output(
     repository_root: &Path,
     path: &Path,
@@ -1336,6 +1464,8 @@ fn pin_curriculum_source_checkpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use huntctl::search_evaluator::learning_value_comparison::LearningValueTreatmentKind;
+    use huntctl::search_evaluator::learning_value_evidence::LearningValuePhaseSource;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1378,6 +1508,74 @@ mod tests {
         assert!(
             pin_curriculum_source_checkpoint(&repository_root, &output, &source, bytes,).is_err()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cell_directory_draft_maps_learning_and_residual_artifacts() {
+        let repository_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let relative = PathBuf::from("build").join(format!(
+            "learning-value-cell-draft-test-{}-{nonce}",
+            std::process::id()
+        ));
+        let root = repository_root.join(&relative);
+        for path in [
+            "request.json",
+            "execution/execution.json",
+            "state.json",
+            "learning-loop/request.json",
+            "learning-loop/state.json",
+            "learning-loop/checkpoint-report.json",
+            "refinement/request.json",
+            "refinement/execution/execution.json",
+            "refinement/state.json",
+        ] {
+            let path = root.join(path);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"artifact").unwrap();
+        }
+
+        let learned = learning_value_cell_draft_from_directory(
+            &repository_root,
+            &relative,
+            "checkpoint".into(),
+            17,
+            LearningValueTreatmentKind::LearnedThenResidualRefinement,
+        )
+        .unwrap();
+        assert_eq!(learned.phases.len(), 2);
+        assert!(matches!(
+            &learned.phases[0],
+            LearningValuePhaseSource::StateReactive { loop_state, .. }
+                if loop_state.path.ends_with("/learning-loop/state.json")
+        ));
+        assert!(matches!(
+            &learned.phases[1],
+            LearningValuePhaseSource::Residual { final_checkpoint, .. }
+                if final_checkpoint.path.ends_with("/refinement/state.json")
+        ));
+
+        let residual = learning_value_cell_draft_from_directory(
+            &repository_root,
+            &relative,
+            "checkpoint".into(),
+            17,
+            LearningValueTreatmentKind::CemResidual,
+        )
+        .unwrap();
+        assert!(matches!(
+            &residual.phases[0],
+            LearningValuePhaseSource::Residual { final_checkpoint, .. }
+                if final_checkpoint.path.ends_with("/state.json")
+                    && !final_checkpoint.path.contains("/refinement/")
+        ));
         fs::remove_dir_all(root).unwrap();
     }
 }

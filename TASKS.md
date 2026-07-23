@@ -806,7 +806,13 @@ revalidated crash-safe journal/state chain.
       selects the fastest successful realized tape, and installs it as the exact
       plan-owned CEM incumbent with an isolated refinement budget and journal.
       Native execution materialization must still cold-validate that tape and
-      first-hit threshold before the residual phase can run.
+      first-hit threshold before the residual phase can run. Native execution
+      directories now pin their exact executable bytes instead of referring to
+      a mutable app-bundle build path. Completed cell directories can be sealed
+      directly into independently replayed evidence with `--cell-root`; the CLI
+      derives the exact one- or two-phase artifact topology for the declared
+      treatment, so matrix collection no longer depends on hand-authored draft
+      references.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
       The predeclared report verdict is implemented but remains unchecked until
