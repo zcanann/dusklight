@@ -1,7 +1,7 @@
 {
   "schema": "dusklight-optimization-request/v2",
-  "content_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-  "id": "ordon-degraded-q131-residual-cem-v3",
+  "content_sha256": "f60bbdd4e8728d5de7897076499fd9adea9e92f0e97de9704e46cce8987d6d55",
+  "id": "ordon-degraded-q131-residual-cem-v4",
   "route": {
     "timeline": {
       "path": "routes/Glitch Exhibition/ordon-degraded-canary.timeline",
@@ -116,8 +116,8 @@
     }
   },
   "resume": {
-    "state_path": "build/campaigns/ordon-degraded-q131-residual-cem-v3/state.json",
-    "journal_path": "build/campaigns/ordon-degraded-q131-residual-cem-v3/journal.jsonl",
+    "state_path": "build/campaigns/ordon-degraded-q131-residual-cem-v4/state.json",
+    "journal_path": "build/campaigns/ordon-degraded-q131-residual-cem-v4/journal.jsonl",
     "checkpoint_every_candidates": 64
   },
   "retention": {
