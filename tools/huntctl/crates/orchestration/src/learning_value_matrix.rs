@@ -9,17 +9,24 @@ use crate::learning_value_comparison::{
     LearningValueTreatmentKind,
 };
 use crate::native_goal_learning_loop::{
-    NativeGoalLearningLoopRequest, NativeGoalLearningLoopResume,
+    NativeGoalLearningLoopRequest, NativeGoalLearningLoopResume, NativeGoalLearningLoopState,
 };
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
-use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
+use crate::native_suffix_result::{NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V7, NativeSuffixBatchResult};
+use crate::optimization_request::{
+    OptimizationIncumbent, OptimizationRequest, ResidualOptimizerConfig,
+};
+use dusklight_automation_contracts::artifact::Digest;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_learning::native_goal_frozen_policy::NativeGoalFrozenPolicyConfig;
 use dusklight_learning::native_goal_reachability::NativeGoalReachabilityConfig;
 use dusklight_learning::native_goal_trajectory::NativeGoalTrajectoryConfig;
 use dusklight_learning::native_replay_corpus::DemonstrationMode;
+use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
+use std::fs;
+use std::path::Component;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -30,6 +37,14 @@ pub struct LearningValueLoopPlanConfig {
     pub trajectory: NativeGoalTrajectoryConfig,
     pub reachability: NativeGoalReachabilityConfig,
     pub policy: NativeGoalFrozenPolicyConfig,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LearningValueRefinementIncumbent {
+    pub tape: ArtifactReference,
+    pub first_hit_tick: u64,
+    pub generation: u16,
+    pub rollout: u16,
 }
 
 pub fn materialize_residual_cell_request(
@@ -230,6 +245,193 @@ pub fn materialize_learning_cell_loop_request(
     .map_err(matrix_error)
 }
 
+pub fn materialize_learning_refinement_request(
+    plan: &LearningValueComparisonPlan,
+    checkpoint_id: &str,
+    deterministic_seed: u64,
+    learning_optimization: &OptimizationRequest,
+    loop_request: &NativeGoalLearningLoopRequest,
+    loop_state: &NativeGoalLearningLoopState,
+    repository_root: &Path,
+) -> Result<(OptimizationRequest, LearningValueRefinementIncumbent), LearningValueMatrixError> {
+    plan.validate_files(repository_root).map_err(matrix_error)?;
+    learning_optimization
+        .validate_files(repository_root)
+        .map_err(matrix_error)?;
+    loop_request.validate().map_err(matrix_error)?;
+    loop_state.validate().map_err(matrix_error)?;
+    if !plan.deterministic_seeds.contains(&deterministic_seed) {
+        return Err(matrix_message(
+            "learning-value refinement seed is absent from the sealed plan",
+        ));
+    }
+    let checkpoint = plan
+        .held_out_checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.id == checkpoint_id)
+        .ok_or_else(|| {
+            matrix_message("learning-value refinement checkpoint is absent from the sealed plan")
+        })?;
+    let treatment = plan
+        .treatments
+        .iter()
+        .find(|treatment| {
+            treatment.kind() == LearningValueTreatmentKind::LearnedThenResidualRefinement
+        })
+        .ok_or_else(|| matrix_message("learning-value plan lacks its learned refinement arm"))?;
+    validate_base(plan, checkpoint, learning_optimization)?;
+    let expected_id = cell_id(
+        &plan.id,
+        checkpoint_id,
+        LearningValueTreatmentKind::LearnedThenResidualRefinement,
+        deterministic_seed,
+    )?;
+    let planned_loop = planned_learning_loop_config(treatment, deterministic_seed)?;
+    if learning_optimization.id != expected_id
+        || learning_optimization.execution.deterministic_seeds != [deterministic_seed]
+        || learning_optimization.budgets.simulated_tick_budget
+            != treatment.budget().discovery_simulated_ticks
+        || loop_request.optimization_request_sha256 != learning_optimization.content_sha256
+        || loop_request.generation_limit != planned_loop.generation_limit
+        || loop_request.rollouts_per_generation != planned_loop.rollouts_per_generation
+        || loop_request.simulated_tick_budget != planned_loop.simulated_tick_budget
+        || loop_request.trajectory != planned_loop.trajectory
+        || loop_request.reachability != planned_loop.reachability
+        || loop_request.policy != planned_loop.policy
+        || loop_state.request_sha256 != loop_request.content_sha256
+        || loop_state.stopped.is_none()
+    {
+        return Err(matrix_message(
+            "learning refinement source differs from its completed plan-owned loop",
+        ));
+    }
+    let incumbent = select_learning_refinement_incumbent(loop_state, repository_root)?;
+    if incumbent.first_hit_tick >= learning_optimization.budgets.exploration_horizon_ticks {
+        return Err(matrix_message(
+            "learning refinement incumbent reaches the terminal outside the residual horizon",
+        ));
+    }
+    let optimizer = learned_refinement_optimizer(treatment)?.clone();
+    let mut request = learning_optimization.clone();
+    request.id = format!("{expected_id}-refinement");
+    if request.id.len() > 128 {
+        return Err(matrix_message(
+            "learning-value refinement cell id exceeds the request limit",
+        ));
+    }
+    request.incumbent = Some(OptimizationIncumbent {
+        tape: incumbent.tape.clone(),
+        first_hit_tick: incumbent.first_hit_tick,
+    });
+    request.budgets.promotion_before_tick = incumbent.first_hit_tick;
+    request.budgets.candidate_budget = optimizer_candidates(&optimizer)?;
+    request.budgets.simulated_tick_budget = treatment.budget().refinement_simulated_ticks;
+    request.proposal.optimizer = optimizer;
+    request.proposal.critic_ranking = None;
+    request.resume.state_path = format!("build/campaigns/{expected_id}/refinement/state.json");
+    request.resume.journal_path = format!("build/campaigns/{expected_id}/refinement/journal.jsonl");
+    request.resume.checkpoint_every_candidates = request
+        .resume
+        .checkpoint_every_candidates
+        .min(request.budgets.candidate_budget)
+        .max(1);
+    request.retention.failed_episode_limit = Some(request.budgets.candidate_budget);
+    request.horizon_tightening = None;
+    request.reverse_curriculum = None;
+    request.refresh_content_sha256().map_err(matrix_error)?;
+    request
+        .validate_files(repository_root)
+        .map_err(matrix_error)?;
+    Ok((request, incumbent))
+}
+
+pub fn select_learning_refinement_incumbent(
+    loop_state: &NativeGoalLearningLoopState,
+    repository_root: &Path,
+) -> Result<LearningValueRefinementIncumbent, LearningValueMatrixError> {
+    loop_state.validate().map_err(matrix_error)?;
+    if loop_state.stopped.is_none() {
+        return Err(matrix_message(
+            "learning refinement requires a completed learning loop",
+        ));
+    }
+    let mut best: Option<LearningValueRefinementIncumbent> = None;
+    for generation in loop_state
+        .generations
+        .iter()
+        .filter(|generation| generation.committed_record_sha256.is_some())
+    {
+        let results = generation
+            .native_results
+            .as_ref()
+            .ok_or_else(|| matrix_message("committed learning generation lacks native results"))?;
+        let tapes = generation
+            .realized_tapes
+            .as_ref()
+            .ok_or_else(|| matrix_message("committed learning generation lacks realized tapes"))?;
+        if results.len() != tapes.len() {
+            return Err(matrix_message(
+                "learning generation result and realized-tape counts differ",
+            ));
+        }
+        for (rollout, (result_reference, tape_reference)) in results.iter().zip(tapes).enumerate() {
+            let bytes = read_reference(repository_root, result_reference)?;
+            let result: NativeSuffixBatchResult =
+                serde_json::from_slice(&bytes).map_err(matrix_error)?;
+            let Some(candidate) = result.candidates.first().filter(|_| {
+                result.schema == NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V7
+                    && result.status == "passed"
+                    && result.error.is_none()
+                    && result.candidates.len() == 1
+                    && result.completed_candidates == 1
+            }) else {
+                return Err(matrix_message(
+                    "learning native result is not one completed v7 policy rollout",
+                ));
+            };
+            let Some(first_hit_tick) = candidate.first_hit_tick.filter(|tick| *tick > 0) else {
+                if candidate.success || result.winner_id.is_some() {
+                    return Err(matrix_message(
+                        "learning native result success fields disagree",
+                    ));
+                }
+                continue;
+            };
+            if !candidate.success || result.winner_id.as_deref() != Some(candidate.id.as_str()) {
+                return Err(matrix_message(
+                    "learning native result terminal fields disagree",
+                ));
+            }
+            read_reference(repository_root, tape_reference)?;
+            let candidate_incumbent = LearningValueRefinementIncumbent {
+                tape: tape_reference.clone(),
+                first_hit_tick,
+                generation: generation.generation,
+                rollout: u16::try_from(rollout).map_err(matrix_error)?,
+            };
+            let candidate_key = (
+                candidate_incumbent.first_hit_tick,
+                candidate_incumbent.tape.sha256,
+                candidate_incumbent.tape.path.as_str(),
+            );
+            let replace = best.as_ref().is_none_or(|current| {
+                candidate_key
+                    < (
+                        current.first_hit_tick,
+                        current.tape.sha256,
+                        current.tape.path.as_str(),
+                    )
+            });
+            if replace {
+                best = Some(candidate_incumbent);
+            }
+        }
+    }
+    best.ok_or_else(|| {
+        matrix_message("completed learning loop contains no successful realized refinement tape")
+    })
+}
+
 pub fn residual_treatment_from_slug(
     value: &str,
 ) -> Result<LearningValueTreatmentKind, LearningValueMatrixError> {
@@ -275,6 +477,23 @@ fn baseline_optimizer(
         }
         _ => Err(matrix_message(
             "only plan-owned residual baseline treatments can materialize residual cells",
+        )),
+    }
+}
+
+fn learned_refinement_optimizer(
+    treatment: &LearningValueTreatment,
+) -> Result<&ResidualOptimizerConfig, LearningValueMatrixError> {
+    match treatment {
+        LearningValueTreatment::LearnedThenResidualRefinement {
+            budget,
+            refinement_optimizer,
+            ..
+        } if budget.discovery_simulated_ticks > 0 && budget.refinement_simulated_ticks > 0 => {
+            Ok(refinement_optimizer)
+        }
+        _ => Err(matrix_message(
+            "learning refinement requires the plan-owned learned-plus-CEM arm",
         )),
     }
 }
@@ -361,6 +580,39 @@ fn matrix_cell_seed(base_seed: u64, deterministic_seed: u64, domain: u64) -> u64
     } else {
         value
     }
+}
+
+fn read_reference(
+    repository_root: &Path,
+    reference: &ArtifactReference,
+) -> Result<Vec<u8>, LearningValueMatrixError> {
+    if reference.path.is_empty()
+        || Path::new(&reference.path).is_absolute()
+        || Path::new(&reference.path)
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(matrix_message(
+            "learning refinement artifact path is not repository-relative",
+        ));
+    }
+    let root = repository_root.canonicalize().map_err(matrix_error)?;
+    let path = root
+        .join(&reference.path)
+        .canonicalize()
+        .map_err(matrix_error)?;
+    if !path.starts_with(&root) || !path.is_file() {
+        return Err(matrix_message(
+            "learning refinement artifact escapes the repository or is absent",
+        ));
+    }
+    let bytes = fs::read(path).map_err(matrix_error)?;
+    if Digest(Sha256::digest(&bytes).into()) != reference.sha256 {
+        return Err(matrix_message(
+            "learning refinement artifact differs from its content reference",
+        ));
+    }
+    Ok(bytes)
 }
 
 fn validate_base(

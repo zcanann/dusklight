@@ -23,6 +23,73 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("materialize-learning-value-refinement-cell") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let plan_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--plan")?,
+            "learning-value comparison plan",
+        )?;
+        let optimization_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--request")?,
+            "learning-value learning request",
+        )?;
+        let loop_request_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--loop-request")?,
+            "learning-value loop request",
+        )?;
+        let loop_state_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--loop-state")?,
+            "learning-value loop state",
+        )?;
+        let plan: huntctl::search_evaluator::learning_value_comparison::LearningValueComparisonPlan =
+            serde_json::from_slice(&fs::read(plan_path)?)?;
+        let optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(optimization_path)?)?;
+        let loop_request: huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopRequest =
+            serde_json::from_slice(&fs::read(loop_request_path)?)?;
+        let loop_state: huntctl::search_evaluator::native_goal_learning_loop::NativeGoalLearningLoopState =
+            serde_json::from_slice(&fs::read(loop_state_path)?)?;
+        let checkpoint_id =
+            option(command_args, "--checkpoint").ok_or("missing required --checkpoint <id>")?;
+        let deterministic_seed = option(command_args, "--seed")
+            .ok_or("missing required --seed <u64>")?
+            .parse()?;
+        let (request, incumbent) = huntctl::search_evaluator::learning_value_matrix::materialize_learning_refinement_request(
+            &plan,
+            &checkpoint_id,
+            deterministic_seed,
+            &optimization,
+            &loop_request,
+            &loop_state,
+            &repository_root,
+        )?;
+        let report = request.validate_files(&repository_root)?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "learning-value refinement cell request",
+        )?;
+        refuse_existing_output(&output, "learning-value refinement cell request")?;
+        write_new_file(&output, request.to_pretty_json()?)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "request": report,
+                "learning_incumbent": {
+                    "tape": incumbent.tape,
+                    "first_hit_tick": incumbent.first_hit_tick,
+                    "generation": incumbent.generation,
+                    "rollout": incumbent.rollout,
+                }
+            }))?
+        );
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("materialize-learning-value-loop-cell") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;

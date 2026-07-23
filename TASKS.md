@@ -801,6 +801,12 @@ revalidated crash-safe journal/state chain.
       split/exploration seed and both model initialization seeds, so treatments
       remain paired within one replicate while the four declared replicates are
       genuinely distinct; cell evidence independently recomputes those bindings.
+      For the learned-plus-refinement arm, a separate materializer reopens the
+      completed sealed loop, digest-checks every committed native result/tape,
+      selects the fastest successful realized tape, and installs it as the exact
+      plan-owned CEM incumbent with an isolated refinement budget and journal.
+      Native execution materialization must still cold-validate that tape and
+      first-hit threshold before the residual phase can run.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
       The predeclared report verdict is implemented but remains unchecked until
