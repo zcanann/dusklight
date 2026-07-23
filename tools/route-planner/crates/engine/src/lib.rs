@@ -11,6 +11,7 @@ pub mod authorization;
 pub mod binary_evidence;
 pub mod bite_matrix;
 pub mod builtin_refinement;
+pub mod citation;
 pub mod component_catalog;
 pub mod cutscene;
 pub mod cutscene_corruption;

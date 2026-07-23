@@ -3014,7 +3014,14 @@ timeline assumptions.
 - [ ] Match planned edges to trace/tape observations.
 - [ ] Validate postconditions and component preservation against snapshots.
 - [ ] Promote witnessed edges without erasing lower-confidence alternatives.
-- [ ] Attach source, extraction, trace, video, or community citations.
+- [x] Attach source, extraction, trace, video, or community citations. The
+      catalog-digest-bound `evidence-citation-index/v1` targets existing stable
+      evidence-record IDs and distinguishes all five citation kinds. Artifact,
+      exact repository revision/path/line, and HTTP(S) locators support source
+      and archived-content digests; validation rejects dangling targets,
+      catalog drift, unsafe paths/URLs, zero digests, and noncanonical ordering.
+      `export-evidence-citations` seals author drafts. See
+      `docs/route-planner/evidence-citations.md`.
 - [ ] Add tools to identify facts used by many routes but supported weakly.
 - [ ] Report which facts and obligations are exercised by glitchless story, 100%,
       Any%, and hypothetical route suites.

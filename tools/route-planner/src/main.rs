@@ -5,6 +5,7 @@ use dusklight_route_planner::binary_evidence::{
 use dusklight_route_planner::builtin_refinement::{
     bundled_refinement_pack, bundled_refinement_pack_ids,
 };
+use dusklight_route_planner::citation::EvidenceCitationIndex;
 use dusklight_route_planner::component_catalog::ComponentBoundaryCatalog;
 use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::cutscene_corruption::compile_actor_corruption_hypothesis;
@@ -125,6 +126,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("extract-stage-data") => extract_stage_data(&args[1..]),
         Some("extract-world") => extract_world(&args[1..]),
         Some("export-builtin-refinement-pack") => export_builtin_refinement_pack(&args[1..]),
+        Some("export-evidence-citations") => export_evidence_citations(&args[1..]),
         Some("export-refinement-pack") => export_refinement_pack(&args[1..]),
         Some("edit-route-book") => edit_route_book(&args[1..]),
         Some("inspect-state") => inspect_state_command(&args[1..]),
@@ -194,6 +196,29 @@ fn diagnose_refinement_packs_command(args: &[String]) -> Result<(), Box<dyn Erro
         )
         .into());
     }
+    Ok(())
+}
+
+fn export_evidence_citations(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let catalog =
+        ComposedPlannerCatalog::decode_canonical(&fs::read(required_path(args, "--catalog")?)?)?;
+    let input = required_path(args, "--input")?;
+    let output = required_path(args, "--output")?;
+    let index: EvidenceCitationIndex = serde_json::from_slice(&fs::read(&input)?)?;
+    let bytes = index.canonical_bytes(&catalog)?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": index.schema,
+            "input": input,
+            "output": output,
+            "sha256": index.digest(&catalog)?,
+            "citations": index.citations.len(),
+            "fact_catalog_sha256": index.fact_catalog_sha256,
+            "mechanics_catalog_sha256": index.mechanics_catalog_sha256,
+        }))?
+    );
     Ok(())
 }
 
@@ -2327,6 +2352,7 @@ fn print_usage() {
             "  route-planner extract-stage-data --archive ARCHIVE.arc --resource stage.dzs|room.dzr --output STAGE.json",
             "  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json",
             "  route-planner export-builtin-refinement-pack --id ID --output PACK.json",
+            "  route-planner export-evidence-citations --catalog CATALOG.json --input DRAFT.json --output CITATIONS.json",
             "  route-planner export-refinement-pack --input DRAFT.json --output PACK.json",
             "  route-planner identify-orig --orig ORIG_ROOT [--registry REGISTRY.json] [--content-id ID] --output IDENTIFICATION.json",
             "  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]",
