@@ -278,6 +278,10 @@ pub struct BatchComplete {
 pub enum ClientError {
     Io(std::io::Error),
     Json(serde_json::Error),
+    ResponseJson {
+        source: serde_json::Error,
+        line: String,
+    },
     WorkerClosed,
     ResponseTooLarge(usize),
     RequestMismatch {
@@ -307,6 +311,9 @@ impl fmt::Display for ClientError {
         match self {
             Self::Io(error) => write!(f, "worker I/O error: {error}"),
             Self::Json(error) => write!(f, "invalid worker JSON: {error}"),
+            Self::ResponseJson { source, line } => {
+                write!(f, "invalid worker JSON: {source}; response line: {line:?}")
+            }
             Self::WorkerClosed => f.write_str("worker closed its transport"),
             Self::ResponseTooLarge(size) => {
                 write!(f, "worker response is {size} bytes; limit is 1 MiB")
@@ -471,7 +478,11 @@ impl<T: Transport> WorkerClient<T> {
         if line.len() > MAX_CONTROL_LINE_BYTES {
             return Err(ClientError::ResponseTooLarge(line.len()));
         }
-        let response: Envelope = serde_json::from_str(&line)?;
+        let response: Envelope =
+            serde_json::from_str(&line).map_err(|source| ClientError::ResponseJson {
+                source,
+                line: line.clone(),
+            })?;
         if response.id != Some(request_id) {
             return Err(ClientError::RequestMismatch {
                 expected: request_id,

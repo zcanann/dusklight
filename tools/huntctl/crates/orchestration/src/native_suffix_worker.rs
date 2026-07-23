@@ -117,7 +117,12 @@ impl NativeSuffixWorkerSession {
             &prepared.args,
             Some(&prepared.working_directory),
         )
-        .map_err(worker_error)?;
+        .map_err(|source| {
+            worker_message(format!(
+                "cannot launch native suffix worker {}: {source}",
+                prepared.executable.display()
+            ))
+        })?;
         let mut client = WorkerClient::new(transport);
         let hello = client.handshake().map_err(worker_error)?.clone();
         if !hello.capabilities.persistent_control || !hello.capabilities.batch_run {
@@ -267,11 +272,21 @@ fn prepare_launch(
     let card_fixture = canonical_directory(&config.card_fixture, "card fixture")?;
     let working_directory = canonical_directory(&config.working_directory, "working directory")?;
     let batch_path = canonical_file(&config.initial_batch, "initial suffix batch")?;
-    let batch_bytes = fs::read(&batch_path).map_err(worker_error)?;
+    let batch_bytes = fs::read(&batch_path).map_err(|source| {
+        worker_message(format!(
+            "cannot read initial suffix batch {}: {source}",
+            batch_path.display()
+        ))
+    })?;
     let batch: NativeSuffixBatch = serde_json::from_slice(&batch_bytes).map_err(worker_error)?;
     validate_batch_shape(&batch)?;
 
-    let tape_bytes = fs::read(&input_tape).map_err(worker_error)?;
+    let tape_bytes = fs::read(&input_tape).map_err(|source| {
+        worker_message(format!(
+            "cannot read native suffix input tape {}: {source}",
+            input_tape.display()
+        ))
+    })?;
     let tape = InputTape::decode(&tape_bytes).map_err(worker_error)?.tape;
     if tape.boot != TapeBoot::Process
         || batch
@@ -288,7 +303,12 @@ fn prepare_launch(
         ));
     }
 
-    let program_bytes = fs::read(&milestone_program).map_err(worker_error)?;
+    let program_bytes = fs::read(&milestone_program).map_err(|source| {
+        worker_message(format!(
+            "cannot read native suffix milestone program {}: {source}",
+            milestone_program.display()
+        ))
+    })?;
     let decoded =
         dusklight_objectives::milestone_dsl::decode(&program_bytes).map_err(worker_error)?;
     let definition_index = decoded
@@ -312,12 +332,22 @@ fn prepare_launch(
         .map(|path| prepare_new_output(path, "initial suffix winner tape"))
         .transpose()?;
     prepare_state_root(&config.state_root)?;
-    let state_root = config.state_root.canonicalize().map_err(worker_error)?;
+    let state_root = config.state_root.canonicalize().map_err(|source| {
+        worker_message(format!(
+            "cannot canonicalize native suffix state root {}: {source}",
+            config.state_root.display()
+        ))
+    })?;
     let renderer_cache = state_root
         .parent()
         .unwrap_or(&state_root)
         .join("renderer-cache");
-    fs::create_dir_all(&renderer_cache).map_err(worker_error)?;
+    fs::create_dir_all(&renderer_cache).map_err(|source| {
+        worker_message(format!(
+            "cannot create native suffix renderer cache {}: {source}",
+            renderer_cache.display()
+        ))
+    })?;
 
     let game_data_sha256 = sha256_file(&game_data)?;
     let identity = NativeSuffixWorkerIdentity {
@@ -740,7 +770,12 @@ fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWor
 }
 
 fn canonical_file(path: &Path, label: &str) -> Result<PathBuf, NativeSuffixWorkerError> {
-    let canonical = path.canonicalize().map_err(worker_error)?;
+    let canonical = path.canonicalize().map_err(|source| {
+        worker_message(format!(
+            "cannot canonicalize {label} {}: {source}",
+            path.display()
+        ))
+    })?;
     if !canonical.is_file() {
         return Err(worker_message(format!("{label} is not a regular file")));
     }
@@ -748,7 +783,12 @@ fn canonical_file(path: &Path, label: &str) -> Result<PathBuf, NativeSuffixWorke
 }
 
 fn canonical_directory(path: &Path, label: &str) -> Result<PathBuf, NativeSuffixWorkerError> {
-    let canonical = path.canonicalize().map_err(worker_error)?;
+    let canonical = path.canonicalize().map_err(|source| {
+        worker_message(format!(
+            "cannot canonicalize {label} {}: {source}",
+            path.display()
+        ))
+    })?;
     if !canonical.is_dir() {
         return Err(worker_message(format!("{label} is not a directory")));
     }
@@ -767,8 +807,18 @@ fn prepare_new_output(path: &Path, label: &str) -> Result<PathBuf, NativeSuffixW
     let parent = absolute
         .parent()
         .ok_or_else(|| worker_message(format!("{label} has no parent")))?;
-    fs::create_dir_all(parent).map_err(worker_error)?;
-    let parent = parent.canonicalize().map_err(worker_error)?;
+    fs::create_dir_all(parent).map_err(|source| {
+        worker_message(format!(
+            "cannot create {label} parent {}: {source}",
+            parent.display()
+        ))
+    })?;
+    let parent = parent.canonicalize().map_err(|source| {
+        worker_message(format!(
+            "cannot canonicalize {label} parent {}: {source}",
+            parent.display()
+        ))
+    })?;
     let name = absolute
         .file_name()
         .ok_or_else(|| worker_message(format!("{label} has no filename")))?;
@@ -789,13 +839,28 @@ fn prepare_new_result_output(path: &Path, label: &str) -> Result<PathBuf, Native
 
 fn prepare_state_root(path: &Path) -> Result<(), NativeSuffixWorkerError> {
     if path.exists() {
-        if !path.is_dir() || fs::read_dir(path).map_err(worker_error)?.next().is_some() {
+        if !path.is_dir()
+            || fs::read_dir(path)
+                .map_err(|source| {
+                    worker_message(format!(
+                        "cannot inspect native suffix state root {}: {source}",
+                        path.display()
+                    ))
+                })?
+                .next()
+                .is_some()
+        {
             return Err(worker_message(
                 "native suffix state root must be new or empty",
             ));
         }
     } else {
-        fs::create_dir_all(path).map_err(worker_error)?;
+        fs::create_dir_all(path).map_err(|source| {
+            worker_message(format!(
+                "cannot create native suffix state root {}: {source}",
+                path.display()
+            ))
+        })?;
     }
     Ok(())
 }
@@ -806,11 +871,15 @@ fn path_text<'a>(path: &'a Path, label: &str) -> Result<&'a str, NativeSuffixWor
 }
 
 fn sha256_file(path: &Path) -> Result<Digest, NativeSuffixWorkerError> {
-    let mut file = File::open(path).map_err(worker_error)?;
+    let mut file = File::open(path).map_err(|source| {
+        worker_message(format!("cannot hash file {}: {source}", path.display()))
+    })?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 1024 * 1024];
     loop {
-        let count = file.read(&mut buffer).map_err(worker_error)?;
+        let count = file.read(&mut buffer).map_err(|source| {
+            worker_message(format!("cannot hash file {}: {source}", path.display()))
+        })?;
         if count == 0 {
             break;
         }

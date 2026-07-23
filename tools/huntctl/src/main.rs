@@ -17,9 +17,34 @@ mod cli;
 
 fn main() {
     suppress_windows_error_dialogs();
-    if let Err(error) = run() {
-        eprintln!("huntctl: {error}");
-        std::process::exit(2);
+    // Some authenticated campaign values contain wide fixed-size native state
+    // records. Windows gives the process main thread a comparatively small
+    // stack, which made otherwise valid materialization/validation commands
+    // abort before they could report an error. Run the command dispatcher on
+    // an explicitly sized stack; worker processes and gameplay remain wholly
+    // unaffected.
+    let command = std::thread::Builder::new()
+        .name("huntctl-command".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| match run() {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("huntctl: {error}");
+                2
+            }
+        });
+    let exit_code = match command {
+        Ok(command) => match command.join() {
+            Ok(exit_code) => exit_code,
+            Err(panic) => std::panic::resume_unwind(panic),
+        },
+        Err(error) => {
+            eprintln!("huntctl: cannot start command thread: {error}");
+            2
+        }
+    };
+    if exit_code != 0 {
+        std::process::exit(exit_code);
     }
 }
 

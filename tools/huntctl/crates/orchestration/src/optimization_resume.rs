@@ -8,7 +8,9 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
+#[cfg(not(windows))]
+use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -964,7 +966,7 @@ fn write_state_atomically(
             .map_err(OptimizationResumeError::io)?;
         output.sync_all().map_err(OptimizationResumeError::io)?;
         drop(output);
-        fs::rename(&temporary, path).map_err(OptimizationResumeError::io)?;
+        replace_atomically(&temporary, path)?;
         sync_parent(path)
     })();
     if result.is_err() {
@@ -973,6 +975,7 @@ fn write_state_atomically(
     result
 }
 
+#[cfg(not(windows))]
 fn sync_parent(path: &Path) -> Result<(), OptimizationResumeError> {
     let parent = path
         .parent()
@@ -980,6 +983,64 @@ fn sync_parent(path: &Path) -> Result<(), OptimizationResumeError> {
     File::open(parent)
         .and_then(|directory| directory.sync_all())
         .map_err(OptimizationResumeError::io)
+}
+
+#[cfg(windows)]
+fn sync_parent(path: &Path) -> Result<(), OptimizationResumeError> {
+    // Opening a directory with File::open fails with ERROR_ACCESS_DENIED on
+    // Windows. The state replacement below uses MOVEFILE_WRITE_THROUGH, which
+    // does not return until the move is flushed. Still validate the parent so
+    // a malformed persistence path cannot silently skip this boundary.
+    let parent = path
+        .parent()
+        .ok_or_else(|| resume_error("optimization persistence path has no parent"))?;
+    if !parent.is_dir() {
+        return Err(resume_error(
+            "optimization persistence parent is not a directory",
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_atomically(source: &Path, destination: &Path) -> Result<(), OptimizationResumeError> {
+    fs::rename(source, destination).map_err(OptimizationResumeError::io)
+}
+
+#[cfg(windows)]
+fn replace_atomically(source: &Path, destination: &Path) -> Result<(), OptimizationResumeError> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x0000_0001;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x0000_0008;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn MoveFileExW(existing: *const u16, replacement: *const u16, flags: u32) -> i32;
+    }
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        MoveFileExW(
+            source.as_ptr(),
+            destination.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        Err(OptimizationResumeError::io(std::io::Error::last_os_error()))
+    } else {
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

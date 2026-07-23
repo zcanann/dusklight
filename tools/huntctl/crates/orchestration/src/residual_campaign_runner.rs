@@ -333,10 +333,28 @@ pub(crate) fn write_exact_or_new(
         return Ok(());
     }
     fs::rename(&temporary, path).map_err(runner_error)?;
+    sync_artifact_parent(path)
+}
+
+#[cfg(not(windows))]
+fn sync_artifact_parent(path: &Path) -> Result<(), ResidualCampaignRunnerError> {
     if let Some(parent) = path.parent() {
         fs::File::open(parent)
             .and_then(|directory| directory.sync_all())
             .map_err(runner_error)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn sync_artifact_parent(path: &Path) -> Result<(), ResidualCampaignRunnerError> {
+    // Windows rejects ordinary file handles for directories. The artifact was
+    // already flushed before the atomic rename; validate its parent rather
+    // than turning every successful campaign write into ERROR_ACCESS_DENIED.
+    if path.parent().is_some_and(|parent| !parent.is_dir()) {
+        return Err(runner_message(
+            "residual artifact parent is not a directory",
+        ));
     }
     Ok(())
 }

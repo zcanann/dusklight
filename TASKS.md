@@ -384,10 +384,14 @@ goal-only discovery.
 
 ### 2.4 Baseline proof
 
-- [ ] Produce one exact hand-authored repair of the degraded q131 tape using only
+- [x] Produce one exact hand-authored repair of the degraded q131 tape using only
       the residual operations allowed by its sealed search space. Keep the
       witness out of optimizer initialization; it proves expressiveness, not
-      search competence.
+      search competence. A focused regression seals one ordinary one-frame
+      `0x0100` button residual at suffix frame 100, compiles it against the
+      checked q131 tape, and obtains the checked q125 bytes exactly. The witness
+      is absent from CEM generation construction, replay, ranking, and proposal
+      distributions.
 - [ ] Show that independent sampling over the declared residual surface produces
       meaningful variation in successful first-hit times. If it does not, fix
       the action surface or temporal bases before tuning CEM.

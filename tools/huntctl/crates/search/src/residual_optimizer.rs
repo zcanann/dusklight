@@ -1408,6 +1408,58 @@ mod tests {
     }
 
     #[test]
+    fn checked_ordon_canary_surface_can_express_the_exact_q125_repair() {
+        let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../..");
+        let segment_root = repository_root.join("routes/Glitch Exhibition/intro/segments");
+        let degraded_bytes =
+            std::fs::read(segment_root.join("to_ordon_spring_degraded_q131.tape")).unwrap();
+        let q125_bytes = std::fs::read(segment_root.join("to_ordon_spring_q125.tape")).unwrap();
+        let degraded = InputTape::decode(&degraded_bytes).unwrap().tape;
+        let search_space = ResidualSearchSpace {
+            schema: RESIDUAL_SEARCH_SPACE_SCHEMA_V1.into(),
+            start_frame: 0,
+            end_frame_exclusive: 126,
+            candidate_slots: 4,
+            ports: vec![0],
+            analog_channels: vec![
+                AnalogChannel::MainX,
+                AnalogChannel::MainY,
+                AnalogChannel::CameraX,
+                AnalogChannel::CameraY,
+            ],
+            analog_delta_values: vec![-64, -32, -16, -8, -4, 4, 8, 16, 32, 64],
+            button_masks: vec![1, 2, 4, 8, 16, 32, 64, 256, 512, 1024, 2048, 4096],
+            duration_values: vec![1, 2, 4, 8, 16, 32],
+        };
+        search_space.validate().unwrap();
+        assert!(search_space.ports.contains(&0));
+        assert!(search_space.button_masks.contains(&0x0100));
+        assert!(search_space.duration_values.contains(&1));
+        assert!((search_space.start_frame..search_space.end_frame_exclusive).contains(&100));
+
+        // This witness proves only that the sealed residual language can express
+        // the known repair. It is intentionally never inserted into CEM's
+        // population, replay, rank, or proposal distribution.
+        let witness = ResidualCandidate::seal(
+            &degraded_bytes,
+            Vec::new(),
+            vec![ButtonResidual {
+                port: 0,
+                buttons: 0x0100,
+                start_frame: 100,
+                duration_frames: 1,
+                mode: ButtonResidualMode::Press,
+            }],
+        )
+        .unwrap();
+        let compiled = compile_residual_candidate(&degraded, &degraded_bytes, &witness).unwrap();
+
+        assert_eq!(compiled.bytes, q125_bytes);
+        assert_eq!(witness.buttons.len(), 1);
+        assert_eq!(witness.buttons[0].start_frame, 100);
+    }
+
+    #[test]
     fn detached_spaces_genomes_and_snapshots_fail_closed() {
         let (parent, bytes) = parent(96);
         let mut invalid = space();
