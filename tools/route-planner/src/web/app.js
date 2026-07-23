@@ -1,6 +1,7 @@
 const SERVICE_SCHEMA = "dusklight.route-planner.service/v33";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
+const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v6";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
 
@@ -10,6 +11,7 @@ const elements = Object.fromEntries([
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
   "evaluate-transition", "insert-transition", "replace-step", "remove-step",
+  "pin-selection", "ban-selection", "prefer-selection", "select-method",
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -44,6 +46,10 @@ elements["evaluate-transition"].addEventListener("click", evaluateSelectedTransi
 elements["insert-transition"].addEventListener("click", insertSelectedTransition);
 elements["replace-step"].addEventListener("click", replaceSelectedRouteStep);
 elements["remove-step"].addEventListener("click", removeSelectedRouteStep);
+elements["pin-selection"].addEventListener("click", () => editSelectedDirective("pin"));
+elements["ban-selection"].addEventListener("click", () => editSelectedDirective("ban"));
+elements["prefer-selection"].addEventListener("click", () => editSelectedDirective("prefer"));
+elements["select-method"].addEventListener("click", toggleSelectedMethod);
 elements.canvas.addEventListener("wheel", onWheel, { passive: false });
 elements.canvas.addEventListener("pointerdown", beginPan);
 elements.canvas.addEventListener("dragover", allowTransitionDrop);
@@ -269,8 +275,9 @@ function renderNodes() {
   for (const node of state.graph?.nodes ?? []) {
     const position = state.positions.get(node.id);
     const joinClass = transitionJoinClass(node);
+    const preferenceClass = routePreferenceClass(node);
     const group = svg("g", {
-      class: `node ${node.payload.kind}${state.selected?.type === "node" && state.selected.value.id === node.id ? " selected" : ""}${joinClass ? ` ${joinClass}` : ""}`,
+      class: `node ${node.payload.kind}${state.selected?.type === "node" && state.selected.value.id === node.id ? " selected" : ""}${joinClass ? ` ${joinClass}` : ""}${preferenceClass ? ` ${preferenceClass}` : ""}`,
       transform: `translate(${position.x} ${position.y})`,
       "data-node-id": node.id,
     });
@@ -373,6 +380,7 @@ function renderDetails() {
     elements["insert-transition"].disabled = true;
     elements["replace-step"].disabled = true;
     elements["remove-step"].disabled = true;
+    updateDirectiveControls(null);
     renderStateInspector();
     return;
   }
@@ -388,6 +396,7 @@ function renderDetails() {
     ? `Replace ${state.replacementStep.label}`
     : "Choose replacement transition";
   elements["remove-step"].disabled = !routeStep || !state.project?.start_state || state.readOnly;
+  updateDirectiveControls(selected.type === "node" ? selected.value : null);
   elements["evaluate-transition"].title = state.project?.start_state
     ? "Run the authoritative transition evaluator"
     : "This project has no exact start state";
@@ -397,6 +406,187 @@ function renderDetails() {
     ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
   }, null, 2);
   renderStateInspector();
+}
+
+function updateDirectiveControls(node) {
+  const target = directiveTarget(node);
+  const editable = Boolean(target && state.project?.route_book && !state.readOnly);
+  const active = target ? activeDirectives(target) : [];
+  for (const [mode, id] of [
+    ["pin", "pin-selection"],
+    ["ban", "ban-selection"],
+    ["prefer", "prefer-selection"],
+  ]) {
+    const button = elements[id];
+    const isActive = active.some((directive) => directiveMode(directive) === mode);
+    button.disabled = !editable;
+    button.classList.toggle("active", isActive);
+    button.textContent = isActive ? `Un${mode}` : `${mode[0].toUpperCase()}${mode.slice(1)}`;
+  }
+  const method = node?.payload.kind === "plan_method"
+    ? state.project?.route_book?.methods.find((candidate) => candidate.id === node.payload.method_id)
+    : null;
+  const region = method
+    ? state.project.route_book.regions.find((candidate) => candidate.id === method.region_id)
+    : null;
+  const selected = Boolean(method && region?.selected_method_id === method.id);
+  elements["select-method"].disabled = !editable || !method;
+  elements["select-method"].classList.toggle("active", selected);
+  elements["select-method"].textContent = selected ? "Clear selection" : "Select method";
+}
+
+function directiveTarget(node) {
+  if (!node || !state.project?.route_book) return null;
+  if (node.payload.kind === "transition") {
+    const transition = state.project.catalog.mechanics.transitions.find((candidate) =>
+      candidate.id === node.payload.transition_id);
+    return transition ? {
+      type: "action",
+      id: transition.id,
+      scope: transition.scope,
+      action: { kind: "transition", transition_id: transition.id },
+    } : null;
+  }
+  if (node.payload.kind === "plan_method") {
+    const method = state.project.route_book.methods.find((candidate) =>
+      candidate.id === node.payload.method_id);
+    return method ? { type: "method", id: method.id, scope: method.scope } : null;
+  }
+  return null;
+}
+
+function activeDirectives(target) {
+  return (state.project?.route_book?.directives ?? []).filter((record) => {
+    if (target.type === "method") return record.directive.method_id === target.id;
+    return record.directive.action?.kind === target.action.kind
+      && record.directive.action.transition_id === target.action.transition_id;
+  });
+}
+
+function directiveMode(record) {
+  if (record.directive.kind.startsWith("pin_")) return "pin";
+  if (record.directive.kind.startsWith("ban_")) return "ban";
+  if (record.directive.kind.startsWith("prefer_")) return "prefer";
+  return "";
+}
+
+function routePreferenceClass(node) {
+  const target = directiveTarget(node);
+  if (!target) return "";
+  const active = activeDirectives(target).map(directiveMode);
+  if (active.includes("ban")) return "directive-banned";
+  if (active.includes("pin")) return "directive-pinned";
+  if (active.includes("prefer")) return "directive-preferred";
+  if (node.payload.kind === "plan_method") {
+    const method = state.project.route_book.methods.find((candidate) => candidate.id === target.id);
+    const region = state.project.route_book.regions.find((candidate) => candidate.id === method.region_id);
+    if (region?.selected_method_id === method.id) return "method-selected";
+  }
+  return "";
+}
+
+async function editSelectedDirective(mode) {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  const target = directiveTarget(node);
+  if (!target || state.readOnly) return;
+  const active = activeDirectives(target);
+  const same = active.find((record) => directiveMode(record) === mode);
+  let weight = 1;
+  if (mode === "prefer" && !same) {
+    const entered = prompt("Preference weight", "1");
+    if (entered == null) return;
+    weight = Number(entered);
+    if (!Number.isInteger(weight) || weight <= 0 || weight > 0xffffffff) {
+      setStatus("Preference weight must be an integer from 1 through 4294967295", "bad");
+      return;
+    }
+  }
+  const edits = active.map((record) => ({
+    kind: "remove_directive",
+    directive_id: record.id,
+  }));
+  if (!same) {
+    const noun = target.type === "action" ? "action" : "method";
+    const directive = target.type === "action"
+      ? { kind: `${mode}_action`, action: target.action }
+      : { kind: `${mode}_method`, method_id: target.id };
+    if (mode === "prefer") directive.weight = weight;
+    edits.push({
+      kind: "upsert_directive",
+      directive: {
+        id: `directive.browser-${mode}-${noun}-${slug(target.id)}`,
+        scope: target.scope,
+        directive,
+      },
+    });
+  }
+  await editRouteBook(
+    edits,
+    same ? `${node.label} ${mode} removed` : `${node.label} marked ${mode}`,
+  );
+}
+
+async function toggleSelectedMethod() {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  if (node?.payload.kind !== "plan_method" || !state.project?.route_book || state.readOnly) return;
+  const method = state.project.route_book.methods.find((candidate) =>
+    candidate.id === node.payload.method_id);
+  const region = state.project.route_book.regions.find((candidate) =>
+    candidate.id === method?.region_id);
+  if (!method || !region) return;
+  const selected = region.selected_method_id === method.id;
+  await editRouteBook([{
+    kind: "set_selected_method",
+    region_id: region.id,
+    method_id: selected ? null : method.id,
+  }], selected ? `${method.label} selection cleared` : `${method.label} selected`);
+}
+
+async function editRouteBook(edits, message) {
+  try {
+    setStatus("Validating route-book revision...");
+    const validated = await service({
+      command: "validate_route_book",
+      request_id: requestId("validate-route-book"),
+      book: state.project.route_book,
+      catalog: state.project.catalog,
+    });
+    if (validated.kind !== "route_book_valid") {
+      throw new Error(`Unexpected response ${validated.kind}`);
+    }
+    const edited = await service({
+      command: "edit_route_book",
+      request_id: requestId("edit-route-book"),
+      book: state.project.route_book,
+      catalog: state.project.catalog,
+      edit_batch: {
+        schema: ROUTE_BOOK_EDIT_BATCH_SCHEMA,
+        expected_route_book_sha256: validated.route_book_sha256,
+        edits,
+      },
+    });
+    if (edited.kind !== "edited_route_book") {
+      throw new Error(`Unexpected response ${edited.kind}`);
+    }
+    const selectedId = state.selected?.type === "node" ? state.selected.value.id : null;
+    state.project.route_book = edited.book;
+    const projected = await service({
+      command: "project_graph",
+      request_id: requestId("project-after-route-book-edit"),
+      catalog: state.project.catalog,
+      route_book: state.project.route_book,
+    });
+    if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
+    state.graph = projected.graph;
+    ensurePositions();
+    const selected = state.graph.nodes.find((candidate) => candidate.id === selectedId);
+    state.selected = selected ? { type: "node", value: selected } : null;
+    markDirty();
+    render();
+    setStatus(`${message}; save to persist`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 function renderStateInspector() {

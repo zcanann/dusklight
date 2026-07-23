@@ -2713,16 +2713,23 @@ visual polish or whole-game authoring features.
   - [x] Add revision-checked mutation commands for goals, constraints,
         directives, steps, methods, regions, selections, collapse policies, and
         annotations.
-  - [ ] Add pin/ban/prefer and alternative-selection browser interactions after
-        the first drag/connect/save slice is usable.
+  - [x] Add pin/ban/prefer and alternative-selection browser interactions after
+        the first drag/connect/save slice is usable. Transition and plan-method
+        nodes now create, replace, or remove scoped action/method directives
+        through revision-checked Rust edit batches; plan methods can also select
+        or clear their owning region's alternative, and the canvas distinguishes
+        each persisted choice.
 - [ ] Make transition insertion the primary authoring operation.
   - [ ] From a selected state node, list applicable physical, event, warp,
         reload, title/file, and technique transitions.
   - [ ] Permit searching providers by desired destination or postcondition while
         retaining the actual entry contract and effects.
-  - [ ] Reject invalid joins and show the missing state producers, active
+  - [x] Reject invalid joins and show the missing state producers, active
         obstruction resolvers, unknown obligations, or exact-context mismatch.
-        Do not implement a force-connect operation.
+        Do not implement a force-connect operation. Rejected appends and route
+        edits remain visible with their closest propagated state, typed missing/
+        unknown obligations, obstruction diagnostics, scope/evidence failures,
+        and no bypass command.
   - [ ] Allow an author to insert a suggested producer/resolver chain or create
         an explicitly hypothetical refinement from the rejection.
 - [ ] Add nested subgraph authoring and browsing as graph-view encapsulation.

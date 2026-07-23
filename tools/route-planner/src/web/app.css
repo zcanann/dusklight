@@ -62,6 +62,10 @@ button:disabled { opacity: .42; cursor: default; }
 .node.join-accepted rect { stroke: var(--good); stroke-width: 2.5; }
 .node.join-unknown rect { stroke: var(--unknown); stroke-width: 2.5; stroke-dasharray: 5 3; }
 .node.join-rejected rect { stroke: #ff7d7d; stroke-width: 2.5; stroke-dasharray: 5 3; }
+.node.directive-pinned rect { stroke: #cba2ff; stroke-width: 2.2; }
+.node.directive-banned rect { stroke: #ff7d7d; stroke-width: 2.2; stroke-dasharray: 3 3; }
+.node.directive-preferred rect { stroke: #f5c865; stroke-width: 2.2; }
+.node.method-selected rect { stroke: #5ee09a; stroke-width: 2.2; }
 .node text { fill: #edf1f5; font-size: 12px; pointer-events: none; }
 .node .kind { fill: #9ca8b5; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 
@@ -69,6 +73,9 @@ button:disabled { opacity: .42; cursor: default; }
 .details h2 { margin: 5px 0 3px; font-size: 18px; }
 .details p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
 .details button { margin-top: 11px; }
+.directive-controls { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.directive-controls button { margin-top: 0; padding: 5px 8px; font-size: 11px; }
+.directive-controls button.active { border-color: var(--accent); color: var(--accent); background: #173042; }
 .details pre { margin: 0; padding: 11px; background: #101419; border: 1px solid #303943; border-radius: 5px; overflow: auto; font-size: 11px; color: #bcd0df; }
 .state-inspector[hidden] { display: none; }
 .state-inspector { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
