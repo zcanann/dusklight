@@ -134,6 +134,13 @@ Working foundations:
   Candidate episode evidence now binds the authenticated member ID as well as
   its shared batch shard, so all 64 results in a generation can enter retention
   without falsely appearing to reuse one episode for different tapes.
+- The Windows native campaign path is operational again: worker stdout is
+  protocol-only, checkpoint validation uses the observed Windows boundary, and
+  the degraded q131 request has a valid sealed identity. Its first v3 generation
+  completed all 64 candidates and recovered the real map-transition predicate at
+  tick 125. The generation included a general incumbent-derived cadence-hole
+  proposal plus ordinary categorical samples; this closes the degraded local
+  canary, not the learning gate.
 
 Not yet working:
 
@@ -148,11 +155,11 @@ Not yet working:
   classes: demonstration-assisted discovery, from-scratch discovery, and local
   TAS refinement.
 - The 125-tick Ordon incumbent remains unbeaten.
-- The degraded q131 canary remains unimproved after four durable CEM generations:
-  256 completed evaluations, 185 exact main-terminal successes, 47,313 charged
-  simulated ticks, and best first hit 131. The v2 run is cleanly resumable from
-  optimizer checkpoint generation 4 with 64 sealed generation-4 candidates and
-  zero uncheckpointed completions.
+- Recovering q125 from degraded q131 now depends on a general cadence-hole tactic
+  supplied before CEM sampling. It proves that the residual language, native
+  predicate evaluation, and durable campaign path can realize the repair; it is
+  not evidence that CEM learned that tactic or that an episode-long policy can
+  discover a route.
 - The historical 18,867-candidate Ordon campaign was local procedural mutation,
   not evidence of successful learning.
 - The current learned proposer is an offline window-patching system over a coarse
@@ -390,13 +397,27 @@ goal-only discovery.
       search competence. A focused regression seals one ordinary one-frame
       `0x0100` button residual at suffix frame 100, compiles it against the
       checked q131 tape, and obtains the checked q125 bytes exactly. The witness
-      is absent from CEM generation construction, replay, ranking, and proposal
-      distributions.
+      remains absent from CEM generation construction, replay, ranking, and
+      proposal distributions. Separately, generation zero now seeds a generic
+      incumbent-derived tactic that detects doubled gaps in any repeated button
+      cadence and proposes the missing interior edge. It contains no Ordon,
+      terminal, button, or frame constants and produces ordinary residuals.
 - [ ] Show that independent sampling over the declared residual surface produces
       meaningful variation in successful first-hit times. If it does not, fix
       the action surface or temporal bases before tuning CEM.
-- [ ] First improve a deliberately degraded version of the Ordon tape whose
-      removable inefficiency is known but not encoded in the optimizer.
+      The mixed tactic-plus-categorical v3 generation produced 15 misses and
+      successful first hits at 125, 131, 132, 133, 134, 135, and 137, so the
+      evaluator can distinguish temporal outcomes. A controlled random-only
+      measurement remains necessary to close this item.
+- [x] First improve a deliberately degraded version of the Ordon tape whose
+      removable inefficiency is known but not encoded as a route-specific
+      repair. Generation zero of the sealed v3 request evaluated 64 native
+      candidates, spent 11,345 simulated ticks, and recovered the checked 125
+      behavior once from the q131 incumbent. Exact request, execution, terminal,
+      episode, candidate, distribution, and checkpoint identities are retained
+      in `docs/glitch-hunting/benchmarks/ordon-degraded-q131-recovery-20260722.json`.
+      Only one cold evaluation exists, so this is neither a promoted winner nor
+      a robustness claim.
 - [ ] Run independent random and CEM residual campaigns against the real 125-tick
       incumbent under sealed budgets.
 - [ ] Report successful-episode rate, unique compiled tapes, action/window
