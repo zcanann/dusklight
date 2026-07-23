@@ -226,6 +226,21 @@ try {
   );
   await evaluate(`(() => {
     const terminal = document.querySelector('[data-node-id="execution-state/after/step.route-0007"]');
+    if (!terminal) throw new Error("terminal execution state is absent from the grouped region");
+    terminal.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    window.prompt = () => "Terminal state";
+    document.getElementById("group-selection").click();
+    return true;
+  })()`);
+  await browserUntil(
+    "nested region breadcrumbs",
+    `document.getElementById("region-breadcrumbs").textContent.includes("Closing subgraph")
+      && document.getElementById("region-breadcrumbs").textContent.includes("Terminal state")
+      && document.querySelectorAll("#nodes .node.reference_step").length === 0
+      && document.querySelectorAll("#nodes .node.execution_state").length === 1`,
+  );
+  await evaluate(`(() => {
+    const terminal = document.querySelector('[data-node-id="execution-state/after/step.route-0007"]');
     if (!terminal) throw new Error("terminal execution state is absent");
     terminal.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return true;
@@ -248,6 +263,10 @@ try {
     10_000,
   );
   await evaluate(`(() => {
+    const closing = [...document.querySelectorAll("#region-breadcrumbs button")]
+      .find((button) => button.textContent === "Closing subgraph");
+    if (!closing) throw new Error("closing-region breadcrumb is absent");
+    closing.click();
     const step = [...document.querySelectorAll("#nodes .node.reference_step")].at(-1);
     if (!step) throw new Error("terminal route step is absent from the projected graph");
     step.dispatchEvent(new MouseEvent("click", { bubbles: true }));

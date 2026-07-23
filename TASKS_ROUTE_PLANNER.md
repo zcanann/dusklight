@@ -2813,8 +2813,15 @@ visual polish or whole-game authoring features.
         regression proves mechanics/connectivity remain identical. Brave groups
         the terminal keyed-door step/state, enters it by breadcrumb, and keeps
         inspecting and editing the underlying route through save/reload.
-  - [ ] Enter/exit nested regions with breadcrumbs; one-trip and multiple-trip
+  - [x] Enter/exit nested regions with breadcrumbs; one-trip and multiple-trip
         dungeon routes are separately constructed subgraphs, not child methods.
+        Presentation groups may be siblings or recursively nested under the
+        current visual region and never create methods or macro actions. The
+        browser renders the complete ancestor breadcrumb path and supports
+        entering any saved child or returning to any ancestor. Brave constructs
+        `Closing subgraph > Terminal state`, verifies exact-region contents at
+        both levels, inspects the nested execution state, then returns through
+        the parent breadcrumb to edit the underlying route step.
   - [ ] Show every incoming/outgoing boundary state and edge before a saved region
         is copied or referenced elsewhere.
   - [ ] Support version, fork, copy/reference, replace, and usage inspection for
