@@ -8,7 +8,7 @@ const elements = Object.fromEntries([
   "project-list", "new-project", "open-project", "save-project", "save-as-project",
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
-  "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json",
+  "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
   "evaluate-transition", "insert-transition", "replace-step", "remove-step",
 ].map((id) => [id, document.getElementById(id)]));
 
@@ -373,6 +373,7 @@ function renderDetails() {
     elements["insert-transition"].disabled = true;
     elements["replace-step"].disabled = true;
     elements["remove-step"].disabled = true;
+    renderStateInspector();
     return;
   }
   elements["detail-title"].textContent = selected.type === "node" ? selected.value.label : selected.value.relation;
@@ -395,6 +396,97 @@ function renderDetails() {
     ...(state.replacementStep ? { replacement_target: state.replacementStep } : {}),
     ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
   }, null, 2);
+  renderStateInspector();
+}
+
+function renderStateInspector() {
+  const container = elements["state-inspector"];
+  container.replaceChildren();
+  const change = state.transitionEvaluation?.state_change;
+  if (!change?.before) {
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+  const heading = document.createElement("h3");
+  heading.textContent = change.after ? "Exact state change" : "Exact inspected state";
+  const columns = document.createElement("div");
+  columns.className = "state-columns";
+  columns.append(stateInspectionCard("Before", change.before));
+  if (change.after) columns.append(stateInspectionCard("After", change.after));
+  container.append(heading, columns);
+  const deltas = stateDeltaChips(change.diff);
+  if (deltas.length) {
+    const list = document.createElement("div");
+    list.className = "state-deltas";
+    list.append(...deltas);
+    container.append(list);
+  } else if (change.after) {
+    const empty = document.createElement("p");
+    empty.className = "state-empty";
+    empty.textContent = "No modeled state deltas.";
+    container.append(empty);
+  }
+}
+
+function stateInspectionCard(label, inspection) {
+  const environment = inspection.state.snapshot.environment;
+  const location = environment.location;
+  const card = document.createElement("section");
+  card.className = "state-card";
+  const title = document.createElement("h4");
+  title.textContent = label;
+  const facts = inspection.facts.reduce((counts, fact) => {
+    counts[fact.evaluated] = (counts[fact.evaluated] ?? 0) + 1;
+    return counts;
+  }, {});
+  const metrics = document.createElement("dl");
+  for (const [name, value] of [
+    ["Location", `${location.stage} r${location.room} l${location.layer} s${location.spawn}`],
+    ["Context", taggedValue(environment.execution_context)],
+    ["Runtime", environment.active_runtime_file.id],
+    ["Player", `${taggedValue(environment.player.form)} · ${environment.player.action}`],
+    ["Components", environment.components.length],
+    ["Facts", `${facts.true ?? 0} true · ${facts.false ?? 0} false · ${facts.unknown ?? 0} unknown`],
+  ]) {
+    const term = document.createElement("dt");
+    term.textContent = name;
+    const detail = document.createElement("dd");
+    detail.textContent = String(value);
+    detail.title = String(value);
+    metrics.append(term, detail);
+  }
+  card.append(title, metrics);
+  return card;
+}
+
+function taggedValue(value) {
+  if (value == null) return "none";
+  if (typeof value === "string") return value.replaceAll("_", " ");
+  if (typeof value.kind === "string") return value.kind.replaceAll("_", " ");
+  return "modeled";
+}
+
+function stateDeltaChips(diff) {
+  if (!diff) return [];
+  const stateDiff = diff.state_diff;
+  const values = [
+    [stateDiff.location_changed, "location changed", "changed"],
+    [stateDiff.execution_context_changed, "context changed", "changed"],
+    [stateDiff.player_changed, "player changed", "changed"],
+    [stateDiff.component_deltas.length, `${stateDiff.component_deltas.length} component delta(s)`, "changed"],
+    [stateDiff.semantic_deltas.length, `${stateDiff.semantic_deltas.length} semantic delta(s)`, "fact"],
+    [diff.fact_deltas.length, `${diff.fact_deltas.length} evaluated fact delta(s)`, "fact"],
+    [diff.gate_state_deltas.length, `${diff.gate_state_deltas.length} gate delta(s)`, "changed"],
+    [diff.serialized_store_deltas.length, `${diff.serialized_store_deltas.length} store delta(s)`, "changed"],
+    [diff.persistent_file_image_deltas.length, `${diff.persistent_file_image_deltas.length} file-image delta(s)`, "changed"],
+  ];
+  return values.filter(([present]) => Boolean(present)).map(([, label, className]) => {
+    const chip = document.createElement("span");
+    chip.className = `state-delta ${className}`;
+    chip.textContent = label;
+    return chip;
+  });
 }
 
 async function removeSelectedRouteStep() {
@@ -414,7 +506,14 @@ async function removeSelectedRouteStep() {
       evidence_mode: "established_only",
     });
     if (payload.kind === "rejected_route_edit") {
-      state.transitionEvaluation = payload;
+      state.transitionEvaluation = {
+        ...payload,
+        state_change: await inspectStateChange(
+          state.project.start_state,
+          payload.closest_before,
+          "remove-rejection",
+        ),
+      };
       render();
       setStatus(
         `${joinRejectionSummary(node.label, payload, "removed")}; first broken downstream step ${payload.failed_step_id}`,
@@ -472,7 +571,14 @@ async function replaceSelectedRouteStep() {
       evidence_mode: "established_only",
     });
     if (payload.kind === "rejected_route_edit") {
-      state.transitionEvaluation = payload;
+      state.transitionEvaluation = {
+        ...payload,
+        state_change: await inspectStateChange(
+          state.project.start_state,
+          payload.closest_before,
+          "replace-rejection",
+        ),
+      };
       render();
       setStatus(
         `${joinRejectionSummary(node.label, payload, "used as a replacement")}; first broken step ${payload.failed_step_id}`,
@@ -537,7 +643,14 @@ async function insertSelectedTransition() {
       evidence_mode: "established_only",
     });
     if (payload.kind === "rejected_transition_join") {
-      state.transitionEvaluation = payload;
+      state.transitionEvaluation = {
+        ...payload,
+        state_change: await inspectStateChange(
+          state.project.start_state,
+          payload.closest_before,
+          "append-rejection",
+        ),
+      };
       render();
       setStatus(joinRejectionSummary(node.label, payload), "bad");
       return;

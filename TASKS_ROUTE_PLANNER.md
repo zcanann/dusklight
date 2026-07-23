@@ -2642,9 +2642,11 @@ visual polish or whole-game authoring features.
       and evidence in the bottom panel.
       Transition evaluation, append, and replacement now load authoritative full
       start/after inspections plus a typed state diff into the panel. Rejections
-      retain their closest full state and structured join assessment. Dedicated
-      execution-state nodes and a summarized presentation above the raw typed
-      payload remain open.
+      now inspect their closest propagated full state through the same authority
+      and retain the structured join assessment. The browser summarizes exact
+      location, execution context, runtime file, player state, component/fact
+      counts, and typed delta classes above the complete raw payload. Dedicated
+      execution-state nodes remain open.
 - [ ] Support named visual regions with collapse and double-click/breadcrumb
       navigation. Regions are flat-graph encapsulation only: grouping never
       creates a goal, macro transition, alternative implementation, or new
@@ -2739,7 +2741,10 @@ visual polish or whole-game authoring features.
   - [x] Diff serialized owner stores and sealed persistent-file images by stable
         owner/file identity, payload digest, component manifest, and source
         runtime, alongside active/ended runtime and physical-slot deltas.
-  - [ ] Add the visual inspector and before/after route-step diff interaction.
+  - [x] Add the visual inspector and before/after route-step diff interaction.
+        Accepted evaluations/appends/replacements and rejected append/remove/
+        replacement witnesses render authoritative before/after state cards and
+        typed delta categories while retaining the full inspection JSON.
   - [ ] Keep it available on every accepted node and closest rejected-join
         witness in the active graph, including nodes inside expanded regions.
 - [ ] Add raw flag catalogue search and friendly aliases.
