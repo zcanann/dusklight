@@ -2494,12 +2494,19 @@ verified route.
     result, and removing both restores the enabled-pack result.
 - [x] Distinguish satisfy, bypass, avoid, supersede, and assume-absent resolver
       operations, plus explicit record replace/supersede/disable operations.
-- [ ] Add complete import/export and conflict diagnostics.
+- [x] Add complete import/export and conflict diagnostics.
   - [x] Add strict canonical pack import, deterministic composition, canonical
         composed-catalog export, dependency-digest checks, and fail-closed
         conflict/replacement errors to the planner-owned CLI.
-  - [ ] Add structured multi-error diagnostics, pack export authoring, and editor
-        fix suggestions.
+  - [x] Add structured multi-error diagnostics, pack export authoring, and editor
+        fix suggestions. `diagnose-refinement-packs` accumulates readable-pack
+        schema/manifest/rule/order/duplicate errors, missing or digest-drifted
+        dependencies, explicit conflicts, and JSON-shape failures across the
+        whole batch; every row carries a field-specific repair suggestion.
+        `export-refinement-pack` refuses any such draft and emits exact canonical
+        bytes plus digest only after the diagnostic report is empty. Final
+        composition still owns catalog-aware replacement, selector-cardinality,
+        and cross-reference validation.
 
 Deliverable: researchers can extend the model without editing core code.
 

@@ -51,7 +51,8 @@ use dusklight_route_planner::orig_extraction::{
     list_rarc_resource_names, parse_event_list, parse_message_flow, parse_stage_data,
 };
 use dusklight_route_planner::refinement::{
-    ComposedPlannerCatalog, RefinementLayers, RefinementPack,
+    ComposedPlannerCatalog, RefinementDiagnostic, RefinementLayers, RefinementPack,
+    diagnose_refinement_packs,
 };
 use dusklight_route_planner::return_place::gz2e01_tower_return_place_mechanics;
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
@@ -106,6 +107,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("construct-message-flows") => construct_message_flows(&args[1..]),
         Some("compose") => compose(&args[1..]),
         Some("diff-orig") => diff_orig(&args[1..]),
+        Some("diagnose-refinement-packs") => diagnose_refinement_packs_command(&args[1..]),
         Some("extract-binary-range-evidence") => extract_binary_range_evidence(&args[1..]),
         Some("extract-event-list") => extract_event_list(&args[1..]),
         Some("extract-demo-actor-program") => extract_demo_actor_program(&args[1..]),
@@ -121,6 +123,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("extract-stage-data") => extract_stage_data(&args[1..]),
         Some("extract-world") => extract_world(&args[1..]),
         Some("export-builtin-refinement-pack") => export_builtin_refinement_pack(&args[1..]),
+        Some("export-refinement-pack") => export_refinement_pack(&args[1..]),
         Some("edit-route-book") => edit_route_book(&args[1..]),
         Some("inspect-state") => inspect_state_command(&args[1..]),
         Some("identify-orig") => identify_orig(&args[1..]),
@@ -151,6 +154,74 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn diagnose_refinement_packs_command(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let paths = repeated_option(args, "--pack");
+    if paths.is_empty() {
+        return Err("diagnose-refinement-packs requires at least one --pack PACK.json".into());
+    }
+    let mut packs = Vec::new();
+    let mut parse_diagnostics = Vec::new();
+    for path in &paths {
+        match serde_json::from_slice::<RefinementPack>(&fs::read(path)?) {
+            Ok(pack) => packs.push(pack),
+            Err(error) => parse_diagnostics.push(RefinementDiagnostic {
+                pack_id: None,
+                field: format!("pack[{path}]"),
+                detail: error.to_string(),
+                suggestion:
+                    "Correct the reported JSON shape or unknown field, then diagnose again.".into(),
+            }),
+        }
+    }
+    let mut report = diagnose_refinement_packs(&packs);
+    report.diagnostics.extend(parse_diagnostics);
+    report.diagnostics.sort();
+    report.diagnostics.dedup();
+    report.valid = report.diagnostics.is_empty();
+    let bytes = serde_json::to_vec_pretty(&report)?;
+    if let Some(output) = option(args, "--output") {
+        write_file(Path::new(&output), &bytes)?;
+    }
+    println!("{}", String::from_utf8(bytes)?);
+    if !report.valid {
+        return Err(format!(
+            "refinement packs contain {} diagnostic(s)",
+            report.diagnostics.len()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+fn export_refinement_pack(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let input = required_path(args, "--input")?;
+    let output = required_path(args, "--output")?;
+    let pack: RefinementPack = serde_json::from_slice(&fs::read(&input)?)?;
+    let report = pack.diagnose();
+    if !report.valid {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Err(format!(
+            "refinement pack contains {} diagnostic(s)",
+            report.diagnostics.len()
+        )
+        .into());
+    }
+    let bytes = pack.canonical_bytes()?;
+    write_file(&output, &bytes)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "id": pack.manifest.id,
+            "version": pack.manifest.version,
+            "sha256": pack.digest()?,
+            "rules": pack.rules.len(),
+            "input": input,
+            "output": output,
+        }))?
+    );
+    Ok(())
 }
 
 fn list_builtin_refinement_packs() -> Result<(), Box<dyn Error>> {
@@ -2177,6 +2248,7 @@ fn print_usage() {
             "  route-planner construct-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json --output PROGRAMS.json",
             "  route-planner compose --facts FACTS.json --mechanics MECHANICS.json [--message-flow-set MESSAGE.json]... [--message-entry-set ENTRIES.json]... [--pack REFINEMENT.json]... [--route-overlay ROUTE.json]... [--what-if-overlay WHAT_IF.json]... --output CATALOG.json",
             "  route-planner diff-orig --left LEFT.json --right RIGHT.json [--left-locale LOCALE --right-locale LOCALE] --output DIFF.json",
+            "  route-planner diagnose-refinement-packs --pack PACK.json [--pack PACK.json]... [--output REPORT.json]",
             "  route-planner diff-state --before STATE.json --after STATE.json --boundary KIND (--catalog CATALOG.json | --facts FACTS.json) --output DIFF.json [--research]",
             "  route-planner edit-route-book --route-book BOOK.json --edits EDITS.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json) --output EDITED.json",
             "  route-planner extract-binary-range-evidence --dol main.dol --virtual-address ADDRESS --size BYTES --output EVIDENCE.json",
@@ -2195,6 +2267,7 @@ fn print_usage() {
             "  route-planner extract-stage-data --archive ARCHIVE.arc --resource stage.dzs|room.dzr --output STAGE.json",
             "  route-planner extract-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --world-context CONTEXT.json --inventory INVENTORY.json [--inventory MORE.json] --output FACTS.json --manifest MANIFEST.json",
             "  route-planner export-builtin-refinement-pack --id ID --output PACK.json",
+            "  route-planner export-refinement-pack --input DRAFT.json --output PACK.json",
             "  route-planner identify-orig --orig ORIG_ROOT [--registry REGISTRY.json] [--content-id ID] --output IDENTIFICATION.json",
             "  route-planner inspect-state --state STATE.json (--catalog CATALOG.json | --facts FACTS.json) --output INSPECTION.json [--research]",
             "  route-planner list-archive-resources --archive ARCHIVE.arc --output RESOURCES.json",

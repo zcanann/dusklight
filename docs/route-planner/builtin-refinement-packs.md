@@ -42,3 +42,36 @@ tools/route-planner/target/debug/route-planner compose \
 Unknown registry IDs fail closed. Exported bytes round-trip through strict
 canonical pack decoding, and composition retains the pack ID and digest in the
 refinement stack used by proof and solve reports.
+
+## Authoring diagnostics and canonical export
+
+Authored drafts may be ordinary JSON while they are being edited. Diagnose all
+supplied packs together to receive a structured list of schema, manifest, rule,
+ordering, duplicate-ID, dependency-digest, and explicit-conflict errors:
+
+```sh
+tools/route-planner/target/debug/route-planner \
+  diagnose-refinement-packs \
+  --pack draft/base.json \
+  --pack draft/route-overlay.json \
+  --output build/route-planner/refinement-diagnostics.json
+```
+
+Each diagnostic names the pack and field, retains the contract error, and adds
+an editor-facing repair suggestion. JSON shape errors are reported alongside
+semantic errors from other readable packs instead of stopping the entire batch
+at the first malformed input.
+
+Once diagnostics are empty, export canonical bytes for composition:
+
+```sh
+tools/route-planner/target/debug/route-planner \
+  export-refinement-pack \
+  --input draft/route-overlay.json \
+  --output build/route-planner/route-overlay.pack.json
+```
+
+Export revalidates the full batch-local contract and prints the exact canonical
+digest. Composition continues to perform catalog-aware record replacement,
+selector cardinality, and cross-reference checks, so successful draft export
+does not weaken the final composed-catalog boundary.

@@ -20,6 +20,25 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const REFINEMENT_PACK_SCHEMA: &str = "dusklight.route-planner.refinement-pack/v15";
 pub const REFINEMENT_STACK_SCHEMA: &str = "dusklight.route-planner.refinement-stack/v2";
 pub const COMPOSED_CATALOG_SCHEMA: &str = "dusklight.route-planner.composed-catalog/v16";
+pub const REFINEMENT_DIAGNOSTIC_REPORT_SCHEMA: &str =
+    "dusklight.route-planner.refinement-diagnostic-report/v1";
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefinementDiagnosticReport {
+    pub schema: String,
+    pub valid: bool,
+    pub diagnostics: Vec<RefinementDiagnostic>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefinementDiagnostic {
+    pub pack_id: Option<String>,
+    pub field: String,
+    pub detail: String,
+    pub suggestion: String,
+}
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -397,6 +416,10 @@ impl RefinementRule {
 }
 
 impl RefinementPack {
+    pub fn diagnose(&self) -> RefinementDiagnosticReport {
+        diagnose_refinement_packs(std::slice::from_ref(self))
+    }
+
     pub fn validate(&self) -> Result<(), PlannerContractError> {
         if self.schema != REFINEMENT_PACK_SCHEMA {
             return Err(PlannerContractError::new("schema", "is unsupported"));
@@ -444,6 +467,157 @@ impl RefinementPack {
 
     pub fn digest(&self) -> Result<Digest, PlannerContractError> {
         Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
+pub fn diagnose_refinement_packs(packs: &[RefinementPack]) -> RefinementDiagnosticReport {
+    let mut diagnostics = Vec::new();
+    let mut ids = BTreeMap::<&str, Vec<usize>>::new();
+    let mut valid_digests = BTreeMap::new();
+    for (pack_index, pack) in packs.iter().enumerate() {
+        let pack_id = (!pack.manifest.id.is_empty()).then(|| pack.manifest.id.clone());
+        if pack.schema != REFINEMENT_PACK_SCHEMA {
+            diagnostics.push(diagnostic(pack_id.clone(), "schema", "is unsupported"));
+        }
+        if let Err(error) = pack.manifest.validate() {
+            diagnostics.push(diagnostic_from_error(pack_id.clone(), error));
+        }
+        if pack.rules.is_empty() || pack.rules.len() > 16_384 {
+            diagnostics.push(diagnostic(
+                pack_id.clone(),
+                "rules",
+                "must contain between 1 and 16384 records",
+            ));
+        }
+        let mut prior = None;
+        let mut rule_ids = BTreeMap::<&str, Vec<usize>>::new();
+        for (rule_index, rule) in pack.rules.iter().enumerate() {
+            if let Err(error) = rule.validate() {
+                let mut row = diagnostic_from_error(pack_id.clone(), error);
+                row.field = format!("rules[{rule_index}].{}", row.field);
+                diagnostics.push(row);
+            }
+            rule_ids
+                .entry(rule.id.as_str())
+                .or_default()
+                .push(rule_index);
+            if prior.is_some_and(|prior: &str| prior >= rule.id.as_str()) {
+                diagnostics.push(diagnostic(
+                    pack_id.clone(),
+                    format!("rules[{rule_index}].id"),
+                    "is not strictly sorted after the preceding rule ID",
+                ));
+            }
+            prior = Some(rule.id.as_str());
+        }
+        for (id, indexes) in rule_ids {
+            if indexes.len() > 1 {
+                diagnostics.push(diagnostic(
+                    pack_id.clone(),
+                    "rules.id",
+                    format!("duplicate rule ID {id} at indexes {indexes:?}"),
+                ));
+            }
+        }
+        ids.entry(pack.manifest.id.as_str())
+            .or_default()
+            .push(pack_index);
+        if pack.validate().is_ok() {
+            if let Ok(digest) = pack.digest() {
+                valid_digests.insert(pack.manifest.id.as_str(), digest);
+            }
+        }
+    }
+    for (id, indexes) in &ids {
+        if indexes.len() > 1 {
+            diagnostics.push(diagnostic(
+                Some((*id).into()),
+                "manifest.id",
+                format!("duplicate pack ID occurs at indexes {indexes:?}"),
+            ));
+        }
+    }
+    for pack in packs {
+        let pack_id = Some(pack.manifest.id.clone());
+        for dependency in &pack.manifest.dependencies {
+            match valid_digests.get(dependency.pack_id.as_str()) {
+                None => diagnostics.push(diagnostic(
+                    pack_id.clone(),
+                    "manifest.dependencies",
+                    format!("missing valid pack {}", dependency.pack_id),
+                )),
+                Some(actual) if *actual != dependency.pack_sha256 => diagnostics.push(diagnostic(
+                    pack_id.clone(),
+                    "manifest.dependencies",
+                    format!("digest mismatch for pack {}", dependency.pack_id),
+                )),
+                Some(_) => {}
+            }
+        }
+        for conflict in &pack.manifest.conflicts {
+            if ids.contains_key(conflict.as_str()) {
+                diagnostics.push(diagnostic(
+                    pack_id.clone(),
+                    "manifest.conflicts",
+                    format!("packs {} and {conflict} conflict", pack.manifest.id),
+                ));
+            }
+        }
+    }
+    if diagnostics.is_empty() {
+        if let Err(error) = RefinementStack::build(packs) {
+            diagnostics.push(diagnostic_from_error(None, error));
+        }
+    }
+    diagnostics.sort();
+    diagnostics.dedup();
+    RefinementDiagnosticReport {
+        schema: REFINEMENT_DIAGNOSTIC_REPORT_SCHEMA.into(),
+        valid: diagnostics.is_empty(),
+        diagnostics,
+    }
+}
+
+fn diagnostic_from_error(
+    pack_id: Option<String>,
+    error: PlannerContractError,
+) -> RefinementDiagnostic {
+    diagnostic(pack_id, error.field(), error.detail())
+}
+
+fn diagnostic(
+    pack_id: Option<String>,
+    field: impl Into<String>,
+    detail: impl Into<String>,
+) -> RefinementDiagnostic {
+    let field = field.into();
+    let detail = detail.into();
+    let suggestion = diagnostic_suggestion(&field, &detail);
+    RefinementDiagnostic {
+        pack_id,
+        field,
+        detail,
+        suggestion,
+    }
+}
+
+fn diagnostic_suggestion(field: &str, detail: &str) -> String {
+    if detail.contains("sorted") || detail.contains("duplicate") {
+        "Sort records by stable ID and rename or remove duplicates before exporting.".into()
+    } else if detail.contains("missing") || detail.contains("absent") {
+        "Add the referenced record or dependency with its exact canonical digest.".into()
+    } else if detail.contains("digest mismatch") {
+        "Re-export the dependency and update this reference to its exact canonical digest.".into()
+    } else if field.contains("conflicts") {
+        "Disable one conflicting pack or author an explicit replacement pack.".into()
+    } else if field.contains("scope") {
+        "Select an exact supported context or an explicitly evidenced equivalence selector.".into()
+    } else if field.contains("evidence") {
+        "Attach a typed evidence record appropriate to the declared truth status.".into()
+    } else if field.contains("schema") {
+        format!("Set schema to {REFINEMENT_PACK_SCHEMA} before canonical export.")
+    } else {
+        "Correct this field according to the refinement-pack contract and diagnose again.".into()
     }
 }
 
@@ -2146,5 +2320,56 @@ mod tests {
         .unwrap_err();
         assert_eq!(error.field(), "manifest.dependencies");
         assert!(error.detail().contains("later-layer"));
+    }
+
+    #[test]
+    fn diagnostics_accumulate_rule_shape_dependency_and_conflict_fixes() {
+        let operation = RefinementOperation::AddGoal {
+            goal: Goal {
+                id: "goal.diagnostic".into(),
+                label: "Diagnostic goal".into(),
+                predicate: PredicateExpression::True,
+            },
+        };
+        let mut malformed = pack("diagnostic.malformed", 0, operation.clone());
+        malformed.schema = "old-schema".into();
+        let mut duplicate = malformed.rules[0].clone();
+        duplicate.label.clear();
+        malformed.rules.push(duplicate);
+        malformed.manifest.dependencies.push(PackDependency {
+            pack_id: "diagnostic.missing".into(),
+            pack_sha256: Digest([7; 32]),
+        });
+        let mut conflicting = pack("diagnostic.conflicting", 1, operation);
+        conflicting.manifest.conflicts = vec![malformed.manifest.id.clone()];
+
+        let report = diagnose_refinement_packs(&[malformed, conflicting]);
+        assert!(!report.valid);
+        assert!(report.diagnostics.len() >= 5);
+        assert!(report.diagnostics.iter().any(|row| row.field == "schema"));
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|row| row.detail.contains("duplicate rule ID"))
+        );
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|row| row.detail.contains("missing valid pack"))
+        );
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|row| row.detail.contains("conflict"))
+        );
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .all(|row| !row.suggestion.is_empty())
+        );
     }
 }
