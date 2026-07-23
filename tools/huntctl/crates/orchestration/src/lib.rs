@@ -7,6 +7,7 @@ mod campaign_replay;
 pub mod harness;
 pub mod learning_value_comparison;
 pub mod learning_value_evidence;
+pub mod learning_value_matrix;
 pub mod learning_value_report;
 pub mod native_goal_learning_loop;
 pub mod native_goal_learning_loop_runner;

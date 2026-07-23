@@ -781,6 +781,11 @@ revalidated crash-safe journal/state chain.
       planned seed/worker, exact phase caps, and exact checkpoint identity; and
       binds learned refinement to a realized learning-phase tape. The aggregate
       report rejects any missing, duplicate, or extra cross-product cell.
+      Residual baseline cells are now derived reproducibly from a validated
+      checkpoint request: the materializer selects only a plan-owned random or
+      CEM arm, isolates one seed/worker and resume namespace, installs the exact
+      optimizer/candidate count and tick cap, strips critic/curriculum drift,
+      and reseals the result against repository artifacts.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
       The predeclared report verdict is implemented but remains unchecked until

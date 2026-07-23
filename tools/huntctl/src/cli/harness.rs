@@ -23,6 +23,55 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("materialize-learning-value-residual-cell") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let plan_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--plan")?,
+            "learning-value comparison plan",
+        )?;
+        let base_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--base-request")?,
+            "base optimization request",
+        )?;
+        let plan: huntctl::search_evaluator::learning_value_comparison::LearningValueComparisonPlan =
+            serde_json::from_slice(&fs::read(plan_path)?)?;
+        let base: OptimizationRequest = serde_json::from_slice(&fs::read(base_path)?)?;
+        let checkpoint_id =
+            option(command_args, "--checkpoint").ok_or("missing required --checkpoint <id>")?;
+        let deterministic_seed = option(command_args, "--seed")
+            .ok_or("missing required --seed <u64>")?
+            .parse()?;
+        let treatment =
+            huntctl::search_evaluator::learning_value_matrix::residual_treatment_from_slug(
+                &option(command_args, "--treatment").ok_or(
+                    "missing required --treatment <independent-random-residual|cem-residual>",
+                )?,
+            )?;
+        let request =
+            huntctl::search_evaluator::learning_value_matrix::materialize_residual_cell_request(
+                &plan,
+                &checkpoint_id,
+                deterministic_seed,
+                treatment,
+                &base,
+                &repository_root,
+            )?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "learning-value residual cell request",
+        )?;
+        refuse_existing_output(&output, "learning-value residual cell request")?;
+        write_new_file(&output, request.to_pretty_json()?)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&request.validate_files(&repository_root)?)?
+        );
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("seal-learning-value-comparison-report") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;
