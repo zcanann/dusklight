@@ -2534,7 +2534,7 @@ Deliverable: researchers can extend the model without editing core code.
         referenced after a different state; grouping must grant no authority.
         Snapshot views and dynamic references resolve the original transition
         node IDs. Evaluation still submits that transition plus the currently
-        selected exact execution state to service v36; no region field enters
+        selected exact execution state to service v39; no region field enters
         assessment, application, frontier replay, or solve requests.
   - [x] Support cycles and leave-and-return paths in the underlying graph without
         interpreting nesting as recursive goal decomposition. Presentation

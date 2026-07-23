@@ -428,9 +428,9 @@ goal-only discovery.
       and `2184d3a20b7932249c5b71e22259eca12e39e583c7b1b185942e24d32557764c`.
       The complete audit charged 185,113 ticks including the 132-tick
       authenticated incumbent demonstration and diagnoses `winner_found`.
-- [ ] Run independent random and CEM residual campaigns against the real 125-tick
+- [x] Run independent random and CEM residual campaigns against the real 125-tick
       incumbent under sealed budgets.
-- [ ] Report successful-episode rate, unique compiled tapes, action/window
+- [x] Report successful-episode rate, unique compiled tapes, action/window
       coverage, first-hit distribution, retained basin diversity, and improvement
       by simulated tick.
       New v4 campaign checkpoints now carry an incrementally reproduced,
@@ -454,9 +454,19 @@ goal-only discovery.
       identities are respectively
       `1d589a710c5f86c731a34881ebd5c23f1d351955447b14f4c09b08d9dc7a8509`
       and `6ecaefbef4f123233f860c3e13dfa476d25736faa1f22aaf2985a6ee7db2aa9a`;
-      the real q125 comparison remains required before this item closes.
+      the real q125 comparison is now complete and recorded in
+      `ordon-q125-residual-comparison.md`. Under equal sealed 4,096-candidate /
+      1,310,845-tick maxima, random achieved 703,369-millionths success, 1,458
+      successful behavior classes, and audit
+      `52cc8cc7a7b249b909fd568bff2edfaadd09c15f4e70e80642f6813577f344af`;
+      CEM achieved 883,789-millionths success, 2,380 classes, and audit
+      `0514072776833c285df36d055367bcd38bf96ecb9c4b4324d9744baa19559998`.
+      Both produced 4,096 unique tapes, covered every action/octant/temporal
+      category, completed the full candidate budget, tied tick 125, and emitted
+      no improvement point. CEM used 611,497 candidate ticks versus random's
+      753,798 and produced 1.549 times as many successes per candidate tick.
 - [ ] Promote any sub-125 winner only after five identical cold replays.
-- [ ] If no winner appears, preserve enough evidence to distinguish exhausted
+- [x] If no winner appears, preserve enough evidence to distinguish exhausted
       residual coverage from a broken generator, truncated budget, absent
       successes, or premature population collapse. Do not call 125 optimal.
       The checkpoint audit now distinguishes declared-budget completion,
@@ -464,8 +474,12 @@ goal-only discovery.
       improvement, and no-success completion while retaining attempted-genome,
       invalid-versus-duplicate rejection, categorical-concentration, coverage,
       and basin facts.
-      A no-winner campaign remains required before this conditional evidence can
-      be judged in practice.
+      The completed q125 random and CEM audits now exercise this branch in
+      practice: both declare budget completion with zero pending candidates,
+      thousands of exact successes, 4,096 unique tapes, broad nonzero categorical
+      coverage, retained proposal rejection/concentration diagnostics, and an
+      empty improvement sequence. They diagnose
+      `completed_success_without_improvement`, not optimality.
 
 **Gate 2:** the residual optimizer improves the degraded canary and operates as a
 credible, observable search on the 125-tick incumbent. A deterministic sub-125
