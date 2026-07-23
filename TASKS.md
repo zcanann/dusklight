@@ -939,8 +939,15 @@ that it blocks the current loop.
 - [ ] Compile the selected complete actor-set, collision, geometry, surface-graph,
       event/loading, and optional history views into bounded native online
       encoders with exact Rust/native parity.
-- [ ] Compare complete-set encoders against any bounded/truncated alternative on
-      held-out outcomes before accepting truncation.
+- [x] Compare complete-set encoders against any bounded/truncated alternative on
+      held-out outcomes before accepting truncation. `TrainableSetComparison`
+      fits permutation-invariant complete-set and fixed-slot models on identical
+      train/held-out rows and optimizer-step budgets, seals both model identities
+      and metrics, and grants no promotion authority. The overflow-signal
+      regression places the predictive actor beyond the fixed-slot capacity;
+      the complete set cuts held-out MSE by more than 75%, so the recorded
+      decision retains the complete-set candidate rather than accepting the
+      bounded truncation.
 - [ ] Finish machine-readable stage/profile coverage for fields actually selected
       by a promoted learner.
 - [ ] Extend actor-family state, RNG/timers, resource loading, interaction, or
