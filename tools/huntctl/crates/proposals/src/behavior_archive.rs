@@ -11,6 +11,7 @@ use crate::{
     observation_view::movement_state_v2_spec, offline_rl::movement_feature_schema_digest_v1,
 };
 use serde::Serialize;
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
 use std::error::Error;
 use std::fmt;
@@ -105,6 +106,12 @@ pub struct BehaviorDescriptor {
     pub midpoint_position_bin: [i32; 3],
     pub terminal_position_bin: [i32; 3],
     pub closest_exit_distance_bin: i32,
+    /// Nonzero only after this coarse semantic/spatial cell empirically
+    /// contains distinct-quality or distinct-outcome exact trajectories.
+    pub adaptive_spatial_axis_mask: u8,
+    /// Exact, epsilon-free identity over the refined axes' change-compressed
+    /// native f32 sequences.
+    pub adaptive_spatial_identity: Option<String>,
     pub route_signature: u64,
     pub procedure_signature: u64,
     pub terminal: bool,
@@ -121,6 +128,7 @@ pub struct ArchivedEpisode {
 #[derive(Clone, Debug, Default)]
 pub struct BehaviorArchive {
     entries: BTreeMap<BehaviorDescriptor, ArchivedEpisode>,
+    refined_cells: BTreeMap<BehaviorDescriptor, u8>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -129,6 +137,8 @@ pub struct BehaviorArchiveSummary {
     pub policy: &'static str,
     pub entries: usize,
     pub selected: usize,
+    pub refined_cells: usize,
+    pub adaptive_spatial_axis_mask_union: u8,
     pub selected_candidate_ids: Vec<String>,
     pub selected_descriptors: Vec<BehaviorDescriptor>,
 }
@@ -175,7 +185,26 @@ impl BehaviorArchive {
         generation: u32,
         context: &BehaviorContext,
     ) -> Result<(), BehaviorArchiveError> {
-        let descriptor = describe_behavior_with_context(&episode.corpus, context)?;
+        let base_descriptor = describe_behavior_with_context(&episode.corpus, context)?;
+        let mut refinement_mask = self
+            .refined_cells
+            .get(&base_descriptor)
+            .copied()
+            .unwrap_or(0);
+        let mut descriptor =
+            refined_descriptor(&base_descriptor, &episode.corpus, refinement_mask)?;
+        if let Some(incumbent) = self.entries.get(&descriptor)
+            && (incumbent.score != score || incumbent.episode.outcome != episode.outcome)
+        {
+            let differing = differing_spatial_axes(&incumbent.episode.corpus, &episode.corpus)?;
+            let expanded = refinement_mask | differing;
+            if expanded != refinement_mask {
+                self.refine_cell(&base_descriptor, expanded)?;
+                refinement_mask = expanded;
+                descriptor =
+                    refined_descriptor(&base_descriptor, &episode.corpus, refinement_mask)?;
+            }
+        }
         let candidate_id = episode
             .candidate
             .id()
@@ -253,10 +282,16 @@ impl BehaviorArchive {
         selected: &[ArchivedEpisode],
     ) -> Result<BehaviorArchiveSummary, BehaviorArchiveError> {
         Ok(BehaviorArchiveSummary {
-            schema: "dusklight-behavior-archive/v3",
-            policy: "one_native_quality_elite_per_cell_plus_farthest_first_novelty",
+            schema: "dusklight-behavior-archive/v4",
+            policy: "one_native_quality_elite_per_adaptive_cell_plus_farthest_first_novelty",
             entries: self.entries.len(),
             selected: selected.len(),
+            refined_cells: self.refined_cells.len(),
+            adaptive_spatial_axis_mask_union: self
+                .refined_cells
+                .values()
+                .copied()
+                .fold(0, |union, mask| union | mask),
             selected_candidate_ids: selected
                 .iter()
                 .map(|entry| {
@@ -289,6 +324,42 @@ impl BehaviorArchive {
                 self.entries.remove(&descriptor);
             }
         }
+        self.refined_cells.retain(|base, _| {
+            self.entries
+                .keys()
+                .any(|descriptor| base_descriptor(descriptor) == *base)
+        });
+    }
+
+    fn refine_cell(
+        &mut self,
+        base: &BehaviorDescriptor,
+        axis_mask: u8,
+    ) -> Result<(), BehaviorArchiveError> {
+        let existing = self
+            .entries
+            .iter()
+            .filter(|(descriptor, _)| base_descriptor(descriptor) == *base)
+            .map(|(descriptor, entry)| (descriptor.clone(), entry.clone()))
+            .collect::<Vec<_>>();
+        for (descriptor, _) in &existing {
+            self.entries.remove(descriptor);
+        }
+        self.refined_cells.insert(base.clone(), axis_mask);
+        for (_, mut entry) in existing {
+            let descriptor = refined_descriptor(base, &entry.episode.corpus, axis_mask)?;
+            entry.descriptor = descriptor.clone();
+            let replace = self.entries.get(&descriptor).is_none_or(|incumbent| {
+                entry.score > incumbent.score
+                    || (entry.score == incumbent.score
+                        && entry.episode.candidate.frame_count()
+                            < incumbent.episode.candidate.frame_count())
+            });
+            if replace {
+                self.entries.insert(descriptor, entry);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -369,10 +440,139 @@ pub fn describe_behavior_with_context(
         terminal_position_bin: position_bin(terminal, layout),
         closest_exit_distance_bin: closest_exit
             .map_or(-1, |distance| (distance * 8192.0 / 128.0).round() as i32),
+        adaptive_spatial_axis_mask: 0,
+        adaptive_spatial_identity: None,
         route_signature,
         procedure_signature: signature,
         terminal: terminal_transition.terminal,
     })
+}
+
+const SPATIAL_AXIS_X: u8 = 1 << 0;
+const SPATIAL_AXIS_Y: u8 = 1 << 1;
+const SPATIAL_AXIS_Z: u8 = 1 << 2;
+const SPATIAL_AXIS_EXIT_DISTANCE: u8 = 1 << 3;
+
+fn base_descriptor(descriptor: &BehaviorDescriptor) -> BehaviorDescriptor {
+    let mut base = descriptor.clone();
+    base.adaptive_spatial_axis_mask = 0;
+    base.adaptive_spatial_identity = None;
+    base
+}
+
+fn refined_descriptor(
+    base: &BehaviorDescriptor,
+    corpus: &TransitionCorpus,
+    axis_mask: u8,
+) -> Result<BehaviorDescriptor, BehaviorArchiveError> {
+    let mut descriptor = base.clone();
+    descriptor.adaptive_spatial_axis_mask = axis_mask;
+    descriptor.adaptive_spatial_identity = (axis_mask != 0)
+        .then(|| spatial_identity(corpus, axis_mask))
+        .transpose()?;
+    Ok(descriptor)
+}
+
+fn differing_spatial_axes(
+    left: &TransitionCorpus,
+    right: &TransitionCorpus,
+) -> Result<u8, BehaviorArchiveError> {
+    let left_layout = movement_feature_layout(left)?;
+    let right_layout = movement_feature_layout(right)?;
+    let mut mask = 0;
+    for (axis, bit) in [SPATIAL_AXIS_X, SPATIAL_AXIS_Y, SPATIAL_AXIS_Z]
+        .into_iter()
+        .enumerate()
+    {
+        if change_compressed_axis(left, left_layout.position[axis])
+            != change_compressed_axis(right, right_layout.position[axis])
+        {
+            mask |= bit;
+        }
+    }
+    if change_compressed_exit_distance(left, left_layout)
+        != change_compressed_exit_distance(right, right_layout)
+    {
+        mask |= SPATIAL_AXIS_EXIT_DISTANCE;
+    }
+    Ok(mask)
+}
+
+fn spatial_identity(
+    corpus: &TransitionCorpus,
+    axis_mask: u8,
+) -> Result<String, BehaviorArchiveError> {
+    let layout = movement_feature_layout(corpus)?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-adaptive-spatial-cell/v1\0");
+    hasher.update([axis_mask]);
+    for (axis, bit) in [SPATIAL_AXIS_X, SPATIAL_AXIS_Y, SPATIAL_AXIS_Z]
+        .into_iter()
+        .enumerate()
+    {
+        if axis_mask & bit != 0 {
+            hash_bit_sequence(
+                &mut hasher,
+                bit,
+                &change_compressed_axis(corpus, layout.position[axis]),
+            );
+        }
+    }
+    if axis_mask & SPATIAL_AXIS_EXIT_DISTANCE != 0 {
+        hash_bit_sequence(
+            &mut hasher,
+            SPATIAL_AXIS_EXIT_DISTANCE,
+            &change_compressed_exit_distance(corpus, layout),
+        );
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn change_compressed_axis(corpus: &TransitionCorpus, index: usize) -> Vec<u32> {
+    change_compressed_bits(
+        corpus
+            .transitions
+            .iter()
+            .flat_map(|transition| [&transition.state, &transition.next_state])
+            .map(|state| state[index].to_bits()),
+    )
+}
+
+fn change_compressed_exit_distance(
+    corpus: &TransitionCorpus,
+    layout: MovementFeatureLayout,
+) -> Vec<u32> {
+    change_compressed_bits(
+        corpus
+            .transitions
+            .iter()
+            .flat_map(|transition| [&transition.state, &transition.next_state])
+            .map(|state| {
+                if state[layout.exit_present] == 1.0 {
+                    state[layout.exit_distance].to_bits()
+                } else {
+                    u32::MAX
+                }
+            }),
+    )
+}
+
+fn change_compressed_bits(bits: impl Iterator<Item = u32>) -> Vec<u32> {
+    let mut output = Vec::new();
+    for bits in bits {
+        if output.last() != Some(&bits) {
+            output.push(bits);
+        }
+    }
+    output
+}
+
+fn hash_bit_sequence(hasher: &mut Sha256, axis: u8, sequence: &[u32]) {
+    hasher.update([axis]);
+    hasher.update((sequence.len() as u64).to_le_bytes());
+    for bits in sequence {
+        hasher.update(bits.to_le_bytes());
+    }
 }
 
 fn validate_context(context: &BehaviorContext) -> Result<(), BehaviorArchiveError> {
@@ -464,6 +664,11 @@ fn descriptor_distance(left: &BehaviorDescriptor, right: &BehaviorDescriptor) ->
     }
     if left.downstream_state_identity != right.downstream_state_identity {
         distance += 1_u128 << 108;
+    }
+    if left.adaptive_spatial_axis_mask != right.adaptive_spatial_axis_mask
+        || left.adaptive_spatial_identity != right.adaptive_spatial_identity
+    {
+        distance += 1_u128 << 107;
     }
     if left.terminal_stage != right.terminal_stage {
         distance += 1_u128 << 96;
@@ -607,7 +812,7 @@ mod tests {
             .consider(episode(100.0, 4.0, 8), score(10), 0)
             .unwrap();
         archive
-            .consider(episode(110.0, 4.0, 7), score(9), 1)
+            .consider(episode(100.0, 4.0, 8), score(9), 1)
             .unwrap();
         archive
             .consider(episode(900.0, 7.0, 12), score(20), 1)
@@ -620,6 +825,31 @@ mod tests {
             .unwrap();
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].descriptor.terminal_player_procedure, 7);
+    }
+
+    #[test]
+    fn empirically_sensitive_coarse_cells_refine_without_a_float_epsilon() {
+        let mut archive = BehaviorArchive::default();
+        archive
+            .consider(episode(100.0, 4.0, 8), score(10), 0)
+            .unwrap();
+        archive
+            .consider(episode(110.0, 4.0, 8), score(9), 1)
+            .unwrap();
+        assert_eq!(archive.len(), 2);
+        assert_eq!(archive.refined_cells.len(), 1);
+        assert!(archive.entries.keys().all(|descriptor| {
+            descriptor.adaptive_spatial_axis_mask & SPATIAL_AXIS_X != 0
+                && descriptor
+                    .adaptive_spatial_identity
+                    .as_ref()
+                    .is_some_and(|identity| identity.len() == 64)
+        }));
+
+        let selected = archive.select_diverse(&HashSet::new(), &[], 2).unwrap();
+        let summary = archive.summary(&selected).unwrap();
+        assert_eq!(summary.refined_cells, 1);
+        assert_eq!(summary.adaptive_spatial_axis_mask_union, SPATIAL_AXIS_X);
     }
 
     #[test]
@@ -701,10 +931,10 @@ mod tests {
             .unwrap();
         assert_eq!(selected.len(), 11);
         let summary = archive.summary(&selected).unwrap();
-        assert_eq!(summary.schema, "dusklight-behavior-archive/v3");
+        assert_eq!(summary.schema, "dusklight-behavior-archive/v4");
         assert_eq!(
             summary.policy,
-            "one_native_quality_elite_per_cell_plus_farthest_first_novelty"
+            "one_native_quality_elite_per_adaptive_cell_plus_farthest_first_novelty"
         );
     }
 }

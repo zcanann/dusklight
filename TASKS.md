@@ -965,7 +965,7 @@ that it blocks the current loop.
 
 - [x] Add a quality-diversity archive over relational position, contact/surface,
       velocity, action phase, actor/item relationships, event changes, and novel
-      displacement. The native `behavior-archive/v3` keeps one quality elite per
+      displacement. The native `behavior-archive/v4` keeps one quality elite per
       authenticated descriptor cell and selects additional episodes by
       farthest-first novelty. Its cells combine midpoint/terminal position and
       route signatures with player procedure, event/state-transition, contact
@@ -974,8 +974,16 @@ that it blocks the current loop.
       Anchored search derives every semantic axis from sealed native traces and
       value projections; the regression matrix proves each axis creates a
       distinct cell.
-- [ ] Adapt archive resolution around empirically sensitive dimensions so rare
+- [x] Adapt archive resolution around empirically sensitive dimensions so rare
       precision basins survive without globally chosen floating-point epsilons.
+      Behavior-archive v4 begins with the bounded coarse spatial cell. Only when
+      that cell receives exact native trajectories with different quality or
+      outcomes does it refine the axes whose change-compressed f32 sequences
+      actually differ. Existing elites are reindexed atomically and future
+      occupants use a domain-separated exact-bit identity on those axes. Thus a
+      precision basin survives locally without globally shrinking every cell or
+      selecting a floating tolerance; the 256-entry cap and deterministic prune
+      policy remain in force.
 - [ ] Combine learned setup, locomotion, interaction, and frame-synchronization
       behavior with short-horizon continuous/discrete boundary refinement.
 - [ ] Require an exact input-only deterministic proof for every claimed outcome.
