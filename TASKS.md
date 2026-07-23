@@ -394,9 +394,18 @@ goal-only discovery.
       checked q131 tape, and obtains the checked q125 bytes exactly. The witness
       is absent from CEM generation construction, replay, ranking, and proposal
       distributions.
-- [ ] Show that independent sampling over the declared residual surface produces
+- [x] Show that independent sampling over the declared residual surface produces
       meaningful variation in successful first-hit times. If it does not, fix
       the action surface or temporal bases before tuning CEM.
+      The sealed equal-budget q131 random v3 campaign completed all 1,024 unique
+      tapes at checkpoint identity
+      `c6ada18be5e75a99353482a8da638ceb30adc54bb2c2e6e489431840ffe558f7`.
+      Its 681 exact successes range from tick 130 through tick 143 across 332
+      behavior classes, with nonzero coverage for button press/release, both
+      main-stick axes, both camera axes, all eight start octants, and every
+      declared exact/window/ramp/curve temporal basis. Independent sampling
+      therefore exercises a meaningfully variable success basin rather than a
+      terminal predicate or action surface collapsed to one hit time.
 - [x] First improve a deliberately degraded version of the Ordon tape whose
       removable inefficiency is known but not encoded in the optimizer.
       The sealed q131 CEM v5 campaign completed its declared 1,024-candidate
@@ -432,6 +441,16 @@ goal-only discovery.
       Legacy v2/v3 checkpoints remain readable and migrate to v4 at the next
       durable checkpoint. The real degraded-canary and Ordon runs must still
       populate the final comparative reports before this empirical item closes.
+      The degraded-canary half is now populated by equal 1,024-candidate random
+      and CEM audits. Random achieved 665,039-millionths success, 332 successful
+      behavior classes, best tick 130, and first improved at 149,565 charged
+      ticks; CEM achieved 742,187-millionths success, 426 classes, best tick 128,
+      and first improved at 75,759 charged ticks. Both produced 1,024 unique
+      tapes and broad nonzero action/window coverage. Their complete audit
+      identities are respectively
+      `1d589a710c5f86c731a34881ebd5c23f1d351955447b14f4c09b08d9dc7a8509`
+      and `6ecaefbef4f123233f860c3e13dfa476d25736faa1f22aaf2985a6ee7db2aa9a`;
+      the real q125 comparison remains required before this item closes.
 - [ ] Promote any sub-125 winner only after five identical cold replays.
 - [ ] If no winner appears, preserve enough evidence to distinguish exhausted
       residual coverage from a broken generator, truncated budget, absent
