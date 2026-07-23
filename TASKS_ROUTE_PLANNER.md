@@ -2302,6 +2302,12 @@ Deliverable: replayable state evidence that can validate transition rules.
           boss/special-stage branches, and title reset into one reload edge.
           Seven top-level GZ2E01 functions are exact-binary sealed; executable
           transition programs and deeper callee decoding remain open.
+    - [x] Compile the exact GZ2E01 void-selection prefix over normalized observed
+          destinations. Collision-exit and held-restart requests remain
+          mutually exclusive pending loads and preserve the restart backing;
+          lethal damage diverts to game over, declined continue only raises the
+          guarded title-reset request, and special hazards remain explicit
+          unknowns pending packed-parameter evidence.
 - [x] Implement writer/gate/reader evaluation and last-writer provenance.
   - [x] Evaluate scoped/evidenced writer activation separately from active and
         unknown blocking gates, resolve reader source values separately from
@@ -3220,6 +3226,12 @@ slice into release criteria only when it exercises a missing core semantic law.
   - [x] Enumerate the source-backed void, lethal, death-continue, and title-reset
         branches and the backing each consumes. Exact runtime programs remain
         open until restart-parameter decoding and binary/trace evidence land.
+  - [x] Model the exact void-selection prefix from normalized observed branch
+        state. Polygon-exit and held-restart requests create distinct pending
+        loads without rewriting restart state; lethal selection creates no load,
+        and the declined-continue path composes through the existing guarded
+        title-reset transition. Special variants and full continue destinations
+        remain unknown rather than becoming generic reloads.
 - [ ] Model BiTE as a selected component splice into an existing file.
   - [x] Implement the generic selected runtime-component splice into a freshly
         loaded existing file, with destination ownership and mixed provenance.

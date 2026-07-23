@@ -55,6 +55,7 @@ pub mod state;
 pub mod supported_context;
 pub mod title_boundary;
 pub mod transition;
+pub mod void_death;
 pub mod world_data;
 pub mod world_import;
 pub mod witness_promotion;

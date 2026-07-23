@@ -127,6 +127,27 @@ observed. A restart-room record is not itself a map transition, a collision exit
 does not rewrite that record, and a title reset does not imply a successful save
 projection.
 
+### Implemented selection program
+
+`crates/engine/src/void_death.rs` now compiles the exact GZ2E01/English
+selection prefix into ordinary mechanics. An observed, decoded collision exit
+and an observed, decoded held-restart fallback are mutually exclusive
+`VoidReload` candidates. Each creates a `PROC_PLAY_SCENE` pending load, sets the
+one-shot request state, and removes player control without changing the loaded
+world or the retained restart component. A lethal restart selection instead
+enters the game-over wait state with no pending destination.
+
+The declined-continue suffix writes only `reset_requested`; the independently
+guarded title-boundary program remains responsible for requesting and activating
+the opening process. Special hazard variants remain a separate candidate with
+an explicit unknown requirement for damage, mode, room, and packed-parameter
+semantics. Neighboring content or runtime-language identities are rejected.
+
+This implemented prefix consumes normalized observed destination fields. It
+does not claim that the still-unwitnessed raw collision exit or packed restart
+parameter decoder has been recovered, nor does it model the four continue
+destination families or conditional recovery mutations below.
+
 ## Remaining evidence gaps
 
 - Seal any remaining callee ranges needed to decode collision-exit and packed
