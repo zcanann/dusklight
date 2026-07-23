@@ -1,7 +1,7 @@
 {
   "schema": "dusklight-optimization-request/v2",
-  "content_sha256": "673f0de1cae995ead2082cf4c028070bd94a7003fa68f9224c8144e3f34ed039",
-  "id": "ordon-degraded-q131-residual-random-v2",
+  "content_sha256": "776c8c03b56304d2347f42cff74e43a617164a080ae93ff18358b8591d2b6abe",
+  "id": "ordon-degraded-q131-residual-random-v3",
   "campaign_class": "local_tas_refinement",
   "route": {
     "timeline": {
@@ -33,8 +33,8 @@
   "budgets": {
     "exploration_horizon_ticks": 160,
     "promotion_before_tick": 131,
-    "candidate_budget": 64,
-    "simulated_tick_budget": 20612
+    "candidate_budget": 1024,
+    "simulated_tick_budget": 327812
   },
   "execution": {
     "workers": 4,
@@ -110,12 +110,12 @@
     },
     "optimizer": {
       "kind": "random",
-      "samples": 64
+      "samples": 1024
     }
   },
   "resume": {
-    "state_path": "build/campaigns/ordon-degraded-q131-residual-random-v2/state.json",
-    "journal_path": "build/campaigns/ordon-degraded-q131-residual-random-v2/journal.jsonl",
+    "state_path": "build/campaigns/ordon-degraded-q131-residual-random-v3/state.json",
+    "journal_path": "build/campaigns/ordon-degraded-q131-residual-random-v3/journal.jsonl",
     "checkpoint_every_candidates": 64
   },
   "retention": {
