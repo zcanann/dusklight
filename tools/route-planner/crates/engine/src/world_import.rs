@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v11";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v12";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -384,6 +384,25 @@ impl ExtractedWorldFacts {
                     obligations.extend(imported.obligations);
                     transitions.extend(imported.transitions);
                 }
+                for placement in &inventory.placements {
+                    let Some(imported) = import_gz2e01_l7_bridge_demo(
+                        inventory,
+                        placement,
+                        &scope,
+                        inventory_sha256,
+                    )?
+                    else {
+                        continue;
+                    };
+                    for (exit_record_id, transition) in imported.transitions {
+                        transition_ids_by_exit
+                            .entry(exit_record_id)
+                            .or_default()
+                            .push(transition.id.clone());
+                        transitions.push(transition);
+                    }
+                    obligations.extend(imported.obligations);
+                }
             }
 
             for exit in &inventory.exits {
@@ -657,17 +676,29 @@ impl ExtractedWorldFacts {
             .transitions
             .iter()
             .filter(|transition| {
-                matches!(
-                    transition.transition_kind,
-                    TransitionKind::EncodedMapExit | TransitionKind::Door
-                )
+                transition
+                    .activation
+                    .effects
+                    .iter()
+                    .any(|effect| matches!(effect, StateOperation::SetLocation { .. }))
             })
             .map(|transition| transition.id.as_str())
             .collect::<BTreeSet<_>>();
+        if self.mechanics.transitions.iter().any(|transition| {
+            matches!(
+                transition.transition_kind,
+                TransitionKind::EncodedMapExit | TransitionKind::Door
+            ) && !exit_transition_ids.contains(transition.id.as_str())
+        }) {
+            return Err(PlannerContractError::new(
+                "mechanics.transitions",
+                "encoded-map and door transitions must contain an encoded location change",
+            ));
+        }
         if referenced_transition_ids != exit_transition_ids {
             return Err(PlannerContractError::new(
                 "mechanics.transitions",
-                "encoded-map and door transitions must be referenced exactly once by an encoded exit, while other transition kinds must not be referenced by one",
+                "every location-changing transition must be referenced exactly once by its encoded exit, while transitions without a location change must not be referenced by one",
             ));
         }
         let expected_scope = ContextScope {
@@ -1864,6 +1895,205 @@ fn import_gz2e01_koki_gate(
     }))
 }
 
+struct ImportedSceneActorActions {
+    transitions: Vec<(String, CandidateTransition)>,
+    obligations: Vec<FeasibilityObligation>,
+}
+
+fn import_gz2e01_l7_bridge_demo(
+    inventory: &WorldInventory,
+    placement: &PlacementRecord,
+    scope: &ContextScope,
+    inventory_sha256: Digest,
+) -> Result<Option<ImportedSceneActorActions>, PlannerContractError> {
+    if inventory.stage != "D_MN07"
+        || placement.name != "dr"
+        || placement.kind != PlacementKind::Actor
+        || placement.scope.room != Some(6)
+        || placement.parameters != 0x18
+    {
+        return Ok(None);
+    }
+    let matching_exit = |record_index| {
+        inventory
+            .exits
+            .iter()
+            .filter(|exit| exit.scope.room == Some(6) && exit.record_index == record_index)
+            .collect::<Vec<_>>()
+    };
+    let pre_bridge_exits = matching_exit(6);
+    let [pre_bridge_exit] = pre_bridge_exits.as_slice() else {
+        return Ok(None);
+    };
+    let post_bridge_exits = matching_exit(7);
+    let [post_bridge_exit] = post_bridge_exits.as_slice() else {
+        return Ok(None);
+    };
+
+    let family = "l7-bridge-demo";
+    let token = stable_token(
+        "actor-scene",
+        &[
+            family.as_bytes(),
+            inventory.stage.as_bytes(),
+            placement.stable_id.as_bytes(),
+        ],
+    );
+    let mut evidence_records = vec![
+        EvidenceRecord {
+            id: format!("evidence.source.actor.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "7b350f2e3efa4ddb5907b38d4f1f8ceb91d37cc741dce7e4d7de67d436421b02",
+            )),
+            note: "d_a_L7demo_dr.cpp: layer-sensitive start guards, exact SCLS 6/7 scene requests, switch 0x18 write, and absence of a key decrement.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.source.name-map.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "5c46ffc79e891b59b02455b837d9966d05c147d8d95c91c65cc845dd848d32ad",
+            )),
+            note: "d_stage.cpp: the exact `dr` placement name maps to the DR/L7 bridge-demo actor process.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.source.save-layout.{token}"),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(static_digest(
+                "fdac35e3d54a3c496dc20fd2f5e297fa9411a78fb7d09be607a62fa0cfa0c110",
+            )),
+            note: "d_save.h: current-stage memory switch 0x18 and the small-key count occupy distinct dSv_memBit_c fields.".into(),
+        },
+        EvidenceRecord {
+            id: format!("evidence.world.inventory.{token}"),
+            kind: EvidenceKind::Extracted,
+            source_sha256: Some(inventory_sha256),
+            note: format!(
+                "Authenticated D_MN07 room-6 placement {} and its exact room SCLS records.",
+                placement.stable_id
+            ),
+        },
+    ];
+    evidence_records.sort_by(|left, right| left.id.cmp(&right.id));
+    let evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: evidence_records,
+    };
+    let unknown_evidence = RuleEvidence {
+        truth: TruthStatus::Unknown,
+        records: evidence.records.clone(),
+    };
+    let pre_interaction_id = format!("obligation.interaction.{token}.pre-bridge");
+    let pre_effect_id = format!("obligation.actor-state.{token}.pre-bridge");
+    let post_effect_id = format!("obligation.actor-state.{token}.post-bridge");
+    let obligations = vec![
+        FeasibilityObligation {
+            id: pre_effect_id.clone(),
+            label: "Complete the D_MN07 pre-bridge DR event and SCLS 6 request".into(),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Effect,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Confirm event acceptance, camera/player demo ownership, the fixed walk, and the SCLS 6 scene request complete without interruption; no switch or key write belongs to this branch.".into(),
+            },
+            evidence: unknown_evidence.clone(),
+        },
+        FeasibilityObligation {
+            id: post_effect_id.clone(),
+            label: "Complete the D_MN07 bridge-destruction DR event and SCLS 7 request".into(),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::ActorState,
+            stage: crate::transition::ObligationStage::Effect,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Confirm the layer-3 DR event, both bridge-destruction phases, switch 0x18 write, event reset, and SCLS 7 scene request complete without interruption.".into(),
+            },
+            evidence: unknown_evidence.clone(),
+        },
+        FeasibilityObligation {
+            id: pre_interaction_id.clone(),
+            label: "Reach the D_MN07 DR pre-bridge start box with a key".into(),
+            scope: scope.clone(),
+            obligation_kind: ObligationKind::Interaction,
+            stage: crate::transition::ObligationStage::Activate,
+            detail: ObligationDetail::Unresolved {
+                research_question: "Reach world x in (-4480, -3730) and z in (-12800, -12100) outside layer 3 while the actor can acquire its potential event; the source applies no Y bound.".into(),
+            },
+            evidence: unknown_evidence,
+        },
+    ];
+
+    let pre_bridge = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "enter-bridge-layer",
+        "D_MN07 room 6 key-present DR event to bridge layer via SCLS 6",
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                placement_location_guard(inventory, placement, 6),
+                location_layer_guard(ComparisonOperator::NotEqual, 3),
+                memory_switch_guard(0x18, false),
+                small_key_guard(ComparisonOperator::GreaterThan, 0),
+            ],
+        },
+        vec![StateOperation::SetLocation {
+            location: scene_location(pre_bridge_exit),
+        }],
+        &[pre_effect_id, pre_interaction_id],
+        &evidence,
+    );
+    let post_bridge = keyed_actor_candidate(
+        scope,
+        placement,
+        family,
+        "destroy-bridge",
+        "D_MN07 room 6 layer-3 DR bridge destruction via SCLS 7",
+        TransitionKind::ActorDriven,
+        PredicateExpression::All {
+            terms: vec![
+                placement_location_guard(inventory, placement, 6),
+                location_layer_guard(ComparisonOperator::Equal, 3),
+                memory_switch_guard(0x18, false),
+            ],
+        },
+        vec![
+            memory_switch_write(0x18),
+            StateOperation::SetLocation {
+                location: scene_location(post_bridge_exit),
+            },
+        ],
+        &[post_effect_id],
+        &evidence,
+    );
+    Ok(Some(ImportedSceneActorActions {
+        transitions: vec![
+            (pre_bridge_exit.stable_id.clone(), pre_bridge),
+            (post_bridge_exit.stable_id.clone(), post_bridge),
+        ],
+        obligations,
+    }))
+}
+
+fn scene_location(exit: &crate::world_data::StageExitRecord) -> SceneLocation {
+    SceneLocation {
+        stage: exit.destination_stage.clone(),
+        room: exit.destination_room,
+        layer: exit.destination_layer,
+        spawn: exit.destination_point,
+    }
+}
+
+fn location_layer_guard(operator: ComparisonOperator, layer: i64) -> PredicateExpression {
+    PredicateExpression::Compare {
+        left: ValueReference::LocationLayer,
+        operator,
+        right: ValueReference::Literal {
+            value: StateValue::Signed(layer),
+        },
+    }
+}
+
 fn placement_location_guard(
     inventory: &WorldInventory,
     placement: &PlacementRecord,
@@ -2845,6 +3075,65 @@ mod tests {
         )
     }
 
+    fn l7_bridge_demo_inventory() -> WorldInventory {
+        let source =
+            static_digest("a7014eb0a33bb9a57af75caff72605f6725273909f5bd2cf61c465c140fe6a6e");
+        let placement = PlacementRecord {
+            stable_id: format!("dzr-sha256:{source}/chunk/ACTR/record/15"),
+            source_sha256: source,
+            scope: SourceScope {
+                kind: SourceKind::Room,
+                room: Some(6),
+            },
+            chunk_tag: "ACTR".into(),
+            record_index: 15,
+            layer: None,
+            kind: PlacementKind::Actor,
+            name: "dr".into(),
+            parameters: 0x18,
+            position: Vec3 {
+                x: -7075.0,
+                y: -200.0,
+                z: -11809.403,
+            },
+            angle: [0, -32768, 0],
+            set_id: 0xffff,
+            scale_raw: None,
+            raw_hex: "647200000000000000000018c5dd1800c3480000c638859d000080000000ffff".into(),
+        };
+        let mut inventory =
+            replace_room_actor(boss_door_inventory(6), "D_MN07", 6, placement, false);
+        inventory.exits = [
+            (6, 7, 3, "445f4d4e303700000706f03301"),
+            (7, 8, -1, "445f4d4e303700000806f03f00"),
+        ]
+        .into_iter()
+        .map(|(record_index, spawn, layer, raw_hex)| StageExitRecord {
+            stable_id: format!("dzr-sha256:{source}/chunk/SCLS/record/{record_index}"),
+            source_sha256: source,
+            scope: SourceScope {
+                kind: SourceKind::Room,
+                room: Some(6),
+            },
+            chunk_tag: "SCLS".into(),
+            record_index,
+            destination_stage: "D_MN07".into(),
+            destination_point: spawn,
+            destination_room: 6,
+            destination_layer: layer,
+            wipe: if record_index == 6 { 1 } else { 0 },
+            wipe_time: 1,
+            time_hour: -1,
+            raw_start: spawn as u8,
+            raw_field_a: 0xf0,
+            raw_field_b: if record_index == 6 { 0x33 } else { 0x3f },
+            raw_wipe: if record_index == 6 { 1 } else { 0 },
+            raw_hex: raw_hex.into(),
+        })
+        .collect();
+        inventory
+    }
+
     fn has_small_key_comparison(
         transition: &CandidateTransition,
         expected_operator: ComparisonOperator,
@@ -2870,6 +3159,32 @@ mod tests {
                 } if *operator == expected_operator && *value == expected_value
             )
         })
+    }
+
+    fn predicate_has_layer_comparison(
+        predicate: &PredicateExpression,
+        expected_operator: ComparisonOperator,
+        expected_layer: i64,
+    ) -> bool {
+        match predicate {
+            PredicateExpression::Compare {
+                left: ValueReference::LocationLayer,
+                operator,
+                right:
+                    ValueReference::Literal {
+                        value: StateValue::Signed(layer),
+                    },
+            } => *operator == expected_operator && *layer == expected_layer,
+            PredicateExpression::All { terms } | PredicateExpression::Any { terms } => {
+                terms.iter().any(|term| {
+                    predicate_has_layer_comparison(term, expected_operator, expected_layer)
+                })
+            }
+            PredicateExpression::Not { term } => {
+                predicate_has_layer_comparison(term, expected_operator, expected_layer)
+            }
+            _ => false,
+        }
     }
 
     fn writes_small_key(transition: &CandidateTransition, expected_value: u8) -> bool {
@@ -3625,6 +3940,103 @@ mod tests {
     }
 
     #[test]
+    fn imports_l7_bridge_demo_as_two_distinct_scls_backed_actor_transitions() {
+        let content = audited_content();
+        let runtime = runtime(&content);
+        let inventory = l7_bridge_demo_inventory();
+        inventory.validate().unwrap();
+        let context = world_context(content.fingerprint.game_data_sha256, &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+
+        assert_eq!(facts.mechanics.transitions.len(), 2);
+        assert_eq!(facts.mechanics.obligations.len(), 3);
+        let enter = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("SCLS 6"))
+            .unwrap();
+        assert_eq!(enter.transition_kind, TransitionKind::ActorDriven);
+        assert!(has_small_key_comparison(
+            enter,
+            ComparisonOperator::GreaterThan,
+            0,
+        ));
+        assert!(!enter.activation.effects.iter().any(|effect| matches!(
+            effect,
+            StateOperation::AdjustBoundRawUnsigned { .. }
+                | StateOperation::WriteBoundRaw {
+                    byte_offset: 0x1c,
+                    ..
+                }
+        )));
+        assert!(enter.activation.effects.iter().any(|effect| matches!(
+            effect,
+            StateOperation::SetLocation { location }
+                if location.stage == "D_MN07"
+                    && location.room == 6
+                    && location.layer == 3
+                    && location.spawn == 7
+        )));
+        assert!(predicate_has_layer_comparison(
+            &enter.activation.hard_guards,
+            ComparisonOperator::NotEqual,
+            3,
+        ));
+
+        let destroy = facts
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label.contains("SCLS 7"))
+            .unwrap();
+        assert!(!has_small_key_comparison(
+            destroy,
+            ComparisonOperator::GreaterThan,
+            0,
+        ));
+        assert!(predicate_has_layer_comparison(
+            &destroy.activation.hard_guards,
+            ComparisonOperator::Equal,
+            3,
+        ));
+        assert!(matches!(
+            destroy.activation.effects.as_slice(),
+            [
+                StateOperation::WriteBoundRaw {
+                    byte_offset: 0x08,
+                    mask,
+                    value,
+                    ..
+                },
+                StateOperation::SetLocation { location },
+            ] if mask == &[0x01]
+                && value == &[0x01]
+                && location.stage == "D_MN07"
+                && location.room == 6
+                && location.layer == -1
+                && location.spawn == 8
+        ));
+        for record_index in [6, 7] {
+            let exit = facts
+                .encoded_exits
+                .iter()
+                .find(|exit| {
+                    exit.source_record_id
+                        .ends_with(&format!("record/{record_index}"))
+                })
+                .unwrap();
+            assert_eq!(exit.candidate_transition_ids.len(), 1);
+        }
+    }
+
+    #[test]
     fn imports_wrapped_type_zero_shutter_and_each_mboss_event_resource() {
         let scope = ContextScope {
             selectors: vec![ContextSelector::Exact {
@@ -3737,7 +4149,7 @@ mod tests {
     }
 
     #[test]
-    fn encoded_exits_reference_only_map_and_door_transitions() {
+    fn encoded_exits_reference_every_location_changing_world_transition() {
         let content = audited_content();
         let runtime = runtime(&content);
 
@@ -3766,6 +4178,15 @@ mod tests {
         )
         .unwrap();
         door_facts.mechanics.transitions[0].transition_kind = TransitionKind::ActorDriven;
+        door_facts.validate().unwrap();
+        let transition_id = door_facts.mechanics.transitions[0].id.clone();
+        door_facts
+            .encoded_exits
+            .iter_mut()
+            .find(|exit| exit.candidate_transition_ids.contains(&transition_id))
+            .unwrap()
+            .candidate_transition_ids
+            .retain(|id| id != &transition_id);
         assert_eq!(
             door_facts.validate().unwrap_err().field(),
             "mechanics.transitions"

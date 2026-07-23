@@ -2120,6 +2120,12 @@ Deliverable: replayable state evidence that can validate transition rules.
         reference exactly one SCLS record and forbids actor-driven actions from
         fabricating one. Rider/caravan/external-switch families remain explicit
         audited boundaries pending their missing state domains.
+  - [x] Import the exact D_MN07 room-6 `dr` bridge demo as two distinct
+        SCLS-backed actor transitions. The pre-bridge branch requires a key but
+        never consumes it and selects SCLS 6; the layer-3 destruction branch
+        requires no key, writes switch `0x18`, and selects SCLS 7. Event,
+        camera/player, geometry, and bridge-animation completion remain staged
+        obligations rather than assumed effects.
 - [x] Model ordinary item/NPC/event producers. The ordinary Fishing Rod quest
       supplies a reusable six-step NPC/event/item chain, and the imported
       Lanayru/message-entry programs separately prove presentation requests,
@@ -2473,7 +2479,7 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 ### Phase 5 — Physical feasibility and obstructions
 
 - [x] Derive approach geometry from collision and spawn data where possible.
-      World facts v11 attaches one typed approach-geometry record to every
+      World facts v12 attaches one typed approach-geometry record to every
       collision-derived encoded-map candidate. Reconstructed KCL prisms retain
       their exact triangle, plane, and computed bounds; same-room player spawns
       are linked as candidates, never asserted paths. Degenerate reconstruction

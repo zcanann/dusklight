@@ -9,7 +9,7 @@ revision, platform, or language bundle.
 The earlier `DOOR20`, L1-family boss-door, and L5 boss-door audits remain the
 authoritative family-specific records for those actors. This document covers
 the remaining exact-build census and records which semantics are executable in
-`extracted-world-facts/v11` and which remain explicit boundaries.
+`extracted-world-facts/v12` and which remain explicit boundaries.
 
 ## Census method and source identities
 
@@ -54,7 +54,7 @@ hard guard checks only the boss key, yet its `UNLOCK` cut still queues a small-
 key decrement. Counts 1 through 100 lose one, zero clamps back to zero, and a
 raw count above 100 clamps to 99.
 
-The v11 candidate effect is the ordinary eventual committed-count equivalent,
+The v12 candidate effect is the ordinary eventual committed-count equivalent,
 not a claim that the transient queue and raw byte change simultaneously. Its
 actor-state obligation includes an uncontended pending delta. V9 splits zero,
 normal-range, and high-raw-count outcomes so the final committed byte remains
@@ -146,10 +146,14 @@ The pair opens transiently. A separate boar/event collision path destroys or
 opens it without a key. It remains unimported until paired live state and the
 destructive bypass can be represented without falsely persisting an unlock.
 
-The lone `L7demo_dr` placement in D_MN07 room 6 uses `key_count > 0` plus an
-exact local box to start a bridge cutscene, write switch `0x18`, and change
-scene. It never decrements the key count, so it is explicitly not a keyed-door
-consumer.
+The lone `dr` placement in D_MN07 room 6 maps to `L7demo_dr` and has two
+separate branches. Outside layer 3, `key_count > 0` plus world X in
+`(-4480, -3730)` and Z in `(-12800, -12100)` starts the pre-bridge event; it
+never decrements the key count or writes a switch, and eventually requests room
+SCLS 6 (room 6, layer 3, spawn 7). On layer 3 the actor orders the event without
+the key/box guard, completes the bridge-destruction phases, writes its parameter
+switch `0x18`, and requests SCLS 7 (room 6, default layer, spawn 8). Actor
+creation rejects either branch once switch `0x18` is already set.
 
 ## Extracted event evidence
 
@@ -167,15 +171,18 @@ selected retail cuts:
 | `f68b5c754d2ccefc5f80f74e05fb659898e2f12c568260d4ad39237a02ce63a9` | `c8684156665423d1a133dc0b102098d8ec3be838dd6abe117dbafedf0144ab83` | `KOKI_GATE_OPEN00` contains `UNLOCK` before `OPEN` |
 | `a3700cf327a2469195fa93860b69dbada71cbff64bb846b0ee7cf0d932bb4e92` | `95582d74d858aeb5b01a9f1beb6c0c1bd6761b619b75f57d1d60d906f73ea856` | `RIDER_GATE_OPEN00` contains `UNLOCK` |
 
-## Executable v11 boundary
+## Executable v12 boundary
 
-For exact GZ2E01 content, `extracted-world-facts/v11` imports:
+For exact GZ2E01 content, `extracted-world-facts/v12` imports:
 
 - the six front-side option-2 mini-boss placements as distinct first-open and
   already-unlocked `Door` branches joined to their unique SCLS destinations;
 - all five internally checked retail key shutters, including separate zero,
   normal-range, and high-raw-count Lakebed boss-shutter outcomes; and
-- the three layer-sensitive, memory-switch-backed type-0 Koki-gate placements.
+- the three layer-sensitive, memory-switch-backed type-0 Koki-gate placements;
+  and
+- the two `dr` bridge-demo branches, each pinned to its exact room SCLS record,
+  with the pre-bridge key guard kept distinct from the layer-3 switch writer.
 
 The hard predicates resolve the source stage/room/layer, current-stage switch,
 small-key count, and boss-key bit from exact raw backing. Effects retain switch
@@ -184,9 +191,10 @@ Interaction geometry, resource/event completion, keyhole behavior, collision
 release, restart handling, and post-unlock pushing remain named feasibility
 obligations.
 
-V11 also separates transition association by kind: encoded-map and door
-transitions must be referenced exactly once by an encoded SCLS record, while
-in-room actor-driven actions must not be attached to a fabricated exit.
+V12 associates every world-imported transition that changes location with
+exactly one encoded SCLS record, including actor-driven scene requests. In-room
+actor actions without a location effect must not be attached to a fabricated
+exit, and encoded-map/door transitions must still contain a location change.
 
 For L1 and L5 boss doors, v11 replaces the former prose-only interaction
 boundary with placement-derived typed observations: yaw-oriented actor-local
@@ -198,8 +206,8 @@ loaded actor/event/collision/scene-change phase remains unresolved.
 
 The importer intentionally excludes rider gates, caravan gates, externally
 switched `vshuter`, absent/non-memory switches, Koki-gate types without exact
-retail evidence, the guard-only bridge demo, and the zero-placement generic
-`bdoor` family. Those exclusions are tested. Adding them requires modeling the
+retail evidence, and the zero-placement generic `bdoor` family. Those
+exclusions are tested. Adding them requires modeling the
 specific event-bit, switch-domain, paired/transient, destructive, or placement
 semantics described above; actor-name similarity is not sufficient.
 

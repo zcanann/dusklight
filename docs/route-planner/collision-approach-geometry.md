@@ -1,6 +1,6 @@
 # Collision approach geometry
 
-World facts v11 preserves the geometry that is actually present at an imported
+World facts v12 preserves the geometry that is actually present at an imported
 collision/SCLS join without promoting it to a navigation proof.
 
 Each collision-derived encoded-map transition has exactly one
