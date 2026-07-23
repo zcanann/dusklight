@@ -2685,6 +2685,10 @@ mod tests {
         PlannerServiceOutcome, PlannerServicePayload, PlannerServiceRequest, handle_request,
     };
     use dusklight_route_planner::route_evidence_coverage::RouteEvidenceCoverageReport;
+    use dusklight_route_planner::route_observation::{
+        ObservationArtifact, ObservationArtifactKind, PLANNED_EDGE_OBSERVATION_MANIFEST_SCHEMA,
+        PlannedEdgeObservation, PlannedEdgeObservationManifest, RouteObservationMatchReport,
+    };
     use dusklight_route_planner::route_suite_coverage::{RouteSuiteCoverageReport, RouteSuiteKind};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -3009,6 +3013,7 @@ mod tests {
         let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
             panic!("rebind should append as an ordinary typed transition step");
         };
+        let first_after_snapshot = after.snapshot.clone();
         let before = start.clone().into_state().unwrap();
         let after_state = after.clone().into_state().unwrap();
         let before_bank = before
@@ -3082,6 +3087,59 @@ mod tests {
             suite_coverage.suites[3].exercised_fact_ids,
             ["local.forest-switch", "local.tot-switch", "path.tot-open"]
         );
+        let trace = ObservationArtifact {
+            id: "trace.hypothetical-rebind".into(),
+            kind: ObservationArtifactKind::Trace,
+            sha256: Digest([0x41; 32]),
+        };
+        let tape = ObservationArtifact {
+            id: "tape.hypothetical-rebind".into(),
+            kind: ObservationArtifactKind::Tape,
+            sha256: Digest([0x42; 32]),
+        };
+        let manifest = PlannedEdgeObservationManifest {
+            schema: PLANNED_EDGE_OBSERVATION_MANIFEST_SCHEMA.into(),
+            artifacts: vec![tape, trace],
+            observations: vec![
+                PlannedEdgeObservation {
+                    id: "observation.rebind".into(),
+                    step_id: "step.route-0000".into(),
+                    trace_artifact_id: "trace.hypothetical-rebind".into(),
+                    tape_artifact_id: Some("tape.hypothetical-rebind".into()),
+                    before_snapshot_sha256: before.snapshot.digest().unwrap(),
+                    after_snapshot_sha256: first_after_snapshot.digest().unwrap(),
+                    start_tick: 10,
+                    end_tick: 20,
+                    start_tape_frame: Some(9),
+                    end_tape_frame: Some(19),
+                },
+                PlannedEdgeObservation {
+                    id: "observation.temple-path".into(),
+                    step_id: "step.route-0001".into(),
+                    trace_artifact_id: "trace.hypothetical-rebind".into(),
+                    tape_artifact_id: Some("tape.hypothetical-rebind".into()),
+                    before_snapshot_sha256: first_after_snapshot.digest().unwrap(),
+                    after_snapshot_sha256: after.snapshot.digest().unwrap(),
+                    start_tick: 21,
+                    end_tick: 30,
+                    start_tape_frame: Some(20),
+                    end_tape_frame: Some(29),
+                },
+            ],
+        };
+        let observation_report = RouteObservationMatchReport::build(
+            &weak_catalog,
+            &book,
+            &manifest,
+            &[
+                before.snapshot.clone(),
+                first_after_snapshot,
+                after.snapshot.clone(),
+            ],
+        )
+        .unwrap();
+        assert!(observation_report.steps.iter().all(|step| step.observed));
+        assert_eq!(observation_report.steps[1].observations[0].start_tick, 21);
         let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
             request_id: "request.remove-hypothetical-rebind".into(),
             state: Box::new(start),

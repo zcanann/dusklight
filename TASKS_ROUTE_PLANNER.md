@@ -3011,7 +3011,15 @@ timeline assumptions.
 
 ### Phase 10 — Evidence and proof integration
 
-- [ ] Match planned edges to trace/tape observations.
+- [x] Match planned edges to trace/tape observations. Canonical
+      `planned-edge-observation-manifest/v1` records digest-authenticated trace
+      and optional tape sources plus exact tick/frame and before/after snapshot
+      windows for named route steps. `route-observation-match-report/v1`
+      validates the route against one composed catalog, rejects dangling or
+      cross-content windows, retains multiple independent witnesses, and emits
+      every planned step with an explicit observed/unobserved state.
+      `match-route-observations` exports the report. See
+      `docs/route-planner/route-observation-matching.md`.
 - [ ] Validate postconditions and component preservation against snapshots.
 - [ ] Promote witnessed edges without erasing lower-confidence alternatives.
 - [x] Attach source, extraction, trace, video, or community citations. The
