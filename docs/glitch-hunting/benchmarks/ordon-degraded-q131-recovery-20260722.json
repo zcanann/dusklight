@@ -1,79 +1,49 @@
 {
-  "schema": "dusklight-degraded-canary-recovery-report/v1",
+  "schema": "dusklight-rejected-campaign-evidence/v1",
   "recorded_date": "2026-07-22",
-  "request": {
-    "id": "ordon-degraded-q131-residual-cem-v3",
-    "path_at_run": "routes/Glitch Exhibition/intro/benchmarks/ordon-degraded-q131-cem-canary.request.json",
-    "sha256": "df396ff76ed13c88f017d8f33bea8effe03305b1b768ce10e3da271b572b0fbe"
-  },
-  "execution": {
-    "binding_sha256": "1986f36938dff3d2edebc7dbea41953b2f88f2f2bb400b9bdef4787c38ad8fd2",
-    "executable_sha256": "22487ae028a944eff082469960870dbbdb1f66194521926a0d5a59b7571281b9"
-  },
+  "status": "rejected",
   "campaign": {
+    "request_content_sha256": "df396ff76ed13c88f017d8f33bea8effe03305b1b768ce10e3da271b572b0fbe",
+    "execution_binding_sha256": "1986f36938dff3d2edebc7dbea41953b2f88f2f2bb400b9bdef4787c38ad8fd2",
     "generation": 0,
-    "population": 64,
     "completed_candidates": 64,
-    "charged_simulated_ticks": 11345,
-    "first_hit_distribution": [
-      {
-        "result": "miss",
-        "count": 15
-      },
-      {
-        "result": "125",
-        "count": 1
-      },
-      {
-        "result": "131",
-        "count": 40
-      },
-      {
-        "result": "132",
-        "count": 2
-      },
-      {
-        "result": "133",
-        "count": 3
-      },
-      {
-        "result": "134",
-        "count": 1
-      },
-      {
-        "result": "135",
-        "count": 1
-      },
-      {
-        "result": "137",
-        "count": 1
-      }
-    ],
-    "resume_state_sha256": "8a41244c5e7ce54bb6e12c4875418d6f9f29623d96a8e1ef99768c7208f0ba3a",
-    "checkpoint": {
-      "path": "build/campaigns/ordon-degraded-q131-residual-cem-v3/checkpoints/checkpoint-00000197.json",
-      "sha256": "bf40faf72720d9a2f3426f3be22c8c17fb5dc35e6ee14d11f980e2835ad701d2"
-    }
+    "charged_simulated_ticks": 11345
   },
-  "best": {
+  "observed_result": {
     "candidate_id": "g000000-s00000-16f51b6e63e1",
     "candidate_sha256": "16f51b6e63e18e8718d7d11632d14c07abda60dacd46bb4c3619c857f3a19dcd",
-    "realized_tape_sha256": "cfe2ad1737802ad1865fb0b80be116ab69ee7b564a9aff5db6843fcc7f7ba28d",
     "first_hit_tick": 125,
-    "simulated_ticks": 126,
-    "terminal_boundary_fingerprint": "fa1fc9ab3690fbe0951118b7237eb345",
-    "terminal_program_sha256": "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169",
-    "terminal_definition_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
-    "evaluation_artifact_sha256": "c59f91f93616f1cf56517bd20ba4afb795a0d751efd38bc1d9806756ed1844d5",
-    "terminal_evaluation_sha256": "fc587265324413eb1a22bd10a492aa93d222eb2584b8827e06cbd47b7d0f36b2",
-    "episode_sha256": "ef36776038fd4485523fa213bc1260dd42704d009515b39e896a274acf858691"
+    "terminal_evaluation_sha256": "fc587265324413eb1a22bd10a492aa93d222eb2584b8827e06cbd47b7d0f36b2"
   },
-  "interpretation": {
-    "result": "recovered_known_125_tick_behavior",
-    "proposal_source": "incumbent_derived_button_cadence_prior",
-    "terminal_authority": "native_predicate_only",
-    "learning_claim": false,
-    "cold_replays": 1,
-    "promotion_claim": false
-  }
+  "rejection_reasons": [
+    {
+      "code": "known_answer_injected",
+      "detail": "Population slot zero was exactly the pre-existing expressiveness witness: press button 0x0100 for one frame at suffix frame 100. This proves execution, not search competence."
+    },
+    {
+      "code": "proposal_not_reproducible",
+      "detail": "The checked optimizer does not contain the generation-zero cadence injection that created this candidate."
+    },
+    {
+      "code": "request_path_mismatch",
+      "detail": "The original report named the checked canary request path, but that path now identifies a different v4 request rather than the v3 request bound by the campaign."
+    },
+    {
+      "code": "executable_identity_mismatch",
+      "detail": "The original report recorded executable SHA-256 22487ae028a944eff082469960870dbbdb1f66194521926a0d5a59b7571281b9, while the referenced sealed execution recorded 19746f26d1a823c8ed3b333519035d966bf08c6640e80414f47433c9b4957d04."
+    },
+    {
+      "code": "insufficient_replay",
+      "detail": "Only one native evaluation exists; there is no five-replay promotion proof."
+    }
+  ],
+  "allowed_claims": [
+    "The native evaluator observed the Ordon terminal predicate at tick 125 for the known one-frame repair.",
+    "The remaining categorical candidates produced varied success and miss outcomes."
+  ],
+  "forbidden_claims": [
+    "CEM discovered the repair.",
+    "Independent sampling closed the degraded canary.",
+    "The result is promotable or deterministic across cold replay."
+  ]
 }

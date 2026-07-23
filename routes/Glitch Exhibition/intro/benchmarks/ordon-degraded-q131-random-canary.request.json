@@ -1,0 +1,128 @@
+{
+  "schema": "dusklight-optimization-request/v2",
+  "content_sha256": "b405f9b7223c6240d0bb5f5f3ecdb79d83f717ef64e802c980b5f46166ae468f",
+  "id": "ordon-degraded-q131-residual-random-v1",
+  "route": {
+    "timeline": {
+      "path": "routes/Glitch Exhibition/ordon-degraded-canary.timeline",
+      "sha256": "8dc1158912ddfdb41965d2efe4771e4961db603c6f71c745c49c4f5b33d03e23"
+    },
+    "lineage": "canary",
+    "segment": "to_ordon_spring_degraded_q131",
+    "source_boundary_index": 506,
+    "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc"
+  },
+  "terminal_predicate": {
+    "goal": "ordon_spring_load_committed",
+    "source": {
+      "path": "routes/Glitch Exhibition/intro/predicates/ordon_spring_load_committed.milestones",
+      "sha256": "65e395951ce6c46f6728e3daa91ece77410f85806f9a7a83942ffcd5737770ba"
+    },
+    "program_sha256": "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169",
+    "definition_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57"
+  },
+  "incumbent": {
+    "tape": {
+      "path": "routes/Glitch Exhibition/intro/segments/to_ordon_spring_degraded_q131.tape",
+      "sha256": "58bb15b331763df58a70ab06ab20c4d3a1d14713c46dabd6c34a19425354d799"
+    },
+    "first_hit_tick": 131
+  },
+  "budgets": {
+    "exploration_horizon_ticks": 160,
+    "promotion_before_tick": 131,
+    "candidate_budget": 64,
+    "simulated_tick_budget": 20612
+  },
+  "execution": {
+    "workers": 4,
+    "deterministic_seeds": [
+      104729,
+      130363,
+      155921,
+      181081
+    ],
+    "repetitions": 1,
+    "fidelity": "headless",
+    "alternate_terminal_goals": [
+      "ordon_spring_exit_approach"
+    ]
+  },
+  "proposal": {
+    "action_schema": {
+      "id": "dusklight-raw-pad-action/v2",
+      "sha256": "483953b663e327c6d839d88b72ce652cfcc5d0aeb420570e0c076a4c62e3ab7c"
+    },
+    "proposal_schema": {
+      "id": "dusklight-residual-action/v1",
+      "sha256": "8b11beebb1528ebb225f0366c997cd32171b10d596c0f1c4b6ffa740879e2313"
+    },
+    "search_space": {
+      "schema": "dusklight-residual-search-space/v1",
+      "start_frame": 0,
+      "end_frame_exclusive": 126,
+      "candidate_slots": 4,
+      "ports": [
+        0
+      ],
+      "analog_channels": [
+        "main_x",
+        "main_y",
+        "camera_x",
+        "camera_y"
+      ],
+      "analog_delta_values": [
+        -64,
+        -32,
+        -16,
+        -8,
+        -4,
+        4,
+        8,
+        16,
+        32,
+        64
+      ],
+      "button_masks": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        256,
+        512,
+        1024,
+        2048,
+        4096
+      ],
+      "duration_values": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32
+      ]
+    },
+    "optimizer": {
+      "kind": "random",
+      "samples": 64
+    }
+  },
+  "resume": {
+    "state_path": "build/campaigns/ordon-degraded-q131-residual-random-v1/state.json",
+    "journal_path": "build/campaigns/ordon-degraded-q131-residual-random-v1/journal.jsonl",
+    "checkpoint_every_candidates": 64
+  },
+  "retention": {
+    "retain_all_successes": true,
+    "failed_episodes": "diversity_reservoir",
+    "failed_episode_limit": 64,
+    "retain_realized_tapes": true,
+    "retain_native_episode_shards": true,
+    "retain_gameplay_traces": false
+  }
+}
