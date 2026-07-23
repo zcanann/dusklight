@@ -7,6 +7,10 @@ use crate::{
 };
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::evaluation::EvidencePolicy;
+use dusklight_route_planner::evaluation::{
+    FeasibilityMode, FeasibilitySelection, PredicateEvaluator, TransitionAssessment,
+    TransitionClassification,
+};
 use dusklight_route_planner::execution::PlannerExecutionStateDocument;
 use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::EquivalenceSet;
@@ -18,8 +22,9 @@ use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::state::BoundaryKind;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v28";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v29";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -84,6 +89,14 @@ pub enum PlannerServiceRequest {
         equivalence_sets: Vec<EquivalenceSet>,
         evidence_mode: crate::RuntimeEvidenceMode,
     },
+    EvaluateTransition {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        transition_id: String,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
     Solve {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
@@ -116,6 +129,7 @@ impl PlannerServiceRequest {
             | Self::ProjectFeasibilityDiff { request_id, .. }
             | Self::InspectState { request_id, .. }
             | Self::DiffState { request_id, .. }
+            | Self::EvaluateTransition { request_id, .. }
             | Self::Solve { request_id, .. }
             | Self::SolvePortable { request_id, .. } => request_id,
         }
@@ -170,6 +184,10 @@ pub enum PlannerServicePayload {
     },
     StateInspectionDiff {
         inspection_diff: Box<StateInspectionDiff>,
+    },
+    TransitionEvaluation {
+        assessment: Box<TransitionAssessment>,
+        after: Option<Box<PlannerExecutionStateDocument>>,
     },
     SolveReport {
         report: Box<SolveReport>,
@@ -321,6 +339,73 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 })
             })
         }),
+        PlannerServiceRequest::EvaluateTransition {
+            state,
+            catalog,
+            equivalence_sets,
+            transition_id,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|mut state| {
+            let transition = catalog
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| transition.id == transition_id)
+                .ok_or_else(|| {
+                    dusklight_route_planner::PlannerContractError::new(
+                        "transition_id",
+                        "does not name a transition in the composed catalog",
+                    )
+                })?;
+            let policy = match evidence_mode {
+                crate::RuntimeEvidenceMode::EstablishedOnly => EvidencePolicy::ESTABLISHED_ONLY,
+                crate::RuntimeEvidenceMode::Research => EvidencePolicy::RESEARCH,
+            };
+            let empty = BTreeSet::new();
+            let assessment = {
+                let evaluator = PredicateEvaluator::new(
+                    &state.snapshot,
+                    &catalog.facts,
+                    &equivalence_sets,
+                    &state.gate_states,
+                    policy,
+                )?;
+                let resolution = evaluator.resolve_feasibility(
+                    transition,
+                    &catalog.mechanics.obligations,
+                    &catalog.mechanics.obstructions,
+                    &catalog.mechanics.resolvers,
+                    &catalog.mechanics.techniques,
+                    FeasibilitySelection {
+                        resolver_ids: &empty,
+                        technique_ids: &empty,
+                        already_discharged: &empty,
+                        microtraces: &catalog.mechanics.microtraces,
+                    },
+                );
+                evaluator.assess_transition(
+                    transition,
+                    &resolution.discharged_obligation_ids,
+                    &resolution.unknown_obligation_ids,
+                    FeasibilityMode::Modeled,
+                )
+            };
+            let after = if assessment.classification == TransitionClassification::Executable {
+                state.apply_operations(
+                    "web.transition",
+                    "web.after-transition",
+                    &transition.activation.effects,
+                )?;
+                Some(Box::new(state.to_document()?))
+            } else {
+                None
+            };
+            Ok(PlannerServicePayload::TransitionEvaluation {
+                assessment: Box::new(assessment),
+                after,
+            })
+        }),
         PlannerServiceRequest::Solve {
             state,
             catalog,
@@ -441,8 +526,24 @@ pub fn error_response(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dusklight_route_planner::logic::FACT_CATALOG_SCHEMA;
-    use dusklight_route_planner::transition::MECHANICS_CATALOG_SCHEMA;
+    use dusklight_route_planner::artifact::Digest;
+    use dusklight_route_planner::execution::PlannerExecutionState;
+    use dusklight_route_planner::identity::{RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration};
+    use dusklight_route_planner::logic::{
+        ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA, PredicateExpression,
+        RuleEvidence, TruthStatus,
+    };
+    use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
+    use dusklight_route_planner::state::{
+        BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment,
+        PhysicalSlotId, PlayerForm, PlayerState, RuntimeFile, RuntimeFileLifecycle,
+        RuntimeFileOrigin, SceneLocation,
+    };
+    use dusklight_route_planner::transition::{
+        ActivationContract, CandidateTransition, MECHANICS_CATALOG_SCHEMA, StateOperation,
+        TransitionKind,
+    };
+    use std::collections::BTreeMap;
 
     fn catalogs() -> (FactCatalog, MechanicsCatalog) {
         (
@@ -466,6 +567,98 @@ mod tests {
                 goals: Vec::new(),
             },
         )
+    }
+
+    fn executable_transition_fixture() -> (PlannerExecutionStateDocument, ComposedPlannerCatalog) {
+        let runtime = RuntimeConfiguration {
+            schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
+            content_sha256: Digest([1; 32]),
+            language: "en".into(),
+            settings: BTreeMap::new(),
+        };
+        let scope = ContextScope {
+            selectors: vec![dusklight_route_planner::identity::ContextSelector::Exact {
+                context: runtime.exact_context().unwrap(),
+            }],
+        };
+        let snapshot = StateSnapshot {
+            schema: STATE_SNAPSHOT_SCHEMA.into(),
+            id: "snapshot.before".into(),
+            sequence: 0,
+            environment: ExecutionEnvironment {
+                schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+                runtime_configuration: runtime,
+                active_runtime_file: RuntimeFile {
+                    id: "file-0".into(),
+                    origin: RuntimeFileOrigin::TitleFile0,
+                    backing: BackingAttachment::MemoryOnly,
+                    allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                    lifecycle: RuntimeFileLifecycle::Active,
+                },
+                inactive_runtime_files: Vec::new(),
+                physical_slots: Vec::new(),
+                physical_slot_observations: Vec::new(),
+                execution_context: ExecutionContext::World,
+                location: SceneLocation {
+                    stage: "F_SP103".into(),
+                    room: 0,
+                    layer: 0,
+                    spawn: 0,
+                },
+                player: PlayerState {
+                    form: PlayerForm::Human,
+                    mount: None,
+                    position: [0.0; 3],
+                    rotation: [0; 3],
+                    has_control: Some(true),
+                    action: "idle".into(),
+                },
+                components: Vec::new(),
+                static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
+                spatial_connections: Vec::new(),
+                spatial_planes: Vec::new(),
+                persisted_object_controls: Vec::new(),
+                live_world_objects: Vec::new(),
+            },
+            semantic_observations: Vec::new(),
+        };
+        let state = PlannerExecutionState::new(snapshot)
+            .unwrap()
+            .to_document()
+            .unwrap();
+        let (facts, mut mechanics) = catalogs();
+        mechanics.transitions.push(CandidateTransition {
+            id: "transition.enter-forest".into(),
+            label: "Enter Forest Temple".into(),
+            scope,
+            transition_kind: TransitionKind::Door,
+            approach_id: "approach.front".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::True,
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: "D_MN05".into(),
+                        room: 1,
+                        layer: 0,
+                        spawn: 2,
+                    },
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: RuleEvidence {
+                truth: TruthStatus::Established,
+                records: vec![EvidenceRecord {
+                    id: "source.test".into(),
+                    kind: EvidenceKind::SourceAudited,
+                    source_sha256: Some(Digest([2; 32])),
+                    note: "Test transition.".into(),
+                }],
+            },
+        });
+        let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &[]).unwrap();
+        (state, catalog)
     }
 
     #[test]
@@ -499,6 +692,32 @@ mod tests {
         assert_eq!(response.request_id.as_deref(), Some("request.graph"));
         assert_eq!(graph.nodes.len(), 0);
         assert_eq!(graph.regions.len(), 2);
+    }
+
+    #[test]
+    fn service_evaluates_then_applies_only_an_executable_transition() {
+        let (state, catalog) = executable_transition_fixture();
+        let response = handle_request(PlannerServiceRequest::EvaluateTransition {
+            request_id: "request.transition".into(),
+            state: Box::new(state),
+            catalog: Box::new(catalog),
+            equivalence_sets: Vec::new(),
+            transition_id: "transition.enter-forest".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("transition evaluation should succeed");
+        };
+        let PlannerServicePayload::TransitionEvaluation { assessment, after } = *payload else {
+            panic!("transition evaluation should return its typed payload");
+        };
+        assert_eq!(
+            assessment.classification,
+            TransitionClassification::Executable
+        );
+        let after = after.unwrap();
+        assert_eq!(after.snapshot.environment.location.stage, "D_MN05");
+        assert_eq!(after.snapshot.environment.location.room, 1);
     }
 
     #[test]

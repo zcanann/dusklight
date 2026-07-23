@@ -62,6 +62,7 @@ button:disabled { opacity: .42; cursor: default; }
 .details { border-top: 1px solid #303740; background: var(--panel); padding: 14px 17px; display: grid; grid-template-columns: minmax(220px, .8fr) minmax(0, 2fr); gap: 25px; overflow: auto; }
 .details h2 { margin: 5px 0 3px; font-size: 18px; }
 .details p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.details button { margin-top: 11px; }
 .details pre { margin: 0; padding: 11px; background: #101419; border: 1px solid #303943; border-radius: 5px; overflow: auto; font-size: 11px; color: #bcd0df; }
 
 @media (max-width: 800px) {

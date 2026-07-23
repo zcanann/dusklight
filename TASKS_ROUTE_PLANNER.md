@@ -57,9 +57,12 @@ The first independent browser boundary now exists. A loopback-only Rust host
 serves an embedded blueprint canvas and the typed planner service; the client can
 open a typed project, project its authoritative graph, search transitions,
 pan/zoom/fit, drag layout nodes, inspect planner-owned payloads, and export a copy
-with presentation positions. It cannot yet insert validated route steps, inspect
-propagated before/after state, save authoritatively into the workspace, or load
-bundled demonstrations. Coverage is also incomplete, so the current engine is a
+with presentation positions. A selected transition can now be assessed against
+an exact project start state by the Rust evaluator; executable effects return a
+typed after-state, while rejected evaluations retain their guard, obligation,
+and scope classification. The browser cannot yet insert that validated step into
+a propagated route, save route semantics authoritatively, or load all planned
+demonstrations. Coverage is also incomplete, so the current engine is a
 causal-reasoning laboratory over selected modeled mechanics rather than a
 whole-game route explorer.
 
@@ -2551,6 +2554,11 @@ visual polish or whole-game authoring features.
 - [ ] Let an author drag a transition onto the canvas and connect it to an exact
       predecessor state. Rust recomputes every downstream state and remains the
       only validation and mutation authority.
+      The v29 service now evaluates one catalog transition against an exact
+      execution-state document, resolves modeled obligations and evidence, and
+      applies effects transactionally only for `executable`; the browser exposes
+      this on selected transitions for projects with a start state. Persisted
+      step insertion and downstream route propagation remain open.
 - [ ] Render accepted connections distinctly from rejected or unknown joins.
       Selecting a rejected join must show missing producers, active
       obstructions/resolvers, unknown obligations, or exact-context mismatch;

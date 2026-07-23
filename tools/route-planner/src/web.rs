@@ -359,6 +359,20 @@ mod tests {
                 .windows(13)
                 .any(|window| window == b"Route Planner")
         );
+        let app = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/app.js".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(app.status, 200);
+        assert!(
+            String::from_utf8(app.body)
+                .unwrap()
+                .contains("evaluate_transition")
+        );
 
         let health = dispatch(
             HttpRequest {

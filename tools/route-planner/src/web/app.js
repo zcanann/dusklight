@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v28";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v29";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const NODE_WIDTH = 176;
@@ -9,6 +9,7 @@ const elements = Object.fromEntries([
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json",
+  "evaluate-transition",
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -21,6 +22,7 @@ const state = {
   revision: null,
   readOnly: false,
   dirty: false,
+  transitionEvaluation: null,
 };
 
 elements["project-list"].addEventListener("change", () => {
@@ -37,6 +39,7 @@ elements.search.addEventListener("input", renderPalette);
 elements["zoom-in"].addEventListener("click", () => zoomAt(1.2));
 elements["zoom-out"].addEventListener("click", () => zoomAt(1 / 1.2));
 elements.fit.addEventListener("click", fitGraph);
+elements["evaluate-transition"].addEventListener("click", evaluateSelectedTransition);
 elements.canvas.addEventListener("wheel", onWheel, { passive: false });
 elements.canvas.addEventListener("pointerdown", beginPan);
 window.addEventListener("pointermove", moveGesture);
@@ -144,6 +147,7 @@ async function loadProject(project, options) {
   state.readOnly = options.readOnly;
   state.dirty = options.dirty;
   state.selected = null;
+  state.transitionEvaluation = null;
   ensurePositions();
   elements["empty-state"].hidden = true;
   updateProjectControls();
@@ -217,6 +221,7 @@ function renderEdges() {
     path.addEventListener("click", (event) => {
       event.stopPropagation();
       state.selected = { type: "edge", value: edge };
+      state.transitionEvaluation = null;
       render();
     });
     elements.edges.append(path);
@@ -242,6 +247,7 @@ function renderNodes() {
     group.addEventListener("click", (event) => {
       event.stopPropagation();
       state.selected = { type: "node", value: node };
+      state.transitionEvaluation = null;
       render();
     });
     elements.nodes.append(group);
@@ -264,6 +270,7 @@ function renderPalette() {
     button.append(label, id);
     button.addEventListener("click", () => {
       state.selected = { type: "node", value: node };
+      state.transitionEvaluation = null;
       centerNode(node.id);
       render();
     });
@@ -277,17 +284,57 @@ function renderDetails() {
     elements["detail-title"].textContent = "Nothing selected";
     elements["detail-subtitle"].textContent = "Choose a node or connection to inspect its planner-owned identity.";
     elements["detail-json"].textContent = "{}";
+    elements["evaluate-transition"].disabled = true;
     return;
   }
   elements["detail-title"].textContent = selected.type === "node" ? selected.value.label : selected.value.relation;
   elements["detail-subtitle"].textContent = selected.value.id;
-  elements["detail-json"].textContent = JSON.stringify(selected.value, null, 2);
+  const transition = selected.type === "node" && selected.value.payload.kind === "transition";
+  elements["evaluate-transition"].disabled = !transition || !state.project?.start_state;
+  elements["evaluate-transition"].title = state.project?.start_state
+    ? "Run the authoritative transition evaluator"
+    : "This project has no exact start state";
+  elements["detail-json"].textContent = JSON.stringify({
+    selection: selected.value,
+    ...(state.transitionEvaluation ? { transition_evaluation: state.transitionEvaluation } : {}),
+  }, null, 2);
+}
+
+async function evaluateSelectedTransition() {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  if (node?.payload.kind !== "transition" || !state.project?.start_state) return;
+  try {
+    setStatus(`Evaluating ${node.label}...`);
+    const payload = await service({
+      command: "evaluate_transition",
+      request_id: requestId("transition"),
+      state: state.project.start_state,
+      catalog: state.project.catalog,
+      equivalence_sets: state.project.equivalence_sets ?? [],
+      transition_id: node.payload.transition_id,
+      evidence_mode: "established_only",
+    });
+    if (payload.kind !== "transition_evaluation") {
+      throw new Error(`Unexpected response ${payload.kind}`);
+    }
+    state.transitionEvaluation = payload;
+    renderDetails();
+    const accepted = payload.assessment.classification === "executable";
+    setStatus(
+      accepted ? `${node.label} is executable from the exact start state`
+        : `${node.label}: ${payload.assessment.classification.replaceAll("_", " ")}`,
+      accepted ? "good" : "bad",
+    );
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 function beginPan(event) {
   if (event.button !== 0 || event.target.closest?.(".node")) return;
   elements.canvas.setPointerCapture(event.pointerId);
   state.selected = null;
+  state.transitionEvaluation = null;
   state.gesture = { kind: "pan", pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: state.transform.x, y: state.transform.y };
   renderDetails();
 }
@@ -298,6 +345,7 @@ function beginNodeDrag(event, node) {
   elements.canvas.setPointerCapture(event.pointerId);
   const position = state.positions.get(node.id);
   state.selected = { type: "node", value: node };
+  state.transitionEvaluation = null;
   state.gesture = { kind: "node", pointerId: event.pointerId, nodeId: node.id, startX: event.clientX, startY: event.clientY, x: position.x, y: position.y };
   renderDetails();
 }
