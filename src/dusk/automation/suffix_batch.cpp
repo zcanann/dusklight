@@ -156,11 +156,44 @@ bool parse_policy_head(const json& value, FactorizedPadPolicyHeadConfig& output)
     return true;
 }
 
-bool parse_frozen_policy(const json& value, SuffixBatchFrozenPolicy& output) {
-    constexpr std::array Keys{std::string_view{"schema"}, std::string_view{"model_path"},
-        std::string_view{"model_xxh3_128"}, std::string_view{"policy_head"}};
+bool parse_rollout_exploration(
+    const json& value, SuffixBatchFrozenPolicy::RolloutExploration& output) {
+    constexpr std::array Keys{std::string_view{"schema"}, std::string_view{"seed"},
+        std::string_view{"stick_axis_delta_probability_millionths"},
+        std::string_view{"maximum_stick_axis_delta"},
+        std::string_view{"button_flip_probability_millionths"},
+        std::string_view{"button_flip_mask"}};
     if (!has_exact_keys(value, Keys) || !value["schema"].is_string() ||
-        value["schema"].get_ref<const std::string&>() != FrozenPolicySchema ||
+        value["schema"].get_ref<const std::string&>() != PolicyRolloutExplorationSchema)
+        return false;
+    SuffixBatchFrozenPolicy::RolloutExploration parsed;
+    if (!read_integer(value["seed"], std::uint64_t{1}, std::numeric_limits<std::uint64_t>::max(),
+            parsed.seed) ||
+        !read_integer(value["stick_axis_delta_probability_millionths"], std::uint32_t{0},
+            std::uint32_t{1'000'000}, parsed.stickAxisDeltaProbabilityMillionths) ||
+        !read_integer(value["maximum_stick_axis_delta"], std::uint8_t{1}, std::uint8_t{64},
+            parsed.maximumStickAxisDelta) ||
+        !read_integer(value["button_flip_probability_millionths"], std::uint32_t{0},
+            std::uint32_t{1'000'000}, parsed.buttonFlipProbabilityMillionths) ||
+        !read_integer(value["button_flip_mask"], std::uint16_t{1},
+            std::numeric_limits<std::uint16_t>::max(), parsed.buttonFlipMask))
+        return false;
+    output = parsed;
+    return true;
+}
+
+bool parse_frozen_policy(
+    const json& value, const bool requiresExploration, SuffixBatchFrozenPolicy& output) {
+    constexpr std::array LegacyKeys{std::string_view{"schema"}, std::string_view{"model_path"},
+        std::string_view{"model_xxh3_128"}, std::string_view{"policy_head"}};
+    constexpr std::array ExplorationKeys{std::string_view{"schema"}, std::string_view{"model_path"},
+        std::string_view{"model_xxh3_128"}, std::string_view{"policy_head"},
+        std::string_view{"rollout_exploration"}};
+    if (!(requiresExploration ? has_exact_keys(value, ExplorationKeys) :
+                               has_exact_keys(value, LegacyKeys)) ||
+        !value["schema"].is_string() ||
+        value["schema"].get_ref<const std::string&>() !=
+            (requiresExploration ? FrozenPolicySchema : FrozenPolicySchemaV1) ||
         !value["model_path"].is_string() || !valid_boundary_fingerprint(value["model_xxh3_128"]))
         return false;
     SuffixBatchFrozenPolicy parsed;
@@ -171,6 +204,11 @@ bool parse_frozen_policy(const json& value, SuffixBatchFrozenPolicy& output) {
         parsed.policyHead.maximumDurationTicks != 1 || parsed.policyHead.buttonLogitThreshold != 0.0F)
         return false;
     parsed.modelXxh3_128 = value["model_xxh3_128"].get<std::string>();
+    if (requiresExploration) {
+        SuffixBatchFrozenPolicy::RolloutExploration exploration;
+        if (!parse_rollout_exploration(value["rollout_exploration"], exploration)) return false;
+        parsed.rolloutExploration = exploration;
+    }
     output = std::move(parsed);
     return true;
 }
@@ -229,7 +267,7 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         } else if (source == "frozen_policy" && allowFrozenPolicy) {
             output = {.id = id, .frozenPolicy = true};
         } else {
-            error = "candidate source must be tape or a v6 frozen_policy";
+            error = "candidate source must be tape or an admitted frozen_policy";
             return false;
         }
         return true;
@@ -368,7 +406,9 @@ bool parse_suffix_batch(
     const bool legacy = schema == LegacySuffixBatchSchema;
     const bool previous = schema == PreviousSuffixBatchSchema;
     const bool factorized = schema == FactorizedSuffixBatchSchema;
-    const bool frozen = schema == SuffixBatchSchema;
+    const bool legacyFrozen = schema == FrozenPolicySuffixBatchSchemaV6;
+    const bool exploratoryFrozen = schema == SuffixBatchSchema;
+    const bool frozen = legacyFrozen || exploratoryFrozen;
     if ((!legacy && !previous && !factorized && !frozen) ||
         !(legacy ? has_exact_keys(root, LegacyRootKeys) :
                    frozen ? has_exact_keys(root, FrozenRootKeys) : has_exact_keys(root, RootKeys)) ||
@@ -418,7 +458,7 @@ bool parse_suffix_batch(
             return false;
         }
         SuffixBatchFrozenPolicy frozenPolicy;
-        if (!parse_frozen_policy(root["frozen_policy"], frozenPolicy)) {
+        if (!parse_frozen_policy(root["frozen_policy"], exploratoryFrozen, frozenPolicy)) {
             error = "suffix batch frozen policy is invalid";
             return false;
         }

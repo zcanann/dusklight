@@ -245,7 +245,9 @@ fn validate_batch_result<'a>(
     let schema = string_field(batch, "schema")?;
     if !matches!(
         schema.as_str(),
-        "dusklight-suffix-batch-result/v5" | "dusklight-suffix-batch-result/v6"
+        "dusklight-suffix-batch-result/v5"
+            | "dusklight-suffix-batch-result/v6"
+            | "dusklight-suffix-batch-result/v7"
     ) || string_field(batch, "status")? != "passed"
         || u64_field(batch, "source_frame")? != shard.source_frame
         || string_field(batch, "restore_identity")? != reinference.checkpoint_identity
@@ -268,7 +270,11 @@ fn validate_batch_result<'a>(
         || batch
             .pointer("/policy_model/schema")
             .and_then(Value::as_str)
-            != Some("dusklight-native-frozen-policy/v1")
+            != Some(if schema == "dusklight-suffix-batch-result/v7" {
+                "dusklight-native-frozen-policy/v2"
+            } else {
+                "dusklight-native-frozen-policy/v1"
+            })
         || batch
             .pointer("/policy_model/model_xxh3_128")
             .and_then(Value::as_str)
@@ -285,9 +291,13 @@ fn validate_batch_result<'a>(
             .pointer("/policy_model/objective_sha256")
             .and_then(Value::as_str)
             != Some(objective_sha256.as_str())
+        || (schema == "dusklight-suffix-batch-result/v7"
+            && !batch
+                .pointer("/policy_model/rollout_exploration")
+                .is_some_and(valid_rollout_exploration))
     {
         return Err(error(
-            "native frozen policy batch result is not a passed identity-complete v5/v6 run",
+            "native frozen policy batch result is not a passed identity-complete v5/v6/v7 run",
         ));
     }
     let candidates = batch
@@ -300,7 +310,10 @@ fn validate_batch_result<'a>(
     let candidate = matching
         .next()
         .ok_or_else(|| error("native batch result lacks the requested episode"))?;
-    let terminal_boundary_valid = schema != "dusklight-suffix-batch-result/v6"
+    let terminal_boundary_valid = !matches!(
+        schema.as_str(),
+        "dusklight-suffix-batch-result/v6" | "dusklight-suffix-batch-result/v7"
+    )
         || candidate
             .get("terminal_boundary_fingerprint")
             .and_then(Value::as_str)
@@ -319,6 +332,41 @@ fn validate_batch_result<'a>(
         ));
     }
     Ok(candidate)
+}
+
+fn valid_rollout_exploration(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    const KEYS: [&str; 6] = [
+        "schema",
+        "seed",
+        "stick_axis_delta_probability_millionths",
+        "maximum_stick_axis_delta",
+        "button_flip_probability_millionths",
+        "button_flip_mask",
+    ];
+    object.len() == KEYS.len()
+        && KEYS.iter().all(|key| object.contains_key(*key))
+        && object.get("schema").and_then(Value::as_str)
+            == Some("dusklight-native-policy-rollout-exploration/v1")
+        && object.get("seed").and_then(Value::as_u64).is_some_and(|value| value > 0)
+        && object
+            .get("stick_axis_delta_probability_millionths")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value <= 1_000_000)
+        && object
+            .get("maximum_stick_axis_delta")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| (1..=64).contains(&value))
+        && object
+            .get("button_flip_probability_millionths")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value <= 1_000_000)
+        && object
+            .get("button_flip_mask")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| (1..=u64::from(u16::MAX)).contains(&value))
 }
 
 fn validate_milestone_evidence(
@@ -493,6 +541,7 @@ mod tests {
         let boundary = shard.metadata.source_boundary_fingerprint.clone();
         let reinference = verify_native_frozen_policy_reinference(
             &model_bytes,
+            None,
             &shard,
             objective,
             &checkpoint,
@@ -708,6 +757,47 @@ mod tests {
             &fixture.predicate,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn v7_cold_replay_requires_bound_rollout_exploration() {
+        let mut fixture = fixture();
+        let mut batch: Value = serde_json::from_slice(&fixture.batch).unwrap();
+        batch["schema"] = Value::String("dusklight-suffix-batch-result/v7".into());
+        batch["policy_model"]["schema"] =
+            Value::String("dusklight-native-frozen-policy/v2".into());
+        batch["policy_model"]["rollout_exploration"] = json!({
+            "schema": "dusklight-native-policy-rollout-exploration/v1",
+            "seed": 17,
+            "stick_axis_delta_probability_millionths": 0,
+            "maximum_stick_axis_delta": 32,
+            "button_flip_probability_millionths": 0,
+            "button_flip_mask": 3967,
+        });
+        batch["candidates"][0]["terminal_boundary_fingerprint"] =
+            Value::String("a".repeat(32));
+        fixture.batch = serde_json::to_vec(&batch).unwrap();
+        verify(
+            &fixture,
+            &fixture.realized,
+            &fixture.realized_bytes,
+            &fixture.trace,
+            &fixture.predicate,
+        )
+        .unwrap();
+
+        batch["policy_model"]["rollout_exploration"]["seed"] = Value::from(0);
+        fixture.batch = serde_json::to_vec(&batch).unwrap();
+        assert!(
+            verify(
+                &fixture,
+                &fixture.realized,
+                &fixture.realized_bytes,
+                &fixture.trace,
+                &fixture.predicate,
+            )
+            .is_err()
+        );
     }
 
     #[test]

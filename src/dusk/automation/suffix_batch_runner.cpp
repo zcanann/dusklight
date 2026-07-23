@@ -835,6 +835,10 @@ void SuffixBatchRunner::applyCandidateInput() {
             }
         }
         chosen = decision.pad;
+        if (mDefinition.frozenPolicy->rolloutExploration.has_value()) {
+            apply_policy_rollout_exploration(chosen,
+                *mDefinition.frozenPolicy->rolloutExploration, mCandidateTick);
+        }
     } else {
         chosen = candidate.pads[mCandidateTick];
     }
@@ -1428,13 +1432,17 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         }},
     };
     nlohmann::json result{
-        {"schema", "dusklight-suffix-batch-result/v6"},
+        {"schema", mDefinition.frozenPolicy.has_value() &&
+                           mDefinition.frozenPolicy->rolloutExploration.has_value()
+                       ? "dusklight-suffix-batch-result/v7"
+                       : "dusklight-suffix-batch-result/v6"},
         {"status", mCompleted ? "passed" :
                    mFailed    ? "failed" :
                                 "incomplete"},
         {"source_frame", mDefinition.sourceFrame},
         {"policy_model", mDefinition.frozenPolicy.has_value()
-            ? nlohmann::json{{"schema", FrozenPolicySchema},
+            ? nlohmann::json{{"schema", mDefinition.frozenPolicy->rolloutExploration.has_value()
+                    ? FrozenPolicySchema : FrozenPolicySchemaV1},
                   {"action_authority", "episode_policy"},
                   {"policy_controlled_ticks", std::accumulate(mResults.begin(), mResults.end(),
                       std::size_t{0}, [](const std::size_t total, const CandidateResult& result) {
@@ -1447,7 +1455,23 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                   {"action_schema_sha256", digest_hex(
                       mFrozenPolicyModel.actionSchemaSha256())},
                   {"objective_sha256", digest_hex(mFrozenPolicyModel.objectiveSha256())},
-                  {"parameter_count", mFrozenPolicyModel.parameterCount()}}
+                  {"parameter_count", mFrozenPolicyModel.parameterCount()},
+                  {"rollout_exploration", mDefinition.frozenPolicy->rolloutExploration.has_value()
+                      ? nlohmann::json{
+                            {"schema", PolicyRolloutExplorationSchema},
+                            {"seed", mDefinition.frozenPolicy->rolloutExploration->seed},
+                            {"stick_axis_delta_probability_millionths",
+                                mDefinition.frozenPolicy->rolloutExploration
+                                    ->stickAxisDeltaProbabilityMillionths},
+                            {"maximum_stick_axis_delta",
+                                mDefinition.frozenPolicy->rolloutExploration
+                                    ->maximumStickAxisDelta},
+                            {"button_flip_probability_millionths",
+                                mDefinition.frozenPolicy->rolloutExploration
+                                    ->buttonFlipProbabilityMillionths},
+                            {"button_flip_mask",
+                                mDefinition.frozenPolicy->rolloutExploration->buttonFlipMask}}
+                      : nlohmann::json(nullptr)}}
             : nlohmann::json(nullptr)},
         {"source_boundary",
             {

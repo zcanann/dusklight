@@ -486,6 +486,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             let shard = NativeEpisodeShard::read(&shard_path)?;
             let report = verify_native_frozen_policy_reinference(
                 &fs::read(&model_path)?,
+                None,
                 &shard,
                 objective,
                 &checkpoint,

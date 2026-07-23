@@ -4,7 +4,9 @@ use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::RawPadState;
 use dusklight_learning::frozen_inference::FrozenInferenceModel;
 use dusklight_learning::native_frozen_policy_suffix_batch::{
-    NATIVE_FROZEN_POLICY_SCHEMA_V1, NativeFrozenPolicySuffixBatch, NativePolicyActionAuthority,
+    NATIVE_FROZEN_POLICY_SCHEMA_V1, NATIVE_FROZEN_POLICY_SCHEMA_V2,
+    NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V7, NativeFrozenPolicySuffixBatch,
+    NativePolicyActionAuthority,
 };
 use dusklight_search::suffix_batch::{NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch};
 use serde::{Deserialize, Serialize};
@@ -14,6 +16,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6: &str = "dusklight-suffix-batch-result/v6";
+pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V7: &str = "dusklight-suffix-batch-result/v7";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V2: &str = "dusklight-native-episode-shard/v2";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V3: &str = "dusklight-native-episode-shard/v3";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
@@ -306,7 +309,26 @@ impl NativeSuffixBatchResult {
             .policy_model
             .as_ref()
             .ok_or_else(|| result_error("native frozen policy result lacks its model identity"))?;
-        if self.schema != NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6
+        let exploratory = request.schema == NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V7;
+        let expected_result_schema = if exploratory {
+            NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V7
+        } else {
+            NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6
+        };
+        let expected_policy_schema = if exploratory {
+            NATIVE_FROZEN_POLICY_SCHEMA_V2
+        } else {
+            NATIVE_FROZEN_POLICY_SCHEMA_V1
+        };
+        let expected_exploration = request
+            .frozen_policy
+            .rollout_exploration
+            .as_ref()
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|error| result_error(error.to_string()))?
+            .unwrap_or(Value::Null);
+        if self.schema != expected_result_schema
             || self.status != "passed"
             || self.error.is_some()
             || self.source_frame != request.source_frame as u64
@@ -321,7 +343,7 @@ impl NativeSuffixBatchResult {
             || !self.audio_callback_quiesced
             || !self.timing.verified
             || self.timing.schema != "dusklight-suffix-batch-timing/v2"
-            || policy.get("schema").and_then(Value::as_str) != Some(NATIVE_FROZEN_POLICY_SCHEMA_V1)
+            || policy.get("schema").and_then(Value::as_str) != Some(expected_policy_schema)
             || request.action_authority != NativePolicyActionAuthority::EpisodePolicy
             || policy.get("action_authority").and_then(Value::as_str) != Some("episode_policy")
             || policy.get("fallback_ticks").and_then(Value::as_u64) != Some(0)
@@ -334,6 +356,13 @@ impl NativeSuffixBatchResult {
             || policy.get("objective_sha256").and_then(Value::as_str)
                 != Some(model.objective_sha256.to_string().as_str())
             || policy.get("parameter_count").and_then(Value::as_u64) != parameter_count
+            || if exploratory {
+                policy.get("rollout_exploration") != Some(&expected_exploration)
+            } else {
+                policy
+                    .get("rollout_exploration")
+                    .is_some_and(|value| !value.is_null())
+            }
         {
             return Err(result_error(
                 "native frozen policy result is incomplete or detached from its request and model",
@@ -650,7 +679,8 @@ mod tests {
     use super::*;
     use dusklight_learning::factorized_policy_suffix_batch::NativeFactorizedPolicyBatchConfig;
     use dusklight_learning::native_frozen_policy_suffix_batch::{
-        NativeFrozenPolicySuffixBatch, native_frozen_policy_probe_model,
+        NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1, NativeFrozenPolicySuffixBatch,
+        NativePolicyRolloutExploration, native_frozen_policy_probe_model,
     };
     use dusklight_search::search::MacroAction;
     use dusklight_search::suffix_batch::{NativeCheckpointValidation, NativeSuffixCandidate};
@@ -797,16 +827,51 @@ mod tests {
         (request, bytes)
     }
 
+    fn exploratory_frozen_request() -> (NativeFrozenPolicySuffixBatch, Vec<u8>) {
+        let model = native_frozen_policy_probe_model(terminal().definition_sha256).unwrap();
+        let bytes = model.to_bytes().unwrap();
+        let request = NativeFrozenPolicySuffixBatch::build_with_rollout_exploration(
+            &bytes,
+            "policy.dsfrozen".into(),
+            terminal().definition_sha256,
+            "candidate-0".into(),
+            dusklight_learning::native_replay_corpus::DemonstrationMode::Absent,
+            NativePolicyRolloutExploration {
+                schema: NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1.into(),
+                seed: 17,
+                stick_axis_delta_probability_millionths: 125_000,
+                maximum_stick_axis_delta: 32,
+                button_flip_probability_millionths: 2_000,
+                button_flip_mask: 0x0f7f,
+            },
+            NativeFactorizedPolicyBatchConfig {
+                source_frame: 500,
+                source_boundary_fingerprint: "1".repeat(32),
+                checkpoint_validation_ticks: 2,
+                maximum_ticks: 2,
+                verify_state_hashes: false,
+            },
+        )
+        .unwrap();
+        (request, bytes)
+    }
+
     fn frozen_result(
         model_bytes: &[u8],
         request: &NativeFrozenPolicySuffixBatch,
     ) -> NativeSuffixBatchResult {
         let model = FrozenInferenceModel::from_bytes(model_bytes).unwrap();
         let mut result = result(false, false);
+        result.schema = if request.frozen_policy.rollout_exploration.is_some() {
+            NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V7
+        } else {
+            NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6
+        }
+        .into();
         result.timing.schema = "dusklight-suffix-batch-timing/v2".into();
         result.episode_shard.schema = NATIVE_EPISODE_SHARD_SCHEMA_V3.into();
         result.policy_model = Some(serde_json::json!({
-            "schema": NATIVE_FROZEN_POLICY_SCHEMA_V1,
+            "schema": request.frozen_policy.schema,
             "action_authority": "episode_policy",
             "policy_controlled_ticks": result.timing.candidate_ticks,
             "fallback_ticks": 0,
@@ -815,6 +880,7 @@ mod tests {
             "action_schema_sha256": model.action_schema_sha256,
             "objective_sha256": model.objective_sha256,
             "parameter_count": model.layers.iter().map(|layer| layer.weights.len() + layer.biases.len()).sum::<usize>(),
+            "rollout_exploration": request.frozen_policy.rollout_exploration,
         }));
         result
     }
@@ -901,6 +967,24 @@ mod tests {
 
         let mut tampered = frozen_result(&bytes, &request);
         tampered.policy_model.as_mut().unwrap()["fallback_ticks"] = Value::from(1);
+        assert!(
+            tampered
+                .validate_frozen_against(&request, &bytes, &terminal())
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn binds_v7_frozen_policy_result_to_exact_rollout_exploration() {
+        let (request, bytes) = exploratory_frozen_request();
+        let result = frozen_result(&bytes, &request);
+        result
+            .validate_frozen_against(&request, &bytes, &terminal())
+            .unwrap();
+
+        let mut tampered = frozen_result(&bytes, &request);
+        tampered.policy_model.as_mut().unwrap()["rollout_exploration"]["seed"] =
+            Value::from(18_u64);
         assert!(
             tampered
                 .validate_frozen_against(&request, &bytes, &terminal())

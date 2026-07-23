@@ -23,7 +23,10 @@ use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_learning::compiled_goal_graph::CompiledGoalGraph;
 use dusklight_learning::factorized_policy_suffix_batch::NativeFactorizedPolicyBatchConfig;
 use dusklight_learning::native_frozen_policy_reinference::realize_native_frozen_policy_tape;
-use dusklight_learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
+use dusklight_learning::native_frozen_policy_suffix_batch::{
+    NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1, NativeFrozenPolicySuffixBatch,
+    NativePolicyRolloutExploration,
+};
 use dusklight_learning::native_generic_observation::validate_native_generic_observation_shard;
 use dusklight_learning::native_goal_frozen_policy::{
     NativeGoalFrozenPolicyAdmission, NativeGoalFrozenPolicyExport, NativeGoalFrozenPolicyManifest,
@@ -514,12 +517,15 @@ fn prepare_generation(
     let model_path = model_path.canonicalize().map_err(runner_error)?;
     let mut batches = Vec::with_capacity(usize::from(config.request.rollouts_per_generation));
     for rollout in 0..config.request.rollouts_per_generation {
-        let batch = NativeFrozenPolicySuffixBatch::build_with_demonstration_mode(
+        let exploration =
+            rollout_exploration(config.request.trajectory.split_seed, generation, rollout);
+        let batch = NativeFrozenPolicySuffixBatch::build_with_rollout_exploration(
             &export.model_bytes,
             model_path.to_string_lossy().into_owned(),
             config.optimization.terminal_predicate.definition_sha256,
             format!("goal-policy-g{generation:04}-r{rollout:04}"),
             config.request.demonstration_mode,
+            exploration,
             NativeFactorizedPolicyBatchConfig {
                 source_frame: usize::try_from(config.optimization.route.source_boundary_index)
                     .map_err(runner_error)?,
@@ -567,6 +573,34 @@ fn prepare_generation(
         },
     )
     .map_err(runner_error)
+}
+
+fn rollout_exploration(
+    experiment_seed: u64,
+    generation: u16,
+    rollout: u16,
+) -> NativePolicyRolloutExploration {
+    let mut seed = experiment_seed
+        .wrapping_add(0x9e37_79b9_7f4a_7c15_u64.wrapping_mul(u64::from(generation) + 1))
+        .wrapping_add(0xd1b5_4a32_d192_ed03_u64.wrapping_mul(u64::from(rollout) + 1));
+    seed = (seed ^ (seed >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    seed = (seed ^ (seed >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    seed ^= seed >> 31;
+    if seed == 0 {
+        seed = 0xa076_1d64_78bd_642f;
+    }
+    NativePolicyRolloutExploration {
+        schema: NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1.into(),
+        seed,
+        // Retain one exact greedy rollout per generation as an interpretable
+        // baseline. All sibling rollouts explore under paired deterministic
+        // seeds shared across treatment cells.
+        stick_axis_delta_probability_millionths: if rollout == 0 { 0 } else { 125_000 },
+        maximum_stick_axis_delta: 32,
+        button_flip_probability_millionths: if rollout == 0 { 0 } else { 2_000 },
+        // D-pad, Z/L/R, and A/B/X/Y; intentionally exclude Start.
+        button_flip_mask: 0x0f7f,
+    }
 }
 
 fn execute_prepared_generation(
@@ -1067,6 +1101,24 @@ mod tests {
     use std::sync::atomic::AtomicU64;
 
     static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn rollout_exploration_is_paired_unique_and_retains_a_greedy_baseline() {
+        let baseline = rollout_exploration(0x474f_414c_5452_4a01, 3, 0);
+        let first = rollout_exploration(0x474f_414c_5452_4a01, 3, 1);
+        let second = rollout_exploration(0x474f_414c_5452_4a01, 3, 2);
+        assert_eq!(baseline.stick_axis_delta_probability_millionths, 0);
+        assert_eq!(baseline.button_flip_probability_millionths, 0);
+        assert_eq!(first.stick_axis_delta_probability_millionths, 125_000);
+        assert_eq!(first.button_flip_probability_millionths, 2_000);
+        assert_ne!(baseline.seed, first.seed);
+        assert_ne!(first.seed, second.seed);
+        assert_eq!(
+            first,
+            rollout_exploration(0x474f_414c_5452_4a01, 3, 1)
+        );
+        assert_ne!(first, rollout_exploration(0x474f_414c_5452_4a01, 4, 1));
+    }
 
     fn test_root() -> PathBuf {
         let nonce = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);

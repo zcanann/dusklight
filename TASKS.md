@@ -825,6 +825,13 @@ revalidated crash-safe journal/state chain.
       obvious action-support, inference, and execution fallbacks. Observation
       limits remain separately measured by the negative-control sweep. See
       `routes/Glitch Exhibition/intro/benchmarks/ordon-q131-goal-learning-checkpoints.md`.
+      The targeted corrective experiment now uses content-bound v7 policy
+      batches: one greedy rollout is retained per generation while every sibling
+      receives a unique, paired deterministic seed for bounded stick deltas and
+      gameplay-button flips. Native execution and independent Rust reinference
+      apply the same integer transform, and the v7 result binds the exact
+      exploration configuration. Whether this removes the measured collapse
+      remains an empirical comparison, not an assumed framework verdict.
   - observation insufficiency;
   - lossy or unsupported action surface;
   - sparse terminal coverage or poor credit assignment;

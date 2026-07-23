@@ -679,6 +679,7 @@ pub fn validate_native_frozen_policy_artifacts(
         .map_err(worker_error)?;
     let reinference = verify_native_frozen_policy_reinference(
         model_bytes,
+        batch.frozen_policy.rollout_exploration.as_ref(),
         &shard,
         terminal.definition_sha256,
         &execution.restore_identity,

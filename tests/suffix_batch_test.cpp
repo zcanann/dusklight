@@ -150,18 +150,25 @@ void test_factorized_policy_rows_expand_to_an_online_native_program() {
 
 std::string frozen_policy_batch() {
     return R"({
-        "schema":"dusklight-suffix-batch/v6",
+        "schema":"dusklight-suffix-batch/v7",
         "demonstration_mode":"behavior_cloning_warm_start",
         "action_authority":"episode_policy","source_frame":500,
         "source_boundary_fingerprint":"1f849e432274771426236d60fbf7d72f",
         "checkpoint_validation":{"kind":"recorded_replay_window","ticks":2},
         "maximum_ticks":3,"verify_state_hashes":false,
         "frozen_policy":{
-          "schema":"dusklight-native-frozen-policy/v1",
+          "schema":"dusklight-native-frozen-policy/v2",
           "model_path":"build/learning/policy.dsfrozen",
           "model_xxh3_128":"0123456789abcdef0123456789abcdef",
           "policy_head":{"schema":"dusklight-factorized-pad-policy-head/v1",
-            "maximum_duration_ticks":1,"button_logit_threshold":0.0}},
+            "maximum_duration_ticks":1,"button_logit_threshold":0.0},
+          "rollout_exploration":{
+            "schema":"dusklight-native-policy-rollout-exploration/v1",
+            "seed":81985529216486895,
+            "stick_axis_delta_probability_millionths":125000,
+            "maximum_stick_axis_delta":32,
+            "button_flip_probability_millionths":2000,
+            "button_flip_mask":3967}},
         "candidates":[{"id":"native-policy","source":"frozen_policy"}]
     })";
 }
@@ -177,9 +184,25 @@ void test_frozen_policy_is_content_bound_and_one_tick() {
     REQUIRE(batch.frozenPolicy->modelPath == "build/learning/policy.dsfrozen");
     REQUIRE(batch.frozenPolicy->modelXxh3_128 == "0123456789abcdef0123456789abcdef");
     REQUIRE(batch.frozenPolicy->policyHead.maximumDurationTicks == 1);
+    REQUIRE(batch.frozenPolicy->rolloutExploration.has_value());
+    REQUIRE(batch.frozenPolicy->rolloutExploration->seed == 81985529216486895ULL);
     REQUIRE(batch.candidates.size() == 1);
     REQUIRE(batch.candidates[0].frozenPolicy);
     REQUIRE(batch.candidates[0].pads.empty());
+
+    RawPadState explored;
+    explored.stickX = 120;
+    explored.stickY = -120;
+    apply_policy_rollout_exploration(
+        explored, *batch.frozenPolicy->rolloutExploration, 7);
+    REQUIRE(explored.stickX == 120);
+    REQUIRE(explored.stickY == -128);
+    REQUIRE(explored.flags == RawPadFlags::Connected);
+    REQUIRE(explored.error == 0);
+    RawPadState buttonExploration;
+    apply_policy_rollout_exploration(
+        buttonExploration, *batch.frozenPolicy->rolloutExploration, 26);
+    REQUIRE(buttonExploration.buttons == 2048);
 
     constexpr std::array modes{
         std::pair{"absent", SuffixDemonstrationMode::Absent},

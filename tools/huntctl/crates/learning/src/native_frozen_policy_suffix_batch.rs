@@ -1,4 +1,4 @@
-//! Content-bound v5 envelope for native per-tick frozen policy inference.
+//! Content-bound v6/v7 envelopes for native per-tick frozen policy inference.
 
 use crate::artifact::Digest;
 use crate::factorized_pad_action::{
@@ -14,12 +14,97 @@ use crate::native_policy_features::{
     NATIVE_POLICY_FEATURE_SCHEMA_SHA256, NATIVE_POLICY_FEATURE_WIDTH,
 };
 use crate::native_replay_corpus::DemonstrationMode;
+use dusklight_evidence::native_episode_shard::NativeRawPad;
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt;
 
 pub const NATIVE_FROZEN_POLICY_SCHEMA_V1: &str = "dusklight-native-frozen-policy/v1";
+pub const NATIVE_FROZEN_POLICY_SCHEMA_V2: &str = "dusklight-native-frozen-policy/v2";
 pub const NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V6: &str = "dusklight-suffix-batch/v6";
+pub const NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V7: &str = "dusklight-suffix-batch/v7";
+pub const NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1: &str =
+    "dusklight-native-policy-rollout-exploration/v1";
+
+const EXPLORATION_SCALE: u64 = 1_000_000;
+const MAX_STICK_AXIS_DELTA: u8 = 64;
+
+/// Content-bound, deterministic action-space exploration applied after the
+/// state-reactive frozen policy has decoded its PAD. The integer algorithm is
+/// mirrored at the native boundary and by independent Rust reinference.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePolicyRolloutExploration {
+    pub schema: String,
+    pub seed: u64,
+    pub stick_axis_delta_probability_millionths: u32,
+    pub maximum_stick_axis_delta: u8,
+    pub button_flip_probability_millionths: u32,
+    pub button_flip_mask: u16,
+}
+
+impl NativePolicyRolloutExploration {
+    pub fn validate(&self) -> Result<(), NativeFrozenPolicyBatchError> {
+        if self.schema != NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1
+            || self.seed == 0
+            || u64::from(self.stick_axis_delta_probability_millionths) > EXPLORATION_SCALE
+            || self.maximum_stick_axis_delta == 0
+            || self.maximum_stick_axis_delta > MAX_STICK_AXIS_DELTA
+            || u64::from(self.button_flip_probability_millionths) > EXPLORATION_SCALE
+            || self.button_flip_mask == 0
+        {
+            return Err(NativeFrozenPolicyBatchError::new(
+                "native policy rollout exploration is outside its bounded domain",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Apply the portable integer exploration transform for one zero-based policy
+/// decision tick. Only stick axes and explicitly admitted button bits change;
+/// connection and error semantics remain policy-authoritative.
+pub fn apply_native_policy_rollout_exploration(
+    mut pad: NativeRawPad,
+    config: &NativePolicyRolloutExploration,
+    tick: u64,
+) -> Result<NativeRawPad, NativeFrozenPolicyBatchError> {
+    config.validate()?;
+    let probability = u64::from(config.stick_axis_delta_probability_millionths);
+    let maximum_delta = i16::from(config.maximum_stick_axis_delta);
+    let width = u64::from(config.maximum_stick_axis_delta) * 2 + 1;
+    let mut axes = [pad.stick_x, pad.stick_y, pad.substick_x, pad.substick_y];
+    for (stream, axis) in axes.iter_mut().enumerate() {
+        let sample = exploration_sample(config.seed, tick, stream as u64);
+        if sample % EXPLORATION_SCALE < probability {
+            let delta = i16::try_from((sample / EXPLORATION_SCALE) % width)
+                .expect("bounded exploration delta")
+                - maximum_delta;
+            *axis = (i16::from(*axis) + delta).clamp(-128, 127) as i8;
+        }
+    }
+    [pad.stick_x, pad.stick_y, pad.substick_x, pad.substick_y] = axes;
+    let button_probability = u64::from(config.button_flip_probability_millionths);
+    for bit in 0_u32..16 {
+        let mask = 1_u16 << bit;
+        if config.button_flip_mask & mask != 0
+            && exploration_sample(config.seed, tick, u64::from(bit) + 4) % EXPLORATION_SCALE
+                < button_probability
+        {
+            pad.buttons ^= mask;
+        }
+    }
+    Ok(pad)
+}
+
+fn exploration_sample(seed: u64, tick: u64, stream: u64) -> u64 {
+    let mut value = seed
+        .wrapping_add(0x9e37_79b9_7f4a_7c15_u64.wrapping_mul(tick.wrapping_add(1)))
+        .wrapping_add(0xd1b5_4a32_d192_ed03_u64.wrapping_mul(stream.wrapping_add(1)));
+    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,6 +171,8 @@ pub struct NativeFrozenPolicyReference {
     pub model_path: String,
     pub model_xxh3_128: String,
     pub policy_head: NativeFactorizedPolicyHead,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_exploration: Option<NativePolicyRolloutExploration>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -119,6 +206,48 @@ impl NativeFrozenPolicySuffixBatch {
         expected_objective_sha256: Digest,
         candidate_id: String,
         demonstration_mode: DemonstrationMode,
+        config: NativeFactorizedPolicyBatchConfig,
+    ) -> Result<Self, NativeFrozenPolicyBatchError> {
+        Self::build_internal(
+            model_bytes,
+            model_path,
+            expected_objective_sha256,
+            candidate_id,
+            demonstration_mode,
+            None,
+            config,
+        )
+    }
+
+    pub fn build_with_rollout_exploration(
+        model_bytes: &[u8],
+        model_path: String,
+        expected_objective_sha256: Digest,
+        candidate_id: String,
+        demonstration_mode: DemonstrationMode,
+        rollout_exploration: NativePolicyRolloutExploration,
+        config: NativeFactorizedPolicyBatchConfig,
+    ) -> Result<Self, NativeFrozenPolicyBatchError> {
+        rollout_exploration.validate()?;
+        Self::build_internal(
+            model_bytes,
+            model_path,
+            expected_objective_sha256,
+            candidate_id,
+            demonstration_mode,
+            Some(rollout_exploration),
+            config,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_internal(
+        model_bytes: &[u8],
+        model_path: String,
+        expected_objective_sha256: Digest,
+        candidate_id: String,
+        demonstration_mode: DemonstrationMode,
+        rollout_exploration: Option<NativePolicyRolloutExploration>,
         config: NativeFactorizedPolicyBatchConfig,
     ) -> Result<Self, NativeFrozenPolicyBatchError> {
         if !valid_boundary_fingerprint(&config.source_boundary_fingerprint)
@@ -159,7 +288,12 @@ impl NativeFrozenPolicySuffixBatch {
         }
         let model_xxh3_128 = format!("{:032x}", xxhash_rust::xxh3::xxh3_128(model_bytes));
         Ok(Self {
-            schema: NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V6.into(),
+            schema: if rollout_exploration.is_some() {
+                NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V7
+            } else {
+                NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V6
+            }
+            .into(),
             demonstration_mode,
             action_authority: NativePolicyActionAuthority::EpisodePolicy,
             source_frame: config.source_frame,
@@ -171,7 +305,12 @@ impl NativeFrozenPolicySuffixBatch {
             maximum_ticks: config.maximum_ticks,
             verify_state_hashes: config.verify_state_hashes,
             frozen_policy: NativeFrozenPolicyReference {
-                schema: NATIVE_FROZEN_POLICY_SCHEMA_V1.into(),
+                schema: if rollout_exploration.is_some() {
+                    NATIVE_FROZEN_POLICY_SCHEMA_V2
+                } else {
+                    NATIVE_FROZEN_POLICY_SCHEMA_V1
+                }
+                .into(),
                 model_path,
                 model_xxh3_128,
                 policy_head: NativeFactorizedPolicyHead {
@@ -179,6 +318,7 @@ impl NativeFrozenPolicySuffixBatch {
                     maximum_duration_ticks: 1,
                     button_logit_threshold: 0.0,
                 },
+                rollout_exploration,
             },
             candidates: vec![NativeFrozenPolicyCandidate {
                 id: candidate_id,
@@ -195,12 +335,13 @@ impl NativeFrozenPolicySuffixBatch {
         }
         let model = FrozenInferenceModel::from_bytes(model_bytes)
             .map_err(|error| NativeFrozenPolicyBatchError::new(error.to_string()))?;
-        let rebuilt = Self::build_with_demonstration_mode(
+        let rebuilt = Self::build_internal(
             model_bytes,
             self.frozen_policy.model_path.clone(),
             model.objective_sha256,
             self.candidates[0].id.clone(),
             self.demonstration_mode,
+            self.frozen_policy.rollout_exploration.clone(),
             NativeFactorizedPolicyBatchConfig {
                 source_frame: self.source_frame,
                 source_boundary_fingerprint: self.source_boundary_fingerprint.clone(),
@@ -309,8 +450,72 @@ mod tests {
         }
     }
 
+    fn exploration() -> NativePolicyRolloutExploration {
+        NativePolicyRolloutExploration {
+            schema: NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1.into(),
+            seed: 0x0123_4567_89ab_cdef,
+            stick_axis_delta_probability_millionths: 125_000,
+            maximum_stick_axis_delta: 32,
+            button_flip_probability_millionths: 2_000,
+            button_flip_mask: 0x0f7f,
+        }
+    }
+
     #[test]
-    fn builds_content_bound_v5_batch_for_exact_native_contract() {
+    fn rollout_exploration_has_portable_exact_integer_vectors() {
+        let mut pad = NativeRawPad {
+            buttons: 0,
+            stick_x: 120,
+            stick_y: -120,
+            substick_x: 0,
+            substick_y: 0,
+            trigger_left: 0,
+            trigger_right: 0,
+            analog_a: 0,
+            analog_b: 0,
+            connected: true,
+            error: 0,
+        };
+        pad = apply_native_policy_rollout_exploration(pad, &exploration(), 7).unwrap();
+        assert_eq!((pad.stick_x, pad.stick_y), (120, -128));
+        assert!(pad.connected);
+        assert_eq!(pad.error, 0);
+
+        let buttons = apply_native_policy_rollout_exploration(
+            NativeRawPad {
+                stick_x: 0,
+                stick_y: 0,
+                ..pad
+            },
+            &exploration(),
+            26,
+        )
+        .unwrap();
+        assert_eq!(buttons.buttons, 0x0800);
+    }
+
+    #[test]
+    fn builds_content_bound_v7_exploratory_batch() {
+        let objective = Digest([0x44; 32]);
+        let bytes = model(objective).to_bytes().unwrap();
+        let batch = NativeFrozenPolicySuffixBatch::build_with_rollout_exploration(
+            &bytes,
+            "policy.dsfrozen".into(),
+            objective,
+            "exploratory-policy".into(),
+            DemonstrationMode::Absent,
+            exploration(),
+            config(),
+        )
+        .unwrap();
+        assert_eq!(batch.schema, NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V7);
+        assert_eq!(batch.frozen_policy.schema, NATIVE_FROZEN_POLICY_SCHEMA_V2);
+        assert_eq!(batch.frozen_policy.rollout_exploration, Some(exploration()));
+        batch.validate(&bytes).unwrap();
+    }
+
+    #[test]
+    fn builds_content_bound_v6_batch_for_exact_native_contract() {
         let objective = Digest([0x44; 32]);
         let bytes = model(objective).to_bytes().unwrap();
         let batch = NativeFrozenPolicySuffixBatch::build(

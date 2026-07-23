@@ -3,6 +3,9 @@
 use crate::artifact::Digest;
 use crate::factorized_pad_action::{FACTORIZED_PAD_POLICY_HEAD_WIDTH, FactorizedPadPolicyHead};
 use crate::frozen_inference::{FROZEN_INFERENCE_SCHEMA_V1, FrozenInferenceModel};
+use crate::native_frozen_policy_suffix_batch::{
+    NativePolicyRolloutExploration, apply_native_policy_rollout_exploration,
+};
 use crate::native_policy_features::{
     NATIVE_POLICY_FEATURE_SCHEMA_SHA256, NATIVE_POLICY_FEATURE_WIDTH,
     encode_native_policy_observation,
@@ -94,11 +97,17 @@ fn is_lower_hex(value: &str, length: usize) -> bool {
 
 pub fn verify_native_frozen_policy_reinference(
     model_bytes: &[u8],
+    rollout_exploration: Option<&NativePolicyRolloutExploration>,
     shard: &NativeEpisodeShard,
     expected_objective_sha256: Digest,
     expected_checkpoint_identity: &str,
     expected_source_boundary_fingerprint: &str,
 ) -> Result<NativeFrozenPolicyReinferenceReport, NativeFrozenPolicyReinferenceError> {
+    if let Some(config) = rollout_exploration {
+        config
+            .validate()
+            .map_err(|source| error(source.to_string()))?;
+    }
     if shard.metadata.shard_schema != NATIVE_EPISODE_SHARD_SCHEMA_V3 {
         return Err(error(
             "native policy episode shard is not identity-complete v3",
@@ -166,11 +175,15 @@ pub fn verify_native_frozen_policy_reinference(
         let outputs = model
             .infer_batch(&inputs)
             .map_err(|source| error(source.to_string()))?;
-        for (step, output) in episode.steps.iter().zip(outputs) {
-            let decoded = head
+        for (tick, (step, output)) in episode.steps.iter().zip(outputs).enumerate() {
+            let mut decoded = head
                 .decode(&output)
                 .and_then(|action| action.realized_pad())
                 .map_err(|source| error(source.to_string()))?;
+            if let Some(config) = rollout_exploration {
+                decoded = apply_native_policy_rollout_exploration(decoded, config, tick as u64)
+                    .map_err(|source| error(source.to_string()))?;
+            }
             append_pad(&mut decoded_pads, decoded);
             append_pad(&mut chosen_pads, step.chosen_pad);
             append_pad(&mut consumed_pads, step.consumed_pad);
@@ -303,7 +316,10 @@ impl Error for NativeFrozenPolicyReinferenceError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::native_frozen_policy_suffix_batch::native_frozen_policy_probe_model;
+    use crate::native_frozen_policy_suffix_batch::{
+        NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1, NativePolicyRolloutExploration,
+        native_frozen_policy_probe_model,
+    };
     use dusklight_evidence::native_episode_shard::NativeEpisodePolicyModelIdentity;
 
     fn fixture() -> (Vec<u8>, NativeEpisodeShard, Digest, String, String) {
@@ -348,6 +364,7 @@ mod tests {
         let (bytes, shard, objective, checkpoint, boundary) = fixture();
         let mut report = verify_native_frozen_policy_reinference(
             &bytes,
+            None,
             &shard,
             objective,
             &checkpoint,
@@ -376,12 +393,61 @@ mod tests {
     }
 
     #[test]
+    fn independently_reinfers_content_bound_exploratory_pads() {
+        let (bytes, mut shard, objective, checkpoint, boundary) = fixture();
+        let exploration = NativePolicyRolloutExploration {
+            schema: NATIVE_POLICY_ROLLOUT_EXPLORATION_SCHEMA_V1.into(),
+            seed: 0x0123_4567_89ab_cdef,
+            stick_axis_delta_probability_millionths: 125_000,
+            maximum_stick_axis_delta: 32,
+            button_flip_probability_millionths: 1_000_000,
+            button_flip_mask: 0x0f7f,
+        };
+        for episode in &mut shard.episodes {
+            for (tick, step) in episode.steps.iter_mut().enumerate() {
+                let pad = apply_native_policy_rollout_exploration(
+                    step.chosen_pad,
+                    &exploration,
+                    tick as u64,
+                )
+                .unwrap();
+                step.chosen_pad = pad;
+                step.consumed_pad = pad;
+                step.post_simulation.previous_input = pad;
+            }
+        }
+        let report = verify_native_frozen_policy_reinference(
+            &bytes,
+            Some(&exploration),
+            &shard,
+            objective,
+            &checkpoint,
+            &boundary,
+        )
+        .unwrap();
+        assert!(report.verified);
+        assert!(
+            verify_native_frozen_policy_reinference(
+                &bytes,
+                None,
+                &shard,
+                objective,
+                &checkpoint,
+                &boundary,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn rejects_every_detached_policy_and_source_identity() {
         let (bytes, shard, objective, checkpoint, boundary) = fixture();
         let verify = |shard: &NativeEpisodeShard, checkpoint: &str, boundary: &str| {
-            verify_native_frozen_policy_reinference(&bytes, shard, objective, checkpoint, boundary)
-                .unwrap_err()
-                .to_string()
+            verify_native_frozen_policy_reinference(
+                &bytes, None, shard, objective, checkpoint, boundary,
+            )
+            .unwrap_err()
+            .to_string()
         };
 
         let mut detached = shard.clone();
