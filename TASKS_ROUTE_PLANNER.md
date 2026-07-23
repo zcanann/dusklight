@@ -2637,7 +2637,7 @@ visual polish or whole-game authoring features.
       removing the sole step restores an explicitly empty route rather than a
       hollow method, while replacement retains the ordered method and stable
       step ID.
-- [ ] Selecting a state or transition shows exact before/after location,
+- [x] Selecting a state or transition shows exact before/after location,
       inventory, flags/components, bindings, provenance, effects, requirements,
       and evidence in the bottom panel.
       Transition evaluation, append, and replacement now load authoritative full
@@ -2645,8 +2645,12 @@ visual polish or whole-game authoring features.
       now inspect their closest propagated full state through the same authority
       and retain the structured join assessment. The browser summarizes exact
       location, execution context, runtime file, player state, component/fact
-      counts, and typed delta classes above the complete raw payload. Dedicated
-      execution-state nodes remain open.
+      counts, and typed delta classes above the complete raw payload. Graph v9
+      now projects the exact route start and every accepted step result as
+      Rust-owned execution-state nodes, connected to reference steps by typed
+      route-precondition/result edges. Selecting a start state shows its full
+      inspection; selecting a produced state shows that step's exact before/after
+      inspection and typed diff.
 - [x] Support named visual regions with collapse and double-click/breadcrumb
       navigation. Regions are flat-graph encapsulation only: grouping never
       creates a goal, macro transition, alternative implementation, or new
@@ -2708,10 +2712,12 @@ visual polish or whole-game authoring features.
       opens the keyed-door built-in through the rendered picker, uses Save As,
       inserts all nine transitions through the browser palette, navigates into
       the planner-projected authored-route region, removes the terminal close
-      step, observes authoritative downstream replay, saves, reloads through the
-      picker, and compares the persisted project revision plus ordered action
-      identities. Hosts without the documented Brave installation skip this
-      optional system integration; the checked macOS environment executes it.
+      step, observes authoritative downstream replay, selects the ninth projected
+      execution state and verifies its exact D_MN05 room-2 inspection, saves,
+      reloads through the picker, and compares the persisted project revision
+      plus ordered action identities. Hosts without the documented Brave
+      installation skip this optional system integration; the checked macOS
+      environment executes it.
 
 #### Extended editor
 

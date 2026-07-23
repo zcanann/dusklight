@@ -12,7 +12,9 @@ use dusklight_route_planner::evaluation::{
     TransitionClassification,
 };
 use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
-use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
+use dusklight_route_planner::graph::{
+    PlannerExecutionPathState, PlannerFeasibilityGraphDiff, PlannerGraph,
+};
 use dusklight_route_planner::identity::EquivalenceSet;
 use dusklight_route_planner::logic::{FactCatalog, PredicateExpression};
 use dusklight_route_planner::refinement::{
@@ -234,8 +236,11 @@ pub enum PlannerServicePayload {
         diff_sha256: Digest,
     },
     RouteFrontier {
+        graph: Box<PlannerGraph>,
+        graph_sha256: Digest,
         frontier_state: Box<PlannerExecutionStateDocument>,
         frontier: Box<StateInspection>,
+        execution_states: Vec<StateInspection>,
         transitions: Vec<RouteFrontierTransition>,
     },
     StateInspection {
@@ -767,7 +772,37 @@ fn inspect_route_frontier(
     route_book: Option<RouteBook>,
     evidence_mode: crate::RuntimeEvidenceMode,
 ) -> Result<PlannerServicePayload, dusklight_route_planner::PlannerContractError> {
-    if let Some(route_book) = route_book {
+    let path_state = |state: &PlannerExecutionState,
+                      route_step_id: Option<String>|
+     -> Result<
+        PlannerExecutionPathState,
+        dusklight_route_planner::PlannerContractError,
+    > {
+        let location = &state.snapshot.environment.location;
+        Ok(PlannerExecutionPathState {
+            label: match &route_step_id {
+                Some(step_id) => format!(
+                    "After {step_id}: {} r{} l{} s{}",
+                    location.stage, location.room, location.layer, location.spawn
+                ),
+                None => format!(
+                    "Route start: {} r{} l{} s{}",
+                    location.stage, location.room, location.layer, location.spawn
+                ),
+            },
+            execution_state_sha256: state.digest()?,
+            snapshot_sha256: state.snapshot.digest()?,
+            route_step_id,
+        })
+    };
+    let mut execution_path = vec![path_state(&state, None)?];
+    let mut execution_states = vec![inspect_state(
+        &state,
+        &catalog.facts,
+        equivalence_sets,
+        evidence_mode,
+    )?];
+    if let Some(route_book) = &route_book {
         route_book.validate_against_composed(catalog)?;
         if let Some(method) = route_book
             .methods
@@ -808,10 +843,20 @@ fn inspect_route_frontier(
                         ),
                     ));
                 }
+                execution_path.push(path_state(&state, Some(step_id.clone()))?);
+                execution_states.push(inspect_state(
+                    &state,
+                    &catalog.facts,
+                    equivalence_sets,
+                    evidence_mode,
+                )?);
             }
         }
     }
-    let frontier = inspect_state(&state, &catalog.facts, equivalence_sets, evidence_mode)?;
+    let frontier = execution_states
+        .last()
+        .cloned()
+        .expect("start state inspected");
     let frontier_state = state.to_document()?;
     let mut transitions = Vec::with_capacity(catalog.mechanics.transitions.len());
     for transition in &catalog.mechanics.transitions {
@@ -830,9 +875,19 @@ fn inspect_route_frontier(
             diagnostics: evaluation.diagnostics,
         });
     }
+    let mut graph = if let Some(route_book) = &route_book {
+        PlannerGraph::project_composed_with_route_book(catalog, route_book)?
+    } else {
+        PlannerGraph::project_composed(catalog)?
+    };
+    graph.attach_authored_execution_path(&execution_path)?;
+    let graph_sha256 = graph.digest()?;
     Ok(PlannerServicePayload::RouteFrontier {
+        graph: Box::new(graph),
+        graph_sha256,
         frontier_state: Box::new(frontier_state),
         frontier: Box::new(frontier),
+        execution_states,
         transitions,
     })
 }
@@ -1715,15 +1770,31 @@ mod tests {
             panic!("route frontier inspection should succeed");
         };
         let PlannerServicePayload::RouteFrontier {
+            graph,
             frontier_state,
             frontier,
+            execution_states,
             transitions,
+            ..
         } = *payload
         else {
             panic!("frontier inspection should return its typed payload");
         };
         assert_eq!(frontier_state.snapshot.environment.location.stage, "D_MN05");
         assert_eq!(frontier.state.snapshot.environment.location.stage, "D_MN05");
+        assert_eq!(execution_states.len(), 2);
+        assert!(graph.nodes.iter().any(|node| {
+            matches!(
+                &node.payload,
+                dusklight_route_planner::graph::PlannerNodePayload::ExecutionState {
+                    route_step_id: Some(step_id),
+                    ..
+                } if step_id == "step.route-0000"
+            )
+        }));
+        assert!(graph.edges.iter().any(|edge| {
+            edge.relation == dusklight_route_planner::graph::PlannerGraphRelation::RouteResult
+        }));
         for transition_id in ["transition.enter-boss", "transition.enter-side-room"] {
             assert_eq!(
                 transitions

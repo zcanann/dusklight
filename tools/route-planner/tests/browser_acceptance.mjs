@@ -15,6 +15,26 @@ let planner;
 let brave;
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const stopChild = async (child, processGroup = false) => {
+  if (!child) return;
+  const signal = (name) => {
+    try {
+      if (processGroup) process.kill(-child.pid, name);
+      else child.kill(name);
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+  };
+  signal("SIGTERM");
+  if (child.exitCode != null || child.signalCode != null) return;
+  let exited = new Promise((resolve) => child.once("exit", resolve));
+  await Promise.race([exited, delay(2_000)]);
+  if (child.exitCode == null && child.signalCode == null) {
+    exited = new Promise((resolve) => child.once("exit", resolve));
+    signal("SIGKILL");
+    await Promise.race([exited, delay(2_000)]);
+  }
+};
 const freePort = () => new Promise((resolve, reject) => {
   const server = createServer();
   server.once("error", reject);
@@ -56,7 +76,7 @@ try {
     "--remote-debugging-port=0",
     `--user-data-dir=${braveRoot}`,
     "about:blank",
-  ], { stdio: ["ignore", "pipe", "pipe"] });
+  ], { stdio: ["ignore", "pipe", "pipe"], detached: true });
   const devtools = await until("Brave DevTools port", async () => {
     const text = await readFile(join(braveRoot, "DevToolsActivePort"), "utf8");
     const [port] = text.trim().split(/\s+/);
@@ -173,6 +193,20 @@ try {
     "authored route region contents",
     `document.querySelectorAll("#nodes .node.reference_step").length === 9`,
   );
+  await browserUntil(
+    "projected execution states",
+    `document.querySelectorAll("#nodes .node.execution_state").length === 10`,
+  );
+  await evaluate(`(() => {
+    const terminal = document.querySelector('[data-node-id="execution-state/after/step.route-0008"]');
+    if (!terminal) throw new Error("terminal execution state is absent");
+    terminal.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    return true;
+  })()`);
+  await browserUntil(
+    "execution state inspection",
+    `document.getElementById("state-inspector").textContent.includes("D_MN05 r2")`,
+  );
   await evaluate(`(() => {
     const step = [...document.querySelectorAll("#nodes .node.reference_step")].at(-1);
     if (!step) throw new Error("terminal route step is absent from the projected graph");
@@ -215,8 +249,6 @@ try {
   }
   socket.close();
 } finally {
-  if (brave && !brave.killed) brave.kill("SIGTERM");
-  if (planner && !planner.killed) planner.kill("SIGTERM");
-  await delay(100);
-  await rm(temporaryRoot, { recursive: true, force: true });
+  await Promise.all([stopChild(brave, true), stopChild(planner)]);
+  await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

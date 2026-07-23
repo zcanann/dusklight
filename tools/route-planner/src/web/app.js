@@ -33,6 +33,7 @@ const state = {
   collapsedRegionIds: new Set(),
   knownRegionIds: new Set(),
   routeStepInspections: new Map(),
+  executionStateInspections: new Map(),
   routeFrontier: null,
 };
 
@@ -170,6 +171,7 @@ async function loadProject(project, options) {
   state.transitionEvaluation = null;
   state.replacementStep = null;
   state.routeStepInspections = new Map();
+  state.executionStateInspections = new Map();
   state.routeFrontier = null;
   state.activeRegionId = null;
   state.collapsedRegionIds = new Set();
@@ -392,9 +394,24 @@ function renderPalette() {
 
 function selectNode(node) {
   state.selected = { type: "node", value: node };
-  state.transitionEvaluation = node.payload.kind === "reference_step"
-    ? state.routeStepInspections.get(node.payload.step_id) ?? null
-    : null;
+  if (node.payload.kind === "reference_step") {
+    state.transitionEvaluation = state.routeStepInspections.get(node.payload.step_id) ?? null;
+  } else if (node.payload.kind === "execution_state") {
+    const inspection = state.executionStateInspections.get(node.id) ?? null;
+    const producingStep = node.payload.route_step_id == null
+      ? null
+      : state.routeStepInspections.get(node.payload.route_step_id) ?? null;
+    state.transitionEvaluation = producingStep ? {
+      kind: "execution_state_inspection",
+      step_id: node.payload.route_step_id,
+      state_change: producingStep.state_change,
+    } : inspection ? {
+      kind: "execution_state_inspection",
+      state_change: { before: inspection, after: null, diff: null },
+    } : null;
+  } else {
+    state.transitionEvaluation = null;
+  }
 }
 
 async function refreshAuthoredRouteInspections() {
@@ -414,6 +431,16 @@ async function refreshAuthoredRouteInspections() {
     throw new Error(`Unexpected response ${frontier.kind}`);
   }
   state.routeFrontier = frontier;
+  state.graph = frontier.graph;
+  state.executionStateInspections = new Map();
+  for (const node of state.graph.nodes.filter((candidate) =>
+    candidate.payload.kind === "execution_state")) {
+    const stepId = node.payload.route_step_id;
+    const index = stepId == null ? 0 : 1 + (state.project.route_book?.methods
+      .find((method) => method.id === "method.authored-route")?.step_ids.indexOf(stepId) ?? -2);
+    const inspection = frontier.execution_states[index];
+    if (inspection) state.executionStateInspections.set(node.id, inspection);
+  }
   if (!state.project.route_book?.methods.some((method) =>
     method.id === "method.authored-route")) return;
   const payload = await service({
@@ -1419,7 +1446,9 @@ function centerNode(id) {
 }
 
 function projectWithPresentation(project = state.project) {
-  const validNodes = new Set(state.graph.nodes.map((node) => node.id));
+  const validNodes = new Set(state.graph.nodes
+    .filter((node) => node.payload.kind !== "execution_state")
+    .map((node) => node.id));
   const positions = Object.fromEntries([...state.positions.entries()]
     .filter(([id]) => validNodes.has(id))
     .sort(([left], [right]) => left.localeCompare(right)));

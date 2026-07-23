@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v8";
+pub const PLANNER_GRAPH_SCHEMA: &str = "dusklight.route-planner.graph/v9";
 pub const PLANNER_FEASIBILITY_DIFF_SCHEMA: &str =
     "dusklight.route-planner.feasibility-graph-diff/v1";
 
@@ -118,6 +118,11 @@ pub enum PlannerNodePayload {
     ReferenceStep {
         step_id: String,
     },
+    ExecutionState {
+        execution_state_sha256: Digest,
+        snapshot_sha256: Digest,
+        route_step_id: Option<String>,
+    },
     ExternalAction {
         action_id: String,
     },
@@ -176,6 +181,17 @@ pub enum PlannerGraphRelation {
     Contains,
     SelectsAction,
     Selected,
+    RoutePrecondition,
+    RouteResult,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlannerExecutionPathState {
+    pub label: String,
+    pub execution_state_sha256: Digest,
+    pub snapshot_sha256: Digest,
+    pub route_step_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -318,6 +334,106 @@ impl PlannerGraph {
             }
         }
         Ok(())
+    }
+
+    pub fn attach_authored_execution_path(
+        &mut self,
+        states: &[PlannerExecutionPathState],
+    ) -> Result<(), PlannerContractError> {
+        if states.is_empty() || states[0].route_step_id.is_some() {
+            return Err(PlannerContractError::new(
+                "execution_path",
+                "must begin with exactly one route-start state",
+            ));
+        }
+        let authored_steps = states
+            .iter()
+            .skip(1)
+            .map(|state| {
+                state.route_step_id.as_deref().ok_or_else(|| {
+                    PlannerContractError::new(
+                        "execution_path.route_step_id",
+                        "every non-start state must identify its producing route step",
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let step_nodes = authored_steps
+            .iter()
+            .map(|step_id| {
+                self.nodes
+                    .iter()
+                    .find(|node| {
+                        matches!(
+                            &node.payload,
+                            PlannerNodePayload::ReferenceStep { step_id: candidate }
+                                if candidate == step_id
+                        )
+                    })
+                    .cloned()
+                    .ok_or_else(|| {
+                        PlannerContractError::new(
+                            "execution_path.route_step_id",
+                            format!("references unprojected route step {step_id}"),
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let region_id = step_nodes
+            .first()
+            .and_then(|node| node.region_id.clone())
+            .or_else(|| {
+                self.regions
+                    .iter()
+                    .find(|region| region.id == "region.plans")
+                    .map(|region| region.id.clone())
+            })
+            .unwrap_or_else(|| "region.mechanics".into());
+        let state_node_id = |state: &PlannerExecutionPathState| match &state.route_step_id {
+            Some(step_id) => format!("execution-state/after/{step_id}"),
+            None => "execution-state/route-start".into(),
+        };
+        for state in states {
+            validate_label("execution_path.label", &state.label)?;
+            if state.execution_state_sha256 == Digest::ZERO || state.snapshot_sha256 == Digest::ZERO
+            {
+                return Err(PlannerContractError::new(
+                    "execution_path",
+                    "state identities must be nonzero",
+                ));
+            }
+            self.nodes.push(PlannerGraphNode {
+                id: state_node_id(state),
+                label: state.label.clone(),
+                region_id: Some(region_id.clone()),
+                payload: PlannerNodePayload::ExecutionState {
+                    execution_state_sha256: state.execution_state_sha256,
+                    snapshot_sha256: state.snapshot_sha256,
+                    route_step_id: state.route_step_id.clone(),
+                },
+            });
+        }
+        for (index, (before, after)) in states.iter().zip(states.iter().skip(1)).enumerate() {
+            let step = &step_nodes[index];
+            let step_id = authored_steps[index];
+            self.edges.push(PlannerGraphEdge {
+                id: format!("edge.execution-path/{step_id}/precondition"),
+                source_node_id: state_node_id(before),
+                target_node_id: step.id.clone(),
+                relation: PlannerGraphRelation::RoutePrecondition,
+                ordinal: Some(index as u32),
+            });
+            self.edges.push(PlannerGraphEdge {
+                id: format!("edge.execution-path/{step_id}/result"),
+                source_node_id: step.id.clone(),
+                target_node_id: state_node_id(after),
+                relation: PlannerGraphRelation::RouteResult,
+                ordinal: Some(index as u32),
+            });
+        }
+        self.nodes.sort_by(|left, right| left.id.cmp(&right.id));
+        self.edges.sort_by(|left, right| left.id.cmp(&right.id));
+        self.validate()
     }
 
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, PlannerContractError> {
@@ -1483,6 +1599,22 @@ fn validate_node_payload(payload: &PlannerNodePayload) -> Result<(), PlannerCont
             Some(("nodes.payload.method_id", method_id))
         }
         PlannerNodePayload::ReferenceStep { step_id } => Some(("nodes.payload.step_id", step_id)),
+        PlannerNodePayload::ExecutionState {
+            execution_state_sha256,
+            snapshot_sha256,
+            route_step_id,
+        } => {
+            if *execution_state_sha256 == Digest::ZERO || *snapshot_sha256 == Digest::ZERO {
+                return Err(PlannerContractError::new(
+                    "nodes.payload.execution_state",
+                    "contains a zero state identity",
+                ));
+            }
+            if let Some(step_id) = route_step_id {
+                validate_stable_id("nodes.payload.route_step_id", step_id)?;
+            }
+            None
+        }
         PlannerNodePayload::ExternalAction { action_id } => {
             Some(("nodes.payload.action_id", action_id))
         }
