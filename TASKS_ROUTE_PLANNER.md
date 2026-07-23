@@ -2772,13 +2772,16 @@ visual polish or whole-game authoring features.
         or clear their owning region's alternative, and the canvas distinguishes
         each persisted choice.
 - [ ] Make transition insertion the primary authoring operation.
-  - [ ] From a selected state node, list applicable physical, event, warp,
+  - [x] From a selected state node, list applicable physical, event, warp,
         reload, title/file, and technique transitions.
         Service v35 now replays the complete authored method from its exact start,
         returns the authoritative frontier state/inspection, evaluates every
         transition there, and makes executable joins lead the browser palette.
         Transition evaluation now uses that frontier rather than silently using
-        the project start. Dedicated selectable execution-state nodes remain open.
+        the project start. Selecting any graph-v9 execution state now requests a
+        Rust-owned feasibility diff for every catalog transition at that exact
+        state; the palette re-ranks executable joins and labels blocked/unknown
+        candidates without deriving feasibility in JavaScript.
   - [x] Permit searching providers by desired destination or postcondition while
         retaining the actual entry contract and effects. Palette search indexes
         the complete authoritative transition document, including destinations,

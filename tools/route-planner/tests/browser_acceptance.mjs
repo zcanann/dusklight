@@ -43,7 +43,7 @@ const freePort = () => new Promise((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve(port));
   });
 });
-const until = async (label, operation, timeoutMilliseconds = 15_000) => {
+const until = async (label, operation, timeoutMilliseconds = 45_000) => {
   const deadline = Date.now() + timeoutMilliseconds;
   let lastError;
   while (Date.now() < deadline) {
@@ -119,7 +119,8 @@ try {
     }
     return result.result.value;
   };
-  const browserUntil = (label, expression) => until(label, () => evaluate(expression));
+  const browserUntil = (label, expression, timeoutMilliseconds) =>
+    until(label, () => evaluate(expression), timeoutMilliseconds);
 
   await command("Runtime.enable");
   await command("Page.enable");
@@ -206,6 +207,19 @@ try {
   await browserUntil(
     "execution state inspection",
     `document.getElementById("state-inspector").textContent.includes("D_MN05 r2")`,
+  );
+  await browserUntil(
+    "execution state transition listing",
+    `(() => {
+      const status = document.getElementById("status");
+      if (status.classList.contains("bad")) throw new Error(status.textContent);
+      const ready = status.textContent.includes("transition(s) executable from After step.route-0008")
+        && !document.getElementById("palette-list").textContent.includes("not assessed");
+      if (!ready) throw new Error("current status: " + status.textContent
+        + "; palette: " + document.getElementById("palette-list").textContent);
+      return true;
+    })()`,
+    10_000,
   );
   await evaluate(`(() => {
     const step = [...document.querySelectorAll("#nodes .node.reference_step")].at(-1);

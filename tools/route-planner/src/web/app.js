@@ -35,6 +35,7 @@ const state = {
   routeStepInspections: new Map(),
   executionStateInspections: new Map(),
   routeFrontier: null,
+  selectedStateFeasibility: null,
 };
 
 elements["project-list"].addEventListener("change", () => {
@@ -47,7 +48,7 @@ elements["project-file"].addEventListener("change", importProject);
 elements["save-project"].addEventListener("click", saveProject);
 elements["save-as-project"].addEventListener("click", saveProjectAs);
 elements["export-project"].addEventListener("click", exportProject);
-elements.search.addEventListener("input", renderPalette);
+elements.search.addEventListener("input", () => renderPalette());
 elements["zoom-in"].addEventListener("click", () => zoomAt(1.2));
 elements["zoom-out"].addEventListener("click", () => zoomAt(1 / 1.2));
 elements.fit.addEventListener("click", fitGraph);
@@ -173,6 +174,7 @@ async function loadProject(project, options) {
   state.routeStepInspections = new Map();
   state.executionStateInspections = new Map();
   state.routeFrontier = null;
+  state.selectedStateFeasibility = null;
   state.activeRegionId = null;
   state.collapsedRegionIds = new Set();
   state.knownRegionIds = new Set();
@@ -336,11 +338,21 @@ function renderNodes() {
   }
 }
 
-function renderPalette() {
+function renderPalette(selectedFeasibility = state.selectedStateFeasibility) {
   elements["palette-list"].replaceChildren();
   if (!state.graph) return;
   const query = elements.search.value.trim().toLowerCase();
-  const frontierTransitions = new Map((state.routeFrontier?.transitions ?? []).map((record) => [
+  const assessedTransitions = selectedFeasibility?.transitions.map((record) => ({
+    transition_id: record.transition_id,
+    assessment: record.modeled,
+    diagnostics: {
+      active_obstruction_ids: record.active_obstruction_ids,
+      unknown_obstruction_ids: record.unknown_obstruction_ids,
+      applied_resolver_ids: [],
+      applicable_technique_ids: [],
+    },
+  })) ?? state.routeFrontier?.transitions ?? [];
+  const frontierTransitions = new Map(assessedTransitions.map((record) => [
     record.transition_id,
     record,
   ]));
@@ -394,6 +406,7 @@ function renderPalette() {
 
 function selectNode(node) {
   state.selected = { type: "node", value: node };
+  state.selectedStateFeasibility = null;
   if (node.payload.kind === "reference_step") {
     state.transitionEvaluation = state.routeStepInspections.get(node.payload.step_id) ?? null;
   } else if (node.payload.kind === "execution_state") {
@@ -409,9 +422,47 @@ function selectNode(node) {
       kind: "execution_state_inspection",
       state_change: { before: inspection, after: null, diff: null },
     } : null;
+    const selectedInspection = inspection ?? producingStep?.state_change.after ?? null;
+    if (selectedInspection) refreshSelectedStateFeasibility(node, selectedInspection.state).catch((error) => {
+      if (state.selected?.value.id === node.id) setStatus(error.message, "bad");
+    });
   } else {
     state.transitionEvaluation = null;
   }
+}
+
+async function refreshSelectedStateFeasibility(node, executionState) {
+  const payload = await service({
+    command: "inspect_route_frontier",
+    request_id: requestId("selected-state-feasibility"),
+    state: executionState,
+    catalog: state.project.catalog,
+    equivalence_sets: state.project.equivalence_sets ?? [],
+    route_book: null,
+    evidence_mode: projectEvidenceMode(),
+  });
+  if (payload.kind !== "route_frontier") {
+    throw new Error(`Unexpected response ${payload.kind}`);
+  }
+  if (state.selected?.type !== "node" || state.selected.value.id !== node.id) return;
+  const feasibility = {
+    transitions: payload.transitions.map((record) => ({
+      transition_id: record.transition_id,
+      modeled: record.assessment,
+      active_obstruction_ids: record.diagnostics.active_obstruction_ids,
+      unknown_obstruction_ids: record.diagnostics.unknown_obstruction_ids,
+    })),
+  };
+  state.selectedStateFeasibility = feasibility;
+  renderPalette(feasibility);
+  const executable = feasibility.transitions.filter((record) =>
+    record.modeled.classification === "executable").length;
+  const graphTransitionIds = new Set(state.graph.nodes
+    .filter((candidate) => candidate.payload.kind === "transition")
+    .map((candidate) => candidate.payload.transition_id));
+  const matched = feasibility.transitions.filter((record) =>
+    graphTransitionIds.has(record.transition_id)).length;
+  setStatus(`${executable} transition(s) executable from ${node.label} (${matched}/${feasibility.transitions.length} assessed)`, "good");
 }
 
 async function refreshAuthoredRouteInspections() {
