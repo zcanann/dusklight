@@ -43,7 +43,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const WEB_PROJECT_SCHEMA: &str = "dusklight.route-planner.web-project/v1";
+pub const WEB_PROJECT_SCHEMA: &str = "dusklight.route-planner.web-project/v2";
+const LEGACY_WEB_PROJECT_SCHEMA: &str = "dusklight.route-planner.web-project/v1";
 pub const WEB_PROJECT_LIST_SCHEMA: &str = "dusklight.route-planner.web-project-list/v1";
 pub const WEB_PROJECT_RECORD_SCHEMA: &str = "dusklight.route-planner.web-project-record/v1";
 pub const WEB_PROJECT_SAVE_SCHEMA: &str = "dusklight.route-planner.web-project-save/v1";
@@ -85,6 +86,30 @@ pub struct PresentationRegion {
     pub id: String,
     pub label: String,
     pub parent_region_id: Option<String>,
+    #[serde(default = "initial_presentation_region_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub snapshot_node_ids: Vec<String>,
+    #[serde(default)]
+    pub derivation: Option<PresentationRegionDerivation>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresentationRegionDerivation {
+    pub kind: PresentationRegionDerivationKind,
+    pub source_region_id: String,
+    pub source_version: u32,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PresentationRegionDerivationKind {
+    Copy,
+    Fork,
+    Reference,
+    Version,
+    Replacement,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -135,6 +160,10 @@ pub struct ProjectStore {
 
 fn established_evidence_mode() -> crate::RuntimeEvidenceMode {
     crate::RuntimeEvidenceMode::EstablishedOnly
+}
+
+fn initial_presentation_region_version() -> u32 {
+    1
 }
 
 impl PlannerWebProject {
@@ -212,6 +241,22 @@ impl PlannerWebProject {
         for region in &self.presentation.regions {
             validate_project_id(&region.id)?;
             validate_label(&region.label)?;
+            if region.version == 0 {
+                return Err(project_error(format!(
+                    "presentation region {} has version zero",
+                    region.id
+                )));
+            }
+            if region
+                .snapshot_node_ids
+                .windows(2)
+                .any(|pair| pair[0] >= pair[1])
+            {
+                return Err(project_error(format!(
+                    "presentation region {} snapshot nodes must be unique and sorted",
+                    region.id
+                )));
+            }
             if graph_region_ids.contains(region.id.as_str())
                 || !presentation_region_ids.insert(region.id.as_str())
             {
@@ -247,6 +292,47 @@ impl PlannerWebProject {
                     .find(|candidate| candidate.id == parent)
                     .and_then(|candidate| candidate.parent_region_id.as_deref());
             }
+            if let Some(derivation) = &region.derivation {
+                let source = self
+                    .presentation
+                    .regions
+                    .iter()
+                    .find(|candidate| candidate.id == derivation.source_region_id)
+                    .ok_or_else(|| {
+                        project_error(format!(
+                            "presentation region {} references unknown derivation source {}",
+                            region.id, derivation.source_region_id
+                        ))
+                    })?;
+                if derivation.source_region_id == region.id
+                    || derivation.source_version == 0
+                    || derivation.source_version > source.version
+                    || (derivation.kind == PresentationRegionDerivationKind::Reference
+                        && !region.snapshot_node_ids.is_empty())
+                {
+                    return Err(project_error(format!(
+                        "presentation region {} has invalid derivation provenance",
+                        region.id
+                    )));
+                }
+                let mut source_id = Some(derivation.source_region_id.as_str());
+                let mut sources = BTreeSet::from([region.id.as_str()]);
+                while let Some(candidate_id) = source_id {
+                    if !sources.insert(candidate_id) {
+                        return Err(project_error(format!(
+                            "presentation region {} has a derivation cycle",
+                            region.id
+                        )));
+                    }
+                    source_id = self
+                        .presentation
+                        .regions
+                        .iter()
+                        .find(|candidate| candidate.id == candidate_id)
+                        .and_then(|candidate| candidate.derivation.as_ref())
+                        .map(|candidate| candidate.source_region_id.as_str());
+                }
+            }
         }
         let route_step_ids = self
             .route_book
@@ -254,12 +340,25 @@ impl PlannerWebProject {
             .flat_map(|book| &book.steps)
             .map(|step| step.id.as_str())
             .collect::<BTreeSet<_>>();
-        for (node_id, region_id) in &self.presentation.node_region_ids {
-            let dynamic_execution_state = node_id == "execution-state/start"
+        let valid_node_id = |node_id: &str| {
+            node_ids.contains(node_id)
+                || node_id == "execution-state/start"
                 || node_id
                     .strip_prefix("execution-state/after/")
-                    .is_some_and(|step_id| route_step_ids.contains(step_id));
-            if !node_ids.contains(node_id.as_str()) && !dynamic_execution_state {
+                    .is_some_and(|step_id| route_step_ids.contains(step_id))
+        };
+        for region in &self.presentation.regions {
+            for node_id in &region.snapshot_node_ids {
+                if !valid_node_id(node_id) {
+                    return Err(project_error(format!(
+                        "presentation region {} snapshot references unknown node {node_id}",
+                        region.id
+                    )));
+                }
+            }
+        }
+        for (node_id, region_id) in &self.presentation.node_region_ids {
+            if !valid_node_id(node_id) {
                 return Err(project_error(format!(
                     "presentation region assignment references unknown node {node_id}"
                 )));
@@ -415,7 +514,11 @@ fn record(project: PlannerWebProject, read_only: bool) -> Result<ProjectRecord, 
 
 fn read_project(path: &Path) -> Result<PlannerWebProject, ProjectError> {
     let bytes = fs::read(path).map_err(ProjectError::io)?;
-    let project: PlannerWebProject = serde_json::from_slice(&bytes).map_err(ProjectError::json)?;
+    let mut project: PlannerWebProject =
+        serde_json::from_slice(&bytes).map_err(ProjectError::json)?;
+    if project.schema == LEGACY_WEB_PROJECT_SCHEMA {
+        project.schema = WEB_PROJECT_SCHEMA.into();
+    }
     project.validate()?;
     Ok(project)
 }
@@ -3148,11 +3251,26 @@ mod tests {
             id: "region.presentation-shutter-close".into(),
             label: "Shutter close".into(),
             parent_region_id: None,
+            version: 1,
+            snapshot_node_ids: Vec::new(),
+            derivation: None,
         });
         project
             .presentation
             .node_region_ids
             .insert(transition_node, "region.presentation-shutter-close".into());
+        project.presentation.regions.push(PresentationRegion {
+            id: "region.presentation-shutter-close-reference".into(),
+            label: "Shutter close reference".into(),
+            parent_region_id: None,
+            version: 1,
+            snapshot_node_ids: Vec::new(),
+            derivation: Some(PresentationRegionDerivation {
+                kind: PresentationRegionDerivationKind::Reference,
+                source_region_id: "region.presentation-shutter-close".into(),
+                source_version: 1,
+            }),
+        });
         project.validate().unwrap();
         let decoded: PlannerWebProject =
             serde_json::from_slice(&project.canonical_bytes().unwrap()).unwrap();
@@ -3163,6 +3281,22 @@ mod tests {
                 .digest()
                 .unwrap(),
             graph_sha256
+        );
+        let mut legacy = decoded.clone();
+        legacy.schema = LEGACY_WEB_PROJECT_SCHEMA.into();
+        legacy.id = "legacy-presentation-region".into();
+        fs::write(
+            root.join("legacy-presentation-region.json"),
+            serde_json::to_vec_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .load("legacy-presentation-region")
+                .unwrap()
+                .project
+                .schema,
+            WEB_PROJECT_SCHEMA
         );
 
         project.presentation.regions[0].parent_region_id =

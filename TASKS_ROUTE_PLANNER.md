@@ -2803,7 +2803,7 @@ visual polish or whole-game authoring features.
         shutter close join, discovers the eight-step minimal producer chain
         (correctly omitting the unnecessary pending-key flush), inserts it, and
         verifies the projected execution states through save/reload.
-- [ ] Add nested subgraph authoring and browsing as graph-view encapsulation.
+- [x] Add nested subgraph authoring and browsing as graph-view encapsulation.
   - [x] Group selected states/transitions into a named region without changing
         their solver identities, effects, or connectivity. Shift-selection now
         groups arbitrary projected nodes, including authored steps and exact
@@ -2830,8 +2830,16 @@ visual polish or whole-game authoring features.
         state at the boundary. Brave inspects the nested terminal-state boundary
         before reentering it; future copy/reference controls can consume this
         mandatory projection rather than inferring connectivity from layout.
-  - [ ] Support version, fork, copy/reference, replace, and usage inspection for
+  - [x] Support version, fork, copy/reference, replace, and usage inspection for
         saved regions; defer arbitrary rewiring until transition-safe edits exist.
+        Web-project v2 records a validated version plus typed derivation
+        provenance (source region/version and copy, fork, reference, version, or
+        replacement kind). Copies/forks/versions/replacements retain sorted
+        snapshots of the same planner node identities; references resolve the
+        source view dynamically. Derivation sources and versions are validated,
+        cycles fail closed, reverse usages appear in boundary inspection, and
+        legacy v1 projects migrate on load. Brave exercises all five mutations,
+        replaces a copy at version 2, and observes four typed source usages.
 - [x] Add inventory/flag/component state inspector with before/after diff.
   - [x] Add a planner-owned headless state-inspection projection for live and
         serialized stores, raw/structured payloads, bindings, provenance, and

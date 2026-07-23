@@ -91,6 +91,8 @@ button:disabled { opacity: .42; cursor: default; }
 .directive-controls { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
 .directive-controls button { margin-top: 0; padding: 5px 8px; font-size: 11px; }
 .directive-controls button.active { border-color: var(--accent); color: var(--accent); background: #173042; }
+.region-controls { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.region-controls button { margin-top: 0; padding: 5px 8px; font-size: 11px; }
 .details pre { margin: 0; padding: 11px; background: #101419; border: 1px solid #303943; border-radius: 5px; overflow: auto; font-size: 11px; color: #bcd0df; }
 .state-inspector[hidden] { display: none; }
 .state-inspector { min-width: 0; display: flex; flex-direction: column; gap: 8px; }

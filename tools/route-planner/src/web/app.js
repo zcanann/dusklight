@@ -1,5 +1,6 @@
 const SERVICE_SCHEMA = "dusklight.route-planner.service/v36";
-const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
+const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v2";
+const LEGACY_PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v6";
 const NODE_WIDTH = 176;
@@ -13,7 +14,8 @@ const elements = Object.fromEntries([
   "contract-inspector",
   "region-nav", "region-breadcrumbs", "region-children",
   "evaluate-transition", "insert-transition", "suggest-transition-chain", "replace-step", "remove-step",
-  "group-selection", "pin-selection", "ban-selection", "prefer-selection", "select-method",
+  "group-selection", "copy-region", "fork-region", "reference-region", "version-region",
+  "replace-region", "region-usage", "pin-selection", "ban-selection", "prefer-selection", "select-method",
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -59,6 +61,12 @@ elements["suggest-transition-chain"].addEventListener("click", suggestOrInsertSe
 elements["replace-step"].addEventListener("click", replaceSelectedRouteStep);
 elements["remove-step"].addEventListener("click", removeSelectedRouteStep);
 elements["group-selection"].addEventListener("click", groupSelectedNodes);
+elements["copy-region"].addEventListener("click", () => createRegionDerivative("copy"));
+elements["fork-region"].addEventListener("click", () => createRegionDerivative("fork"));
+elements["reference-region"].addEventListener("click", () => createRegionDerivative("reference"));
+elements["version-region"].addEventListener("click", () => createRegionDerivative("version"));
+elements["replace-region"].addEventListener("click", replaceRegionFromSelection);
+elements["region-usage"].addEventListener("click", inspectSelectedRegionUsage);
 elements["pin-selection"].addEventListener("click", () => editSelectedDirective("pin"));
 elements["ban-selection"].addEventListener("click", () => editSelectedDirective("ban"));
 elements["prefer-selection"].addEventListener("click", () => editSelectedDirective("prefer"));
@@ -196,6 +204,7 @@ async function loadProject(project, options) {
 }
 
 function validateProject(project) {
+  if (project?.schema === LEGACY_PROJECT_SCHEMA) project.schema = PROJECT_SCHEMA;
   if (!project || project.schema !== PROJECT_SCHEMA) throw new Error(`Expected ${PROJECT_SCHEMA}`);
   if (!project.id || typeof project.id !== "string") throw new Error("Project has no id");
   if (!project.label || typeof project.label !== "string") throw new Error("Project has no label");
@@ -557,6 +566,39 @@ function displayedNodeRegionId(node) {
   return state.project?.presentation?.node_region_ids?.[node.id] ?? node.region_id ?? null;
 }
 
+function regionSnapshotNodeIds(region, visited = new Set()) {
+  if (!region || visited.has(region.id)) return [];
+  visited.add(region.id);
+  if (region.derivation?.kind === "reference") {
+    const source = displayedRegions().find((candidate) =>
+      candidate.id === region.derivation.source_region_id);
+    const snapshot = regionSnapshotNodeIds(source, visited);
+    return snapshot.length ? snapshot : regionOwnedNodeIds(source);
+  }
+  return region.snapshot_node_ids ?? [];
+}
+
+function regionOwnedNodeIds(region) {
+  if (!region) return [];
+  const regions = displayedRegions();
+  const enclosed = new Set([region.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of regions) {
+      if (candidate.parent_region_id && enclosed.has(candidate.parent_region_id)
+        && !enclosed.has(candidate.id)) {
+        enclosed.add(candidate.id);
+        changed = true;
+      }
+    }
+  }
+  return state.graph.nodes
+    .filter((node) => enclosed.has(displayedNodeRegionId(node)))
+    .map((node) => node.id)
+    .sort();
+}
+
 function synchronizeRegions() {
   const regions = displayedRegions();
   const valid = new Set(regions.map((region) => region.id));
@@ -576,6 +618,11 @@ function visibleNodes() {
   if (!state.graph) return [];
   const regions = displayedRegions();
   if (state.activeRegionId) {
+    const active = regions.find((region) => region.id === state.activeRegionId);
+    const snapshotNodes = new Set(regionSnapshotNodeIds(active));
+    if (snapshotNodes.size) {
+      return state.graph.nodes.filter((node) => snapshotNodes.has(node.id));
+    }
     return state.graph.nodes.filter((node) => displayedNodeRegionId(node) === state.activeRegionId);
   }
   return state.graph.nodes.filter((node) => {
@@ -683,6 +730,10 @@ function inspectRegionBoundary(region) {
   const enclosedNodes = new Set(state.graph.nodes
     .filter((node) => enclosedRegions.has(displayedNodeRegionId(node)))
     .map((node) => node.id));
+  for (const enclosedRegionId of enclosedRegions) {
+    const enclosedRegion = regions.find((candidate) => candidate.id === enclosedRegionId);
+    for (const nodeId of regionSnapshotNodeIds(enclosedRegion)) enclosedNodes.add(nodeId);
+  }
   const nodes = new Map(state.graph.nodes.map((node) => [node.id, node]));
   const boundaryEdges = [];
   for (const edge of state.graph.edges) {
@@ -709,6 +760,18 @@ function inspectRegionBoundary(region) {
     id: region.id,
     label: region.label,
     parent_region_id: region.parent_region_id,
+    version: region.version ?? 1,
+    derivation: region.derivation ?? null,
+    region_usages: (state.project?.presentation?.regions ?? [])
+      .filter((candidate) => candidate.derivation?.source_region_id === region.id)
+      .map((candidate) => ({
+        region_id: candidate.id,
+        label: candidate.label,
+        version: candidate.version ?? 1,
+        derivation_kind: candidate.derivation.kind,
+        source_version: candidate.derivation.source_version,
+      }))
+      .sort((left, right) => left.region_id.localeCompare(right.region_id)),
     enclosed_region_ids: [...enclosedRegions].sort(),
     enclosed_node_ids: [...enclosedNodes].sort(),
     boundary_state_ids: [...new Set(boundaryEdges.flatMap((edge) => [
@@ -785,6 +848,7 @@ async function dropTransitionAtRouteFrontier(event) {
 function renderDetails() {
   const selected = state.selected;
   updateGroupSelectionControl();
+  updateRegionControls();
   if (!selected) {
     elements["detail-title"].textContent = "Nothing selected";
     elements["detail-subtitle"].textContent = "Choose a node or connection to inspect its planner-owned identity.";
@@ -844,6 +908,102 @@ function updateGroupSelectionControl() {
     : "Group selected nodes";
 }
 
+function selectedPresentationRegion() {
+  if (state.selected?.type !== "region") return null;
+  return (state.project?.presentation?.regions ?? []).find((region) =>
+    region.id === state.selected.value.id) ?? null;
+}
+
+function updateRegionControls() {
+  const region = selectedPresentationRegion();
+  const editable = Boolean(region && !state.readOnly);
+  for (const id of [
+    "copy-region", "fork-region", "reference-region", "version-region", "region-usage",
+  ]) elements[id].disabled = !editable;
+  elements["replace-region"].disabled = !editable
+    || (state.project?.presentation?.regions?.length ?? 0) < 2;
+}
+
+function nextPresentationRegionId(label) {
+  const existing = new Set(displayedRegions().map((region) => region.id));
+  const base = `region.presentation-${slug(label)}`;
+  let id = base;
+  let suffix = 2;
+  while (existing.has(id)) id = `${base}-${suffix++}`;
+  return id;
+}
+
+function createRegionDerivative(kind) {
+  const source = selectedPresentationRegion();
+  if (!source || state.readOnly) return;
+  const defaultLabels = {
+    copy: `${source.label} copy`,
+    fork: `${source.label} fork`,
+    reference: `${source.label} reference`,
+    version: `${source.label} v${(source.version ?? 1) + 1}`,
+  };
+  const label = prompt("Derived region name", defaultLabels[kind])?.trim();
+  if (!label) return;
+  const boundary = inspectRegionBoundary(source);
+  const derived = {
+    id: nextPresentationRegionId(label),
+    label,
+    parent_region_id: source.parent_region_id ?? null,
+    version: kind === "version" ? (source.version ?? 1) + 1 : 1,
+    snapshot_node_ids: kind === "reference" ? [] : [...boundary.enclosed_node_ids].sort(),
+    derivation: {
+      kind,
+      source_region_id: source.id,
+      source_version: source.version ?? 1,
+    },
+  };
+  state.project.presentation.regions.push(derived);
+  state.activeRegionId = derived.id;
+  state.selected = { type: "region", value: inspectRegionBoundary(derived) };
+  markDirty();
+  render();
+  requestAnimationFrame(fitGraph);
+  setStatus(`${derived.label} created as ${kind} of ${source.label}; save to persist`, "good");
+}
+
+function replaceRegionFromSelection() {
+  const source = selectedPresentationRegion();
+  if (!source || state.readOnly) return;
+  const candidates = state.project.presentation.regions.filter((region) => region.id !== source.id);
+  const entered = prompt(
+    `Replace which region with ${source.label}?`,
+    candidates[0]?.id ?? "",
+  )?.trim();
+  const target = candidates.find((region) => region.id === entered);
+  if (!target) {
+    setStatus("Replacement target must be an existing presentation region ID", "bad");
+    return;
+  }
+  const boundary = inspectRegionBoundary(source);
+  target.version = (target.version ?? 1) + 1;
+  target.snapshot_node_ids = [...boundary.enclosed_node_ids].sort();
+  target.derivation = {
+    kind: "replacement",
+    source_region_id: source.id,
+    source_version: source.version ?? 1,
+  };
+  state.activeRegionId = target.id;
+  state.selected = { type: "region", value: inspectRegionBoundary(target) };
+  markDirty();
+  render();
+  requestAnimationFrame(fitGraph);
+  setStatus(`${target.label} replaced from ${source.label} at version ${target.version}; save to persist`, "good");
+}
+
+function inspectSelectedRegionUsage() {
+  const region = selectedPresentationRegion();
+  if (!region) return;
+  state.selected = { type: "region", value: inspectRegionBoundary(region) };
+  renderDetails();
+  const count = state.selected.value.region_usages.length;
+  setStatus(`${region.label} has ${count} derived usage${count === 1 ? "" : "s"}`);
+}
+
 function toggleGroupSelection(node) {
   if (state.groupSelection.has(node.id)) state.groupSelection.delete(node.id);
   else state.groupSelection.add(node.id);
@@ -853,16 +1013,15 @@ function groupSelectedNodes() {
   if (!state.groupSelection.size || state.readOnly) return;
   const label = prompt("Nested region name", "New region")?.trim();
   if (!label) return;
-  const existing = new Set(displayedRegions().map((region) => region.id));
-  const base = `region.presentation-${slug(label)}`;
-  let id = base;
-  let suffix = 2;
-  while (existing.has(id)) id = `${base}-${suffix++}`;
+  const id = nextPresentationRegionId(label);
   const presentation = state.project.presentation ?? { positions: {} };
   const regions = [...(presentation.regions ?? []), {
     id,
     label,
     parent_region_id: state.activeRegionId ?? null,
+    version: 1,
+    snapshot_node_ids: [],
+    derivation: null,
   }];
   const nodeRegionIds = { ...(presentation.node_region_ids ?? {}) };
   for (const nodeId of state.groupSelection) nodeRegionIds[nodeId] = id;
@@ -1758,11 +1917,16 @@ function projectWithPresentation(project = state.project) {
       .filter(([id]) => allNodes.has(id))
       .sort(([left], [right]) => left.localeCompare(right)),
   );
+  const regions = (project.presentation?.regions ?? []).map((region) => ({
+    ...region,
+    snapshot_node_ids: (region.snapshot_node_ids ?? []).filter((id) => allNodes.has(id)).sort(),
+  }));
   return {
     ...project,
     presentation: {
       ...(project.presentation ?? {}),
       positions,
+      regions,
       node_region_ids: nodeRegionIds,
     },
   };

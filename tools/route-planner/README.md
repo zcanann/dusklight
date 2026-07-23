@@ -266,6 +266,11 @@ The planner CLI currently owns forty operations:
   region control also computes its descendant closure and exposes a sorted list
   of every incoming/outgoing graph edge, inside/outside endpoint kind, and exact
   execution-state endpoint crossing the visual boundary.
+  Web-project v2 adds versioned presentation-region derivations: snapshot copies,
+  independent forks, dynamic references, successor versions, replacements, and
+  reverse usage inspection. Every derivation binds its source region/version;
+  references resolve the source view dynamically while other derivations seal a
+  sorted node-identity snapshot. Legacy v1 projects migrate on load.
   Static assets are embedded in the Rust binary and served with a restrictive
   content security policy and no cache.
 

@@ -146,7 +146,11 @@ try {
   })()`);
   await browserUntil(
     "editable demonstration copy",
-    `document.getElementById("status").textContent === "Project copy saved"`,
+    `(() => {
+      const status = document.getElementById("status");
+      if (status.textContent !== "Project copy saved") throw new Error(status.textContent);
+      return true;
+    })()`,
   );
 
   await evaluate(`(() => {
@@ -254,6 +258,48 @@ try {
     "nested region boundary inspection",
     `document.getElementById("detail-json").textContent.includes('"boundary_edges"')
       && document.getElementById("detail-json").textContent.includes("execution-state/after/step.route-0007")`,
+  );
+  const deriveRegion = async (buttonId, promptValue, expectedStatus) => {
+    await evaluate(`(() => {
+      const closing = [...document.querySelectorAll("#region-breadcrumbs button")]
+        .find((button) => button.textContent === "Closing subgraph");
+      if (closing) closing.click();
+      const terminalRow = [...document.querySelectorAll("#region-children .region-row")]
+        .find((row) => row.querySelector(".enter-region")?.textContent === "Terminal state");
+      if (!terminalRow) throw new Error("terminal-state source region is absent");
+      terminalRow.querySelector(".inspect-region").click();
+      window.prompt = () => ${JSON.stringify(promptValue)};
+      document.getElementById(${JSON.stringify(buttonId)}).click();
+      return true;
+    })()`);
+    await browserUntil(
+      `region ${buttonId}`,
+      `document.getElementById("status").textContent.includes(${JSON.stringify(expectedStatus)})`,
+    );
+  };
+  await deriveRegion("reference-region", "Terminal reference", "created as reference");
+  await deriveRegion("copy-region", "Terminal copy", "created as copy");
+  await deriveRegion("fork-region", "Terminal fork", "created as fork");
+  await deriveRegion("version-region", "Terminal v2", "created as version");
+  await deriveRegion(
+    "replace-region",
+    "region.presentation-terminal-copy",
+    "Terminal copy replaced from Terminal state at version 2",
+  );
+  await evaluate(`(() => {
+    const closing = [...document.querySelectorAll("#region-breadcrumbs button")]
+      .find((button) => button.textContent === "Closing subgraph");
+    if (closing) closing.click();
+    const terminalRow = [...document.querySelectorAll("#region-children .region-row")]
+      .find((row) => row.querySelector(".enter-region")?.textContent === "Terminal state");
+    terminalRow.querySelector(".inspect-region").click();
+    document.getElementById("region-usage").click();
+    return true;
+  })()`);
+  await browserUntil(
+    "region usage inspection",
+    `document.getElementById("status").textContent.includes("has 4 derived usages")
+      && document.getElementById("detail-json").textContent.includes('"derivation_kind": "replacement"')`,
   );
   await evaluate(`(() => {
     const terminal = [...document.querySelectorAll("#region-children .enter-region")]
