@@ -249,7 +249,10 @@ The planner CLI currently owns forty operations:
   entry's layer, pack ID, digest, and local precedence. Reached steps and blocked
   witnesses embed all contributing rule/fact evidence and report their weakest
   evidence level, so hypothetical support cannot be hidden behind an established
-  transition label.
+  transition label. Solve-report v10 also derives a compact `summary` containing
+  primary/alternative action sequences, costs, weakest evidence, search bounds,
+  unknowns, blocker counts, merge counts, and producer-cut counts; the complete
+  `result` remains alongside it as the expanded research/proof view.
 - `solve-portable` expands a route book's exact/equivalent context scope,
   requires one explicit start state per exact context, solves each context
   independently, and reports whether the route reaches its goal everywhere.

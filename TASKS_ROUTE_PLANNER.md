@@ -2589,7 +2589,13 @@ Deliverable: a headless query API and deterministic fixture suite.
     microtraces, and unknown requirements. Each dependency retains its complete
     `RuleEvidence`, and `weakest_evidence` makes contested, hypothetical, or
     unknown support directly filterable without rejoining the catalog.
-- [ ] Generate concise collapsed summaries and fully expanded research views.
+- [x] Generate concise collapsed summaries and fully expanded research views.
+      Solve-report v10 derives a presentation-only summary with primary and
+      alternative action sequences, costs, preference/evidence strength, bounds,
+      unknown IDs, and blocker/merge/cut counts. The complete typed search result
+      remains adjacent as the expanded view with every step dependency, state
+      identity, blocked witness, continuation proof, and failed-producer cut;
+      collapsing the summary therefore discards no research authority.
 
 Deliverable: every route and failure is inspectable rather than magical.
 

@@ -14,16 +14,18 @@ use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::evaluation::{EvidencePolicy, FeasibilityMode};
 use dusklight_route_planner::execution::PlannerExecutionState;
 use dusklight_route_planner::identity::{ContextSelector, EquivalenceSet, ExactContext};
-use dusklight_route_planner::logic::FactCatalog;
+use dusklight_route_planner::logic::{FactCatalog, TruthStatus};
 use dusklight_route_planner::refinement::{ComposedPlannerCatalog, RefinementStackEntry};
 use dusklight_route_planner::route_book::RouteBook;
-use dusklight_route_planner::solver::{ForwardSolver, SearchResult, SearchStatus, SolverOptions};
+use dusklight_route_planner::solver::{
+    ForwardSolver, SearchActionKind, SearchPlan, SearchResult, SearchStatus, SolverOptions,
+};
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v9";
-pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v8";
+pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v10";
+pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v9";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,7 +86,108 @@ pub struct SolveReport {
     pub equivalence_set_count: usize,
     pub feasibility_mode: RuntimeFeasibilityMode,
     pub evidence_mode: RuntimeEvidenceMode,
+    /// Compact presentation derived only from the complete result below. The
+    /// result remains the expanded research view and sole proof authority.
+    pub summary: SolveSummary,
     pub result: SearchResult,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SolveSummary {
+    pub status: SearchStatus,
+    pub primary_plan: Option<PlanSummary>,
+    pub alternative_plans: Vec<PlanSummary>,
+    pub explored_states: usize,
+    pub hit_search_limit: bool,
+    pub unknown_transition_ids: Vec<String>,
+    pub unknown_writer_ids: Vec<String>,
+    pub execution_error_ids: Vec<String>,
+    pub blocked_transition_count: usize,
+    pub blocked_writer_count: usize,
+    pub continuation_merge_count: usize,
+    pub failed_producer_cut_count: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlanSummary {
+    pub actions: Vec<ActionSummary>,
+    pub preference_score: u64,
+    pub satisfied_preference_ids: Vec<String>,
+    pub route_costs: BTreeMap<String, u64>,
+    pub weakest_evidence: Option<TruthStatus>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActionSummary {
+    pub action_kind: SearchActionKind,
+    pub action_id: String,
+}
+
+impl SolveSummary {
+    pub fn from_result(result: &SearchResult) -> Self {
+        let primary_plan = (result.status == SearchStatus::Reached).then(|| PlanSummary {
+            actions: result
+                .steps
+                .iter()
+                .map(|step| ActionSummary {
+                    action_kind: step.action_kind,
+                    action_id: step.action_id.clone(),
+                })
+                .collect(),
+            preference_score: result.preference_score,
+            satisfied_preference_ids: result.satisfied_preference_ids.clone(),
+            route_costs: result.route_costs.clone(),
+            weakest_evidence: result
+                .steps
+                .iter()
+                .filter_map(|step| step.weakest_evidence)
+                .max(),
+        });
+        Self {
+            status: result.status,
+            primary_plan,
+            alternative_plans: result
+                .alternative_plans
+                .iter()
+                .map(PlanSummary::from_search_plan)
+                .collect(),
+            explored_states: result.explored_states,
+            hit_search_limit: result.hit_search_limit,
+            unknown_transition_ids: result.unknown_transition_ids.clone(),
+            unknown_writer_ids: result.unknown_writer_ids.clone(),
+            execution_error_ids: result.execution_error_ids.clone(),
+            blocked_transition_count: result.blocked_transition_witnesses.len(),
+            blocked_writer_count: result.blocked_writer_witnesses.len(),
+            continuation_merge_count: result.continuation_merge_proofs.len(),
+            failed_producer_cut_count: result.failed_producer_cuts.len(),
+        }
+    }
+}
+
+impl PlanSummary {
+    fn from_search_plan(plan: &SearchPlan) -> Self {
+        Self {
+            actions: plan
+                .steps
+                .iter()
+                .map(|step| ActionSummary {
+                    action_kind: step.action_kind,
+                    action_id: step.action_id.clone(),
+                })
+                .collect(),
+            preference_score: plan.preference_score,
+            satisfied_preference_ids: plan.satisfied_preference_ids.clone(),
+            route_costs: plan.route_costs.clone(),
+            weakest_evidence: plan
+                .steps
+                .iter()
+                .filter_map(|step| step.weakest_evidence)
+                .max(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -203,6 +306,7 @@ fn solve_catalog_goal_inner(
         None => ForwardSolver::new(facts, mechanics, equivalence_sets, solver_options)?
             .solve_alternatives(state, &goal.predicate, options.max_plans)?,
     };
+    let summary = SolveSummary::from_result(&result);
     Ok(SolveReport {
         schema: SOLVE_REPORT_SCHEMA.into(),
         goal_id: goal.id.clone(),
@@ -216,6 +320,7 @@ fn solve_catalog_goal_inner(
         equivalence_set_count: equivalence_sets.len(),
         feasibility_mode: options.feasibility_mode,
         evidence_mode: options.evidence_mode,
+        summary,
         result,
     })
 }
@@ -571,6 +676,16 @@ mod tests {
         assert_eq!(report.schema, SOLVE_REPORT_SCHEMA);
         assert_eq!(report.result.status, SearchStatus::Reached);
         assert!(report.result.steps.is_empty());
+        assert_eq!(report.summary.status, SearchStatus::Reached);
+        assert_eq!(
+            report.summary.primary_plan.as_ref().unwrap().actions,
+            vec![]
+        );
+        assert!(report.summary.alternative_plans.is_empty());
+        assert_eq!(
+            report.summary.explored_states,
+            report.result.explored_states
+        );
         assert_ne!(report.fact_catalog_sha256, Digest::ZERO);
         assert_eq!(report.refinement_stack_sha256, None);
 
