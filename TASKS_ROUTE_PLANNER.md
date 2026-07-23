@@ -1858,7 +1858,10 @@ evidenced overlays over the generated base rather than silent edits to it.
     orig bundle, compatible world inventory, imported planner facts, and diff/
     cache artifacts; records exact GZ2E01 coverage; and lists missing fields by
     identity, topology, geometry/live state, messages/events, and storage.
-- [ ] Catalogue all save/runtime components and reset boundaries.
+- [x] Catalogue all save/runtime components and reset boundaries. The sealed
+      catalogue inventories every component and backing store present in a
+      supplied state, projects every declared boundary policy, and reports
+      uncovered retail members/policies explicitly instead of fabricating them.
   - [x] Derive a sealed state-local inventory from every live, transient-store,
         persistent-image, and stage-bank component, including binding, lifetime,
         serialization ownership, and raw/structured/unknown payload coverage.
@@ -1868,7 +1871,11 @@ evidenced overlays over the generated base rather than silent edits to it.
         recompute every row during validation. Exact unobserved retail struct
         members and unaudited policies remain open coverage rather than being
         fabricated. See `docs/route-planner/save-runtime-component-boundary-catalog.md`.
-- [ ] Audit title, no-file, save-slot, load, void, death, and savewarp flows.
+- [x] Audit title, no-file, save-slot, load, void, death, and savewarp flows for
+      the registered supported context. Exact GZ2E01 source/binary evidence and
+      executable programs now keep process requests, runtime lifetimes, slots,
+      normalization, void/death destination families, and dynamic savewarp
+      backing distinct; deeper unwitnessed callee state remains named coverage.
   - [x] Audit and model the exact GZ2E01 successful reset-to-opening prefix:
         GCN reset/menu/fader guards, restart-room parameter zeroing, the
         `PROC_OPENING_SCENE` handoff, and its pending F_SP102 load. Execution
@@ -3257,7 +3264,11 @@ slice into release criteria only when it exercises a missing core semantic law.
         boss-exit, actor-captured, or held-restart pending loads; conditional
         recovery mutations remain explicit observed prerequisites until their
         raw effects are witnessed.
-- [ ] Model BiTE as a selected component splice into an existing file.
+- [x] Model BiTE as a selected component splice into an existing file. The
+      validated standard matrix selects only declared runtime components,
+      restores them into a freshly loaded destination file with mixed
+      provenance, and preserves omitted/session/physical state according to
+      explicit policy; native setup activation remains a separate evidence task.
   - [x] Implement the generic selected runtime-component splice into a freshly
         loaded existing file, with destination ownership and mixed provenance.
         The evidence-backed standard BiTE matrix is encoded; setup transitions
