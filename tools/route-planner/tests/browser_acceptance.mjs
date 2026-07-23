@@ -149,35 +149,44 @@ try {
     `document.getElementById("status").textContent === "Project copy saved"`,
   );
 
-  const transitions = [
-    "transition.gz2e01-door1-01-offer-event",
-    "transition.gz2e01-door1-02-demo-action8",
-    "transition.gz2e01-door1-03-finish-keyhole",
-    "transition.gz2e01-door1-04-flush-key-delta",
-    "transition.gz2e01-door1-05-open-init",
-    "transition.gz2e01-door1-06-open-proc",
-    "transition.gz2e01-door1-07-cross-room-adjacency",
-    "transition.gz2e01-door1-08-close-init",
-    "transition.gz2e01-door1-09-close-end",
-  ];
-  for (let index = 0; index < transitions.length; index += 1) {
-    const transition = transitions[index];
-    await evaluate(`(() => {
-      const search = document.getElementById("search");
-      search.value = ${JSON.stringify(transition)};
-      search.dispatchEvent(new Event("input", { bubbles: true }));
-      const item = [...document.querySelectorAll("#palette-list .palette-item")]
-        .find((button) => button.querySelector("small")?.textContent.endsWith(${JSON.stringify(`· ${transition}`)}));
-      if (!item) throw new Error("transition is absent from the browser palette");
-      item.click();
-      document.getElementById("insert-transition").click();
+  await evaluate(`(() => {
+    const transition = ${JSON.stringify("transition.gz2e01-door1-09-close-end")};
+    const search = document.getElementById("search");
+    search.value = transition;
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    const item = [...document.querySelectorAll("#palette-list .palette-item")]
+      .find((button) => button.querySelector("small")?.textContent.endsWith("· " + transition));
+    if (!item) throw new Error("rejected transition is absent from the browser palette");
+    item.click();
+    document.getElementById("insert-transition").click();
+    return true;
+  })()`);
+  await browserUntil(
+    "typed rejected join",
+    `(() => {
+      const status = document.getElementById("status");
+      if (!status.textContent.includes("was not inserted")) throw new Error(status.textContent);
       return true;
-    })()`);
-    await browserUntil(
-      `route insertion ${index}`,
-      `document.getElementById("status").textContent.includes("inserted as step.route-${String(index).padStart(4, "0")}")`,
-    );
-  }
+    })()`,
+  );
+  await evaluate(`document.getElementById("suggest-transition-chain").click()`);
+  await browserUntil(
+    "producer-chain suggestion",
+    `(() => {
+      const status = document.getElementById("status");
+      const button = document.getElementById("suggest-transition-chain");
+      if (!status.textContent.includes("Suggested exact chain")
+        || button.textContent !== "Insert 8-step chain") {
+        throw new Error(status.textContent + "; button: " + button.textContent);
+      }
+      return true;
+    })()`,
+  );
+  await evaluate(`document.getElementById("suggest-transition-chain").click()`);
+  await browserUntil(
+    "atomic producer-chain insertion",
+    `document.getElementById("status").textContent.includes("8-step producer chain inserted")`,
+  );
   await evaluate(`(() => {
     document.querySelector("#region-breadcrumbs button")?.click();
     const plans = [...document.querySelectorAll("#region-children .enter-region")]
@@ -192,14 +201,14 @@ try {
   })()`);
   await browserUntil(
     "authored route region contents",
-    `document.querySelectorAll("#nodes .node.reference_step").length === 9`,
+    `document.querySelectorAll("#nodes .node.reference_step").length === 8`,
   );
   await browserUntil(
     "projected execution states",
-    `document.querySelectorAll("#nodes .node.execution_state").length === 10`,
+    `document.querySelectorAll("#nodes .node.execution_state").length === 9`,
   );
   await evaluate(`(() => {
-    const terminal = document.querySelector('[data-node-id="execution-state/after/step.route-0008"]');
+    const terminal = document.querySelector('[data-node-id="execution-state/after/step.route-0007"]');
     if (!terminal) throw new Error("terminal execution state is absent");
     terminal.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return true;
@@ -213,7 +222,7 @@ try {
     `(() => {
       const status = document.getElementById("status");
       if (status.classList.contains("bad")) throw new Error(status.textContent);
-      const ready = status.textContent.includes("transition(s) executable from After step.route-0008")
+      const ready = status.textContent.includes("transition(s) executable from After step.route-0007")
         && !document.getElementById("palette-list").textContent.includes("not assessed");
       if (!ready) throw new Error("current status: " + status.textContent
         + "; palette: " + document.getElementById("palette-list").textContent);

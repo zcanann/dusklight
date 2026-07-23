@@ -27,9 +27,9 @@ use dusklight_route_planner::route_book::{
 use dusklight_route_planner::state::BoundaryKind;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v35";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v36";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -110,6 +110,17 @@ pub enum PlannerServiceRequest {
         transition_id: String,
         evidence_mode: crate::RuntimeEvidenceMode,
     },
+    SuggestTransitionChain {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        route_book: Option<Box<RouteBook>>,
+        transition_id: String,
+        evidence_mode: crate::RuntimeEvidenceMode,
+        max_depth: usize,
+        max_states: usize,
+    },
     AppendTransition {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
@@ -182,6 +193,7 @@ impl PlannerServiceRequest {
             | Self::InspectState { request_id, .. }
             | Self::DiffState { request_id, .. }
             | Self::EvaluateTransition { request_id, .. }
+            | Self::SuggestTransitionChain { request_id, .. }
             | Self::AppendTransition { request_id, .. }
             | Self::RemoveAuthoredStep { request_id, .. }
             | Self::ReplaceAuthoredStep { request_id, .. }
@@ -250,6 +262,15 @@ pub enum PlannerServicePayload {
         inspection_diff: Box<StateInspectionDiff>,
     },
     TransitionEvaluation {
+        assessment: Box<TransitionAssessment>,
+        diagnostics: Box<TransitionJoinDiagnostics>,
+        after: Option<Box<PlannerExecutionStateDocument>>,
+    },
+    TransitionChainSuggestion {
+        target_transition_id: String,
+        transition_ids: Vec<String>,
+        explored_states: usize,
+        hit_search_limit: bool,
         assessment: Box<TransitionAssessment>,
         diagnostics: Box<TransitionJoinDiagnostics>,
         after: Option<Box<PlannerExecutionStateDocument>>,
@@ -537,6 +558,28 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 diagnostics: Box::new(evaluation.diagnostics),
                 after,
             })
+        }),
+        PlannerServiceRequest::SuggestTransitionChain {
+            state,
+            catalog,
+            equivalence_sets,
+            route_book,
+            transition_id,
+            evidence_mode,
+            max_depth,
+            max_states,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            suggest_transition_chain(
+                state,
+                &catalog,
+                &equivalence_sets,
+                route_book.map(|book| *book),
+                &transition_id,
+                evidence_mode,
+                max_depth,
+                max_states,
+            )
         }),
         PlannerServiceRequest::AppendTransition {
             state,
@@ -998,6 +1041,129 @@ fn inspect_route_state_change(
             equivalence_sets,
             evidence_mode,
         )?,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn suggest_transition_chain(
+    state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: Option<RouteBook>,
+    transition_id: &str,
+    evidence_mode: crate::RuntimeEvidenceMode,
+    max_depth: usize,
+    max_states: usize,
+) -> Result<PlannerServicePayload, dusklight_route_planner::PlannerContractError> {
+    if max_depth == 0 || max_depth > 32 {
+        return Err(dusklight_route_planner::PlannerContractError::new(
+            "max_depth",
+            "must be between 1 and 32",
+        ));
+    }
+    if max_states == 0 || max_states > 100_000 {
+        return Err(dusklight_route_planner::PlannerContractError::new(
+            "max_states",
+            "must be between 1 and 100000",
+        ));
+    }
+    let frontier =
+        inspect_route_frontier(state, catalog, equivalence_sets, route_book, evidence_mode)?;
+    let PlannerServicePayload::RouteFrontier { frontier_state, .. } = frontier else {
+        unreachable!("route-frontier inspection returns its typed payload")
+    };
+    let frontier_state = frontier_state.into_state()?;
+    let mut initial_candidate = frontier_state.clone();
+    let initial = assess_and_apply_transition(
+        &mut initial_candidate,
+        catalog,
+        equivalence_sets,
+        transition_id,
+        evidence_mode,
+        "route.suggest-initial",
+    )?;
+
+    let mut queue = VecDeque::from([(frontier_state.clone(), Vec::<String>::new())]);
+    let mut visited = BTreeSet::from([frontier_state.digest()?]);
+    let mut explored_states = 0usize;
+    let mut hit_search_limit = false;
+    while let Some((state, prefix)) = queue.pop_front() {
+        if explored_states == max_states {
+            hit_search_limit = true;
+            break;
+        }
+        explored_states += 1;
+        if prefix.len() < max_depth {
+            let mut after = state.clone();
+            let evaluation = assess_and_apply_transition(
+                &mut after,
+                catalog,
+                equivalence_sets,
+                transition_id,
+                evidence_mode,
+                &format!("route.suggest-target-{explored_states:06}"),
+            )?;
+            if evaluation.assessment.classification == TransitionClassification::Executable {
+                let mut transition_ids = prefix;
+                transition_ids.push(transition_id.into());
+                return Ok(PlannerServicePayload::TransitionChainSuggestion {
+                    target_transition_id: transition_id.into(),
+                    transition_ids,
+                    explored_states,
+                    hit_search_limit: false,
+                    assessment: Box::new(evaluation.assessment),
+                    diagnostics: Box::new(evaluation.diagnostics),
+                    after: Some(Box::new(after.to_document()?)),
+                });
+            }
+        }
+        if prefix.len() + 1 >= max_depth {
+            continue;
+        }
+        for transition in &catalog.mechanics.transitions {
+            if transition.id == transition_id {
+                continue;
+            }
+            let mut next = state.clone();
+            let evaluation = assess_and_apply_transition(
+                &mut next,
+                catalog,
+                equivalence_sets,
+                &transition.id,
+                evidence_mode,
+                &format!(
+                    "route.suggest-producer-{explored_states:06}.{}",
+                    transition.id
+                ),
+            )?;
+            if evaluation.assessment.classification != TransitionClassification::Executable {
+                continue;
+            }
+            let identity = next.digest()?;
+            if visited.contains(&identity) {
+                continue;
+            }
+            if visited.len() == max_states {
+                hit_search_limit = true;
+                break;
+            }
+            visited.insert(identity);
+            let mut chain = prefix.clone();
+            chain.push(transition.id.clone());
+            queue.push_back((next, chain));
+        }
+    }
+    if !queue.is_empty() {
+        hit_search_limit = true;
+    }
+    Ok(PlannerServicePayload::TransitionChainSuggestion {
+        target_transition_id: transition_id.into(),
+        transition_ids: Vec::new(),
+        explored_states,
+        hit_search_limit,
+        assessment: Box::new(initial.assessment),
+        diagnostics: Box::new(initial.diagnostics),
+        after: None,
     })
 }
 
@@ -1806,6 +1972,49 @@ mod tests {
                 TransitionClassification::Executable
             );
         }
+    }
+
+    #[test]
+    fn service_suggests_the_shortest_exact_transition_chain_to_a_rejected_join() {
+        let (state, catalog) = executable_transition_fixture();
+        let response = handle_request(PlannerServiceRequest::SuggestTransitionChain {
+            request_id: "request.suggest-chain".into(),
+            state: Box::new(state),
+            catalog: Box::new(catalog),
+            equivalence_sets: Vec::new(),
+            route_book: None,
+            transition_id: "transition.enter-boss".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+            max_depth: 4,
+            max_states: 32,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("chain suggestion should be a typed service result");
+        };
+        let PlannerServicePayload::TransitionChainSuggestion {
+            target_transition_id,
+            transition_ids,
+            explored_states,
+            hit_search_limit,
+            assessment,
+            after: Some(after),
+            ..
+        } = *payload
+        else {
+            panic!("a reachable rejected join should return its producer chain");
+        };
+        assert_eq!(target_transition_id, "transition.enter-boss");
+        assert_eq!(
+            transition_ids,
+            ["transition.enter-forest", "transition.enter-boss"]
+        );
+        assert!(explored_states >= 2);
+        assert!(!hit_search_limit);
+        assert_eq!(
+            assessment.classification,
+            TransitionClassification::Executable
+        );
+        assert_eq!(after.snapshot.environment.location.stage, "D_MN06");
     }
 
     #[test]

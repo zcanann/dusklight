@@ -254,6 +254,11 @@ The planner CLI currently owns forty operations:
   exposes the same versioned service envelope over `POST /api/service`. It also
   owns a path-confined project workspace with list/load/template/save endpoints,
   immutable built-in demonstrations, and revision-checked atomic persistence.
+  Rejected transition joins retain their exact propagated frontier and can run
+  a deterministic bounded transition search for the shortest executable
+  producer chain. The browser previews that typed suggestion and validates
+  every append against a temporary route book before committing the complete
+  unsaved chain, so a stale or invalid suffix cannot partially edit the route.
   Static assets are embedded in the Rust binary and served with a restrictive
   content security policy and no cache.
 

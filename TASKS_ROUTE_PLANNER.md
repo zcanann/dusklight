@@ -2771,7 +2771,7 @@ visual polish or whole-game authoring features.
         through revision-checked Rust edit batches; plan methods can also select
         or clear their owning region's alternative, and the canvas distinguishes
         each persisted choice.
-- [ ] Make transition insertion the primary authoring operation.
+- [x] Make transition insertion the primary authoring operation.
   - [x] From a selected state node, list applicable physical, event, warp,
         reload, title/file, and technique transitions.
         Service v35 now replays the complete authored method from its exact start,
@@ -2793,8 +2793,16 @@ visual polish or whole-game authoring features.
         edits remain visible with their closest propagated state, typed missing/
         unknown obligations, obstruction diagnostics, scope/evidence failures,
         and no bypass command.
-  - [ ] Allow an author to insert a suggested producer/resolver chain or create
-        an explicitly hypothetical refinement from the rejection.
+  - [x] Allow an author to insert a suggested producer/resolver chain or create
+        an explicitly hypothetical refinement from the rejection. Service v36
+        performs deterministic bounded breadth-first search from the exact
+        propagated route frontier, returns the shortest executable transition
+        chain with its terminal assessment and state, and the browser validates
+        the whole suggested chain against a temporary route book before making
+        the unsaved edit visible. The real Brave acceptance rejects the keyed
+        shutter close join, discovers the eight-step minimal producer chain
+        (correctly omitting the unnecessary pending-key flush), inserts it, and
+        verifies the projected execution states through save/reload.
 - [ ] Add nested subgraph authoring and browsing as graph-view encapsulation.
   - [ ] Group selected states/transitions into a named region without changing
         their solver identities, effects, or connectivity.

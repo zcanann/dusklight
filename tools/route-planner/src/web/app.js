@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v35";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v36";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v1";
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v6";
@@ -12,7 +12,7 @@ const elements = Object.fromEntries([
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
   "contract-inspector",
   "region-nav", "region-breadcrumbs", "region-children",
-  "evaluate-transition", "insert-transition", "replace-step", "remove-step",
+  "evaluate-transition", "insert-transition", "suggest-transition-chain", "replace-step", "remove-step",
   "pin-selection", "ban-selection", "prefer-selection", "select-method",
 ].map((id) => [id, document.getElementById(id)]));
 
@@ -54,6 +54,7 @@ elements["zoom-out"].addEventListener("click", () => zoomAt(1 / 1.2));
 elements.fit.addEventListener("click", fitGraph);
 elements["evaluate-transition"].addEventListener("click", evaluateSelectedTransition);
 elements["insert-transition"].addEventListener("click", insertSelectedTransition);
+elements["suggest-transition-chain"].addEventListener("click", suggestOrInsertSelectedTransitionChain);
 elements["replace-step"].addEventListener("click", replaceSelectedRouteStep);
 elements["remove-step"].addEventListener("click", removeSelectedRouteStep);
 elements["pin-selection"].addEventListener("click", () => editSelectedDirective("pin"));
@@ -690,6 +691,8 @@ function renderDetails() {
     elements["detail-json"].textContent = "{}";
     elements["evaluate-transition"].disabled = true;
     elements["insert-transition"].disabled = true;
+    elements["suggest-transition-chain"].disabled = true;
+    elements["suggest-transition-chain"].textContent = "Find producer chain";
     elements["replace-step"].disabled = true;
     elements["remove-step"].disabled = true;
     updateDirectiveControls(null);
@@ -703,6 +706,13 @@ function renderDetails() {
   const routeStep = selected.type === "node" && selected.value.payload.kind === "reference_step";
   elements["evaluate-transition"].disabled = !transition || !state.project?.start_state;
   elements["insert-transition"].disabled = !transition || !state.project?.start_state || state.readOnly;
+  const suggestion = state.transitionEvaluation?.suggestion;
+  const rejectedJoin = state.transitionEvaluation?.kind === "rejected_transition_join";
+  elements["suggest-transition-chain"].disabled = !transition || !rejectedJoin
+    || !state.project?.start_state || state.readOnly;
+  elements["suggest-transition-chain"].textContent = suggestion?.transition_ids?.length
+    ? `Insert ${suggestion.transition_ids.length}-step chain`
+    : "Find producer chain";
   elements["replace-step"].disabled = (!routeStep && !(transition && state.replacementStep))
     || !state.project?.start_state || state.readOnly;
   elements["replace-step"].textContent = transition && state.replacementStep
@@ -1290,6 +1300,96 @@ async function insertSelectedTransition() {
   }
 }
 
+async function suggestOrInsertSelectedTransitionChain() {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  if (node?.payload.kind !== "transition" || state.readOnly
+    || state.transitionEvaluation?.kind !== "rejected_transition_join") return;
+  const prior = state.transitionEvaluation.suggestion;
+  if (prior?.transition_ids?.length) {
+    await insertSuggestedTransitionChain(prior);
+    return;
+  }
+  try {
+    setStatus(`Searching exact producer chains for ${node.label}...`);
+    const payload = await service({
+      command: "suggest_transition_chain",
+      request_id: requestId("suggest-transition-chain"),
+      state: state.project.start_state,
+      catalog: state.project.catalog,
+      equivalence_sets: state.project.equivalence_sets ?? [],
+      route_book: state.project.route_book ?? null,
+      transition_id: node.payload.transition_id,
+      evidence_mode: projectEvidenceMode(),
+      max_depth: 12,
+      max_states: 2048,
+    });
+    if (payload.kind !== "transition_chain_suggestion") {
+      throw new Error(`Unexpected response ${payload.kind}`);
+    }
+    state.transitionEvaluation = { ...state.transitionEvaluation, suggestion: payload };
+    render();
+    if (payload.transition_ids.length) {
+      const labels = payload.transition_ids.map((id) =>
+        state.project.catalog.mechanics.transitions.find((candidate) => candidate.id === id)?.label ?? id);
+      setStatus(`Suggested exact chain: ${labels.join(" → ")}`, "good");
+    } else {
+      const limit = payload.hit_search_limit ? " within the bounded search" : "";
+      setStatus(`No executable producer chain found${limit}; rejection remains explicit`, "bad");
+    }
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function insertSuggestedTransitionChain(suggestion) {
+  const node = state.selected?.type === "node" ? state.selected.value : null;
+  if (node?.payload.kind !== "transition" || !suggestion.transition_ids.length || state.readOnly) return;
+  try {
+    setStatus(`Validating and inserting ${suggestion.transition_ids.length}-step producer chain...`);
+    let book = state.project.route_book ?? null;
+    let appended = null;
+    for (const transitionId of suggestion.transition_ids) {
+      const payload = await service({
+        command: "append_transition",
+        request_id: requestId("append-suggested-transition"),
+        state: state.project.start_state,
+        catalog: state.project.catalog,
+        equivalence_sets: state.project.equivalence_sets ?? [],
+        route_book: book,
+        route_book_id: `route.${slug(state.project.id)}`,
+        route_book_label: state.project.label,
+        transition_id: transitionId,
+        evidence_mode: projectEvidenceMode(),
+      });
+      if (payload.kind !== "appended_transition") {
+        throw new Error(`Suggested chain changed before insertion at ${transitionId}`);
+      }
+      book = payload.book;
+      appended = payload;
+    }
+    state.project.route_book = book;
+    const projected = await service({
+      command: "project_graph",
+      request_id: requestId("project-after-suggested-chain"),
+      catalog: state.project.catalog,
+      route_book: state.project.route_book,
+    });
+    if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
+    state.graph = projected.graph;
+    await refreshAuthoredRouteInspections();
+    ensurePositions();
+    const stepNode = state.graph.nodes.find((candidate) =>
+      candidate.payload.kind === "reference_step" && candidate.payload.step_id === appended.step_id);
+    if (stepNode) selectNode(stepNode);
+    else state.selected = null;
+    markDirty();
+    render();
+    setStatus(`${suggestion.transition_ids.length}-step producer chain inserted; save to persist`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
 async function evaluateSelectedTransition() {
   const node = state.selected?.type === "node" ? state.selected.value : null;
   const frontierState = state.routeFrontier?.frontier_state ?? state.project?.start_state;
@@ -1340,7 +1440,9 @@ async function inspectStateChange(before, after, id) {
   if (beforePayload.kind !== "state_inspection") {
     throw new Error(`Unexpected response ${beforePayload.kind}`);
   }
-  if (!after) return { before: beforePayload.inspection, after: null, diff: null };
+  if (!after || after.snapshot.sequence <= before.snapshot.sequence) {
+    return { before: beforePayload.inspection, after: null, diff: null };
+  }
   const afterPayload = await service({
     command: "inspect_state",
     request_id: requestId(`${id}-after`),
