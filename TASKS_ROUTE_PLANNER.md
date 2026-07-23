@@ -2253,7 +2253,11 @@ Deliverable: replayable state evidence that can validate transition rules.
         and rule-level semantic equivalence remain open.
 - [ ] Reconstruct live actor behavior from placement, layer, persisted state, and
       instance lifecycle.
-- [ ] Implement save/load/title/runtime-file operations.
+- [x] Implement save/load/title/runtime-file operations. The supported GZ2E01
+      context now has transactional save/load/runtime lifetimes, exact title and
+      file-select programs, save-time normalization, and distinct normalized
+      void/death request programs; undecoded special variants remain explicit
+      unknown candidates rather than missing or generic edges.
   - [x] Add transactional primitives for serialization, restoration, explicit
         component projection between runtime-file bindings, and location changes.
   - [x] Model persistent-file images, populated physical slots, active-runtime
@@ -2263,8 +2267,11 @@ Deliverable: replayable state evidence that can validate transition rules.
         card-backed runtime loads; session-owned state is independent and the
         loaded runtime's future save targets remain explicit. See
         `docs/route-planner/backing-store-boundaries.md`.
-  - [ ] Model concrete title-return/void handling and build-specific save-time
-        normalization/clearing as evidenced transition programs.
+  - [x] Model concrete title-return/void handling and build-specific save-time
+        normalization/clearing as evidenced transition programs. Exact GZ2E01
+        title/file-select/save normalization composes with collision-exit,
+        held-restart, lethal-diversion, return-to-title, and four normalized
+        death-continue destination branches.
     - [x] Model the exact GZ2E01 reset-to-opening prefix as a guarded title-return
           transition with an explicit process context and pending world-load
           request; do not conflate that request with a completed map load.
@@ -2305,8 +2312,9 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Source-audit void/hazard and death selection without collapsing
           collision exits, held restart-room state, captured actor exits,
           boss/special-stage branches, and title reset into one reload edge.
-          Seven top-level GZ2E01 functions are exact-binary sealed; executable
-          transition programs and deeper callee decoding remain open.
+          Seven top-level GZ2E01 functions are exact-binary sealed; normalized
+          selection programs are executable while deeper callee decoding remains
+          open.
     - [x] Compile the exact GZ2E01 void-selection prefix over normalized observed
           destinations. Collision-exit and held-restart requests remain
           mutually exclusive pending loads and preserve the restart backing;
@@ -3225,7 +3233,10 @@ slice into release criteria only when it exercises a missing core semantic law.
         and prove the failed command changes no slot/header.
 - [x] Show physical slots 1–3 separately.
   - Populated slots seal distinct persistent-file images; slot 0 is rejected.
-- [ ] Model void/title-state handling and save projection to a chosen slot.
+- [x] Model void/title-state handling and save projection to a chosen slot. The
+      exact supported context keeps requests pending, distinguishes all decoded
+      destination families, and routes title return through the existing guarded
+      reset program; unknown special-hazard parameters never authorize a reload.
   - [x] Model the chosen-slot projection/load mechanics independently of the
         still-unmodeled void/title-state preconditions and normalization rules.
   - [x] Enumerate the source-backed void, lethal, death-continue, and title-reset
@@ -3235,8 +3246,13 @@ slice into release criteria only when it exercises a missing core semantic law.
         state. Polygon-exit and held-restart requests create distinct pending
         loads without rewriting restart state; lethal selection creates no load,
         and the declined-continue path composes through the existing guarded
-        title-reset transition. Special variants and full continue destinations
+        title-reset transition. Special variants and raw destination decoding
         remain unknown rather than becoming generic reloads.
+  - [x] Model the four death-continue destination families after confirmed
+        recovery. Life restoration precedes mutually exclusive D_MN09A-special,
+        boss-exit, actor-captured, or held-restart pending loads; conditional
+        recovery mutations remain explicit observed prerequisites until their
+        raw effects are witnessed.
 - [ ] Model BiTE as a selected component splice into an existing file.
   - [x] Implement the generic selected runtime-component splice into a freshly
         loaded existing file, with destination ownership and mixed provenance.

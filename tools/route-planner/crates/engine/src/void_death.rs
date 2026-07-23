@@ -18,6 +18,7 @@ use crate::transition::{
 pub const VOID_CONTROL_COMPONENT_ID: &str = "control.void-selection";
 pub const DEATH_FLOW_COMPONENT_ID: &str = "control.death-flow";
 pub const RESET_CONTROL_COMPONENT_ID: &str = "reset-control";
+pub const PLAYER_RESOURCES_COMPONENT_ID: &str = "inventory-and-resources";
 
 pub fn gz2e01_void_death_mechanics(
     content: &ContentIdentity,
@@ -194,6 +195,85 @@ pub fn gz2e01_void_death_mechanics(
                 },
             }],
         ),
+        transition(
+            "transition.gz2e01.void.06-continue-recovery",
+            "Apply the confirmed death-continue recovery prefix",
+            TransitionKind::DeathReload,
+            vec![
+                death_is("phase", StateValue::Text("game_over_wait".into())),
+                death_is("choice", StateValue::Text("continue".into())),
+                control_is(
+                    "continue_mutations_observed_complete",
+                    StateValue::Boolean(true),
+                ),
+            ],
+            vec![
+                StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: PLAYER_RESOURCES_COMPONENT_ID.into(),
+                        field: "life".into(),
+                    },
+                    value: StateValue::Unsigned(12),
+                },
+                write_death(
+                    "phase",
+                    StateValue::Text("continue_destination_select".into()),
+                ),
+            ],
+            Vec::new(),
+        ),
+        transition(
+            "transition.gz2e01.void.07-continue-d-mn09a-special",
+            "Request the decoded D_MN09A room-50 continue destination",
+            TransitionKind::DeathReload,
+            continue_family_guards("d_mn09a_special"),
+            request_effects(
+                "death_destination_stage",
+                "death_destination_room",
+                "death_destination_spawn",
+                "death_continue_requested",
+            ),
+            Vec::new(),
+        ),
+        transition(
+            "transition.gz2e01.void.08-continue-boss-exit",
+            "Request the decoded boss-room exit-0 continue destination",
+            TransitionKind::DeathReload,
+            continue_family_guards("boss_exit"),
+            request_effects(
+                "death_destination_stage",
+                "death_destination_room",
+                "death_destination_spawn",
+                "death_continue_requested",
+            ),
+            Vec::new(),
+        ),
+        transition(
+            "transition.gz2e01.void.09-continue-actor-exit",
+            "Request the decoded actor-captured continue destination",
+            TransitionKind::DeathReload,
+            continue_family_guards("actor_exit"),
+            request_effects(
+                "death_destination_stage",
+                "death_destination_room",
+                "death_destination_spawn",
+                "death_continue_requested",
+            ),
+            Vec::new(),
+        ),
+        transition(
+            "transition.gz2e01.void.10-continue-held-restart",
+            "Request the held restart-room continue destination",
+            TransitionKind::DeathReload,
+            continue_family_guards("held_restart"),
+            request_effects(
+                "restart_destination_stage",
+                "restart_destination_room",
+                "restart_destination_spawn",
+                "death_continue_requested",
+            ),
+            Vec::new(),
+        ),
     ];
     let catalog = MechanicsCatalog {
         schema: MECHANICS_CATALOG_SCHEMA.into(),
@@ -272,6 +352,18 @@ fn world_active() -> PredicateExpression {
         ValueReference::WorldExecutionActive,
         StateValue::Boolean(true),
     )
+}
+
+fn continue_family_guards(family: &str) -> Vec<PredicateExpression> {
+    vec![
+        world_active(),
+        death_is(
+            "phase",
+            StateValue::Text("continue_destination_select".into()),
+        ),
+        death_is("destination_family", StateValue::Text(family.into())),
+        control_is("restart_one_shot", StateValue::Boolean(false)),
+    ]
 }
 
 fn component_field(component_id: &str, field: &str) -> ValueReference {
@@ -427,6 +519,10 @@ mod tests {
                         ComponentKind::PendingOperation,
                         BTreeMap::from([
                             ("choice".into(), StateValue::Text("decline_continue".into())),
+                            (
+                                "destination_family".into(),
+                                StateValue::Text("actor_exit".into()),
+                            ),
                             ("phase".into(), StateValue::Text("idle".into())),
                         ]),
                     ),
@@ -444,6 +540,16 @@ mod tests {
                                 "collision_exit_usable".into(),
                                 StateValue::Boolean(collision_exit_usable),
                             ),
+                            (
+                                "continue_mutations_observed_complete".into(),
+                                StateValue::Boolean(true),
+                            ),
+                            ("death_destination_room".into(), StateValue::Signed(4)),
+                            ("death_destination_spawn".into(), StateValue::Signed(9)),
+                            (
+                                "death_destination_stage".into(),
+                                StateValue::Text("D_MN09A".into()),
+                            ),
                             ("event_acquired".into(), StateValue::Boolean(true)),
                             ("hazard_variant".into(), StateValue::Text("ordinary".into())),
                             ("lethal".into(), StateValue::Boolean(lethal)),
@@ -457,6 +563,11 @@ mod tests {
                             ("selection_requested".into(), StateValue::Boolean(true)),
                             ("trigger_entered".into(), StateValue::Boolean(true)),
                         ]),
+                    ),
+                    component(
+                        PLAYER_RESOURCES_COMPONENT_ID,
+                        ComponentKind::Inventory,
+                        BTreeMap::from([("life".into(), StateValue::Unsigned(0))]),
                     ),
                     component(
                         RESET_CONTROL_COMPONENT_ID,
@@ -511,12 +622,37 @@ mod tests {
             .unwrap();
     }
 
+    fn fields_mut<'a>(
+        state: &'a mut PlannerExecutionState,
+        component_id: &str,
+    ) -> &'a mut BTreeMap<String, StateValue> {
+        let component = state
+            .snapshot
+            .environment
+            .components
+            .iter_mut()
+            .find(|component| component.id == component_id)
+            .unwrap();
+        let ComponentPayload::Structured { fields } = &mut component.payload else {
+            unreachable!()
+        };
+        fields
+    }
+
     #[test]
     fn collision_exit_and_held_restart_requests_remain_distinct() {
         let (content, runtime) = context();
         let mechanics = gz2e01_void_death_mechanics(&content, &runtime).unwrap();
         let mut collision = state(true, false);
-        let restart_before = collision.snapshot.environment.components[3].payload.clone();
+        let restart_before = collision
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "restart")
+            .unwrap()
+            .payload
+            .clone();
         apply(&mut collision, &mechanics.transitions[0]);
         assert!(matches!(
             collision.snapshot.environment.execution_context,
@@ -526,7 +662,14 @@ mod tests {
             } if process_name == "PROC_PLAY_SCENE" && stage == "F_SP109"
         ));
         assert_eq!(
-            collision.snapshot.environment.components[3].payload,
+            collision
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == "restart")
+                .unwrap()
+                .payload,
             restart_before
         );
 
@@ -553,7 +696,13 @@ mod tests {
             ExecutionContext::World
         ));
         apply(&mut state, &mechanics.transitions[3]);
-        let reset = &state.snapshot.environment.components[2];
+        let reset = state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == RESET_CONTROL_COMPONENT_ID)
+            .unwrap();
         let ComponentPayload::Structured { fields } = &reset.payload else {
             unreachable!()
         };
@@ -562,6 +711,35 @@ mod tests {
             state.snapshot.environment.execution_context,
             ExecutionContext::World
         ));
+    }
+
+    #[test]
+    fn continue_recovery_routes_each_decoded_destination_family() {
+        let (content, runtime) = context();
+        let mechanics = gz2e01_void_death_mechanics(&content, &runtime).unwrap();
+        for (family, transition_index, expected_stage, expected_room, expected_spawn) in [
+            ("d_mn09a_special", 6, "D_MN09A", 4, 9),
+            ("boss_exit", 7, "D_MN09A", 4, 9),
+            ("actor_exit", 8, "D_MN09A", 4, 9),
+            ("held_restart", 9, "F_SP108", 0, 3),
+        ] {
+            let mut state = state(false, true);
+            apply(&mut state, &mechanics.transitions[2]);
+            let death = fields_mut(&mut state, DEATH_FLOW_COMPONENT_ID);
+            death.insert("choice".into(), StateValue::Text("continue".into()));
+            death.insert("destination_family".into(), StateValue::Text(family.into()));
+            apply(&mut state, &mechanics.transitions[5]);
+            let resources = fields_mut(&mut state, PLAYER_RESOURCES_COMPONENT_ID);
+            assert_eq!(resources["life"], StateValue::Unsigned(12));
+            apply(&mut state, &mechanics.transitions[transition_index]);
+            assert!(matches!(
+                state.snapshot.environment.execution_context,
+                ExecutionContext::Process {
+                    pending_world_load: Some(SceneLocation { ref stage, room, spawn, .. }),
+                    ..
+                } if stage == expected_stage && room == expected_room && spawn == expected_spawn
+            ));
+        }
     }
 
     #[test]

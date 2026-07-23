@@ -145,8 +145,13 @@ semantics. Neighboring content or runtime-language identities are rejected.
 
 This implemented prefix consumes normalized observed destination fields. It
 does not claim that the still-unwitnessed raw collision exit or packed restart
-parameter decoder has been recovered, nor does it model the four continue
-destination families or conditional recovery mutations below.
+parameter decoder has been recovered. After a normalized observation confirms
+that the source-visible conditional recovery mutations completed, the program
+restores life to 12 and selects each of the four distinct continue destination
+families: `D_MN09A` room-50 special, boss exit, actor-captured exit/room, or held
+restart. Every family creates a pending load and none completes scheduler/world
+activation. The conditional lantern, oil, minigame, Ooccoo, and warp mutations
+themselves remain evidence gaps below rather than guessed effects.
 
 ## Remaining evidence gaps
 
