@@ -1959,9 +1959,13 @@ evidenced overlays over the generated base rather than silent edits to it.
       explicit. See
       `docs/route-planner/gz2e01-representative-actor-state-inventory.md`.
 - [ ] Audit SavMem placements, guards, and all return/restart-place writers.
-- [ ] Record known BiT, BiTE, Auru duplication, wrong-flags respawn, Fanadi lock,
+- [x] Record known BiT, BiTE, Auru duplication, wrong-flags respawn, Fanadi lock,
       Text Displacement, and Ordon/twilight route evidence without prematurely
-      encoding conclusions.
+      encoding conclusions. The evidence index separates exact mechanism,
+      extracted/witnessed scope, unresolved activation, and hypothesis for each
+      family; generic splice or item-store machinery never establishes a
+      trick-specific route or preservation set. See
+      `docs/route-planner/route-research-evidence-index.md`.
 - [x] Establish a glossary: build, runtime file, backing, slot, component, payload,
       binding, fact, technique, obstruction, obligation, refinement, route book,
       proof. See `docs/route-planner/glossary.md`; it also fixes the meanings of
