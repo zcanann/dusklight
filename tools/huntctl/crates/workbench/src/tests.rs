@@ -57,6 +57,39 @@ fn checked_intro_timeline(repository: &Path) -> PathBuf {
     repository.join("routes/Glitch Exhibition/intro.timeline")
 }
 
+fn copy_tree(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+fn pristine_intro_repository(name: &str) -> PathBuf {
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../..")
+        .canonicalize()
+        .unwrap();
+    let repository = temporary_root(name);
+    let route_root = repository.join("routes/Glitch Exhibition");
+    fs::create_dir_all(&route_root).unwrap();
+    fs::copy(
+        checked_intro_timeline(&source),
+        route_root.join("intro.timeline"),
+    )
+    .unwrap();
+    copy_tree(
+        &source.join("routes/Glitch Exhibition/intro"),
+        &route_root.join("intro"),
+    );
+    repository
+}
+
 fn write_tape(root: &Path, name: &str, values: &[i8]) {
     let tape = InputTape {
         frames: values
@@ -1915,10 +1948,7 @@ continue main with boot_link.tas after root@clean
 
 #[test]
 fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../..")
-        .canonicalize()
-        .unwrap();
+    let repository = pristine_intro_repository("checked-intro");
     let timeline_path = checked_intro_timeline(&repository);
     let route = load_authoritative_timeline(&timeline_path).unwrap();
     let mut graph = graph_from_timeline(&route, timeline_path.parent().unwrap()).unwrap();
@@ -2059,6 +2089,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let boot = graph.origin.as_ref().unwrap();
     assert!(boot.recordable_from_boot);
     assert_eq!(boot.id, "boot");
+    fs::remove_dir_all(repository).unwrap();
 }
 
 #[test]
@@ -2276,10 +2307,7 @@ fn completed_optimization_candidate_projects_as_a_playable_ephemeral_sibling() {
 
 #[test]
 fn optimization_start_api_requires_explicit_world_context() {
-    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../..")
-        .canonicalize()
-        .unwrap();
+    let repository = pristine_intro_repository("optimization-start");
     let config = WorkbenchConfig {
         timeline_path: checked_intro_timeline(&repository),
         repository_root: repository.clone(),
@@ -2341,6 +2369,7 @@ fn optimization_start_api_requires_explicit_world_context() {
     );
     assert_eq!(smuggled.status, 400);
     assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
+    fs::remove_dir_all(repository).unwrap();
 }
 
 #[test]
