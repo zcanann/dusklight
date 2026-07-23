@@ -3176,8 +3176,10 @@ slice into release criteria only when it exercises a missing core semantic law.
 
 #### 11B. Back in Time/file 0
 
-- [ ] Enter the slotless title-origin runtime file and import its exact initialized
-      persistent-domain stores per build.
+- [x] Enter the slotless title-origin runtime file and import its exact initialized
+      persistent-domain stores for every registered supported build. GZ2E01 is
+      currently the sole registered exact identity; the profile is digest-bound
+      and rejects neighboring content rather than generalizing its initialization.
   - [x] For GZ2E01, model the exact opening guard and audited initialized
         projection: empty item slots, selected Hero's Clothes, Ordon Sword and
         Hylian Shield, health, rupees, Epona-tamed bit, initial return place,
@@ -3335,7 +3337,10 @@ switch-area creation/outside clearers, the exhaustive committed writer/consumer
 set, and the distinct 16-tear `KYTAG04` -> switch 13 -> point-20 twilight-clear
 sequence.
 
-- [ ] Locate the spirit actor/event flow and every build-specific placement.
+- [x] Locate the spirit actor/event flow and every placement in the registered
+      supported contexts. The sole supported identity is GZ2E01; its stage,
+      layer-13 actor, message group, language resource, and flow label are pinned
+      exactly, while unregistered builds remain unsupported rather than inferred.
   - [x] Pin the exact GZ2E01 F_SP115 STAG, R01 layer-13 `Seirei`, US-English
         group-8 resource, and flow-21 label in a compiled message-entry contract.
         Other build/language placements remain unverified.
