@@ -11,6 +11,7 @@ use crate::residual_campaign::ResidualCampaignCheckpoint;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
+use dusklight_search::residual_retention::ResidualOutcomeArchive;
 pub use dusklight_search::residual_retention::ReverseCurriculumSupportPolicy;
 use serde::de::DeserializeOwned;
 use sha2::{Digest as _, Sha256};
@@ -110,7 +111,7 @@ pub fn expand_residual_reverse_curriculum_request(
         .start_frame
         .saturating_sub(lineage.policy.expansion_step_ticks)
         .max(lineage.root_start_frame);
-    let archive = checkpoint.restore_archive().map_err(curriculum_error)?;
+    let archive = ResidualOutcomeArchive::restore_after_validation(checkpoint.retention.clone());
     let evidence = archive
         .reverse_curriculum_evidence(
             incumbent_tape,
@@ -175,12 +176,9 @@ pub(crate) fn validate_reverse_curriculum_files(
         })?;
         let execution: NativeResidualExecutionBinding = read_bound_json(root, execution_reference)?;
         execution
-            .validate_files(root, &parent)
+            .validate_seal(&parent)
             .map_err(|error| format!("invalid curriculum source execution: {error}"))?;
         let checkpoint: ResidualCampaignCheckpoint = read_bound_json(root, checkpoint_reference)?;
-        checkpoint
-            .validate(&parent, execution.content_sha256)
-            .map_err(|error| format!("invalid curriculum source checkpoint: {error}"))?;
         let incumbent = parent
             .incumbent
             .as_ref()

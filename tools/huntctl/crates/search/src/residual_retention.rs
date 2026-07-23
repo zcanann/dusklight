@@ -197,6 +197,8 @@ impl ResidualRetentionSnapshot {
             .iter()
             .map(|entry| (entry.evidence_sha256, entry.realized_tape_sha256))
             .collect::<BTreeMap<_, _>>();
+        let tapes_with_evaluations = evaluations.values().copied().collect::<BTreeSet<_>>();
+        let tapes_with_episodes = episodes.values().copied().collect::<BTreeSet<_>>();
         if evaluated.keys().any(|digest| *digest == Digest::ZERO)
             || evaluations
                 .iter()
@@ -205,8 +207,7 @@ impl ResidualRetentionSnapshot {
                 .iter()
                 .any(|(evidence, tape)| *evidence == Digest::ZERO || !evaluated.contains_key(tape))
             || evaluated.keys().any(|tape| {
-                !evaluations.values().any(|bound| bound == tape)
-                    || !episodes.values().any(|bound| bound == tape)
+                !tapes_with_evaluations.contains(tape) || !tapes_with_episodes.contains(tape)
             })
         {
             return Err(retention_error(
@@ -221,15 +222,19 @@ impl ResidualRetentionSnapshot {
                 ));
             }
         }
+        let successes_by_tape = self
+            .successes
+            .iter()
+            .map(|success| (success.realized_tape_sha256, success))
+            .collect::<BTreeMap<_, _>>();
         for success in self
             .successes
             .iter()
-            .filter(|success| success.minimized_from.is_some())
+            .filter_map(|success| success.minimized_from.map(|source| (success, source)))
         {
-            let source = self
-                .successes
-                .iter()
-                .find(|source| Some(source.realized_tape_sha256) == success.minimized_from)
+            let (success, source_digest) = success;
+            let source = successes_by_tape
+                .get(&source_digest)
                 .ok_or_else(|| retention_error("minimized success is detached from its source"))?;
             if (success.tape_frames, success.input_complexity)
                 >= (source.tape_frames, source.input_complexity)
@@ -433,7 +438,15 @@ impl ResidualOutcomeArchive {
 
     pub fn restore(snapshot: ResidualRetentionSnapshot) -> Result<Self, ResidualRetentionError> {
         snapshot.validate()?;
-        Ok(Self {
+        Ok(Self::restore_after_validation(snapshot))
+    }
+
+    /// Restores a snapshot whose seal and semantic bindings were validated by
+    /// the enclosing authenticated artifact. This avoids repeating the
+    /// potentially large snapshot validation when a checkpoint has just
+    /// validated the same value.
+    pub fn restore_after_validation(snapshot: ResidualRetentionSnapshot) -> Self {
+        Self {
             config: snapshot.config,
             successes: snapshot.successes,
             failures: snapshot.failures,
@@ -452,7 +465,7 @@ impl ResidualOutcomeArchive {
                 .into_iter()
                 .map(|entry| (entry.evidence_sha256, entry.realized_tape_sha256))
                 .collect(),
-        })
+        }
     }
 
     pub fn snapshot(&self) -> Result<ResidualRetentionSnapshot, ResidualRetentionError> {

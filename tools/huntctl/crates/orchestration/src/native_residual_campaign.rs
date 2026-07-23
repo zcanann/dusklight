@@ -96,18 +96,7 @@ impl NativeResidualExecutionBinding {
     ) -> Result<NativeResidualExecutionValidationReport, NativeResidualCampaignError> {
         let root = repository_root.canonicalize().map_err(native_error)?;
         optimization.validate_files(&root).map_err(native_error)?;
-        if self.schema != NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1
-            || self.optimization_request_sha256 != optimization.content_sha256
-            || self.checkpoint_validation_ticks == 0
-            || self.checkpoint_validation_ticks > 256
-            || self.checkpoint_validation_ticks > optimization.budgets.exploration_horizon_ticks
-            || self.content_sha256 == Digest::ZERO
-            || self.content_sha256 != self.identity()?
-        {
-            return Err(native_message(
-                "native residual execution binding is invalid or detached",
-            ));
-        }
+        self.validate_seal(optimization)?;
         let _executable = validate_artifact(&root, "executable", &self.executable, false)?;
         // Development disc images are commonly ignored repository-relative
         // symlinks to an external immutable image. Preserve the repository
@@ -208,6 +197,29 @@ impl NativeResidualExecutionBinding {
             checkpoint_validation_ticks: self.checkpoint_validation_ticks,
             workers: optimization.execution.workers,
         })
+    }
+
+    /// Validates the immutable execution object without reopening its external
+    /// runtime artifacts. Curriculum descendants consume only this sealed
+    /// identity and a checkpoint bound to it; the executable and game image
+    /// are authenticated again when an execution is actually launched.
+    pub(crate) fn validate_seal(
+        &self,
+        optimization: &OptimizationRequest,
+    ) -> Result<(), NativeResidualCampaignError> {
+        if self.schema != NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1
+            || self.optimization_request_sha256 != optimization.content_sha256
+            || self.checkpoint_validation_ticks == 0
+            || self.checkpoint_validation_ticks > 256
+            || self.checkpoint_validation_ticks > optimization.budgets.exploration_horizon_ticks
+            || self.content_sha256 == Digest::ZERO
+            || self.content_sha256 != self.identity()?
+        {
+            return Err(native_message(
+                "native residual execution binding is invalid or detached",
+            ));
+        }
+        Ok(())
     }
 
     pub fn to_pretty_json(&self) -> Result<Vec<u8>, NativeResidualCampaignError> {
@@ -1110,8 +1122,13 @@ mod tests {
         assert_eq!(report.process_boot_tape_frames, 666);
         assert_eq!(report.materialized_route_frames, 632);
         assert_eq!(report.workers, 4);
+        binding.validate_seal(&optimization).unwrap();
 
         fs::write(&program, b"tampered").unwrap();
+        // Lineage validation consumes the sealed execution identity and a
+        // checkpoint bound to it, not the old runtime files. A fresh launch
+        // still authenticates those files in validate_files.
+        binding.validate_seal(&optimization).unwrap();
         assert!(binding.validate_files(&root, &optimization).is_err());
     }
 

@@ -17,8 +17,9 @@ use crate::native_suffix_worker::{
 use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
 use crate::optimization_resume::{
     OptimizationResumeEvent, OptimizationResumeState,
-    append_optimization_resume_events_from_validated_state, initialize_optimization_resume,
-    load_optimization_resume,
+    append_optimization_resume_events_from_validated_state,
+    initialize_optimization_resume_after_request_validation,
+    load_optimization_resume_after_request_validation,
 };
 use crate::residual_campaign::{
     ResidualCampaignCheckpoint, ResidualCampaignOptimizer, ResidualReplayCheckpoint,
@@ -1763,9 +1764,9 @@ fn run_campaign_loop(
 ) -> Result<ResidualCampaignRunSummary, NativeResidualCampaignRunnerError> {
     ensure_not_cancelled(config)?;
     let mut resume = if root.join(&config.optimization.resume.journal_path).exists() {
-        load_optimization_resume(config.optimization, root)
+        load_optimization_resume_after_request_validation(config.optimization, root)
     } else {
-        initialize_optimization_resume(config.optimization, root)
+        initialize_optimization_resume_after_request_validation(config.optimization, root)
     }
     .map_err(native_error)?;
     if resume.latest_optimizer_checkpoint.is_none() {

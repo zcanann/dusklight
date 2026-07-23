@@ -201,6 +201,13 @@ pub fn initialize_optimization_resume(
     request
         .validate_files(repository_root)
         .map_err(|source| resume_error(source.to_string()))?;
+    initialize_optimization_resume_after_request_validation(request, repository_root)
+}
+
+pub(crate) fn initialize_optimization_resume_after_request_validation(
+    request: &OptimizationRequest,
+    repository_root: &Path,
+) -> Result<OptimizationResumeState, OptimizationResumeError> {
     let root = canonical_root(repository_root)?;
     let journal_path = output_path(&root, &request.resume.journal_path)?;
     let state_path = output_path(&root, &request.resume.state_path)?;
