@@ -1,7 +1,8 @@
 //! Direct training and native frozen export for one authenticated semantic goal.
 //!
-//! The policy imitates only actions from real successful trajectories. Physical
-//! episodes remain isolated across training, validation, and test. A separately
+//! The policy imitates actions from real successful trajectories and applies a
+//! bounded contrastive update away from actions in authenticated policy failures.
+//! Physical episodes remain isolated across training, validation, and test. A separately
 //! admitted reachability model is required as lineage and a fail-closed signal
 //! that the same corpus supports useful goal-conditioned prediction. Training-
 //! only normalization is folded into the first dense layer, so the emitted
@@ -28,8 +29,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-pub const NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V1: &str =
-    "dusklight-native-goal-frozen-policy-manifest/v1";
+pub const NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V2: &str =
+    "dusklight-native-goal-frozen-policy-manifest/v2";
 const MAX_ROWS: usize = 1_000_000;
 const MAX_HIDDEN_WIDTH: usize = 256;
 const MAX_EPOCHS: usize = 2_048;
@@ -37,6 +38,7 @@ const MAX_GRADIENT_UPDATES: usize = 100_000_000;
 const CONTINUOUS_HEADS: usize = 8;
 const BUTTON_HEAD_START: usize = 8;
 const BUTTON_HEAD_END: usize = 24;
+const FAILURE_CONTRAST_WEIGHT: f64 = -0.01;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -155,6 +157,9 @@ pub struct NativeGoalFrozenPolicyManifest {
     pub feature_mean: Vec<f64>,
     pub feature_inverse_stddev: Vec<f64>,
     pub training_successful_episode_sha256: Vec<Digest>,
+    pub training_successful_rows: usize,
+    pub training_failed_rows: usize,
+    pub failure_contrast_weight: f64,
     pub gradient_updates: u64,
     pub training: NativeGoalFrozenPolicyMetrics,
     pub validation: NativeGoalFrozenPolicyMetrics,
@@ -177,6 +182,7 @@ pub struct NativeGoalFrozenPolicyExport {
 struct MaterializedPolicyRow {
     episode_sha256: Digest,
     split: AuxiliarySplit,
+    success: bool,
     features: Vec<f64>,
     target: [f64; FACTORIZED_PAD_POLICY_HEAD_WIDTH],
     pad: AuxiliaryPadTarget,
@@ -252,7 +258,12 @@ impl NativeGoalFrozenPolicyExport {
         for _ in 0..config.epochs {
             rng.shuffle(&mut order);
             for index in order.iter().copied() {
-                network.update(&normalized[index], &rows[index].target, config)?;
+                let weight = if rows[index].success {
+                    1.0
+                } else {
+                    FAILURE_CONTRAST_WEIGHT
+                };
+                network.update(&normalized[index], &rows[index].target, weight, config)?;
             }
         }
         if usize::try_from(network.gradient_updates).ok() != Some(work) {
@@ -290,14 +301,22 @@ impl NativeGoalFrozenPolicyExport {
         );
         let mut training_successful_episode_sha256 = rows
             .iter()
-            .filter(|row| row.split == AuxiliarySplit::Training)
+            .filter(|row| row.split == AuxiliarySplit::Training && row.success)
             .map(|row| row.episode_sha256)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
         training_successful_episode_sha256.sort_unstable();
+        let training_successful_rows = rows
+            .iter()
+            .filter(|row| row.split == AuxiliarySplit::Training && row.success)
+            .count();
+        let training_failed_rows = rows
+            .iter()
+            .filter(|row| row.split == AuxiliarySplit::Training && !row.success)
+            .count();
         let mut manifest = NativeGoalFrozenPolicyManifest {
-            schema: NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V1.into(),
+            schema: NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V2.into(),
             source_dataset_sha256: dataset.dataset_sha256,
             source_replay_corpus_sha256: dataset.replay_corpus_sha256,
             source_reachability_model_sha256: reachability.model_sha256,
@@ -314,6 +333,9 @@ impl NativeGoalFrozenPolicyExport {
             feature_mean,
             feature_inverse_stddev,
             training_successful_episode_sha256,
+            training_successful_rows,
+            training_failed_rows,
+            failure_contrast_weight: FAILURE_CONTRAST_WEIGHT,
             gradient_updates: network.gradient_updates,
             training,
             validation,
@@ -370,7 +392,7 @@ impl NativeGoalFrozenPolicyManifest {
         ]
         .iter()
         .all(|digest| *digest != Digest::ZERO);
-        if self.schema != NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V1
+        if self.schema != NATIVE_GOAL_FROZEN_POLICY_MANIFEST_SCHEMA_V2
             || !sources_valid
             || !is_lower_hex(&self.goal_objective_identity, 32)
             || self.observation_schema.is_empty()
@@ -400,11 +422,17 @@ impl NativeGoalFrozenPolicyManifest {
             || !self.validation.validate()
             || !self.test.validate()
             || self.training_successful_episode_sha256.len() != self.training.episodes
+            || self.training_successful_rows != self.training.rows
+            || self.failure_contrast_weight != FAILURE_CONTRAST_WEIGHT
             || self.gradient_updates
-                != u64::try_from(self.training.rows)
-                    .ok()
-                    .and_then(|rows| rows.checked_mul(u64::from(self.config.epochs)))
-                    .unwrap_or(0)
+                != u64::try_from(
+                    self.training_successful_rows
+                        .checked_add(self.training_failed_rows)
+                        .unwrap_or(0),
+                )
+                .ok()
+                .and_then(|rows| rows.checked_mul(u64::from(self.config.epochs)))
+                .unwrap_or(0)
             || self.admission != admission(&self.validation, self.config)
             || self.frozen_byte_count != model_bytes.len()
             || self.frozen_model_xxh3_128
@@ -437,7 +465,7 @@ impl NativeGoalFrozenPolicyManifest {
         let mut canonical = self.clone();
         canonical.manifest_sha256 = Digest::ZERO;
         canonical_digest(
-            b"dusklight.native-goal-frozen-policy-manifest/v1\0",
+            b"dusklight.native-goal-frozen-policy-manifest/v2\0",
             &canonical,
         )
     }
@@ -487,21 +515,28 @@ impl PolicyNetwork {
         &mut self,
         features: &[f64],
         target: &[f64; FACTORIZED_PAD_POLICY_HEAD_WIDTH],
+        sample_weight: f64,
         config: NativeGoalFrozenPolicyConfig,
     ) -> Result<(), NativeGoalFrozenPolicyError> {
+        if !sample_weight.is_finite() || sample_weight == 0.0 || sample_weight.abs() > 1.0 {
+            return Err(NativeGoalFrozenPolicyError::new(
+                "goal policy sample weight is invalid",
+            ));
+        }
         let hidden_width = usize::from(config.hidden_width);
         let input_width = features.len();
         let forward = self.forward(features, hidden_width);
         let output_weights_before = self.output_weights.clone();
         let mut d_output = [0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH];
         for head in 0..FACTORIZED_PAD_POLICY_HEAD_WIDTH {
-            let gradient = if (BUTTON_HEAD_START..BUTTON_HEAD_END).contains(&head) {
-                (logistic(forward.output[head]) - target[head]) / 16.0
-            } else if head < CONTINUOUS_HEADS {
-                2.0 * (forward.output[head] - target[head]) / CONTINUOUS_HEADS as f64
-            } else {
-                forward.output[head] - target[head]
-            };
+            let gradient = sample_weight
+                * if (BUTTON_HEAD_START..BUTTON_HEAD_END).contains(&head) {
+                    (logistic(forward.output[head]) - target[head]) / 16.0
+                } else if head < CONTINUOUS_HEADS {
+                    2.0 * (forward.output[head] - target[head]) / CONTINUOUS_HEADS as f64
+                } else {
+                    forward.output[head] - target[head]
+                };
             d_output[head] = clip(gradient, config.gradient_clip);
             for (hidden, value) in forward.hidden.iter().copied().enumerate() {
                 let parameter = head * hidden_width + hidden;
@@ -682,13 +717,14 @@ fn materialize(
                 "trajectory state or consumed PAD differs from its policy source",
             ));
         }
-        if row.success
+        let imitates_success = row.success
             && (row.role != ReplayExperienceRole::Demonstration
                 || dataset
                     .config
                     .demonstration_mode
-                    .imitates_demonstration_actions())
-        {
+                    .imitates_demonstration_actions());
+        let contrasts_failure = !row.success && row.role == ReplayExperienceRole::PolicyRollout;
+        if imitates_success || contrasts_failure {
             let features = encode_native_policy_observation(&step.pre_input)
                 .map_err(|error| NativeGoalFrozenPolicyError::new(error.to_string()))?
                 .into_iter()
@@ -697,18 +733,19 @@ fn materialize(
             rows.push(MaterializedPolicyRow {
                 episode_sha256,
                 split: row.split,
+                success: row.success,
                 features,
                 target: policy_target(row.consumed_pad),
                 pad: row.consumed_pad,
             });
             if rows.len() > MAX_ROWS {
                 return Err(NativeGoalFrozenPolicyError::new(
-                    "goal policy successful-row limit exceeded",
+                    "goal policy trajectory-row limit exceeded",
                 ));
             }
         }
     }
-    if rows.is_empty() {
+    if !rows.iter().any(|row| row.success) {
         return Err(NativeGoalFrozenPolicyError::new(
             "goal policy has no authenticated successful trajectory actions",
         ));
@@ -724,7 +761,7 @@ fn validate_split_support(
         AuxiliarySplit::Validation,
         AuxiliarySplit::Test,
     ] {
-        if !rows.iter().any(|row| row.split == split) {
+        if !rows.iter().any(|row| row.split == split && row.success) {
             return Err(NativeGoalFrozenPolicyError::new(
                 "goal policy requires successful actions in training, validation, and test",
             ));
@@ -793,13 +830,18 @@ fn training_mean_output(
     training: &[usize],
 ) -> [f64; FACTORIZED_PAD_POLICY_HEAD_WIDTH] {
     let mut output = [0.0; FACTORIZED_PAD_POLICY_HEAD_WIDTH];
-    for index in training {
+    let successful = training
+        .iter()
+        .filter(|index| rows[**index].success)
+        .copied()
+        .collect::<Vec<_>>();
+    for index in &successful {
         for (output, target) in output.iter_mut().zip(rows[*index].target) {
             *output += target;
         }
     }
     for (head, output) in output.iter_mut().enumerate() {
-        *output /= training.len() as f64;
+        *output /= successful.len() as f64;
         if (BUTTON_HEAD_START..BUTTON_HEAD_END).contains(&head) {
             *output = logit(output.clamp(0.01, 0.99));
         }
@@ -816,7 +858,7 @@ fn evaluate(
 ) -> Result<NativeGoalFrozenPolicyMetrics, NativeGoalFrozenPolicyError> {
     let selected = rows
         .iter()
-        .filter(|row| row.split == split)
+        .filter(|row| row.split == split && row.success)
         .collect::<Vec<_>>();
     let inputs = selected
         .iter()
@@ -1134,6 +1176,16 @@ milestone reach_goal {
         NativeGoalTrajectoryDataset,
         NativeGoalReachabilityModel,
     ) {
+        sources_with_failure_role(ReplayExperienceRole::RandomizedCoverage)
+    }
+
+    fn sources_with_failure_role(
+        failure_role: ReplayExperienceRole,
+    ) -> (
+        NativeEpisodeShard,
+        NativeGoalTrajectoryDataset,
+        NativeGoalReachabilityModel,
+    ) {
         let mut shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v14.dseps"
         ))
@@ -1208,11 +1260,17 @@ milestone reach_goal {
             .episodes
             .iter()
             .enumerate()
-            .map(|(episode_index, _)| ReplayEpisodeSource {
+            .map(|(episode_index, episode)| ReplayEpisodeSource {
                 shard: &shard,
                 episode_index,
-                role: ReplayExperienceRole::RandomizedCoverage,
-                policy_lineage_sha256: None,
+                role: if episode.success {
+                    ReplayExperienceRole::RandomizedCoverage
+                } else {
+                    failure_role
+                },
+                policy_lineage_sha256: (!episode.success
+                    && failure_role == ReplayExperienceRole::PolicyRollout)
+                    .then_some(Digest([9; 32])),
                 parent_entry_sha256: None,
             })
             .collect::<Vec<_>>();
@@ -1367,6 +1425,43 @@ milestone reach_goal {
         )
         .unwrap();
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn authenticated_policy_failures_change_the_next_frozen_objective() {
+        let (baseline_shard, baseline_dataset, baseline_reachability) = sources();
+        let baseline = NativeGoalFrozenPolicyExport::fit(
+            &baseline_dataset,
+            std::slice::from_ref(&baseline_shard),
+            &baseline_reachability,
+            config(),
+        )
+        .unwrap();
+        assert_eq!(baseline.manifest.training_failed_rows, 0);
+
+        let (contrast_shard, contrast_dataset, contrast_reachability) =
+            sources_with_failure_role(ReplayExperienceRole::PolicyRollout);
+        let contrast = NativeGoalFrozenPolicyExport::fit(
+            &contrast_dataset,
+            std::slice::from_ref(&contrast_shard),
+            &contrast_reachability,
+            config(),
+        )
+        .unwrap();
+        contrast.validate().unwrap();
+        assert!(contrast.manifest.training_failed_rows > 0);
+        assert_eq!(contrast.manifest.failure_contrast_weight, -0.01);
+        assert_eq!(
+            contrast.manifest.admission,
+            NativeGoalFrozenPolicyAdmission::FrozenPolicyCandidate,
+            "{:?}",
+            contrast.manifest.validation
+        );
+        assert_ne!(baseline.model_bytes, contrast.model_bytes);
+        assert_ne!(
+            baseline.manifest.frozen_artifact_sha256,
+            contrast.manifest.frozen_artifact_sha256
+        );
     }
 
     #[test]
