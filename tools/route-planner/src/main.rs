@@ -2260,7 +2260,7 @@ fn extract_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                 domain: CoverageDomain::Collision,
                 scope: "world".into(),
                 status: CoverageStatus::Partial,
-                detail: "Addressable room collision and exit-code joins are indexed; reachability is not inferred.".into(),
+                detail: "Addressable room collision and exit-code joins are indexed. Reconstructed trigger triangles retain exact plane/bounds and same-room spawn candidates; connectivity and reachability are not inferred.".into(),
             },
             FactPackCoverage {
                 domain: CoverageDomain::PhysicalFeasibility,
@@ -2292,6 +2292,7 @@ fn extract_world(args: &[String]) -> Result<(), Box<dyn Error>> {
             "spatial_planes": facts.spatial_planes.len(),
             "spawns": facts.spawns.len(),
             "encoded_exits": facts.encoded_exits.len(),
+            "approach_geometries": facts.approach_geometries.len(),
             "candidate_transitions": facts.mechanics.transitions.len(),
             "physical_obligations": facts.mechanics.obligations.len(),
         }))?

@@ -2406,7 +2406,12 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 
 ### Phase 5 — Physical feasibility and obstructions
 
-- [ ] Derive approach geometry from collision and spawn data where possible.
+- [x] Derive approach geometry from collision and spawn data where possible.
+      World facts v11 attaches one typed approach-geometry record to every
+      collision-derived encoded-map candidate. Reconstructed KCL prisms retain
+      their exact triangle, plane, and computed bounds; same-room player spawns
+      are linked as candidates, never asserted paths. Degenerate reconstruction
+      stays explicitly unavailable and no geometry implies connectivity.
 - [ ] Define obligations for reaching/activating each candidate transition.
 - [ ] Define obligations for state-producing interactions and interruptions, not
       only final map transitions.

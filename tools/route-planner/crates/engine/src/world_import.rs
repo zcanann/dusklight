@@ -21,13 +21,15 @@ use crate::transition::{
     MechanicsCatalog, ObligationDetail, ObligationKind, StateOperation, TransitionKind,
     UnknownRequirement,
 };
-use crate::world_data::{PlacementKind, PlacementRecord, SourceKind, WorldContext, WorldInventory};
-use crate::{PlannerContractError, canonical_json, validate_stable_id};
+use crate::world_data::{
+    KclReconstruction, PlacementKind, PlacementRecord, SourceKind, WorldContext, WorldInventory,
+};
+use crate::{PlannerContractError, canonical_json, validate_label, validate_stable_id};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v10";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v11";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -66,6 +68,37 @@ pub struct ExtractedEncodedExit {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExtractedApproachShape {
+    Reconstructed {
+        triangle: [[f32; 3]; 3],
+        plane_normal: [f32; 3],
+        plane_offset: f32,
+        minimum: [f32; 3],
+        maximum: [f32; 3],
+    },
+    Unavailable {
+        reason: String,
+    },
+}
+
+/// Geometry attached to one imported collision/SCLS candidate. Same-room
+/// spawns are candidates for later reachability work, never proof of a path.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedApproachGeometry {
+    pub id: String,
+    pub transition_id: String,
+    pub approach_id: String,
+    pub source_stage: String,
+    pub source_room: i8,
+    pub source_collision_id: String,
+    pub source_inventory_sha256: Digest,
+    pub candidate_spawn_ids: Vec<String>,
+    pub shape: ExtractedApproachShape,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExtractedWorldFacts {
     pub schema: String,
@@ -77,6 +110,7 @@ pub struct ExtractedWorldFacts {
     pub spatial_planes: Vec<SpatialPlane>,
     pub spawns: Vec<ExtractedSpawn>,
     pub encoded_exits: Vec<ExtractedEncodedExit>,
+    pub approach_geometries: Vec<ExtractedApproachGeometry>,
     pub mechanics: MechanicsCatalog,
 }
 
@@ -143,6 +177,7 @@ impl ExtractedWorldFacts {
         let mut spatial_planes = Vec::new();
         let mut spawns = Vec::new();
         let mut encoded_exits = Vec::new();
+        let mut approach_geometries = Vec::new();
         let mut transitions = Vec::new();
         let mut obligations = Vec::new();
 
@@ -186,6 +221,57 @@ impl ExtractedWorldFacts {
                 let obligation_id = format!("obligation.reach.{token}");
                 let evidence =
                     extracted_evidence(inventory_sha256, &token, trigger.inferred_semantics);
+                let collision = inventory
+                    .collisions
+                    .iter()
+                    .find(|collision| collision.prism.authored.stable_id == trigger.collision_id)
+                    .expect("validated load trigger references a collision");
+                let mut candidate_spawn_ids = inventory
+                    .player_spawns
+                    .iter()
+                    .filter(|spawn| spawn.scope.room == Some(trigger.room))
+                    .map(|spawn| {
+                        stable_token(
+                            "world.spawn",
+                            &[inventory.stage.as_bytes(), spawn.stable_id.as_bytes()],
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                candidate_spawn_ids.sort();
+                let shape = match &collision.prism.reconstruction {
+                    KclReconstruction::Reconstructed { plane, triangle } => {
+                        let triangle = triangle
+                            .map(|point| canonicalize_position([point.x, point.y, point.z]));
+                        let (minimum, maximum) = triangle_bounds(&triangle);
+                        ExtractedApproachShape::Reconstructed {
+                            triangle,
+                            plane_normal: canonicalize_position([
+                                plane.normal.x,
+                                plane.normal.y,
+                                plane.normal.z,
+                            ]),
+                            plane_offset: canonicalize_scalar(plane.d),
+                            minimum,
+                            maximum,
+                        }
+                    }
+                    KclReconstruction::Degenerate { reason } => {
+                        ExtractedApproachShape::Unavailable {
+                            reason: reason.clone(),
+                        }
+                    }
+                };
+                approach_geometries.push(ExtractedApproachGeometry {
+                    id: format!("approach-geometry.{token}"),
+                    transition_id: transition_id.clone(),
+                    approach_id: approach_id.clone(),
+                    source_stage: inventory.stage.clone(),
+                    source_room: trigger.room,
+                    source_collision_id: trigger.collision_id.clone(),
+                    source_inventory_sha256: inventory_sha256,
+                    candidate_spawn_ids,
+                    shape,
+                });
                 obligations.push(FeasibilityObligation {
                     id: obligation_id.clone(),
                     label: format!(
@@ -335,6 +421,7 @@ impl ExtractedWorldFacts {
         spatial_planes.sort_by(|left, right| left.plane_id.cmp(&right.plane_id));
         spawns.sort_by(|left, right| left.id.cmp(&right.id));
         encoded_exits.sort_by(|left, right| left.id.cmp(&right.id));
+        approach_geometries.sort_by(|left, right| left.id.cmp(&right.id));
         obligations.sort_by(|left, right| left.id.cmp(&right.id));
         transitions.sort_by(|left, right| left.id.cmp(&right.id));
         let facts = Self {
@@ -349,6 +436,7 @@ impl ExtractedWorldFacts {
             spatial_planes,
             spawns,
             encoded_exits,
+            approach_geometries,
             mechanics: MechanicsCatalog {
                 schema: MECHANICS_CATALOG_SCHEMA.into(),
                 transitions,
@@ -486,6 +574,83 @@ impl ExtractedWorldFacts {
                 ));
             }
         }
+        validate_sorted("approach_geometries", &self.approach_geometries, |value| {
+            value.id.as_str()
+        })?;
+        let spawn_ids = self
+            .spawns
+            .iter()
+            .map(|spawn| spawn.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut approach_transition_ids = BTreeSet::new();
+        for geometry in &self.approach_geometries {
+            validate_stable_id("approach_geometries.id", &geometry.id)?;
+            validate_stable_id("approach_geometries.transition_id", &geometry.transition_id)?;
+            validate_stable_id("approach_geometries.approach_id", &geometry.approach_id)?;
+            validate_game_name("approach_geometries.source_stage", &geometry.source_stage)?;
+            if geometry.source_collision_id.is_empty()
+                || geometry.source_collision_id.len() > 2048
+                || geometry.source_inventory_sha256 == Digest::ZERO
+                || !strictly_sorted(&geometry.candidate_spawn_ids)
+                || geometry
+                    .candidate_spawn_ids
+                    .iter()
+                    .any(|id| !spawn_ids.contains(id.as_str()))
+            {
+                return Err(PlannerContractError::new(
+                    "approach_geometries",
+                    "contains an invalid source or spawn reference",
+                ));
+            }
+            if geometry.candidate_spawn_ids.iter().any(|id| {
+                self.spawns
+                    .iter()
+                    .find(|spawn| spawn.id == *id)
+                    .is_none_or(|spawn| {
+                        spawn.location.stage != geometry.source_stage
+                            || spawn.location.room != geometry.source_room
+                    })
+            }) {
+                return Err(PlannerContractError::new(
+                    "approach_geometries.candidate_spawn_ids",
+                    "must remain in the geometry's exact source stage and room",
+                ));
+            }
+            let Some(transition) = self
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| transition.id == geometry.transition_id)
+            else {
+                return Err(PlannerContractError::new(
+                    "approach_geometries.transition_id",
+                    "references an unknown transition",
+                ));
+            };
+            if transition.transition_kind != TransitionKind::EncodedMapExit
+                || transition.approach_id != geometry.approach_id
+                || !approach_transition_ids.insert(geometry.transition_id.as_str())
+            {
+                return Err(PlannerContractError::new(
+                    "approach_geometries.transition_id",
+                    "must uniquely reference its encoded-map transition and exact approach",
+                ));
+            }
+            validate_approach_shape(&geometry.shape)?;
+        }
+        let encoded_map_transition_ids = self
+            .mechanics
+            .transitions
+            .iter()
+            .filter(|transition| transition.transition_kind == TransitionKind::EncodedMapExit)
+            .map(|transition| transition.id.as_str())
+            .collect::<BTreeSet<_>>();
+        if approach_transition_ids != encoded_map_transition_ids {
+            return Err(PlannerContractError::new(
+                "approach_geometries",
+                "must cover every collision-derived encoded-map transition exactly once",
+            ));
+        }
         let exit_transition_ids = self
             .mechanics
             .transitions
@@ -530,6 +695,7 @@ impl ExtractedWorldFacts {
             + self.spatial_planes.len()
             + self.spawns.len()
             + self.encoded_exits.len()
+            + self.approach_geometries.len()
             + self.mechanics.transitions.len()
             + self.mechanics.obligations.len();
         if total > MAX_EXTRACTED_WORLD_RECORDS {
@@ -2039,6 +2205,56 @@ fn canonicalize_scalar(value: f32) -> f32 {
     if value == 0.0 { 0.0 } else { value }
 }
 
+fn triangle_bounds(triangle: &[[f32; 3]; 3]) -> ([f32; 3], [f32; 3]) {
+    let mut minimum = triangle[0];
+    let mut maximum = triangle[0];
+    for point in &triangle[1..] {
+        for axis in 0..3 {
+            minimum[axis] = minimum[axis].min(point[axis]);
+            maximum[axis] = maximum[axis].max(point[axis]);
+        }
+    }
+    (
+        canonicalize_position(minimum),
+        canonicalize_position(maximum),
+    )
+}
+
+fn validate_approach_shape(shape: &ExtractedApproachShape) -> Result<(), PlannerContractError> {
+    match shape {
+        ExtractedApproachShape::Reconstructed {
+            triangle,
+            plane_normal,
+            plane_offset,
+            minimum,
+            maximum,
+        } => {
+            if triangle.iter().any(|point| !canonical_position(*point))
+                || !canonical_position(*plane_normal)
+                || !plane_offset.is_finite()
+                || plane_offset.to_bits() == (-0.0_f32).to_bits()
+                || plane_normal.iter().all(|value| *value == 0.0)
+                || !canonical_position(*minimum)
+                || !canonical_position(*maximum)
+                || minimum
+                    .iter()
+                    .zip(maximum)
+                    .any(|(minimum, maximum)| minimum > maximum)
+                || triangle_bounds(triangle) != (*minimum, *maximum)
+            {
+                return Err(PlannerContractError::new(
+                    "approach_geometries.shape",
+                    "has invalid reconstructed triangle, plane, or exact bounds",
+                ));
+            }
+            Ok(())
+        }
+        ExtractedApproachShape::Unavailable { reason } => {
+            validate_label("approach_geometries.shape.reason", reason)
+        }
+    }
+}
+
 fn canonical_position(values: [f32; 3]) -> bool {
     values
         .iter()
@@ -2694,6 +2910,15 @@ mod tests {
         assert_eq!(facts.spawns[0].location.spawn, 5);
         assert_eq!(facts.mechanics.transitions.len(), 1);
         assert_eq!(facts.mechanics.obligations.len(), 1);
+        assert_eq!(facts.approach_geometries.len(), 1);
+        assert!(matches!(
+            facts.approach_geometries[0].shape,
+            ExtractedApproachShape::Unavailable { .. }
+        ));
+        assert_eq!(
+            facts.approach_geometries[0].candidate_spawn_ids,
+            vec![facts.spawns[0].id.clone()]
+        );
         assert_eq!(facts.encoded_exits[0].candidate_transition_ids.len(), 1);
         let transition = &facts.mechanics.transitions[0];
         assert_eq!(transition.evidence.truth, TruthStatus::Contested);
@@ -2710,6 +2935,86 @@ mod tests {
             facts
         );
         assert_ne!(facts.digest().unwrap(), Digest::ZERO);
+    }
+
+    #[test]
+    fn derives_collision_triangle_bounds_and_same_room_spawn_candidates() {
+        let content = content();
+        let runtime = runtime(&content);
+        let mut inventory = inventory(true);
+        inventory.collisions[0].prism.reconstruction = KclReconstruction::Reconstructed {
+            plane: crate::world_data::CollisionPlane {
+                anchor: Vec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                normal: Vec3 {
+                    x: 0.0,
+                    y: 1.0,
+                    z: 0.0,
+                },
+                d: 0.0,
+            },
+            triangle: [
+                Vec3 {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                Vec3 {
+                    x: 2.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                Vec3 {
+                    x: 0.0,
+                    y: 3.0,
+                    z: 0.0,
+                },
+            ],
+        };
+        inventory.validate().unwrap();
+        let context = world_context(Digest([2; 32]), &inventory);
+        let facts = ExtractedWorldFacts::build(
+            &content,
+            &runtime,
+            &context,
+            std::slice::from_ref(&inventory),
+        )
+        .unwrap();
+        let geometry = &facts.approach_geometries[0];
+        assert_eq!(geometry.transition_id, facts.mechanics.transitions[0].id);
+        assert_eq!(
+            geometry.approach_id,
+            facts.mechanics.transitions[0].approach_id
+        );
+        assert_eq!(
+            geometry.candidate_spawn_ids,
+            vec![facts.spawns[0].id.clone()]
+        );
+        assert!(matches!(
+            geometry.shape,
+            ExtractedApproachShape::Reconstructed {
+                minimum: [0.0, 0.0, 0.0],
+                maximum: [2.0, 3.0, 0.0],
+                plane_normal: [0.0, 1.0, 0.0],
+                plane_offset: 0.0,
+                ..
+            }
+        ));
+
+        let mut tampered = facts;
+        let ExtractedApproachShape::Reconstructed { maximum, .. } =
+            &mut tampered.approach_geometries[0].shape
+        else {
+            unreachable!();
+        };
+        maximum[0] = 3.0;
+        assert_eq!(
+            tampered.validate().unwrap_err().field(),
+            "approach_geometries.shape"
+        );
     }
 
     #[test]

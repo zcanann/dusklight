@@ -26,7 +26,7 @@ name might suggest.
 | `message-flow-entry-contract-set/v4` and `compiled-message-flow-entry-set/v4` | Exact compiled-flow schema/digest, stage/message resource joins, optional raw actor placement identity, resolved flow label, authored guards, obligations, unknowns, speaker context, source-pinned presentation requests, resolved generic item backings, and deterministic entry mechanics | Unauthored callers, presentation-actor execution, inferred interaction geometry, actor behavior not established by placement, or equivalence across builds/languages |
 | `dusklight-world-context/v1` | One game-data digest and sorted stage-to-inventory/spatial-index digests | Product/revision identity, runtime configuration, the inventory or spatial records themselves |
 | `dusklight-world-inventory/v1` | Source records; chunk directory; actor/scaled/door/treasure/player placements; SCLS; KCL prisms and decoded PLC words; inferred same-room collision/SCLS joins | Actor-specific guards and lifecycle, dynamic collision, paths/rails/volumes, source-confirmed activation behavior |
-| `extracted-world-facts/v10` | Exact context; source digests; static objects; player spawns; encoded exits; collision-join candidates; exact-GZ2E01 L1/L5 boss doors, keyed mini-boss doors, key shutters, Lakebed boss shutter, and memory-switch-backed type-0 Koki gates; backing-sensitive key/boss-key guards, switch writes and key adjustments; kind-sensitive exit association; source-and-placement-bound L1/L5 yaw-oriented interaction shapes, L1 human/wolf compound branches, L5 front-side planes, and circular facing obligations | Collision navigation/connectivity, unjoined SCLS activation, source-censused but semantically unaudited actor-driven exits, item/NPC/event producers, rider/caravan/external-switch gate semantics, live actor reconstruction, and unavailable native attention-position observations |
+| `extracted-world-facts/v11` | Exact context; source digests; static objects; player spawns; encoded exits; collision-join candidates; per-candidate reconstructed trigger triangles, planes, bounds, and same-room spawn references; exact-GZ2E01 L1/L5 boss doors, keyed mini-boss doors, key shutters, Lakebed boss shutter, and memory-switch-backed type-0 Koki gates; backing-sensitive guards/effects; source-and-placement-bound L1/L5 oriented/compound interaction shapes | Collision navigation/connectivity, proof that a same-room spawn reaches a trigger, unjoined SCLS activation, source-censused but semantically unaudited actor-driven exits, item/NPC/event producers, rider/caravan/external-switch gate semantics, live actor reconstruction, and unavailable native attention-position observations |
 | `orig-bundle-diff/v1` | Exact input-bundle/content digests; raw-versus-decoded stage/message/ignored-candidate differences; explicit one-sided locale coverage | Semantic comparison for domains not decoded into the input bundles |
 | `fact-pack/v1` plus immutable cache | Exact content, extractor, source, coverage, payload, and manifest identities; verified reuse without `orig/` | Any implication that a partial coverage declaration is complete |
 
@@ -75,7 +75,7 @@ digests, then imports:
 - every SCLS record as an encoded destination; and
 - each precomputed collision/SCLS join as an encoded-map-exit candidate.
 
-For exact GZ2E01 L1/L5 boss doors, v10 also imports the actor-local `checkArea`
+For exact GZ2E01 L1/L5 boss doors, v11 also imports the actor-local `checkArea`
 rectangle (`|x| <= 200`, `|z| <= 100`) using the placement's binary-angle yaw,
 and the shortest-circular-facing obligation around `door_yaw - 0x7fff`. L5
 adds the strict positive-local-Z `checkFront` plane. L1 adds form-selected
@@ -117,7 +117,7 @@ semantics and does not decode any actor-specific placement parameters.
   transitions as distinct classes.
 - Continue importing the audited rider/caravan/external-switch boundaries only
   after their event-bit, switch-domain, paired/transient, and destructive state
-  can be represented. The exact GZ2E01 keyed-family census and current v10 import
+  can be represented. The exact GZ2E01 keyed-family census and current v11 import
   boundary are recorded in
   `docs/route-planner/gz2e01-keyed-door-gate-family-audit.md`.
 - Preserve source-room/layer activation rules separately from destination
