@@ -3022,7 +3022,15 @@ timeline assumptions.
       catalog drift, unsafe paths/URLs, zero digests, and noncanonical ordering.
       `export-evidence-citations` seals author drafts. See
       `docs/route-planner/evidence-citations.md`.
-- [ ] Add tools to identify facts used by many routes but supported weakly.
+- [x] Add tools to identify facts used by many routes but supported weakly. The
+      canonical `route-evidence-coverage/v1` validates every route against one
+      exact composed catalog, follows goal/constraint/directive/step/region and
+      action-contract predicates through recursive derived-fact dependencies,
+      and counts each fact once per route. Rows retain authored truth, evidence
+      record IDs, route IDs, and all catalog/route digests; the configurable
+      threshold reports only non-established facts used by enough distinct
+      routes. `report-route-evidence-coverage` exports the report. See
+      `docs/route-planner/route-evidence-coverage.md`.
 - [ ] Report which facts and obligations are exercised by glitchless story, 100%,
       Any%, and hypothetical route suites.
 - [x] Report extraction coverage separately for topology, hard guards, backing

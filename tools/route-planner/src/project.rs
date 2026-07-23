@@ -2684,6 +2684,7 @@ mod tests {
     use crate::service::{
         PlannerServiceOutcome, PlannerServicePayload, PlannerServiceRequest, handle_request,
     };
+    use dusklight_route_planner::route_evidence_coverage::RouteEvidenceCoverageReport;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -3039,6 +3040,32 @@ mod tests {
             panic!("Temple path should append after replaying the rebind");
         };
         assert_eq!(after.snapshot.environment.location.stage, "STAGE_B");
+        let mut weak_facts = project.catalog.facts.clone();
+        weak_facts
+            .derived_facts
+            .iter_mut()
+            .find(|fact| fact.id == "path.tot-open")
+            .unwrap()
+            .evidence
+            .truth = TruthStatus::Contested;
+        let weak_catalog =
+            ComposedPlannerCatalog::compose(&weak_facts, &project.catalog.mechanics, &[]).unwrap();
+        let mut second_book = book.clone();
+        second_book.manifest.id = "route.hypothetical-rebind-demo-copy".into();
+        let coverage =
+            RouteEvidenceCoverageReport::build(&weak_catalog, &[*book.clone(), *second_book], 2)
+                .unwrap();
+        assert_eq!(coverage.weak_high_usage_fact_ids, ["path.tot-open"]);
+        assert_eq!(
+            coverage
+                .facts
+                .iter()
+                .find(|fact| fact.fact_id == "local.tot-switch")
+                .unwrap()
+                .route_book_ids
+                .len(),
+            2
+        );
         let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
             request_id: "request.remove-hypothetical-rebind".into(),
             state: Box::new(start),

@@ -41,6 +41,7 @@ pub mod refinement;
 pub mod relevance;
 pub mod return_place;
 pub mod route_book;
+pub mod route_evidence_coverage;
 pub mod scene_change_audit;
 pub mod snapshot;
 pub mod solver;
