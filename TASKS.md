@@ -1,23 +1,34 @@
-# Active task: ship a usable deterministic TAS optimization loop
+# Active task: ship a usable deterministic TAS learning and optimization loop
 
 ## Outcome
 
-Given an existing TAS segment, its source boundary, an authored terminal
-predicate, and an optional incumbent tape, one unattended campaign must be able
-to:
+Given an exact source boundary, an authored terminal predicate, and an optional
+human demonstration, one unattended campaign must be able to:
 
 1. restore the exact source state without replaying unrelated history;
-2. generate precise raw-PAD candidates, including coordinated continuous edits;
-3. execute them through persistent native workers without rendering or host
+2. give a state-reactive policy complete controller authority for the entire
+   episode rather than confining it to edits around an incumbent;
+3. execute exploration through persistent native workers without rendering or host
    pacing affecting simulation;
-4. retain complete success and failure trajectories as learning experience;
-5. improve its proposals across generations;
-6. expose live candidates as ordinary ephemeral siblings in the Route Workbench;
-7. promote a winner only after exact cold replay from boot.
+4. retain slow successes, failures, and circuitous trajectories as learning
+   experience under a generous or adaptive horizon;
+5. treat a human tape as optional replay/curriculum evidence, never as the
+   coordinate system of the learner's action space;
+6. improve its proposals across generations, then use incumbent-relative
+   residual search only as a distinct route-refinement stage;
+7. expose live candidates as ordinary ephemeral siblings in the Route Workbench;
+8. promote a winner only after exact cold replay from boot.
 
 The first benchmark is the checked 125-tick `ToOrdonSprings` segment. It is a
 small control problem intended to expose framework defects cheaply. It is not a
 claim that Ordon-specific machinery is useful elsewhere.
+
+The deliberately degraded 131-tick Ordon tape is a hard infrastructure canary:
+the allowed refinement surface must first be shown capable of expressing its
+known repair, and an optimizer must recover at least the known 125-tick result
+without being supplied that repair. Separately, a discovery campaign must be
+able to learn a successful route with episode-long action authority. Passing one
+regime does not stand in for the other.
 
 ## Current truth
 
@@ -46,7 +57,9 @@ Working foundations:
   horizons, budgets, execution seeds, proposal schemas, optimizer, resume
   location, and retention policy. The first Ordon q125 CEM request validates
   against the checked-in route and uses 160 ticks for exploration while keeping
-  promotion strictly sub-125.
+  promotion strictly sub-125. That request is now classified strictly as a
+  local residual-refinement experiment: its horizon and incumbent-relative
+  proposal surface are not evidence of route discovery.
 - Completed native campaign evaluations now retain the exact terminal engine
   boundary and project a bounded set of authenticated successes and recent
   misses as ephemeral Workbench siblings. Those candidates use ordinary
@@ -126,6 +139,14 @@ Not yet working:
 
 - There is no closed `collect -> train -> freeze -> execute -> ingest -> refit`
   campaign.
+- There is no campaign in which a learner receives full state-reactive PAD
+  authority throughout a genuinely exploratory episode. The checked residual
+  requests stop at tick 160, permit at most four incumbent-relative edits, and
+  restrict intervention starts to frames `0..126`; they cannot establish broad
+  learning or route discovery.
+- Campaign artifacts do not yet identify and enforce three distinct experiment
+  classes: demonstration-assisted discovery, from-scratch discovery, and local
+  TAS refinement.
 - The 125-tick Ordon incumbent remains unbeaten.
 - The degraded q131 canary remains unimproved after four durable CEM generations:
   256 completed evaluations, 185 exact main-terminal successes, 47,313 charged
@@ -137,7 +158,8 @@ Not yet working:
 - The current learned proposer is an offline window-patching system over a coarse
   action catalog, not a continuous state-reactive policy.
 
-Known reasons the earlier Ordon search produced no improvement:
+Measured and structural reasons the Ordon work has not yet demonstrated useful
+optimization or learning:
 
 - Candidate exploration stopped at the 125-tick promotion threshold, turning
   slower but successful perturbations into indistinguishable failures.
@@ -150,6 +172,13 @@ Known reasons the earlier Ordon search produced no improvement:
   banks, discarding the fine analog control required for route golf.
 - The inspected Q corpus was too small and sparse to support counterfactual
   action values.
+- The current 160-tick horizon allows only 29-35 ticks beyond the incumbents,
+  and the residual action window ends before that horizon. This is acceptable
+  for a deliberately local baseline but prevents substantially slower routes
+  from becoming useful discovery experience.
+- The incumbent is still the substrate of every residual proposal. Retaining it
+  as one demonstration is valid; requiring every candidate to be its bounded
+  perturbation is not a learning experiment.
 - The six-lane learned-proposal allocator defect is fixed; proposal quality and
   coordinated downstream repair remain the measured limitations.
 
@@ -178,7 +207,15 @@ current work and acceptance gates, not every completed experiment.
   values, geometry, novelty, and demonstrations may guide proposals but cannot
   declare success.
 - Exploration horizon and promotion threshold are different values. A campaign
-  may learn from slower successes while promoting only a faster result.
+  may learn from much slower successes while promoting only a faster result. A
+  discovery horizon must be justified by goal reachability or an adaptive
+  curriculum, never by a small multiplier over the incumbent.
+- Every campaign declares whether it is demonstration-assisted discovery,
+  from-scratch discovery, or incumbent-relative refinement. Reports never
+  compare or conflate those regimes.
+- A demonstration may seed replay, behavior cloning, or checkpoint curriculum.
+  It must not restrict the actions, coordinates, temporal windows, or trajectory
+  neighborhood available to a discovery policy.
 - Raw PAD is the ground-truth action. Model outputs, tactics, curves, and residual
   parameters must compile to and record every consumed frame.
 - Rendering, shader compilation, host pacing, and orchestration time never enter
@@ -247,15 +284,18 @@ goal-only discovery.
   - worker count, deterministic seeds, repetitions, and fidelity settings;
   - proposal/action schema and optimizer configuration;
   - resume location and artifact-retention policy.
-- [x] Default the first Ordon campaign to an exploration horizon with enough
-      slack to retain perturbed successes. Promotion remains strictly sub-125.
+- [x] Separate the first Ordon residual campaign's exploration horizon from its
+      promotion threshold so it can retain locally perturbed slower successes.
+      Promotion remains strictly sub-125.
       The sealed `ordon-q125-residual-campaign.request.json` explores through
       tick 160 while retaining the incumbent first-hit tick and strict
       `promotion_before_tick = 125` as separate authenticated fields. Its v2
       source now includes the console-faithful TV calibration screen, binds the
       Link-control checkpoint at frame 506 to native fingerprint
       `e7ac8251329f22a5df682bbe5eb2a2ba`, and passes an exact 8-tick checkpoint
-      restore plus the incumbent's tick-125 F_SP104 load commit.
+      restore plus the incumbent's tick-125 F_SP104 load commit. Its 160-tick
+      horizon is a local-refinement parameter and must not be reused as the
+      default for unrestricted learning.
 - [x] Make campaigns resumable after cancellation, worker crash, or UI closure
       without repeating sealed candidates or losing optimizer state.
       `native_residual_campaign_runner` now journals candidate batches before
@@ -344,6 +384,13 @@ goal-only discovery.
 
 ### 2.4 Baseline proof
 
+- [ ] Produce one exact hand-authored repair of the degraded q131 tape using only
+      the residual operations allowed by its sealed search space. Keep the
+      witness out of optimizer initialization; it proves expressiveness, not
+      search competence.
+- [ ] Show that independent sampling over the declared residual surface produces
+      meaningful variation in successful first-hit times. If it does not, fix
+      the action surface or temporal bases before tuning CEM.
 - [ ] First improve a deliberately degraded version of the Ordon tape whose
       removable inefficiency is known but not encoded in the optimizer.
 - [ ] Run independent random and CEM residual campaigns against the real 125-tick
@@ -378,8 +425,36 @@ goal-only discovery.
 **Gate 2:** the residual optimizer improves the degraded canary and operates as a
 credible, observable search on the 125-tick incumbent. A deterministic sub-125
 winner is the target and remains an open framework challenge until achieved.
+Failure to recover the known q125 behavior is an infrastructure failure, not a
+reason to describe the incumbent as optimal or proceed to a more elaborate
+learner.
 
 ## 3. Close the autonomous learning loop
+
+This gate is demonstration-assisted discovery, not residual optimization. The
+incumbent may contribute one authenticated trajectory, behavior-cloning seed, or
+reverse-curriculum state sequence, but the online policy must be able to ignore
+it and emit any legal PAD action for the entire episode.
+
+- [ ] Encode the campaign class explicitly and reject a request that labels an
+      incumbent-relative proposal surface as discovery.
+- [ ] Give the native policy episode-long state-reactive action authority. Do not
+      end its proposal window at the demonstration's terminal frame or fall back
+      to released incumbent input after that point.
+- [ ] Use a generous initial horizon or a success-supported adaptive curriculum.
+      Retain slow successes and timeouts as experience; contract the horizon only
+      after held-out goal reachability is reliable.
+- [ ] Support controlled demonstration modes: absent, replay-only, behavior-
+      cloning warm start, and reverse-curriculum checkpoints. Record the active
+      mode in every model, rollout, and comparison artifact.
+- [ ] Supply a stable generic observation contract containing Link motion/action
+      state, camera/PAD history, local collision contacts and geometry, target
+      trigger relation, loading/event state, and complete relevant actor sets
+      with explicit missingness.
+- [ ] Separate authoritative rewards from diagnostics. Terminal success and
+      per-tick cost define the task; navigation-aware potential, novelty,
+      contacts, and learned reachability may shape exploration but cannot declare
+      success or encode a human waypoint corridor.
 
 - [x] Add one campaign command/API that owns persistent workers for the entire
       run instead of relaunching the game per generation.
@@ -531,7 +606,9 @@ conversion.
       distributions for:
   - independent random residual search;
   - CEM residual optimization;
-  - learned state-conditioned proposals combined with the same residual surface.
+  - demonstration-assisted state-reactive discovery;
+  - from-scratch state-reactive discovery;
+  - learned proposals followed by the same post-discovery residual refinement.
 - [ ] Evaluate across several deterministic seeds and held-out checkpoints.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
@@ -583,7 +660,7 @@ continuous optimizer, and appropriate negative controls remove the advantage.
 stop, resume, inspect, replay, and promote an optimization result without manually
 assembling CLI stages or moving artifacts.
 
-## 6. Demonstrate goal-only discovery separately
+## 6. Demonstrate from-scratch goal discovery separately
 
 This is not a prerequisite for the first usable demonstration-seeded optimizer.
 
@@ -591,6 +668,7 @@ This is not a prerequisite for the first usable demonstration-seeded optimizer.
       the incumbent tape, incumbent-relative residuals, path coordinates, or
       route-progress features.
 - [ ] Supply generic world observations, the complete factorized action surface,
+      episode-long native action authority, a generous/adaptive horizon,
       checkpoint-backed curriculum, intrinsic coverage, and hindsight goals.
 - [ ] Preserve diverse spatial, contact, action-phase, event, and actor-relative
       states rather than one distance-minimizing frontier.
@@ -661,11 +739,17 @@ The first usable release is complete when:
 - the repository builds cleanly at its recorded submodule revisions;
 - one command or workbench action launches a resumable persistent campaign;
 - exploration horizon is independent of promotion threshold;
+- discovery campaigns provide episode-long state-reactive PAD authority and do
+  not inherit incumbent-relative edit windows or a near-incumbent time cap;
+- the human tape is optional authenticated experience, and the active
+  demonstration mode is explicit;
 - candidates use precise factorized raw PAD and coordinated continuous residuals;
 - slower successes, failures, and winners all enter authenticated experience;
 - a trained frozen policy executes natively and round-trips through exact Rust
   reinference and cold tape playback;
 - at least three autonomous learning generations run without manual conversion;
+- one demonstration-assisted learner reaches the Ordon terminal without being
+  constrained to residual edits around the demonstration;
 - the residual baseline improves a known-degraded canary;
 - Ordon 125 receives a measured continuous optimization campaign, with any winner
   promoted only after five identical cold replays;

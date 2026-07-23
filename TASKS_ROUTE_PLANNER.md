@@ -43,6 +43,31 @@ The primary result of a query is one of:
 
 ---
 
+### Current implementation status
+
+The independent Rust backend is real and substantial: typed execution state,
+component lifetimes and provenance, transition composition, obstructions and
+techniques, backward relevance plus forward reachability, graph projection,
+route-book mutation, state inspection, content extraction, and a typed stdio
+service all exist. Selected validation cases exercise Text Displacement, Auru's
+recent-item mechanism, Fanadi return-place locking, dungeon-key semantics,
+Faron-twilight returns, and hypothetical component rebinding.
+
+The usable planner application does not yet exist. There is no browser canvas
+for dragging transitions, connecting them through validated state flow, saving
+route books, or inspecting propagated state. Coverage is also incomplete, so
+the current engine is a causal-reasoning laboratory over selected modeled
+mechanics rather than a whole-game route explorer.
+
+Current Windows health is not green. The standalone runtime tests pass, but the
+engine suite currently reports 219/233 passing. Bundled canonical JSON is
+checked out with CRLF endings, causing exact-build/profile validation failures;
+the failed build-registry lookup then suppresses audited GZ2E01 actor-transition
+imports and produces downstream world-import failures. Fix this before treating
+the backend or its demonstrations as release-ready.
+
+---
+
 ## 2. Acceptance stories
 
 These stories define the architecture more usefully than a catalogue of data
@@ -1727,6 +1752,17 @@ evidenced overlays over the generated base rather than silent edits to it.
 
 ## 6. Dependency-ordered implementation plan
 
+### Immediate stabilization gate
+
+- [ ] Enforce checkout-independent canonical bytes for planner-owned JSON
+      artifacts, preferably with repository LF attributes plus a parser/error
+      contract that makes accidental newline conversion obvious.
+- [ ] Restore the complete planner engine suite to green on Windows and retain a
+      regression proving exact-build recognition and audited actor-transition
+      imports survive a normal checkout.
+- [ ] Run both the runtime and engine manifests in the normal planner test entry
+      point so a green wrapper suite cannot hide failing dependency-crate tests.
+
 ### Phase 0 — Evidence inventory and terminology
 
 - [ ] Catalogue exact supported builds, revisions, disc/executable/resource
@@ -2486,6 +2522,47 @@ Deliverable: every route and failure is inspectable rather than magical.
 
 ### Phase 9 — Independent planner UX and authoring
 
+The first UI release is a deliberately small blueprint-style web application,
+not the complete research workbench described by every later task. It must make
+the already implemented transition/state engine usable before adding broad
+visual polish or whole-game authoring features.
+
+#### First web slice
+
+- [ ] Add a local planner web host around the typed Rust service and serve a
+      versioned browser client without coupling it to Huntctl or TAS timeline
+      schemas.
+- [ ] Build a straightforward application shell with new/open/save/save-as,
+      a searchable transition palette, an infinite pan/zoom canvas, and a bottom
+      properties/state panel.
+- [ ] Let an author drag a transition onto the canvas and connect it to an exact
+      predecessor state. Rust recomputes every downstream state and remains the
+      only validation and mutation authority.
+- [ ] Render accepted connections distinctly from rejected or unknown joins.
+      Selecting a rejected join must show missing producers, active
+      obstructions/resolvers, unknown obligations, or exact-context mismatch;
+      there is no force-connect operation.
+- [ ] Save route semantics and presentation metadata through revision-checked
+      route-book edits. Node positions, viewport, and visual grouping may persist
+      but must never affect solver reachability.
+- [ ] Selecting a state or transition shows exact before/after location,
+      inventory, flags/components, bindings, provenance, effects, requirements,
+      and evidence in the bottom panel.
+- [ ] Support named visual regions with collapse and double-click/breadcrumb
+      navigation. Regions are flat-graph encapsulation only: grouping never
+      creates a goal, macro transition, alternative implementation, or new
+      reachability semantics.
+- [ ] Ship several small editable demonstrations from already modeled mechanics:
+      a keyed door, Fanadi return-place locking, Auru recent-item transfer, Text
+      Displacement toward Goron Mines, and a clearly hypothetical component
+      rebind. Each must load, validate, edit, save-as, and visibly change its
+      propagated state when a transition is removed or replaced.
+- [ ] Add one browser-driven acceptance test that opens a demonstration, removes
+      or replaces a transition, observes the changed downstream state/rejection,
+      saves it, reloads it, and obtains identical semantic identities.
+
+#### Extended editor
+
 - [ ] Define an independent versioned planner graph-projection schema and Rust
       crate/server API; do not overload timeline `WorkbenchGraph` or playback
       segment semantics.
@@ -2523,7 +2600,8 @@ Deliverable: every route and failure is inspectable rather than magical.
   - [x] Add revision-checked mutation commands for goals, constraints,
         directives, steps, methods, regions, selections, collapse policies, and
         annotations.
-  - [ ] Add the browser interactions.
+  - [ ] Add pin/ban/prefer and alternative-selection browser interactions after
+        the first drag/connect/save slice is usable.
 - [ ] Make transition insertion the primary authoring operation.
   - [ ] From a selected state node, list applicable physical, event, warp,
         reload, title/file, and technique transitions.
@@ -3192,6 +3270,8 @@ These should remain explicit unknowns until evidence closes them:
 
 The first useful release is complete when:
 
+- The blueprint-style browser can create, open, drag/connect, validate, save,
+  save-as, and reload a route through the authoritative Rust service.
 - A route is assembled exclusively from typed transitions applied to exact states;
   reachability is never an authored loss list or an unvalidated visual connection.
 - The provider catalogue includes representative physical travel, encoded
@@ -3204,8 +3284,9 @@ The first useful release is complete when:
 - An invalid join names the missing state producer, active obstruction and known
   resolvers, unknown obligation, or exact-context mismatch. The only escape hatch
   is an explicit evidenced or hypothetical refinement, never force-connect.
-- Any selected graph region can be named, nested, collapsed, saved, forked, copied,
-  or referenced without becoming a transition or changing solver truth.
+- Any selected graph region can be named, nested, collapsed, and saved without
+  becoming a transition or changing solver truth. Fork/copy/reference workflows
+  may follow after the first usable slice.
 - Reusing a region after another state reevaluates every enclosed transition.
   One-trip, leave-and-return, and partial-dungeon subgraphs coexist as ordinary
   graph fragments rather than implementations of a parent goal.
@@ -3215,6 +3296,8 @@ The first useful release is complete when:
   query and proof; unsupported contexts never inherit neighboring facts silently.
 - The headless solver and authoring UI round-trip the same graph, state, rejection,
   and proof identities deterministically.
+- Several pre-shipped demonstrations load as ordinary editable route books and
+  visibly recompute downstream state when their transitions change.
 - At least one ordinary multi-room route and one obstruction/resolver or
   leave-and-return fixture demonstrate the complete compose, inspect, collapse,
   reuse, and re-expand loop.
