@@ -773,8 +773,24 @@ revalidated crash-safe journal/state chain.
       per cell, a 13,107,200-tick declared cap, and no promotion authority:
       `routes/Glitch Exhibition/intro/benchmarks/ordon-gate4-learning-value-comparison.plan.json`.
 - [ ] Evaluate across several deterministic seeds and held-out checkpoints.
+      The matrix evidence boundary is implemented but this item remains open
+      until all 40 real cells exist. Each cell now reopens its optimization,
+      execution, terminal, checkpoint/loop journal, final audit/report, and (for
+      learning) every committed native episode shard; recomputes ticks,
+      successes, first-hit time, and sample-efficiency charge; requires one
+      planned seed/worker, exact phase caps, and exact checkpoint identity; and
+      binds learned refinement to a realized learning-phase tape. The aggregate
+      report rejects any missing, duplicate, or extra cross-product cell.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
+      The predeclared report verdict is implemented but remains unchecked until
+      real evidence wins: episode-weighted success rate, best hit, and median
+      first-success charge are recomputed by treatment; the learned-plus-CEM arm
+      must clear at least one sealed threshold against both random and CEM, and
+      the authenticated shuffled-outcome and action-only controls must worsen
+      all three held-out critic metrics. A valid losing report remains valid and
+      carries `learning_advantage_demonstrated: false`; it has no promotion
+      authority.
 - [x] Add negative controls for shuffled outcomes, action-only input, removed
       collision/geometry, removed actors, removed history, and checkpoint/tape
       identity leakage. `learn evaluate-goal-reachability-negative-controls`

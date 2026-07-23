@@ -23,6 +23,64 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
+    if args.first().map(String::as_str) == Some("seal-learning-value-comparison-report") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let plan = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--plan")?,
+            "learning-value comparison plan",
+        )?;
+        let cell_paths = repeated_option(command_args, "--cell");
+        if cell_paths.is_empty() {
+            return Err("learning-value comparison report requires --cell CELL.json...".into());
+        }
+        let cells = cell_paths
+            .iter()
+            .map(|path| {
+                repository_artifact(
+                    &repository_root,
+                    Path::new(path),
+                    "learning-value cell evidence",
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let negative_control = repository_artifact(
+            &repository_root,
+            &required_path(command_args, "--negative-control")?,
+            "learning-value negative-control report",
+        )?;
+        let report =
+            huntctl::search_evaluator::learning_value_report::LearningValueComparisonReport::seal(
+                plan,
+                cells,
+                negative_control,
+                &repository_root,
+            )?;
+        let output = repository_build_output(
+            &repository_root,
+            &required_path(command_args, "--output")?,
+            "learning-value comparison report",
+        )?;
+        refuse_existing_output(&output, "learning-value comparison report")?;
+        write_new_file(&output, report.to_pretty_json()?)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if args.first().map(String::as_str) == Some("validate-learning-value-comparison-report") {
+        let command_args = &args[1..];
+        let repository_root = repository_root(command_args)?.canonicalize()?;
+        let input_path = repository_file(
+            &repository_root,
+            &required_path(command_args, "--input")?,
+            "learning-value comparison report",
+        )?;
+        let report: huntctl::search_evaluator::learning_value_report::LearningValueComparisonReport =
+            serde_json::from_slice(&fs::read(input_path)?)?;
+        report.validate_files(&repository_root)?;
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
     if args.first().map(String::as_str) == Some("seal-learning-value-cell-evidence") {
         let command_args = &args[1..];
         let repository_root = repository_root(command_args)?.canonicalize()?;
