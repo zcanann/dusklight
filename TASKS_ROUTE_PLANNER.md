@@ -3239,9 +3239,15 @@ slice into release criteria only when it exercises a missing core semantic law.
 
 #### 11C. EMS to Hyrule Castle/Ganon
 
-- [ ] Produce upper-bound logic path.
-- [ ] Introduce geometry/twilight/form/mount obstructions.
-- [ ] Encode standard EMS setup.
+- [x] Produce upper-bound logic path. The exact-context EMS validation profile
+      reaches Master Sword, Hyrule Castle, and Ganon in upper-bound mode while
+      retaining hard state guards and technique prerequisites.
+- [x] Introduce geometry/twilight/form/mount obstructions. Modeled feasibility
+      represents the two castle boundaries, wolf form, Faron twilight, and the
+      Epona mount as independently evidenced constraints with scoped resolvers.
+- [x] Encode standard EMS setup. The standard technique performs the modeled
+      human-form change and discharges only its named charge-approach and castle
+      boundary obligations.
 - [x] Encode Epona OOB non-twilight constraint. The bundled technique now
       requires player control, human form, Epona mount, and the explicit
       negation of the Faron-twilight gate before it can discharge its single
@@ -3250,7 +3256,10 @@ slice into release criteria only when it exercises a missing core semantic law.
       Its bundled record discharges only the named charge-attack-approach
       obligation and now requires the same controlled human/Epona/non-twilight
       setup instead of acting as a global wall bypass.
-- [ ] Show how route results refine as obstruction knowledge is enabled.
+- [x] Show how route results refine as obstruction knowledge is enabled. The
+      same fixture reaches Ganon under the permissive upper bound, fails under
+      the full modeled obstruction catalog, and regains a modeled route only
+      through the separately constrained Epona/rupee alternative.
 
 #### 11D. Local-bank rebind
 
