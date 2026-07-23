@@ -397,8 +397,24 @@ goal-only discovery.
 - [ ] Show that independent sampling over the declared residual surface produces
       meaningful variation in successful first-hit times. If it does not, fix
       the action surface or temporal bases before tuning CEM.
-- [ ] First improve a deliberately degraded version of the Ordon tape whose
+- [x] First improve a deliberately degraded version of the Ordon tape whose
       removable inefficiency is known but not encoded in the optimizer.
+      The sealed q131 CEM v5 campaign completed its declared 1,024-candidate
+      budget at checkpoint content identity
+      `d09df73560542f250eeb5b4bd336a4fcd606d6d2145ca76aaca1a9180847e6b1`.
+      All 1,024 compiled tapes were unique; 760 candidates succeeded, spanning
+      426 successful behavior classes, for a 742,187-millionths successful
+      episode rate. Candidate
+      `5eb2132cf8e4c06efc9f2223e72cd92eddf4ba833d308cf8216f09bf25c77250`
+      first hit the exact terminal at tick 128 after 75,759 charged simulated
+      ticks, improving the deliberately degraded tick-131 incumbent without
+      receiving the checked q125 expressiveness witness as initialization.
+      Its realized tape, behavior, and episode identities are respectively
+      `9f7fa710016624d2d920d5c7397eb34f427a86fe74aea665e658cc1438cc5e94`,
+      `513de318b95c534d0626459bac9588235778dd23791944c0b80b9a1d3ab75d01`,
+      and `2184d3a20b7932249c5b71e22259eca12e39e583c7b1b185942e24d32557764c`.
+      The complete audit charged 185,113 ticks including the 132-tick
+      authenticated incumbent demonstration and diagnoses `winner_found`.
 - [ ] Run independent random and CEM residual campaigns against the real 125-tick
       incumbent under sealed budgets.
 - [ ] Report successful-episode rate, unique compiled tapes, action/window
