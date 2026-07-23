@@ -27,9 +27,10 @@ use crate::residual_campaign::{
 use crate::residual_campaign_audit::ResidualCampaignAudit;
 use crate::residual_campaign_runner::{
     PreparedCandidate, ResidualCampaignRunSummary, append_checkpoint, artifact_reference,
-    campaign_root, load_candidate, load_checkpoint, load_generation, new_optimizer, prepare_batch,
-    read_artifact, seal_candidate_batch, write_exact_or_new,
+    campaign_root, load_candidate, load_checkpoint, load_generation, new_optimizer,
+    prepare_batch_with_ranker, read_artifact, seal_candidate_batch, write_exact_or_new,
 };
+use crate::residual_critic_ranking::PreparedResidualCriticRanker;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
@@ -1726,6 +1727,8 @@ pub fn run_native_residual_campaign(
         .ok_or_else(|| native_message("native residual campaign requires an incumbent tape"))?;
     let parent_bytes = fs::read(root.join(&incumbent.tape.path)).map_err(native_error)?;
     let parent = InputTape::decode(&parent_bytes).map_err(native_error)?.tape;
+    let critic_ranker =
+        PreparedResidualCriticRanker::load(&root, config.optimization).map_err(native_error)?;
     let campaign = campaign_root(&root, config.optimization).map_err(native_error)?;
     fs::create_dir_all(&campaign).map_err(native_error)?;
     let mut pool = WorkerPool::new(&root, &campaign, config.optimization, config.execution)?;
@@ -1737,6 +1740,7 @@ pub fn run_native_residual_campaign(
         &campaign,
         &parent,
         &parent_bytes,
+        critic_ranker.as_ref(),
         &mut pool,
         &mut alternate_pools,
     );
@@ -1770,6 +1774,7 @@ fn run_campaign_loop(
     campaign: &Path,
     parent: &InputTape,
     parent_bytes: &[u8],
+    critic_ranker: Option<&PreparedResidualCriticRanker>,
     pool: &mut WorkerPool<'_>,
     alternate_pools: &mut [WorkerPool<'_>],
 ) -> Result<ResidualCampaignRunSummary, NativeResidualCampaignRunnerError> {
@@ -1898,9 +1903,15 @@ fn run_campaign_loop(
                     let batch = random
                         .sample(parent, parent_bytes, count)
                         .map_err(native_error)?;
-                    let prepared =
-                        prepare_batch(config.optimization, parent, parent_bytes, generation, batch)
-                            .map_err(native_error)?;
+                    let prepared = prepare_batch_with_ranker(
+                        config.optimization,
+                        parent,
+                        parent_bytes,
+                        generation,
+                        batch,
+                        critic_ranker,
+                    )
+                    .map_err(native_error)?;
                     resume = seal_candidate_batch(
                         root,
                         campaign,
@@ -1928,9 +1939,15 @@ fn run_campaign_loop(
                     let batch = random
                         .sample(parent, parent_bytes, resume.candidates.len() - produced)
                         .map_err(native_error)?;
-                    let prepared =
-                        prepare_batch(config.optimization, parent, parent_bytes, generation, batch)
-                            .map_err(native_error)?;
+                    let prepared = prepare_batch_with_ranker(
+                        config.optimization,
+                        parent,
+                        parent_bytes,
+                        generation,
+                        batch,
+                        critic_ranker,
+                    )
+                    .map_err(native_error)?;
                     resume = seal_candidate_batch(
                         root,
                         campaign,
@@ -2029,9 +2046,15 @@ fn run_campaign_loop(
                 }
                 if state.pending.is_empty() {
                     let batch = cem.ask(parent, parent_bytes).map_err(native_error)?;
-                    let prepared =
-                        prepare_batch(config.optimization, parent, parent_bytes, generation, batch)
-                            .map_err(native_error)?;
+                    let prepared = prepare_batch_with_ranker(
+                        config.optimization,
+                        parent,
+                        parent_bytes,
+                        generation,
+                        batch,
+                        critic_ranker,
+                    )
+                    .map_err(native_error)?;
                     resume = seal_candidate_batch(
                         root,
                         campaign,

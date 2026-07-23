@@ -700,8 +700,23 @@ it and emit any legal PAD action for the entire episode.
       behavior classes (76.5625%) under the same terminal predicate and exact
       simulation authority. The sealed lineage and checkpoint identities are
       recorded in `ordon-q125-reverse-curriculum.md`.
-- [ ] Use residual search for continuous trajectory proposals and the learned
+- [x] Use residual search for continuous trajectory proposals and the learned
       critic for state-conditioned ranking. Keep exact simulation as authority.
+      Residual optimization requests may now bind an immutable sorted set of
+      movement-transition training corpora and their exact phase/provenance
+      sidecars plus the incumbent-state corpus, its sidecar-authenticated tape
+      and absolute frame origin, fitted-Q configuration, seed, and disagreement
+      penalty. Both persistent native and ordinary campaign
+      runners fit that critic once, score each losslessly compiled raw-PAD
+      residual against the incumbent action at every affected observed state,
+      and dispatch the finite batch in conservative state-conditioned order.
+      Each candidate seals its batch-report, critic, parent-corpus, rank,
+      scored/unsupported frame counts, and exact floating-point advantage.
+      Continuous or button actions outside the critic's discrete support remain
+      in the batch behind supported proposals instead of being discarded. The
+      ranking artifact explicitly has no route or promotion authority; every
+      retained proposal still runs through the same native authored-terminal
+      evaluation, and only that exact result enters retention or CEM updates.
 - [x] Preserve achieved goals and alternate terminals so failed main-goal runs
       still teach local dynamics and short-horizon reachability. The checked
       Ordon campaign now binds `ordon_spring_exit_approach` as an alternate to

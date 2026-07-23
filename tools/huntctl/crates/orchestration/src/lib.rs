@@ -16,6 +16,7 @@ pub mod optimization_resume;
 pub mod residual_campaign;
 pub mod residual_campaign_audit;
 pub mod residual_campaign_runner;
+pub mod residual_critic_ranking;
 pub mod residual_horizon_tightening;
 pub mod residual_reverse_curriculum;
 pub mod residual_winner_minimization;

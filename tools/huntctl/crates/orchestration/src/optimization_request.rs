@@ -129,6 +129,27 @@ pub struct OptimizationProposal {
     pub proposal_schema: SchemaIdentity,
     pub search_space: ResidualSearchSpace,
     pub optimizer: ResidualOptimizerConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critic_ranking: Option<OptimizationCriticRanking>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptimizationCriticRanking {
+    pub training_corpora: Vec<OptimizationCriticCorpus>,
+    pub parent_corpus: OptimizationCriticCorpus,
+    pub parent_corpus_start_frame: u64,
+    pub iterations: u16,
+    pub trees_per_action: u16,
+    pub seed: u64,
+    pub uncertainty_penalty_millionths: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptimizationCriticCorpus {
+    pub corpus: ArtifactReference,
+    pub evidence: ArtifactReference,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -360,6 +381,38 @@ impl OptimizationRequest {
                 ));
             }
             _ => {}
+        }
+        if let Some(ranking) = &self.proposal.critic_ranking {
+            if ranking.training_corpora.is_empty()
+                || ranking.training_corpora.len() > 256
+                || ranking.iterations == 0
+                || ranking.iterations > 128
+                || ranking.trees_per_action == 0
+                || ranking.trees_per_action > 127
+                || ranking.uncertainty_penalty_millionths > 10_000_000
+                || !ranking
+                    .training_corpora
+                    .windows(2)
+                    .all(|pair| pair[0].corpus.path < pair[1].corpus.path)
+            {
+                return Err(request_error(
+                    "critic ranking requires canonical bounded corpora and fitted-Q configuration",
+                ));
+            }
+            for source in &ranking.training_corpora {
+                validate_artifact_shape("critic training corpus", &source.corpus)?;
+                validate_artifact_shape("critic training evidence", &source.evidence)?;
+            }
+            validate_artifact_shape("critic parent-state corpus", &ranking.parent_corpus.corpus)?;
+            validate_artifact_shape(
+                "critic parent-state evidence",
+                &ranking.parent_corpus.evidence,
+            )?;
+            if self.proposal.search_space.start_frame < ranking.parent_corpus_start_frame {
+                return Err(request_error(
+                    "critic parent-state corpus begins after the residual search surface",
+                ));
+            }
         }
         validate_build_path("resume state", &self.resume.state_path)?;
         validate_build_path("resume journal", &self.resume.journal_path)?;
@@ -663,6 +716,25 @@ impl OptimizationRequest {
             &self.route.segment,
             &self.execution.alternate_terminal_goals,
         )?;
+
+        if let Some(ranking) = &self.proposal.critic_ranking {
+            for source in &ranking.training_corpora {
+                validate_artifact_file(&root, "critic training corpus", &source.corpus)?;
+                validate_artifact_file(&root, "critic training evidence", &source.evidence)?;
+            }
+            validate_artifact_file(
+                &root,
+                "critic parent-state corpus",
+                &ranking.parent_corpus.corpus,
+            )?;
+            validate_artifact_file(
+                &root,
+                "critic parent-state evidence",
+                &ranking.parent_corpus.evidence,
+            )?;
+            crate::residual_critic_ranking::validate_critic_ranking_files(&root, self, ranking)
+                .map_err(|error| request_error(error.to_string()))?;
+        }
 
         if self.horizon_tightening.is_some() {
             crate::residual_horizon_tightening::validate_horizon_tightening_files(

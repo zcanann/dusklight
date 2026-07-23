@@ -7,11 +7,12 @@ use crate::optimization_resume::{
     load_optimization_resume, optimization_evaluation_order_after_request_validation,
 };
 use crate::residual_campaign::{
-    ResidualCampaignCandidate, ResidualCampaignCheckpoint, ResidualCampaignError,
-    ResidualCampaignEvaluation, ResidualCampaignOptimizer, ResidualNativeAttempt,
-    ResidualReplayCheckpoint,
+    ResidualCampaignCandidate, ResidualCampaignCheckpoint, ResidualCampaignCriticRanking,
+    ResidualCampaignError, ResidualCampaignEvaluation, ResidualCampaignOptimizer,
+    ResidualNativeAttempt, ResidualReplayCheckpoint,
 };
 use crate::residual_campaign_audit::{ResidualAuditCompletion, ResidualCampaignAudit};
+use crate::residual_critic_ranking::PreparedResidualCriticRanker;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::observation_view::ObservationSpec;
 use dusklight_automation_contracts::tape::InputTape;
@@ -509,12 +510,13 @@ fn prepare_candidate(
     genome: dusklight_search::residual_optimizer::ResidualGenome,
     candidate: dusklight_search::residual_action::ResidualCandidate,
     compiled: CompiledResidualCandidate,
+    critic_ranking: Option<ResidualCampaignCriticRanking>,
 ) -> Result<PreparedCandidate, ResidualCampaignRunnerError> {
     let digest = candidate.content_sha256.to_string();
     let id = format!("g{generation:06}-s{sample_index:05}-{}", &digest[..12]);
     let proposer_seed = optimization.execution.deterministic_seeds
         [sample_index as usize % optimization.execution.deterministic_seeds.len()];
-    let envelope = ResidualCampaignCandidate::seal(
+    let envelope = ResidualCampaignCandidate::seal_with_critic_ranking(
         id,
         generation,
         sample_index,
@@ -522,6 +524,7 @@ fn prepare_candidate(
         genome,
         candidate,
         &compiled,
+        critic_ranking,
     )?;
     Ok(PreparedCandidate { envelope, compiled })
 }
@@ -599,6 +602,7 @@ pub(crate) fn load_candidate(
         || envelope.proposer_seed != row.proposer_seed
         || envelope.compilation != compiled.report
         || compiled.bytes != read_artifact(root, &row.compiled_tape)?
+        || envelope.critic_ranking.is_some() != optimization.proposal.critic_ranking.is_some()
     {
         return Err(runner_message(
             "residual candidate differs from its journaled artifacts",
@@ -621,7 +625,15 @@ pub(crate) fn load_generation(
         .filter(|row| row.generation == generation)
         .map(|row| load_candidate(root, optimization, parent, parent_bytes, row))
         .collect::<Result<Vec<_>, _>>()?;
-    values.sort_by_key(|candidate| candidate.envelope.sample_index);
+    values.sort_by_key(|candidate| {
+        candidate
+            .envelope
+            .critic_ranking
+            .as_ref()
+            .map_or(candidate.envelope.sample_index as usize, |ranking| {
+                ranking.rank
+            })
+    });
     Ok(values)
 }
 
@@ -883,6 +895,8 @@ pub fn run_residual_campaign(
         .ok_or_else(|| runner_message("residual campaign requires an incumbent tape"))?;
     let parent_bytes = fs::read(root.join(&incumbent.tape.path)).map_err(runner_error)?;
     let parent = InputTape::decode(&parent_bytes).map_err(runner_error)?.tape;
+    let critic_ranker =
+        PreparedResidualCriticRanker::load(&root, config.optimization).map_err(runner_error)?;
     let campaign = campaign_root(&root, config.optimization)?;
     fs::create_dir_all(&campaign).map_err(runner_error)?;
     let mut resume = if root.join(&config.optimization.resume.journal_path).exists() {
@@ -978,12 +992,13 @@ pub fn run_residual_campaign(
                     let batch = random
                         .sample(&parent, &parent_bytes, count)
                         .map_err(runner_error)?;
-                    let prepared = prepare_batch(
+                    let prepared = prepare_batch_with_ranker(
                         config.optimization,
                         &parent,
                         &parent_bytes,
                         generation,
                         batch,
+                        critic_ranker.as_ref(),
                     )?;
                     resume = seal_candidate_batch(
                         &root,
@@ -1010,12 +1025,13 @@ pub fn run_residual_campaign(
                     let batch = random
                         .sample(&parent, &parent_bytes, resume.candidates.len() - produced)
                         .map_err(runner_error)?;
-                    let prepared = prepare_batch(
+                    let prepared = prepare_batch_with_ranker(
                         config.optimization,
                         &parent,
                         &parent_bytes,
                         generation,
                         batch,
+                        critic_ranker.as_ref(),
                     )?;
                     resume = seal_candidate_batch(
                         &root,
@@ -1083,12 +1099,13 @@ pub fn run_residual_campaign(
                 }
                 if state.pending.is_empty() {
                     let batch = cem.ask(&parent, &parent_bytes).map_err(runner_error)?;
-                    let prepared = prepare_batch(
+                    let prepared = prepare_batch_with_ranker(
                         config.optimization,
                         &parent,
                         &parent_bytes,
                         generation,
                         batch,
+                        critic_ranker.as_ref(),
                     )?;
                     resume = seal_candidate_batch(
                         &root,
@@ -1151,6 +1168,7 @@ pub fn run_residual_campaign(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_batch(
     optimization: &OptimizationRequest,
     parent: &InputTape,
@@ -1158,6 +1176,23 @@ pub(crate) fn prepare_batch(
     generation: u64,
     batch: dusklight_search::residual_optimizer::ResidualProposalBatch,
 ) -> Result<Vec<PreparedCandidate>, ResidualCampaignRunnerError> {
+    prepare_batch_with_ranker(optimization, parent, parent_bytes, generation, batch, None)
+}
+
+pub(crate) fn prepare_batch_with_ranker(
+    optimization: &OptimizationRequest,
+    parent: &InputTape,
+    parent_bytes: &[u8],
+    generation: u64,
+    batch: dusklight_search::residual_optimizer::ResidualProposalBatch,
+    critic_ranker: Option<&PreparedResidualCriticRanker>,
+) -> Result<Vec<PreparedCandidate>, ResidualCampaignRunnerError> {
+    let (batch, report) = if let Some(ranker) = critic_ranker {
+        let (batch, report) = ranker.rank(batch).map_err(runner_error)?;
+        (batch, Some(report))
+    } else {
+        (batch, None)
+    };
     batch
         .proposals
         .into_iter()
@@ -1169,6 +1204,25 @@ pub(crate) fn prepare_batch(
                 optimization.budgets.exploration_horizon_ticks,
             )
             .map_err(runner_error)?;
+            let critic_ranking = report.as_ref().map(|report| {
+                let score = report
+                    .proposals
+                    .iter()
+                    .find(|score| score.candidate_sha256 == proposal.candidate.content_sha256)
+                    .expect("ranking report covers every returned proposal");
+                ResidualCampaignCriticRanking {
+                    report_sha256: report.report_sha256,
+                    critic_sha256: report.critic_sha256,
+                    parent_corpus_sha256: report.parent_corpus_sha256,
+                    rank: score.rank,
+                    affected_frames: score.affected_frames,
+                    scored_frames: score.scored_frames,
+                    unsupported_action_frames: score.unsupported_action_frames,
+                    conservative_mean_advantage_bits: score.conservative_mean_advantage.to_bits(),
+                    exact_simulation_authority: report.exact_simulation_authority,
+                    promotion_authority: report.promotion_authority,
+                }
+            });
             prepare_candidate(
                 optimization,
                 generation,
@@ -1176,6 +1230,7 @@ pub(crate) fn prepare_batch(
                 proposal.genome,
                 proposal.candidate,
                 compiled,
+                critic_ranking,
             )
         })
         .collect()
@@ -1242,6 +1297,19 @@ impl From<ResidualCampaignError> for ResidualCampaignRunnerError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimization_request::{OptimizationCriticCorpus, OptimizationCriticRanking};
+    use crate::residual_critic_ranking::PreparedResidualCriticRanker;
+    use dusklight_automation_contracts::observation_view::movement_state_v2_spec;
+    use dusklight_evidence::transition_corpus::{
+        MacroAction, StateReference, StateReferenceKind, Transition, TransitionCorpus,
+    };
+    use dusklight_learning::offline_rl::MovementActionSchema;
+    use dusklight_search::residual_action::{
+        AnalogChannel, AnalogResidual, ResidualCandidate, TemporalBasis, compile_residual_candidate,
+    };
+    use dusklight_search::residual_optimizer::{
+        ResidualGenome, ResidualProposal, ResidualProposalBatch,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn repository() -> PathBuf {
@@ -1300,5 +1368,142 @@ mod tests {
         assert_eq!(adopted.record_count, sealed.record_count);
         assert_eq!(adopted.candidates, sealed.candidates);
         fs::remove_dir_all(campaign).unwrap();
+    }
+
+    #[test]
+    fn campaign_candidates_preserve_request_bound_critic_ordering() {
+        let root = repository();
+        let checked = root.join(
+            "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
+        );
+        let mut optimization: OptimizationRequest =
+            serde_json::from_slice(&fs::read(checked).unwrap()).unwrap();
+        let incumbent = optimization.incumbent.as_ref().unwrap();
+        let parent_bytes = fs::read(root.join(&incumbent.tape.path)).unwrap();
+        let parent = InputTape::decode(&parent_bytes).unwrap().tape;
+        let spec = movement_state_v2_spec();
+        let action_schema = MovementActionSchema::V2;
+        let reference = |byte| StateReference {
+            kind: StateReferenceKind::Boundary,
+            digest: Digest([byte; 32]),
+        };
+        let parent_rows = (0..126)
+            .map(|frame| {
+                let pad = parent.frames[frame].pads[0];
+                let action = action_schema.action_id(pad).unwrap_or(0);
+                Transition {
+                    source: reference((frame % 250 + 1) as u8),
+                    state: vec![0.0; spec.features.len()],
+                    action: MacroAction {
+                        action_id: action,
+                        macro_kind: action_schema.macro_kind(),
+                        parameters: vec![
+                            i16::from(pad.stick_x),
+                            i16::from(pad.stick_y),
+                            pad.buttons as i16,
+                        ],
+                    },
+                    duration_ticks: 1,
+                    reward: -1.0,
+                    next: reference((frame % 250 + 2) as u8),
+                    next_state: vec![0.0; spec.features.len()],
+                    terminal: frame == 125,
+                }
+            })
+            .collect::<Vec<_>>();
+        let parent_corpus = TransitionCorpus::new(
+            spec.digest().unwrap(),
+            action_schema.digest(),
+            spec.features.len() as u32,
+            parent_rows,
+        )
+        .unwrap();
+        let mut training_rows = Vec::new();
+        for action in 0..action_schema.action_count() {
+            training_rows.push(Transition {
+                source: reference((action % 250 + 1) as u8),
+                state: vec![0.0; spec.features.len()],
+                action: MacroAction {
+                    action_id: action,
+                    macro_kind: action_schema.macro_kind(),
+                    parameters: vec![0, 0, 0],
+                },
+                duration_ticks: 1,
+                reward: action as f32,
+                next: reference((action % 250 + 2) as u8),
+                next_state: vec![0.0; spec.features.len()],
+                terminal: true,
+            });
+        }
+        let training = TransitionCorpus::new(
+            spec.digest().unwrap(),
+            action_schema.digest(),
+            spec.features.len() as u32,
+            training_rows,
+        )
+        .unwrap();
+        let artifact = ArtifactReference {
+            path: "build/critic-fixture.dtcz".into(),
+            sha256: Digest([61; 32]),
+        };
+        let source = OptimizationCriticCorpus {
+            corpus: artifact.clone(),
+            evidence: ArtifactReference {
+                path: "build/critic-fixture.evidence.json".into(),
+                sha256: Digest([62; 32]),
+            },
+        };
+        let binding = OptimizationCriticRanking {
+            training_corpora: vec![source.clone()],
+            parent_corpus: source,
+            parent_corpus_start_frame: 0,
+            iterations: 1,
+            trees_per_action: 1,
+            seed: 7,
+            uncertainty_penalty_millionths: 250_000,
+        };
+        optimization.proposal.critic_ranking = Some(binding.clone());
+        optimization.refresh_content_sha256().unwrap();
+        let ranker =
+            PreparedResidualCriticRanker::from_corpora(&[training], parent_corpus, &binding)
+                .unwrap();
+        let candidate = ResidualCandidate::seal(
+            &parent_bytes,
+            vec![AnalogResidual {
+                port: 0,
+                channel: AnalogChannel::MainY,
+                basis: TemporalBasis::ExactFrame {
+                    frame: 8,
+                    delta: 127,
+                },
+            }],
+            vec![],
+        )
+        .unwrap();
+        let compiled = compile_residual_candidate(&parent, &parent_bytes, &candidate).unwrap();
+        let prepared = prepare_batch_with_ranker(
+            &optimization,
+            &parent,
+            &parent_bytes,
+            0,
+            ResidualProposalBatch {
+                proposals: vec![ResidualProposal {
+                    generation: 0,
+                    sample_index: 0,
+                    genome: ResidualGenome { genes: vec![] },
+                    candidate,
+                    compiled,
+                }],
+                rejected_invalid: 0,
+                rejected_duplicate_tape: 0,
+            },
+            Some(&ranker),
+        )
+        .unwrap();
+        let evidence = prepared[0].envelope.critic_ranking.as_ref().unwrap();
+        assert_eq!(evidence.rank, 0);
+        assert!(evidence.exact_simulation_authority);
+        assert!(!evidence.promotion_authority);
+        prepared[0].envelope.validate().unwrap();
     }
 }

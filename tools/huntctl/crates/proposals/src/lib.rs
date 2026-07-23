@@ -12,3 +12,4 @@ pub use dusklight_search::search;
 
 pub mod behavior_archive;
 pub mod q_search;
+pub mod residual_critic_ranking;

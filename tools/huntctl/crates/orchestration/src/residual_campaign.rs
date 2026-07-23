@@ -25,6 +25,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V1: &str = "dusklight-residual-campaign-candidate/v1";
+pub const RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V2: &str = "dusklight-residual-campaign-candidate/v2";
 pub const RESIDUAL_CAMPAIGN_EVALUATION_SCHEMA_V2: &str =
     "dusklight-residual-campaign-evaluation/v2";
 pub const RESIDUAL_CAMPAIGN_CHECKPOINT_SCHEMA_V2: &str =
@@ -46,6 +47,23 @@ pub struct ResidualCampaignCandidate {
     pub genome: ResidualGenome,
     pub candidate: ResidualCandidate,
     pub compilation: ResidualCompilationReport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub critic_ranking: Option<ResidualCampaignCriticRanking>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResidualCampaignCriticRanking {
+    pub report_sha256: Digest,
+    pub critic_sha256: Digest,
+    pub parent_corpus_sha256: Digest,
+    pub rank: usize,
+    pub affected_frames: usize,
+    pub scored_frames: usize,
+    pub unsupported_action_frames: usize,
+    pub conservative_mean_advantage_bits: u64,
+    pub exact_simulation_authority: bool,
+    pub promotion_authority: bool,
 }
 
 impl ResidualCampaignCandidate {
@@ -58,8 +76,35 @@ impl ResidualCampaignCandidate {
         candidate: ResidualCandidate,
         compiled: &CompiledResidualCandidate,
     ) -> Result<Self, ResidualCampaignError> {
+        Self::seal_with_critic_ranking(
+            id,
+            generation,
+            sample_index,
+            proposer_seed,
+            genome,
+            candidate,
+            compiled,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn seal_with_critic_ranking(
+        id: String,
+        generation: u64,
+        sample_index: u32,
+        proposer_seed: u64,
+        genome: ResidualGenome,
+        candidate: ResidualCandidate,
+        compiled: &CompiledResidualCandidate,
+        critic_ranking: Option<ResidualCampaignCriticRanking>,
+    ) -> Result<Self, ResidualCampaignError> {
         let mut value = Self {
-            schema: RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V1.into(),
+            schema: if critic_ranking.is_some() {
+                RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V2.into()
+            } else {
+                RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V1.into()
+            },
             content_sha256: Digest::ZERO,
             id,
             generation,
@@ -68,6 +113,7 @@ impl ResidualCampaignCandidate {
             genome,
             candidate,
             compilation: compiled.report.clone(),
+            critic_ranking,
         };
         value.content_sha256 = value.identity()?;
         value.validate()?;
@@ -79,11 +125,31 @@ impl ResidualCampaignCandidate {
             .validate()
             .map_err(|error| campaign_error(error.to_string()))?;
         if !valid_id(&self.id)
-            || self.schema != RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V1
+            || !matches!(
+                (self.schema.as_str(), self.critic_ranking.is_some()),
+                (RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V1, false)
+                    | (RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V2, true)
+            )
             || self.compilation.candidate_sha256 != self.candidate.content_sha256
             || self.compilation.parent_tape_sha256 != self.candidate.parent_tape_sha256
             || self.compilation.realized_tape_sha256 == Digest::ZERO
             || !self.compilation.realized_tape_authoritative
+            || self.critic_ranking.as_ref().is_some_and(|ranking| {
+                [
+                    ranking.report_sha256,
+                    ranking.critic_sha256,
+                    ranking.parent_corpus_sha256,
+                ]
+                .contains(&Digest::ZERO)
+                    || ranking.affected_frames == 0
+                    || ranking.scored_frames > ranking.affected_frames
+                    || ranking.unsupported_action_frames > ranking.affected_frames
+                    || ranking.scored_frames + ranking.unsupported_action_frames
+                        != ranking.affected_frames
+                    || !f64::from_bits(ranking.conservative_mean_advantage_bits).is_finite()
+                    || !ranking.exact_simulation_authority
+                    || ranking.promotion_authority
+            })
             || self.content_sha256 == Digest::ZERO
             || self.content_sha256 != self.identity()?
         {
@@ -101,7 +167,16 @@ impl ResidualCampaignCandidate {
     fn identity(&self) -> Result<Digest, ResidualCampaignError> {
         let mut canonical = self.clone();
         canonical.content_sha256 = Digest::ZERO;
-        canonical_digest(b"dusklight.residual-campaign-candidate/v1\0", &canonical)
+        let domain = match self.schema.as_str() {
+            RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V1 => {
+                b"dusklight.residual-campaign-candidate/v1\0".as_slice()
+            }
+            RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V2 => {
+                b"dusklight.residual-campaign-candidate/v2\0".as_slice()
+            }
+            _ => return Err(campaign_error("unsupported residual candidate schema")),
+        };
+        canonical_digest(domain, &canonical)
     }
 }
 
@@ -792,6 +867,48 @@ mod tests {
         let mut tampered = envelope.clone();
         tampered.compilation.frame_count = 63;
         assert!(tampered.validate().is_err());
+
+        let ranked = ResidualCampaignCandidate::seal_with_critic_ranking(
+            "g000000-s00000-ranked".into(),
+            0,
+            0,
+            17,
+            envelope.genome.clone(),
+            envelope.candidate.clone(),
+            &compiled,
+            Some(ResidualCampaignCriticRanking {
+                report_sha256: Digest([41; 32]),
+                critic_sha256: Digest([42; 32]),
+                parent_corpus_sha256: Digest([43; 32]),
+                rank: 0,
+                affected_frames: 1,
+                scored_frames: 1,
+                unsupported_action_frames: 0,
+                conservative_mean_advantage_bits: 2.5_f64.to_bits(),
+                exact_simulation_authority: true,
+                promotion_authority: false,
+            }),
+        )
+        .unwrap();
+        let mut promoted_by_critic = ranked.clone();
+        promoted_by_critic
+            .critic_ranking
+            .as_mut()
+            .unwrap()
+            .promotion_authority = true;
+        assert!(promoted_by_critic.validate().is_err());
+        let mut downgraded = ranked.clone();
+        downgraded.schema = RESIDUAL_CAMPAIGN_CANDIDATE_SCHEMA_V1.into();
+        downgraded.content_sha256 = Digest::ZERO;
+        downgraded.content_sha256 = downgraded.identity().unwrap();
+        assert!(downgraded.validate().is_err());
+        let mut nonfinite = ranked;
+        nonfinite
+            .critic_ranking
+            .as_mut()
+            .unwrap()
+            .conservative_mean_advantage_bits = f64::NAN.to_bits();
+        assert!(nonfinite.validate().is_err());
     }
 
     #[test]
