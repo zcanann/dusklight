@@ -44,6 +44,7 @@ pub mod orig_extraction;
 pub mod refinement;
 pub mod relevance;
 pub mod return_place;
+pub mod return_restart_audit;
 pub mod route_book;
 pub mod route_evidence_coverage;
 pub mod route_observation;

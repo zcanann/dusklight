@@ -1982,7 +1982,11 @@ evidenced overlays over the generated base rather than silent edits to it.
       timing boundaries and leaves family-specific geometry/event unknowns
       explicit. See
       `docs/route-planner/gz2e01-representative-actor-state-inventory.md`.
-- [ ] Audit SavMem placements, guards, and all return/restart-place writers.
+- [x] Audit SavMem placements, guards, and all return/restart-place writers.
+      The canonical exact-GZ2E01 audit joins all 132 placements to decoded
+      targets and guards and seals 30 persistent-return, transient-restart,
+      initialization, and restart-parameter source calls across 24 files. See
+      `docs/route-planner/gz2e01-return-restart-writer-audit.md`.
 - [x] Record known BiT, BiTE, Auru duplication, wrong-flags respawn, Fanadi lock,
       Text Displacement, and Ordon/twilight route evidence without prematurely
       encoding conclusions. The evidence index separates exact mechanism,

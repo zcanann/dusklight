@@ -59,6 +59,7 @@ use dusklight_route_planner::refinement::{
     diagnose_refinement_packs,
 };
 use dusklight_route_planner::return_place::gz2e01_tower_return_place_mechanics;
+use dusklight_route_planner::return_restart_audit::ReturnRestartAudit;
 use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::route_evidence_coverage::RouteEvidenceCoverageReport;
 use dusklight_route_planner::route_observation::{
@@ -169,6 +170,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("validate-scene-change-consumer-audit") => {
             validate_scene_change_consumer_audit(&args[1..])
         }
+        Some("audit-return-restart-writers") => audit_return_restart_writers(&args[1..]),
+        Some("validate-return-restart-audit") => validate_return_restart_audit(&args[1..]),
         Some("help" | "--help" | "-h") | None => {
             print_usage();
             Ok(())
@@ -618,6 +621,49 @@ fn validate_scene_change_consumer_audit(args: &[String]) -> Result<(), Box<dyn E
             "source_files": audit.source_files.len(),
             "call_sites": audit.counts.iter().map(|row| row.call_sites).sum::<u64>(),
             "counts": audit.counts,
+            "input": input,
+        }))?
+    );
+    Ok(())
+}
+
+fn audit_return_restart_writers(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let repository_root = required_path(args, "--repository-root")?;
+    let bundle = dusklight_route_planner::orig_discovery::ExtractedOrigBundle::decode_canonical(
+        &fs::read(required_path(args, "--bundle")?)?,
+    )?;
+    let output = required_path(args, "--output")?;
+    let audit = ReturnRestartAudit::extract(&repository_root, &bundle)?;
+    write_file(&output, &audit.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": audit.schema,
+            "content_sha256": audit.content_sha256,
+            "source_bundle_sha256": audit.source_bundle_sha256,
+            "source_files": audit.source_files.len(),
+            "call_sites": audit.writer_counts.iter().map(|row| row.call_sites).sum::<u64>(),
+            "writer_counts": audit.writer_counts,
+            "savmem_placements": audit.savmem_placements.len(),
+            "output": output,
+        }))?
+    );
+    Ok(())
+}
+
+fn validate_return_restart_audit(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let input = required_path(args, "--input")?;
+    let audit = ReturnRestartAudit::decode_canonical(&fs::read(&input)?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": audit.schema,
+            "content_sha256": audit.content_sha256,
+            "source_bundle_sha256": audit.source_bundle_sha256,
+            "source_files": audit.source_files.len(),
+            "call_sites": audit.writer_counts.iter().map(|row| row.call_sites).sum::<u64>(),
+            "writer_counts": audit.writer_counts,
+            "savmem_placements": audit.savmem_placements.len(),
             "input": input,
         }))?
     );
@@ -2586,6 +2632,8 @@ fn print_usage() {
             "Independent TP route planner:",
             "  route-planner audit-scene-change-consumers --source-root SOURCE --content-identity CONTENT.json --output AUDIT.json",
             "  route-planner validate-scene-change-consumer-audit --input AUDIT.json",
+            "  route-planner audit-return-restart-writers --repository-root REPOSITORY --bundle BUNDLE.json --output AUDIT.json",
+            "  route-planner validate-return-restart-audit --input AUDIT.json",
             "  route-planner cache-fact-pack --cache CACHE --payload PAYLOAD.json --manifest MANIFEST.json --receipt RECEIPT.json",
             "  route-planner catalog-state-boundaries --state STATE.json --policy POLICY.json [--policy POLICY.json]... --output CATALOG.json",
             "  route-planner compile-cutscene --program PROGRAM.json --output TRANSITIONS.json",
