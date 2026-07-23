@@ -2684,10 +2684,14 @@ mod tests {
     use crate::service::{
         PlannerServiceOutcome, PlannerServicePayload, PlannerServiceRequest, handle_request,
     };
+    use dusklight_route_planner::evaluation::EvidencePolicy;
     use dusklight_route_planner::route_evidence_coverage::RouteEvidenceCoverageReport;
     use dusklight_route_planner::route_observation::{
         ObservationArtifact, ObservationArtifactKind, PLANNED_EDGE_OBSERVATION_MANIFEST_SCHEMA,
         PlannedEdgeObservation, PlannedEdgeObservationManifest, RouteObservationMatchReport,
+    };
+    use dusklight_route_planner::route_observation_validation::{
+        ComponentDisposition, RouteObservationValidationReport, VerificationStatus,
     };
     use dusklight_route_planner::route_suite_coverage::{RouteSuiteCoverageReport, RouteSuiteKind};
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -3127,19 +3131,45 @@ mod tests {
                 },
             ],
         };
+        let observation_snapshots = vec![
+            before.snapshot.clone(),
+            first_after_snapshot,
+            after.snapshot.clone(),
+        ];
         let observation_report = RouteObservationMatchReport::build(
             &weak_catalog,
             &book,
             &manifest,
-            &[
-                before.snapshot.clone(),
-                first_after_snapshot,
-                after.snapshot.clone(),
-            ],
+            &observation_snapshots,
         )
         .unwrap();
         assert!(observation_report.steps.iter().all(|step| step.observed));
         assert_eq!(observation_report.steps[1].observations[0].start_tick, 21);
+        let validation = RouteObservationValidationReport::build(
+            &weak_catalog,
+            &book,
+            &observation_report,
+            &observation_snapshots,
+            &project.equivalence_sets,
+            EvidencePolicy::RESEARCH,
+        )
+        .unwrap();
+        assert_eq!(validation.validations.len(), 2);
+        assert!(validation.validations.iter().all(|row| {
+            row.model_replay_status == VerificationStatus::Verified
+                && row.snapshot_effects_status == VerificationStatus::Verified
+                && row.component_preservation_status == VerificationStatus::Verified
+        }));
+        let local_bank = validation.validations[0]
+            .component_checks
+            .iter()
+            .find(|check| check.component_id == "stage.local-bank")
+            .unwrap();
+        assert_eq!(
+            local_bank.modeled_disposition,
+            ComponentDisposition::Changed
+        );
+        assert!(local_bank.matches_model);
         let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
             request_id: "request.remove-hypothetical-rebind".into(),
             state: Box::new(start),

@@ -3020,7 +3020,17 @@ timeline assumptions.
       every planned step with an explicit observed/unobserved state.
       `match-route-observations` exports the report. See
       `docs/route-planner/route-observation-matching.md`.
-- [ ] Validate postconditions and component preservation against snapshots.
+- [x] Validate postconditions and component preservation against snapshots.
+      `route-observation-validation-report/v1` evaluates intrinsic/authored
+      preconditions and postconditions without collapsing unknownness, replays
+      typed action operations from each digest-bound before snapshot, and
+      compares the modeled environment to the observed after snapshot. Its
+      per-component census distinguishes expected changes from unexpected
+      mutations to payload, binding, lifetime, or serialization ownership;
+      provenance-only changes do not masquerade as semantic drift. Replay that
+      needs unavailable backing state remains explicitly unavailable.
+      `validate-route-observations` retains evidence-policy and equivalence-set
+      identities. See `docs/route-planner/route-observation-validation.md`.
 - [ ] Promote witnessed edges without erasing lower-confidence alternatives.
 - [x] Attach source, extraction, trace, video, or community citations. The
       catalog-digest-bound `evidence-citation-index/v1` targets existing stable

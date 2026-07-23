@@ -103,8 +103,15 @@ impl PlannedEdgeObservationManifest {
                 "must be unique and sorted",
             ));
         }
+        let mut observation_ids = BTreeSet::new();
         for observation in &self.observations {
             validate_stable_id("observations.id", &observation.id)?;
+            if !observation_ids.insert(observation.id.as_str()) {
+                return Err(PlannerContractError::new(
+                    "observations.id",
+                    "must be globally unique",
+                ));
+            }
             validate_stable_id("observations.step_id", &observation.step_id)?;
             validate_stable_id(
                 "observations.trace_artifact_id",

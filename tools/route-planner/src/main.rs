@@ -62,6 +62,7 @@ use dusklight_route_planner::route_evidence_coverage::RouteEvidenceCoverageRepor
 use dusklight_route_planner::route_observation::{
     PlannedEdgeObservationManifest, RouteObservationMatchReport,
 };
+use dusklight_route_planner::route_observation_validation::RouteObservationValidationReport;
 use dusklight_route_planner::route_suite_coverage::{RouteSuiteCoverageReport, RouteSuiteKind};
 use dusklight_route_planner::scene_change_audit::SceneChangeConsumerAudit;
 use dusklight_route_planner::snapshot::StateSnapshot;
@@ -148,6 +149,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("report-route-evidence-coverage") => report_route_evidence_coverage(&args[1..]),
         Some("report-route-suite-coverage") => report_route_suite_coverage(&args[1..]),
         Some("match-route-observations") => match_route_observations(&args[1..]),
+        Some("validate-route-observations") => validate_route_observations(&args[1..]),
         Some("serve-stdio") => serve_stdio(&args[1..]),
         Some("serve-web") => serve_web_command(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
@@ -355,6 +357,50 @@ fn match_route_observations(args: &[String]) -> Result<(), Box<dyn Error>> {
             "observed_steps": report.steps.iter().filter(|step| step.observed).count(),
             "planned_steps": report.steps.len(),
             "observation_windows": manifest.observations.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn validate_route_observations(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let catalog =
+        ComposedPlannerCatalog::decode_canonical(&fs::read(required_path(args, "--catalog")?)?)?;
+    let route_book = RouteBook::decode_canonical(&fs::read(required_path(args, "--route-book")?)?)?;
+    let matches = RouteObservationMatchReport::decode_canonical(&fs::read(required_path(
+        args,
+        "--matches",
+    )?)?)?;
+    let mut snapshots = Vec::new();
+    for path in repeated_option(args, "--snapshot") {
+        snapshots.push(StateSnapshot::decode_canonical(&fs::read(path)?)?);
+    }
+    let equivalence_sets = repeated_option(args, "--equivalence-set")
+        .into_iter()
+        .map(|path| Ok(EquivalenceSet::decode_canonical(&fs::read(path)?)?))
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let report = RouteObservationValidationReport::build(
+        &catalog,
+        &route_book,
+        &matches,
+        &snapshots,
+        &equivalence_sets,
+        if flag(args, "--research") {
+            EvidencePolicy::RESEARCH
+        } else {
+            EvidencePolicy::ESTABLISHED_ONLY
+        },
+    )?;
+    let output = required_path(args, "--output")?;
+    write_file(&output, &report.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": report.schema,
+            "output": output,
+            "sha256": report.digest()?,
+            "validated_windows": report.validations.len(),
+            "verified_postconditions": report.validations.iter().filter(|row| row.postcondition_status == dusklight_route_planner::route_observation_validation::VerificationStatus::Verified).count(),
+            "verified_preservation": report.validations.iter().filter(|row| row.component_preservation_status == dusklight_route_planner::route_observation_validation::VerificationStatus::Verified).count(),
         }))?
     );
     Ok(())
@@ -2504,6 +2550,7 @@ fn print_usage() {
             "  route-planner report-route-evidence-coverage --catalog CATALOG.json --route-book BOOK.json [--route-book BOOK.json]... --output REPORT.json [--minimum-route-count N]",
             "  route-planner report-route-suite-coverage --catalog CATALOG.json [--glitchless BOOK.json]... [--hundred-percent BOOK.json]... [--any-percent BOOK.json]... [--hypothetical BOOK.json]... --output REPORT.json",
             "  route-planner match-route-observations --catalog CATALOG.json --route-book BOOK.json --manifest OBSERVATIONS.json --snapshot SNAPSHOT.json [--snapshot SNAPSHOT.json]... --output REPORT.json",
+            "  route-planner validate-route-observations --catalog CATALOG.json --route-book BOOK.json --matches MATCHES.json --snapshot SNAPSHOT.json [--snapshot SNAPSHOT.json]... [--equivalence-set SET.json]... [--research] --output REPORT.json",
             "  route-planner scan-orig --orig ORIG_ROOT [--product-id ID] --output SCAN.json",
             "  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json",
             "  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)",
