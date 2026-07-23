@@ -63,13 +63,18 @@ a browser-authored route: Rust replays the ordered method from the exact start,
 rejects the first broken join, applies only executable effects, edits the route
 book transactionally, returns the propagated after-state, and lets the existing
 revision-checked project save persist both semantics and layout. Drag-to-connect,
-rejected-edge depiction, producer suggestions, and all planned demonstrations
+rejected-edge depiction, producer suggestions, and most planned demonstrations
 remain open. Invalid insertion is nevertheless no longer flattened into a
 service error: the v31 response preserves the closest propagated state, exact
 classification, missing and unknown obligation/requirement IDs, context/evidence
 status, and active or unknown obstruction/resolver diagnostics; the browser
-retains and renders that payload without mutating the route book. Coverage is
-also incomplete, so the current engine is a
+retains and renders that payload without mutating the route book. The built-in
+Fanadi project is now an executable demonstration rather than only
+a catalog view: its exact GZ2E01 runtime state contains a provenance-bearing
+stored return-place component and a concrete location goal, so Save As followed
+by insertion propagates from F_SP103 to R_SP107 room 3 through the modeled
+savewarp reader. The remaining planned demonstrations and removal/replacement
+editing remain open. Coverage is also incomplete, so the current engine is a
 causal-reasoning laboratory over selected modeled mechanics rather than a
 whole-game route explorer.
 
@@ -2595,8 +2600,11 @@ visual polish or whole-game authoring features.
       propagated state when a transition is removed or replaced.
       The exact GZ2E01 Fanadi return-place/savewarp mechanics and audited opening
       and file-selection flow now ship as read-only built-ins that can be saved
-      into the editable workspace; transition editing and the remaining three
-      demonstrations are still open.
+      into the editable workspace. The Fanadi project now includes an exact
+      start state and concrete goal; after Save As, its savewarp transition
+      validates, inserts, and visibly changes the propagated location to
+      R_SP107 room 3. Removal/replacement, an executable opening-flow state, and
+      the remaining three demonstrations are still open.
 - [ ] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
       saves it, reloads it, and obtains identical semantic identities.

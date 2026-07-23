@@ -2,20 +2,30 @@
 
 use dusklight_route_planner::PlannerContractError;
 use dusklight_route_planner::artifact::Digest;
-use dusklight_route_planner::execution::PlannerExecutionStateDocument;
+use dusklight_route_planner::execution::{PlannerExecutionState, PlannerExecutionStateDocument};
 use dusklight_route_planner::graph::PlannerGraph;
 use dusklight_route_planner::identity::{
     CONTENT_IDENTITY_SCHEMA, ContentFingerprint, ContentIdentity, EquivalenceSet, GamePlatform,
     GameRegion, RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
 };
-use dusklight_route_planner::logic::{FACT_CATALOG_SCHEMA, FactCatalog};
+use dusklight_route_planner::logic::{
+    ComparisonOperator, FACT_CATALOG_SCHEMA, FactCatalog, PredicateExpression, ValueReference,
+};
 use dusklight_route_planner::refinement::ComposedPlannerCatalog;
 use dusklight_route_planner::return_place::{
     GZ2E01_CONTENT_SHA256, gz2e01_tower_return_place_mechanics,
 };
 use dusklight_route_planner::route_book::RouteBook;
+use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
+use dusklight_route_planner::state::{
+    BackingAttachment, ComponentBinding, ComponentKind, ComponentPayload, ComponentProvenance,
+    EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext, ExecutionEnvironment, PhysicalSlotId,
+    PlayerForm, PlayerState, ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle,
+    RuntimeFileOrigin, SceneLocation, SemanticLifetime, SerializationOwner, StateComponent,
+    StateValue,
+};
 use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
-use dusklight_route_planner::transition::{MECHANICS_CATALOG_SCHEMA, MechanicsCatalog};
+use dusklight_route_planner::transition::{Goal, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -442,11 +452,30 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
         aliases: Vec::new(),
         derived_facts: Vec::new(),
     };
-    let fanadi = ComposedPlannerCatalog::compose(
-        &facts,
-        &gz2e01_tower_return_place_mechanics(&content, &runtime)?,
-        &[],
-    )?;
+    let mut fanadi_mechanics = gz2e01_tower_return_place_mechanics(&content, &runtime)?;
+    fanadi_mechanics.goals.push(Goal {
+        id: "goal.reach-fanadi-return-place".into(),
+        label: "Reach the stored Fanadi return place".into(),
+        predicate: PredicateExpression::All {
+            terms: vec![
+                PredicateExpression::Compare {
+                    left: ValueReference::LocationStage,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Text("R_SP107".into()),
+                    },
+                },
+                PredicateExpression::Compare {
+                    left: ValueReference::LocationRoom,
+                    operator: ComparisonOperator::Equal,
+                    right: ValueReference::Literal {
+                        value: StateValue::Signed(3),
+                    },
+                },
+            ],
+        },
+    });
+    let fanadi = ComposedPlannerCatalog::compose(&facts, &fanadi_mechanics, &[])?;
     let opening = ComposedPlannerCatalog::compose(
         &facts,
         &gz2e01_reset_to_opening_mechanics(&content, &runtime)?,
@@ -459,7 +488,7 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             label: "Fanadi return-place locking".into(),
             catalog: fanadi,
             route_book: None,
-            start_state: None,
+            start_state: Some(fanadi_start_state(runtime.clone())?),
             equivalence_sets: Vec::new(),
             presentation: ProjectPresentation::default(),
         },
@@ -478,6 +507,83 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
         project.validate()?;
     }
     Ok(projects)
+}
+
+fn fanadi_start_state(
+    runtime_configuration: RuntimeConfiguration,
+) -> Result<PlannerExecutionStateDocument, ProjectError> {
+    let runtime_file_id = "file-0".to_owned();
+    let return_place = StateComponent {
+        id: "return-place".into(),
+        component_kind: ComponentKind::Custom {
+            id: "return-place".into(),
+        },
+        payload: ComponentPayload::Structured {
+            fields: BTreeMap::from([
+                ("player_status".into(), StateValue::Unsigned(1)),
+                ("room".into(), StateValue::Signed(3)),
+                ("stage".into(), StateValue::Text("R_SP107".into())),
+            ]),
+        },
+        binding: ComponentBinding::RuntimeFile {
+            runtime_file_id: runtime_file_id.clone(),
+        },
+        lifetime: SemanticLifetime::RuntimeFile,
+        serialization_owner: SerializationOwner::RuntimeFile {
+            runtime_file_id: runtime_file_id.clone(),
+        },
+        provenance: vec![ComponentProvenance {
+            source_kind: ProvenanceSourceKind::ExtractedFact,
+            source_id: "demo.fanadi-return-place".into(),
+            source_sha256: None,
+            transition_id: None,
+        }],
+    };
+    let snapshot = StateSnapshot {
+        schema: STATE_SNAPSHOT_SCHEMA.into(),
+        id: "snapshot.fanadi-before-savewarp".into(),
+        sequence: 0,
+        environment: ExecutionEnvironment {
+            schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+            runtime_configuration,
+            active_runtime_file: RuntimeFile {
+                id: runtime_file_id,
+                origin: RuntimeFileOrigin::NewFile,
+                backing: BackingAttachment::MemoryOnly,
+                allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                lifecycle: RuntimeFileLifecycle::Active,
+            },
+            inactive_runtime_files: Vec::new(),
+            physical_slots: Vec::new(),
+            physical_slot_observations: Vec::new(),
+            execution_context: ExecutionContext::World,
+            location: SceneLocation {
+                stage: "F_SP103".into(),
+                room: 0,
+                layer: 0,
+                spawn: 0,
+            },
+            player: PlayerState {
+                form: PlayerForm::Human,
+                mount: None,
+                position: [0.0; 3],
+                rotation: [0; 3],
+                has_control: Some(true),
+                action: "idle".into(),
+            },
+            components: vec![return_place],
+            static_world_objects: Vec::new(),
+            spatial_volumes: Vec::new(),
+            spatial_connections: Vec::new(),
+            spatial_planes: Vec::new(),
+            persisted_object_controls: Vec::new(),
+            live_world_objects: Vec::new(),
+        },
+        semantic_observations: Vec::new(),
+    };
+    PlannerExecutionState::new(snapshot)
+        .and_then(|state| state.to_document())
+        .map_err(ProjectError::from)
 }
 
 fn empty_mechanics() -> MechanicsCatalog {
@@ -561,6 +667,10 @@ fn project_error(message: impl Into<String>) -> ProjectError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::RuntimeEvidenceMode;
+    use crate::service::{
+        PlannerServiceOutcome, PlannerServicePayload, PlannerServiceRequest, handle_request,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -586,6 +696,40 @@ mod tests {
                 .iter()
                 .any(|project| project.id == "demo-fanadi-return-place")
         );
+        let fanadi = store.load("demo-fanadi-return-place").unwrap();
+        assert!(fanadi.project.start_state.is_some());
+        assert_eq!(fanadi.project.catalog.mechanics.goals.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn fanadi_demo_savewarp_propagates_from_its_exact_start_state() {
+        let root = temporary_root("fanadi-propagation");
+        let store = ProjectStore::open(&root).unwrap();
+        let record = store.load("demo-fanadi-return-place").unwrap();
+        let project = record.project;
+        let response = handle_request(PlannerServiceRequest::AppendTransition {
+            request_id: "request.fanadi-savewarp".into(),
+            state: Box::new(project.start_state.unwrap()),
+            catalog: Box::new(project.catalog),
+            equivalence_sets: project.equivalence_sets,
+            route_book: None,
+            route_book_id: "route.fanadi-demo".into(),
+            route_book_label: "Fanadi demo route".into(),
+            transition_id: "transition.savewarp.from-player-return-place".into(),
+            evidence_mode: RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("Fanadi demo savewarp should be executable from its checked start state");
+        };
+        let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
+            panic!("Fanadi demo should append one propagated transition");
+        };
+        assert_eq!(after.snapshot.environment.location.stage, "R_SP107");
+        assert_eq!(after.snapshot.environment.location.room, 3);
+        assert_eq!(after.snapshot.environment.location.layer, -1);
+        assert_eq!(after.snapshot.environment.location.spawn, 1);
+        assert_eq!(book.methods[0].step_ids, ["step.route-0000"]);
         fs::remove_dir_all(root).unwrap();
     }
 
