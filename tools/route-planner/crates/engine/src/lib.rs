@@ -27,6 +27,7 @@ pub mod fact_pack;
 pub mod fact_pack_cache;
 pub mod file_zero_research;
 pub mod fishing_rod;
+pub mod gcm;
 pub mod graph;
 pub mod identity;
 pub mod jstudio_import;

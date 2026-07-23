@@ -47,7 +47,7 @@ Dragging nodes marks presentation state dirty; JSON import/export remains
 available for interchange. Graph projection still runs through the Rust
 service, and layout metadata never participates in reachability.
 
-The planner CLI currently owns forty-one operations:
+The planner CLI currently owns forty-two operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -125,6 +125,12 @@ The planner CLI currently owns forty-one operations:
   planner facts and unresolved physical obligations.
 - `extract-resource` performs bounded Yaz0/RARC extraction of one uniquely
   named resource from user-supplied retail data.
+- `extract-gcm` expands a GameCube GCM/ISO into the conventional `sys/` and
+  `files/` tree consumed by `scan-orig` and `extract-orig`. It validates the
+  DOL, apploader, and FST ranges; rejects unsafe, duplicate, or overlapping FST
+  entries; and requires a new output root. The reported product ID is
+  descriptive only: exact-build support is still established by hashing the
+  extracted files through `scan-orig` or `extract-orig`.
 - `scan-orig` discovers an extracted GameCube/Wii disc from either its game
   root or a parent `orig/` directory, reads the product/revision header, hashes
   every regular file below the extracted `sys/` and `files/` trees, and emits a

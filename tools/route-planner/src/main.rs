@@ -29,6 +29,7 @@ use dusklight_route_planner::fact_pack::{
     FactPackSource, SourceArtifactKind,
 };
 use dusklight_route_planner::fact_pack_cache::{load_fact_pack, store_fact_pack};
+use dusklight_route_planner::gcm::extract_gamecube_disc;
 use dusklight_route_planner::graph::{PlannerFeasibilityGraphDiff, PlannerGraph};
 use dusklight_route_planner::identity::{ContentIdentity, EquivalenceSet, RuntimeConfiguration};
 use dusklight_route_planner::jstudio_import::parse_jstudio_stb;
@@ -126,6 +127,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("extract-event-list") => extract_event_list(&args[1..]),
         Some("extract-demo-actor-program") => extract_demo_actor_program(&args[1..]),
         Some("extract-function-evidence") => extract_function_evidence(&args[1..]),
+        Some("extract-gcm") => extract_gcm(&args[1..]),
         Some("extract-jstudio-stb") => extract_jstudio_stb(&args[1..]),
         Some("resolve-jstudio-stb") => resolve_jstudio_stb(&args[1..]),
         Some("resolve-cutscene-package") => resolve_cutscene_package_command(&args[1..]),
@@ -176,6 +178,14 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn extract_gcm(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let iso = required_path(args, "--iso")?;
+    let output = required_path(args, "--output")?;
+    let report = extract_gamecube_disc(&iso, &output)?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    Ok(())
 }
 
 fn diagnose_refinement_packs_command(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -2594,6 +2604,7 @@ fn print_usage() {
             "  route-planner extract-event-list --archive ARCHIVE.arc [--resource event_list.dat] --output EVENTS.json",
             "  route-planner extract-demo-actor-program --archive ARCHIVE.arc --resource FILE.stb --content-identity CONTENT.json --output PROGRAM.json",
             "  route-planner extract-function-evidence --dol main.dol --symbols symbols.txt --symbol EXACT_NAME --output EVIDENCE.json",
+            "  route-planner extract-gcm --iso DISC.iso --output NEW_EXTRACTED_ROOT",
             "  route-planner extract-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --output PROGRAM.json",
             "  route-planner resolve-jstudio-stb --archive ARCHIVE.arc --resource FILE.stb --content-identity CONTENT.json [--profile PROFILE.json] --output SEMANTICS.json",
             "  route-planner resolve-cutscene-package --content-identity CONTENT.json --topology WRAPPER.json --semantics SEMANTICS.json [--profile PROFILE.json] --output PACKAGE.json",
