@@ -669,6 +669,9 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             ],
         },
     });
+    fanadi_mechanics
+        .goals
+        .sort_by(|left, right| left.id.cmp(&right.id));
     let fanadi = ComposedPlannerCatalog::compose(&facts, &fanadi_mechanics, &[])?;
     let mut opening_mechanics = gz2e01_reset_to_opening_mechanics(&content, &runtime)?;
     opening_mechanics.goals.push(Goal {
@@ -693,6 +696,9 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             ],
         },
     });
+    opening_mechanics
+        .goals
+        .sort_by(|left, right| left.id.cmp(&right.id));
     let opening = ComposedPlannerCatalog::compose(&facts, &opening_mechanics, &[])?;
     let (keyed_door, keyed_door_start) = keyed_door_demo(&facts, runtime.clone())?;
     let (rebind, rebind_start) = hypothetical_rebind_demo(runtime.clone())?;
@@ -1065,6 +1071,9 @@ fn text_displacement_demo(
         label: "Use displaced text state to write Gor Coron M029".into(),
         predicate: fact("event.gor-coron-won"),
     });
+    mechanics
+        .goals
+        .sort_by(|left, right| left.id.cmp(&right.id));
     let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &[])?;
     let mut components = vec![
         StateComponent {
@@ -1337,6 +1346,9 @@ fn auru_recent_item_demo(
             },
         },
     });
+    mechanics
+        .goals
+        .sort_by(|left, right| left.id.cmp(&right.id));
     let facts = FactCatalog {
         schema: FACT_CATALOG_SCHEMA.into(),
         aliases: Vec::new(),
@@ -1606,6 +1618,9 @@ fn hypothetical_rebind_demo(
         label: "Enter the path exposed by the hypothetical rebind".into(),
         predicate: stage_is("STAGE_B"),
     });
+    mechanics
+        .goals
+        .sort_by(|left, right| left.id.cmp(&right.id));
     let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &[])?;
     let snapshot = StateSnapshot {
         schema: STATE_SNAPSHOT_SCHEMA.into(),
@@ -2048,6 +2063,9 @@ fn keyed_door_demo(
             ],
         },
     });
+    mechanics
+        .goals
+        .sort_by(|left, right| left.id.cmp(&right.id));
     let catalog = ComposedPlannerCatalog::compose(facts, &mechanics, &[])?;
     let snapshot = keyed_door_start_snapshot(runtime_configuration);
     let document = PlannerExecutionState::new(snapshot)?.to_document()?;
@@ -2695,7 +2713,21 @@ mod tests {
         assert_eq!(fanadi.project.catalog.mechanics.goals.len(), 1);
         let opening = store.load("demo-opening-flow").unwrap();
         assert!(opening.project.start_state.is_some());
-        assert_eq!(opening.project.catalog.mechanics.goals.len(), 1);
+        assert_eq!(opening.project.catalog.mechanics.goals.len(), 2);
+        assert_eq!(
+            opening
+                .project
+                .catalog
+                .mechanics
+                .goals
+                .iter()
+                .map(|goal| goal.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "goal.enter-opening-process",
+                dusklight_route_planner::title_boundary::GZ2E01_UNSAVED_FILE_ZERO_GOAL_ID,
+            ]
+        );
         let keyed_door = store.load("demo-forest-keyed-door").unwrap();
         assert!(keyed_door.project.start_state.is_some());
         assert_eq!(keyed_door.project.catalog.mechanics.transitions.len(), 9);

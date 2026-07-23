@@ -2,6 +2,7 @@ use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::binary_evidence::{
     extract_dol_function_evidence, extract_dol_range_evidence,
 };
+use dusklight_route_planner::component_catalog::ComponentBoundaryCatalog;
 use dusklight_route_planner::cutscene::CutsceneProgram;
 use dusklight_route_planner::cutscene_corruption::compile_actor_corruption_hypothesis;
 use dusklight_route_planner::cutscene_import::{
@@ -54,7 +55,7 @@ use dusklight_route_planner::route_book::{RouteBook, RouteBookEditBatch};
 use dusklight_route_planner::scene_change_audit::SceneChangeConsumerAudit;
 use dusklight_route_planner::snapshot::StateSnapshot;
 use dusklight_route_planner::solver::{ForwardSolver, SolverOptions};
-use dusklight_route_planner::state::BoundaryKind;
+use dusklight_route_planner::state::{BoundaryKind, BoundaryPolicy};
 use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
 use dusklight_route_planner::transition::MechanicsCatalog;
 use dusklight_route_planner::world_data::{WorldContext, WorldInventory};
@@ -90,6 +91,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let args = env::args().skip(1).collect::<Vec<_>>();
     match args.first().map(String::as_str) {
         Some("cache-fact-pack") => cache_fact_pack(&args[1..]),
+        Some("catalog-state-boundaries") => catalog_state_boundaries(&args[1..]),
         Some("compile-cutscene") => compile_cutscene(&args[1..]),
         Some("compile-cutscene-corruption-hypothesis") => {
             compile_cutscene_corruption_hypothesis_command(&args[1..])
@@ -144,6 +146,41 @@ fn run() -> Result<(), Box<dyn Error>> {
             Err("unknown route-planner command".into())
         }
     }
+}
+
+fn catalog_state_boundaries(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let state_path = required_path(args, "--state")?;
+    let state =
+        PlannerExecutionStateDocument::decode_canonical(&fs::read(state_path)?)?.into_state()?;
+    let policy_paths = repeated_option(args, "--policy");
+    let policies = policy_paths
+        .iter()
+        .map(|path| {
+            let policy: BoundaryPolicy = serde_json::from_slice(&fs::read(path)?)?;
+            policy.validate()?;
+            Ok(policy)
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let catalog = ComponentBoundaryCatalog::derive(&state, policies)?;
+    let output = required_path(args, "--output")?;
+    write_file(&output, &catalog.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": catalog.schema,
+            "content_sha256": catalog.content_sha256,
+            "source_execution_state_sha256": catalog.source_execution_state_sha256,
+            "inventory_entries": catalog.inventory.len(),
+            "live_components": catalog
+                .inventory
+                .iter()
+                .filter(|entry| matches!(&entry.storage, dusklight_route_planner::component_catalog::ComponentStorageLocation::Live))
+                .count(),
+            "boundary_policies": catalog.boundary_policies.len(),
+            "effective_live_boundaries": catalog.effective_live_boundaries.len(),
+        }))?
+    );
+    Ok(())
 }
 
 fn audit_scene_change_consumers(args: &[String]) -> Result<(), Box<dyn Error>> {
@@ -2086,6 +2123,7 @@ fn print_usage() {
             "  route-planner audit-scene-change-consumers --source-root SOURCE --content-identity CONTENT.json --output AUDIT.json",
             "  route-planner validate-scene-change-consumer-audit --input AUDIT.json",
             "  route-planner cache-fact-pack --cache CACHE --payload PAYLOAD.json --manifest MANIFEST.json --receipt RECEIPT.json",
+            "  route-planner catalog-state-boundaries --state STATE.json --policy POLICY.json [--policy POLICY.json]... --output CATALOG.json",
             "  route-planner compile-cutscene --program PROGRAM.json --output TRANSITIONS.json",
             "  route-planner compile-message-entries --bundle BUNDLE.json --message-flow-set COMPILED.json --contracts ENTRIES.json --output COMPILED_ENTRIES.json --manifest MANIFEST.json",
             "  route-planner compile-message-flows --bundle BUNDLE.json --runtime-configuration RUNTIME.json --profile PROFILE.json [--overlays OVERLAYS.json] --output COMPILED.json --manifest MANIFEST.json",

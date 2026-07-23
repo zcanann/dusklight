@@ -47,7 +47,7 @@ Dragging nodes marks presentation state dirty; JSON import/export remains
 available for interchange. Graph projection still runs through the Rust
 service, and layout metadata never participates in reachability.
 
-The planner CLI currently owns forty operations:
+The planner CLI currently owns forty-one operations:
 
 - `compose` validates deterministic layered refinement stacks and emits a
   canonical composed fact/mechanics catalog. `--pack`, `--route-overlay`, and
@@ -55,6 +55,11 @@ The planner CLI currently owns forty operations:
   cannot silently become installed knowledge. Authored obstruction selectors
   bind to concrete actions during composition, producing solver/graph
   dependencies without route-book wiring.
+- `catalog-state-boundaries` derives a sealed complete inventory of every live,
+  transient-store, persistent-image, and stage-bank component represented by an
+  execution state, then projects every supplied boundary policy onto every live
+  component. Explicit rules, defaults, unknowns, and one-boundary preserve
+  overrides remain distinguishable, and overlapping selectors fail closed.
 - `compile-cutscene` validates a phase-level cutscene program and compiles each
   normal, skip, interruption, scene-change, or resource-failure branch into an
   ordinary causal transition. Confirmed prefixes remain ordered and unaudited

@@ -1859,6 +1859,15 @@ evidenced overlays over the generated base rather than silent edits to it.
     cache artifacts; records exact GZ2E01 coverage; and lists missing fields by
     identity, topology, geometry/live state, messages/events, and storage.
 - [ ] Catalogue all save/runtime components and reset boundaries.
+  - [x] Derive a sealed state-local inventory from every live, transient-store,
+        persistent-image, and stage-bank component, including binding, lifetime,
+        serialization ownership, and raw/structured/unknown payload coverage.
+        Project every supplied boundary onto every live component and preserve
+        whether its effective disposition came from an explicit rule, the
+        default, or a one-boundary override; reject overlaps and independently
+        recompute every row during validation. Exact unobserved retail struct
+        members and unaudited policies remain open coverage rather than being
+        fabricated. See `docs/route-planner/save-runtime-component-boundary-catalog.md`.
 - [ ] Audit title, no-file, save-slot, load, void, death, and savewarp flows.
   - [x] Audit and model the exact GZ2E01 successful reset-to-opening prefix:
         GCN reset/menu/fader guards, restart-room parameter zeroing, the
