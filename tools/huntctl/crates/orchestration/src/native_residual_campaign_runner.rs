@@ -456,7 +456,7 @@ fn alternate_worker_pools<'a>(
     execution: &'a NativeResidualExecutionBinding,
 ) -> Result<Vec<WorkerPool<'a>>, NativeResidualCampaignRunnerError> {
     optimization
-        .alternate_terminal_predicates(root)
+        .alternate_terminal_predicates_after_request_validation(root)
         .map_err(native_error)?
         .into_iter()
         .enumerate()
@@ -700,24 +700,31 @@ fn validate_evaluation_artifacts_cached(
     for attempt in &evaluation.attempts {
         validate_attempt_artifacts_cached(root, &terminal, attempt, artifact_cache)?;
     }
-    let expected = optimization
-        .alternate_terminal_predicates(root)
-        .map_err(native_error)?
-        .into_iter()
-        .map(|binding| NativeTerminalBinding {
-            goal: binding.goal,
-            program_sha256: binding.program_sha256,
-            definition_sha256: binding.definition_sha256,
-        })
-        .collect::<Vec<_>>();
+    if artifact_cache.alternate_terminals.is_none() {
+        artifact_cache.alternate_terminals = Some(
+            optimization
+                .alternate_terminal_predicates_after_request_validation(root)
+                .map_err(native_error)?
+                .into_iter()
+                .map(|binding| NativeTerminalBinding {
+                    goal: binding.goal,
+                    program_sha256: binding.program_sha256,
+                    definition_sha256: binding.definition_sha256,
+                })
+                .collect(),
+        );
+    }
     let expected = if evaluation
         .attempts
         .first()
         .is_some_and(|attempt| attempt.first_hit_tick.is_none())
     {
-        expected
+        artifact_cache
+            .alternate_terminals
+            .as_deref()
+            .unwrap_or_default()
     } else {
-        Vec::new()
+        &[]
     };
     if evaluation
         .alternate_terminals
@@ -767,8 +774,11 @@ struct CachedNativeAttemptArtifacts {
     episode: ArtifactReference,
 }
 
-type NativeAttemptArtifactCache =
-    BTreeMap<NativeAttemptArtifactCacheKey, CachedNativeAttemptArtifacts>;
+#[derive(Default)]
+struct NativeAttemptArtifactCache {
+    attempts: BTreeMap<NativeAttemptArtifactCacheKey, CachedNativeAttemptArtifacts>,
+    alternate_terminals: Option<Vec<NativeTerminalBinding>>,
+}
 
 fn validate_attempt_artifacts_cached(
     root: &Path,
@@ -785,7 +795,7 @@ fn validate_attempt_artifacts_cached(
         terminal_program_sha256: terminal.program_sha256,
         terminal_definition_sha256: terminal.definition_sha256,
     };
-    if !artifact_cache.contains_key(&cache_key) {
+    if !artifact_cache.attempts.contains_key(&cache_key) {
         let batch: NativeSuffixBatch = serde_json::from_slice(
             &read_artifact(root, &attempt.batch_request).map_err(native_error)?,
         )
@@ -800,12 +810,13 @@ fn validate_attempt_artifacts_cached(
             .map_err(native_error)?;
         let episode = artifact_reference(root, Path::new(&validated.episode_shard_path))
             .map_err(native_error)?;
-        artifact_cache.insert(
+        artifact_cache.attempts.insert(
             cache_key.clone(),
             CachedNativeAttemptArtifacts { validated, episode },
         );
     }
     let cached = artifact_cache
+        .attempts
         .get(&cache_key)
         .expect("validated native attempt artifacts were cached");
     let candidate = cached
@@ -2344,12 +2355,14 @@ mod tests {
         let optimization = optimization(&root);
         let execution = execution(&optimization);
         let (_parent, _parent_bytes, prepared) = prepared_generation(&root, &optimization);
-        let alternate = optimization
-            .alternate_terminal_predicates(&root)
-            .unwrap()
-            .into_iter()
-            .next()
-            .unwrap();
+        let alternates = optimization.alternate_terminal_predicates(&root).unwrap();
+        assert_eq!(
+            optimization
+                .alternate_terminal_predicates_after_request_validation(&root)
+                .unwrap(),
+            alternates
+        );
+        let alternate = alternates.into_iter().next().unwrap();
         let attempt = |first_hit_tick: Option<u64>, byte: u8| NativeResidualAttempt {
             repetition: 1,
             worker_seed: optimization.execution.deterministic_seeds[0],

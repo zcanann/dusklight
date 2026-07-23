@@ -143,7 +143,7 @@ pub(crate) fn append_residual_replay_generation(
         BTreeMap::new()
     } else {
         optimization
-            .alternate_terminal_predicates(root)
+            .alternate_terminal_predicates_after_request_validation(root)
             .map_err(replay_error)?
             .into_iter()
             .map(|binding| (binding.goal.clone(), binding))

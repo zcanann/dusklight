@@ -732,6 +732,14 @@ impl OptimizationRequest {
         repository_root: &Path,
     ) -> Result<Vec<AlternateTerminalPredicateBinding>, OptimizationRequestError> {
         self.validate_files(repository_root)?;
+        self.alternate_terminal_predicates_after_request_validation(repository_root)
+    }
+
+    pub(crate) fn alternate_terminal_predicates_after_request_validation(
+        &self,
+        repository_root: &Path,
+    ) -> Result<Vec<AlternateTerminalPredicateBinding>, OptimizationRequestError> {
+        self.validate()?;
         let root = repository_root.canonicalize().map_err(|source| {
             request_error(format!(
                 "cannot resolve repository root {}: {source}",
