@@ -262,7 +262,10 @@ The planner CLI currently owns forty operations:
   Shift-selected graph nodes can also be grouped into nested presentation-only
   regions. These saved regions have validated parent/cycle contracts and
   breadcrumb navigation, but node IDs, mechanics, edges, and graph digests stay
-  planner-owned and unchanged; grouping grants no reachability authority.
+  planner-owned and unchanged; grouping grants no reachability authority. Each
+  region control also computes its descendant closure and exposes a sorted list
+  of every incoming/outgoing graph edge, inside/outside endpoint kind, and exact
+  execution-state endpoint crossing the visual boundary.
   Static assets are embedded in the Rust binary and served with a restrictive
   content security policy and no cache.
 

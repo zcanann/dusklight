@@ -2822,8 +2822,14 @@ visual polish or whole-game authoring features.
         `Closing subgraph > Terminal state`, verifies exact-region contents at
         both levels, inspects the nested execution state, then returns through
         the parent breadcrumb to edit the underlying route step.
-  - [ ] Show every incoming/outgoing boundary state and edge before a saved region
-        is copied or referenced elsewhere.
+  - [x] Show every incoming/outgoing boundary state and edge before a saved region
+        is copied or referenced elsewhere. Every region row now reports its
+        crossing-edge count and opens a deterministic boundary projection over
+        the complete descendant closure: direction, relation, edge identity,
+        inside/outside node identities and kinds, plus every exact execution
+        state at the boundary. Brave inspects the nested terminal-state boundary
+        before reentering it; future copy/reference controls can consume this
+        mandatory projection rather than inferring connectivity from layout.
   - [ ] Support version, fork, copy/reference, replace, and usage inspection for
         saved regions; defer arbitrary rewiring until transition-safe edits exist.
 - [x] Add inventory/flag/component state inspector with before/after diff.

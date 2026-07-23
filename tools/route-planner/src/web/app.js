@@ -625,6 +625,13 @@ function renderRegionNavigation() {
     enter.textContent = region.label;
     enter.title = "Enter region";
     enter.addEventListener("click", () => enterRegion(region.id));
+    const inspect = document.createElement("button");
+    inspect.type = "button";
+    inspect.className = "inspect-region";
+    const boundary = inspectRegionBoundary(region);
+    inspect.textContent = `↔${boundary.boundary_edges.length}`;
+    inspect.title = "Inspect every edge crossing this region boundary";
+    inspect.addEventListener("click", () => selectRegionBoundary(region));
     const collapse = document.createElement("button");
     collapse.type = "button";
     collapse.className = "collapse-region";
@@ -632,7 +639,7 @@ function renderRegionNavigation() {
     collapse.textContent = collapsed ? "+" : "−";
     collapse.title = collapsed ? "Expand region in the full graph" : "Collapse region in the full graph";
     collapse.addEventListener("click", () => toggleRegionCollapse(region.id));
-    row.append(enter, collapse);
+    row.append(enter, inspect, collapse);
     elements["region-children"].append(row);
   }
 }
@@ -657,6 +664,66 @@ function enterRegion(regionId) {
   state.transitionEvaluation = null;
   render();
   requestAnimationFrame(fitGraph);
+}
+
+function inspectRegionBoundary(region) {
+  const regions = displayedRegions();
+  const enclosedRegions = new Set([region.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of regions) {
+      if (candidate.parent_region_id && enclosedRegions.has(candidate.parent_region_id)
+        && !enclosedRegions.has(candidate.id)) {
+        enclosedRegions.add(candidate.id);
+        changed = true;
+      }
+    }
+  }
+  const enclosedNodes = new Set(state.graph.nodes
+    .filter((node) => enclosedRegions.has(displayedNodeRegionId(node)))
+    .map((node) => node.id));
+  const nodes = new Map(state.graph.nodes.map((node) => [node.id, node]));
+  const boundaryEdges = [];
+  for (const edge of state.graph.edges) {
+    const sourceInside = enclosedNodes.has(edge.source_node_id);
+    const targetInside = enclosedNodes.has(edge.target_node_id);
+    if (sourceInside === targetInside) continue;
+    const insideNodeId = sourceInside ? edge.source_node_id : edge.target_node_id;
+    const outsideNodeId = sourceInside ? edge.target_node_id : edge.source_node_id;
+    const insideNode = nodes.get(insideNodeId);
+    const outsideNode = nodes.get(outsideNodeId);
+    boundaryEdges.push({
+      direction: sourceInside ? "outgoing" : "incoming",
+      edge_id: edge.id,
+      relation: edge.relation,
+      inside_node_id: insideNodeId,
+      inside_node_kind: insideNode?.payload.kind ?? "missing",
+      outside_node_id: outsideNodeId,
+      outside_node_kind: outsideNode?.payload.kind ?? "missing",
+    });
+  }
+  boundaryEdges.sort((left, right) => left.edge_id.localeCompare(right.edge_id));
+  return {
+    kind: "presentation_region_boundary",
+    id: region.id,
+    label: region.label,
+    parent_region_id: region.parent_region_id,
+    enclosed_region_ids: [...enclosedRegions].sort(),
+    enclosed_node_ids: [...enclosedNodes].sort(),
+    boundary_state_ids: [...new Set(boundaryEdges.flatMap((edge) => [
+      edge.inside_node_kind === "execution_state" ? edge.inside_node_id : null,
+      edge.outside_node_kind === "execution_state" ? edge.outside_node_id : null,
+    ]).filter(Boolean))].sort(),
+    boundary_edges: boundaryEdges,
+  };
+}
+
+function selectRegionBoundary(region) {
+  state.selected = { type: "region", value: inspectRegionBoundary(region) };
+  state.transitionEvaluation = null;
+  renderDetails();
+  setStatus(`${region.label}: ${state.selected.value.boundary_edges.length} crossing edge(s)`);
 }
 
 function toggleRegionCollapse(regionId) {
@@ -733,7 +800,9 @@ function renderDetails() {
     renderStateInspector();
     return;
   }
-  elements["detail-title"].textContent = selected.type === "node" ? selected.value.label : selected.value.relation;
+  elements["detail-title"].textContent = selected.type === "node" || selected.type === "region"
+    ? selected.value.label
+    : selected.value.relation;
   elements["detail-subtitle"].textContent = selected.value.id;
   const transition = selected.type === "node" && selected.value.payload.kind === "transition";
   const routeStep = selected.type === "node" && selected.value.payload.kind === "reference_step";

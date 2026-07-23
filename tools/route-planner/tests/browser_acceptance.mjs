@@ -240,6 +240,29 @@ try {
       && document.querySelectorAll("#nodes .node.execution_state").length === 1`,
   );
   await evaluate(`(() => {
+    const closing = [...document.querySelectorAll("#region-breadcrumbs button")]
+      .find((button) => button.textContent === "Closing subgraph");
+    if (!closing) throw new Error("closing-region breadcrumb is absent");
+    closing.click();
+    const terminalRow = [...document.querySelectorAll("#region-children .region-row")]
+      .find((row) => row.querySelector(".enter-region")?.textContent === "Terminal state");
+    if (!terminalRow) throw new Error("terminal-state child region is absent");
+    terminalRow.querySelector(".inspect-region").click();
+    return true;
+  })()`);
+  await browserUntil(
+    "nested region boundary inspection",
+    `document.getElementById("detail-json").textContent.includes('"boundary_edges"')
+      && document.getElementById("detail-json").textContent.includes("execution-state/after/step.route-0007")`,
+  );
+  await evaluate(`(() => {
+    const terminal = [...document.querySelectorAll("#region-children .enter-region")]
+      .find((button) => button.textContent === "Terminal state");
+    if (!terminal) throw new Error("terminal-state enter control is absent");
+    terminal.click();
+    return true;
+  })()`);
+  await evaluate(`(() => {
     const terminal = document.querySelector('[data-node-id="execution-state/after/step.route-0007"]');
     if (!terminal) throw new Error("terminal execution state is absent");
     terminal.dispatchEvent(new MouseEvent("click", { bubbles: true }));

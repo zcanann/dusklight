@@ -56,6 +56,7 @@ button:disabled { opacity: .42; cursor: default; }
 .region-nav button.current { color: var(--accent); border-color: #4d819f; }
 .region-row { display: inline-flex; }
 .region-row .collapse-region { padding-inline: 5px; border-left: 0; border-radius: 0 4px 4px 0; color: var(--muted); }
+.region-row .inspect-region { padding-inline: 5px; border-left: 0; border-radius: 0; color: var(--muted); }
 .region-row .enter-region { border-radius: 4px 0 0 4px; }
 .region-row.collapsed .enter-region { color: var(--muted); }
 
