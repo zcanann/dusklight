@@ -836,9 +836,14 @@ fn validate_stage_name(stage: &str) -> Result<(), PlannerContractError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::identity::{
+        CONTENT_IDENTITY_SCHEMA, ContentFingerprint, ContentIdentity, GamePlatform, GameRegion,
+        RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
+    };
     use crate::orig_extraction::{
         ExtractedStageChunk, ExtractedStageData, extract_unique_rarc_resource, parse_stage_data,
     };
+    use crate::world_import::ExtractedWorldFacts;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -991,6 +996,47 @@ mod tests {
             ExtractedOrigWorldInventories::decode_canonical(&bytes).unwrap(),
             set
         );
+        let content = ContentIdentity {
+            schema: CONTENT_IDENTITY_SCHEMA.into(),
+            id: "gcn-us-native-fixture".into(),
+            fingerprint: ContentFingerprint {
+                platform: GamePlatform::GameCube,
+                region: GameRegion::Usa,
+                revision: "fixture".into(),
+                product_id: "FIXE01".into(),
+                executable_sha256: digest(11),
+                game_data_sha256: digest(9),
+                resource_manifest_sha256: digest(12),
+            },
+        };
+        let runtime = RuntimeConfiguration {
+            schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
+            content_sha256: content.digest().unwrap(),
+            language: "en".into(),
+            settings: BTreeMap::new(),
+        };
+        let mut import_set = set.clone();
+        import_set.content_sha256 = content.digest().unwrap();
+        let facts =
+            ExtractedWorldFacts::build_from_orig_world_inventories(&content, &runtime, &import_set)
+                .unwrap();
+        assert_eq!(facts.world_context_sha256, None);
+        assert_eq!(
+            facts.native_inventory_set_sha256,
+            Some(import_set.digest().unwrap())
+        );
+        assert_eq!(facts.static_world_objects.len(), 3);
+        assert_eq!(facts.spawns.len(), 1);
+        assert_eq!(facts.encoded_exits.len(), 1);
+        assert!(
+            facts
+                .inventories
+                .iter()
+                .all(|source| source.spatial_index_sha256.is_none())
+        );
+        let mut mixed_provenance = facts.clone();
+        mixed_provenance.world_context_sha256 = Some(digest(13));
+        assert!(mixed_provenance.validate().is_err());
         let mut incomplete = set;
         incomplete.inventories[0].player_spawns.clear();
         assert!(incomplete.validate().is_err());

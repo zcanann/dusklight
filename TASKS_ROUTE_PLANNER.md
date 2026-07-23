@@ -2119,6 +2119,13 @@ Deliverable: replayable state evidence that can validate transition rules.
         KCL/PLC collision coverage explicitly unavailable; the exact 79-stage
         acceptance run retains 384 sources, 6,128 chunks, 29,575 ordinary
         placements, 1,277 spawns, and 1,036 exits.
+  - [x] Import the planner-native inventory set directly into base world facts
+        without a compatible world context or fabricated spatial digest. World
+        facts v17 make the two provenance modes exclusive, use `null` for
+        unavailable native spatial identities, retain every static object,
+        spawn, and encoded exit, and still compile source-audited actor rules.
+        The exact acceptance run emits 30,852 static objects, 1,277 spawns,
+        1,036 exits, 119 actor/door transitions, and zero collision approaches.
   - [x] Import exact-GZ2E01 L1-family boss-door candidates by joining actor
         parameters to the unique same-room SCLS record. Reverse-side, ambiguous,
         non-audited-build, and unmodeled-switch-domain cases remain encoded facts
@@ -2514,7 +2521,7 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 ### Phase 5 — Physical feasibility and obstructions
 
 - [x] Derive approach geometry from collision and spawn data where possible.
-      World facts v16 attaches one typed approach-geometry record to every
+      World facts v17 attaches one typed approach-geometry record to every
       collision-derived encoded-map candidate. Reconstructed KCL prisms retain
       their exact triangle, plane, and computed bounds; same-room player spawns
       are linked as candidates, never asserted paths. Degenerate reconstruction

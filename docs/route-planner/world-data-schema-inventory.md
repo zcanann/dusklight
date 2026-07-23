@@ -1,8 +1,8 @@
 # Route-planner world-data schema inventory
 
-Status: audited against the planner contracts at `824315df62` and the canonical
-GZ2E01 extraction with bundle SHA-256
-`c3408c1ccbf0c4596b5989b0cc94c2c1db9680d38b4336dd7bf425f07de6a78c`.
+Status: audited against the current planner contracts and the canonical GZ2E01
+extraction with bundle SHA-256
+`1780d0f1e3a7fb4d0fb9ad94ef79446d7958da08d26d871f34d5f3d7c64fa41f`.
 This inventory describes what each artifact actually proves, not everything its
 name might suggest.
 
@@ -27,7 +27,7 @@ name might suggest.
 | `message-flow-entry-contract-set/v4` and `compiled-message-flow-entry-set/v4` | Exact compiled-flow schema/digest, stage/message resource joins, optional raw actor placement identity, resolved flow label, authored guards, obligations, unknowns, speaker context, source-pinned presentation requests, resolved generic item backings, and deterministic entry mechanics | Unauthored callers, presentation-actor execution, inferred interaction geometry, actor behavior not established by placement, or equivalence across builds/languages |
 | `dusklight-world-context/v1` | One game-data digest and sorted stage-to-inventory/spatial-index digests | Product/revision identity, runtime configuration, the inventory or spatial records themselves |
 | `dusklight-world-inventory/v1` | Source records; chunk directory; actor/scaled/door/treasure/player placements; SCLS; KCL prisms and decoded PLC words; inferred same-room collision/SCLS joins | Actor-specific guards and lifecycle, dynamic collision, paths/rails/volumes, source-confirmed activation behavior |
-| `extracted-world-facts/v16` | Exact context; source digests; static objects; player spawns; encoded exits; collision-join candidates; per-candidate reconstructed trigger triangles, planes, bounds, and same-room spawn references; exact-GZ2E01 L1/L5 boss doors, keyed mini-boss doors, key shutters, Lakebed boss shutter, memory-switch-backed type-0 Koki gates, the two SCLS-backed L7 bridge-demo branches, F_SP109 and F_SP121 rider gates, the R_SP116 wolf-chain writer and externally switched shutter, and both F_SP118 caravan-gate parents with distinct transient key and boar-destruction branches; backing-sensitive guards/effects; source-and-placement-bound L1/L5 oriented/compound interaction shapes; mechanics-v29 staged obligations | Collision navigation/connectivity, proof that a same-room spawn reaches a trigger, unjoined SCLS activation, other source-censused but semantically unaudited actor-driven exits, item/NPC/event producers, unavailable native attention-position observations, and actor families without an audited reconstruction rule |
+| `extracted-world-facts/v17` | Exact context; exclusive compatible-world-context or planner-native-inventory-set provenance; optional per-stage spatial identity; static objects; player spawns; encoded exits; compatible collision-join candidates and approach geometry; exact-GZ2E01 audited actor families and mechanics-v29 staged obligations | Native imports explicitly omit unavailable KCL/PLC approaches; collision navigation/connectivity, proof that a same-room spawn reaches a trigger, unaudited actor exits, item/NPC/event producers, unavailable native attention positions, and actor families without an audited reconstruction rule |
 | `orig-bundle-diff/v2` | Exact input-bundle/content digests; raw-versus-decoded stage/message/ignored-candidate differences; explicit one-sided locale coverage; a sealed domain matrix that marks executable code, runtime language selection, actor semantics, cutscene semantics, and rule semantics `not_represented` | Comparison data for domains explicitly reported as unrepresented |
 | `fact-pack/v1` plus immutable cache | Exact content, extractor, source, coverage, payload, and manifest identities; verified reuse without `orig/` | Any implication that a partial coverage declaration is complete |
 
@@ -37,8 +37,11 @@ in the repository, but the planner has no Rust dependency on Huntctl and must
 not acquire one. `extracted-orig-bundle/v4` and
 `extracted-orig-world-inventories/v1` are planner-native. The latter is built
 directly from the former by `orig_world.rs`; it never imports Huntctl types or
-artifacts. Direct construction of complete base facts still awaits
-planner-owned KCL/PLC or an explicitly unavailable spatial-context contract.
+artifacts. World facts v17 consume the native set directly. They represent its
+absent world context and per-stage spatial identities as `null`, bind the
+native-set digest instead, and preserve the compatible world-context path as a
+distinct exclusive provenance mode. Complete physical facts still await
+planner-owned KCL/PLC.
 
 ## Exact GZ2E01 extraction coverage
 
@@ -84,6 +87,13 @@ retained raw record, requires complete recognized-chunk coverage, and rejects
 duplicate scopes, sources, chunks, or record identities. Its collision domain
 is explicitly unavailable rather than represented by invented empty geometry.
 
+Direct native fact import retains 30,852 static objects, 1,277 spawns, and all
+1,036 encoded exits. Exact GZ2E01 source rules compile 91 actor-driven and 28
+door transitions with 121 staged obligations. All 79 spatial-index identities
+are unavailable, so the output contains zero collision approach records; the
+18 actor-local interaction volumes and two actor-local planes remain distinct
+source-audited obligations rather than generic navigation claims.
+
 ## What the current world import really does
 
 `ExtractedWorldFacts::build` verifies exact content/runtime/world-context
@@ -94,7 +104,7 @@ digests, then imports:
 - every SCLS record as an encoded destination; and
 - each precomputed collision/SCLS join as an encoded-map-exit candidate.
 
-For exact GZ2E01 L1/L5 boss doors, v16 also imports the actor-local `checkArea`
+For exact GZ2E01 L1/L5 boss doors, v17 also imports the actor-local `checkArea`
 rectangle (`|x| <= 200`, `|z| <= 100`) using the placement's binary-angle yaw,
 and the shortest-circular-facing obligation around `door_yaw - 0x7fff`. L5
 adds the strict positive-local-Z `checkFront` plane. L1 adds form-selected
@@ -103,7 +113,7 @@ current-position local-X strip. These observations are bound to both the world
 inventory and audited actor source. They do not discharge the separate loaded-
 actor/event-phase obligation.
 
-For the exact D_MN07 room-6 `dr` placement, v16 separately imports the two
+For the exact D_MN07 room-6 `dr` placement, v17 separately imports the two
 source branches. Outside layer 3, a positive small-key count and the exact
 world-X/Z start box lead to SCLS 6 without consuming a key or writing the
 bridge switch. On layer 3, actor creation requires switch `0x18` clear, but the
@@ -111,17 +121,17 @@ event itself has no key guard; its confirmed suffix writes switch `0x18` and
 selects SCLS 7. Event acceptance, camera/player ownership, and bridge animation
 completion remain staged actor/interaction obligations.
 
-For every exact F_SP109 room-0 `R_Gate` layer, v16 keeps three causal states
+For every exact F_SP109 room-0 `R_Gate` layer, v17 keeps three causal states
 separate: a locked key event can decrement one key and set memory switch
 `0x6b`; an already-set switch permits physical pushing; and persistent event
 bit M_035 (`saveBitLabels[68]`, raw coordinate `0x0810`) forces both leaves
-fully open without consuming a key or writing that switch. V16 applies the same
+fully open without consuming a key or writing that switch. V17 applies the same
 four mutually exclusive branches to the exact F_SP121 room-3 and room-15
 copies, binding switches `0x82` and `0x81` to the complete 64-byte
 dungeon-session Boolean view instead of misclassifying them as stage-memory
 switches.
 
-For the exact R_SP116 room-6 pair, v16 imports the one-shot `Wchain` producer and
+For the exact R_SP116 room-6 pair, v17 imports the one-shot `Wchain` producer and
 state-neutral `vshuter` consumer separately. The chain's `0x00000fef`
 parameters normalize repeat nibble `0xf` to false; a wolf pull past the exact
 94-unit switch offset writes current-room one-zone switch `0xef`. The shutter
@@ -131,7 +141,7 @@ opening/collision phases remain explicit staged obligations. The exact world
 inventory is SHA-256
 `44d58b8a8b8b4b8ba5f24bf192c61092a9176075d0e2409a797905406c384601`.
 
-For the exact F_SP118 room-1 and room-2 `CrvGate` parents, v16 imports normal
+For the exact F_SP118 room-1 and room-2 `CrvGate` parents, v17 imports normal
 and high-count key-event branches whose only persistent effect is the eventual
 one-key decrement. The parent-created child leaf, paired transient `SetOpen`,
 camera/event completion, and absence of any unlock switch remain one staged
@@ -164,15 +174,14 @@ exact-GZ2E01 families above; every other placement remains opaque.
 
 ### Topology and activation
 
-- Construct base facts directly from the planner-native inventory set without
-  requiring a compatible world-context artifact. The remaining design work is
-  to represent the unavailable spatial-index digest honestly until
-  planner-owned KCL/PLC exists.
+- Add planner-owned KCL/PLC decoding and spatial artifacts to enrich native
+  facts; v17 already imports the non-spatial bundle domains directly and marks
+  every absent native spatial identity explicitly.
 - Import actor-driven map changes, doors, portals, elevators, warps, event
   transitions, cutscene scene changes, restart/savewarp, void, death, and title
   transitions as distinct classes.
 - Continue importing other source-censused actor writers and consumers against
-  their exact state domains. V16 already composes the R_SP116 `Wchain` producer
+  their exact state domains. V17 already composes the R_SP116 `Wchain` producer
   with its `vshuter` consumer and binds F_SP121 rider actions to the observed
   dungeon-session view. The exact GZ2E01 keyed-family census is recorded in
   `docs/route-planner/gz2e01-keyed-door-gate-family-audit.md`.

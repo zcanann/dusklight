@@ -11,6 +11,7 @@ use crate::logic::{
     ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, PredicateExpression,
     RuleEvidence, TruthStatus, ValueReference,
 };
+use crate::orig_world::ExtractedOrigWorldInventories;
 use crate::state::{
     ComponentBinding, ComponentBindingReference, ComponentKind, SceneLocation, SpatialPlane,
     SpatialVolume, SpatialVolumeShape, StateValue, StaticWorldObject, validate_spatial_plane,
@@ -29,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v16";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v17";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 const DUNGEON_SESSION_SWITCH_LABEL_KIND: &str = "observed-dungeon-session-switch-labels";
@@ -40,7 +41,7 @@ const ROOM_SWITCH_LABEL_KIND: &str = "observed-room-switch-labels";
 pub struct WorldInventoryFactSource {
     pub stage: String,
     pub inventory_sha256: Digest,
-    pub spatial_index_sha256: Digest,
+    pub spatial_index_sha256: Option<Digest>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -106,7 +107,8 @@ pub struct ExtractedApproachGeometry {
 pub struct ExtractedWorldFacts {
     pub schema: String,
     pub exact_context: ExactContext,
-    pub world_context_sha256: Digest,
+    pub world_context_sha256: Option<Digest>,
+    pub native_inventory_set_sha256: Option<Digest>,
     pub inventories: Vec<WorldInventoryFactSource>,
     pub static_world_objects: Vec<StaticWorldObject>,
     pub spatial_volumes: Vec<SpatialVolume>,
@@ -115,6 +117,13 @@ pub struct ExtractedWorldFacts {
     pub encoded_exits: Vec<ExtractedEncodedExit>,
     pub approach_geometries: Vec<ExtractedApproachGeometry>,
     pub mechanics: MechanicsCatalog,
+}
+
+#[derive(Clone, Copy)]
+struct WorldImportStage<'a> {
+    inventory: &'a WorldInventory,
+    inventory_sha256: Digest,
+    spatial_index_sha256: Option<Digest>,
 }
 
 impl ExtractedWorldFacts {
@@ -165,6 +174,53 @@ impl ExtractedWorldFacts {
             }
         }
 
+        let stages = world_context
+            .stages
+            .iter()
+            .map(|stage| {
+                let inventory = inventory_by_stage
+                    .get(stage.stage.as_str())
+                    .copied()
+                    .ok_or_else(|| {
+                        PlannerContractError::new("inventories", "is missing a world-context stage")
+                    })?;
+                let inventory_sha256 = inventory
+                    .digest()
+                    .map_err(|error| world_error("inventories", error))?;
+                if inventory_sha256 != stage.inventory_sha256 {
+                    return Err(PlannerContractError::new(
+                        "inventories",
+                        "digest does not match the world context",
+                    ));
+                }
+                Ok(WorldImportStage {
+                    inventory,
+                    inventory_sha256,
+                    spatial_index_sha256: Some(stage.spatial_index_sha256),
+                })
+            })
+            .collect::<Result<Vec<_>, PlannerContractError>>()?;
+        Self::build_validated(
+            content,
+            runtime_configuration,
+            Some(
+                world_context
+                    .digest()
+                    .map_err(|error| world_error("world_context", error))?,
+            ),
+            None,
+            stages,
+        )
+    }
+
+    fn build_validated(
+        content: &ContentIdentity,
+        runtime_configuration: &RuntimeConfiguration,
+        world_context_sha256: Option<Digest>,
+        native_inventory_set_sha256: Option<Digest>,
+        stages: Vec<WorldImportStage<'_>>,
+    ) -> Result<Self, PlannerContractError> {
+        let content_sha256 = content.digest()?;
         let exact_context = ExactContext {
             content_sha256,
             runtime_configuration_sha256: runtime_configuration.digest()?,
@@ -174,7 +230,7 @@ impl ExtractedWorldFacts {
                 context: exact_context.clone(),
             }],
         };
-        let mut sources = Vec::with_capacity(world_context.stages.len());
+        let mut sources = Vec::with_capacity(stages.len());
         let mut static_world_objects = Vec::new();
         let mut spatial_volumes = Vec::new();
         let mut spatial_planes = Vec::new();
@@ -184,23 +240,11 @@ impl ExtractedWorldFacts {
         let mut transitions = Vec::new();
         let mut obligations = Vec::new();
 
-        for stage in &world_context.stages {
-            let inventory = inventory_by_stage
-                .get(stage.stage.as_str())
-                .ok_or_else(|| {
-                    PlannerContractError::new("inventories", "is missing a world-context stage")
-                })?;
-            let inventory_sha256 = inventory
-                .digest()
-                .map_err(|error| world_error("inventories", error))?;
-            if inventory_sha256 != stage.inventory_sha256 {
-                return Err(PlannerContractError::new(
-                    "inventories",
-                    "digest does not match the world context",
-                ));
-            }
+        for stage in stages {
+            let inventory = stage.inventory;
+            let inventory_sha256 = stage.inventory_sha256;
             sources.push(WorldInventoryFactSource {
-                stage: stage.stage.clone(),
+                stage: inventory.stage.clone(),
                 inventory_sha256,
                 spatial_index_sha256: stage.spatial_index_sha256,
             });
@@ -450,9 +494,8 @@ impl ExtractedWorldFacts {
         let facts = Self {
             schema: EXTRACTED_WORLD_FACTS_SCHEMA.into(),
             exact_context,
-            world_context_sha256: world_context
-                .digest()
-                .map_err(|error| world_error("world_context", error))?,
+            world_context_sha256,
+            native_inventory_set_sha256,
             inventories: sources,
             static_world_objects,
             spatial_volumes,
@@ -479,12 +522,59 @@ impl ExtractedWorldFacts {
         Ok(facts)
     }
 
-    pub fn validate(&self) -> Result<(), PlannerContractError> {
-        if self.schema != EXTRACTED_WORLD_FACTS_SCHEMA || self.world_context_sha256 == Digest::ZERO
+    /// Imports planner-native stage records without manufacturing a compatible
+    /// world-context or spatial-index identity. Collision-backed transitions
+    /// remain absent because the v1 native inventory set marks that domain
+    /// unavailable; placement/SCLS-backed actor rules still import normally.
+    pub fn build_from_orig_world_inventories(
+        content: &ContentIdentity,
+        runtime_configuration: &RuntimeConfiguration,
+        native: &ExtractedOrigWorldInventories,
+    ) -> Result<Self, PlannerContractError> {
+        content.validate()?;
+        runtime_configuration.validate()?;
+        native.validate()?;
+        let content_sha256 = content.digest()?;
+        if native.content_sha256 != content_sha256
+            || native.game_data_sha256 != content.fingerprint.game_data_sha256
         {
             return Err(PlannerContractError::new(
+                "native_world.identity",
+                "does not match the supplied content identity",
+            ));
+        }
+        if runtime_configuration.content_sha256 != content_sha256 {
+            return Err(PlannerContractError::new(
+                "runtime_configuration.content_sha256",
+                "does not name the supplied content identity",
+            ));
+        }
+        let native_sha256 = native.digest()?;
+        let stages = native
+            .inventories
+            .iter()
+            .map(|inventory| {
+                Ok(WorldImportStage {
+                    inventory,
+                    inventory_sha256: inventory.digest()?,
+                    spatial_index_sha256: None,
+                })
+            })
+            .collect::<Result<Vec<_>, PlannerContractError>>()?;
+        Self::build_validated(
+            content,
+            runtime_configuration,
+            None,
+            Some(native_sha256),
+            stages,
+        )
+    }
+
+    pub fn validate(&self) -> Result<(), PlannerContractError> {
+        if self.schema != EXTRACTED_WORLD_FACTS_SCHEMA {
+            return Err(PlannerContractError::new(
                 "extracted_world_facts",
-                "has an unsupported schema or zero world-context digest",
+                "has an unsupported schema",
             ));
         }
         ContextSelector::Exact {
@@ -500,14 +590,30 @@ impl ExtractedWorldFacts {
         validate_sorted("inventories", &self.inventories, |value| {
             value.stage.as_str()
         })?;
+        let compatible_provenance = matches!(
+            (self.world_context_sha256, self.native_inventory_set_sha256),
+            (Some(context), None) if context != Digest::ZERO
+        );
+        let native_provenance = matches!(
+            (self.world_context_sha256, self.native_inventory_set_sha256),
+            (None, Some(native)) if native != Digest::ZERO
+        );
+        if !compatible_provenance && !native_provenance {
+            return Err(PlannerContractError::new(
+                "extracted_world_facts.provenance",
+                "must name exactly one nonzero world context or native inventory set",
+            ));
+        }
         for source in &self.inventories {
             validate_game_name("inventories.stage", &source.stage)?;
             if source.inventory_sha256 == Digest::ZERO
-                || source.spatial_index_sha256 == Digest::ZERO
+                || compatible_provenance
+                    && !matches!(source.spatial_index_sha256, Some(digest) if digest != Digest::ZERO)
+                || native_provenance && source.spatial_index_sha256.is_some()
             {
                 return Err(PlannerContractError::new(
                     "inventories",
-                    "contains a zero digest",
+                    "does not match its compatible or planner-native spatial provenance",
                 ));
             }
         }
@@ -570,6 +676,19 @@ impl ExtractedWorldFacts {
             }
         }
         self.mechanics.validate()?;
+        if native_provenance
+            && (!self.approach_geometries.is_empty()
+                || self
+                    .mechanics
+                    .transitions
+                    .iter()
+                    .any(|transition| transition.transition_kind == TransitionKind::EncodedMapExit))
+        {
+            return Err(PlannerContractError::new(
+                "extracted_world_facts.native_collision",
+                "native inventory-set provenance cannot contain unavailable collision approaches or encoded-map transitions",
+            ));
+        }
         validate_sorted("encoded_exits", &self.encoded_exits, |value| {
             value.id.as_str()
         })?;

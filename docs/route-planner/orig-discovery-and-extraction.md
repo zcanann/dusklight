@@ -34,6 +34,18 @@ route-planner construct-world-inventories \
   --output extracted-orig-world-inventories.json
 ```
 
+Import those inventories into base world facts with unavailable spatial
+coverage kept explicit:
+
+```text
+route-planner extract-native-world \
+  --content-identity content.json \
+  --runtime-configuration runtime.json \
+  --inventories extracted-orig-world-inventories.json \
+  --output world-facts.json \
+  --manifest world-facts.manifest.json
+```
+
 The default path identifies the input against the bundled audited registry.
 `--content-id ID` can select one bundled entry when the parent contains multiple
 games, and `--registry REGISTRY.json` can replace the bundled registry. An
@@ -138,6 +150,16 @@ represented field from the retained lowercase raw hex and proves complete
 coverage of every recognized placement and SCLS chunk. Collision coverage is
 explicitly `unavailable`: the command does not manufacture KCL/PLC paths,
 spatial digests, prisms, or load-trigger joins.
+
+`extract-native-world` produces `extracted-world-facts/v17` directly from that
+set. It binds the exact content/runtime and inventory-set digests, leaves the
+world-context and every per-stage spatial-index digest `null`, imports every
+placement/spawn/SCLS record, and compiles only source-audited actor rules. Its
+fact-pack manifest marks collision `unavailable` and physical feasibility
+`partial` because exact actor-local shapes remain represented. The exact GZ2E01
+acceptance output contains 30,852 static objects, 1,277 spawns, 1,036 encoded
+exits, 119 source-audited actor/door transitions, 121 staged obligations, and no
+collision approach records.
 
 Stage discovery recognizes `files/res/Stage/**/STG_00.arc` as `stage.dzs` and
 room archives beginning with `R` as `room.dzr`. Message discovery treats

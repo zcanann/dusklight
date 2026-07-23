@@ -137,6 +137,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("resolve-cutscene-outer") => resolve_cutscene_outer_command(&args[1..]),
         Some("extract-cutscene-wrapper") => extract_cutscene_wrapper(&args[1..]),
         Some("extract-message-flow") => extract_message_flow(&args[1..]),
+        Some("extract-native-world") => extract_native_world(&args[1..]),
         Some("extract-orig") => extract_orig(&args[1..]),
         Some("extract-resource") => extract_resource(&args[1..]),
         Some("extract-stage-data") => extract_stage_data(&args[1..]),
@@ -2372,7 +2373,9 @@ fn extract_world(args: &[String]) -> Result<(), Box<dyn Error>> {
     let mut sources = vec![FactPackSource {
         kind: SourceArtifactKind::WorldContext,
         id: "world-context".into(),
-        sha256: facts.world_context_sha256,
+        sha256: facts
+            .world_context_sha256
+            .ok_or("compatible world import did not retain its world-context digest")?,
     }];
     sources.extend(facts.inventories.iter().map(|inventory| FactPackSource {
         kind: SourceArtifactKind::WorldInventory,
@@ -2440,6 +2443,90 @@ fn extract_world(args: &[String]) -> Result<(), Box<dyn Error>> {
             "spawns": facts.spawns.len(),
             "encoded_exits": facts.encoded_exits.len(),
             "approach_geometries": facts.approach_geometries.len(),
+            "candidate_transitions": facts.mechanics.transitions.len(),
+            "physical_obligations": facts.mechanics.obligations.len(),
+        }))?
+    );
+    Ok(())
+}
+
+fn extract_native_world(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let content_path = required_path(args, "--content-identity")?;
+    let runtime_path = required_path(args, "--runtime-configuration")?;
+    let inventories_path = required_path(args, "--inventories")?;
+    let output = required_path(args, "--output")?;
+    let manifest_output = required_path(args, "--manifest")?;
+    let content = ContentIdentity::decode_canonical(&fs::read(content_path)?)?;
+    let runtime = RuntimeConfiguration::decode_canonical(&fs::read(runtime_path)?)?;
+    let inventories =
+        ExtractedOrigWorldInventories::decode_canonical(&fs::read(inventories_path)?)?;
+    let facts =
+        ExtractedWorldFacts::build_from_orig_world_inventories(&content, &runtime, &inventories)?;
+    let bytes = facts.canonical_bytes()?;
+    let native_sha256 = facts
+        .native_inventory_set_sha256
+        .ok_or("native world import did not retain its inventory-set digest")?;
+    let manifest = FactPackManifest::build(
+        format!("{}.native-world", content.id),
+        content,
+        ExtractorIdentity {
+            name: "route-planner-native-world-facts".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            executable_sha256: Digest(Sha256::digest(fs::read(env::current_exe()?)?).into()),
+            schema_sha256: Digest(Sha256::digest(EXTRACTED_WORLD_FACTS_SCHEMA).into()),
+        },
+        vec![FactPackSource {
+            kind: SourceArtifactKind::WorldInventory,
+            id: "native-world-inventory-set".into(),
+            sha256: native_sha256,
+        }],
+        vec![
+            FactPackCoverage {
+                domain: CoverageDomain::Topology,
+                scope: "world".into(),
+                status: CoverageStatus::Partial,
+                detail: "Every planner-native SCLS record is imported as an inert encoded destination; source-audited actor transitions import separately, while unaudited activation remains absent.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::ActorPlacements,
+                scope: "world".into(),
+                status: CoverageStatus::Partial,
+                detail: "Every recognized planner-native actor, treasure, and player-spawn record is imported; generic actor behavior remains unaudited.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::Collision,
+                scope: "world".into(),
+                status: CoverageStatus::Unavailable,
+                detail: "The planner-native inventory-set v1 does not decode KCL/PLC, spatial indexes, or collision/SCLS joins.".into(),
+            },
+            FactPackCoverage {
+                domain: CoverageDomain::PhysicalFeasibility,
+                scope: "world".into(),
+                status: CoverageStatus::Partial,
+                detail: "No spatial-index identity or generic collision reachability is manufactured; exact source-audited actor interaction shapes and staged obligations remain represented where available.".into(),
+            },
+        ],
+        EXTRACTED_WORLD_FACTS_SCHEMA,
+        facts.digest()?,
+    )?;
+    write_file(&output, &bytes)?;
+    write_file(&manifest_output, &manifest.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": facts.schema,
+            "exact_context": facts.exact_context,
+            "native_inventory_set_sha256": native_sha256,
+            "world_context_sha256": facts.world_context_sha256,
+            "output": output,
+            "manifest": manifest_output,
+            "manifest_sha256": manifest.digest()?,
+            "sha256": facts.digest()?,
+            "bytes": bytes.len(),
+            "stages": facts.inventories.len(),
+            "static_world_objects": facts.static_world_objects.len(),
+            "spawns": facts.spawns.len(),
+            "encoded_exits": facts.encoded_exits.len(),
             "candidate_transitions": facts.mechanics.transitions.len(),
             "physical_obligations": facts.mechanics.obligations.len(),
         }))?
@@ -2719,6 +2806,7 @@ fn print_usage() {
             "  route-planner compile-cutscene-corruption-hypothesis --content-identity CONTENT.json --runtime-configuration RUNTIME.json --outer-event OUTER.json [--outer-profile PROFILE.json] --output HYPOTHESIS.json",
             "  route-planner extract-cutscene-wrapper --archive ARCHIVE.arc [--stage-resource room.dzr] [--event-list-resource event_list.dat] --event-name NAME --layer LAYER --output WRAPPER.json",
             "  route-planner extract-message-flow --archive ARCHIVE.arc --resource FILE.bmg --output FLOW.json",
+            "  route-planner extract-native-world --content-identity CONTENT.json --runtime-configuration RUNTIME.json --inventories INVENTORIES.json --output FACTS.json --manifest MANIFEST.json",
             "  route-planner extract-orig --orig ORIG_ROOT [--content-identity CONTENT.json | [--registry REGISTRY.json] [--content-id ID]] --output BUNDLE.json --manifest MANIFEST.json",
             "  route-planner extract-resource --archive ARCHIVE.arc --resource FILE --output FILE",
             "  route-planner extract-stage-data --archive ARCHIVE.arc --resource stage.dzs|room.dzr --output STAGE.json",
