@@ -208,6 +208,23 @@ try {
     `document.querySelectorAll("#nodes .node.execution_state").length === 9`,
   );
   await evaluate(`(() => {
+    const step = document.querySelector('[data-node-id="plan-step/step.route-0007"]');
+    const terminal = document.querySelector('[data-node-id="execution-state/after/step.route-0007"]');
+    if (!step || !terminal) throw new Error("terminal state/step grouping pair is absent");
+    step.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    terminal.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+    window.prompt = () => "Closing subgraph";
+    document.getElementById("group-selection").click();
+    return true;
+  })()`);
+  await browserUntil(
+    "presentation-only nested grouping",
+    `document.getElementById("status").textContent.includes("presentation-only graph region")
+      && document.getElementById("region-breadcrumbs").textContent.includes("Closing subgraph")
+      && document.querySelectorAll("#nodes .node.reference_step").length === 1
+      && document.querySelectorAll("#nodes .node.execution_state").length === 1`,
+  );
+  await evaluate(`(() => {
     const terminal = document.querySelector('[data-node-id="execution-state/after/step.route-0007"]');
     if (!terminal) throw new Error("terminal execution state is absent");
     terminal.dispatchEvent(new MouseEvent("click", { bubbles: true }));

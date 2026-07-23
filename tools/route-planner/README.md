@@ -259,6 +259,10 @@ The planner CLI currently owns forty operations:
   producer chain. The browser previews that typed suggestion and validates
   every append against a temporary route book before committing the complete
   unsaved chain, so a stale or invalid suffix cannot partially edit the route.
+  Shift-selected graph nodes can also be grouped into nested presentation-only
+  regions. These saved regions have validated parent/cycle contracts and
+  breadcrumb navigation, but node IDs, mechanics, edges, and graph digests stay
+  planner-owned and unchanged; grouping grants no reachability authority.
   Static assets are embedded in the Rust binary and served with a restrictive
   content security policy and no cache.
 

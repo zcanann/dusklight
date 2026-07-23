@@ -13,7 +13,7 @@ const elements = Object.fromEntries([
   "contract-inspector",
   "region-nav", "region-breadcrumbs", "region-children",
   "evaluate-transition", "insert-transition", "suggest-transition-chain", "replace-step", "remove-step",
-  "pin-selection", "ban-selection", "prefer-selection", "select-method",
+  "group-selection", "pin-selection", "ban-selection", "prefer-selection", "select-method",
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
@@ -36,6 +36,7 @@ const state = {
   executionStateInspections: new Map(),
   routeFrontier: null,
   selectedStateFeasibility: null,
+  groupSelection: new Set(),
 };
 
 elements["project-list"].addEventListener("change", () => {
@@ -57,6 +58,7 @@ elements["insert-transition"].addEventListener("click", insertSelectedTransition
 elements["suggest-transition-chain"].addEventListener("click", suggestOrInsertSelectedTransitionChain);
 elements["replace-step"].addEventListener("click", replaceSelectedRouteStep);
 elements["remove-step"].addEventListener("click", removeSelectedRouteStep);
+elements["group-selection"].addEventListener("click", groupSelectedNodes);
 elements["pin-selection"].addEventListener("click", () => editSelectedDirective("pin"));
 elements["ban-selection"].addEventListener("click", () => editSelectedDirective("ban"));
 elements["prefer-selection"].addEventListener("click", () => editSelectedDirective("prefer"));
@@ -176,6 +178,7 @@ async function loadProject(project, options) {
   state.executionStateInspections = new Map();
   state.routeFrontier = null;
   state.selectedStateFeasibility = null;
+  state.groupSelection = new Set();
   state.activeRegionId = null;
   state.collapsedRegionIds = new Set();
   state.knownRegionIds = new Set();
@@ -235,6 +238,10 @@ function requestId(prefix) {
 
 function ensurePositions() {
   synchronizeRegions();
+  const validNodeIds = new Set(state.graph.nodes.map((node) => node.id));
+  state.groupSelection = new Set(
+    [...state.groupSelection].filter((nodeId) => validNodeIds.has(nodeId)),
+  );
   const columns = new Map();
   for (const node of state.graph.nodes) {
     if (state.positions.has(node.id)) continue;
@@ -312,8 +319,9 @@ function renderNodes() {
     const position = state.positions.get(node.id);
     const joinClass = transitionJoinClass(node);
     const preferenceClass = routePreferenceClass(node);
+    const groupClass = state.groupSelection.has(node.id) ? " group-selected" : "";
     const group = svg("g", {
-      class: `node ${node.payload.kind}${state.selected?.type === "node" && state.selected.value.id === node.id ? " selected" : ""}${joinClass ? ` ${joinClass}` : ""}${preferenceClass ? ` ${preferenceClass}` : ""}`,
+      class: `node ${node.payload.kind}${state.selected?.type === "node" && state.selected.value.id === node.id ? " selected" : ""}${groupClass}${joinClass ? ` ${joinClass}` : ""}${preferenceClass ? ` ${preferenceClass}` : ""}`,
       transform: `translate(${position.x} ${position.y})`,
       "data-node-id": node.id,
     });
@@ -326,6 +334,11 @@ function renderNodes() {
     group.addEventListener("pointerdown", (event) => beginNodeDrag(event, node));
     group.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (event.shiftKey) {
+        toggleGroupSelection(node);
+        render();
+        return;
+      }
       selectNode(node);
       render();
     });
@@ -529,9 +542,25 @@ async function refreshAuthoredRouteInspections() {
   }
 }
 
+function displayedRegions() {
+  const planner = state.graph?.regions ?? [];
+  const authored = (state.project?.presentation?.regions ?? []).map((region) => ({
+    ...region,
+    owner_node_id: null,
+    collapsed_by_default: false,
+    presentation_only: true,
+  }));
+  return [...planner, ...authored];
+}
+
+function displayedNodeRegionId(node) {
+  return state.project?.presentation?.node_region_ids?.[node.id] ?? node.region_id ?? null;
+}
+
 function synchronizeRegions() {
-  const valid = new Set((state.graph?.regions ?? []).map((region) => region.id));
-  for (const region of state.graph?.regions ?? []) {
+  const regions = displayedRegions();
+  const valid = new Set(regions.map((region) => region.id));
+  for (const region of regions) {
     if (!state.knownRegionIds.has(region.id) && region.collapsed_by_default) {
       state.collapsedRegionIds.add(region.id);
     }
@@ -545,16 +574,17 @@ function synchronizeRegions() {
 
 function visibleNodes() {
   if (!state.graph) return [];
+  const regions = displayedRegions();
   if (state.activeRegionId) {
-    return state.graph.nodes.filter((node) => node.region_id === state.activeRegionId);
+    return state.graph.nodes.filter((node) => displayedNodeRegionId(node) === state.activeRegionId);
   }
   return state.graph.nodes.filter((node) => {
-    let regionId = node.region_id;
+    let regionId = displayedNodeRegionId(node);
     const visited = new Set();
     while (regionId && !visited.has(regionId)) {
       if (state.collapsedRegionIds.has(regionId)) return false;
       visited.add(regionId);
-      regionId = state.graph.regions.find((region) => region.id === regionId)?.parent_region_id ?? null;
+      regionId = regions.find((region) => region.id === regionId)?.parent_region_id ?? null;
     }
     return true;
   });
@@ -562,7 +592,7 @@ function visibleNodes() {
 
 function renderRegionNavigation() {
   const nav = elements["region-nav"];
-  const regions = state.graph?.regions ?? [];
+  const regions = displayedRegions();
   nav.hidden = !regions.length;
   elements["region-breadcrumbs"].replaceChildren();
   elements["region-children"].replaceChildren();
@@ -609,12 +639,13 @@ function renderRegionNavigation() {
 
 function activeRegionPath() {
   const path = [];
-  let region = state.graph?.regions.find((candidate) => candidate.id === state.activeRegionId);
+  const regions = displayedRegions();
+  let region = regions.find((candidate) => candidate.id === state.activeRegionId);
   const visited = new Set();
   while (region && !visited.has(region.id)) {
     path.unshift(region);
     visited.add(region.id);
-    region = state.graph.regions.find((candidate) => candidate.id === region.parent_region_id);
+    region = regions.find((candidate) => candidate.id === region.parent_region_id);
   }
   return path;
 }
@@ -636,9 +667,10 @@ function toggleRegionCollapse(regionId) {
 }
 
 function revealNode(node) {
-  if (!node.region_id) return;
-  state.activeRegionId = node.region_id;
-  state.collapsedRegionIds.delete(node.region_id);
+  const regionId = displayedNodeRegionId(node);
+  if (!regionId) return;
+  state.activeRegionId = regionId;
+  state.collapsedRegionIds.delete(regionId);
 }
 
 function allowTransitionDrop(event) {
@@ -685,6 +717,7 @@ async function dropTransitionAtRouteFrontier(event) {
 
 function renderDetails() {
   const selected = state.selected;
+  updateGroupSelectionControl();
   if (!selected) {
     elements["detail-title"].textContent = "Nothing selected";
     elements["detail-subtitle"].textContent = "Choose a node or connection to inspect its planner-owned identity.";
@@ -732,6 +765,50 @@ function renderDetails() {
   }, null, 2);
   renderContractInspector(contract);
   renderStateInspector();
+}
+
+function updateGroupSelectionControl() {
+  const count = state.groupSelection.size;
+  elements["group-selection"].disabled = count === 0 || state.readOnly;
+  elements["group-selection"].textContent = count
+    ? `Group ${count} selected node${count === 1 ? "" : "s"}`
+    : "Group selected nodes";
+}
+
+function toggleGroupSelection(node) {
+  if (state.groupSelection.has(node.id)) state.groupSelection.delete(node.id);
+  else state.groupSelection.add(node.id);
+}
+
+function groupSelectedNodes() {
+  if (!state.groupSelection.size || state.readOnly) return;
+  const label = prompt("Nested region name", "New region")?.trim();
+  if (!label) return;
+  const existing = new Set(displayedRegions().map((region) => region.id));
+  const base = `region.presentation-${slug(label)}`;
+  let id = base;
+  let suffix = 2;
+  while (existing.has(id)) id = `${base}-${suffix++}`;
+  const presentation = state.project.presentation ?? { positions: {} };
+  const regions = [...(presentation.regions ?? []), {
+    id,
+    label,
+    parent_region_id: state.activeRegionId ?? null,
+  }];
+  const nodeRegionIds = { ...(presentation.node_region_ids ?? {}) };
+  for (const nodeId of state.groupSelection) nodeRegionIds[nodeId] = id;
+  state.project.presentation = {
+    ...presentation,
+    regions,
+    node_region_ids: nodeRegionIds,
+  };
+  state.groupSelection = new Set();
+  state.activeRegionId = id;
+  state.collapsedRegionIds.delete(id);
+  markDirty();
+  render();
+  requestAnimationFrame(fitGraph);
+  setStatus(`${label} grouped as presentation-only graph region; save to persist`, "good");
 }
 
 function selectedContract(node) {
@@ -1510,6 +1587,7 @@ function beginPan(event) {
 function beginNodeDrag(event, node) {
   if (event.button !== 0) return;
   event.stopPropagation();
+  if (event.shiftKey) return;
   elements.canvas.setPointerCapture(event.pointerId);
   const position = state.positions.get(node.id);
   selectNode(node);
@@ -1599,13 +1677,26 @@ function centerNode(id) {
 }
 
 function projectWithPresentation(project = state.project) {
-  const validNodes = new Set(state.graph.nodes
+  const allNodes = new Set(state.graph.nodes.map((node) => node.id));
+  const positionNodes = new Set(state.graph.nodes
     .filter((node) => node.payload.kind !== "execution_state")
     .map((node) => node.id));
   const positions = Object.fromEntries([...state.positions.entries()]
-    .filter(([id]) => validNodes.has(id))
+    .filter(([id]) => positionNodes.has(id))
     .sort(([left], [right]) => left.localeCompare(right)));
-  return { ...project, presentation: { ...(project.presentation ?? {}), positions } };
+  const nodeRegionIds = Object.fromEntries(
+    Object.entries(project.presentation?.node_region_ids ?? {})
+      .filter(([id]) => allNodes.has(id))
+      .sort(([left], [right]) => left.localeCompare(right)),
+  );
+  return {
+    ...project,
+    presentation: {
+      ...(project.presentation ?? {}),
+      positions,
+      node_region_ids: nodeRegionIds,
+    },
+  };
 }
 
 async function persistProject(project, expectedRevision) {

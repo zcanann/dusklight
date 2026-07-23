@@ -2804,8 +2804,15 @@ visual polish or whole-game authoring features.
         (correctly omitting the unnecessary pending-key flush), inserts it, and
         verifies the projected execution states through save/reload.
 - [ ] Add nested subgraph authoring and browsing as graph-view encapsulation.
-  - [ ] Group selected states/transitions into a named region without changing
-        their solver identities, effects, or connectivity.
+  - [x] Group selected states/transitions into a named region without changing
+        their solver identities, effects, or connectivity. Shift-selection now
+        groups arbitrary projected nodes, including authored steps and exact
+        execution states, into saved presentation-only regions. Rust validates
+        node references, unique region identities, parents, and acyclic nesting;
+        the planner graph is neither reprojected nor rewritten, and a digest
+        regression proves mechanics/connectivity remain identical. Brave groups
+        the terminal keyed-door step/state, enters it by breadcrumb, and keeps
+        inspecting and editing the underlying route through save/reload.
   - [ ] Enter/exit nested regions with breadcrumbs; one-trip and multiple-trip
         dungeon routes are separately constructed subgraphs, not child methods.
   - [ ] Show every incoming/outgoing boundary state and edge before a saved region

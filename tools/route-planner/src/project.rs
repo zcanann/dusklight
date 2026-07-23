@@ -73,6 +73,18 @@ pub struct PlannerWebProject {
 pub struct ProjectPresentation {
     #[serde(default)]
     pub positions: BTreeMap<String, NodePosition>,
+    #[serde(default)]
+    pub regions: Vec<PresentationRegion>,
+    #[serde(default)]
+    pub node_region_ids: BTreeMap<String, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresentationRegion {
+    pub id: String,
+    pub label: String,
+    pub parent_region_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -175,6 +187,11 @@ impl PlannerWebProject {
             .iter()
             .map(|node| node.id.as_str())
             .collect::<BTreeSet<_>>();
+        let graph_region_ids = graph
+            .regions
+            .iter()
+            .map(|region| region.id.as_str())
+            .collect::<BTreeSet<_>>();
         for (node_id, position) in &self.presentation.positions {
             if !node_ids.contains(node_id.as_str()) {
                 return Err(project_error(format!(
@@ -188,6 +205,68 @@ impl PlannerWebProject {
             {
                 return Err(project_error(format!(
                     "presentation position for {node_id} is outside the finite canvas"
+                )));
+            }
+        }
+        let mut presentation_region_ids = BTreeSet::new();
+        for region in &self.presentation.regions {
+            validate_project_id(&region.id)?;
+            validate_label(&region.label)?;
+            if graph_region_ids.contains(region.id.as_str())
+                || !presentation_region_ids.insert(region.id.as_str())
+            {
+                return Err(project_error(format!(
+                    "presentation region {} is duplicated or collides with a planner region",
+                    region.id
+                )));
+            }
+        }
+        for region in &self.presentation.regions {
+            if let Some(parent) = &region.parent_region_id
+                && !graph_region_ids.contains(parent.as_str())
+                && !presentation_region_ids.contains(parent.as_str())
+            {
+                return Err(project_error(format!(
+                    "presentation region {} references unknown parent {parent}",
+                    region.id
+                )));
+            }
+            let mut ancestor = region.parent_region_id.as_deref();
+            let mut visited = BTreeSet::from([region.id.as_str()]);
+            while let Some(parent) = ancestor {
+                if !visited.insert(parent) {
+                    return Err(project_error(format!(
+                        "presentation region {} has a parent cycle",
+                        region.id
+                    )));
+                }
+                ancestor = self
+                    .presentation
+                    .regions
+                    .iter()
+                    .find(|candidate| candidate.id == parent)
+                    .and_then(|candidate| candidate.parent_region_id.as_deref());
+            }
+        }
+        let route_step_ids = self
+            .route_book
+            .iter()
+            .flat_map(|book| &book.steps)
+            .map(|step| step.id.as_str())
+            .collect::<BTreeSet<_>>();
+        for (node_id, region_id) in &self.presentation.node_region_ids {
+            let dynamic_execution_state = node_id == "execution-state/start"
+                || node_id
+                    .strip_prefix("execution-state/after/")
+                    .is_some_and(|step_id| route_step_ids.contains(step_id));
+            if !node_ids.contains(node_id.as_str()) && !dynamic_execution_state {
+                return Err(project_error(format!(
+                    "presentation region assignment references unknown node {node_id}"
+                )));
+            }
+            if !presentation_region_ids.contains(region_id.as_str()) {
+                return Err(project_error(format!(
+                    "presentation region assignment references unknown region {region_id}"
                 )));
             }
         }
@@ -3040,6 +3119,61 @@ mod tests {
             StateValue::Text("name_entry".into())
         );
         assert_eq!(route_book.unwrap().methods[0].step_ids.len(), 9);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn presentation_regions_group_nodes_without_changing_the_planner_graph() {
+        let root = temporary_root("presentation-region");
+        let store = ProjectStore::open(&root).unwrap();
+        let mut project = store.load("demo-forest-keyed-door").unwrap().project;
+        let graph = PlannerGraph::project_composed(&project.catalog).unwrap();
+        let transition_node = graph
+            .nodes
+            .iter()
+            .find(|node| {
+                matches!(
+                    &node.payload,
+                    dusklight_route_planner::graph::PlannerNodePayload::Transition {
+                        transition_id,
+                        ..
+                    } if transition_id == "transition.gz2e01-door1-09-close-end"
+                )
+            })
+            .unwrap()
+            .id
+            .clone();
+        let graph_sha256 = graph.digest().unwrap();
+        project.presentation.regions.push(PresentationRegion {
+            id: "region.presentation-shutter-close".into(),
+            label: "Shutter close".into(),
+            parent_region_id: None,
+        });
+        project
+            .presentation
+            .node_region_ids
+            .insert(transition_node, "region.presentation-shutter-close".into());
+        project.validate().unwrap();
+        let decoded: PlannerWebProject =
+            serde_json::from_slice(&project.canonical_bytes().unwrap()).unwrap();
+        assert_eq!(decoded.presentation, project.presentation);
+        assert_eq!(
+            PlannerGraph::project_composed(&decoded.catalog)
+                .unwrap()
+                .digest()
+                .unwrap(),
+            graph_sha256
+        );
+
+        project.presentation.regions[0].parent_region_id =
+            Some("region.presentation-shutter-close".into());
+        assert!(
+            project
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("cycle")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
