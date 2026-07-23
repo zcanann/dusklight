@@ -70,6 +70,9 @@ use dusklight_route_planner::solver::{ForwardSolver, SolverOptions};
 use dusklight_route_planner::state::{BoundaryKind, BoundaryPolicy};
 use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
 use dusklight_route_planner::transition::MechanicsCatalog;
+use dusklight_route_planner::witness_promotion::{
+    WitnessPromotionRequest, promote_witnessed_actions,
+};
 use dusklight_route_planner::world_data::{WorldContext, WorldInventory};
 use dusklight_route_planner::world_import::{EXTRACTED_WORLD_FACTS_SCHEMA, ExtractedWorldFacts};
 use dusklight_route_planner_runtime::context_compare::compare_semantic_contexts;
@@ -150,6 +153,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         Some("report-route-suite-coverage") => report_route_suite_coverage(&args[1..]),
         Some("match-route-observations") => match_route_observations(&args[1..]),
         Some("validate-route-observations") => validate_route_observations(&args[1..]),
+        Some("promote-witnessed-actions") => promote_witnessed_actions_command(&args[1..]),
         Some("serve-stdio") => serve_stdio(&args[1..]),
         Some("serve-web") => serve_web_command(&args[1..]),
         Some("state-from-snapshot") => state_from_snapshot(&args[1..]),
@@ -401,6 +405,35 @@ fn validate_route_observations(args: &[String]) -> Result<(), Box<dyn Error>> {
             "validated_windows": report.validations.len(),
             "verified_postconditions": report.validations.iter().filter(|row| row.postcondition_status == dusklight_route_planner::route_observation_validation::VerificationStatus::Verified).count(),
             "verified_preservation": report.validations.iter().filter(|row| row.component_preservation_status == dusklight_route_planner::route_observation_validation::VerificationStatus::Verified).count(),
+        }))?
+    );
+    Ok(())
+}
+
+fn promote_witnessed_actions_command(args: &[String]) -> Result<(), Box<dyn Error>> {
+    let catalog =
+        ComposedPlannerCatalog::decode_canonical(&fs::read(required_path(args, "--catalog")?)?)?;
+    let validation = RouteObservationValidationReport::decode_canonical(&fs::read(
+        required_path(args, "--validation")?,
+    )?)?;
+    let request =
+        WitnessPromotionRequest::decode_canonical(&fs::read(required_path(args, "--request")?)?)?;
+    let (pack, receipt) = promote_witnessed_actions(&catalog, &validation, &request)?;
+    let output = required_path(args, "--output")?;
+    let receipt_output = required_path(args, "--receipt")?;
+    write_file(&output, &pack.canonical_bytes()?)?;
+    write_file(&receipt_output, &receipt.canonical_bytes()?)?;
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema": receipt.schema,
+            "pack_id": pack.manifest.id,
+            "output": output,
+            "pack_sha256": pack.digest()?,
+            "receipt": receipt_output,
+            "receipt_sha256": receipt.digest()?,
+            "promoted_actions": receipt.promotions.len(),
+            "action_census_unchanged": receipt.action_ids_before == receipt.action_ids_after,
         }))?
     );
     Ok(())
@@ -2551,6 +2584,7 @@ fn print_usage() {
             "  route-planner report-route-suite-coverage --catalog CATALOG.json [--glitchless BOOK.json]... [--hundred-percent BOOK.json]... [--any-percent BOOK.json]... [--hypothetical BOOK.json]... --output REPORT.json",
             "  route-planner match-route-observations --catalog CATALOG.json --route-book BOOK.json --manifest OBSERVATIONS.json --snapshot SNAPSHOT.json [--snapshot SNAPSHOT.json]... --output REPORT.json",
             "  route-planner validate-route-observations --catalog CATALOG.json --route-book BOOK.json --matches MATCHES.json --snapshot SNAPSHOT.json [--snapshot SNAPSHOT.json]... [--equivalence-set SET.json]... [--research] --output REPORT.json",
+            "  route-planner promote-witnessed-actions --catalog CATALOG.json --validation VALIDATION.json --request REQUEST.json --output PACK.json --receipt RECEIPT.json",
             "  route-planner scan-orig --orig ORIG_ROOT [--product-id ID] --output SCAN.json",
             "  route-planner state-from-snapshot --snapshot SNAPSHOT.json --output STATE.json",
             "  route-planner validate-route-book --route-book BOOK.json (--catalog CATALOG.json | --facts FACTS.json --mechanics MECHANICS.json)",

@@ -2694,6 +2694,10 @@ mod tests {
         ComponentDisposition, RouteObservationValidationReport, VerificationStatus,
     };
     use dusklight_route_planner::route_suite_coverage::{RouteSuiteCoverageReport, RouteSuiteKind};
+    use dusklight_route_planner::witness_promotion::{
+        RequestedActionPromotion, RequestedWitness, WITNESS_PROMOTION_REQUEST_SCHEMA,
+        WitnessPromotionPackMetadata, WitnessPromotionRequest, promote_witnessed_actions,
+    };
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -3170,6 +3174,79 @@ mod tests {
             ComponentDisposition::Changed
         );
         assert!(local_bank.matches_model);
+        let source_transition = weak_catalog
+            .mechanics
+            .transitions
+            .iter()
+            .find(|record| record.id == "transition.hypothetical-local-bank-rebind")
+            .unwrap()
+            .clone();
+        let untouched_transition = weak_catalog
+            .mechanics
+            .transitions
+            .iter()
+            .find(|record| record.id == "transition.enter-temple-path")
+            .unwrap()
+            .clone();
+        let promotion_request = WitnessPromotionRequest {
+            schema: WITNESS_PROMOTION_REQUEST_SCHEMA.into(),
+            pack: WitnessPromotionPackMetadata {
+                id: "pack.witnessed-rebind".into(),
+                version: "1.0.0".into(),
+                author: "Dusklight regression".into(),
+                source: "Validated hypothetical rebind observation".into(),
+                precedence: 100,
+                conflicts: Vec::new(),
+            },
+            promotions: vec![RequestedActionPromotion {
+                action: book.steps[0].action.clone(),
+                promotion_rule_id: "rule.promote-rebind".into(),
+                replacement_rule_id: "rule.replace-rebind-evidence".into(),
+                witnesses: vec![RequestedWitness {
+                    observation_id: "observation.rebind".into(),
+                    evidence_id: "evidence.witnessed-rebind".into(),
+                }],
+            }],
+        };
+        let (promotion_pack, promotion_receipt) =
+            promote_witnessed_actions(&weak_catalog, &validation, &promotion_request).unwrap();
+        assert_eq!(
+            promotion_receipt.action_ids_before,
+            promotion_receipt.action_ids_after
+        );
+        let promoted_catalog = ComposedPlannerCatalog::compose(
+            &weak_catalog.facts,
+            &weak_catalog.mechanics,
+            &[promotion_pack],
+        )
+        .unwrap();
+        let promoted_transition = promoted_catalog
+            .mechanics
+            .transitions
+            .iter()
+            .find(|record| record.id == source_transition.id)
+            .unwrap();
+        assert_eq!(promoted_transition.evidence.truth, TruthStatus::Established);
+        assert!(source_transition.evidence.records.iter().all(|prior| {
+            promoted_transition
+                .evidence
+                .records
+                .iter()
+                .any(|record| record == prior)
+        }));
+        assert!(promoted_transition.evidence.records.iter().any(|record| {
+            record.id == "evidence.witnessed-rebind"
+                && record.kind == dusklight_route_planner::logic::EvidenceKind::RouteWitnessed
+        }));
+        assert_eq!(
+            promoted_catalog
+                .mechanics
+                .transitions
+                .iter()
+                .find(|record| record.id == untouched_transition.id)
+                .unwrap(),
+            &untouched_transition
+        );
         let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
             request_id: "request.remove-hypothetical-rebind".into(),
             state: Box::new(start),

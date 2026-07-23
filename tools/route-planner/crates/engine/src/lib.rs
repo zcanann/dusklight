@@ -54,6 +54,7 @@ pub mod title_boundary;
 pub mod transition;
 pub mod world_data;
 pub mod world_import;
+pub mod witness_promotion;
 
 use std::error::Error;
 use std::fmt;

@@ -3031,7 +3031,17 @@ timeline assumptions.
       needs unavailable backing state remains explicitly unavailable.
       `validate-route-observations` retains evidence-policy and equivalence-set
       identities. See `docs/route-planner/route-observation-validation.md`.
-- [ ] Promote witnessed edges without erasing lower-confidence alternatives.
+- [x] Promote witnessed edges without erasing lower-confidence alternatives.
+      `witness-promotion-request/v1` selects only observation validations whose
+      preconditions, postconditions, modeled effects, and component preservation
+      fully verify. `promote-witnessed-actions` emits a dependency-pinned
+      refinement pack that preserves the action ID and mechanics, retains every
+      prior evidence record, adds digest-bound `route_witnessed` evidence, and
+      replaces only the evidence-enriched record. Other candidate actions,
+      ID-bound obstructions/readers, and lower-confidence source records remain
+      intact. A canonical receipt proves an unchanged action census and binds
+      the catalog, validation, and pack digests. See
+      `docs/route-planner/witness-promotion.md`.
 - [x] Attach source, extraction, trace, video, or community citations. The
       catalog-digest-bound `evidence-citation-index/v1` targets existing stable
       evidence-record IDs and distinguishes all five citation kinds. Artifact,
