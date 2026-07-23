@@ -2555,14 +2555,18 @@ Deliverable: researchers can extend the model without editing core code.
         outstanding obligations, unknown requirements, and source-state digest.
   - [ ] Compute minimal failed-producer cuts across multiple upstream actions.
         Exhaustive bounded solves now emit validated `FailedProducerCut` records
-        for concrete state dependencies when every catalog producer is a
-        transition or writer, none executed, and each owns a retained blocked
-        witness. A cut keeps all alternative producer actions, their typed
-        failure classifications, and exact source-state identities; two-way OR
-        producers are covered, while any executed technique/resolver/
-        reconstruction producer or a hit search limit suppresses the claim.
-        Extending the cut algebra through those unsupported producer families
-        and nested goal boolean structure remains open.
+        for concrete state dependencies when every catalog producer is accounted
+        for and none executed. Cuts now keep transitions, writers, inactive
+        techniques, inactive resolvers, and active resolvers whose consuming
+        transition remains blocked, with typed classifications and exact source
+        states. Actor reconstruction is not misrepresented as a free action:
+        active or inactive reconstruction producers instead retain their full
+        rule witness and appear as explicit missing instantiation-boundary
+        assumptions. Successful transition setup records resolver/technique
+        execution so an actually used producer suppresses a false cut; search
+        limits still suppress incomplete claims. Two-way OR producers and every
+        catalog producer family are covered. Conservatively minimizing cut sets
+        through nested goal boolean structure remains open.
 - [x] Add bounded suspicious-state queries and retain complete proof objects for
       model-bug versus research-lead triage. Suspicious-state query v1 evaluates
       the identical typed predicate and bounds under modeled/established and

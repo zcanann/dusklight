@@ -390,6 +390,7 @@ pub enum EvidenceDependencyKind {
     Resolver,
     Technique,
     Writer,
+    Reconstruction,
     Gate,
     Reader,
     Microtrace,
@@ -490,6 +491,85 @@ pub struct BlockedWriterWitness {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockedTechniqueWitness {
+    pub technique_id: String,
+    pub source_state_sha256: Digest,
+    pub classification: RuleClassification,
+    pub prerequisites: EvaluatedTruth,
+    pub prerequisites_expression: PredicateExpression,
+    pub operations: Vec<StateOperation>,
+    pub evidence_dependencies: Vec<EvidenceDependency>,
+    pub weakest_evidence: Option<TruthStatus>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockedResolverWitness {
+    pub resolver_id: String,
+    pub obstruction_id: String,
+    pub source_state_sha256: Digest,
+    pub classification: RuleClassification,
+    pub applicability: EvaluatedTruth,
+    pub applicability_expression: PredicateExpression,
+    pub operations: Vec<StateOperation>,
+    pub evidence_dependencies: Vec<EvidenceDependency>,
+    pub weakest_evidence: Option<TruthStatus>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BlockedReconstructionWitness {
+    pub reconstruction_rule_id: String,
+    pub source_state_sha256: Digest,
+    pub classification: RuleClassification,
+    pub activation: EvaluatedTruth,
+    pub instantiate_when: PredicateExpression,
+    pub initialization_operations: Vec<StateOperation>,
+    pub evidence_dependencies: Vec<EvidenceDependency>,
+    pub weakest_evidence: Option<TruthStatus>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum FailedProducerAssumption {
+    ReconstructionBoundary {
+        reconstruction_rule_id: String,
+        source_state_sha256: Digest,
+        classification: RuleClassification,
+    },
+}
+
+impl FailedProducerAssumption {
+    fn identity(&self) -> &str {
+        match self {
+            Self::ReconstructionBoundary {
+                reconstruction_rule_id,
+                ..
+            } => reconstruction_rule_id,
+        }
+    }
+
+    fn validate(&self) -> Result<(), PlannerContractError> {
+        let (id, source) = match self {
+            Self::ReconstructionBoundary {
+                reconstruction_rule_id,
+                source_state_sha256,
+                ..
+            } => (reconstruction_rule_id, *source_state_sha256),
+        };
+        validate_stable_id("solver.failed_producer_assumption.id", id)?;
+        if source == Digest::ZERO {
+            return Err(PlannerContractError::new(
+                "solver.failed_producer_assumption.source_state_sha256",
+                "must be nonzero",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FailedProducerBlocker {
     Transition {
@@ -502,6 +582,18 @@ pub enum FailedProducerBlocker {
         source_state_sha256: Digest,
         classification: WriterClassification,
     },
+    Technique {
+        technique_id: String,
+        source_state_sha256: Digest,
+        classification: RuleClassification,
+    },
+    Resolver {
+        resolver_id: String,
+        source_state_sha256: Digest,
+        classification: RuleClassification,
+        consumer_transition_id: Option<String>,
+        consumer_classification: Option<TransitionClassification>,
+    },
 }
 
 impl FailedProducerBlocker {
@@ -512,6 +604,12 @@ impl FailedProducerBlocker {
             },
             Self::Writer { writer_id, .. } => RouteActionRef::Writer {
                 writer_id: writer_id.clone(),
+            },
+            Self::Technique { technique_id, .. } => RouteActionRef::Technique {
+                technique_id: technique_id.clone(),
+            },
+            Self::Resolver { resolver_id, .. } => RouteActionRef::Resolver {
+                resolver_id: resolver_id.clone(),
             },
         }
     }
@@ -536,6 +634,42 @@ impl FailedProducerBlocker {
                 *source_state_sha256,
                 *classification == WriterClassification::Executable,
             ),
+            Self::Technique {
+                source_state_sha256,
+                classification,
+                ..
+            } => (
+                self.action(),
+                *source_state_sha256,
+                *classification == RuleClassification::Active,
+            ),
+            Self::Resolver {
+                source_state_sha256,
+                classification,
+                consumer_transition_id,
+                consumer_classification,
+                ..
+            } => {
+                let active_without_blocked_consumer = *classification == RuleClassification::Active
+                    && (consumer_transition_id.is_none()
+                        || consumer_classification.is_none_or(|classification| {
+                            classification == TransitionClassification::Executable
+                        }));
+                if (*classification == RuleClassification::Active)
+                    != consumer_transition_id.is_some()
+                    || consumer_transition_id.is_some() != consumer_classification.is_some()
+                {
+                    return Err(PlannerContractError::new(
+                        "solver.failed_producer_blocker.resolver",
+                        "an active resolver requires one blocked consumer and an inactive resolver must not name one",
+                    ));
+                }
+                (
+                    self.action(),
+                    *source_state_sha256,
+                    active_without_blocked_consumer,
+                )
+            }
         };
         validate_route_action_ref(&action)?;
         if source_state_sha256 == Digest::ZERO || executable {
@@ -557,11 +691,12 @@ impl FailedProducerBlocker {
 pub struct FailedProducerCut {
     pub dependency: StateDependency,
     pub blocked_producers: Vec<FailedProducerBlocker>,
+    pub missing_assumptions: Vec<FailedProducerAssumption>,
 }
 
 impl FailedProducerCut {
     pub fn validate(&self) -> Result<(), PlannerContractError> {
-        if self.blocked_producers.is_empty()
+        if (self.blocked_producers.is_empty() && self.missing_assumptions.is_empty())
             || matches!(
                 self.dependency,
                 StateDependency::Fact { .. } | StateDependency::AnyState
@@ -583,6 +718,17 @@ impl FailedProducerCut {
                 ));
             }
             prior = Some(action);
+        }
+        let mut prior_assumption = None;
+        for assumption in &self.missing_assumptions {
+            assumption.validate()?;
+            if prior_assumption.is_some_and(|prior: &str| prior >= assumption.identity()) {
+                return Err(PlannerContractError::new(
+                    "solver.failed_producer_cut.missing_assumptions",
+                    "must be unique and sorted by assumption identity",
+                ));
+            }
+            prior_assumption = Some(assumption.identity());
         }
         Ok(())
     }
@@ -610,6 +756,9 @@ pub struct SearchResult {
     pub execution_error_ids: Vec<String>,
     pub blocked_transition_witnesses: Vec<BlockedTransitionWitness>,
     pub blocked_writer_witnesses: Vec<BlockedWriterWitness>,
+    pub blocked_technique_witnesses: Vec<BlockedTechniqueWitness>,
+    pub blocked_resolver_witnesses: Vec<BlockedResolverWitness>,
+    pub blocked_reconstruction_witnesses: Vec<BlockedReconstructionWitness>,
     pub continuation_merge_proofs: Vec<ContinuationMergeProof>,
     pub failed_producer_cuts: Vec<FailedProducerCut>,
 }
@@ -1184,6 +1333,10 @@ impl<'a> ForwardSolver<'a> {
         let mut execution_error_ids = BTreeSet::new();
         let mut blocked_transition_witnesses = BTreeMap::new();
         let mut blocked_writer_witnesses = BTreeMap::new();
+        let mut blocked_technique_witnesses = BTreeMap::<String, BlockedTechniqueWitness>::new();
+        let mut blocked_resolver_witnesses = BTreeMap::<String, BlockedResolverWitness>::new();
+        let mut blocked_reconstruction_witnesses =
+            BTreeMap::<String, BlockedReconstructionWitness>::new();
         let mut executed_actions = BTreeSet::new();
         let mut saw_unknown_goal = false;
         let mut hit_search_limit = false;
@@ -1329,6 +1482,9 @@ impl<'a> ForwardSolver<'a> {
                         execution_error_ids: execution_error_ids.into_iter().collect(),
                         blocked_transition_witnesses: Vec::new(),
                         blocked_writer_witnesses: Vec::new(),
+                        blocked_technique_witnesses: Vec::new(),
+                        blocked_resolver_witnesses: Vec::new(),
+                        blocked_reconstruction_witnesses: Vec::new(),
                         continuation_merge_proofs,
                         failed_producer_cuts: Vec::new(),
                     });
@@ -1356,6 +1512,93 @@ impl<'a> ForwardSolver<'a> {
                     hit_search_limit = true;
                 }
                 continue;
+            }
+
+            // Resolvers execute only as transition setup, but their own
+            // applicability can still be the closest reason a state-producing
+            // resolver was unavailable. Retain that rule witness independently
+            // from the blocked consumer transition.
+            for resolver in &self.mechanics.resolvers {
+                if backward_pruning_applied
+                    && backward_relevance
+                        .resolver_ids
+                        .binary_search(&resolver.id)
+                        .is_err()
+                {
+                    continue;
+                }
+                let assessment = evaluator.assess_resolver(resolver);
+                if assessment.classification == RuleClassification::Active
+                    || resolver.operations.is_empty()
+                {
+                    continue;
+                }
+                let evidence_dependencies = resolver_evidence_dependencies(self.facts, resolver);
+                let candidate = BlockedResolverWitness {
+                    resolver_id: resolver.id.clone(),
+                    obstruction_id: resolver.obstruction_id.clone(),
+                    source_state_sha256: state_identity,
+                    classification: assessment.classification,
+                    applicability: assessment.applicability,
+                    applicability_expression: resolver.applicable_when.clone(),
+                    operations: resolver.operations.clone(),
+                    weakest_evidence: weakest_evidence(&evidence_dependencies),
+                    evidence_dependencies,
+                };
+                let replace = blocked_resolver_witnesses
+                    .get(&resolver.id)
+                    .is_none_or(|current| {
+                        rule_blocker_rank(candidate.classification, candidate.source_state_sha256)
+                            < rule_blocker_rank(current.classification, current.source_state_sha256)
+                    });
+                if replace {
+                    blocked_resolver_witnesses.insert(resolver.id.clone(), candidate);
+                }
+            }
+
+            // Reconstruction rules describe actor-instantiation semantics, not
+            // freely executable search actions. Preserve their closest rule
+            // assessment so a producer cut can name the missing instantiation
+            // boundary instead of silently suppressing the explanation.
+            for rule in &self.mechanics.reconstruction_rules {
+                if backward_pruning_applied
+                    && backward_relevance
+                        .reconstruction_rule_ids
+                        .binary_search(&rule.id)
+                        .is_err()
+                {
+                    continue;
+                }
+                if rule.initialization_operations.is_empty() {
+                    continue;
+                }
+                let assessment = evaluator.assess_reconstruction(rule);
+                let evidence_dependencies = reconstruction_evidence_dependencies(self.facts, rule);
+                let candidate = BlockedReconstructionWitness {
+                    reconstruction_rule_id: rule.id.clone(),
+                    source_state_sha256: state_identity,
+                    classification: assessment.classification,
+                    activation: assessment.activation,
+                    instantiate_when: rule.instantiate_when.clone(),
+                    initialization_operations: rule.initialization_operations.clone(),
+                    weakest_evidence: weakest_evidence(&evidence_dependencies),
+                    evidence_dependencies,
+                };
+                let replace =
+                    blocked_reconstruction_witnesses
+                        .get(&rule.id)
+                        .is_none_or(|current| {
+                            rule_blocker_rank(
+                                candidate.classification,
+                                candidate.source_state_sha256,
+                            ) < rule_blocker_rank(
+                                current.classification,
+                                current.source_state_sha256,
+                            )
+                        });
+                if replace {
+                    blocked_reconstruction_witnesses.insert(rule.id.clone(), candidate);
+                }
             }
 
             // Writer records are standalone engine actions. Their activation
@@ -1492,10 +1735,40 @@ impl<'a> ForwardSolver<'a> {
                 {
                     continue;
                 }
-                if evaluator.assess_technique(technique).classification
-                    != RuleClassification::Active
-                    || technique.operations.is_empty()
-                {
+                let assessment = evaluator.assess_technique(technique);
+                if assessment.classification != RuleClassification::Active {
+                    if !technique.operations.is_empty() {
+                        let evidence_dependencies =
+                            technique_evidence_dependencies(self.facts, self.mechanics, technique);
+                        let candidate = BlockedTechniqueWitness {
+                            technique_id: technique.id.clone(),
+                            source_state_sha256: state_identity,
+                            classification: assessment.classification,
+                            prerequisites: assessment.prerequisites,
+                            prerequisites_expression: technique.prerequisites.clone(),
+                            operations: technique.operations.clone(),
+                            weakest_evidence: weakest_evidence(&evidence_dependencies),
+                            evidence_dependencies,
+                        };
+                        let replace =
+                            blocked_technique_witnesses
+                                .get(&technique.id)
+                                .is_none_or(|current| {
+                                    rule_blocker_rank(
+                                        candidate.classification,
+                                        candidate.source_state_sha256,
+                                    ) < rule_blocker_rank(
+                                        current.classification,
+                                        current.source_state_sha256,
+                                    )
+                                });
+                        if replace {
+                            blocked_technique_witnesses.insert(technique.id.clone(), candidate);
+                        }
+                    }
+                    continue;
+                }
+                if technique.operations.is_empty() {
                     continue;
                 }
                 let mut next = node.state.clone();
@@ -1924,7 +2197,11 @@ impl<'a> ForwardSolver<'a> {
                             before: transition_before,
                             after: next.clone(),
                         });
-                        executed_actions.insert(transition_action.clone());
+                        executed_actions.extend(
+                            action_boundaries
+                                .iter()
+                                .map(|boundary| boundary.action.clone()),
+                        );
                         let evidence_dependencies = transition_evidence_dependencies(
                             self.facts,
                             self.mechanics,
@@ -2021,6 +2298,9 @@ impl<'a> ForwardSolver<'a> {
                 execution_error_ids: execution_error_ids.into_iter().collect(),
                 blocked_transition_witnesses: Vec::new(),
                 blocked_writer_witnesses: Vec::new(),
+                blocked_technique_witnesses: Vec::new(),
+                blocked_resolver_witnesses: Vec::new(),
+                blocked_reconstruction_witnesses: Vec::new(),
                 continuation_merge_proofs,
                 failed_producer_cuts: Vec::new(),
             });
@@ -2040,6 +2320,9 @@ impl<'a> ForwardSolver<'a> {
                 &executed_actions,
                 &blocked_transition_witnesses,
                 &blocked_writer_witnesses,
+                &blocked_technique_witnesses,
+                &blocked_resolver_witnesses,
+                &blocked_reconstruction_witnesses,
             )?
         };
         Ok(SearchResult {
@@ -2065,6 +2348,11 @@ impl<'a> ForwardSolver<'a> {
             execution_error_ids: execution_error_ids.into_iter().collect(),
             blocked_transition_witnesses: blocked_transition_witnesses.into_values().collect(),
             blocked_writer_witnesses: blocked_writer_witnesses.into_values().collect(),
+            blocked_technique_witnesses: blocked_technique_witnesses.into_values().collect(),
+            blocked_resolver_witnesses: blocked_resolver_witnesses.into_values().collect(),
+            blocked_reconstruction_witnesses: blocked_reconstruction_witnesses
+                .into_values()
+                .collect(),
             continuation_merge_proofs,
             failed_producer_cuts,
         })
@@ -2556,6 +2844,64 @@ fn technique_evidence_dependencies(
         .collect()
 }
 
+fn resolver_evidence_dependencies(
+    facts: &FactCatalog,
+    resolver: &crate::transition::ObstructionResolver,
+) -> Vec<EvidenceDependency> {
+    let mut dependencies = BTreeMap::new();
+    insert_evidence(
+        &mut dependencies,
+        EvidenceDependencyKind::Resolver,
+        &resolver.id,
+        &resolver.evidence,
+    );
+    collect_predicate_evidence(
+        &resolver.applicable_when,
+        facts,
+        &mut dependencies,
+        &mut BTreeSet::new(),
+    );
+    dependencies
+        .into_iter()
+        .map(
+            |((dependency_kind, record_id), evidence)| EvidenceDependency {
+                dependency_kind,
+                record_id,
+                evidence,
+            },
+        )
+        .collect()
+}
+
+fn reconstruction_evidence_dependencies(
+    facts: &FactCatalog,
+    rule: &crate::transition::ActorReconstructionRule,
+) -> Vec<EvidenceDependency> {
+    let mut dependencies = BTreeMap::new();
+    insert_evidence(
+        &mut dependencies,
+        EvidenceDependencyKind::Reconstruction,
+        &rule.id,
+        &rule.evidence,
+    );
+    collect_predicate_evidence(
+        &rule.instantiate_when,
+        facts,
+        &mut dependencies,
+        &mut BTreeSet::new(),
+    );
+    dependencies
+        .into_iter()
+        .map(
+            |((dependency_kind, record_id), evidence)| EvidenceDependency {
+                dependency_kind,
+                record_id,
+                evidence,
+            },
+        )
+        .collect()
+}
+
 fn writer_evidence_dependencies(
     facts: &FactCatalog,
     mechanics: &MechanicsCatalog,
@@ -2892,6 +3238,9 @@ fn failed_producer_cuts(
     executed_actions: &BTreeSet<RouteActionRef>,
     transition_witnesses: &BTreeMap<String, BlockedTransitionWitness>,
     writer_witnesses: &BTreeMap<String, BlockedWriterWitness>,
+    technique_witnesses: &BTreeMap<String, BlockedTechniqueWitness>,
+    resolver_witnesses: &BTreeMap<String, BlockedResolverWitness>,
+    reconstruction_witnesses: &BTreeMap<String, BlockedReconstructionWitness>,
 ) -> Result<Vec<FailedProducerCut>, PlannerContractError> {
     let mut cuts = Vec::new();
     for dependency in &relevance.dependencies {
@@ -2909,6 +3258,7 @@ fn failed_producer_cuts(
             })
         };
         let mut blockers = Vec::new();
+        let mut assumptions = Vec::new();
         let mut saw_producer = false;
         let mut complete = true;
         for transition in &mechanics.transitions {
@@ -2955,25 +3305,95 @@ fn failed_producer_cuts(
                 complete = false;
             }
         }
-        let unsupported_producer = mechanics
-            .techniques
-            .iter()
-            .any(|technique| produces(&technique.operations))
-            || mechanics
-                .resolvers
+        for technique in &mechanics.techniques {
+            if !produces(&technique.operations) {
+                continue;
+            }
+            saw_producer = true;
+            let action = RouteActionRef::Technique {
+                technique_id: technique.id.clone(),
+            };
+            if executed_actions.contains(&action) {
+                complete = false;
+                continue;
+            }
+            if let Some(witness) = technique_witnesses.get(&technique.id) {
+                blockers.push(FailedProducerBlocker::Technique {
+                    technique_id: technique.id.clone(),
+                    source_state_sha256: witness.source_state_sha256,
+                    classification: witness.classification,
+                });
+            } else {
+                complete = false;
+            }
+        }
+        for resolver in &mechanics.resolvers {
+            if !produces(&resolver.operations) {
+                continue;
+            }
+            saw_producer = true;
+            let action = RouteActionRef::Resolver {
+                resolver_id: resolver.id.clone(),
+            };
+            if executed_actions.contains(&action) {
+                complete = false;
+                continue;
+            }
+            if let Some(witness) = resolver_witnesses.get(&resolver.id) {
+                blockers.push(FailedProducerBlocker::Resolver {
+                    resolver_id: resolver.id.clone(),
+                    source_state_sha256: witness.source_state_sha256,
+                    classification: witness.classification,
+                    consumer_transition_id: None,
+                    consumer_classification: None,
+                });
+                continue;
+            }
+            let blocked_consumer = mechanics
+                .obstructions
                 .iter()
-                .any(|resolver| produces(&resolver.operations))
-            || mechanics
-                .reconstruction_rules
-                .iter()
-                .any(|rule| produces(&rule.initialization_operations));
-        if !saw_producer || !complete || unsupported_producer {
+                .find(|obstruction| obstruction.id == resolver.obstruction_id)
+                .and_then(|obstruction| {
+                    transition_witnesses
+                        .get(&obstruction.blocked_action_id)
+                        .map(|witness| (obstruction, witness))
+                });
+            if let Some((obstruction, witness)) = blocked_consumer {
+                blockers.push(FailedProducerBlocker::Resolver {
+                    resolver_id: resolver.id.clone(),
+                    source_state_sha256: witness.source_state_sha256,
+                    classification: RuleClassification::Active,
+                    consumer_transition_id: Some(obstruction.blocked_action_id.clone()),
+                    consumer_classification: Some(witness.classification),
+                });
+            } else {
+                complete = false;
+            }
+        }
+        for rule in &mechanics.reconstruction_rules {
+            if !produces(&rule.initialization_operations) {
+                continue;
+            }
+            saw_producer = true;
+            if let Some(witness) = reconstruction_witnesses.get(&rule.id) {
+                assumptions.push(FailedProducerAssumption::ReconstructionBoundary {
+                    reconstruction_rule_id: rule.id.clone(),
+                    source_state_sha256: witness.source_state_sha256,
+                    classification: witness.classification,
+                });
+            } else {
+                complete = false;
+            }
+        }
+        if !saw_producer || !complete {
             continue;
         }
         blockers.sort_by_key(FailedProducerBlocker::action);
+        assumptions.sort_by(|left, right| left.identity().cmp(right.identity()));
         let cut = FailedProducerCut {
             dependency: dependency.clone(),
             blocked_producers: blockers,
+            missing_assumptions: assumptions,
         };
         cut.validate()?;
         cuts.push(cut);
@@ -2998,6 +3418,17 @@ fn blocker_rank(witness: &BlockedTransitionWitness) -> (usize, u8, Digest) {
         TransitionClassification::Inapplicable => 4,
     };
     (unresolved, classification, witness.source_state_sha256)
+}
+
+fn rule_blocker_rank(classification: RuleClassification, source: Digest) -> (u8, Digest) {
+    let classification = match classification {
+        RuleClassification::Active => 0,
+        RuleClassification::Inactive => 1,
+        RuleClassification::ActivationUnknown => 2,
+        RuleClassification::EvidenceUnknown => 3,
+        RuleClassification::Inapplicable => 4,
+    };
+    (classification, source)
 }
 
 fn and_truth(left: EvaluatedTruth, right: EvaluatedTruth) -> EvaluatedTruth {
@@ -5452,6 +5883,211 @@ mod tests {
         let mut detached = cut.clone();
         detached.blocked_producers.reverse();
         assert!(detached.validate().is_err());
+    }
+
+    #[test]
+    fn inactive_technique_producers_participate_in_complete_cuts() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(Vec::new());
+        mechanics.techniques = [
+            ("technique.b-to-g", "STAGE_B"),
+            ("technique.c-to-g", "STAGE_C"),
+        ]
+        .into_iter()
+        .map(|(id, prerequisite)| {
+            let mut technique = location_technique(&snapshot, id, "STAGE_G", &[]);
+            technique.prerequisites = stage_is(prerequisite);
+            technique
+        })
+        .collect();
+        let result = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_G"),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SearchStatus::UnreachableUnderModel);
+        assert_eq!(result.blocked_technique_witnesses.len(), 2);
+        assert!(result.blocked_technique_witnesses.iter().all(|witness| {
+            witness.classification == RuleClassification::Inactive
+                && witness.prerequisites == EvaluatedTruth::False
+        }));
+        let cut = result
+            .failed_producer_cuts
+            .iter()
+            .find(|cut| cut.dependency == StateDependency::LocationStage)
+            .unwrap();
+        assert_eq!(
+            cut.blocked_producers
+                .iter()
+                .map(FailedProducerBlocker::action)
+                .collect::<Vec<_>>(),
+            vec![
+                RouteActionRef::Technique {
+                    technique_id: "technique.b-to-g".into(),
+                },
+                RouteActionRef::Technique {
+                    technique_id: "technique.c-to-g".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn inactive_resolver_producers_participate_in_complete_cuts() {
+        let snapshot = snapshot();
+        let mut mechanics = obstructed_transition_catalog(&snapshot);
+        mechanics.transitions[0].activation.effects = vec![StateOperation::SetLocation {
+            location: SceneLocation {
+                stage: "STAGE_G".into(),
+                room: 0,
+                layer: 0,
+                spawn: 0,
+            },
+        }];
+        mechanics.resolvers[0].applicable_when = stage_is("STAGE_B");
+        mechanics.resolvers[0].operations = mechanics.transitions[0].activation.effects.clone();
+        let result = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_G"),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SearchStatus::UnreachableUnderModel);
+        assert_eq!(result.blocked_resolver_witnesses.len(), 1);
+        assert_eq!(
+            result.blocked_resolver_witnesses[0].classification,
+            RuleClassification::Inactive
+        );
+        let cut = result
+            .failed_producer_cuts
+            .iter()
+            .find(|cut| cut.dependency == StateDependency::LocationStage)
+            .unwrap();
+        assert_eq!(
+            cut.blocked_producers
+                .iter()
+                .map(FailedProducerBlocker::action)
+                .collect::<Vec<_>>(),
+            vec![
+                RouteActionRef::Transition {
+                    transition_id: "transition.a-to-b".into(),
+                },
+                RouteActionRef::Resolver {
+                    resolver_id: "resolver.text-state".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn active_resolver_with_blocked_consumer_retains_that_dependency() {
+        let snapshot = snapshot();
+        let mut mechanics = obstructed_transition_catalog(&snapshot);
+        let to_goal = StateOperation::SetLocation {
+            location: SceneLocation {
+                stage: "STAGE_G".into(),
+                room: 0,
+                layer: 0,
+                spawn: 0,
+            },
+        };
+        mechanics.transitions[0].activation.effects = vec![to_goal.clone()];
+        mechanics.transitions[0].activation.hard_guards = PredicateExpression::All {
+            terms: vec![stage_is("STAGE_A"), gate_is("gate.never-set", true)],
+        };
+        mechanics.resolvers[0].operations = vec![to_goal];
+        let result = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_G"),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SearchStatus::UnreachableUnderModel);
+        assert!(result.blocked_resolver_witnesses.is_empty());
+        let cut = result
+            .failed_producer_cuts
+            .iter()
+            .find(|cut| cut.dependency == StateDependency::LocationStage)
+            .unwrap();
+        let resolver = cut
+            .blocked_producers
+            .iter()
+            .find(|blocker| {
+                matches!(
+                    blocker,
+                    FailedProducerBlocker::Resolver { resolver_id, .. }
+                        if resolver_id == "resolver.text-state"
+                )
+            })
+            .unwrap();
+        assert!(matches!(
+            resolver,
+            FailedProducerBlocker::Resolver {
+                classification: RuleClassification::Active,
+                consumer_transition_id: Some(transition_id),
+                consumer_classification: Some(TransitionClassification::GuardBlocked),
+                ..
+            } if transition_id == "transition.a-to-b"
+        ));
+        cut.validate().unwrap();
+    }
+
+    #[test]
+    fn reconstruction_producers_become_explicit_boundary_assumptions() {
+        let snapshot = snapshot();
+        let mut mechanics = catalog(Vec::new());
+        mechanics.reconstruction_rules = vec![ActorReconstructionRule {
+            id: "reconstruction.goal-actor".into(),
+            label: "Instantiate the goal actor".into(),
+            scope: scope(&snapshot),
+            actor_type: "goal_actor".into(),
+            instantiate_when: PredicateExpression::True,
+            initialization_operations: vec![StateOperation::SetLocation {
+                location: SceneLocation {
+                    stage: "STAGE_G".into(),
+                    room: 0,
+                    layer: 0,
+                    spawn: 0,
+                },
+            }],
+            evidence: evidence(TruthStatus::Established),
+        }];
+        let result = ForwardSolver::new(&facts(), &mechanics, &[], SolverOptions::default())
+            .unwrap()
+            .solve(
+                PlannerExecutionState::new(snapshot).unwrap(),
+                &stage_is("STAGE_G"),
+            )
+            .unwrap();
+
+        assert_eq!(result.status, SearchStatus::UnreachableUnderModel);
+        assert_eq!(result.blocked_reconstruction_witnesses.len(), 1);
+        assert_eq!(
+            result.blocked_reconstruction_witnesses[0].classification,
+            RuleClassification::Active
+        );
+        let cut = result
+            .failed_producer_cuts
+            .iter()
+            .find(|cut| cut.dependency == StateDependency::LocationStage)
+            .unwrap();
+        assert!(cut.blocked_producers.is_empty());
+        assert!(matches!(
+            cut.missing_assumptions.as_slice(),
+            [FailedProducerAssumption::ReconstructionBoundary {
+                reconstruction_rule_id,
+                classification: RuleClassification::Active,
+                ..
+            }] if reconstruction_rule_id == "reconstruction.goal-actor"
+        ));
+        cut.validate().unwrap();
     }
 
     #[test]

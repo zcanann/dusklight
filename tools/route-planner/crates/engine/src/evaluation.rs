@@ -11,8 +11,9 @@ use crate::state::{
     StateValue,
 };
 use crate::transition::{
-    CandidateTransition, FeasibilityObligation, GateRule, ObligationDetail, ReaderRule,
-    TemporalRequirement, VolumeReference, WitnessedMicrotrace, WriterRule,
+    ActorReconstructionRule, CandidateTransition, FeasibilityObligation, GateRule,
+    ObligationDetail, ReaderRule, TemporalRequirement, VolumeReference, WitnessedMicrotrace,
+    WriterRule,
 };
 use crate::transition::{Obstruction, ObstructionResolver, Technique};
 use crate::{PlannerContractError, validate_stable_id};
@@ -154,7 +155,8 @@ pub struct ReaderAssessment {
     pub interpretation: Option<EvaluatedTruth>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RuleClassification {
     Inapplicable,
     EvidenceUnknown,
@@ -186,6 +188,13 @@ pub struct TechniqueAssessment {
     pub prerequisites: EvaluatedTruth,
     pub discharged_obligation_ids: Vec<String>,
     pub introduced_obligation_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReconstructionAssessment {
+    pub reconstruction_rule_id: String,
+    pub classification: RuleClassification,
+    pub activation: EvaluatedTruth,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -758,6 +767,19 @@ impl<'a> PredicateEvaluator<'a> {
             prerequisites,
             discharged_obligation_ids: technique.discharged_obligation_ids.clone(),
             introduced_obligation_ids: technique.introduced_obligation_ids.clone(),
+        }
+    }
+
+    pub fn assess_reconstruction(
+        &self,
+        rule: &ActorReconstructionRule,
+    ) -> ReconstructionAssessment {
+        let (classification, activation) =
+            self.assess_rule(&rule.scope, rule.evidence.truth, &rule.instantiate_when);
+        ReconstructionAssessment {
+            reconstruction_rule_id: rule.id.clone(),
+            classification,
+            activation,
         }
     }
 

@@ -25,8 +25,8 @@ use dusklight_route_planner::transition::MechanicsCatalog;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v12";
-pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v11";
+pub const SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.solve-report/v13";
+pub const PORTABLE_SOLVE_REPORT_SCHEMA: &str = "dusklight.route-planner.portable-solve-report/v12";
 pub const SUSPICIOUS_STATE_QUERY_SCHEMA: &str = "dusklight.route-planner.suspicious-state-query/v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -107,6 +107,9 @@ pub struct SolveSummary {
     pub execution_error_ids: Vec<String>,
     pub blocked_transition_count: usize,
     pub blocked_writer_count: usize,
+    pub blocked_technique_count: usize,
+    pub blocked_resolver_count: usize,
+    pub blocked_reconstruction_count: usize,
     pub continuation_merge_count: usize,
     pub failed_producer_cut_count: usize,
     pub failed_producer_cuts: Vec<FailedProducerCut>,
@@ -164,6 +167,9 @@ impl SolveSummary {
             execution_error_ids: result.execution_error_ids.clone(),
             blocked_transition_count: result.blocked_transition_witnesses.len(),
             blocked_writer_count: result.blocked_writer_witnesses.len(),
+            blocked_technique_count: result.blocked_technique_witnesses.len(),
+            blocked_resolver_count: result.blocked_resolver_witnesses.len(),
+            blocked_reconstruction_count: result.blocked_reconstruction_witnesses.len(),
             continuation_merge_count: result.continuation_merge_proofs.len(),
             failed_producer_cut_count: result.failed_producer_cuts.len(),
             failed_producer_cuts: result.failed_producer_cuts.clone(),
