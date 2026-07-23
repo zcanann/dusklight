@@ -741,9 +741,21 @@ revalidated crash-safe journal/state chain.
 - [ ] Evaluate across several deterministic seeds and held-out checkpoints.
 - [ ] Require the learned method to improve successful-episode rate, best
       first-hit time, or sample efficiency over the non-learning baselines.
-- [ ] Add negative controls for shuffled outcomes, action-only input, removed
+- [x] Add negative controls for shuffled outcomes, action-only input, removed
       collision/geometry, removed actors, removed history, and checkpoint/tape
-      identity leakage.
+      identity leakage. `learn evaluate-goal-reachability-negative-controls`
+      now trains every treatment with identical configuration, seed, episode
+      splits, and source rows; evaluates against untouched held-out truth; seals
+      input-cell and target impact counts plus all critic metrics; and has no
+      promotion authority. The authenticated q131 sweep covers 143,798 rows.
+      Shuffling 105,913 training targets worsens held-out Brier by 76.3%, time
+      MAE by 337.3%, and return RMSE by 14.3%; previous-PAD-only input worsens
+      them by 64.2%, 296.7%, and 14.6%. Collision and history treatments expose
+      that only proxies are represented. Actor and checkpoint/tape identity
+      removals change zero cells and reproduce the exact baseline model,
+      proving those fields cannot provide the observed signal through this
+      input contract. The sealed diagnosis is recorded in
+      `routes/Glitch Exhibition/intro/benchmarks/ordon-q131-goal-reachability-negative-controls.md`.
 - [ ] Attribute failure before changing architecture:
   - observation insufficiency;
   - lossy or unsupported action surface;

@@ -31,6 +31,8 @@ use std::fmt;
 
 pub const NATIVE_GOAL_REACHABILITY_MODEL_SCHEMA_V1: &str =
     "dusklight-native-goal-reachability-model/v1";
+pub const NATIVE_GOAL_REACHABILITY_NEGATIVE_CONTROL_SCHEMA_V1: &str =
+    "dusklight-native-goal-reachability-negative-controls/v1";
 pub const NATIVE_GOAL_EMBEDDING_SCHEMA_V1: &str = "dusklight-semantic-goal-embedding/v1";
 pub const NATIVE_GOAL_REACHABILITY_HEADS: usize = 4;
 pub const MAX_GOAL_REACHABILITY_TICKS: u32 = 4_096;
@@ -110,6 +112,67 @@ impl NativeGoalReachabilityConfig {
 pub enum NativeGoalReachabilityAdmission {
     RetainTrainingMeanBaseline,
     GoalConditionedCandidate,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeGoalReachabilityNegativeControl {
+    ShuffledOutcomes,
+    ActionOnlyInput,
+    RemovedCollisionGeometry,
+    RemovedActors,
+    RemovedHistory,
+    RemovedCheckpointTapeIdentity,
+}
+
+impl NativeGoalReachabilityNegativeControl {
+    pub const ALL: [Self; 6] = [
+        Self::ShuffledOutcomes,
+        Self::ActionOnlyInput,
+        Self::RemovedCollisionGeometry,
+        Self::RemovedActors,
+        Self::RemovedHistory,
+        Self::RemovedCheckpointTapeIdentity,
+    ];
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NegativeControlRepresentation {
+    FullyRepresented,
+    ProxyOnly,
+    NotRepresented,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeGoalReachabilityControlResult {
+    pub control: Option<NativeGoalReachabilityNegativeControl>,
+    pub representation: NegativeControlRepresentation,
+    pub representation_note: String,
+    pub changed_input_rows: usize,
+    pub changed_input_cells: usize,
+    pub changed_training_target_rows: usize,
+    pub model_sha256: Digest,
+    pub admission: NativeGoalReachabilityAdmission,
+    pub training: NativeGoalReachabilityMetrics,
+    pub validation: NativeGoalReachabilityMetrics,
+    pub test: NativeGoalReachabilityMetrics,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeGoalReachabilityNegativeControlReport {
+    pub schema: String,
+    pub source_dataset_sha256: Vec<Digest>,
+    pub source_replay_corpus_sha256: Vec<Digest>,
+    pub native_feature_schema_sha256: Digest,
+    pub config: NativeGoalReachabilityConfig,
+    pub baseline: NativeGoalReachabilityControlResult,
+    pub controls: Vec<NativeGoalReachabilityControlResult>,
+    pub observation_insufficiency: Vec<String>,
+    pub promotion_authority: bool,
+    pub report_sha256: Digest,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -238,6 +301,191 @@ struct MaterializedRow {
     discounted_tick_cost: f64,
 }
 
+#[derive(Clone, Debug)]
+struct ControlImpact {
+    representation: NegativeControlRepresentation,
+    representation_note: &'static str,
+    changed_input_rows: usize,
+    changed_input_cells: usize,
+    changed_training_target_rows: usize,
+}
+
+fn prepare_materialized_rows(
+    datasets: &[NativeGoalTrajectoryDataset],
+    shards: &[NativeEpisodeShard],
+    config: NativeGoalReachabilityConfig,
+) -> Result<Vec<MaterializedRow>, NativeGoalReachabilityError> {
+    config.validate()?;
+    let observation_schemas = datasets
+        .iter()
+        .map(|dataset| dataset.observation_schema.as_str())
+        .collect::<BTreeSet<_>>();
+    let action_schemas = datasets
+        .iter()
+        .map(|dataset| dataset.action_schema.as_str())
+        .collect::<BTreeSet<_>>();
+    let demonstration_modes = datasets
+        .iter()
+        .map(|dataset| dataset.config.demonstration_mode)
+        .collect::<BTreeSet<_>>();
+    if observation_schemas.len() != 1 || action_schemas.len() != 1 || demonstration_modes.len() != 1
+    {
+        return Err(NativeGoalReachabilityError::new(
+            "goal reachability datasets mix observation, action, or demonstration-mode contracts",
+        ));
+    }
+    materialize(datasets, shards)
+}
+
+fn apply_negative_control(
+    rows: &mut [MaterializedRow],
+    control: Option<NativeGoalReachabilityNegativeControl>,
+    seed: u64,
+) -> Result<ControlImpact, NativeGoalReachabilityError> {
+    let Some(control) = control else {
+        return Ok(ControlImpact {
+            representation: NegativeControlRepresentation::FullyRepresented,
+            representation_note: "unmodified_goal_conditioned_native_observation",
+            changed_input_rows: 0,
+            changed_input_cells: 0,
+            changed_training_target_rows: 0,
+        });
+    };
+    let mut changed_input_rows = 0;
+    let mut changed_input_cells = 0;
+    let mut changed_training_target_rows = 0;
+    let (representation, representation_note) = match control {
+        NativeGoalReachabilityNegativeControl::ShuffledOutcomes => {
+            #[derive(Clone, Copy, PartialEq)]
+            struct Outcome {
+                success: bool,
+                ticks_to_goal: Option<u32>,
+                terminal_reward: f64,
+                bootstrap_discount: f64,
+                realized_return: f64,
+                discounted_tick_cost: f64,
+            }
+            let training = rows
+                .iter()
+                .enumerate()
+                .filter_map(|(index, row)| (row.split == AuxiliarySplit::Training).then_some(index))
+                .collect::<Vec<_>>();
+            let original = training
+                .iter()
+                .map(|index| {
+                    let row = &rows[*index];
+                    Outcome {
+                        success: row.success,
+                        ticks_to_goal: row.ticks_to_goal,
+                        terminal_reward: row.terminal_reward,
+                        bootstrap_discount: row.bootstrap_discount,
+                        realized_return: row.realized_return,
+                        discounted_tick_cost: row.discounted_tick_cost,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let mut shuffled = original.clone();
+            Rng::new(seed ^ 0x5348_5546_464c_4544).shuffle(&mut shuffled);
+            for ((index, original), shuffled) in training.into_iter().zip(original).zip(shuffled) {
+                let row = &mut rows[index];
+                row.success = shuffled.success;
+                row.ticks_to_goal = shuffled.ticks_to_goal;
+                row.terminal_reward = shuffled.terminal_reward;
+                row.bootstrap_discount = shuffled.bootstrap_discount;
+                row.realized_return = shuffled.realized_return;
+                row.discounted_tick_cost = shuffled.discounted_tick_cost;
+                changed_training_target_rows += usize::from(original != shuffled);
+            }
+            if changed_training_target_rows == 0 {
+                return Err(NativeGoalReachabilityError::new(
+                    "shuffled-outcome control did not change any training target",
+                ));
+            }
+            (
+                NegativeControlRepresentation::FullyRepresented,
+                "deterministic_rowwise_permutation_of_training_outcomes_only",
+            )
+        }
+        NativeGoalReachabilityNegativeControl::ActionOnlyInput => {
+            // The only action-valued part of the v1 observation vector is the
+            // previous raw PAD at [31, 57). Remove state and goal conditioning.
+            for row in rows.iter_mut() {
+                let mut row_changes = 0;
+                for (index, value) in row.features.iter_mut().enumerate() {
+                    if !(31..57).contains(&index) && value.to_bits() != 0.0_f64.to_bits() {
+                        *value = 0.0;
+                        row_changes += 1;
+                    }
+                }
+                changed_input_rows += usize::from(row_changes > 0);
+                changed_input_cells += row_changes;
+            }
+            (
+                NegativeControlRepresentation::ProxyOnly,
+                "previous_pad_only;current_consumed_action_is_not_an_input",
+            )
+        }
+        NativeGoalReachabilityNegativeControl::RemovedCollisionGeometry => {
+            // v1 carries contact bits, ground/roof heights, and the last XZ
+            // correction, but no collision mesh or surface geometry.
+            for row in rows.iter_mut() {
+                let mut row_changes = 0;
+                for index in (11..20).chain(27..30) {
+                    if row.features[index].to_bits() != 0.0_f64.to_bits() {
+                        row.features[index] = 0.0;
+                        row_changes += 1;
+                    }
+                }
+                changed_input_rows += usize::from(row_changes > 0);
+                changed_input_cells += row_changes;
+            }
+            (
+                NegativeControlRepresentation::ProxyOnly,
+                "removed_contact_height_and_correction_proxies;collision_geometry_is_absent",
+            )
+        }
+        NativeGoalReachabilityNegativeControl::RemovedActors => (
+            NegativeControlRepresentation::NotRepresented,
+            "actor_set_and_non_player_actor_features_are_absent",
+        ),
+        NativeGoalReachabilityNegativeControl::RemovedHistory => {
+            for row in rows.iter_mut() {
+                let mut row_changes = 0;
+                for value in &mut row.features[31..57] {
+                    if value.to_bits() != 0.0_f64.to_bits() {
+                        *value = 0.0;
+                        row_changes += 1;
+                    }
+                }
+                changed_input_rows += usize::from(row_changes > 0);
+                changed_input_cells += row_changes;
+            }
+            (
+                NegativeControlRepresentation::ProxyOnly,
+                "removed_previous_pad;multi_step_observation_history_is_absent",
+            )
+        }
+        NativeGoalReachabilityNegativeControl::RemovedCheckpointTapeIdentity => (
+            NegativeControlRepresentation::NotRepresented,
+            "checkpoint_and_tape_identifiers_are_excluded_from_model_input",
+        ),
+    };
+    if representation == NegativeControlRepresentation::NotRepresented
+        && (changed_input_rows != 0 || changed_input_cells != 0)
+    {
+        return Err(NativeGoalReachabilityError::new(
+            "unrepresented negative control unexpectedly changed model input",
+        ));
+    }
+    Ok(ControlImpact {
+        representation,
+        representation_note,
+        changed_input_rows,
+        changed_input_cells,
+        changed_training_target_rows,
+    })
+}
+
 #[derive(Clone, Copy)]
 struct Targets {
     values: [f64; NATIVE_GOAL_REACHABILITY_HEADS],
@@ -260,30 +508,24 @@ impl NativeGoalReachabilityModel {
         shards: &[NativeEpisodeShard],
         config: NativeGoalReachabilityConfig,
     ) -> Result<Self, NativeGoalReachabilityError> {
+        let rows = prepare_materialized_rows(datasets, shards, config)?;
+        Self::fit_materialized(datasets, rows, config, None).map(|(model, _)| model)
+    }
+
+    fn fit_materialized(
+        datasets: &[NativeGoalTrajectoryDataset],
+        mut rows: Vec<MaterializedRow>,
+        config: NativeGoalReachabilityConfig,
+        control: Option<NativeGoalReachabilityNegativeControl>,
+    ) -> Result<(Self, ControlImpact), NativeGoalReachabilityError> {
         config.validate()?;
-        let observation_schemas = datasets
-            .iter()
-            .map(|dataset| dataset.observation_schema.as_str())
-            .collect::<BTreeSet<_>>();
-        let action_schemas = datasets
-            .iter()
-            .map(|dataset| dataset.action_schema.as_str())
-            .collect::<BTreeSet<_>>();
-        let demonstration_modes = datasets
-            .iter()
-            .map(|dataset| dataset.config.demonstration_mode)
-            .collect::<BTreeSet<_>>();
-        if observation_schemas.len() != 1
-            || action_schemas.len() != 1
-            || demonstration_modes.len() != 1
-        {
-            return Err(NativeGoalReachabilityError::new(
-                "goal reachability datasets mix observation, action, or demonstration-mode contracts",
-            ));
-        }
-        let rows = materialize(datasets, shards)?;
         validate_split_isolation(&rows)?;
         validate_split_support(&rows)?;
+        let evaluation_rows = (control
+            == Some(NativeGoalReachabilityNegativeControl::ShuffledOutcomes))
+        .then(|| rows.clone());
+        let impact = apply_negative_control(&mut rows, control, config.seed)?;
+        let truth_rows = evaluation_rows.as_deref().unwrap_or(&rows);
         let input_width = rows[0].features.len();
         let training_indices = split_indices(&rows, AuxiliarySplit::Training);
         let training_n_step_bootstrap_rows = training_indices
@@ -397,9 +639,9 @@ impl NativeGoalReachabilityModel {
             .into_iter()
             .map(|(_, member)| member)
             .collect::<Vec<_>>();
-        let baseline = TrainingBaseline::from_rows(&rows, &training_indices)?;
+        let baseline = TrainingBaseline::from_rows(truth_rows, &training_indices)?;
         let training = evaluate(
-            &rows,
+            truth_rows,
             &normalized,
             &members,
             AuxiliarySplit::Training,
@@ -407,7 +649,7 @@ impl NativeGoalReachabilityModel {
             usize::from(config.hidden_width),
         )?;
         let validation = evaluate(
-            &rows,
+            truth_rows,
             &normalized,
             &members,
             AuxiliarySplit::Validation,
@@ -415,7 +657,7 @@ impl NativeGoalReachabilityModel {
             usize::from(config.hidden_width),
         )?;
         let test = evaluate(
-            &rows,
+            truth_rows,
             &normalized,
             &members,
             AuxiliarySplit::Test,
@@ -491,7 +733,7 @@ impl NativeGoalReachabilityModel {
             .map_err(|error| NativeGoalReachabilityError::new(error.to_string()))?;
         model.model_sha256 = model.digest()?;
         model.validate()?;
-        Ok(model)
+        Ok((model, impact))
     }
 
     pub fn validate(&self) -> Result<(), NativeGoalReachabilityError> {
@@ -599,6 +841,170 @@ impl NativeGoalReachabilityModel {
         canonical.model_sha256 = Digest::ZERO;
         canonical_digest(b"dusklight.native-goal-reachability-model/v1\0", &canonical)
     }
+}
+
+impl NativeGoalReachabilityNegativeControlReport {
+    pub fn evaluate(
+        datasets: &[NativeGoalTrajectoryDataset],
+        shards: &[NativeEpisodeShard],
+        config: NativeGoalReachabilityConfig,
+    ) -> Result<Self, NativeGoalReachabilityError> {
+        let rows = prepare_materialized_rows(datasets, shards, config)?;
+        let (baseline_model, baseline_impact) =
+            NativeGoalReachabilityModel::fit_materialized(datasets, rows.clone(), config, None)?;
+        let baseline = control_result(None, baseline_model, baseline_impact);
+        let mut controls = Vec::with_capacity(NativeGoalReachabilityNegativeControl::ALL.len());
+        for control in NativeGoalReachabilityNegativeControl::ALL {
+            let (model, impact) = NativeGoalReachabilityModel::fit_materialized(
+                datasets,
+                rows.clone(),
+                config,
+                Some(control),
+            )?;
+            controls.push(control_result(Some(control), model, impact));
+        }
+        let mut report = Self {
+            schema: NATIVE_GOAL_REACHABILITY_NEGATIVE_CONTROL_SCHEMA_V1.into(),
+            source_dataset_sha256: baseline_model_sources(datasets, |dataset| {
+                dataset.dataset_sha256
+            }),
+            source_replay_corpus_sha256: baseline_model_sources(datasets, |dataset| {
+                dataset.replay_corpus_sha256
+            }),
+            native_feature_schema_sha256: Digest(NATIVE_POLICY_FEATURE_SCHEMA_SHA256),
+            config,
+            baseline,
+            controls,
+            observation_insufficiency: vec![
+                "current_consumed_action_is_not_represented;action_only_uses_previous_pad".into(),
+                "collision_mesh_and_surface_geometry_are_not_represented;only_contact_height_and_correction_proxies_exist".into(),
+                "non_player_actor_sets_and_actor_state_are_not_represented".into(),
+                "multi_step_observation_history_is_not_represented;only_previous_pad_exists".into(),
+            ],
+            promotion_authority: false,
+            report_sha256: Digest::ZERO,
+        };
+        // Stabilize promoted f32-derived decimals exactly as model sealing does.
+        let canonical_bytes = serde_json::to_vec(&report)
+            .map_err(|error| NativeGoalReachabilityError::new(error.to_string()))?;
+        report = serde_json::from_slice(&canonical_bytes)
+            .map_err(|error| NativeGoalReachabilityError::new(error.to_string()))?;
+        report.report_sha256 = report.digest()?;
+        report.validate()?;
+        Ok(report)
+    }
+
+    pub fn validate(&self) -> Result<(), NativeGoalReachabilityError> {
+        self.config.validate()?;
+        let expected_controls = NativeGoalReachabilityNegativeControl::ALL
+            .into_iter()
+            .map(Some)
+            .collect::<Vec<_>>();
+        let actual_controls = self
+            .controls
+            .iter()
+            .map(|control| control.control)
+            .collect::<Vec<_>>();
+        let sources_are_canonical = |values: &[Digest]| {
+            !values.is_empty()
+                && !values.contains(&Digest::ZERO)
+                && values.windows(2).all(|pair| pair[0] < pair[1])
+        };
+        if self.schema != NATIVE_GOAL_REACHABILITY_NEGATIVE_CONTROL_SCHEMA_V1
+            || !sources_are_canonical(&self.source_dataset_sha256)
+            || !sources_are_canonical(&self.source_replay_corpus_sha256)
+            || self.native_feature_schema_sha256 != Digest(NATIVE_POLICY_FEATURE_SCHEMA_SHA256)
+            || self.baseline.control.is_some()
+            || self.baseline.representation != NegativeControlRepresentation::FullyRepresented
+            || self.baseline.changed_input_rows != 0
+            || self.baseline.changed_input_cells != 0
+            || self.baseline.changed_training_target_rows != 0
+            || !self.baseline.valid()
+            || actual_controls != expected_controls
+            || self.controls.iter().any(|control| !control.valid())
+            || self.observation_insufficiency.len() != 4
+            || self
+                .observation_insufficiency
+                .iter()
+                .any(|finding| finding.is_empty())
+            || self.promotion_authority
+            || self.report_sha256 != self.digest()?
+        {
+            return Err(NativeGoalReachabilityError::new(
+                "native goal reachability negative-control report is invalid or detached",
+            ));
+        }
+        Ok(())
+    }
+
+    fn digest(&self) -> Result<Digest, NativeGoalReachabilityError> {
+        let mut canonical = self.clone();
+        canonical.report_sha256 = Digest::ZERO;
+        canonical_digest(
+            b"dusklight.native-goal-reachability-negative-controls/v1\0",
+            &canonical,
+        )
+    }
+}
+
+impl NativeGoalReachabilityControlResult {
+    fn valid(&self) -> bool {
+        self.model_sha256 != Digest::ZERO
+            && self.training.validate()
+            && self.validation.validate()
+            && self.test.validate()
+            && !self.representation_note.is_empty()
+            && match self.control {
+                None => true,
+                Some(NativeGoalReachabilityNegativeControl::ShuffledOutcomes) => {
+                    self.representation == NegativeControlRepresentation::FullyRepresented
+                        && self.changed_input_rows == 0
+                        && self.changed_input_cells == 0
+                        && self.changed_training_target_rows > 0
+                }
+                Some(NativeGoalReachabilityNegativeControl::RemovedActors)
+                | Some(NativeGoalReachabilityNegativeControl::RemovedCheckpointTapeIdentity) => {
+                    self.representation == NegativeControlRepresentation::NotRepresented
+                        && self.changed_input_rows == 0
+                        && self.changed_input_cells == 0
+                        && self.changed_training_target_rows == 0
+                }
+                Some(_) => {
+                    self.representation == NegativeControlRepresentation::ProxyOnly
+                        && self.changed_training_target_rows == 0
+                }
+            }
+    }
+}
+
+fn control_result(
+    control: Option<NativeGoalReachabilityNegativeControl>,
+    model: NativeGoalReachabilityModel,
+    impact: ControlImpact,
+) -> NativeGoalReachabilityControlResult {
+    NativeGoalReachabilityControlResult {
+        control,
+        representation: impact.representation,
+        representation_note: impact.representation_note.into(),
+        changed_input_rows: impact.changed_input_rows,
+        changed_input_cells: impact.changed_input_cells,
+        changed_training_target_rows: impact.changed_training_target_rows,
+        model_sha256: model.model_sha256,
+        admission: model.admission,
+        training: model.training,
+        validation: model.validation,
+        test: model.test,
+    }
+}
+
+fn baseline_model_sources(
+    datasets: &[NativeGoalTrajectoryDataset],
+    source: impl Fn(&NativeGoalTrajectoryDataset) -> Digest,
+) -> Vec<Digest> {
+    let mut sources = datasets.iter().map(source).collect::<Vec<_>>();
+    sources.sort_unstable();
+    sources.dedup();
+    sources
 }
 
 impl ReachabilityMember {
@@ -1864,6 +2270,67 @@ milestone reach_goal {
         let mut tampered = model;
         tampered.admission = NativeGoalReachabilityAdmission::RetainTrainingMeanBaseline;
         tampered.model_sha256 = tampered.digest().unwrap();
+        assert!(tampered.validate().is_err());
+    }
+
+    #[test]
+    fn negative_controls_are_equal_budget_sealed_and_expose_missing_observations() {
+        let (shard, _, _, dataset) = balanced_sources();
+        let config = NativeGoalReachabilityConfig {
+            members: 2,
+            epochs: 3,
+            hidden_width: 4,
+            minimum_validation_improvement: 0.0,
+            maximum_validation_reachability_stddev: 0.5,
+            ..fit_config()
+        };
+        let first = NativeGoalReachabilityNegativeControlReport::evaluate(
+            std::slice::from_ref(&dataset),
+            std::slice::from_ref(&shard),
+            config,
+        )
+        .unwrap();
+        first.validate().unwrap();
+        let decoded: NativeGoalReachabilityNegativeControlReport =
+            serde_json::from_slice(&serde_json::to_vec(&first).unwrap()).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded, first);
+        assert_eq!(first.controls.len(), 6);
+        assert!(first.controls.iter().all(|control| {
+            control.training.rows == first.baseline.training.rows
+                && control.validation.rows == first.baseline.validation.rows
+                && control.test.rows == first.baseline.test.rows
+        }));
+
+        let shuffled = &first.controls[0];
+        assert_eq!(
+            shuffled.control,
+            Some(NativeGoalReachabilityNegativeControl::ShuffledOutcomes)
+        );
+        assert!(shuffled.changed_training_target_rows > 0);
+        assert_eq!(shuffled.changed_input_cells, 0);
+
+        for control in [&first.controls[3], &first.controls[5]] {
+            assert_eq!(
+                control.representation,
+                NegativeControlRepresentation::NotRepresented
+            );
+            assert_eq!(control.changed_input_cells, 0);
+            assert_eq!(control.model_sha256, first.baseline.model_sha256);
+        }
+        assert_eq!(first.observation_insufficiency.len(), 4);
+
+        let second = NativeGoalReachabilityNegativeControlReport::evaluate(
+            std::slice::from_ref(&dataset),
+            std::slice::from_ref(&shard),
+            config,
+        )
+        .unwrap();
+        assert_eq!(first, second);
+
+        let mut tampered = first;
+        tampered.controls[3].changed_input_cells = 1;
+        tampered.report_sha256 = tampered.digest().unwrap();
         assert!(tampered.validate().is_err());
     }
 }

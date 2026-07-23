@@ -1267,14 +1267,14 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
 
     let mut too_many_inputs = Command::new(executable);
     too_many_inputs.args(["learn", "fit"]);
-    for _ in 0..65 {
+    for _ in 0..257 {
         too_many_inputs.arg("--input").arg(&path);
     }
     let too_many_inputs = too_many_inputs.output().unwrap();
     assert!(!too_many_inputs.status.success());
     assert!(
         String::from_utf8_lossy(&too_many_inputs.stderr)
-            .contains("at most 64 input corpora; received 65")
+            .contains("at most 256 input corpora; received 257")
     );
 
     let many_actions_path = root.join("too-many-actions.dtcz");
