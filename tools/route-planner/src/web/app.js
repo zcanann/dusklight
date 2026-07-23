@@ -191,6 +191,14 @@ function validateProject(project) {
   if (!project.label || typeof project.label !== "string") throw new Error("Project has no label");
   if (!project.catalog || typeof project.catalog !== "object") throw new Error("Project has no catalog");
   if (project.route_book != null && typeof project.route_book !== "object") throw new Error("Project route_book is invalid");
+  project.evidence_mode ??= "established_only";
+  if (!["established_only", "research"].includes(project.evidence_mode)) {
+    throw new Error("Project evidence_mode must be established_only or research");
+  }
+}
+
+function projectEvidenceMode() {
+  return state.project?.evidence_mode ?? "established_only";
 }
 
 async function projectApi(path, options = {}) {
@@ -386,7 +394,7 @@ async function refreshAuthoredRouteInspections() {
     catalog: state.project.catalog,
     equivalence_sets: state.project.equivalence_sets ?? [],
     route_book: state.project.route_book,
-    evidence_mode: "established_only",
+    evidence_mode: projectEvidenceMode(),
   });
   if (payload.kind !== "authored_route_inspection") {
     throw new Error(`Unexpected response ${payload.kind}`);
@@ -982,7 +990,7 @@ async function removeSelectedRouteStep() {
       equivalence_sets: state.project.equivalence_sets ?? [],
       route_book: state.project.route_book,
       step_id: node.payload.step_id,
-      evidence_mode: "established_only",
+      evidence_mode: projectEvidenceMode(),
     });
     if (payload.kind === "rejected_route_edit") {
       state.transitionEvaluation = {
@@ -1048,7 +1056,7 @@ async function replaceSelectedRouteStep() {
       route_book: state.project.route_book,
       step_id: replacement.step_id,
       transition_id: node.payload.transition_id,
-      evidence_mode: "established_only",
+      evidence_mode: projectEvidenceMode(),
     });
     if (payload.kind === "rejected_route_edit") {
       state.transitionEvaluation = {
@@ -1122,7 +1130,7 @@ async function insertSelectedTransition() {
       route_book_id: `route.${slug(state.project.id)}`,
       route_book_label: state.project.label,
       transition_id: node.payload.transition_id,
-      evidence_mode: "established_only",
+      evidence_mode: projectEvidenceMode(),
     });
     if (payload.kind === "rejected_transition_join") {
       state.transitionEvaluation = {
@@ -1187,7 +1195,7 @@ async function evaluateSelectedTransition() {
       catalog: state.project.catalog,
       equivalence_sets: state.project.equivalence_sets ?? [],
       transition_id: node.payload.transition_id,
-      evidence_mode: "established_only",
+      evidence_mode: projectEvidenceMode(),
     });
     if (payload.kind !== "transition_evaluation") {
       throw new Error(`Unexpected response ${payload.kind}`);
@@ -1219,7 +1227,7 @@ async function inspectStateChange(before, after, id) {
     state: before,
     catalog: state.project.catalog,
     equivalence_sets: state.project.equivalence_sets ?? [],
-    evidence_mode: "established_only",
+    evidence_mode: projectEvidenceMode(),
   });
   if (beforePayload.kind !== "state_inspection") {
     throw new Error(`Unexpected response ${beforePayload.kind}`);
@@ -1231,7 +1239,7 @@ async function inspectStateChange(before, after, id) {
     state: after,
     catalog: state.project.catalog,
     equivalence_sets: state.project.equivalence_sets ?? [],
-    evidence_mode: "established_only",
+    evidence_mode: projectEvidenceMode(),
   });
   if (afterPayload.kind !== "state_inspection") {
     throw new Error(`Unexpected response ${afterPayload.kind}`);
@@ -1244,7 +1252,7 @@ async function inspectStateChange(before, after, id) {
     boundary: { kind: "custom", id: `browser.${id}` },
     catalog: state.project.catalog,
     equivalence_sets: state.project.equivalence_sets ?? [],
-    evidence_mode: "established_only",
+    evidence_mode: projectEvidenceMode(),
   });
   if (diffPayload.kind !== "state_inspection_diff") {
     throw new Error(`Unexpected response ${diffPayload.kind}`);

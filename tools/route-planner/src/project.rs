@@ -9,8 +9,9 @@ use dusklight_route_planner::identity::{
     GamePlatform, GameRegion, RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
 };
 use dusklight_route_planner::logic::{
-    ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA,
-    FactCatalog, PredicateExpression, RuleEvidence, TruthStatus, ValueReference,
+    ComparisonOperator, ContextScope, DerivedFact, EvidenceKind, EvidenceRecord,
+    FACT_CATALOG_SCHEMA, FactCatalog, FriendlyAlias, PredicateExpression, RawFactBinding,
+    RuleEvidence, TruthStatus, ValueReference,
 };
 use dusklight_route_planner::refinement::ComposedPlannerCatalog;
 use dusklight_route_planner::return_place::{
@@ -20,10 +21,10 @@ use dusklight_route_planner::route_book::RouteBook;
 use dusklight_route_planner::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
 use dusklight_route_planner::state::{
     BackingAttachment, ComponentBinding, ComponentBindingReference, ComponentKind,
-    ComponentPayload, ComponentProvenance, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionContext,
-    ExecutionEnvironment, PhysicalSlotId, PlayerForm, PlayerState, ProvenanceSourceKind,
-    RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation, SemanticLifetime,
-    SerializationOwner, StateComponent, StateValue,
+    ComponentPayload, ComponentProvenance, ComponentSelector, EXECUTION_ENVIRONMENT_SCHEMA,
+    ExecutionContext, ExecutionEnvironment, PhysicalSlotId, PlayerForm, PlayerState,
+    ProvenanceSourceKind, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
+    SemanticLifetime, SerializationOwner, StateComponent, StateValue,
 };
 use dusklight_route_planner::title_boundary::gz2e01_reset_to_opening_mechanics;
 use dusklight_route_planner::transition::{
@@ -55,6 +56,8 @@ pub struct PlannerWebProject {
     pub id: String,
     pub label: String,
     pub catalog: ComposedPlannerCatalog,
+    #[serde(default = "established_evidence_mode")]
+    pub evidence_mode: crate::RuntimeEvidenceMode,
     #[serde(default)]
     pub route_book: Option<RouteBook>,
     #[serde(default)]
@@ -118,6 +121,10 @@ pub struct ProjectStore {
     builtins: BTreeMap<String, PlannerWebProject>,
 }
 
+fn established_evidence_mode() -> crate::RuntimeEvidenceMode {
+    crate::RuntimeEvidenceMode::EstablishedOnly
+}
+
 impl PlannerWebProject {
     pub fn blank(id: impl Into<String>, label: impl Into<String>) -> Result<Self, ProjectError> {
         let facts = FactCatalog {
@@ -132,6 +139,7 @@ impl PlannerWebProject {
             id: id.into(),
             label: label.into(),
             catalog,
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: None,
             equivalence_sets: Vec::new(),
@@ -505,14 +513,27 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
     });
     let opening = ComposedPlannerCatalog::compose(&facts, &opening_mechanics, &[])?;
     let (keyed_door, keyed_door_start) = keyed_door_demo(&facts, runtime.clone())?;
+    let (rebind, rebind_start) = hypothetical_rebind_demo(runtime.clone())?;
     let projects = vec![
         PlannerWebProject {
             schema: WEB_PROJECT_SCHEMA.into(),
             id: "demo-forest-keyed-door".into(),
             label: "Forest Temple small-key door".into(),
             catalog: keyed_door,
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: Some(keyed_door_start),
+            equivalence_sets: Vec::new(),
+            presentation: ProjectPresentation::default(),
+        },
+        PlannerWebProject {
+            schema: WEB_PROJECT_SCHEMA.into(),
+            id: "demo-hypothetical-local-bank-rebind".into(),
+            label: "Hypothetical local-bank rebind".into(),
+            catalog: rebind,
+            evidence_mode: crate::RuntimeEvidenceMode::Research,
+            route_book: None,
+            start_state: Some(rebind_start),
             equivalence_sets: Vec::new(),
             presentation: ProjectPresentation::default(),
         },
@@ -521,6 +542,7 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             id: "demo-fanadi-return-place".into(),
             label: "Fanadi return-place locking".into(),
             catalog: fanadi,
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: Some(fanadi_start_state(runtime.clone())?),
             equivalence_sets: Vec::new(),
@@ -531,6 +553,7 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
             id: "demo-opening-flow".into(),
             label: "Opening and file-selection flow".into(),
             catalog: opening,
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
             route_book: None,
             start_state: Some(opening_start_state(runtime)?),
             equivalence_sets: Vec::new(),
@@ -541,6 +564,221 @@ fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
         project.validate()?;
     }
     Ok(projects)
+}
+
+fn hypothetical_rebind_demo(
+    runtime_configuration: RuntimeConfiguration,
+) -> Result<(ComposedPlannerCatalog, PlannerExecutionStateDocument), ProjectError> {
+    const BANK_ID: &str = "stage.local-bank";
+    let scope = ContextScope {
+        selectors: vec![ContextSelector::Exact {
+            context: runtime_configuration.exact_context()?,
+        }],
+    };
+    let established = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![EvidenceRecord {
+            id: "source.local-bank-binding-model".into(),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(Digest([0x61; 32])),
+            note: "Stage-local values derive meaning from their current backing binding.".into(),
+        }],
+    };
+    let hypothetical = RuleEvidence {
+        truth: TruthStatus::Hypothetical,
+        records: vec![EvidenceRecord {
+            id: "hypothesis.local-bank-rebind".into(),
+            kind: EvidenceKind::Theorycraft,
+            source_sha256: None,
+            note: "Explicit research-only transfer of one preserved local bank.".into(),
+        }],
+    };
+    let raw_binding = |stage: &str| RawFactBinding {
+        component_kind: ComponentKind::StageMemory,
+        binding: ComponentBindingReference::Exact {
+            binding: ComponentBinding::Stage {
+                stage: stage.into(),
+            },
+        },
+        byte_offset: 0,
+        mask: vec![0x01],
+        expected: vec![0x01],
+    };
+    let facts = FactCatalog {
+        schema: FACT_CATALOG_SCHEMA.into(),
+        aliases: vec![
+            FriendlyAlias {
+                id: "local.forest-switch".into(),
+                label: "Forest local switch".into(),
+                scope: scope.clone(),
+                raw: raw_binding("D_MN05"),
+                evidence: established.clone(),
+            },
+            FriendlyAlias {
+                id: "local.tot-switch".into(),
+                label: "Temple of Time local switch".into(),
+                scope: scope.clone(),
+                raw: raw_binding("D_MN06"),
+                evidence: established.clone(),
+            },
+        ],
+        derived_facts: vec![DerivedFact {
+            id: "path.tot-open".into(),
+            label: "Temple of Time local path is open".into(),
+            scope: scope.clone(),
+            rule: PredicateExpression::Fact {
+                fact_id: "local.tot-switch".into(),
+            },
+            evidence: established.clone(),
+        }],
+    };
+    let stage_is = |stage: &str| PredicateExpression::Compare {
+        left: ValueReference::LocationStage,
+        operator: ComparisonOperator::Equal,
+        right: ValueReference::Literal {
+            value: StateValue::Text(stage.into()),
+        },
+    };
+    let mut mechanics = empty_mechanics();
+    mechanics.transitions = vec![
+        CandidateTransition {
+            id: "transition.hypothetical-local-bank-rebind".into(),
+            label: "Hypothetically preserve Forest memory and rebind it to Temple of Time".into(),
+            scope: scope.clone(),
+            transition_kind: TransitionKind::Technique,
+            approach_id: "approach.hypothetical-local-bank-rebind".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        stage_is("STAGE_A"),
+                        PredicateExpression::Fact {
+                            fact_id: "local.forest-switch".into(),
+                        },
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![
+                    StateOperation::Preserve {
+                        selector: ComponentSelector::Id {
+                            component_id: BANK_ID.into(),
+                        },
+                    },
+                    StateOperation::Rebind {
+                        selector: ComponentSelector::Id {
+                            component_id: BANK_ID.into(),
+                        },
+                        binding: ComponentBinding::Stage {
+                            stage: "D_MN06".into(),
+                        },
+                    },
+                ],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: hypothetical,
+        },
+        CandidateTransition {
+            id: "transition.enter-temple-path".into(),
+            label: "Enter the Temple of Time path opened by the rebound value".into(),
+            scope: scope.clone(),
+            transition_kind: TransitionKind::ActorDriven,
+            approach_id: "approach.temple-local-path".into(),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        stage_is("STAGE_A"),
+                        PredicateExpression::Fact {
+                            fact_id: "path.tot-open".into(),
+                        },
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::SetLocation {
+                    location: SceneLocation {
+                        stage: "STAGE_B".into(),
+                        room: 0,
+                        layer: 0,
+                        spawn: 0,
+                    },
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: established,
+        },
+    ];
+    mechanics
+        .transitions
+        .sort_by(|left, right| left.id.cmp(&right.id));
+    mechanics.goals.push(Goal {
+        id: "goal.enter-rebound-temple-path".into(),
+        label: "Enter the path exposed by the hypothetical rebind".into(),
+        predicate: stage_is("STAGE_B"),
+    });
+    let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &[])?;
+    let snapshot = StateSnapshot {
+        schema: STATE_SNAPSHOT_SCHEMA.into(),
+        id: "snapshot.before-hypothetical-local-bank-rebind".into(),
+        sequence: 0,
+        environment: ExecutionEnvironment {
+            schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+            runtime_configuration,
+            active_runtime_file: RuntimeFile {
+                id: "file-0".into(),
+                origin: RuntimeFileOrigin::NewFile,
+                backing: BackingAttachment::MemoryOnly,
+                allowed_serialization_targets: vec![PhysicalSlotId(1)],
+                lifecycle: RuntimeFileLifecycle::Active,
+            },
+            inactive_runtime_files: Vec::new(),
+            physical_slots: Vec::new(),
+            physical_slot_observations: Vec::new(),
+            execution_context: ExecutionContext::World,
+            location: SceneLocation {
+                stage: "STAGE_A".into(),
+                room: 0,
+                layer: 0,
+                spawn: 0,
+            },
+            player: PlayerState {
+                form: PlayerForm::Human,
+                mount: None,
+                position: [0.0; 3],
+                rotation: [0; 3],
+                has_control: Some(true),
+                action: "idle".into(),
+            },
+            components: vec![StateComponent {
+                id: BANK_ID.into(),
+                component_kind: ComponentKind::StageMemory,
+                payload: ComponentPayload::Raw {
+                    bytes: vec![0x01],
+                    known_mask: vec![0xff],
+                },
+                binding: ComponentBinding::Stage {
+                    stage: "D_MN05".into(),
+                },
+                lifetime: SemanticLifetime::StageLoad,
+                serialization_owner: SerializationOwner::StageBank {
+                    runtime_file_id: "file-0".into(),
+                    stage: "D_MN05".into(),
+                },
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "trace.forest-local-bank".into(),
+                    source_sha256: Some(Digest([0x62; 32])),
+                    transition_id: None,
+                }],
+            }],
+            static_world_objects: Vec::new(),
+            spatial_volumes: Vec::new(),
+            spatial_connections: Vec::new(),
+            spatial_planes: Vec::new(),
+            persisted_object_controls: Vec::new(),
+            live_world_objects: Vec::new(),
+        },
+        semantic_observations: Vec::new(),
+    };
+    let document = PlannerExecutionState::new(snapshot)?.to_document()?;
+    Ok((catalog, document))
 }
 
 fn keyed_door_demo(
@@ -1335,7 +1573,7 @@ mod tests {
         let root = temporary_root("builtins");
         let store = ProjectStore::open(&root).unwrap();
         let list = store.list().unwrap();
-        assert_eq!(list.projects.len(), 3);
+        assert_eq!(list.projects.len(), 4);
         assert!(list.projects.iter().all(|project| project.read_only));
         assert!(
             list.projects
@@ -1352,6 +1590,89 @@ mod tests {
         assert!(keyed_door.project.start_state.is_some());
         assert_eq!(keyed_door.project.catalog.mechanics.transitions.len(), 9);
         assert_eq!(keyed_door.project.catalog.mechanics.goals.len(), 1);
+        let rebind = store.load("demo-hypothetical-local-bank-rebind").unwrap();
+        assert_eq!(rebind.project.evidence_mode, RuntimeEvidenceMode::Research);
+        assert_eq!(rebind.project.catalog.mechanics.transitions.len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hypothetical_rebind_demo_changes_binding_without_changing_payload() {
+        let root = temporary_root("hypothetical-rebind");
+        let store = ProjectStore::open(&root).unwrap();
+        let project = store
+            .load("demo-hypothetical-local-bank-rebind")
+            .unwrap()
+            .project;
+        let start = project.start_state.unwrap();
+        let append = |route_book, transition_id: &str| {
+            handle_request(PlannerServiceRequest::AppendTransition {
+                request_id: format!("request.{transition_id}"),
+                state: Box::new(start.clone()),
+                catalog: Box::new(project.catalog.clone()),
+                equivalence_sets: project.equivalence_sets.clone(),
+                route_book,
+                route_book_id: "route.hypothetical-rebind-demo".into(),
+                route_book_label: "Hypothetical rebind demo route".into(),
+                transition_id: transition_id.into(),
+                evidence_mode: project.evidence_mode,
+            })
+        };
+        let response = append(None, "transition.hypothetical-local-bank-rebind");
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("research mode should admit the explicit hypothetical rebind");
+        };
+        let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
+            panic!("rebind should append as an ordinary typed transition step");
+        };
+        let before = start.clone().into_state().unwrap();
+        let after_state = after.clone().into_state().unwrap();
+        let before_bank = before
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "stage.local-bank")
+            .unwrap();
+        let after_bank = after_state
+            .snapshot
+            .environment
+            .components
+            .iter()
+            .find(|component| component.id == "stage.local-bank")
+            .unwrap();
+        assert_eq!(before_bank.payload, after_bank.payload);
+        assert_ne!(before_bank.binding, after_bank.binding);
+        assert_eq!(
+            after_bank.binding,
+            ComponentBinding::Stage {
+                stage: "D_MN06".into()
+            }
+        );
+        let response = append(Some(book), "transition.enter-temple-path");
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("the rebound alias should authorize the unchanged Temple path");
+        };
+        let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
+            panic!("Temple path should append after replaying the rebind");
+        };
+        assert_eq!(after.snapshot.environment.location.stage, "STAGE_B");
+        let response = handle_request(PlannerServiceRequest::RemoveAuthoredStep {
+            request_id: "request.remove-hypothetical-rebind".into(),
+            state: Box::new(start),
+            catalog: Box::new(project.catalog),
+            equivalence_sets: project.equivalence_sets,
+            route_book: book,
+            step_id: "step.route-0000".into(),
+            evidence_mode: project.evidence_mode,
+        });
+        let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+            panic!("removing the rebind should return the broken downstream join");
+        };
+        let PlannerServicePayload::RejectedRouteEdit { failed_step_id, .. } = *payload else {
+            panic!("the Temple path must remain causally dependent on the rebind");
+        };
+        assert_eq!(failed_step_id, "step.route-0001");
         fs::remove_dir_all(root).unwrap();
     }
 
