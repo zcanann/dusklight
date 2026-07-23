@@ -419,6 +419,14 @@ fn optimization_request_rejects_coupled_horizons_and_timeline_tampering() {
     let request: Value = serde_json::from_slice(&fs::read(request_path).unwrap()).unwrap();
     for (suffix, mutation, expected) in [
         (
+            "discovery-label",
+            (
+                "/campaign_class",
+                Value::String("demonstration_assisted_discovery".into()),
+            ),
+            "incumbent-relative residual proposal surfaces",
+        ),
+        (
             "horizon",
             ("/budgets/exploration_horizon_ticks", Value::from(125)),
             "strictly larger exploration horizon",

@@ -1,17 +1,17 @@
 {
   "schema": "dusklight-automation-card-fixture/v2",
-  "name": "Canonical process boot",
+  "name": "Canonical process boot (89e1737 container)",
   "root": "orig/automation-card-fixtures/process-boot",
   "files": [
     {
       "path": "USA/Card A/01-GZ2E-gczelda2.gci",
-      "sha256": "e2b1f16eba971b0b94ea5c5ff5a5a1ef46bcfd0d947f4d23862a1fefc4abc75e"
+      "sha256": "89e1737bde8fd9b66e9c44822991b64347f1c92a2154cce758df8c0c99ec3c60"
     }
   ],
   "source_boundaries": [
     {
       "source_frame": 506,
-      "fingerprint": "e7ac8251329f22a5df682bbe5eb2a2ba"
+      "fingerprint": "4786d70e77b31416d02864783434c7dc"
     }
   ]
 }

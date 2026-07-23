@@ -8,7 +8,7 @@
 use crate::native_residual_campaign::{
     NativeResidualCampaignError, NativeResidualExecutionBinding,
 };
-use crate::optimization_request::OptimizationRequest;
+use crate::optimization_request::{CampaignClass, OptimizationRequest};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
@@ -46,6 +46,8 @@ const MAX_SIMULATED_TICKS: u64 = 1_000_000_000_000;
 pub struct NativeGoalLearningLoopRequest {
     pub schema: String,
     pub content_sha256: Digest,
+    #[serde(default = "demonstration_assisted_class")]
+    pub campaign_class: CampaignClass,
     pub optimization_request_sha256: Digest,
     pub native_execution_sha256: Digest,
     pub initial_replay_corpus: ArtifactReference,
@@ -240,6 +242,7 @@ impl NativeGoalLearningLoopRequest {
         let mut request = Self {
             schema: NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
+            campaign_class: CampaignClass::DemonstrationAssistedDiscovery,
             optimization_request_sha256: optimization.content_sha256,
             native_execution_sha256: execution.content_sha256,
             initial_replay_corpus,
@@ -263,6 +266,7 @@ impl NativeGoalLearningLoopRequest {
         self.policy.validate().map_err(loop_error)?;
         validate_artifact_shape("initial replay corpus", &self.initial_replay_corpus)?;
         if self.schema != NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1
+            || self.campaign_class != CampaignClass::DemonstrationAssistedDiscovery
             || self.content_sha256 == Digest::ZERO
             || self.optimization_request_sha256 == Digest::ZERO
             || self.native_execution_sha256 == Digest::ZERO
@@ -329,6 +333,7 @@ impl NativeGoalLearningLoopRequest {
             .map_err(loop_error)?;
         if self.optimization_request_sha256 != optimization.content_sha256
             || self.native_execution_sha256 != execution.content_sha256
+            || optimization.campaign_class != CampaignClass::LocalTasRefinement
         {
             return Err(loop_message(
                 "learning-loop request differs from its optimization or native execution authority",
@@ -374,6 +379,7 @@ impl NativeGoalLearningLoopRequest {
         Ok(NativeGoalLearningLoopValidationReport {
             schema: NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1,
             request_sha256: self.content_sha256,
+            campaign_class: self.campaign_class,
             optimization_request_sha256: optimization.content_sha256,
             native_execution_sha256: execution.content_sha256,
             initial_corpus_sha256: corpus.corpus_sha256,
@@ -406,6 +412,7 @@ impl NativeGoalLearningLoopRequest {
 pub struct NativeGoalLearningLoopValidationReport {
     pub schema: &'static str,
     pub request_sha256: Digest,
+    pub campaign_class: CampaignClass,
     pub optimization_request_sha256: Digest,
     pub native_execution_sha256: Digest,
     pub initial_corpus_sha256: Digest,
@@ -416,6 +423,10 @@ pub struct NativeGoalLearningLoopValidationReport {
     pub generation_limit: u16,
     pub rollouts_per_generation: u16,
     pub simulated_tick_budget: u64,
+}
+
+fn demonstration_assisted_class() -> CampaignClass {
+    CampaignClass::DemonstrationAssistedDiscovery
 }
 
 impl NativeGoalLearningLoopState {
@@ -1246,6 +1257,7 @@ mod tests {
         let mut request = NativeGoalLearningLoopRequest {
             schema: NATIVE_GOAL_LEARNING_LOOP_REQUEST_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
+            campaign_class: CampaignClass::DemonstrationAssistedDiscovery,
             optimization_request_sha256: Digest([1; 32]),
             native_execution_sha256: Digest([2; 32]),
             initial_replay_corpus: initial_corpus,

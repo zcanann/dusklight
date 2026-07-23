@@ -243,6 +243,8 @@ struct CardFixtureManifest {
     name: String,
     root: String,
     files: Vec<CardFixtureFile>,
+    #[serde(default)]
+    source_boundaries: Vec<CardFixtureSourceBoundary>,
 }
 
 #[derive(Deserialize)]
@@ -250,6 +252,54 @@ struct CardFixtureManifest {
 struct CardFixtureFile {
     path: String,
     sha256: Digest,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CardFixtureSourceBoundary {
+    source_frame: u64,
+    fingerprint: String,
+}
+
+/// Resolves the first exact process-boot fixture manifest whose declared tree
+/// is present in this checkout. The canonical manifest remains preferred, while
+/// digest-named alternates let another authenticated process-boot fixture
+/// coexist only when it also binds the request's exact native source boundary.
+pub fn resolve_card_fixture_manifest(
+    repository_root: &Path,
+    optimization: &OptimizationRequest,
+) -> Result<PathBuf, NativeResidualCampaignError> {
+    let root = repository_root.canonicalize().map_err(native_error)?;
+    let manifest_root = root
+        .join(&optimization.route.timeline.path)
+        .with_extension("")
+        .join("benchmarks");
+    let primary = manifest_root.join("process_boot.fixture.json");
+    let mut manifests = vec![primary.clone()];
+    if let Ok(entries) = fs::read_dir(&manifest_root) {
+        for entry in entries {
+            let path = entry.map_err(native_error)?.path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if name.starts_with("process_boot.")
+                && name.ends_with(".fixture.json")
+                && path != primary
+            {
+                manifests.push(path);
+            }
+        }
+    }
+    manifests[1..].sort();
+    for manifest in &manifests {
+        if manifest.is_file() && validate_card_fixture(&root, optimization, manifest).is_ok() {
+            return Ok(manifest.clone());
+        }
+    }
+    Err(native_message(format!(
+        "no authenticated process-boot card fixture matches this checkout beneath {}",
+        manifest_root.display()
+    )))
 }
 
 fn validate_card_fixture(
@@ -268,13 +318,27 @@ fn validate_card_fixture(
         .as_ref()
         .and_then(|origin| origin.card_fixture.as_deref())
         .ok_or_else(|| native_message("native process route has no card fixture authority"))?;
-    if manifest.schema != "dusklight-automation-card-fixture/v1"
+    let boundary_matches = manifest.source_boundaries.iter().any(|boundary| {
+        boundary.source_frame == optimization.route.source_boundary_index
+            && boundary.fingerprint == optimization.route.native_source_boundary_fingerprint
+    });
+    if manifest.schema != "dusklight-automation-card-fixture/v2"
         || manifest.name.trim().is_empty()
         || Path::new(&manifest.root) != declared
         || manifest.files.is_empty()
+        || manifest.source_boundaries.is_empty()
+        || !manifest.source_boundaries.windows(2).all(|pair| {
+            (pair[0].source_frame, pair[0].fingerprint.as_str())
+                < (pair[1].source_frame, pair[1].fingerprint.as_str())
+        })
+        || manifest
+            .source_boundaries
+            .iter()
+            .any(|boundary| !lower_hex(&boundary.fingerprint, 32))
+        || !boundary_matches
     {
         return Err(native_message(
-            "native residual card fixture manifest differs from the timeline origin",
+            "native residual card fixture manifest differs from the timeline origin or requested native source boundary",
         ));
     }
     let fixture_root = root
@@ -1026,6 +1090,7 @@ mod tests {
     fn execution_binding_seals_the_exact_native_checkpoint_authority() {
         let (root, _artifacts, optimization, executable, game_data, tape, program, world_context) =
             fixture();
+        let card_fixture = resolve_card_fixture_manifest(&root, &optimization).unwrap();
         let binding = NativeResidualExecutionBinding::seal(
             &root,
             &optimization,
@@ -1034,7 +1099,7 @@ mod tests {
             &tape,
             &program,
             &world_context,
-            &root.join("routes/Glitch Exhibition/intro/benchmarks/process_boot.fixture.json"),
+            &card_fixture,
             8,
             false,
         )
@@ -1068,6 +1133,7 @@ mod tests {
         fs::write(&external_game, b"game-data").unwrap();
         fs::remove_file(&game_data).unwrap();
         std::os::unix::fs::symlink(&external_game, &game_data).unwrap();
+        let card_fixture = resolve_card_fixture_manifest(&root, &optimization).unwrap();
 
         let binding = NativeResidualExecutionBinding::seal(
             &root,
@@ -1077,7 +1143,7 @@ mod tests {
             &tape,
             &program,
             &world_context,
-            &root.join("routes/Glitch Exhibition/intro/benchmarks/process_boot.fixture.json"),
+            &card_fixture,
             8,
             false,
         )
@@ -1100,7 +1166,7 @@ mod tests {
                 &tape,
                 &program,
                 &world_context,
-                &root.join("routes/Glitch Exhibition/intro/benchmarks/process_boot.fixture.json"),
+                &card_fixture,
                 8,
                 false,
             )

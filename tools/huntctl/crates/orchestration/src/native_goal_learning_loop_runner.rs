@@ -1106,6 +1106,8 @@ mod tests {
         let request = NativeGoalLearningLoopRequest {
             schema: "test-invalid-request".into(),
             content_sha256: Digest([9; 32]),
+            campaign_class:
+                crate::optimization_request::CampaignClass::DemonstrationAssistedDiscovery,
             optimization_request_sha256: optimization.content_sha256,
             native_execution_sha256: execution.content_sha256,
             initial_replay_corpus: reference("missing/corpus", 10),

@@ -442,8 +442,13 @@ incumbent may contribute one authenticated trajectory, behavior-cloning seed, or
 reverse-curriculum state sequence, but the online policy must be able to ignore
 it and emit any legal PAD action for the entire episode.
 
-- [ ] Encode the campaign class explicitly and reject a request that labels an
-      incumbent-relative proposal surface as discovery.
+- [x] Encode the campaign class explicitly and reject a request that labels an
+      incumbent-relative proposal surface as discovery. Optimization requests
+      now identify `local_tas_refinement`; native goal-learning loops identify
+      `demonstration_assisted_discovery`; the shared closed enum reserves
+      `from_scratch_discovery`. Residual-request validation rejects either
+      discovery label, and the learning loop rejects a non-refinement source
+      authority. Checked requests and validation reports carry the class.
 - [ ] Give the native policy episode-long state-reactive action authority. Do not
       end its proposal window at the demonstration's terminal frame or fall back
       to released incumbent input after that point.

@@ -37,6 +37,8 @@ pub struct OptimizationRequest {
     pub schema: String,
     pub content_sha256: Digest,
     pub id: String,
+    #[serde(default)]
+    pub campaign_class: CampaignClass,
     pub route: RouteOptimizationBinding,
     pub terminal_predicate: TerminalPredicateBinding,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -50,6 +52,15 @@ pub struct OptimizationRequest {
     pub horizon_tightening: Option<OptimizationHorizonTightening>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reverse_curriculum: Option<OptimizationReverseCurriculum>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CampaignClass {
+    DemonstrationAssistedDiscovery,
+    FromScratchDiscovery,
+    #[default]
+    LocalTasRefinement,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -194,6 +205,7 @@ pub struct OptimizationRequestValidationReport {
     pub schema: &'static str,
     pub request_id: String,
     pub request_sha256: Digest,
+    pub campaign_class: CampaignClass,
     pub timeline_sha256: Digest,
     pub lineage: String,
     pub segment: String,
@@ -302,6 +314,11 @@ impl OptimizationRequest {
         }
         validate_schema("action", &self.proposal.action_schema)?;
         validate_schema("proposal", &self.proposal.proposal_schema)?;
+        if self.campaign_class != CampaignClass::LocalTasRefinement {
+            return Err(request_error(
+                "incumbent-relative residual proposal surfaces must be classified as local_tas_refinement, never discovery",
+            ));
+        }
         if self.proposal.action_schema.id != "dusklight-raw-pad-action/v2"
             || self.proposal.action_schema.sha256
                 != Digest(ONLINE_FACTORIZED_PAD_ACTION_SCHEMA_SHA256)
@@ -668,6 +685,7 @@ impl OptimizationRequest {
             schema: OPTIMIZATION_REQUEST_SCHEMA_V2,
             request_id: self.id.clone(),
             request_sha256: self.content_sha256,
+            campaign_class: self.campaign_class,
             timeline_sha256: self.route.timeline.sha256,
             lineage: self.route.lineage.clone(),
             segment: self.route.segment.clone(),

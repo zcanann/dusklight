@@ -3,6 +3,7 @@
 use super::*;
 use dusklight_orchestration::native_residual_campaign::{
     NativeResidualExecutionBinding, materialize_native_residual_process_tape,
+    resolve_card_fixture_manifest,
 };
 use dusklight_orchestration::native_residual_campaign_runner::{
     NativeResidualCampaignRunConfig, run_native_residual_campaign,
@@ -478,10 +479,8 @@ pub(super) fn prepare_optimization_execution(
     let source = fs::read_to_string(source_path).map_err(optimization_runtime_error)?;
     let compiled = milestone_dsl::compile_source(&source).map_err(optimization_runtime_error)?;
     write_exact_or_new(&program_path, &compiled.bytes)?;
-    let card_fixture_manifest = root
-        .join(&optimization.route.timeline.path)
-        .with_extension("")
-        .join("benchmarks/process_boot.fixture.json");
+    let card_fixture_manifest =
+        resolve_card_fixture_manifest(root, optimization).map_err(optimization_runtime_error)?;
     let binding = NativeResidualExecutionBinding::seal(
         root,
         optimization,

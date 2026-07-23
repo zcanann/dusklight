@@ -1340,7 +1340,7 @@ mod tests {
                 episode_shard: reference("build/episode.bin", 11),
                 restore_identity: "e".repeat(32),
                 checkpoint_bytes: 64,
-                simulated_ticks: 2,
+                simulated_ticks: 3,
                 first_hit_tick: Some(2),
                 terminal_boundary_fingerprint: "b".repeat(32),
                 behavior_sha256: ArtifactDigest([12; 32]),

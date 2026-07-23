@@ -1926,7 +1926,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     let campaign = graph
         .campaigns
         .iter()
-        .find(|campaign| campaign.id == "ordon-q125-residual-cem-v1")
+        .find(|campaign| campaign.id == "ordon-q125-residual-cem-v3")
         .unwrap();
     assert_eq!(campaign.segment, "to_ordon_spring_q125");
     assert_eq!(campaign.goal, "ordon_spring_load_committed");
@@ -1990,7 +1990,7 @@ fn checked_in_intro_exposes_native_reproved_predicate_anchor() {
     assert_eq!(to_link.exit_segment, "tolink_link_control");
     assert_eq!(to_link.parent, None);
     assert_eq!(to_link.recursive_segments.len(), 10);
-    assert_eq!(to_link.frame_count, Some(440));
+    assert_eq!(to_link.frame_count, Some(506));
     let choose_play = graph
         .segments
         .iter()
@@ -2202,7 +2202,7 @@ fn completed_optimization_candidate_projects_as_a_playable_ephemeral_sibling() {
             episode_shard: test_artifact_reference(&repository, &episode_path),
             restore_identity: "a".repeat(32),
             checkpoint_bytes: 64,
-            simulated_ticks: 100,
+            simulated_ticks: 101,
             first_hit_tick: Some(100),
             terminal_boundary_fingerprint: terminal_boundary.clone(),
             behavior_sha256: crate::artifact::Digest([7; 32]),
@@ -2236,7 +2236,7 @@ fn completed_optimization_candidate_projects_as_a_playable_ephemeral_sibling() {
     assert_eq!(projection.segment.predicate_proof, "verified");
     assert_eq!(projection.segment.first_hit_tick, Some(100));
     assert_eq!(projection.segment.frame_count, Some(160));
-    assert_eq!(projection.full_tape.frames.len(), 600);
+    assert_eq!(projection.full_tape.frames.len(), 666);
     let generated = projection.segment.generated.as_ref().unwrap();
     assert_eq!(generated.kind, "optimization_candidate");
     assert_eq!(generated.status, "success");
@@ -2296,7 +2296,7 @@ fn optimization_start_api_requires_explicit_world_context() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|campaign| campaign["id"] == "ordon-q125-residual-cem-v1")
+        .find(|campaign| campaign["id"] == "ordon-q125-residual-cem-v3")
         .unwrap();
     assert_eq!(
         campaign["blocker"],
@@ -2313,7 +2313,7 @@ fn optimization_start_api_requires_explicit_world_context() {
         &config,
         "POST",
         "/api/optimization/start",
-        br#"{"campaign":"ordon-q125-residual-cem-v1"}"#,
+        br#"{"campaign":"ordon-q125-residual-cem-v3"}"#,
     );
     assert_eq!(response.status, 400);
     assert!(
@@ -2325,7 +2325,7 @@ fn optimization_start_api_requires_explicit_world_context() {
         &config,
         "POST",
         "/api/goal-learning/start",
-        br#"{"campaign":"ordon-q125-residual-cem-v1"}"#,
+        br#"{"campaign":"ordon-q125-residual-cem-v3"}"#,
     );
     assert_eq!(learning.status, 400);
     assert!(
@@ -2337,7 +2337,7 @@ fn optimization_start_api_requires_explicit_world_context() {
         &config,
         "POST",
         "/api/goal-learning/start",
-        br#"{"campaign":"ordon-q125-residual-cem-v1","generations":1,"game":"forged"}"#,
+        br#"{"campaign":"ordon-q125-residual-cem-v3","generations":1,"game":"forged"}"#,
     );
     assert_eq!(smuggled.status, 400);
     assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
@@ -2483,8 +2483,8 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
         MaterializeTarget::ThroughSegment("tolink_link_control".into()),
     )
     .unwrap();
-    assert_eq!(prefix.tape.frames.len(), 440);
-    let start_frames = BTreeSet::from([115_usize, 147, 227, 235, 237, 335, 337]);
+    assert_eq!(prefix.tape.frames.len(), 506);
+    let start_frames = BTreeSet::from([115_usize, 147, 227, 235, 237, 335, 401, 403]);
     for (index, frame) in prefix.tape.frames.iter().enumerate() {
         let expected_buttons = if index == 268 {
             0x0100
@@ -2527,7 +2527,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     let continuation = load_segment_tape(segment, artifact_root).unwrap();
     assert_eq!(continuation.frames.len(), 126);
     let playback = materialize_segment_playback(&route, artifact_root, segment_id, None).unwrap();
-    assert_eq!(playback.tape.frames.len(), 566);
+    assert_eq!(playback.tape.frames.len(), 632);
     assert_eq!(
         segment_parent_frame_count(
             &route,
@@ -2537,7 +2537,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
             segment_id,
         )
         .unwrap(),
-        440
+        506
     );
     assert_eq!(playback.lineage, None);
 
@@ -2553,7 +2553,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     assert!(review.record_anchors.is_empty());
     let review_playback =
         materialize_segment_playback(&route, artifact_root, review_id, None).unwrap();
-    assert_eq!(review_playback.tape.frames.len(), 565);
+    assert_eq!(review_playback.tape.frames.len(), 631);
     assert_eq!(playback.segment.as_deref(), Some(segment_id));
     assert_eq!(
         &playback.tape.frames[..prefix.tape.frames.len()],
@@ -2565,7 +2565,7 @@ fn checked_in_ordon_spring_incumbent_composes_its_exact_boot_prefix() {
     );
     let first_local_frame =
         materialize_segment_playback(&route, artifact_root, segment_id, Some(0)).unwrap();
-    assert_eq!(first_local_frame.tape.frames.len(), 441);
+    assert_eq!(first_local_frame.tape.frames.len(), 507);
     assert_eq!(
         first_local_frame.tape.frames.last(),
         continuation.frames.first()
