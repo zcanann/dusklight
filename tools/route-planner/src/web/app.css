@@ -49,6 +49,9 @@ button:disabled { opacity: .42; cursor: default; }
 
 .graph-edge { fill: none; stroke: #586573; stroke-width: 1.5; opacity: .72; vector-effect: non-scaling-stroke; }
 .graph-edge.selected { stroke: var(--accent); stroke-width: 2.4; opacity: 1; }
+.graph-edge.route-accepted { stroke: var(--good); stroke-width: 2.2; opacity: .95; }
+.graph-edge.route-unknown { stroke: var(--unknown); stroke-width: 2.2; stroke-dasharray: 6 4; opacity: 1; }
+.graph-edge.route-rejected { stroke: #ff7d7d; stroke-width: 2.2; stroke-dasharray: 6 4; opacity: 1; }
 .node { cursor: grab; }
 .node:active { cursor: grabbing; }
 .node rect { fill: #222933; stroke: #56616d; stroke-width: 1.25; rx: 5; vector-effect: non-scaling-stroke; }

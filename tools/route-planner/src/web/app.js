@@ -217,12 +217,18 @@ function render() {
 
 function renderEdges() {
   elements.edges.replaceChildren();
+  const nodesById = new Map((state.graph?.nodes ?? []).map((node) => [node.id, node]));
   for (const edge of state.graph?.edges ?? []) {
     const source = state.positions.get(edge.source_node_id);
     const target = state.positions.get(edge.target_node_id);
     if (!source || !target) continue;
+    const sourceNode = nodesById.get(edge.source_node_id);
+    const targetNode = nodesById.get(edge.target_node_id);
+    const acceptedRouteJoin = edge.relation === "selects_action"
+      && sourceNode?.payload.kind === "reference_step"
+      && targetNode?.payload.kind === "transition";
     const path = svg("path", {
-      class: `graph-edge${state.selected?.type === "edge" && state.selected.value.id === edge.id ? " selected" : ""}`,
+      class: `graph-edge${acceptedRouteJoin ? " route-accepted" : ""}${state.selected?.type === "edge" && state.selected.value.id === edge.id ? " selected" : ""}`,
       d: connector(source, target),
     });
     path.addEventListener("click", (event) => {
@@ -233,6 +239,29 @@ function renderEdges() {
     });
     elements.edges.append(path);
   }
+  renderRejectedRouteJoin();
+}
+
+function renderRejectedRouteJoin() {
+  if (state.transitionEvaluation?.kind !== "rejected_transition_join"
+    || state.selected?.type !== "node"
+    || state.selected.value.payload.kind !== "transition"
+    || !state.project?.route_book) return;
+  const method = state.project.route_book.methods.find((candidate) =>
+    candidate.id === "method.authored-route");
+  const frontierStepId = method?.step_ids.at(-1);
+  const sourceNode = state.graph.nodes.find((node) =>
+    node.payload.kind === "reference_step" && node.payload.step_id === frontierStepId);
+  const source = sourceNode ? state.positions.get(sourceNode.id) : null;
+  const target = state.positions.get(state.selected.value.id);
+  if (!source || !target) return;
+  const classification = state.transitionEvaluation.assessment.classification;
+  const joinClass = classification === "feasibility_unknown" ? "route-unknown" : "route-rejected";
+  elements.edges.append(svg("path", {
+    class: `graph-edge ${joinClass}`,
+    d: connector(source, target),
+    "data-rejected-route-join": classification,
+  }));
 }
 
 function renderNodes() {

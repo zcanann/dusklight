@@ -103,6 +103,13 @@ from its start state before committing. A drop on an earlier authored step is
 rejected as ambiguous instead of silently changing route order; replacement has
 its own explicit workflow.
 
+Ordered route-step-to-transition connections are rendered as accepted green
+joins. When an append at an existing route frontier is rejected or remains
+unknown, the browser retains a dashed red or amber provisional connection from
+that exact frontier while the detail panel shows the Rust assessment, closest
+state, missing/unknown obligations, and obstruction/resolver diagnostics. There
+is no force-connect path.
+
 Current Windows health is green. Planner-owned canonical JSON and source-evidence
 files are forced to LF checkout, and the workspace declares both crates as
 default members. The normal planner test command now runs the engine rather than
@@ -2611,10 +2618,14 @@ visual polish or whole-game authoring features.
       rather than inventing middle-insertion semantics. Explicit graph-handle
       wiring remains extended-editor polish rather than a prerequisite for the
       first usable authoring slice.
-- [ ] Render accepted connections distinctly from rejected or unknown joins.
+- [x] Render accepted connections distinctly from rejected or unknown joins.
       Selecting a rejected join must show missing producers, active
       obstructions/resolvers, unknown obligations, or exact-context mismatch;
       there is no force-connect operation.
+      Browser-authored step-to-transition edges are green. A rejected append at
+      an existing route frontier remains visible as a dashed red connection, or
+      amber for `feasibility_unknown`, while its typed assessment, closest
+      propagated state, and diagnostics remain selected in the detail panel.
 - [x] Save route semantics and presentation metadata through revision-checked
       route-book edits. Node positions, viewport, and visual grouping may persist
       but must never affect solver reachability. Append-transition v33 creates or
