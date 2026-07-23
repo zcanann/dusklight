@@ -2665,13 +2665,15 @@ visual polish or whole-game authoring features.
       into the editable workspace. The Fanadi project now includes an exact
       start state and concrete goal; after Save As, its savewarp transition
       validates, inserts, and visibly changes the propagated location to
-      R_SP107 room 3. The opening project now also executes its reset prefix from
-      an exact start, writes `restart.room_param = 0`, and exposes the pending
-      F_SP102 opening-process load. Selected steps can now be removed with
+      R_SP107 room 3. The opening project now executes a nine-step prefix from an
+      exact pre-reset state through the pending F_SP102 load, independently
+      observed opening/name process activations, both title-file-0 initialization
+      boundaries, explicit blank-slot focus, and blank slot 1 selection. It ends
+      in name entry with `new_file_raw = 128`, zero-based `data_num_raw = 0`, and
+      no fabricated physical-slot attachment. Selected steps can now be removed with
       authoritative downstream replay and a typed rejection when the removed
       step remains a required producer. They can also be replaced through the
-      transition palette with the same replay/rejection semantics. Deeper
-      file-selection continuation remains open. The exact GZ2E01 Forest Temple
+      transition palette with the same replay/rejection semantics. The exact GZ2E01 Forest Temple
       `Door[1]` demonstration now
       ships too: its nine source-audited DOOR20 phases author and replay through
       the ordinary browser route API, retain the one-update separation between
@@ -2695,8 +2697,9 @@ visual polish or whole-game authoring features.
       A/C-to-M029 Gor Coron talks. Removing the selected producer rejects the hall
       entry. All built-ins load and validate through the same project store,
       author through the same replay-safe service, inherit the common Save As
-      path, and expose typed propagated-state changes and broken joins. Deeper
-      file-selection continuation remains a separate opening-demo enhancement.
+      path, and expose typed propagated-state changes and broken joins. The
+      opening demo's scheduler-observation transitions keep a submitted scene
+      request distinct from completed process activation.
 - [x] Add one browser-driven acceptance test that opens a demonstration, removes
       or replaces a transition, observes the changed downstream state/rejection,
       saves it, reloads it, and obtains identical semantic identities.

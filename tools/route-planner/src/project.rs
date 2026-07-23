@@ -2113,6 +2113,11 @@ fn opening_start_state(
         ComponentKind::Session,
         BTreeMap::from([
             ("fader_status".into(), StateValue::Unsigned(1)),
+            ("name_scene_observed".into(), StateValue::Boolean(false)),
+            (
+                "opening_process_observed".into(),
+                StateValue::Boolean(false),
+            ),
             ("reset_requested".into(), StateValue::Boolean(true)),
             ("return_to_menu".into(), StateValue::Boolean(false)),
         ]),
@@ -2134,6 +2139,218 @@ fn opening_start_state(
             runtime_file_id: runtime_file_id.clone(),
         },
     );
+    let runtime_binding = ComponentBinding::RuntimeFile {
+        runtime_file_id: runtime_file_id.clone(),
+    };
+    let runtime_owner = SerializationOwner::RuntimeFile {
+        runtime_file_id: runtime_file_id.clone(),
+    };
+    let raw_component = |id: &str, component_kind: ComponentKind, byte_count: usize| {
+        let mut component = component(
+            id,
+            component_kind,
+            BTreeMap::new(),
+            runtime_binding.clone(),
+            SemanticLifetime::RuntimeFile,
+            runtime_owner.clone(),
+        );
+        component.payload = ComponentPayload::Raw {
+            bytes: vec![0xaa; byte_count],
+            known_mask: vec![0xff; byte_count],
+        };
+        component
+    };
+    let mut loaded_stage_memory = raw_component(
+        "flags.loaded-stage-memory",
+        ComponentKind::DungeonMemory,
+        0x20,
+    );
+    loaded_stage_memory.binding = ComponentBinding::Stage {
+        stage: "R_SP107".into(),
+    };
+    loaded_stage_memory.lifetime = SemanticLifetime::StageLoad;
+    loaded_stage_memory.serialization_owner = SerializationOwner::StageBank {
+        runtime_file_id: runtime_file_id.clone(),
+        stage: "R_SP107".into(),
+    };
+    let mut dungeon_session_labels = raw_component(
+        "flags.dungeon-session-labels",
+        ComponentKind::Custom {
+            id: "observed-dungeon-session-switch-labels".into(),
+        },
+        4,
+    );
+    dungeon_session_labels.binding = ComponentBinding::Stage {
+        stage: "R_SP107".into(),
+    };
+    dungeon_session_labels.lifetime = SemanticLifetime::StageLoad;
+    dungeon_session_labels.serialization_owner = SerializationOwner::None;
+    let mut room_switch_labels = raw_component(
+        "flags.room-switch-labels",
+        ComponentKind::Custom {
+            id: "observed-room-switch-labels".into(),
+        },
+        4,
+    );
+    room_switch_labels.binding = ComponentBinding::Room {
+        stage: "R_SP107".into(),
+        room: 3,
+    };
+    room_switch_labels.lifetime = SemanticLifetime::RoomLoad;
+    room_switch_labels.serialization_owner = SerializationOwner::None;
+    let inventory = component(
+        "inventory-and-resources",
+        ComponentKind::Inventory,
+        BTreeMap::from([
+            ("maximum_life".into(), StateValue::Unsigned(15)),
+            ("life".into(), StateValue::Unsigned(80)),
+            ("rupees".into(), StateValue::Unsigned(0)),
+            ("maximum_oil".into(), StateValue::Unsigned(0)),
+            ("oil".into(), StateValue::Unsigned(0)),
+            ("inventory".into(), StateValue::Bytes(vec![0xff; 24])),
+            ("item_lineup".into(), StateValue::Bytes(vec![0xff; 24])),
+            ("selected_items".into(), StateValue::Bytes(vec![0xff; 4])),
+            ("mixed_items".into(), StateValue::Bytes(vec![0xff; 4])),
+            ("vibration".into(), StateValue::Unsigned(1)),
+            (
+                "equipment".into(),
+                StateValue::Bytes(vec![0x2e, 0xff, 0xff, 0xff, 0xff, 0]),
+            ),
+            ("bomb_counts".into(), StateValue::Bytes(vec![0; 3])),
+            (
+                "bomb_capacities".into(),
+                StateValue::Bytes(vec![30, 15, 10]),
+            ),
+            ("bottle_quantities".into(), StateValue::Bytes(vec![0; 4])),
+            ("acquired_item_bits".into(), StateValue::Bytes(vec![0; 32])),
+            ("collect_item_bits".into(), StateValue::Bytes(vec![0; 8])),
+        ]),
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+    );
+    let return_place = component(
+        "return-place",
+        ComponentKind::PersistentSave,
+        BTreeMap::from([
+            ("player_status".into(), StateValue::Unsigned(9)),
+            ("room".into(), StateValue::Signed(3)),
+            ("stage".into(), StateValue::Text("R_SP107".into())),
+        ]),
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+    );
+    let runtime_header = component(
+        "runtime-file.header",
+        ComponentKind::Session,
+        BTreeMap::from([
+            ("data_num_raw".into(), StateValue::Unsigned(3)),
+            ("new_file_raw".into(), StateValue::Unsigned(9)),
+            ("no_file_raw".into(), StateValue::Unsigned(7)),
+        ]),
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+    );
+    let saved_dungeon_six = component(
+        "save.dungeon-memory.index-6",
+        ComponentKind::DungeonMemory,
+        BTreeMap::from([("key_count".into(), StateValue::Unsigned(7))]),
+        ComponentBinding::Custom {
+            kind_id: "saved-dungeon-memory".into(),
+            context_id: "index-6".into(),
+        },
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+    );
+    let player_info = component(
+        "save.player-info",
+        ComponentKind::Custom {
+            id: "player-info".into(),
+        },
+        BTreeMap::from([
+            (
+                "horse_name_bytes".into(),
+                StateValue::Bytes(b"Epona\0".to_vec()),
+            ),
+            (
+                "player_name_bytes".into(),
+                StateValue::Bytes(b"Link\0".to_vec()),
+            ),
+            ("total_time_ticks".into(), StateValue::Unsigned(0)),
+            ("date_ipl_ticks".into(), StateValue::Unsigned(0)),
+        ]),
+        runtime_binding.clone(),
+        SemanticLifetime::RuntimeFile,
+        runtime_owner.clone(),
+    );
+    let session_component = |id: &str, fields: BTreeMap<String, StateValue>| {
+        component(
+            id,
+            ComponentKind::Session,
+            fields,
+            ComponentBinding::Session {
+                session_id: "process".into(),
+            },
+            SemanticLifetime::Session,
+            SerializationOwner::None,
+        )
+    };
+    let mut components = vec![
+        reset_control,
+        restart,
+        loaded_stage_memory,
+        dungeon_session_labels,
+        room_switch_labels,
+        raw_component(
+            "flags.event",
+            ComponentKind::Custom {
+                id: "observed-event-flag-labels".into(),
+            },
+            4,
+        ),
+        raw_component(
+            "flags.persistent-event-registers",
+            ComponentKind::Custom {
+                id: "persistent-event-registers".into(),
+            },
+            256,
+        ),
+        raw_component(
+            "flags.temporary",
+            ComponentKind::Custom {
+                id: "observed-temporary-flag-labels".into(),
+            },
+            4,
+        ),
+        raw_component(
+            "flags.temporary-event-registers",
+            ComponentKind::TemporaryFlags,
+            256,
+        ),
+        inventory,
+        return_place,
+        runtime_header,
+        saved_dungeon_six,
+        player_info,
+        raw_component(
+            "save.player-light-drop",
+            ComponentKind::Custom {
+                id: "player-light-drop".into(),
+            },
+            5,
+        ),
+        session_component(
+            "session.active-vibration",
+            BTreeMap::from([("enabled_raw".into(), StateValue::Unsigned(0))]),
+        ),
+        session_component(
+            "session.save-stage-display",
+            BTreeMap::from([("stage".into(), StateValue::Text("stale".into()))]),
+        ),
+    ];
+    components.sort_by(|left, right| left.id.cmp(&right.id));
     let snapshot = StateSnapshot {
         schema: STATE_SNAPSHOT_SCHEMA.into(),
         id: "snapshot.opening-before-reset".into(),
@@ -2166,7 +2383,7 @@ fn opening_start_state(
                 has_control: Some(true),
                 action: "idle".into(),
             },
-            components: vec![reset_control, restart],
+            components,
             static_world_objects: Vec::new(),
             spatial_volumes: Vec::new(),
             spatial_connections: Vec::new(),
@@ -2743,6 +2960,86 @@ mod tests {
         };
         assert_eq!(fields["room_param"], StateValue::Unsigned(0));
         assert_eq!(book.methods[0].step_ids, ["step.route-0000"]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn opening_demo_replays_through_blank_slot_selection() {
+        let root = temporary_root("opening-file-select-propagation");
+        let store = ProjectStore::open(&root).unwrap();
+        let project = store.load("demo-opening-flow").unwrap().project;
+        let start = project.start_state.unwrap();
+        let mut route_book = None;
+        let mut final_state = None;
+        for transition_id in [
+            "transition.gz2e01.reset-to-opening",
+            "transition.gz2e01.observe-opening-phase-4",
+            "transition.gz2e01.opening-enter-and-initialize-file0",
+            "transition.gz2e01.title-key-accept",
+            "transition.gz2e01.title-request-name-scene",
+            "transition.gz2e01.observe-name-scene-create",
+            "transition.gz2e01.name-scene-file-select-initialize",
+            "transition.gz2e01.file-select-focus-blank-slot-1",
+            "transition.gz2e01.file-select-blank-slot-1",
+        ] {
+            let response = handle_request(PlannerServiceRequest::AppendTransition {
+                request_id: format!("request.{transition_id}"),
+                state: Box::new(start.clone()),
+                catalog: Box::new(project.catalog.clone()),
+                equivalence_sets: project.equivalence_sets.clone(),
+                route_book,
+                route_book_id: "route.opening-file-select-demo".into(),
+                route_book_label: "Opening file-select demo route".into(),
+                transition_id: transition_id.into(),
+                evidence_mode: project.evidence_mode,
+            });
+            let PlannerServiceOutcome::Ok { payload } = response.outcome else {
+                panic!("{transition_id} should append after replaying its exact prefix");
+            };
+            let PlannerServicePayload::AppendedTransition { after, book, .. } = *payload else {
+                panic!("opening demo should return an appended transition");
+            };
+            final_state = Some(after);
+            route_book = Some(book);
+        }
+        let final_state = final_state.unwrap();
+        assert_eq!(
+            final_state.snapshot.environment.execution_context,
+            ExecutionContext::Process {
+                process_name: "PROC_NAME_SCENE".into(),
+                pending_world_load: None,
+            }
+        );
+        assert_eq!(
+            final_state.snapshot.environment.active_runtime_file.origin,
+            RuntimeFileOrigin::TitleFile0
+        );
+        let fields = |component_id: &str| {
+            let component = final_state
+                .snapshot
+                .environment
+                .components
+                .iter()
+                .find(|component| component.id == component_id)
+                .unwrap();
+            let ComponentPayload::Structured { fields } = &component.payload else {
+                panic!("{component_id} should remain structured");
+            };
+            fields
+        };
+        assert_eq!(
+            fields("runtime-file.header")["new_file_raw"],
+            StateValue::Unsigned(128)
+        );
+        assert_eq!(
+            fields("runtime-file.header")["data_num_raw"],
+            StateValue::Unsigned(0)
+        );
+        assert_eq!(
+            fields("name-scene-control")["phase"],
+            StateValue::Text("name_entry".into())
+        );
+        assert_eq!(route_book.unwrap().methods[0].step_ids.len(), 9);
         fs::remove_dir_all(root).unwrap();
     }
 

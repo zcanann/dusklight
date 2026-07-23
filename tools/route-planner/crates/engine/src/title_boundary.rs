@@ -173,6 +173,103 @@ pub fn gz2e01_reset_to_opening_mechanics(
         },
         evidence,
     };
+    let scheduler_evidence = RuleEvidence {
+        truth: TruthStatus::Established,
+        records: vec![EvidenceRecord {
+            id: "source.gz2e01-title-process-activation".into(),
+            kind: EvidenceKind::SourceAudited,
+            source_sha256: Some(parse_digest(
+                "f095894aabc198c068ee0ac9872f6c277c0e035b36c4d29d1f896e7c2eb0fe4b",
+            )),
+            note: "GZ2E01 process audit separates a submitted scene request from the scheduler-observed opening/name process create phase; these transitions record those independently observed activations.".into(),
+        }],
+    };
+    let process_component = |id: &str,
+                             component_kind: ComponentKind,
+                             fields: BTreeMap<String, StateValue>| StateComponent {
+        id: id.into(),
+        component_kind,
+        payload: ComponentPayload::Structured { fields },
+        binding: ComponentBinding::Session {
+            session_id: "process".into(),
+        },
+        lifetime: SemanticLifetime::Session,
+        serialization_owner: SerializationOwner::None,
+        provenance: vec![ComponentProvenance {
+            source_kind: ProvenanceSourceKind::TraceObservation,
+            source_id: "observation.gz2e01-process-activation".into(),
+            source_sha256: Some(parse_digest(
+                "f095894aabc198c068ee0ac9872f6c277c0e035b36c4d29d1f896e7c2eb0fe4b",
+            )),
+            transition_id: None,
+        }],
+    };
+    let opening_process_activation_transition = CandidateTransition {
+        id: "transition.gz2e01.observe-opening-phase-4".into(),
+        label: "Observe opening process activation at phase 4".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::Other,
+        approach_id: "scheduler.observe-opening-phase-4".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: vec![
+                    compare(
+                        ValueReference::ExecutionProcess,
+                        ComparisonOperator::Equal,
+                        StateValue::Text("PROC_OPENING_SCENE".into()),
+                    ),
+                    compare(
+                        ValueReference::PendingWorldLoadStage,
+                        ComparisonOperator::Equal,
+                        StateValue::Text("F_SP102".into()),
+                    ),
+                    compare(
+                        ValueReference::ComponentField {
+                            component_id: RESET_CONTROL_COMPONENT.into(),
+                            field: "opening_process_observed".into(),
+                        },
+                        ComparisonOperator::Equal,
+                        StateValue::Boolean(false),
+                    ),
+                ],
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: vec![
+                StateOperation::Initialize {
+                    component: process_component(
+                        OPENING_PROCESS_CONTROL_COMPONENT,
+                        ComponentKind::Session,
+                        BTreeMap::from([(
+                            "phase".into(),
+                            StateValue::Text("phase_4".into()),
+                        )]),
+                    ),
+                },
+                StateOperation::Initialize {
+                    component: process_component(
+                        TITLE_CONTROL_COMPONENT,
+                        ComponentKind::Title,
+                        BTreeMap::from([
+                            ("phase".into(), StateValue::Text("key_wait".into())),
+                            ("reset_requested".into(), StateValue::Boolean(false)),
+                            ("overlap_peek".into(), StateValue::Boolean(false)),
+                            ("a_triggered".into(), StateValue::Boolean(true)),
+                            ("start_triggered".into(), StateValue::Boolean(false)),
+                        ]),
+                    ),
+                },
+                StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: RESET_CONTROL_COMPONENT.into(),
+                        field: "opening_process_observed".into(),
+                    },
+                    value: StateValue::Boolean(true),
+                },
+            ],
+            unknown_requirements: Vec::new(),
+        },
+        evidence: scheduler_evidence.clone(),
+    };
     let opening_evidence = RuleEvidence {
         truth: TruthStatus::Established,
         records: vec![
@@ -446,6 +543,62 @@ pub fn gz2e01_reset_to_opening_mechanics(
         },
         evidence: title_evidence,
     };
+    let name_scene_activation_transition = CandidateTransition {
+        id: "transition.gz2e01.observe-name-scene-create".into(),
+        label: "Observe name scene activation at file-select creation".into(),
+        scope: reset_transition.scope.clone(),
+        transition_kind: TransitionKind::Other,
+        approach_id: "scheduler.observe-name-scene-create".into(),
+        activation: ActivationContract {
+            hard_guards: PredicateExpression::All {
+                terms: vec![
+                    pending_compare(
+                        ValueReference::ExecutionProcess,
+                        StateValue::Text("PROC_OPENING_SCENE".into()),
+                    ),
+                    pending_compare(
+                        title_field("phase"),
+                        StateValue::Text("scene_requested".into()),
+                    ),
+                    pending_compare(
+                        ValueReference::ComponentField {
+                            component_id: RESET_CONTROL_COMPONENT.into(),
+                            field: "name_scene_observed".into(),
+                        },
+                        StateValue::Boolean(false),
+                    ),
+                ],
+            },
+            physical_obligation_ids: Vec::new(),
+            effects: vec![
+                StateOperation::Initialize {
+                    component: process_component(
+                        NAME_SCENE_CONTROL_COMPONENT,
+                        ComponentKind::Title,
+                        BTreeMap::from([(
+                            "phase".into(),
+                            StateValue::Text("create_file_select".into()),
+                        )]),
+                    ),
+                },
+                StateOperation::SetExecutionContext {
+                    context: ExecutionContext::Process {
+                        process_name: "PROC_NAME_SCENE".into(),
+                        pending_world_load: None,
+                    },
+                },
+                StateOperation::Write {
+                    target: ComponentFieldTarget {
+                        component_id: RESET_CONTROL_COMPONENT.into(),
+                        field: "name_scene_observed".into(),
+                    },
+                    value: StateValue::Boolean(true),
+                },
+            ],
+            unknown_requirements: Vec::new(),
+        },
+        evidence: scheduler_evidence,
+    };
     let file_select_evidence = RuleEvidence {
         truth: TruthStatus::Established,
         records: vec![
@@ -568,6 +721,37 @@ pub fn gz2e01_reset_to_opening_mechanics(
     let mut file_select_branch_transitions = Vec::new();
     for index in 0_u64..3 {
         let slot = index + 1;
+        file_select_branch_transitions.push(CandidateTransition {
+            id: format!("transition.gz2e01.file-select-focus-blank-slot-{slot}"),
+            label: format!("Focus blank save slot {slot}"),
+            scope: reset_transition.scope.clone(),
+            transition_kind: TransitionKind::Other,
+            approach_id: format!("file-select.focus-blank-slot-{slot}"),
+            activation: ActivationContract {
+                hard_guards: PredicateExpression::All {
+                    terms: vec![
+                        name_process_guard.clone(),
+                        pending_compare(
+                            name_field("phase"),
+                            StateValue::Text("file_select_open".into()),
+                        ),
+                    ],
+                },
+                physical_obligation_ids: Vec::new(),
+                effects: vec![StateOperation::WriteFields {
+                    component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
+                    fields: BTreeMap::from([
+                        (
+                            "selected_entry_kind".into(),
+                            StateValue::Text("new".into()),
+                        ),
+                        ("selected_index_raw".into(), StateValue::Unsigned(index)),
+                    ]),
+                }],
+                unknown_requirements: Vec::new(),
+            },
+            evidence: file_select_branch_evidence.clone(),
+        });
         file_select_branch_transitions.push(CandidateTransition {
             id: format!("transition.gz2e01.file-select-blank-slot-{slot}"),
             label: format!("Select blank save slot {slot}"),
@@ -1678,7 +1862,9 @@ pub fn gz2e01_reset_to_opening_mechanics(
     });
     let mut transitions = vec![
         name_scene_file_select_transition,
+        name_scene_activation_transition,
         enter_and_initialize_transition,
+        opening_process_activation_transition,
         opening_transition,
         reset_transition,
         title_key_accept_transition,
