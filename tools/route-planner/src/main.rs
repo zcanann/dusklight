@@ -1342,6 +1342,8 @@ fn extract_stage_data(args: &[String]) -> Result<(), Box<dyn Error>> {
             "map_events": stage.map_events.len(),
             "demo_archive_banks": stage.demo_archive_banks.len(),
             "actor_placements": stage.actor_placements.len(),
+            "treasure_placements": stage.treasure_placements.len(),
+            "player_spawns": stage.player_spawns.len(),
         }))?
     );
     Ok(())

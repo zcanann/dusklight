@@ -12,7 +12,7 @@ name might suggest.
 |---|---|---|
 | `orig-input-scan/v1` | Disc-header product/platform/region/revision, normalized `sys/` and `files/` manifest, executable/game-data/resource digests, candidate archive paths | Friendly identity, runtime language selection, decoded records, behavior |
 | `supported-build-registry/v1` | Exact full-fingerprint-to-friendly-ID mapping | Nearest-build fallback, implied cross-build equivalence |
-| `extracted-orig-bundle/v3` | Source manifest; generic actor/scaled/door placements; STAG message group; indexed SCLS destinations; REVT event/exit coordinates; LBNK demo-archive selections; decoded numbered BMG flow graphs; explicit ignored message candidates | KCL/PLC, player-spawn and treasure records, most DZS/DZR chunk bodies, actor parameter meaning, JStudio cutscene internals, message text, runtime bindings |
+| `extracted-orig-bundle/v4` | Source manifest; separate generic actor/scaled/door, treasure (`TRES`/`TRE*`), and player-spawn (`PLYR`) placements with raw records; STAG message group; indexed SCLS destinations; REVT event/exit coordinates; LBNK demo-archive selections; decoded numbered BMG flow graphs; explicit ignored message candidates | KCL/PLC, most other DZS/DZR chunk bodies, actor/treasure parameter meaning, JStudio cutscene internals, message text, runtime bindings |
 | `cutscene-wrapper-topology/v1` | Exact joins among one REVT event, layer LBNK demo archive, `event_list.dat` staff/cut/data paths, map-tool ID, and normal/skip SCLS records | JStudio phase semantics, exceptional resource-failure dispatch, return/restart writers, executable transition effects |
 | `binary-function-evidence/v1` | Exact DOL/symbol-table identities, one bounded text symbol, DOL section/address/file coordinates, selected code bytes and digest, and exact `blr`-only immediate-return classification | Call-site reachability, function-name semantics, larger-function disassembly, source control flow, or cross-build equivalence |
 | `binary-range-evidence/v1` | Exact DOL identity, one bounded virtual-address range wholly contained in exactly one loadable text/data section, section/address/file coordinates, and selected bytes/digest | Semantic meaning, proof that code references the bytes, pointer/control-flow analysis, BSS, or cross-build equivalence |
@@ -33,7 +33,7 @@ name might suggest.
 The planner owns its copies of the `WorldContext` and `WorldInventory` wire
 contracts in `world_data.rs`. The compatible producer currently lives elsewhere
 in the repository, but the planner has no Rust dependency on Huntctl and must
-not acquire one. `extracted-orig-bundle/v3` is planner-native. There is not yet a
+not acquire one. `extracted-orig-bundle/v4` is planner-native. There is not yet a
 transform from that bundle into `WorldInventory` or directly into a complete
 planner fact pack.
 
@@ -43,9 +43,9 @@ The retail acceptance bundle contains:
 
 - 3,661 sealed input files;
 - 384 decoded stage/room archives;
-- 6,128 DZS/DZR chunk directory entries;
-- 2,102 entries whose record layout is currently recognized and 4,026 whose
-  record body is not decoded;
+- 6,128 DZS/DZR chunk entries with their tag, count, and offset retained; v4
+  additionally decodes every `PLYR`, `TRES`, and layered `TRE*` record instead
+  of leaving those chunk bodies opaque;
 - STAG data in 79 archives;
 - 1,036 indexed SCLS destinations;
 - 29,184 generic actor/scaled/door placement records;
@@ -57,13 +57,21 @@ gameplay semantics. In particular, an SCLS destination is inert until an
 activation contract is known, and a placement's raw parameters do not prove its
 guard, switch ownership, lifecycle, or interaction geometry.
 
-The most consequential current parity mismatch is visible in the source data:
-`PLYR` appears in 304 archives and `TRES` in 128, but both remain undecoded in
-the planner-native orig extractor even though the compatible world-inventory
-schema has typed player-spawn and treasure records. Other frequent undecoded
-families include `RARO`, `RCAM`, `FILI`, `LBNK`, `LGT*`, `REVT`, `RPAT`,
-`RPPN`, `RTBL`, and environment/color records. Their chunk tag, count, and
-offset remain visible; their record bodies and meanings do not.
+V4 closes the former placement-layout parity mismatch: `PLYR` appears in 304
+archives and `TRES` in 128, and the planner-native extractor now emits their
+same 32-byte name/parameter/position/angle/set-ID records into separate
+`player_spawns` and `treasure_placements` collections. Layered `TRE*` chunks
+retain their decoded layer. Frequent still-undecoded families include `RARO`,
+`RCAM`, `FILI`, `LGT*`, `RPAT`, `RPPN`, `RTBL`, and environment/color records.
+Their chunk tag, count, and offset remain visible; their record bodies and
+meanings do not.
+
+The exact R_SP116 room-6 resource
+`10487ef6754fec1f454c93aa33f605ee9781b4db4b91eed8e864721d76304d40`
+is the retail parity witness: both the independent compatible inventory and
+planner-native v4 extraction produce 95 actor placements, five player spawns,
+zero treasures, and one 32-byte `PLYR` chunk with five records. The engine test
+reproduces this comparison whenever the original tree is present.
 
 ## What the current world import really does
 
@@ -147,8 +155,8 @@ exact-GZ2E01 families above; every other placement remains opaque.
 
 - Connect planner-native orig records to base facts without routing through
   Huntctl implementation types.
-- Decode `PLYR` and `TRES` in the native extractor and establish parity tests
-  against compatible world inventories.
+- Connect the planner-native placement collections directly to base world facts
+  without routing through compatible world-inventory artifacts.
 - Import actor-driven map changes, doors, portals, elevators, warps, event
   transitions, cutscene scene changes, restart/savewarp, void, death, and title
   transitions as distinct classes.

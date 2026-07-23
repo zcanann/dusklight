@@ -529,6 +529,8 @@ mod tests {
                 raw_hex: "0702ff".into(),
             }],
             actor_placements: Vec::new(),
+            treasure_placements: Vec::new(),
+            player_spawns: Vec::new(),
         }
     }
 

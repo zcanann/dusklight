@@ -2084,6 +2084,8 @@ mod tests {
                             scale_raw: None,
                             raw_hex: "0011223344556677".into(),
                         }],
+                        treasure_placements: Vec::new(),
+                        player_spawns: Vec::new(),
                     },
                 },
                 ExtractedOrigStageArchive {
@@ -2101,6 +2103,8 @@ mod tests {
                         map_events: Vec::new(),
                         demo_archive_banks: Vec::new(),
                         actor_placements: Vec::new(),
+                        treasure_placements: Vec::new(),
+                        player_spawns: Vec::new(),
                     },
                 },
             ],

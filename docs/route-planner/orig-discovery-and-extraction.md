@@ -101,7 +101,8 @@ The canonical bundle contains only:
 
 - the verified content identity;
 - normalized relative paths, sizes, and source digests;
-- decoded DZS/DZR chunk, placement, STAG, and SCLS records;
+- decoded DZS/DZR chunk, actor/scaled/door placement, treasure, player-spawn,
+  STAG, and SCLS records;
 - decoded BMG flow graphs with temporary, persistent, and switch accesses; and
 - explicit records for candidate archives containing no numbered message-flow
   resource, including their sorted resource-name inventory.
@@ -111,6 +112,12 @@ separate fact-pack manifest seals the bundle digest, extractor executable and
 schema digests, source archive digests, and per-domain coverage. Physical
 feasibility remains unavailable rather than being inferred from an encoded
 destination.
+
+Stage-data schema v4 keeps `actor_placements`, `treasure_placements`, and
+`player_spawns` distinct. Its exact R_SP116 room-6 parity witness matches the
+compatible inventory at 95 actors and five spawns for resource SHA-256
+`10487ef6754fec1f454c93aa33f605ee9781b4db4b91eed8e864721d76304d40`;
+the conditional retail regression reruns that check when `orig/` is present.
 
 Stage discovery recognizes `files/res/Stage/**/STG_00.arc` as `stage.dzs` and
 room archives beginning with `R` as `room.dzr`. Message discovery treats

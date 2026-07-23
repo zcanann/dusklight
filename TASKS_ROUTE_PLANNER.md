@@ -2077,6 +2077,10 @@ Deliverable: replayable state evidence that can validate transition rules.
         message-flow and DZS/DZR actor-placement decoding with archive/resource
         digests; orchestration, input discovery, and sealed derived-pack output
         remain open.
+  - [x] Decode `PLYR`, `TRES`, and layered `TRE*` records in the planner-owned
+        stage extractor. Bundle v4 keeps actor, treasure, and player-spawn
+        placements in distinct collections while retaining exact raw records,
+        source transforms, parameters, layers, and standalone extraction counts.
   - [x] Add full input discovery/version verification and one-command extraction
         from a supplied `orig/` tree.
     - `scan-orig` reads the disc header, hashes a normalized complete file
@@ -2105,6 +2109,9 @@ Deliverable: replayable state evidence that can validate transition rules.
         planner and remove all planner-to-Huntctl crate dependencies.
 - [ ] Import actor-driven transitions and any remaining map/room metadata not
       represented by the current world inventories.
+  - [x] Close the planner-native placement-layout gap for `PLYR`, `TRES`, and
+        layered `TRE*` chunks with bounded decoding and a parser regression that
+        proves the three placement classes remain distinct.
   - [x] Import exact-GZ2E01 L1-family boss-door candidates by joining actor
         parameters to the unique same-room SCLS record. Reverse-side, ambiguous,
         non-audited-build, and unmodeled-switch-domain cases remain encoded facts

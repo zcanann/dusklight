@@ -13,7 +13,7 @@ const MAX_RARC_FILE_ENTRIES: usize = 100_000;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
 const MAX_EVENT_RECORDS: usize = 1_000_000;
-pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v3";
+pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v4";
 pub const EXTRACTED_EVENT_LIST_SCHEMA: &str = "dusklight.route-planner.extracted-event-list/v1";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -25,6 +25,8 @@ pub struct ExtractedStageData {
     pub map_events: Vec<ExtractedMapEvent>,
     pub demo_archive_banks: Vec<ExtractedDemoArchiveBank>,
     pub actor_placements: Vec<ExtractedActorPlacement>,
+    pub treasure_placements: Vec<ExtractedActorPlacement>,
+    pub player_spawns: Vec<ExtractedActorPlacement>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -409,6 +411,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     let mut map_events = Vec::new();
     let mut demo_archive_banks = Vec::new();
     let mut actor_placements = Vec::new();
+    let mut treasure_placements = Vec::new();
+    let mut player_spawns = Vec::new();
     let mut recognized_ranges = Vec::new();
     let mut total_records = 0_usize;
 
@@ -586,7 +590,7 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
             continue;
         }
 
-        let Some((_, scaled, layer)) = actor_layout else {
+        let Some((_, scaled, layer, placement_class)) = actor_layout else {
             unreachable!("all other recognized records are actor placements")
         };
 
@@ -614,7 +618,7 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
                     "must be finite",
                 ));
             }
-            actor_placements.push(ExtractedActorPlacement {
+            let placement = ExtractedActorPlacement {
                 chunk_tag: tag.clone(),
                 record_index,
                 layer,
@@ -629,7 +633,12 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
                 set_id: read_u16(record, 30, "orig.stage.actor.set_id")?,
                 scale_raw: scaled.then(|| [record[32], record[33], record[34]]),
                 raw_hex: hex_bytes(record),
-            });
+            };
+            match placement_class {
+                ExtractedPlacementClass::Actor => actor_placements.push(placement),
+                ExtractedPlacementClass::Treasure => treasure_placements.push(placement),
+                ExtractedPlacementClass::PlayerSpawn => player_spawns.push(placement),
+            }
         }
     }
     recognized_ranges.sort_by_key(|range| range.0);
@@ -651,6 +660,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
         map_events,
         demo_archive_banks,
         actor_placements,
+        treasure_placements,
+        player_spawns,
     })
 }
 
@@ -1003,27 +1014,41 @@ fn hex_bytes(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-fn actor_record_layout(tag: &str) -> Option<(usize, bool, Option<u8>)> {
+#[derive(Clone, Copy)]
+enum ExtractedPlacementClass {
+    Actor,
+    Treasure,
+    PlayerSpawn,
+}
+
+fn actor_record_layout(tag: &str) -> Option<(usize, bool, Option<u8>, ExtractedPlacementClass)> {
+    if tag == "PLYR" {
+        return Some((0x20, false, None, ExtractedPlacementClass::PlayerSpawn));
+    }
+    if tag == "TRES" {
+        return Some((0x20, false, None, ExtractedPlacementClass::Treasure));
+    }
     if matches!(tag, "ACTR" | "TGOB") {
-        return Some((0x20, false, None));
+        return Some((0x20, false, None, ExtractedPlacementClass::Actor));
     }
     if matches!(tag, "SCOB" | "TGSC" | "TGDR" | "Door") {
-        return Some((0x24, true, None));
+        return Some((0x24, true, None, ExtractedPlacementClass::Actor));
     }
     if tag.len() != 4 {
         return None;
     }
-    let (prefix, scaled) = match &tag[..3] {
-        "ACT" => ("ACT", false),
-        "SCO" | "Doo" => (&tag[..3], true),
+    let (prefix, scaled, placement_class) = match &tag[..3] {
+        "ACT" => ("ACT", false, ExtractedPlacementClass::Actor),
+        "TRE" => ("TRE", false, ExtractedPlacementClass::Treasure),
+        "SCO" | "Doo" => (&tag[..3], true, ExtractedPlacementClass::Actor),
         _ => return None,
     };
     debug_assert_eq!(prefix, &tag[..3]);
     decode_layer(tag.as_bytes()[3]).map(|layer| {
         if scaled {
-            (0x24, true, Some(layer))
+            (0x24, true, Some(layer), placement_class)
         } else {
-            (0x20, false, Some(layer))
+            (0x20, false, Some(layer), placement_class)
         }
     })
 }
@@ -1766,21 +1791,34 @@ mod tests {
     }
 
     #[test]
-    fn parses_layered_stage_actor_placement_without_world_tool_dependencies() {
-        let mut stage = vec![0; 0x40];
-        stage[0..4].copy_from_slice(&1_u32.to_be_bytes());
-        stage[4..8].copy_from_slice(b"ACT5");
-        stage[8..12].copy_from_slice(&1_u32.to_be_bytes());
-        stage[12..16].copy_from_slice(&0x20_u32.to_be_bytes());
-        stage[0x20..0x24].copy_from_slice(b"grD1");
-        stage[0x28..0x2c].copy_from_slice(&0x12345678_u32.to_be_bytes());
-        stage[0x2c..0x30].copy_from_slice(&1.5_f32.to_bits().to_be_bytes());
-        stage[0x30..0x34].copy_from_slice(&(-2.0_f32).to_bits().to_be_bytes());
-        stage[0x34..0x38].copy_from_slice(&3.25_f32.to_bits().to_be_bytes());
-        stage[0x38..0x3a].copy_from_slice(&42_i16.to_be_bytes());
-        stage[0x3a..0x3c].copy_from_slice(&(-1_i16).to_be_bytes());
-        stage[0x3c..0x3e].copy_from_slice(&9_i16.to_be_bytes());
-        stage[0x3e..0x40].copy_from_slice(&7_u16.to_be_bytes());
+    fn parses_actor_treasure_and_player_placements_without_world_tool_dependencies() {
+        let mut stage = vec![0; 0xa0];
+        stage[0..4].copy_from_slice(&3_u32.to_be_bytes());
+        for (index, (tag, offset)) in [
+            (b"ACT5", 0x40_u32),
+            (b"PLYR", 0x60_u32),
+            (b"TREa", 0x80_u32),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let header = 4 + index * 12;
+            stage[header..header + 4].copy_from_slice(tag);
+            stage[header + 4..header + 8].copy_from_slice(&1_u32.to_be_bytes());
+            stage[header + 8..header + 12].copy_from_slice(&offset.to_be_bytes());
+        }
+        stage[0x40..0x44].copy_from_slice(b"grD1");
+        stage[0x48..0x4c].copy_from_slice(&0x12345678_u32.to_be_bytes());
+        stage[0x4c..0x50].copy_from_slice(&1.5_f32.to_bits().to_be_bytes());
+        stage[0x50..0x54].copy_from_slice(&(-2.0_f32).to_bits().to_be_bytes());
+        stage[0x54..0x58].copy_from_slice(&3.25_f32.to_bits().to_be_bytes());
+        stage[0x58..0x5a].copy_from_slice(&42_i16.to_be_bytes());
+        stage[0x5a..0x5c].copy_from_slice(&(-1_i16).to_be_bytes());
+        stage[0x5c..0x5e].copy_from_slice(&9_i16.to_be_bytes());
+        stage[0x5e..0x60].copy_from_slice(&7_u16.to_be_bytes());
+        stage[0x60..0x65].copy_from_slice(b"start");
+        stage[0x80..0x85].copy_from_slice(b"Tbox0");
+        stage[0x88..0x8c].copy_from_slice(&0xfeed_beef_u32.to_be_bytes());
 
         let parsed = parse_stage_data(&stage).unwrap();
         assert_eq!(parsed.chunks[0].recognized_record_size, Some(0x20));
@@ -1791,6 +1829,46 @@ mod tests {
         assert_eq!(actor.position, [1.5, -2.0, 3.25]);
         assert_eq!(actor.angle, [42, -1, 9]);
         assert_eq!(actor.set_id, 7);
+        assert_eq!(parsed.player_spawns.len(), 1);
+        assert_eq!(parsed.player_spawns[0].name, "start");
+        assert_eq!(parsed.player_spawns[0].layer, None);
+        assert_eq!(parsed.treasure_placements.len(), 1);
+        assert_eq!(parsed.treasure_placements[0].name, "Tbox0");
+        assert_eq!(parsed.treasure_placements[0].parameters, 0xfeed_beef);
+        assert_eq!(parsed.treasure_placements[0].layer, Some(10));
+    }
+
+    #[test]
+    fn real_rsp116_room6_placement_counts_match_the_compatible_inventory_when_present() {
+        use sha2::{Digest as _, Sha256};
+        use std::path::Path;
+
+        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(4)
+            .unwrap();
+        let archive_path = repository_root.join("orig/GZ2E01/files/res/Stage/R_SP116/R06_00.arc");
+        if !archive_path.is_file() {
+            return;
+        }
+        let archive = std::fs::read(archive_path).unwrap();
+        let resource = extract_unique_rarc_resource(&archive, "room.dzr").unwrap();
+        assert_eq!(
+            hex_bytes(&Sha256::digest(&resource)),
+            "10487ef6754fec1f454c93aa33f605ee9781b4db4b91eed8e864721d76304d40"
+        );
+        let parsed = parse_stage_data(&resource).unwrap();
+        assert_eq!(parsed.actor_placements.len(), 95);
+        assert_eq!(parsed.player_spawns.len(), 5);
+        assert_eq!(parsed.treasure_placements.len(), 0);
+        assert_eq!(
+            parsed
+                .chunks
+                .iter()
+                .find(|chunk| chunk.tag == "PLYR")
+                .map(|chunk| (chunk.record_count, chunk.recognized_record_size)),
+            Some((5, Some(0x20)))
+        );
     }
 
     #[test]
