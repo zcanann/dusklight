@@ -2693,11 +2693,13 @@ visual polish or whole-game authoring features.
         the planner CLI and typed service.
   - [x] Add the browser's loopback HTTP adapter over the same typed service
         envelope; no WebSocket is needed for the current request/response flow.
-- [ ] Define the planner's own visual grammar and navigation conventions for
+- [x] Define the planner's own visual grammar and navigation conventions for
       colors, spacing, node anatomy, camera controls, breadcrumbs, selection,
       grouping, and detail panes. Existing TAS screenshots may inform this work,
       but no source import, running Huntctl instance, or shared component is
-      required.
+      required. `tools/route-planner/VISUAL_GRAMMAR.md` now fixes these
+      conventions, their accessibility cues, and the browser/Rust authority
+      boundary against the implemented canvas.
 - [ ] Implement nested proof/plan regions with familiar subgraph navigation while
       preserving planner-specific AND/OR, cycles, and continuation-distinct
       frontier states.
