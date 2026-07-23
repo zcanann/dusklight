@@ -308,17 +308,27 @@ function renderPalette() {
   elements["palette-list"].replaceChildren();
   if (!state.graph) return;
   const query = elements.search.value.trim().toLowerCase();
-  const matches = state.graph.nodes.filter((node) => node.payload.kind === "transition"
-    && (!query || `${node.label} ${node.id} ${state.transitionSearch.get(node.payload.transition_id) ?? ""}`
-      .toLowerCase().includes(query)));
+  const matches = state.graph.nodes.filter((node) => {
+    const transition = node.payload.kind === "transition";
+    const fact = node.payload.kind === "alias" || node.payload.kind === "derived_fact";
+    if (!transition && (!query || !fact)) return false;
+    const contract = selectedContract(node);
+    const contractText = transition
+      ? state.transitionSearch.get(node.payload.transition_id)
+      : transitionSearchText(contract);
+    return !query || `${node.label} ${node.id} ${contractText ?? ""}`.toLowerCase().includes(query);
+  });
   for (const node of matches) {
     const button = document.createElement("button");
-    button.className = "palette-item";
-    button.draggable = true;
+    const transition = node.payload.kind === "transition";
+    button.className = `palette-item${transition ? "" : " fact"}`;
+    button.draggable = transition;
     const label = document.createElement("span");
     label.textContent = node.label;
     const id = document.createElement("small");
-    id.textContent = node.payload.transition_id;
+    id.textContent = transition
+      ? node.payload.transition_id
+      : `${node.payload.kind.replaceAll("_", " ")} · ${node.payload.fact_id}`;
     button.append(label, id);
     button.addEventListener("click", () => {
       state.selected = { type: "node", value: node };
@@ -326,11 +336,13 @@ function renderPalette() {
       centerNode(node.id);
       render();
     });
-    button.addEventListener("dragstart", (event) => {
-      event.dataTransfer.effectAllowed = "copy";
-      event.dataTransfer.setData("text/plain", node.id);
-      setStatus(`Drop ${node.label} on the canvas or current route frontier`);
-    });
+    if (transition) {
+      button.addEventListener("dragstart", (event) => {
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("text/plain", node.id);
+        setStatus(`Drop ${node.label} on the canvas or current route frontier`);
+      });
+    }
     elements["palette-list"].append(button);
   }
 }
@@ -420,8 +432,15 @@ function renderDetails() {
 }
 
 function selectedContract(node) {
-  const mechanics = state.project?.catalog.mechanics;
+  const catalog = state.project?.catalog;
+  const mechanics = catalog?.mechanics;
   if (!mechanics) return null;
+  if (node.payload.kind === "alias") {
+    return catalog.facts.aliases.find((record) => record.id === node.payload.fact_id) ?? null;
+  }
+  if (node.payload.kind === "derived_fact") {
+    return catalog.facts.derived_facts.find((record) => record.id === node.payload.fact_id) ?? null;
+  }
   const lookups = {
     transition: [mechanics.transitions, "transition_id"],
     obligation: [mechanics.obligations, "obligation_id"],

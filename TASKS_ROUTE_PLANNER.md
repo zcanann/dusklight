@@ -2757,7 +2757,11 @@ visual polish or whole-game authoring features.
         typed delta categories while retaining the full inspection JSON.
   - [ ] Keep it available on every accepted node and closest rejected-join
         witness in the active graph, including nodes inside expanded regions.
-- [ ] Add raw flag catalogue search and friendly aliases.
+- [x] Add raw flag catalogue search and friendly aliases. The shared palette
+      searches friendly labels, stable fact IDs, derived predicates, component
+      kinds/bindings, raw byte offsets, masks, expected values, scopes, and
+      evidence from the exact composed fact catalogue; fact results remain
+      inspectable but cannot be dragged as transitions.
 - [x] Add obstruction and requirement inspectors. Selecting an obligation,
       obstruction, resolver, transition, technique, writer, gate, reader,
       reconstruction, microtrace, or goal now resolves the exact composed
