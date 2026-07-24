@@ -144,6 +144,12 @@ pub struct RankedOption {
     pub ensemble_variance: f64,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AvailableOptionRanking {
+    pub ranked: Vec<RankedOption>,
+    pub unsupported: Vec<OptionActionDescriptor>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct OptionValueModel {
     feature_width: usize,
@@ -255,6 +261,64 @@ impl OptionValueModel {
             .into_iter()
             .map(|estimate| self.rank(estimate))
             .collect())
+    }
+
+    /// Rank the trained portion of a state-local executable catalog.
+    ///
+    /// Applicable actions with no replay support remain explicit so the
+    /// campaign's exploration policy can choose them without inventing a Q
+    /// value. This method delegates every supported score to the existing
+    /// duration-aware critic.
+    pub fn rank_available_options(
+        &self,
+        state: &[f32],
+        available: &[OptionActionDescriptor],
+    ) -> Result<AvailableOptionRanking, OptionValueError> {
+        let mut canonical_available = available
+            .iter()
+            .map(|descriptor| {
+                descriptor.validate()?;
+                Ok((
+                    serde_json::to_vec(descriptor)
+                        .map_err(|error| OptionValueError::Serialization(error.to_string()))?,
+                    descriptor,
+                ))
+            })
+            .collect::<Result<Vec<_>, OptionValueError>>()?;
+        canonical_available.sort_by(|left, right| left.0.cmp(&right.0));
+        if canonical_available
+            .windows(2)
+            .any(|pair| pair[0].0 == pair[1].0)
+        {
+            return Err(OptionValueError::Invalid(
+                "available option catalog contains duplicates",
+            ));
+        }
+
+        let model_keys = self
+            .actions
+            .iter()
+            .map(serde_json::to_vec)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| OptionValueError::Serialization(error.to_string()))?;
+        let mut allowed = Vec::new();
+        let mut unsupported = Vec::new();
+        for (key, descriptor) in canonical_available {
+            match model_keys.binary_search(&key) {
+                Ok(index) => allowed.push(index as u32),
+                Err(_) => unsupported.push(descriptor.clone()),
+            }
+        }
+        let ranked = self
+            .critic
+            .rank_action_subset(state, &allowed)?
+            .into_iter()
+            .map(|estimate| self.rank(estimate))
+            .collect();
+        Ok(AvailableOptionRanking {
+            ranked,
+            unsupported,
+        })
     }
 
     pub fn actions(&self) -> &[OptionActionDescriptor] {
@@ -474,6 +538,41 @@ mod tests {
             "option_value_then_deterministic_realization"
         );
         assert_eq!(encoded["raw_frame_policy"], "last_mile_tape_golf_only");
+    }
+
+    #[test]
+    fn state_local_ranking_keeps_untrained_actions_explicit() {
+        let wait = action("wait", OptionType::Neutral);
+        let roll = action("roll", OptionType::Roll);
+        let attack = action("attack", OptionType::Attack);
+        let model = OptionValueModel::fit(
+            1,
+            &[
+                sample(0.0, wait.clone(), 1, 1.0, true, 1),
+                sample(0.0, roll, 1, 2.0, true, 2),
+            ],
+            &[0, 1],
+            &OptionValueConfig::default(),
+        )
+        .unwrap();
+
+        let available = model
+            .rank_available_options(&[0.0], &[wait.clone(), attack.clone()])
+            .unwrap();
+        assert_eq!(
+            available
+                .ranked
+                .iter()
+                .map(|entry| entry.descriptor.option_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["wait"]
+        );
+        assert_eq!(available.unsupported, vec![attack]);
+        assert!(
+            model
+                .rank_available_options(&[0.0], &[wait.clone(), wait])
+                .is_err()
+        );
     }
 
     #[test]
