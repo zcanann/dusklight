@@ -10,6 +10,7 @@ use dusklight_control::roll_option::RollOptionPlan;
 use std::f32::consts::TAU;
 
 pub const DEFAULT_ROUTE_TACTIC_COUNT: usize = 128;
+pub const MAX_GOAL_SEEK_TARGETS: usize = 64;
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -148,6 +149,45 @@ pub fn default_route_tactic_catalog() -> Result<TacticAssetCatalog, TacticAssetE
     TacticAssetCatalog::new(entries)
 }
 
+/// Extends the route-agnostic bootstrap catalog with concrete coordinates
+/// resolved from the authenticated goal and world mechanics.
+///
+/// These are goal-conditioned actions, not route hints: callers must derive
+/// every target from the current objective and pinned world inventory. Keeping
+/// the extension here makes the resulting coordinates part of the ordinary
+/// typed action schema seen by the learner.
+pub fn goal_conditioned_route_tactic_catalog(
+    targets: &[[f32; 3]],
+    maximum_ticks: u32,
+) -> Result<TacticAssetCatalog, TacticAssetError> {
+    if targets.is_empty() || targets.len() > MAX_GOAL_SEEK_TARGETS || maximum_ticks == 0 {
+        return Err(TacticAssetError::InvalidAsset(
+            "goal seek targets or duration are invalid".into(),
+        ));
+    }
+    let mut entries = default_route_tactic_catalog()?.entries().to_vec();
+    for (index, coordinate) in targets.iter().copied().enumerate() {
+        if coordinate.iter().any(|value| !value.is_finite()) {
+            return Err(TacticAssetError::InvalidAsset(
+                "goal seek target is non-finite".into(),
+            ));
+        }
+        push(
+            &mut entries,
+            format!("goal.seek.coordinate.{index:02}"),
+            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+                GenericTactic::SeekCoordinate {
+                    coordinate_f32_bits: coordinate.map(f32::to_bits),
+                    tolerance_f32_bits: 24.0_f32.to_bits(),
+                    magnitude: 127,
+                },
+                maximum_ticks,
+            )),
+        )?;
+    }
+    TacticAssetCatalog::new(entries)
+}
+
 fn push(
     entries: &mut Vec<TacticCatalogEntry>,
     option_id: String,
@@ -208,5 +248,30 @@ mod tests {
                 .unwrap(),
             PreparedTacticExecution::NativeGeneric(_)
         ));
+    }
+
+    #[test]
+    fn goal_conditioned_catalog_exposes_derived_seek_targets_as_ordinary_actions() {
+        let target = [-1842.0, 717.0, -4739.0];
+        let catalog = goal_conditioned_route_tactic_catalog(&[target], 160).unwrap();
+        assert_eq!(catalog.entries().len(), DEFAULT_ROUTE_TACTIC_COUNT + 1);
+        let entry = catalog.entry("goal.seek.coordinate.00").unwrap();
+        assert_eq!(entry.description().duration.maximum_ticks, 160);
+        assert!(matches!(
+            entry.source(),
+            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan {
+                tactic: GenericTactic::SeekCoordinate {
+                    coordinate_f32_bits,
+                    ..
+                },
+                ..
+            }) if coordinate_f32_bits.map(f32::from_bits) == target
+        ));
+    }
+
+    #[test]
+    fn goal_conditioned_catalog_rejects_missing_or_non_finite_targets() {
+        assert!(goal_conditioned_route_tactic_catalog(&[], 160).is_err());
+        assert!(goal_conditioned_route_tactic_catalog(&[[f32::NAN, 0.0, 0.0]], 160).is_err());
     }
 }

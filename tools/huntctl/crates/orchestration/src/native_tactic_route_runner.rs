@@ -11,29 +11,36 @@ use crate::tactic_q_campaign::{TacticCampaignDiagnostics, TacticQCampaign, Tacti
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
-use dusklight_learning::default_tactic_catalog::default_route_tactic_catalog;
+use dusklight_learning::default_tactic_catalog::goal_conditioned_route_tactic_catalog;
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
 use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::option_values::OptionValueConfig;
-use dusklight_learning::reward_shaping::{TACTIC_REWARD_SPEC_SCHEMA_V1, TacticRewardSpec};
+use dusklight_learning::reward_shaping::{
+    POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V1,
+    TacticRewardBreakdown, TacticRewardSpec,
+};
 use dusklight_learning::tactic_exploration::{TacticExplorationConfig, TacticSelectionReason};
-use dusklight_learning::tactic_features::TacticFeatureEncoder;
+use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
+use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_search::search::{MacroAction, SearchPadState};
 use dusklight_search::suffix_batch::{
     NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation, NativeSuffixBatch,
     NativeSuffixCandidate,
 };
+use dusklight_world::world_context::WorldContext;
+use dusklight_world::world_geometry::KclReconstruction;
+use dusklight_world::world_inventory::WorldInventory;
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V1: &str = "dusklight-native-tactic-route-report/v1";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V2: &str = "dusklight-native-tactic-route-report/v2";
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_TICK_COST: f32 = 0.001;
@@ -60,6 +67,8 @@ pub struct NativeTacticRouteReport {
     pub objective_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub action_schema_sha256: Digest,
+    pub goal_target: NativeTacticGoalTargetReport,
+    pub reward_spec: TacticRewardSpec,
     pub demonstration_transitions: u64,
     pub exploration_seeds: Vec<u64>,
     pub decisions_per_seed: u64,
@@ -99,6 +108,9 @@ pub struct NativeTacticDecisionTrace {
     pub selected_q: Option<f64>,
     pub best_q: Option<f64>,
     pub reward: f32,
+    pub reward_components: TacticRewardBreakdown,
+    pub goal_distance_before: f32,
+    pub goal_distance_after: f32,
     pub terminal: bool,
     pub frontier_cells: usize,
     pub visited_states: usize,
@@ -121,9 +133,15 @@ pub fn run_native_tactic_route(
     }
     fs::create_dir_all(config.output_root).map_err(route_error)?;
 
-    let catalog = default_route_tactic_catalog().map_err(route_error)?;
+    let goal_target = resolve_goal_transition_target(&root, config)?;
+    let goal_tactic_ticks =
+        goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
+    let catalog =
+        goal_conditioned_route_tactic_catalog(&[goal_target.coordinate], goal_tactic_ticks)
+            .map_err(route_error)?;
     let registry = FactRegistry::canonical();
-    let encoder = TacticFeatureEncoder::new();
+    let encoder =
+        GoalConditionedTacticFeatureEncoder::new(goal_target.coordinate).map_err(route_error)?;
     let process_tape = InputTape::decode(
         &fs::read(root.join(&config.execution.process_boot_tape.path)).map_err(route_error)?,
     )
@@ -179,13 +197,16 @@ pub fn run_native_tactic_route(
     let initial_facts = initial_facts(&initial)?;
     if initial_facts.tape_frame != config.optimization.route.source_boundary_index
         || initial_facts.terminal.reached != Some(false)
+        || initial_facts.world.stage != goal_target.source_stage
+        || initial_facts.world.room != goal_target.source_room
     {
         return Err(route_message(
-            "native source observation is not the requested nonterminal tactic boundary",
+            "native source observation is not the requested nonterminal goal-source boundary",
         ));
     }
     let root_checkpoint_sha256 =
         tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;
+    let reward_spec = route_tactic_reward_spec(&encoder, &initial_facts)?;
 
     let run = (|| {
         let mut seed_results = Vec::with_capacity(config.exploration_seeds.len());
@@ -196,6 +217,7 @@ pub fn run_native_tactic_route(
                 &catalog,
                 &registry,
                 &encoder,
+                &reward_spec,
                 &initial_facts,
                 &route_prefix,
                 root_checkpoint_sha256,
@@ -210,12 +232,14 @@ pub fn run_native_tactic_route(
     shutdown?;
 
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V1.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V2.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
         action_schema_sha256: catalog.action_schema_sha256(),
+        goal_target: goal_target.report(),
+        reward_spec,
         demonstration_transitions: 0,
         exploration_seeds: config.exploration_seeds.to_vec(),
         decisions_per_seed: config.decisions_per_seed,
@@ -237,7 +261,8 @@ fn run_seed(
     worker: &mut NativeSuffixWorkerSession,
     catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
     registry: &FactRegistry,
-    encoder: &TacticFeatureEncoder,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    reward_spec: &TacticRewardSpec,
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
     root_checkpoint_sha256: Digest,
@@ -272,7 +297,6 @@ fn run_seed(
         },
     )
     .map_err(route_error)?;
-    let reward_spec = route_tactic_reward_spec();
     let mut trace = Vec::new();
     let mut selection_counts = BTreeMap::<String, u64>::new();
     let mut native_ticks = 0_u64;
@@ -339,7 +363,7 @@ fn run_seed(
                 },
                 &encode,
                 |_| true,
-                &reward_spec,
+                reward_spec,
             )
             .map_err(route_error)?;
         let selected = &step.step.decision.selected;
@@ -367,6 +391,12 @@ fn run_seed(
             step.step.transition.execution.duration.realized_ticks,
         ));
         let diagnostics = campaign.diagnostics().map_err(route_error)?;
+        let before_features = encoder
+            .encode(&step.step.transition.before)
+            .map_err(route_error)?;
+        let after_features = encoder
+            .encode(&step.step.transition.after)
+            .map_err(route_error)?;
         trace.push(NativeTacticDecisionTrace {
             decision_index,
             episode,
@@ -380,6 +410,9 @@ fn run_seed(
             selected_q,
             best_q,
             reward: step.reward.training_reward,
+            reward_components: step.reward.clone(),
+            goal_distance_before: before_features[encoder.goal_distance_feature()],
+            goal_distance_after: after_features[encoder.goal_distance_feature()],
             terminal: step.step.transition.value_sample.terminal,
             frontier_cells: diagnostics.frontier_cells,
             visited_states: campaign.visited_state_count(),
@@ -441,7 +474,259 @@ fn initial_probe_batch(
     tactic_root_probe_batch(config.optimization, config.execution)
 }
 
-fn route_tactic_reward_spec() -> TacticRewardSpec {
+#[derive(Clone, Debug, PartialEq)]
+struct GoalTransitionTarget {
+    source_stage: String,
+    source_room: i8,
+    destination_stage: String,
+    destination_room: i8,
+    destination_point: i16,
+    coordinate: [f32; 3],
+    supporting_load_triggers: usize,
+    source_inventory_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticGoalTargetReport {
+    pub source_stage: String,
+    pub source_room: i8,
+    pub destination_stage: String,
+    pub destination_room: i8,
+    pub destination_point: i16,
+    pub coordinate: [f32; 3],
+    pub supporting_load_triggers: usize,
+    pub source_inventory_sha256: Digest,
+    pub authored_route_coordinates_used: bool,
+}
+
+impl GoalTransitionTarget {
+    fn report(&self) -> NativeTacticGoalTargetReport {
+        NativeTacticGoalTargetReport {
+            source_stage: self.source_stage.clone(),
+            source_room: self.source_room,
+            destination_stage: self.destination_stage.clone(),
+            destination_room: self.destination_room,
+            destination_point: self.destination_point,
+            coordinate: self.coordinate,
+            supporting_load_triggers: self.supporting_load_triggers,
+            source_inventory_sha256: self.source_inventory_sha256,
+            authored_route_coordinates_used: false,
+        }
+    }
+}
+
+fn resolve_goal_transition_target(
+    root: &Path,
+    config: &NativeTacticRouteRunConfig<'_>,
+) -> Result<GoalTransitionTarget, NativeTacticRouteRunError> {
+    let program_bytes =
+        fs::read(root.join(&config.execution.milestone_program.path)).map_err(route_error)?;
+    let decoded =
+        dusklight_objectives::milestone_dsl::decode(&program_bytes).map_err(route_error)?;
+    let definition = decoded
+        .program
+        .definitions
+        .iter()
+        .find(|definition| definition.name == config.optimization.terminal_predicate.goal)
+        .ok_or_else(|| route_message("goal definition is absent from milestone program"))?;
+    let source_stage = exact_symbol_literal(&definition.when, Field::StageName)?;
+    let source_room = exact_i8_literal(&definition.when, Field::StageRoom)?;
+    let destination_stage = exact_symbol_literal(&definition.when, Field::NextStageName)?;
+    let destination_room = exact_i8_literal(&definition.when, Field::NextStageRoom)?;
+    let destination_point = exact_i16_literal(&definition.when, Field::NextStageSpawn)?;
+
+    let context_path = root.join(&config.execution.world_context.path);
+    let context_bytes = fs::read(&context_path).map_err(route_error)?;
+    let context = WorldContext::decode_canonical(&context_bytes).map_err(route_error)?;
+    if context.digest().map_err(route_error)? != config.execution.world_context.sha256 {
+        return Err(route_message(
+            "goal target world context differs from its execution binding",
+        ));
+    }
+    let stage_binding = context
+        .stages
+        .iter()
+        .find(|stage| stage.stage == source_stage)
+        .ok_or_else(|| route_message("goal source stage is absent from world context"))?;
+    let inventory_path = context_path
+        .parent()
+        .ok_or_else(|| route_message("world context has no artifact directory"))?
+        .join(format!("{source_stage}.inventory.json"));
+    let inventory =
+        WorldInventory::decode_canonical(&fs::read(&inventory_path).map_err(route_error)?)
+            .map_err(route_error)?;
+    if inventory.stage != source_stage
+        || inventory.digest().map_err(route_error)? != stage_binding.inventory_sha256
+    {
+        return Err(route_message(
+            "goal source inventory differs from the pinned world context",
+        ));
+    }
+
+    let collision_ids = inventory
+        .load_triggers
+        .iter()
+        .filter(|trigger| {
+            trigger.room == source_room
+                && trigger.destination_stage == destination_stage
+                && trigger.destination_room == destination_room
+                && trigger.destination_point == destination_point
+        })
+        .map(|trigger| trigger.collision_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if collision_ids.is_empty() {
+        return Err(route_message(
+            "goal transition has no matching load trigger in the pinned world",
+        ));
+    }
+
+    let mut sum = [0.0_f64; 3];
+    let mut points = 0_u64;
+    for collision in &inventory.collisions {
+        if !collision_ids.contains(collision.prism.authored.stable_id.as_str()) {
+            continue;
+        }
+        let KclReconstruction::Reconstructed { triangle, .. } = &collision.prism.reconstruction
+        else {
+            continue;
+        };
+        for point in triangle {
+            sum[0] += f64::from(point.x);
+            sum[1] += f64::from(point.y);
+            sum[2] += f64::from(point.z);
+            points += 1;
+        }
+    }
+    if points == 0 {
+        return Err(route_message(
+            "goal load triggers have no reconstructed target surface",
+        ));
+    }
+    let coordinate = sum.map(|axis| (axis / points as f64) as f32);
+    if coordinate.iter().any(|value| !value.is_finite()) {
+        return Err(route_message("goal target centroid is non-finite"));
+    }
+    Ok(GoalTransitionTarget {
+        source_stage,
+        source_room,
+        destination_stage,
+        destination_room,
+        destination_point,
+        coordinate,
+        supporting_load_triggers: collision_ids.len(),
+        source_inventory_sha256: stage_binding.inventory_sha256,
+    })
+}
+
+fn exact_symbol_literal(
+    expression: &Expression,
+    field: Field,
+) -> Result<String, NativeTacticRouteRunError> {
+    let values = exact_literals(expression, field);
+    let mut symbols = values
+        .into_iter()
+        .map(|value| match value {
+            Value::Symbol(symbol) => Ok(symbol),
+            _ => Err(route_message("goal transition literal has the wrong type")),
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if symbols.len() != 1 {
+        return Err(route_message(
+            "goal transition requires one exact symbolic field literal",
+        ));
+    }
+    Ok(symbols.pop_first().expect("one checked symbol"))
+}
+
+fn exact_i8_literal(
+    expression: &Expression,
+    field: Field,
+) -> Result<i8, NativeTacticRouteRunError> {
+    i8::try_from(exact_integer_literal(expression, field)?).map_err(route_error)
+}
+
+fn exact_i16_literal(
+    expression: &Expression,
+    field: Field,
+) -> Result<i16, NativeTacticRouteRunError> {
+    i16::try_from(exact_integer_literal(expression, field)?).map_err(route_error)
+}
+
+fn exact_integer_literal(
+    expression: &Expression,
+    field: Field,
+) -> Result<i64, NativeTacticRouteRunError> {
+    let values = exact_literals(expression, field);
+    let integers = values
+        .into_iter()
+        .map(|value| match value {
+            Value::I32(value) => Ok(i64::from(value)),
+            Value::U32(value) => Ok(i64::from(value)),
+            Value::U64(value) => i64::try_from(value).map_err(route_error),
+            _ => Err(route_message("goal transition literal has the wrong type")),
+        })
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if integers.len() != 1 {
+        return Err(route_message(
+            "goal transition requires one exact integer field literal",
+        ));
+    }
+    Ok(*integers.first().expect("one checked integer"))
+}
+
+fn exact_literals(expression: &Expression, field: Field) -> Vec<Value> {
+    match expression {
+        Expression::Compare {
+            field: candidate,
+            operator: Comparison::Equal,
+            value,
+        } if *candidate == field => vec![value.clone()],
+        Expression::And(left, right) => {
+            let mut values = exact_literals(left, field);
+            values.extend(exact_literals(right, field));
+            values
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn goal_tactic_maximum_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunError> {
+    let horizon = u32::try_from(horizon).map_err(route_error)?;
+    if horizon == 0 {
+        return Err(route_message("goal tactic requires a nonzero horizon"));
+    }
+    Ok((horizon / 2).clamp(1, 80))
+}
+
+fn route_tactic_reward_spec(
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    initial_facts: &FactSnapshot,
+) -> Result<TacticRewardSpec, NativeTacticRouteRunError> {
+    let initial_features = encoder.encode(initial_facts).map_err(route_error)?;
+    let start_distance = initial_features[encoder.goal_distance_feature()];
+    if !start_distance.is_finite() || start_distance <= 0.0 {
+        return Err(route_message(
+            "goal-conditioned source distance must be finite and positive",
+        ));
+    }
+    let mut reward = route_tactic_base_reward_spec();
+    reward.potential = Some(PotentialShapingSpec {
+        schema: POTENTIAL_SHAPING_SCHEMA_V1.into(),
+        feature_schema: encoder.schema_sha256,
+        terms: vec![PotentialTerm::CorridorProgress {
+            name: "goal_planar_distance".into(),
+            feature: encoder.goal_distance_feature(),
+            start: start_distance,
+            end: 0.0,
+            weight: 5.0,
+            unavailable_value: None,
+        }],
+    });
+    Ok(reward)
+}
+
+fn route_tactic_base_reward_spec() -> TacticRewardSpec {
     TacticRewardSpec {
         schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
         terminal_reward: 100.0,
@@ -587,14 +872,15 @@ mod tests {
 
     #[test]
     fn semantic_frontier_progress_outweighs_one_bounded_tactic() {
-        let catalog = default_route_tactic_catalog().unwrap();
+        let catalog =
+            dusklight_learning::default_tactic_catalog::default_route_tactic_catalog().unwrap();
         let maximum_ticks = catalog
             .entries()
             .iter()
             .map(|entry| entry.description().duration.maximum_ticks)
             .max()
             .unwrap();
-        let reward = route_tactic_reward_spec();
+        let reward = route_tactic_base_reward_spec();
 
         assert!(reward.tick_cost > 0.0);
         assert!(

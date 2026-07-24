@@ -1074,7 +1074,23 @@ fn seek_pad(
     }
     let camera = required_camera(observation)?;
     query.camera_yaw_radians_f32_bits = observation.camera_yaw_radians_f32_bits;
-    Ok((direction_pad(dx.atan2(dz) - camera, magnitude), false))
+    let relative = dx.atan2(dz) - camera;
+    Ok((
+        RawPadState {
+            // The game's main-stick X axis is opposite the mathematical
+            // positive sine direction used by the world X/Z heading. Keep
+            // native generic seek tactics identical to DUSKCTRL's canonical
+            // world-space seek operation.
+            stick_x: (-relative.sin() * f32::from(magnitude))
+                .round()
+                .clamp(-128.0, 127.0) as i8,
+            stick_y: (relative.cos() * f32::from(magnitude))
+                .round()
+                .clamp(-128.0, 127.0) as i8,
+            ..RawPadState::default()
+        },
+        false,
+    ))
 }
 
 fn target_actor<'a>(
@@ -1395,6 +1411,8 @@ mod tests {
             result.execution.emitted_raw_actions.len()
         );
         assert_eq!(result.tape.frames, result.execution.emitted_raw_actions);
+        assert_eq!(result.tape.frames[0].pads[0].stick_x, -100);
+        assert_eq!(result.tape.frames[0].pads[0].stick_y, 0);
         assert!(
             result
                 .queries

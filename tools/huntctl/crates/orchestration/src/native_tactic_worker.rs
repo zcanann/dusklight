@@ -417,6 +417,18 @@ fn native_generic_controller_program(
             )),
             magnitude: *magnitude,
         },
+        GenericTactic::SeekCoordinate {
+            coordinate_f32_bits,
+            tolerance_f32_bits,
+            magnitude,
+        } => Operation::SeekCoordinate {
+            blend: StickBlend::Replace,
+            frame: CoordinateFrame::World,
+            target: coordinate_f32_bits.map(f32::from_bits),
+            offset: [0.0; 3],
+            stop_radius: f32::from_bits(*tolerance_f32_bits),
+            magnitude: *magnitude,
+        },
         GenericTactic::ShortCurve { control } => Operation::CubicBezier {
             blend: StickBlend::Replace,
             points: control.map(|point| point.map(i16::from)),
@@ -1613,6 +1625,45 @@ mod tests {
             3
         );
         assert!(batch.candidates[0].controller_program_hex.is_some());
+    }
+
+    #[test]
+    fn seek_coordinate_becomes_one_linear_native_controller_candidate() {
+        let target = [-1842.25_f32, 717.0, -4739.5];
+        let plan = NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinate {
+                coordinate_f32_bits: target.map(f32::to_bits),
+                tolerance_f32_bits: 24.0_f32.to_bits(),
+                magnitude: 127,
+            },
+            80,
+        );
+        let program = native_generic_controller_program(
+            &plan,
+            TacticDurationBounds {
+                minimum_ticks: 1,
+                maximum_ticks: 80,
+            },
+        )
+        .unwrap()
+        .expect("seek-coordinate has a native controller equivalent");
+        let Operation::SeekCoordinate {
+            frame,
+            target: actual,
+            offset,
+            stop_radius,
+            magnitude,
+            ..
+        } = program.layers[0].operation
+        else {
+            panic!("seek coordinate must compile to the same controller operation");
+        };
+        assert_eq!(frame, CoordinateFrame::World);
+        assert_eq!(actual, target);
+        assert_eq!(offset, [0.0; 3]);
+        assert_eq!(stop_radius.to_bits(), 24.0_f32.to_bits());
+        assert_eq!(magnitude, 127);
+        assert_eq!(program.duration_frames, 80);
     }
 
     #[test]

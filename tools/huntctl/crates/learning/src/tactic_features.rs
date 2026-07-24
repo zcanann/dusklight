@@ -15,6 +15,9 @@ use std::f32::consts::PI;
 use std::fmt;
 
 pub const TACTIC_FEATURE_SCHEMA_V1: &str = "dusklight-tactic-features/v1";
+pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V1: &str =
+    "dusklight-goal-conditioned-tactic-features/v1";
+const GOAL_FEATURE_NAMES: &[&str] = &["goal_dx", "goal_dy", "goal_dz", "goal_planar_distance"];
 
 const FEATURE_NAMES: &[&str] = &[
     "stage_hash",
@@ -237,6 +240,84 @@ impl TacticFeatureEncoder {
         }
         Ok(output)
     }
+}
+
+/// The route-agnostic tactic features plus measurements relative to one
+/// objective-derived world target.
+///
+/// The target is run context, not authored route progress. Its coordinates are
+/// retained as exact bits so feature generation is deterministic and auditable.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GoalConditionedTacticFeatureEncoder {
+    pub schema: String,
+    pub schema_sha256: Digest,
+    pub feature_names: Vec<String>,
+    pub target_coordinate_f32_bits: [u32; 3],
+    base: TacticFeatureEncoder,
+}
+
+impl GoalConditionedTacticFeatureEncoder {
+    pub fn new(target: [f32; 3]) -> Result<Self, TacticFeatureError> {
+        if target.iter().any(|value| !value.is_finite()) {
+            return Err(TacticFeatureError::InvalidEncoder);
+        }
+        let base = TacticFeatureEncoder::new();
+        let mut feature_names = base.feature_names.clone();
+        feature_names.extend(GOAL_FEATURE_NAMES.iter().map(|name| (*name).into()));
+        Ok(Self {
+            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V1.into(),
+            schema_sha256: goal_conditioned_feature_schema_digest(base.schema_sha256),
+            feature_names,
+            target_coordinate_f32_bits: target.map(f32::to_bits),
+            base,
+        })
+    }
+
+    pub fn feature_width(&self) -> usize {
+        self.feature_names.len()
+    }
+
+    pub fn goal_distance_feature(&self) -> usize {
+        self.feature_names.len() - 1
+    }
+
+    pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
+        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V1
+            || self.schema_sha256 != goal_conditioned_feature_schema_digest(self.base.schema_sha256)
+            || self.feature_names.len() != self.base.feature_width() + GOAL_FEATURE_NAMES.len()
+        {
+            return Err(TacticFeatureError::InvalidEncoder);
+        }
+        let mut output = self.base.encode(facts)?;
+        let player = finite_vec3(facts.player.position_f32_bits)?;
+        let target = self.target_coordinate_f32_bits.map(f32::from_bits);
+        if target.iter().any(|value| !value.is_finite()) {
+            return Err(TacticFeatureError::InvalidEncoder);
+        }
+        let delta = [
+            target[0] - player[0],
+            target[1] - player[1],
+            target[2] - player[2],
+        ];
+        let planar_distance = delta[0].hypot(delta[2]);
+        output.extend(delta);
+        output.push(planar_distance);
+        if output.len() != self.feature_width() || output.iter().any(|value| !value.is_finite()) {
+            return Err(TacticFeatureError::InvalidOutput);
+        }
+        Ok(output)
+    }
+}
+
+fn goal_conditioned_feature_schema_digest(base: Digest) -> Digest {
+    let bytes = serde_json::to_vec(&(
+        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V1,
+        base,
+        GOAL_FEATURE_NAMES,
+    ))
+    .expect("fixed goal-conditioned feature schema serializes");
+    Digest(Sha256::digest(bytes).into())
 }
 
 fn encode_actor_summary(
@@ -578,5 +659,38 @@ mod tests {
             encoder.encode(&facts).unwrap(),
             encoder.encode(&reversed).unwrap()
         );
+    }
+
+    #[test]
+    fn goal_conditioned_features_measure_objective_relative_progress() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let facts = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let player = facts.player.position_f32_bits.map(f32::from_bits);
+        let target = [player[0] + 30.0, player[1] + 7.0, player[2] + 40.0];
+        let encoder = GoalConditionedTacticFeatureEncoder::new(target).unwrap();
+        let encoded = encoder.encode(&facts).unwrap();
+
+        assert_eq!(
+            encoded.len(),
+            TacticFeatureEncoder::new().feature_width() + 4
+        );
+        assert_eq!(
+            encoded[encoder.goal_distance_feature()].to_bits(),
+            50.0_f32.to_bits()
+        );
+        assert_ne!(
+            encoder.schema_sha256,
+            TacticFeatureEncoder::new().schema_sha256
+        );
+        assert!(GoalConditionedTacticFeatureEncoder::new([f32::NAN, 0.0, 0.0]).is_err());
     }
 }
