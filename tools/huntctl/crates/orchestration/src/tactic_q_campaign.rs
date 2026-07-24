@@ -27,9 +27,12 @@ use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, choose_tactic,
 };
+use dusklight_proposals::behavior_archive::{
+    BehaviorArchive, TacticEndpointDescriptor, TacticFrontierEntry,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -79,6 +82,7 @@ pub struct TacticQCampaignCheckpoint {
     pub current: LearnerState,
     pub route_tape: InputTape,
     pub replay: Vec<OptionTransitionSample>,
+    pub replay_routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
     pub model_config: OptionValueConfig,
     pub exploration: TacticExplorationConfig,
@@ -96,7 +100,26 @@ pub struct TacticQFinalResult {
     pub terminal_state_sha256: Digest,
     pub route_tape: InputTape,
     pub replay: Vec<OptionTransitionSample>,
+    pub replay_routes: Vec<InputTape>,
     pub terminal: FactSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TacticBranchKind {
+    Root,
+    RetainedFrontier,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticCampaignBranch {
+    pub kind: TacticBranchKind,
+    pub state_sha256: Digest,
+    pub route_checkpoint_sha256: Digest,
+    pub state: FactSnapshot,
+    pub route_tape: InputTape,
+    pub descriptor: Option<TacticEndpointDescriptor>,
 }
 
 /// Mutable state for one connected tactic episode.
@@ -115,6 +138,7 @@ pub struct TacticQCampaign {
     pub current: LearnerState,
     pub route_tape: InputTape,
     pub replay: Vec<OptionTransitionSample>,
+    pub replay_routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
     model_config: OptionValueConfig,
     exploration: TacticExplorationConfig,
@@ -161,6 +185,7 @@ impl TacticQCampaign {
             current,
             route_tape,
             replay: Vec::new(),
+            replay_routes: Vec::new(),
             episode_groups: Vec::new(),
             model_config,
             exploration,
@@ -182,6 +207,122 @@ impl TacticQCampaign {
         &self.hindsight
     }
 
+    pub fn frontier_archive(&self) -> Result<BehaviorArchive, TacticQCampaignError> {
+        let mut archive = BehaviorArchive::default();
+        for (index, (transition, route)) in self.replay.iter().zip(&self.replay_routes).enumerate()
+        {
+            archive
+                .consider_tactic_endpoint(
+                    self.root_checkpoint_sha256,
+                    transition.clone(),
+                    route.clone(),
+                    index as u64,
+                )
+                .map_err(|error| TacticQCampaignError::Frontier(error.to_string()))?;
+        }
+        Ok(archive)
+    }
+
+    /// Returns one root and one retained frontier branch on every call. The
+    /// retained choice is seeded; root connectivity is therefore sampled
+    /// explicitly instead of being left to archive luck.
+    pub fn sample_root_and_frontier(
+        &self,
+        seed: u64,
+        round: u64,
+        reference: &[TacticEndpointDescriptor],
+    ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError> {
+        let first = self
+            .replay
+            .first()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "frontier sampling requires replay",
+            ))?;
+        let first_route = &self.replay_routes[0];
+        let root_frames = usize::try_from(first.execution.realized_tape_range.start_frame)
+            .map_err(|_| TacticQCampaignError::InvalidState("root tape range overflows"))?;
+        let root_route = tape_prefix(first_route, root_frames);
+        let root = TacticCampaignBranch {
+            kind: TacticBranchKind::Root,
+            state_sha256: first.before_state_sha256,
+            route_checkpoint_sha256: route_checkpoint(self.root_checkpoint_sha256, &root_route)?,
+            state: first.before.clone(),
+            route_tape: root_route,
+            descriptor: None,
+        };
+        let archive = self.frontier_archive()?;
+        let choices = archive.select_tactic_frontier(reference, archive.tactic_len());
+        if choices.is_empty() {
+            return Err(TacticQCampaignError::InvalidState(
+                "frontier archive has no restorable endpoint",
+            ));
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"dusklight-tactic-frontier-sample/v1");
+        hasher.update(seed.to_le_bytes());
+        hasher.update(round.to_le_bytes());
+        let digest = hasher.finalize();
+        let index =
+            (u64::from_le_bytes(digest[..8].try_into().unwrap()) % choices.len() as u64) as usize;
+        let selected: &TacticFrontierEntry = &choices[index];
+        let frontier = TacticCampaignBranch {
+            kind: TacticBranchKind::RetainedFrontier,
+            state_sha256: selected.transition.after_state_sha256,
+            route_checkpoint_sha256: selected.route_checkpoint_sha256,
+            state: selected.transition.after.clone(),
+            route_tape: selected.route_tape.clone(),
+            descriptor: Some(selected.descriptor.clone()),
+        };
+        Ok([root, frontier])
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore_branch<A>(
+        &mut self,
+        branch: &TacticCampaignBranch,
+        episode_group: u64,
+        registry: &FactRegistry,
+        catalog: &TacticAssetCatalog,
+        blueprints: &[TacticBlueprint],
+        entry_applicable: A,
+    ) -> Result<(), TacticQCampaignError>
+    where
+        A: Fn(&TacticAssetDescription) -> bool,
+    {
+        branch
+            .state
+            .validate()
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        branch
+            .route_tape
+            .validate()
+            .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
+        if self.episode_groups.contains(&episode_group)
+            || branch.state_sha256
+                != branch
+                    .state
+                    .content_sha256()
+                    .map_err(|error| TacticQCampaignError::Features(error.to_string()))?
+            || branch.state.tape_frame != branch.route_tape.frames.len() as u64
+            || branch.route_checkpoint_sha256
+                != route_checkpoint(self.root_checkpoint_sha256, &branch.route_tape)?
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "frontier branch is detached or reuses an episode group",
+            ));
+        }
+        self.current = LearnerState::build(
+            branch.state.clone(),
+            registry,
+            catalog,
+            blueprints,
+            entry_applicable,
+        )?;
+        self.route_tape = branch.route_tape.clone();
+        self.episode_group = episode_group;
+        Ok(())
+    }
+
     pub fn checkpoint(&self) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
         let mut checkpoint = TacticQCampaignCheckpoint {
             schema: TACTIC_Q_CHECKPOINT_SCHEMA_V1.into(),
@@ -194,6 +335,7 @@ impl TacticQCampaign {
             current: self.current.clone(),
             route_tape: self.route_tape.clone(),
             replay: self.replay.clone(),
+            replay_routes: self.replay_routes.clone(),
             episode_groups: self.episode_groups.clone(),
             model_config: self.model_config.clone(),
             exploration: self.exploration,
@@ -274,6 +416,7 @@ impl TacticQCampaign {
             current: checkpoint.current,
             route_tape: checkpoint.route_tape,
             replay: checkpoint.replay,
+            replay_routes: checkpoint.replay_routes,
             episode_groups: checkpoint.episode_groups,
             model_config: checkpoint.model_config,
             exploration: checkpoint.exploration,
@@ -295,7 +438,7 @@ impl TacticQCampaign {
         }
         let route_bytes = serde_json::to_vec(&self.route_tape)
             .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-        let replay_bytes = serde_json::to_vec(&self.replay)
+        let replay_bytes = serde_json::to_vec(&(&self.replay, &self.replay_routes))
             .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
         let mut result = TacticQFinalResult {
             schema: TACTIC_Q_FINAL_RESULT_SCHEMA_V1.into(),
@@ -307,6 +450,7 @@ impl TacticQCampaign {
             terminal_state_sha256: self.current.snapshot_sha256,
             route_tape: self.route_tape.clone(),
             replay: self.replay.clone(),
+            replay_routes: self.replay_routes.clone(),
             terminal: self.current.snapshot.clone(),
         };
         result.content_sha256 = final_result_digest(&result)?;
@@ -572,6 +716,8 @@ impl TacticQCampaign {
 
         let mut replay = self.replay.clone();
         replay.push(transition.clone());
+        let mut replay_routes = self.replay_routes.clone();
+        replay_routes.push(outcome.route_tape.clone());
         let mut episode_groups = self.episode_groups.clone();
         episode_groups.push(self.episode_group);
         let feature_width = transition.value_sample.state.len();
@@ -591,6 +737,7 @@ impl TacticQCampaign {
         self.current = next;
         self.route_tape = outcome.route_tape;
         self.replay = replay;
+        self.replay_routes = replay_routes;
         self.episode_groups = episode_groups;
         self.model = Some(model);
         self.decision_index =
@@ -622,6 +769,7 @@ fn validate_checkpoint(checkpoint: &TacticQCampaignCheckpoint) -> Result<(), Tac
         || checkpoint.root_checkpoint_sha256 == Digest::ZERO
         || checkpoint.exploration.epsilon_per_million > 1_000_000
         || checkpoint.replay.len() != checkpoint.episode_groups.len()
+        || checkpoint.replay.len() != checkpoint.replay_routes.len()
         || checkpoint.decision_index != checkpoint.replay.len() as u64
         || checkpoint.current.snapshot.tape_frame != checkpoint.route_tape.frames.len() as u64
     {
@@ -629,13 +777,19 @@ fn validate_checkpoint(checkpoint: &TacticQCampaignCheckpoint) -> Result<(), Tac
             "campaign checkpoint identity or shape is invalid",
         ));
     }
-    let mut prior_after = None;
-    let mut prior_checkpoint = None;
-    for transition in &checkpoint.replay {
+    let mut endpoints = BTreeMap::<u64, (Digest, Digest)>::new();
+    for ((transition, route), episode_group) in checkpoint
+        .replay
+        .iter()
+        .zip(&checkpoint.replay_routes)
+        .zip(&checkpoint.episode_groups)
+    {
         transition.validate()?;
         if transition.feature_schema_sha256 != checkpoint.feature_schema_sha256
-            || prior_after.is_some_and(|digest| digest != transition.before_state_sha256)
-            || prior_checkpoint.is_some_and(|digest| digest != transition.source_checkpoint_sha256)
+            || endpoints.get(episode_group).is_some_and(|(state, route)| {
+                *state != transition.before_state_sha256
+                    || *route != transition.source_checkpoint_sha256
+            })
         {
             return Err(TacticQCampaignError::InvalidState(
                 "campaign checkpoint replay chain is detached",
@@ -643,33 +797,37 @@ fn validate_checkpoint(checkpoint: &TacticQCampaignCheckpoint) -> Result<(), Tac
         }
         transition
             .execution
-            .validate_against_tape(&checkpoint.route_tape)
+            .validate_against_tape(route)
             .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
         let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
             .map_err(|_| TacticQCampaignError::InvalidState("replay tape range overflows"))?;
         let end = usize::try_from(transition.execution.realized_tape_range.end_frame_exclusive)
             .map_err(|_| TacticQCampaignError::InvalidState("replay tape range overflows"))?;
-        if end > checkpoint.route_tape.frames.len()
+        if end > route.frames.len()
             || transition.source_checkpoint_sha256
                 != route_checkpoint(
                     checkpoint.root_checkpoint_sha256,
-                    &tape_prefix(&checkpoint.route_tape, start),
+                    &tape_prefix(route, start),
                 )?
             || transition.next_checkpoint_sha256
-                != route_checkpoint(
-                    checkpoint.root_checkpoint_sha256,
-                    &tape_prefix(&checkpoint.route_tape, end),
-                )?
+                != route_checkpoint(checkpoint.root_checkpoint_sha256, &tape_prefix(route, end))?
         {
             return Err(TacticQCampaignError::InvalidState(
                 "campaign checkpoint replay route is detached",
             ));
         }
-        prior_after = Some(transition.after_state_sha256);
-        prior_checkpoint = Some(transition.next_checkpoint_sha256);
+        endpoints.insert(
+            *episode_group,
+            (
+                transition.after_state_sha256,
+                transition.next_checkpoint_sha256,
+            ),
+        );
     }
-    if let Some(after) = prior_after
-        && after != checkpoint.current.snapshot_sha256
+    if let Some((after, route)) = endpoints.get(&checkpoint.episode_group)
+        && (*after != checkpoint.current.snapshot_sha256
+            || *route
+                != route_checkpoint(checkpoint.root_checkpoint_sha256, &checkpoint.route_tape)?)
     {
         return Err(TacticQCampaignError::InvalidState(
             "campaign checkpoint current state is not the replay endpoint",
@@ -729,7 +887,7 @@ fn validate_final_result(result: &TacticQFinalResult) -> Result<(), TacticQCampa
         .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
     let route_bytes = serde_json::to_vec(&result.route_tape)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    let replay_bytes = serde_json::to_vec(&result.replay)
+    let replay_bytes = serde_json::to_vec(&(&result.replay, &result.replay_routes))
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
     if result.schema != TACTIC_Q_FINAL_RESULT_SCHEMA_V1
         || result.content_sha256 == Digest::ZERO
@@ -738,6 +896,7 @@ fn validate_final_result(result: &TacticQFinalResult) -> Result<(), TacticQCampa
         || result.root_checkpoint_sha256 == Digest::ZERO
         || result.route_tape_sha256 != sha256(&route_bytes)
         || result.replay_sha256 != sha256(&replay_bytes)
+        || result.replay.len() != result.replay_routes.len()
         || result.terminal_state_sha256
             != result
                 .terminal
@@ -756,11 +915,11 @@ fn validate_final_result(result: &TacticQFinalResult) -> Result<(), TacticQCampa
             "final tactic-Q result is not an authenticated terminal route",
         ));
     }
-    for transition in &result.replay {
+    for (transition, route) in result.replay.iter().zip(&result.replay_routes) {
         transition.validate()?;
         transition
             .execution
-            .validate_against_tape(&result.route_tape)
+            .validate_against_tape(route)
             .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
     }
     Ok(())
@@ -819,6 +978,7 @@ pub enum TacticQCampaignError {
     Tape(String),
     Io(String),
     Serialization(String),
+    Frontier(String),
     LearnerState(LearnerStateError),
     Catalog(LiveTacticCatalogError),
     Exploration(TacticExplorationError),
@@ -841,6 +1001,7 @@ impl fmt::Display for TacticQCampaignError {
             Self::Serialization(message) => {
                 write!(formatter, "tactic-Q serialization failed: {message}")
             }
+            Self::Frontier(message) => write!(formatter, "tactic-Q frontier failed: {message}"),
             Self::LearnerState(error) => write!(formatter, "tactic-Q state failed: {error}"),
             Self::Catalog(error) => write!(formatter, "tactic-Q catalog failed: {error}"),
             Self::Exploration(error) => write!(formatter, "tactic-Q selection failed: {error}"),
@@ -1091,7 +1252,25 @@ mod tests {
         assert_eq!(restored.decision_index, campaign.decision_index);
         assert_eq!(restored.route_tape, campaign.route_tape);
         assert_eq!(restored.replay, campaign.replay);
+        assert_eq!(restored.replay_routes, campaign.replay_routes);
         assert!(restored.model().is_some());
+        let archive = restored.frontier_archive().unwrap();
+        assert_eq!(archive.tactic_len(), 1);
+        let [root_branch, frontier_branch] = restored.sample_root_and_frontier(5, 0, &[]).unwrap();
+        assert_eq!(root_branch.kind, TacticBranchKind::Root);
+        assert_eq!(frontier_branch.kind, TacticBranchKind::RetainedFrontier);
+        assert_eq!(
+            frontier_branch.state_sha256,
+            campaign.current.snapshot_sha256
+        );
+        let mut branched = TacticQCampaign::resume(checkpoint.clone()).unwrap();
+        branched
+            .restore_branch(&root_branch, 22, &registry, &catalog, &[], |_| true)
+            .unwrap();
+        assert_eq!(branched.episode_group, 22);
+        assert_eq!(branched.current.snapshot_sha256, root_branch.state_sha256);
+        assert!(branched.model().is_some());
+        branched.checkpoint().unwrap();
         let mut tampered = checkpoint;
         tampered.decision_index += 1;
         assert!(TacticQCampaign::resume(tampered).is_err());

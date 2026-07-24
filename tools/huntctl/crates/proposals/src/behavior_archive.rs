@@ -10,6 +10,10 @@ use crate::transition_corpus::TransitionCorpus;
 use crate::{
     observation_view::movement_state_v2_spec, offline_rl::movement_feature_schema_digest_v1,
 };
+use dusklight_automation_contracts::artifact::Digest;
+use dusklight_automation_contracts::tape::InputTape;
+use dusklight_learning::fact_snapshot::FactSnapshot;
+use dusklight_learning::option_transition::OptionTransitionSample;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -129,6 +133,33 @@ pub struct ArchivedEpisode {
 pub struct BehaviorArchive {
     entries: BTreeMap<BehaviorDescriptor, ArchivedEpisode>,
     refined_cells: BTreeMap<BehaviorDescriptor, u8>,
+    tactic_entries: BTreeMap<TacticEndpointDescriptor, TacticFrontierEntry>,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticEndpointDescriptor {
+    pub stage: String,
+    pub room: i8,
+    pub layer: Option<i8>,
+    pub player_procedure: Option<u16>,
+    pub position_bin: [i32; 3],
+    pub event_running: Option<bool>,
+    pub event_id: Option<i16>,
+    pub actor_count_bin: u16,
+    pub terminal: bool,
+    pub action_identity_sha256: Digest,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticFrontierEntry {
+    pub descriptor: TacticEndpointDescriptor,
+    pub root_checkpoint_sha256: Digest,
+    pub route_checkpoint_sha256: Digest,
+    pub transition: OptionTransitionSample,
+    pub route_tape: InputTape,
+    pub first_seen_generation: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -167,6 +198,99 @@ impl BehaviorArchive {
 
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    pub fn tactic_len(&self) -> usize {
+        self.tactic_entries.len()
+    }
+
+    /// Feed one authenticated tactic endpoint into the same bounded
+    /// quality-diversity archive used by route search. The retained route is a
+    /// restorable checkpoint: replay it from `root_checkpoint_sha256` to reach
+    /// the transition's exact after-state.
+    pub fn consider_tactic_endpoint(
+        &mut self,
+        root_checkpoint_sha256: Digest,
+        transition: OptionTransitionSample,
+        route_tape: InputTape,
+        generation: u64,
+    ) -> Result<(), BehaviorArchiveError> {
+        transition
+            .validate()
+            .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
+        route_tape
+            .validate()
+            .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
+        transition
+            .execution
+            .validate_against_tape(&route_tape)
+            .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
+        if root_checkpoint_sha256 == Digest::ZERO
+            || transition.after.tape_frame != route_tape.frames.len() as u64
+            || transition.next_checkpoint_sha256
+                != tactic_route_checkpoint(root_checkpoint_sha256, &route_tape)?
+        {
+            return Err(BehaviorArchiveError::new(
+                "tactic endpoint is detached from its restorable route",
+            ));
+        }
+        let descriptor = tactic_endpoint_descriptor(&transition)?;
+        let entry = TacticFrontierEntry {
+            descriptor: descriptor.clone(),
+            root_checkpoint_sha256,
+            route_checkpoint_sha256: transition.next_checkpoint_sha256,
+            transition,
+            route_tape,
+            first_seen_generation: generation,
+        };
+        let replace = self
+            .tactic_entries
+            .get(&descriptor)
+            .is_none_or(|incumbent| tactic_quality_cmp(&entry, incumbent).is_gt());
+        if replace {
+            self.tactic_entries.insert(descriptor, entry);
+        }
+        while self.tactic_entries.len() > MAX_BEHAVIOR_ARCHIVE_ENTRIES {
+            let remove = self
+                .tactic_entries
+                .iter()
+                .min_by(|(_, left), (_, right)| {
+                    tactic_quality_cmp(left, right)
+                        .then_with(|| right.first_seen_generation.cmp(&left.first_seen_generation))
+                })
+                .map(|(descriptor, _)| descriptor.clone())
+                .expect("nonempty tactic archive exceeds its bound");
+            self.tactic_entries.remove(&remove);
+        }
+        Ok(())
+    }
+
+    pub fn select_tactic_frontier(
+        &self,
+        reference: &[TacticEndpointDescriptor],
+        budget: usize,
+    ) -> Vec<TacticFrontierEntry> {
+        let mut pool = self.tactic_entries.values().cloned().collect::<Vec<_>>();
+        let mut selected: Vec<TacticFrontierEntry> = Vec::new();
+        while selected.len() < budget && !pool.is_empty() {
+            let index = pool
+                .iter()
+                .enumerate()
+                .max_by(|(_, left), (_, right)| {
+                    tactic_frontier_novelty(&left.descriptor, reference, &selected)
+                        .cmp(&tactic_frontier_novelty(
+                            &right.descriptor,
+                            reference,
+                            &selected,
+                        ))
+                        .then_with(|| tactic_quality_cmp(left, right))
+                        .then_with(|| right.descriptor.cmp(&left.descriptor))
+                })
+                .map(|(index, _)| index)
+                .expect("nonempty tactic frontier has a selection");
+            selected.push(pool.swap_remove(index));
+        }
+        selected
     }
 
     pub fn consider(
@@ -622,6 +746,119 @@ fn novelty(
         .unwrap_or(u128::MAX)
 }
 
+fn tactic_endpoint_descriptor(
+    transition: &OptionTransitionSample,
+) -> Result<TacticEndpointDescriptor, BehaviorArchiveError> {
+    let after: &FactSnapshot = &transition.after;
+    let position = after.player.position_f32_bits.map(f32::from_bits);
+    let position_bin = position
+        .map(|value| (f64::from(value) / f64::from(POSITION_BIN_WORLD_UNITS)).floor() as i32);
+    let action_bytes = serde_json::to_vec(&transition.value_sample.action)
+        .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
+    Ok(TacticEndpointDescriptor {
+        stage: after.world.stage.clone(),
+        room: after.world.room,
+        layer: after.world.layer,
+        player_procedure: after.player.procedure,
+        position_bin,
+        event_running: after.event.as_ref().map(|event| event.running),
+        event_id: after.event.as_ref().map(|event| event.event_id),
+        actor_count_bin: u16::try_from(after.actors.len().div_ceil(8)).unwrap_or(u16::MAX),
+        terminal: transition.value_sample.terminal,
+        action_identity_sha256: Digest(Sha256::digest(action_bytes).into()),
+    })
+}
+
+fn tactic_route_checkpoint(
+    root_checkpoint_sha256: Digest,
+    route: &InputTape,
+) -> Result<Digest, BehaviorArchiveError> {
+    let bytes =
+        serde_json::to_vec(route).map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-route-checkpoint/v1");
+    hasher.update(root_checkpoint_sha256.0);
+    hasher.update((bytes.len() as u64).to_le_bytes());
+    hasher.update(bytes);
+    Ok(Digest(hasher.finalize().into()))
+}
+
+fn tactic_quality_cmp(
+    left: &TacticFrontierEntry,
+    right: &TacticFrontierEntry,
+) -> std::cmp::Ordering {
+    left.transition
+        .value_sample
+        .terminal
+        .cmp(&right.transition.value_sample.terminal)
+        .then_with(|| {
+            left.transition
+                .value_sample
+                .reward
+                .total_cmp(&right.transition.value_sample.reward)
+        })
+        .then_with(|| {
+            right
+                .route_tape
+                .frames
+                .len()
+                .cmp(&left.route_tape.frames.len())
+        })
+        .then_with(|| {
+            right
+                .transition
+                .after_state_sha256
+                .cmp(&left.transition.after_state_sha256)
+        })
+}
+
+fn tactic_frontier_novelty(
+    descriptor: &TacticEndpointDescriptor,
+    reference: &[TacticEndpointDescriptor],
+    selected: &[TacticFrontierEntry],
+) -> u128 {
+    reference
+        .iter()
+        .map(|other| tactic_descriptor_distance(descriptor, other))
+        .chain(
+            selected
+                .iter()
+                .map(|entry| tactic_descriptor_distance(descriptor, &entry.descriptor)),
+        )
+        .min()
+        .unwrap_or(u128::MAX)
+}
+
+fn tactic_descriptor_distance(
+    left: &TacticEndpointDescriptor,
+    right: &TacticEndpointDescriptor,
+) -> u128 {
+    let mut distance = 0_u128;
+    if left.stage != right.stage {
+        distance += 1_u128 << 127;
+    }
+    if left.room != right.room || left.layer != right.layer {
+        distance += 1_u128 << 112;
+    }
+    if left.player_procedure != right.player_procedure {
+        distance += 1_u128 << 96;
+    }
+    if left.event_running != right.event_running || left.event_id != right.event_id {
+        distance += 1_u128 << 80;
+    }
+    if left.action_identity_sha256 != right.action_identity_sha256 {
+        distance += 1_u128 << 64;
+    }
+    if left.terminal != right.terminal {
+        distance += 1_u128 << 63;
+    }
+    distance += u128::from(left.actor_count_bin.abs_diff(right.actor_count_bin)).pow(2);
+    for (left, right) in left.position_bin.iter().zip(right.position_bin) {
+        distance += u128::from(left.abs_diff(right)).pow(2);
+    }
+    distance
+}
+
 fn descriptor_distance(left: &BehaviorDescriptor, right: &BehaviorDescriptor) -> u128 {
     let mut distance = 0_u128;
     if left.procedure_sequence_identity != right.procedure_sequence_identity {
@@ -713,6 +950,128 @@ mod tests {
     use crate::search::{Candidate, SegmentProfile};
     use crate::tape::{InputFrame, InputTape, RawPadState};
     use crate::transition_corpus::{MacroAction, StateReference, StateReferenceKind, Transition};
+    use dusklight_control::option_execution::{
+        OptionCondition, OptionEndReason, OptionExecution, OptionType, TapeRange,
+    };
+    use dusklight_evidence::native_episode_shard::{NativeEpisodeShard, NativeObservationPhase};
+    use dusklight_learning::fact_snapshot::FactSnapshot;
+    use dusklight_learning::option_transition::OptionTransitionSample;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn tactic_endpoints_become_restorable_quality_diversity_elites() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let step = &shard.episodes[0].steps[0];
+        let before =
+            FactSnapshot::from_native_learning(&step.pre_input, &[], None, Vec::new()).unwrap();
+        let mut route = InputTape {
+            frames: vec![InputFrame::default(); before.tape_frame as usize],
+            ..InputTape::default()
+        };
+        let mut frame = InputFrame {
+            owned_ports: 1,
+            ..InputFrame::default()
+        };
+        frame.pads[0] = RawPadState {
+            buttons: step.chosen_pad.buttons,
+            stick_x: step.chosen_pad.stick_x,
+            stick_y: step.chosen_pad.stick_y,
+            substick_x: step.chosen_pad.substick_x,
+            substick_y: step.chosen_pad.substick_y,
+            trigger_left: step.chosen_pad.trigger_left,
+            trigger_right: step.chosen_pad.trigger_right,
+            analog_a: step.chosen_pad.analog_a,
+            analog_b: step.chosen_pad.analog_b,
+            connected: step.chosen_pad.connected,
+            error: step.chosen_pad.error,
+        };
+        route.frames.push(frame);
+        let execution = OptionExecution::capture(
+            "fixture.tick".into(),
+            OptionType::Neutral,
+            BTreeMap::new(),
+            1,
+            1,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &route,
+            TapeRange {
+                start_frame: before.tape_frame,
+                end_frame_exclusive: before.tape_frame + 1,
+            },
+        )
+        .unwrap();
+        let mut boundary = step.post_simulation.clone();
+        boundary.phase = NativeObservationPhase::PreInput;
+        boundary.simulation_tick += 1;
+        boundary.tape_frame += 1;
+        let after = FactSnapshot::from_native_learning(
+            &boundary,
+            std::slice::from_ref(&step.pre_input),
+            Some(&execution),
+            Vec::new(),
+        )
+        .unwrap();
+        let root = Digest([7; 32]);
+        let prefix = InputTape {
+            frames: route.frames[..before.tape_frame as usize].to_vec(),
+            ..route.clone()
+        };
+        let transition = OptionTransitionSample::capture(
+            Digest([9; 32]),
+            tactic_route_checkpoint(root, &prefix).unwrap(),
+            tactic_route_checkpoint(root, &route).unwrap(),
+            before,
+            after,
+            execution,
+            &route,
+            1.0,
+            step.post_simulation.terminal_reason
+                == dusklight_evidence::native_episode_shard::NativeTerminalReason::GoalReached,
+            |facts| Ok::<_, &'static str>(vec![facts.tape_frame as f32]),
+        )
+        .unwrap();
+
+        let mut archive = BehaviorArchive::default();
+        archive
+            .consider_tactic_endpoint(root, transition.clone(), route.clone(), 0)
+            .unwrap();
+        assert_eq!(archive.tactic_len(), 1);
+        let selected = archive.select_tactic_frontier(&[], 1);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].route_tape, route);
+        assert_eq!(
+            selected[0].route_checkpoint_sha256,
+            transition.next_checkpoint_sha256
+        );
+
+        let mut better = transition.clone();
+        better.value_sample.reward = 2.0;
+        archive
+            .consider_tactic_endpoint(root, better, route.clone(), 1)
+            .unwrap();
+        assert_eq!(archive.tactic_len(), 1);
+        assert_eq!(
+            archive.select_tactic_frontier(&[], 1)[0]
+                .transition
+                .value_sample
+                .reward,
+            2.0
+        );
+
+        let mut detached = transition;
+        detached.next_checkpoint_sha256 = Digest([8; 32]);
+        detached.value_sample.next_checkpoint_sha256 = Digest([8; 32]);
+        assert!(
+            archive
+                .consider_tactic_endpoint(root, detached, route, 2)
+                .is_err()
+        );
+    }
 
     fn episode(x: f32, procedure: f32, frames: usize) -> QEpisode {
         let disconnected = RawPadState {

@@ -200,10 +200,6 @@ Work in this order.
   condition, exact queries, and next state.
 ### 4. Branch from useful states
 
-- [ ] Feed the existing quality-diversity archive with tactic-transition
-  endpoints and retain restorable checkpoints for selected frontier states.
-- [ ] Sample both the root and retained frontiers so the agent learns connected
-  complete routes rather than only terminal-local continuations.
 - [ ] Detect zero-diversity selection, repeated identical compositions,
   no-progress loops, and a frontier that loses root connectivity.
 - [ ] Project the resulting state/tactic/checkpoint graph for inspection and
