@@ -78,13 +78,8 @@ pub fn choose_tactic(
         return Err(TacticExplorationError::DetachedRanking);
     }
 
-    let draw = deterministic_draw(
-        config.seed,
-        decision_index,
-        ranking.learner_snapshot_sha256,
-        0,
-    );
-    let exploration_draw = (draw % u64::from(EPSILON_SCALE)) as u32;
+    let exploration_draw =
+        stratified_exploration_draw(config.seed, decision_index, config.epsilon_per_million);
     let bootstrap_unsupported = ranking.values.ranked.is_empty()
         || (ranking.values.ranked[0].mean_q <= 0.0
             && !ranking.values.unsupported.is_empty()
@@ -150,6 +145,19 @@ fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&Optio
 
 fn deterministic_index(seed: u64, decision_index: u64, state: Digest, len: usize) -> usize {
     (deterministic_draw(seed, decision_index, state, 1) % len as u64) as usize
+}
+
+/// Schedules epsilon decisions at their declared density with a seeded phase.
+///
+/// Independent Bernoulli draws can legally produce an arbitrarily long greedy
+/// streak, which makes short native campaigns depend on luck rather than their
+/// configured exploration rate. Accumulating epsilon through a fixed-size
+/// cycle retains deterministic epsilon-greedy selection while bounding the gap
+/// between exploration decisions whenever epsilon divides the scale.
+fn stratified_exploration_draw(seed: u64, decision_index: u64, epsilon: u32) -> u32 {
+    let phase = deterministic_draw(seed, 0, Digest::ZERO, 2) % u64::from(EPSILON_SCALE);
+    let offset = u128::from(decision_index) * u128::from(epsilon);
+    ((u128::from(phase) + offset) % u128::from(EPSILON_SCALE)) as u32
 }
 
 fn deterministic_draw(seed: u64, decision_index: u64, state: Digest, lane: u8) -> u64 {
@@ -263,6 +271,25 @@ mod tests {
             choose_tactic(&ranking, 7, config).unwrap().reason,
             TacticSelectionReason::Epsilon
         );
+    }
+
+    #[test]
+    fn stratified_epsilon_bounds_finite_campaign_exploration_gaps() {
+        for seed in 0..32 {
+            let quarter = (0..20)
+                .map(|decision| stratified_exploration_draw(seed, decision, 250_000))
+                .collect::<Vec<_>>();
+            for cycle in quarter.chunks_exact(4) {
+                assert_eq!(cycle.iter().filter(|draw| **draw < 250_000).count(), 1);
+            }
+
+            let tenth = (0..30)
+                .map(|decision| stratified_exploration_draw(seed, decision, 100_000))
+                .collect::<Vec<_>>();
+            for cycle in tenth.chunks_exact(10) {
+                assert_eq!(cycle.iter().filter(|draw| **draw < 100_000).count(), 1);
+            }
+        }
     }
 
     #[test]
