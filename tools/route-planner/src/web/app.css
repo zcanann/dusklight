@@ -192,6 +192,9 @@ button:disabled { opacity: .42; cursor: default; }
 .node-catalogue { flex: 0 0 auto; max-height: 44%; overflow: auto; }
 .node-catalogue > summary { cursor: pointer; color: #cbd4dc; font-size: 11px; font-weight: 700; }
 .node-catalogue > label { display: block; margin: 8px 0 5px; }
+.node-kind-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.node-kind-list button { padding: 4px 6px; color: var(--muted); background: #171d23; font-size: 9px; }
+.node-kind-list button.active { color: var(--accent); border-color: #4d819f; background: #1d2c36; }
 
 .details { border-top: 0; border-left: 1px solid #303740; padding: 14px; display: flex; flex-direction: column; gap: 15px; }
 .details button:disabled { display: none; }

@@ -167,6 +167,21 @@ try {
         && panel.querySelector('select[aria-label="Evidence policy"]').disabled;
     })()`,
   );
+  await browserUntil(
+    "code-authored node kinds",
+    `(() => {
+      const kinds = [...document.querySelectorAll("#node-kind-list [data-node-kind]")]
+        .map((button) => button.dataset.nodeKind);
+      return ["mechanic", "goal", "condition"].every((kind) => kinds.includes(kind))
+        && document.querySelectorAll('#content-browser-list [data-node-kind]').length === 0;
+    })()`,
+  );
+  await evaluate(`document.querySelector('#node-kind-list [data-node-kind="goal"]').click()`);
+  await browserUntil(
+    "goal content separated from its built-in kind",
+    `document.querySelector('#palette-list .palette-item[data-node-kind="goal"]') != null
+      && document.getElementById("palette-list").textContent.includes("Model content")`,
+  );
   await evaluate(`(() => {
     const answers = ["browser-keyed-door", "Browser keyed-door acceptance"];
     window.prompt = () => answers.shift() ?? null;
@@ -184,15 +199,21 @@ try {
 
   await evaluate(`(() => {
     const transition = ${JSON.stringify("transition.gz2e01-door1-09-close-end")};
-    const search = document.getElementById("search");
+    const canvas = document.getElementById("canvas");
+    canvas.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 420,
+      clientY: 260,
+    }));
+    const search = document.getElementById("add-node-search");
     search.value = transition;
     search.dispatchEvent(new Event("input", { bubbles: true }));
     const item = document.querySelector(
-      '#palette-list .palette-item[data-transition-id="' + transition + '"]',
+      '#add-node-results .add-node-result[data-transition-id="' + transition + '"]',
     );
-    if (!item) throw new Error("rejected transition is absent from the browser palette");
+    if (!item) throw new Error("rejected transition is absent from the right-click Add Node menu");
     item.click();
-    document.getElementById("insert-transition").click();
     return true;
   })()`);
   await browserUntil(

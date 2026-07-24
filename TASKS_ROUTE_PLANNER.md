@@ -96,11 +96,6 @@ or test fixture does not count as progress by itself.
 
 ## 3. Workspace and asset architecture
 
-### 3.2 Separate Workspace and Library content
-
-- [ ] Surface code-authored node kinds through the node catalogue, not as fake
-      content files.
-
 ### 3.3 Implement real CRUD
 
 - [ ] Add create, rename, move, duplicate, delete-to-trash, restore, and permanent
@@ -122,8 +117,6 @@ or test fixture does not count as progress by itself.
 
 ### 5.1 Node catalogue and placement
 
-- [ ] Add a canvas context menu with searchable, categorized **Add Node**
-      results.
 - [ ] Let dragging from a pin open the same catalogue filtered to compatible
       nodes.
 - [ ] Merge three sources into the catalogue without conflating them:

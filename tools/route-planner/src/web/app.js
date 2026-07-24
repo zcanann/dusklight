@@ -57,6 +57,26 @@ const FRIENDLY_CLASSIFICATIONS = {
   inapplicable: "Not applicable",
   not_assessed: "Not checked",
 };
+const CODE_AUTHORED_NODE_KINDS = [
+  {
+    id: "mechanic",
+    label: "Mechanic",
+    payloadKinds: new Set(["transition"]),
+    description: "Apply a typed mechanic from the current model to the route.",
+  },
+  {
+    id: "goal",
+    label: "Goal",
+    payloadKinds: new Set(["goal"]),
+    description: "Inspect or solve a goal defined by the current model.",
+  },
+  {
+    id: "condition",
+    label: "Condition",
+    payloadKinds: new Set(["alias", "derived_fact", "external_fact", "predicate"]),
+    description: "Inspect a typed fact or predicate used by route contracts.",
+  },
+];
 
 const elements = Object.fromEntries([
   "workspace-list", "new-workspace", "workspace-tab", "library-tab", "content-search",
@@ -67,7 +87,7 @@ const elements = Object.fromEntries([
   "import-workspace", "export-workspace", "workspace-file",
   "add-node-menu", "add-node-search", "add-node-results",
   "project-list", "open-project", "save-project", "save-as-project",
-  "export-project", "project-file", "project-name", "status", "search", "palette-list",
+  "export-project", "project-file", "project-name", "status", "search", "node-kind-list", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state",
   "empty-primary", "empty-secondary", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
@@ -110,6 +130,7 @@ const state = {
   solveReport: null,
   groupSelection: new Set(),
   emptyActions: { primary: null, secondary: null },
+  nodeKindFilter: "mechanic",
 };
 
 elements["workspace-list"].addEventListener("change", () => {
@@ -2027,12 +2048,16 @@ function renderAddNodeMenu() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "add-node-result";
+    button.dataset.nodeKind = "mechanic";
+    button.dataset.transitionId = match.node.payload.transition_id;
     const label = document.createElement("strong");
     label.textContent = match.node.label;
     const compatibility = document.createElement("span");
     compatibility.className = `compatibility ${match.classification}`;
     compatibility.textContent = friendlyClassification(match.classification);
-    button.append(label, compatibility);
+    const source = document.createElement("small");
+    source.textContent = `Model mechanic · ${friendlyEnum(match.contract?.transition_kind ?? "mechanic")}`;
+    button.append(label, compatibility, source);
     button.addEventListener("click", async () => {
       closeAddNodeMenu();
       selectNode(match.node);
@@ -2051,10 +2076,35 @@ function renderAddNodeMenu() {
   if (!matches.length) results.append(contentMessage("No compatible node kinds found."));
 }
 
+function renderNodeKindCatalogue() {
+  const list = elements["node-kind-list"];
+  list.replaceChildren();
+  for (const kind of CODE_AUTHORED_NODE_KINDS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset.nodeKind = kind.id;
+    button.textContent = kind.label;
+    button.title = kind.description;
+    const active = state.nodeKindFilter === kind.id;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+    button.addEventListener("click", () => {
+      state.nodeKindFilter = kind.id;
+      renderNodeKindCatalogue();
+      renderPalette();
+      elements.search.focus();
+    });
+    list.append(button);
+  }
+}
+
 function renderPalette(selectedFeasibility = state.selectedStateFeasibility) {
   elements["palette-list"].replaceChildren();
+  renderNodeKindCatalogue();
   if (!state.graph || !state.project) return;
   const query = elements.search.value.trim().toLowerCase();
+  const selectedKind = CODE_AUTHORED_NODE_KINDS.find((kind) =>
+    kind.id === state.nodeKindFilter) ?? CODE_AUTHORED_NODE_KINDS[0];
   const assessedTransitions = selectedFeasibility?.transitions.map((record) => ({
     transition_id: record.transition_id,
     assessment: record.modeled,
@@ -2070,9 +2120,8 @@ function renderPalette(selectedFeasibility = state.selectedStateFeasibility) {
     record,
   ]));
   const matches = state.graph.nodes.filter((node) => {
+    if (!selectedKind.payloadKinds.has(node.payload.kind)) return false;
     const transition = node.payload.kind === "transition";
-    const fact = node.payload.kind === "alias" || node.payload.kind === "derived_fact";
-    if (!transition && (!query || !fact)) return false;
     const contract = selectedContract(node);
     const contractText = transition
       ? state.transitionSearch.get(node.payload.transition_id)
@@ -2091,14 +2140,15 @@ function renderPalette(selectedFeasibility = state.selectedStateFeasibility) {
     const transition = node.payload.kind === "transition";
     button.className = `palette-item${transition ? "" : " fact"}`;
     button.draggable = transition;
+    button.dataset.nodeKind = selectedKind.id;
     if (transition) button.dataset.transitionId = node.payload.transition_id;
     const label = document.createElement("span");
     label.textContent = node.label;
     const id = document.createElement("small");
     const frontier = transition ? frontierTransitions.get(node.payload.transition_id) : null;
     id.textContent = transition
-      ? `${friendlyClassification(frontier?.assessment.classification)} · ${friendlyEnum(selectedContract(node)?.transition_kind ?? "mechanic")}`
-      : friendlyKind(node.payload.kind);
+      ? `Model mechanic · ${friendlyClassification(frontier?.assessment.classification)} · ${friendlyEnum(selectedContract(node)?.transition_kind ?? "mechanic")}`
+      : `Model content · ${friendlyKind(node.payload.kind)}`;
     button.append(label, id);
     button.addEventListener("click", () => {
       state.selected = { type: "node", value: node };
@@ -2115,6 +2165,13 @@ function renderPalette(selectedFeasibility = state.selectedStateFeasibility) {
       });
     }
     elements["palette-list"].append(button);
+  }
+  if (!matches.length) {
+    elements["palette-list"].append(contentMessage(
+      query
+        ? `No ${selectedKind.label.toLowerCase()} content matches this search.`
+        : `The current model has no ${selectedKind.label.toLowerCase()} content.`,
+    ));
   }
 }
 
