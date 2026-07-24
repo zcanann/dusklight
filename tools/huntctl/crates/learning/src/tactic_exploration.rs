@@ -90,25 +90,28 @@ pub fn choose_tactic(
             && !ranking.values.unsupported.is_empty()
             && exploration_draw >= config.epsilon_per_million);
     let (descriptor, reason) = if bootstrap_unsupported {
+        let unsupported = prioritized_unsupported(&ranking.values.unsupported);
         let index = deterministic_index(
             config.seed,
             decision_index,
             ranking.learner_snapshot_sha256,
-            ranking.values.unsupported.len(),
+            unsupported.len(),
         );
         (
-            ranking.values.unsupported[index].clone(),
+            unsupported[index].clone(),
             TacticSelectionReason::UnsupportedBootstrap,
         )
     } else if exploration_draw < config.epsilon_per_million {
         // Finite tactic catalogs should spend exploratory decisions on choices
         // for which the learner has no transition evidence before resampling a
-        // known action. This is still epsilon-greedy—the greedy branch is
-        // unchanged—but makes basic coverage prompt and demonstrable.
+        // known action. Prefer typed spatial targets while any remain untried;
+        // they are the goal-conditioned navigation basis, whereas generic
+        // headings remain available after spatial coverage. This is still
+        // epsilon-greedy—the greedy branch is unchanged.
         let exploratory = if ranking.values.unsupported.is_empty() {
             available
         } else {
-            ranking.values.unsupported.iter().collect::<Vec<_>>()
+            prioritized_unsupported(&ranking.values.unsupported)
         };
         let index = deterministic_index(
             config.seed,
@@ -131,6 +134,18 @@ pub fn choose_tactic(
         reason,
         exploration_draw,
     })
+}
+
+fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&OptionActionDescriptor> {
+    let spatial = unsupported
+        .iter()
+        .filter(|descriptor| descriptor.parameters.contains_key("coordinate"))
+        .collect::<Vec<_>>();
+    if spatial.is_empty() {
+        unsupported.iter().collect()
+    } else {
+        spatial
+    }
 }
 
 fn deterministic_index(seed: u64, decision_index: u64, state: Digest, len: usize) -> usize {
@@ -174,7 +189,7 @@ mod tests {
     use crate::option_values::{AvailableOptionRanking, RankedOption};
     use crate::tactic_asset::TacticDurationBounds;
     use crate::tactic_blueprint::ConcreteTacticChoiceKind;
-    use dusklight_control::option_execution::OptionType;
+    use dusklight_control::option_execution::{OptionParameter, OptionType};
     use std::collections::BTreeMap;
 
     fn descriptor(id: &str, option_type: OptionType) -> OptionActionDescriptor {
@@ -327,6 +342,48 @@ mod tests {
             )
             .unwrap();
             assert_eq!(selected.descriptor, fresh);
+            assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
+        }
+    }
+
+    #[test]
+    fn unsupported_spatial_tactics_are_covered_before_generic_controls() {
+        let known = descriptor("known", OptionType::Neutral);
+        let generic = descriptor("generic", OptionType::MaintainHeading);
+        let mut spatial = descriptor("spatial", OptionType::Move);
+        spatial.parameters.insert(
+            "coordinate".into(),
+            OptionParameter::Vec3F32Bits([1.0_f32.to_bits(), 2.0_f32.to_bits(), 3.0_f32.to_bits()]),
+        );
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([5; 32]),
+            action_universe_sha256: Digest([6; 32]),
+            choices: vec![
+                choice(generic.clone()),
+                choice(known.clone()),
+                choice(spatial.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 1,
+                    descriptor: known,
+                    mean_q: 5.0,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: vec![generic, spatial.clone()],
+            },
+        };
+        for seed in 0..16 {
+            let selected = choose_tactic(
+                &ranking,
+                0,
+                TacticExplorationConfig {
+                    seed,
+                    epsilon_per_million: EPSILON_SCALE,
+                },
+            )
+            .unwrap();
+            assert_eq!(selected.descriptor, spatial);
             assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
         }
     }
