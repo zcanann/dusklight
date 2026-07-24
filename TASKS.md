@@ -195,11 +195,9 @@ Work in this order.
 
 ### 3. Wire the existing Q and tactic executors into a campaign
 
-- [ ] Extend persistent execution from exact static tactics and static
-  composites to native-generic and reactive-controller observation loops,
-  preserving their real stopping condition and next state.
-- [ ] Add configurable potential shaping, tick cost, novelty, terminal reward,
-  and hindsight rows while keeping terminal authority separate.
+- [ ] Extend persistent execution from static and native-generic tactics to
+  reactive DUSKCTRL observation loops, preserving their real stopping
+  condition, exact queries, and next state.
 - [ ] Persist only enough crash-safe state to resume the loop and authenticate a
   final result; do not seal every transient refit.
 
