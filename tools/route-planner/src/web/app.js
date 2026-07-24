@@ -10,6 +10,7 @@ const WORKSPACE_ASSET_SCHEMA = "dusklight.route-planner.workspace-asset/v1";
 const WORKSPACE_ASSET_SAVE_SCHEMA = "dusklight.route-planner.workspace-asset-save/v1";
 const WORKSPACE_ASSET_COMMAND_SCHEMA = "dusklight.route-planner.workspace-asset-command/v1";
 const WORKSPACE_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-trash-command/v1";
+const WORKSPACE_LIBRARY_FORK_SCHEMA = "dusklight.route-planner.workspace-library-fork/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
@@ -443,6 +444,7 @@ function libraryContentItem(library) {
     ["Inspect", () => inspectLibrary(library), false],
     ["Add Reference", () => addLibraryReference(library), true],
     ["Create Scenario from Template", () => createScenarioFromLibrary(library), true],
+    ["Fork to Workspace", () => forkLibraryToWorkspace(library), true],
   ]) {
     const button = document.createElement("button");
     button.type = "button";
@@ -519,6 +521,39 @@ async function addLibraryReference(library) {
     await refreshWorkspaces(workspaceId);
     renderContentBrowser();
     setStatus(`Referenced exact Library ${library.label}`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function forkLibraryToWorkspace(library) {
+  if (!state.workspace) {
+    setStatus("Create or open a workspace first", "bad");
+    return;
+  }
+  const namespace = prompt("Fork namespace", `${slug(library.id)}-fork`);
+  if (namespace == null || !namespace.trim()) return;
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    state.workspace = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/library-forks/${encodeURIComponent(library.id)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schema: WORKSPACE_LIBRARY_FORK_SCHEMA,
+          namespace: namespace.trim(),
+        }),
+      },
+    );
+    state.workspaceSignature = workspaceSignature(state.workspace);
+    await refreshTrash();
+    await refreshWorkspaces(workspaceId);
+    selectContentSource("workspace");
+    const graphId = `route-graph.${slug(namespace)}`;
+    const graph = state.workspace.assets.find((asset) => asset.id === graphId);
+    if (graph) await inspectWorkspaceAsset(graph);
+    setStatus("Library content forked with exact provenance", "good");
   } catch (error) {
     setStatus(error.message, "bad");
   }

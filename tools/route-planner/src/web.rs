@@ -4,7 +4,8 @@ use crate::project::{ProjectSaveRequest, ProjectStore};
 use crate::service::{PlannerServiceEnvelope, error_response, handle_envelope};
 use crate::workspace::{
     BUILTIN_LIBRARY_VERSION, WorkspaceAssetCommandRequest, WorkspaceAssetSaveRequest,
-    WorkspaceCreateRequest, WorkspaceRegistry, WorkspaceTrashCommandRequest,
+    WorkspaceCreateRequest, WorkspaceLibraryForkRequest, WorkspaceRegistry,
+    WorkspaceTrashCommandRequest,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -333,6 +334,42 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
                         workspace_id,
                         &project.project,
                         project.revision_sha256,
+                    )
+                    .map_err(|error| error.to_string())
+            })
+        }
+        [_, "library-forks", library_id]
+            if request.method == "POST" && !library_id.is_empty() =>
+        {
+            let fork = match serde_json::from_slice::<WorkspaceLibraryForkRequest>(&request.body) {
+                Ok(fork) => fork,
+                Err(error) => {
+                    return project_error_response(400, "Bad Request", &error.to_string());
+                }
+            };
+            project_response(|| {
+                let project = {
+                    let projects = state
+                        .projects
+                        .lock()
+                        .map_err(|_| "project store lock is poisoned".to_owned())?;
+                    projects
+                        .load(library_id)
+                        .map_err(|error| error.to_string())?
+                };
+                if !project.read_only {
+                    return Err("only read-only Library content can be forked".into());
+                }
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry
+                    .fork_library(
+                        workspace_id,
+                        &project.project,
+                        project.revision_sha256,
+                        fork,
                     )
                     .map_err(|error| error.to_string())
             })
@@ -861,6 +898,26 @@ mod tests {
                     || asset["kind"] == "route_book"
                     || asset.get("revision_sha256").is_some())
         );
+
+        let fork = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_LIBRARY_FORK_SCHEMA,
+            "namespace": "forest-alternate",
+        });
+        let forked = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/library-forks/demo-forest-keyed-door".into(),
+                body: serde_json::to_vec(&fork).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(forked.status, 200);
+        let forked: serde_json::Value = serde_json::from_slice(&forked.body).unwrap();
+        assert!(forked["assets"].as_array().unwrap().iter().any(|asset| {
+            asset["id"] == "route-graph.forest-alternate"
+                && asset["kind"] == "route_graph"
+                && asset.get("revision_sha256").is_some()
+        }));
 
         let asset = crate::workspace::WorkspaceAsset {
             schema: crate::workspace::WORKSPACE_ASSET_SCHEMA.into(),

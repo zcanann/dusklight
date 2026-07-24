@@ -34,6 +34,8 @@ pub const WORKSPACE_ASSET_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-asset-command/v1";
 pub const WORKSPACE_TRASH_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-trash-command/v1";
+pub const WORKSPACE_LIBRARY_FORK_SCHEMA: &str =
+    "dusklight.route-planner.workspace-library-fork/v1";
 pub const BUILTIN_LIBRARY_VERSION: &str = "builtin-v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
@@ -368,6 +370,13 @@ pub struct WorkspaceTrashCommandRequest {
     pub schema: String,
     pub expected_revision_sha256: Digest,
     pub command: WorkspaceTrashCommand,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceLibraryForkRequest {
+    pub schema: String,
+    pub namespace: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -960,6 +969,23 @@ impl WorkspaceRegistry {
         workspace_record(&store)
     }
 
+    pub fn fork_library(
+        &self,
+        workspace_id: &str,
+        project: &PlannerWebProject,
+        library_sha256: Digest,
+        request: WorkspaceLibraryForkRequest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_LIBRARY_FORK_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace Library fork schema is unsupported",
+            ));
+        }
+        let mut store = self.open_workspace(workspace_id)?;
+        store.fork_project_template(project, library_sha256, &request.namespace)?;
+        workspace_record(&store)
+    }
+
     fn open_workspace(&self, id: &str) -> Result<WorkspaceStore, WorkspaceError> {
         let path = self.workspace_path(id)?;
         if !path.is_dir() {
@@ -1393,6 +1419,32 @@ impl WorkspaceStore {
         project: &PlannerWebProject,
         library_sha256: Digest,
     ) -> Result<(), WorkspaceError> {
+        let fragment = stable_fragment(&project.id);
+        self.import_project_template_as(project, library_sha256, &fragment)
+    }
+
+    fn fork_project_template(
+        &mut self,
+        project: &PlannerWebProject,
+        library_sha256: Digest,
+        namespace: &str,
+    ) -> Result<(), WorkspaceError> {
+        validate_stable_id("Library fork namespace", namespace)?;
+        let fragment = stable_fragment(namespace);
+        if fragment.is_empty() {
+            return Err(WorkspaceError::new(
+                "Library fork namespace must contain letters or digits",
+            ));
+        }
+        self.import_project_template_as(project, library_sha256, &fragment)
+    }
+
+    fn import_project_template_as(
+        &mut self,
+        project: &PlannerWebProject,
+        library_sha256: Digest,
+        fragment: &str,
+    ) -> Result<(), WorkspaceError> {
         project
             .validate()
             .map_err(|error| WorkspaceError::new(error.to_string()))?;
@@ -1408,7 +1460,6 @@ impl WorkspaceStore {
             .environment
             .runtime_configuration
             .exact_context()?;
-        let fragment = stable_fragment(&project.id);
         let scenario_id = format!("scenario.{fragment}");
         let graph_id = format!("route-graph.{fragment}");
         let state_id = format!("state-seed.{fragment}");

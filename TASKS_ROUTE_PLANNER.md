@@ -97,9 +97,6 @@ or test fixture does not count as progress by itself.
 
 ### 3.2 Separate Workspace and Library content
 
-- [ ] Make library operations contextual: Open, Inspect, Add Reference, Create
-      Scenario From Template, and Fork to Workspace. Do not show disabled
-      Rename/Delete commands.
 - [ ] Make dragging a Library asset create a reference. Copying or forking must
       remain an explicit separate action with recorded provenance.
 - [ ] Surface code-authored node kinds through the node catalogue, not as fake
