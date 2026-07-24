@@ -198,8 +198,6 @@ Work in this order.
 - [ ] Extend persistent execution from exact static tactics and static
   composites to native-generic and reactive-controller observation loops,
   preserving their real stopping condition and next state.
-- [ ] Refit the existing option-value model from accumulated replay and repeat:
-  `restore -> observe -> enumerate -> choose -> execute -> retain -> refit`.
 - [ ] Add configurable potential shaping, tick cost, novelty, terminal reward,
   and hindsight rows while keeping terminal authority separate.
 - [ ] Persist only enough crash-safe state to resume the loop and authenticate a
