@@ -4,7 +4,7 @@
 //! and discrete macro actions. It is not tied to a game process or tape format.
 
 use crate::artifact::Digest;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -31,7 +31,7 @@ pub struct Transition {
 }
 
 /// Controls both Bellman fitting and the small regression forests.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct FqiConfig {
     /// Number of fitted Bellman backups.
     pub iterations: usize,

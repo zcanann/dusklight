@@ -10,14 +10,14 @@ use crate::tactic_blueprint::{
     ApplicableTacticChoices, ConcreteTacticChoiceKind, TacticBlueprint, TacticBlueprintError,
 };
 use dusklight_control::option_execution::{OptionCondition, OptionParameter};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt::{self, Write as _};
 
 pub const LEARNER_STATE_SCHEMA_V1: &str = "dusklight-learner-state/v1";
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LearnerState {
     pub schema: String,
@@ -29,7 +29,7 @@ pub struct LearnerState {
     pub action_mask: Vec<LearnerActionMaskEntry>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LearnerActionMaskEntry {
     pub choice_id: String,

@@ -142,7 +142,8 @@ pub struct InputFrame {
     pub pads: [RawPadState; PORT_COUNT],
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct InputTape {
     pub boot: TapeBoot,
     pub tick_rate_numerator: u32,

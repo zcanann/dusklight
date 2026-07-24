@@ -198,9 +198,6 @@ Work in this order.
 - [ ] Extend persistent execution from static and native-generic tactics to
   reactive DUSKCTRL observation loops, preserving their real stopping
   condition, exact queries, and next state.
-- [ ] Persist only enough crash-safe state to resume the loop and authenticate a
-  final result; do not seal every transient refit.
-
 ### 4. Branch from useful states
 
 - [ ] Feed the existing quality-diversity archive with tactic-transition

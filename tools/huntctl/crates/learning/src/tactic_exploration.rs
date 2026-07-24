@@ -3,7 +3,7 @@
 use crate::artifact::Digest;
 use crate::live_tactic_catalog::LiveTacticRanking;
 use crate::option_values::OptionActionDescriptor;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
@@ -11,7 +11,7 @@ use std::fmt;
 pub const TACTIC_EXPLORATION_SCHEMA_V1: &str = "dusklight-tactic-exploration/v1";
 pub const EPSILON_SCALE: u32 = 1_000_000;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticExplorationConfig {
     pub seed: u64,

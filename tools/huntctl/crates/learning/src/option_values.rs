@@ -120,7 +120,7 @@ impl OptionValueBatch {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct OptionValueConfig {
     pub fitted_q: FqiConfig,
 }

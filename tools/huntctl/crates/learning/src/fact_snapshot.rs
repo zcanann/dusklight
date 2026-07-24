@@ -12,7 +12,7 @@ use dusklight_evidence::native_episode_shard::{
     NativeActorObservation, NativeActorSelectionRule, NativeChannelStatus,
     NativeLearningObservation, NativeObservationPhase, NativeRawPad, NativeTerminalReason,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
@@ -22,14 +22,14 @@ pub const MAX_FACT_HISTORY: usize = 8;
 pub const MAX_FACT_ACTORS: usize = 4_096;
 pub const MAX_CONDITION_EVALUATIONS: usize = 256;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactObservationSource {
     NativeLearning,
     NativeTactic,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactPhase {
     PreInput,
@@ -37,7 +37,7 @@ pub enum FactPhase {
     TacticBoundary,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactAvailability {
     Available,
@@ -46,7 +46,7 @@ pub enum FactAvailability {
     NotSampled,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactSnapshot {
     pub schema: String,
@@ -69,7 +69,7 @@ pub struct FactSnapshot {
     pub conditions: Vec<ConditionFactSnapshot>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorldFactSnapshot {
     pub stage: String,
@@ -82,7 +82,7 @@ pub struct WorldFactSnapshot {
     pub next_point: Option<i16>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlayerFactSnapshot {
     pub present: bool,
@@ -105,14 +105,14 @@ pub struct PlayerFactSnapshot {
     pub previous_pad: Option<PadFactSnapshot>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActionLaneFactSnapshot {
     pub resource_id: u16,
     pub frame_f32_bits: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PadFactSnapshot {
     pub buttons: u16,
@@ -128,7 +128,7 @@ pub struct PadFactSnapshot {
     pub error: i8,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EventFactSnapshot {
     pub running: bool,
@@ -139,7 +139,7 @@ pub struct EventFactSnapshot {
     pub name_hash: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactTerminalReason {
     None,
@@ -148,7 +148,7 @@ pub enum FactTerminalReason {
     NotReported,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TerminalFactSnapshot {
     pub reason: FactTerminalReason,
@@ -161,7 +161,7 @@ pub struct TerminalFactSnapshot {
     pub first_hit_tick: Option<u64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ActorFactSnapshot {
     pub portable_selector: Option<PlacedActorSelector>,
@@ -182,7 +182,7 @@ pub struct ActorFactSnapshot {
     pub trigger_volume_present: Option<bool>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelFactSnapshot {
     pub camera: FactAvailability,
@@ -201,14 +201,14 @@ pub struct ChannelFactSnapshot {
     pub resource_loads: FactAvailability,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ByteBankFactSnapshot {
     pub availability: FactAvailability,
     pub bytes: Vec<u8>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlagBankFactSnapshot {
     pub event: ByteBankFactSnapshot,
@@ -219,7 +219,7 @@ pub struct FlagBankFactSnapshot {
     pub switch_room: Option<i8>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HistoryFactSnapshot {
     pub boundary_index: u64,
@@ -233,7 +233,7 @@ pub struct HistoryFactSnapshot {
     pub previous_pad: PadFactSnapshot,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RecentOptionFactSnapshot {
     pub option_id: String,
@@ -243,7 +243,7 @@ pub struct RecentOptionFactSnapshot {
     pub tape_end_exclusive: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConditionFactSnapshot {
     pub condition: OptionCondition,

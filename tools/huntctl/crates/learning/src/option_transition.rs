@@ -6,7 +6,7 @@ use crate::fact_snapshot::{FactPhase, FactSnapshot};
 use crate::option_values::{OptionActionDescriptor, OptionValueSample};
 use crate::tape::InputTape;
 use dusklight_control::option_execution::{OptionExecution, TapeRange};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
 use std::fmt;
@@ -17,7 +17,7 @@ pub const OPTION_TRANSITION_SAMPLE_SCHEMA_V1: &str = "dusklight-option-transitio
 /// the compact `OptionValueSample`. The Q implementation continues to consume
 /// only `value_sample`; checkpoint and PAD provenance remain inspectable and
 /// cannot drift away from it.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptionTransitionSample {
     pub schema: String,
