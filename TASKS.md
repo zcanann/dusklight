@@ -784,7 +784,13 @@ revalidated crash-safe journal/state chain.
       Full-budget learners use eight 256-rollout online generations; the
       half-budget learned-plus-refinement arm uses four. This preserves the
       exact 160-tick phase budgets while avoiding eight times as many redundant
-      full-corpus retrains as the original 32-rollout draft.
+      full-corpus retrains as the original 32-rollout draft. The Git-owned v2
+      plan preserves that predeclared matrix while binding both held-out tapes
+      to native boundary fingerprint `4786d70e77b31416d02864783434c7dc`,
+      which is the checkpoint identity authenticated by the available
+      `89e1737...` card fixture and its `4786d70e...` manifest; the unavailable
+      v1 fixture identity is not relabeled:
+      `routes/Glitch Exhibition/intro/benchmarks/ordon-gate4-learning-value-comparison-v2.plan.json`.
 - [ ] Evaluate across several deterministic seeds and held-out checkpoints.
       The matrix evidence boundary is implemented but this item remains open
       until all 40 real cells exist. Each cell now reopens its optimization,

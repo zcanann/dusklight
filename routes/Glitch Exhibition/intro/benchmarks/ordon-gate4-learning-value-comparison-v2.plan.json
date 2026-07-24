@@ -1,0 +1,108 @@
+{
+  "schema": "dusklight-learning-value-comparison-plan/v1",
+  "content_sha256": "7ceb77ab15ae43269fc553ca94a4fa44af22e56afae3a47c6cce4de561f51fb6",
+  "id": "ordon-gate4-learning-value-v2",
+  "terminal_program_sha256": "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169",
+  "terminal_definition_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+  "simulated_tick_budget_per_cell": 327680,
+  "repetitions_per_cell": 1,
+  "deterministic_seeds": [
+    104729,
+    130363,
+    155921,
+    181081
+  ],
+  "held_out_checkpoints": [
+    {
+      "id": "ordon-degraded-q131",
+      "source": {
+        "path": "routes/Glitch Exhibition/intro/segments/to_ordon_spring_degraded_q131.tape",
+        "sha256": "58bb15b331763df58a70ab06ab20c4d3a1d14713c46dabd6c34a19425354d799"
+      },
+      "source_boundary_index": 506,
+      "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc"
+    },
+    {
+      "id": "ordon-q125",
+      "source": {
+        "path": "routes/Glitch Exhibition/intro/segments/to_ordon_spring_q125.tape",
+        "sha256": "cf0b5cc3a9987b0c5944a30e6d636daaba52f7bc28dfd50fdc90babecf280152"
+      },
+      "source_boundary_index": 506,
+      "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc"
+    }
+  ],
+  "treatments": [
+    {
+      "kind": "independent_random_residual",
+      "budget": {
+        "discovery_simulated_ticks": 0,
+        "refinement_simulated_ticks": 327680
+      },
+      "optimizer": {
+        "kind": "random",
+        "samples": 1024
+      }
+    },
+    {
+      "kind": "cem_residual",
+      "budget": {
+        "discovery_simulated_ticks": 0,
+        "refinement_simulated_ticks": 327680
+      },
+      "optimizer": {
+        "kind": "cem",
+        "population": 64,
+        "elites": 8,
+        "generations": 16,
+        "smoothing_millionths": 250000
+      }
+    },
+    {
+      "kind": "demonstration_assisted_state_reactive",
+      "budget": {
+        "discovery_simulated_ticks": 327680,
+        "refinement_simulated_ticks": 0
+      },
+      "generation_limit": 8,
+      "rollouts_per_generation": 256
+    },
+    {
+      "kind": "from_scratch_state_reactive",
+      "budget": {
+        "discovery_simulated_ticks": 327680,
+        "refinement_simulated_ticks": 0
+      },
+      "generation_limit": 8,
+      "rollouts_per_generation": 256
+    },
+    {
+      "kind": "learned_then_residual_refinement",
+      "budget": {
+        "discovery_simulated_ticks": 163840,
+        "refinement_simulated_ticks": 163840
+      },
+      "generation_limit": 4,
+      "rollouts_per_generation": 256,
+      "refinement_optimizer": {
+        "kind": "cem",
+        "population": 64,
+        "elites": 8,
+        "generations": 16,
+        "smoothing_millionths": 250000
+      }
+    }
+  ],
+  "win_rule": {
+    "metrics": [
+      "successful_episode_rate",
+      "best_first_hit_tick",
+      "first_success_simulated_ticks"
+    ],
+    "minimum_success_rate_gain_millionths": 10000,
+    "minimum_first_hit_improvement_ticks": 1,
+    "minimum_sample_efficiency_gain_millionths": 10000,
+    "require_negative_control_loss": true
+  },
+  "promotion_authority": false
+}
