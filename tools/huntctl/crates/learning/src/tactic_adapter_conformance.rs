@@ -142,6 +142,14 @@ fn multi_tactic_adapters_preserve_queries_composition_boundaries_and_pad() {
         reward: 1.0,
         next_state: vec![1.0],
         terminal: true,
+        before_state_sha256: Digest([10; 32]),
+        after_state_sha256: Digest([11; 32]),
+        source_checkpoint_sha256: Digest([12; 32]),
+        next_checkpoint_sha256: Digest([13; 32]),
+        realized_tape_range: TapeRange {
+            start_frame: 0,
+            end_frame_exclusive: 1,
+        },
         realized_tape_sha256: Digest([9; 32]),
     };
     let model = OptionValueModel::fit(1, &[sample], &[0], &OptionValueConfig::default()).unwrap();

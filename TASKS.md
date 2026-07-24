@@ -195,8 +195,6 @@ Work in this order.
 
 ### 3. Wire the existing Q and tactic executors into a campaign
 
-- [ ] Convert each realized `OptionExecution` plus before/after facts, reward,
-  duration, terminal, checkpoint, and PAD range into an `OptionValueSample`.
 - [ ] Build the live executable catalog for each state and use the existing
   duration-aware `OptionValueModel` to rank it.
 - [ ] Add epsilon-greedy or uncertainty-aware exploration around the existing

@@ -240,6 +240,14 @@ mod tests {
             reward,
             next_state: vec![state + 1.0],
             terminal: true,
+            before_state_sha256: Digest([tape_byte.wrapping_add(1); 32]),
+            after_state_sha256: Digest([tape_byte.wrapping_add(2); 32]),
+            source_checkpoint_sha256: Digest([tape_byte.wrapping_add(3); 32]),
+            next_checkpoint_sha256: Digest([tape_byte.wrapping_add(4); 32]),
+            realized_tape_range: TapeRange {
+                start_frame: 0,
+                end_frame_exclusive: u64::from(candidate.plan.planned_ticks().unwrap()),
+            },
             realized_tape_sha256: Digest([tape_byte; 32]),
         }
     }

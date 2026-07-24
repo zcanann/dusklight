@@ -1219,6 +1219,14 @@ mod tests {
                 reward: 1.0,
                 next_state: vec![state + 1.0],
                 terminal: true,
+                before_state_sha256: Digest([index as u8 + 3; 32]),
+                after_state_sha256: Digest([index as u8 + 4; 32]),
+                source_checkpoint_sha256: Digest([index as u8 + 5; 32]),
+                next_checkpoint_sha256: Digest([index as u8 + 6; 32]),
+                realized_tape_range: TapeRange {
+                    start_frame: 0,
+                    end_frame_exclusive: 3,
+                },
                 realized_tape_sha256: Digest([index as u8 + 1; 32]),
             })
             .collect::<Vec<_>>();

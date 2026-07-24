@@ -333,6 +333,14 @@ mod tests {
             reward: -0.25,
             next_state: vec![1.0],
             terminal: false,
+            before_state_sha256: Digest([4; 32]),
+            after_state_sha256: Digest([5; 32]),
+            source_checkpoint_sha256: Digest([6; 32]),
+            next_checkpoint_sha256: Digest([7; 32]),
+            realized_tape_range: crate::option_execution::TapeRange {
+                start_frame: 0,
+                end_frame_exclusive: 4,
+            },
             realized_tape_sha256: Digest([3; 32]),
         }
     }

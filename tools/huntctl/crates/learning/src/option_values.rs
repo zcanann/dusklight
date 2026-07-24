@@ -6,7 +6,7 @@
 
 use crate::artifact::Digest;
 use crate::fqi::{FittedQ, FqiConfig, FqiError, QEstimate, Transition};
-use crate::option_execution::{OptionParameter, OptionType};
+use crate::option_execution::{OptionParameter, OptionType, TapeRange};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -57,6 +57,11 @@ pub struct OptionValueSample {
     pub reward: f32,
     pub next_state: Vec<f32>,
     pub terminal: bool,
+    pub before_state_sha256: Digest,
+    pub after_state_sha256: Digest,
+    pub source_checkpoint_sha256: Digest,
+    pub next_checkpoint_sha256: Digest,
+    pub realized_tape_range: TapeRange,
     /// Digest of the exact raw tape emitted by this realized option.
     pub realized_tape_sha256: Digest,
 }
@@ -307,6 +312,15 @@ fn validate_sample(
             .any(|value| !value.is_finite())
         || !sample.reward.is_finite()
         || sample.duration_ticks == 0
+        || sample.before_state_sha256 == Digest::ZERO
+        || sample.after_state_sha256 == Digest::ZERO
+        || sample.source_checkpoint_sha256 == Digest::ZERO
+        || sample.next_checkpoint_sha256 == Digest::ZERO
+        || sample.realized_tape_range.end_frame_exclusive
+            <= sample.realized_tape_range.start_frame
+        || sample.realized_tape_range.end_frame_exclusive
+            - sample.realized_tape_range.start_frame
+            != u64::from(sample.duration_ticks)
         || sample.realized_tape_sha256 == Digest::ZERO
     {
         return Err(OptionValueError::Invalid("invalid realized option sample"));
@@ -411,6 +425,14 @@ mod tests {
             reward,
             next_state: vec![state + 1.0],
             terminal,
+            before_state_sha256: Digest([digest; 32]),
+            after_state_sha256: Digest([digest.wrapping_add(1); 32]),
+            source_checkpoint_sha256: Digest([digest.wrapping_add(2); 32]),
+            next_checkpoint_sha256: Digest([digest.wrapping_add(3); 32]),
+            realized_tape_range: TapeRange {
+                start_frame: 0,
+                end_frame_exclusive: u64::from(duration),
+            },
             realized_tape_sha256: Digest([digest; 32]),
         }
     }
