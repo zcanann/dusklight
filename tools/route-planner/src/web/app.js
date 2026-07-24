@@ -14,6 +14,7 @@ const elements = Object.fromEntries([
   "workspace-list", "new-workspace", "workspace-tab", "library-tab", "content-search",
   "content-browser-list", "new-workspace-dialog", "new-workspace-form",
   "new-workspace-label", "new-workspace-id", "new-workspace-error", "cancel-new-workspace",
+  "add-node-menu", "add-node-search", "add-node-results",
   "project-list", "new-project", "open-project", "save-project", "save-as-project",
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
@@ -103,10 +104,20 @@ elements["prefer-selection"].addEventListener("click", () => editSelectedDirecti
 elements["select-method"].addEventListener("click", toggleSelectedMethod);
 elements.canvas.addEventListener("wheel", onWheel, { passive: false });
 elements.canvas.addEventListener("pointerdown", beginPan);
+elements.canvas.addEventListener("contextmenu", openAddNodeMenu);
 elements.canvas.addEventListener("dragover", allowTransitionDrop);
 elements.canvas.addEventListener("drop", dropTransitionAtRouteFrontier);
 window.addEventListener("pointermove", moveGesture);
 window.addEventListener("pointerup", endGesture);
+window.addEventListener("pointerdown", (event) => {
+  if (!elements["add-node-menu"].hidden && !elements["add-node-menu"].contains(event.target)) {
+    closeAddNodeMenu();
+  }
+});
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") closeAddNodeMenu();
+});
+elements["add-node-search"].addEventListener("input", renderAddNodeMenu);
 window.addEventListener("beforeunload", (event) => {
   if (!state.dirty) return;
   event.preventDefault();
@@ -1035,6 +1046,93 @@ function renderNodes() {
     });
     elements.nodes.append(group);
   }
+}
+
+function openAddNodeMenu(event) {
+  if (!state.graph || !state.project) return;
+  event.preventDefault();
+  event.stopPropagation();
+  const bounds = elements["canvas-shell"].getBoundingClientRect();
+  const menu = elements["add-node-menu"];
+  menu.hidden = false;
+  const width = 330;
+  const height = Math.min(520, bounds.height - 24);
+  menu.style.left = `${Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - height - 8))}px`;
+  elements["add-node-search"].value = "";
+  renderAddNodeMenu();
+  elements["add-node-search"].focus();
+}
+
+function closeAddNodeMenu() {
+  elements["add-node-menu"].hidden = true;
+}
+
+function renderAddNodeMenu() {
+  const results = elements["add-node-results"];
+  results.replaceChildren();
+  if (!state.graph) return;
+  const query = elements["add-node-search"].value.trim().toLowerCase();
+  const frontier = new Map((state.routeFrontier?.transitions ?? []).map((record) => [
+    record.transition_id,
+    record.assessment.classification,
+  ]));
+  const matches = state.graph.nodes
+    .filter((node) => node.payload.kind === "transition")
+    .map((node) => ({
+      node,
+      contract: selectedContract(node),
+      classification: frontier.get(node.payload.transition_id) ?? "not_assessed",
+    }))
+    .filter(({ node }) =>
+      !query || `${node.label} ${node.payload.transition_id} ${state.transitionSearch.get(node.payload.transition_id) ?? ""}`
+        .toLowerCase().includes(query))
+    .sort((left, right) => {
+      const leftCategory = left.contract?.transition_kind ?? "other";
+      const rightCategory = right.contract?.transition_kind ?? "other";
+      const rank = (classification) =>
+        classification === "executable" ? 0 : classification === "feasibility_unknown" ? 1 : 2;
+      return leftCategory.localeCompare(rightCategory)
+        || rank(left.classification) - rank(right.classification)
+        || left.node.label.localeCompare(right.node.label);
+    });
+  let category = null;
+  for (const match of matches) {
+    const nextCategory = (match.contract?.transition_kind ?? "other").replaceAll("_", " ");
+    if (nextCategory !== category) {
+      category = nextCategory;
+      const heading = document.createElement("h3");
+      heading.className = "add-node-category";
+      heading.textContent = category;
+      results.append(heading);
+    }
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "add-node-result";
+    const label = document.createElement("strong");
+    label.textContent = match.node.label;
+    const compatibility = document.createElement("span");
+    compatibility.className = `compatibility ${match.classification}`;
+    compatibility.textContent = match.classification.replaceAll("_", " ");
+    const id = document.createElement("small");
+    id.textContent = match.node.payload.transition_id;
+    button.append(label, compatibility, id);
+    button.addEventListener("click", async () => {
+      closeAddNodeMenu();
+      selectNode(match.node);
+      revealNode(match.node);
+      render();
+      if (state.readOnly) {
+        setStatus("Library examples are read-only; use Save as before authoring", "bad");
+      } else if (!state.project?.start_state) {
+        setStatus("This graph needs a grounded Scenario Root before a transition can be added", "bad");
+      } else {
+        await insertSelectedTransition();
+      }
+    });
+    results.append(button);
+  }
+  if (!matches.length) results.append(contentMessage("No compatible node kinds found."));
 }
 
 function renderPalette(selectedFeasibility = state.selectedStateFeasibility) {
