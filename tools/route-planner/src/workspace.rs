@@ -33,6 +33,7 @@ pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
 const LEGACY_WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v0";
 const TRANSACTION_ROOT: &str = ".dusklight/transactions";
+const TRASH_ROOT: &str = ".dusklight/trash";
 const TRANSACTION_SCHEMA: &str = "dusklight.route-planner.workspace-transaction/v1";
 static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -295,6 +296,16 @@ pub struct WorkspaceAssetRecord {
     pub asset: WorkspaceAsset,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceTrashListing {
+    pub id: String,
+    pub label: String,
+    pub kind: WorkspaceAssetKind,
+    pub original_relative_path: PathBuf,
+    pub revision_sha256: Digest,
+}
+
 #[derive(Debug)]
 pub struct WorkspaceRegistry {
     root: PathBuf,
@@ -311,6 +322,10 @@ pub enum WorkspaceMutation {
     Delete {
         relative_path: PathBuf,
         expected_revision_sha256: Digest,
+    },
+    Archive {
+        trash_relative_path: PathBuf,
+        asset: WorkspaceAsset,
     },
 }
 
@@ -941,6 +956,20 @@ impl WorkspaceStore {
                     relative_path: path_to_slashes(relative_path)?,
                     expected_revision_sha256: *expected_revision_sha256,
                 }),
+                WorkspaceMutation::Archive {
+                    trash_relative_path,
+                    asset,
+                } => {
+                    let staged_file = format!("asset-{index:04}.json");
+                    let bytes = asset.canonical_bytes()?;
+                    write_new_synced(&transaction_root.join(&staged_file), &bytes)?;
+                    operations.push(JournalOperation::Put {
+                        relative_path: path_to_slashes(trash_relative_path)?,
+                        staged_file,
+                        expected_revision_sha256: None,
+                        new_revision_sha256: asset.digest()?,
+                    });
+                }
             }
         }
         let journal = WorkspaceTransactionJournal {
@@ -979,8 +1008,169 @@ impl WorkspaceStore {
         ])
     }
 
+    pub fn rename_asset(
+        &self,
+        id: &str,
+        label: impl Into<String>,
+        expected_revision_sha256: Digest,
+    ) -> Result<Digest, WorkspaceError> {
+        let (mut asset, relative_path) = self.load_asset(id)?;
+        if asset.digest()? != expected_revision_sha256 {
+            return Err(WorkspaceError::new("asset revision conflict before rename"));
+        }
+        asset.header.label = label.into();
+        self.save_asset(&relative_path, Some(expected_revision_sha256), &asset)
+    }
+
+    pub fn duplicate_asset(
+        &self,
+        source_id: &str,
+        new_id: impl Into<String>,
+        new_label: impl Into<String>,
+        destination: &Path,
+    ) -> Result<Digest, WorkspaceError> {
+        let (mut asset, _) = self.load_asset(source_id)?;
+        asset.header.id = new_id.into();
+        asset.header.label = new_label.into();
+        asset.header.version = 1;
+        self.save_asset(destination, None, &asset)
+    }
+
+    pub fn inbound_references(
+        &self,
+        id: &str,
+    ) -> Result<Vec<WorkspaceAssetListing>, WorkspaceError> {
+        validate_stable_id("asset id", id)?;
+        let mut inbound = Vec::new();
+        for listing in self.list_assets()? {
+            let asset = read_asset(&self.root.join(&listing.relative_path))?;
+            if asset
+                .references
+                .iter()
+                .any(|reference| reference.asset_id == id)
+            {
+                inbound.push(listing);
+            }
+        }
+        Ok(inbound)
+    }
+
+    pub fn delete_to_trash(
+        &self,
+        id: &str,
+        expected_revision_sha256: Digest,
+        allow_broken_references: bool,
+    ) -> Result<(), WorkspaceError> {
+        let inbound = self.inbound_references(id)?;
+        if !allow_broken_references && !inbound.is_empty() {
+            return Err(WorkspaceError::new(format!(
+                "asset {id} is referenced by {}; confirm deletion to preserve these as broken stable-ID references",
+                inbound
+                    .iter()
+                    .map(|listing| listing.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        let (asset, source) = self.load_asset(id)?;
+        if asset.digest()? != expected_revision_sha256 {
+            return Err(WorkspaceError::new("asset revision conflict before delete"));
+        }
+        let trash_relative_path = Path::new(TRASH_ROOT).join(&source);
+        self.transact(&[
+            WorkspaceMutation::Archive {
+                trash_relative_path,
+                asset,
+            },
+            WorkspaceMutation::Delete {
+                relative_path: source,
+                expected_revision_sha256,
+            },
+        ])
+    }
+
+    pub fn list_trash(&self) -> Result<Vec<WorkspaceTrashListing>, WorkspaceError> {
+        let root = self.root.join(TRASH_ROOT);
+        let mut trash = Vec::new();
+        collect_asset_files(&root, &mut |path| {
+            let asset = read_asset(path)?;
+            let relative = path
+                .strip_prefix(&root)
+                .map_err(|_| WorkspaceError::new("trash asset escaped trash root"))?
+                .to_path_buf();
+            trash.push(WorkspaceTrashListing {
+                id: asset.header.id.clone(),
+                label: asset.header.label.clone(),
+                kind: asset.header.kind,
+                original_relative_path: relative,
+                revision_sha256: asset.digest()?,
+            });
+            Ok(())
+        })?;
+        trash.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.label.cmp(&right.label))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(trash)
+    }
+
+    pub fn restore_from_trash(
+        &self,
+        id: &str,
+        expected_revision_sha256: Digest,
+    ) -> Result<(), WorkspaceError> {
+        let listing = self
+            .list_trash()?
+            .into_iter()
+            .find(|listing| listing.id == id)
+            .ok_or_else(|| WorkspaceError::new(format!("trashed asset {id} does not exist")))?;
+        if listing.revision_sha256 != expected_revision_sha256 {
+            return Err(WorkspaceError::new(
+                "trash revision conflict before restore",
+            ));
+        }
+        let trash_relative_path = Path::new(TRASH_ROOT).join(&listing.original_relative_path);
+        let asset = read_asset(&self.root.join(&trash_relative_path))?;
+        self.transact(&[
+            WorkspaceMutation::Put {
+                relative_path: listing.original_relative_path,
+                expected_revision_sha256: None,
+                asset,
+            },
+            WorkspaceMutation::Delete {
+                relative_path: trash_relative_path,
+                expected_revision_sha256,
+            },
+        ])
+    }
+
+    pub fn permanently_delete_from_trash(
+        &self,
+        id: &str,
+        expected_revision_sha256: Digest,
+    ) -> Result<(), WorkspaceError> {
+        let listing = self
+            .list_trash()?
+            .into_iter()
+            .find(|listing| listing.id == id)
+            .ok_or_else(|| WorkspaceError::new(format!("trashed asset {id} does not exist")))?;
+        if listing.revision_sha256 != expected_revision_sha256 {
+            return Err(WorkspaceError::new(
+                "trash revision conflict before permanent delete",
+            ));
+        }
+        let path = self
+            .root
+            .join(TRASH_ROOT)
+            .join(listing.original_relative_path);
+        fs::remove_file(path).map_err(WorkspaceError::io)
+    }
+
     fn ensure_transaction_root(&self) -> Result<(), WorkspaceError> {
-        fs::create_dir_all(self.root.join(TRANSACTION_ROOT)).map_err(WorkspaceError::io)
+        fs::create_dir_all(self.root.join(TRANSACTION_ROOT)).map_err(WorkspaceError::io)?;
+        fs::create_dir_all(self.root.join(TRASH_ROOT)).map_err(WorkspaceError::io)
     }
 
     fn recover_transactions(&self) -> Result<(), WorkspaceError> {
@@ -1023,7 +1213,7 @@ impl WorkspaceStore {
             .iter()
             .filter_map(|mutation| match mutation {
                 WorkspaceMutation::Delete { relative_path, .. } => Some(relative_path),
-                WorkspaceMutation::Put { .. } => None,
+                WorkspaceMutation::Put { .. } | WorkspaceMutation::Archive { .. } => None,
             })
             .collect::<BTreeSet<_>>();
         let mut put_ids = BTreeSet::new();
@@ -1061,6 +1251,14 @@ impl WorkspaceStore {
                 } => {
                     validate_relative_path("asset path", relative_path)?;
                     (relative_path, Some(*expected_revision_sha256))
+                }
+                WorkspaceMutation::Archive {
+                    trash_relative_path,
+                    asset,
+                } => {
+                    asset.validate()?;
+                    validate_trash_path(trash_relative_path)?;
+                    (trash_relative_path, None)
                 }
             };
             if !paths.insert(relative_path) {
@@ -1369,6 +1567,19 @@ fn validate_relative_path(field: &str, path: &Path) -> Result<(), WorkspaceError
         return Err(WorkspaceError::new(format!(
             "{field} must be a nonempty relative path without traversal"
         )));
+    }
+    Ok(())
+}
+
+fn validate_trash_path(path: &Path) -> Result<(), WorkspaceError> {
+    validate_relative_path("trash path", path)?;
+    if !path.starts_with(TRASH_ROOT)
+        || path == Path::new(TRASH_ROOT)
+        || path.extension().and_then(|value| value.to_str()) != Some("json")
+    {
+        return Err(WorkspaceError::new(
+            "trash asset path must be a JSON file below the workspace trash root",
+        ));
     }
     Ok(())
 }
@@ -1748,6 +1959,108 @@ mod tests {
         assert!(root.join(destination).is_file());
         assert_eq!(recovered.load_asset("graph.ordon").unwrap().1, destination);
         assert!(!transaction_root.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn asset_crud_preserves_ids_references_and_recoverable_trash() {
+        let root = temporary_directory("asset-crud");
+        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        let store = WorkspaceStore::create(&root, manifest).unwrap();
+        let mut graph = graph_asset("graph.ordon", "Ordon route");
+        let graph_path = Path::new("route-graphs/ordon.json");
+        let first_revision = store.save_asset(graph_path, None, &graph).unwrap();
+
+        let layout = WorkspaceAsset {
+            schema: WORKSPACE_ASSET_SCHEMA.into(),
+            header: WorkspaceAssetHeader {
+                id: "layout.ordon".into(),
+                label: "Ordon layout".into(),
+                kind: WorkspaceAssetKind::Layout,
+                version: 1,
+            },
+            references: vec![WorkspaceAssetReference {
+                asset_id: graph.header.id.clone(),
+                kind: WorkspaceAssetKind::RouteGraph,
+            }],
+            payload: WorkspaceAssetPayload::Layout(LayoutAsset {
+                semantic_asset_id: graph.header.id.clone(),
+                positions: BTreeMap::new(),
+                viewport: None,
+            }),
+        };
+        store
+            .save_asset(Path::new("layouts/ordon.json"), None, &layout)
+            .unwrap();
+        assert_eq!(
+            store.inbound_references("graph.ordon").unwrap()[0].id,
+            "layout.ordon"
+        );
+        let error = store
+            .delete_to_trash("graph.ordon", first_revision, false)
+            .unwrap_err();
+        assert!(error.to_string().contains("layout.ordon"));
+
+        store
+            .delete_to_trash("graph.ordon", first_revision, true)
+            .unwrap();
+        assert!(store.load_asset("graph.ordon").is_err());
+        let trash = store.list_trash().unwrap();
+        assert_eq!(trash[0].original_relative_path, graph_path);
+        assert_eq!(
+            store.inbound_references("graph.ordon").unwrap()[0].id,
+            "layout.ordon"
+        );
+        store
+            .restore_from_trash("graph.ordon", trash[0].revision_sha256)
+            .unwrap();
+
+        let restored_revision = store.load_asset("graph.ordon").unwrap().0.digest().unwrap();
+        let renamed_revision = store
+            .rename_asset("graph.ordon", "Renamed route", restored_revision)
+            .unwrap();
+        graph.header.id = "graph.ordon-copy".into();
+        graph.header.label = "Ordon route copy".into();
+        store
+            .duplicate_asset(
+                "graph.ordon",
+                "graph.ordon-copy",
+                "Ordon route copy",
+                Path::new("route-graphs/ordon-copy.json"),
+            )
+            .unwrap();
+        assert_eq!(store.list_assets().unwrap().len(), 3);
+        store
+            .move_asset(
+                "graph.ordon",
+                Path::new("route-graphs/routes/renamed.json"),
+                renamed_revision,
+            )
+            .unwrap();
+        assert_eq!(
+            store.load_asset("graph.ordon").unwrap().1,
+            Path::new("route-graphs/routes/renamed.json")
+        );
+
+        let moved_revision = store.load_asset("graph.ordon").unwrap().0.digest().unwrap();
+        store
+            .delete_to_trash("graph.ordon", moved_revision, true)
+            .unwrap();
+        let trash = store.list_trash().unwrap();
+        let trashed = trash
+            .iter()
+            .find(|listing| listing.id == "graph.ordon")
+            .unwrap();
+        store
+            .permanently_delete_from_trash("graph.ordon", trashed.revision_sha256)
+            .unwrap();
+        assert!(
+            store
+                .list_trash()
+                .unwrap()
+                .iter()
+                .all(|listing| listing.id != "graph.ordon")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
