@@ -40,7 +40,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V3: &str = "dusklight-native-tactic-route-report/v3";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
@@ -116,6 +116,49 @@ pub struct NativeTacticDecisionTrace {
     pub terminal: bool,
     pub frontier_cells: usize,
     pub visited_states: usize,
+    pub before: NativeTacticStateTrace,
+    pub after: NativeTacticStateTrace,
+    pub measurements: Vec<NativeTacticMeasurementTrace>,
+    pub applicable_tactics: Vec<NativeTacticValueTrace>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticStateTrace {
+    pub snapshot_sha256: Digest,
+    pub stage: String,
+    pub room: i8,
+    pub layer: Option<i8>,
+    pub point: Option<i16>,
+    pub simulation_tick: u64,
+    pub tape_frame: u64,
+    pub player_position: [f32; 3],
+    pub player_velocity: Option<[f32; 3]>,
+    pub player_procedure: Option<u16>,
+    pub player_contacts: Option<u8>,
+    pub event_running: Option<bool>,
+    pub event_id: Option<i16>,
+    pub terminal_reached: Option<bool>,
+    pub actor_count: usize,
+    pub same_room_actor_count: usize,
+    pub recent_option_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticMeasurementTrace {
+    pub name: String,
+    pub before: f32,
+    pub after: f32,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticValueTrace {
+    pub option_id: String,
+    pub mean_q: Option<f64>,
+    pub ensemble_variance: Option<f64>,
+    pub selected: bool,
 }
 
 pub fn run_native_tactic_route(
@@ -243,7 +286,7 @@ pub fn run_native_tactic_route(
     shutdown?;
 
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V3.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -464,7 +507,42 @@ fn run_seed(
         let after_features = encoder
             .encode(&step.step.transition.after)
             .map_err(route_error)?;
-        trace.push(NativeTacticDecisionTrace {
+        let measurements = encoder
+            .feature_names
+            .iter()
+            .cloned()
+            .zip(before_features.iter().copied())
+            .zip(after_features.iter().copied())
+            .map(|((name, before), after)| NativeTacticMeasurementTrace {
+                name,
+                before,
+                after,
+            })
+            .collect();
+        let applicable_tactics = step
+            .step
+            .decision
+            .ranking
+            .choices
+            .iter()
+            .map(|choice| {
+                let value = step
+                    .step
+                    .decision
+                    .ranking
+                    .values
+                    .ranked
+                    .iter()
+                    .find(|value| value.descriptor == choice.descriptor);
+                NativeTacticValueTrace {
+                    option_id: choice.choice_id.clone(),
+                    mean_q: value.map(|value| value.mean_q),
+                    ensemble_variance: value.map(|value| value.ensemble_variance),
+                    selected: choice.descriptor == selected.descriptor,
+                }
+            })
+            .collect();
+        let decision_trace = NativeTacticDecisionTrace {
             decision_index,
             episode,
             route_suffix_ticks: campaign
@@ -483,7 +561,18 @@ fn run_seed(
             terminal: step.step.transition.value_sample.terminal,
             frontier_cells: diagnostics.frontier_cells,
             visited_states: campaign.visited_state_count(),
-        });
+            before: tactic_state_trace(&step.step.transition.before)?,
+            after: tactic_state_trace(&step.step.transition.after)?,
+            measurements,
+            applicable_tactics,
+        };
+        let decision_trace_root = seed_root.join("decision-trace");
+        fs::create_dir_all(&decision_trace_root).map_err(route_error)?;
+        write_new(
+            &decision_trace_root.join(format!("decision-{decision_index:06}.json")),
+            &serde_json::to_vec_pretty(&decision_trace).map_err(route_error)?,
+        )?;
+        trace.push(decision_trace);
         let run_finished = step.step.transition.value_sample.terminal
             || campaign.decision_index >= config.decisions_per_seed
             || native_ticks >= config.optimization.budgets.simulated_tick_budget;
@@ -545,6 +634,41 @@ fn run_seed(
         successful_tape,
         final_result,
         trace,
+    })
+}
+
+fn tactic_state_trace(
+    facts: &FactSnapshot,
+) -> Result<NativeTacticStateTrace, NativeTacticRouteRunError> {
+    let room = facts.world.room;
+    Ok(NativeTacticStateTrace {
+        snapshot_sha256: facts.content_sha256().map_err(route_error)?,
+        stage: facts.world.stage.clone(),
+        room,
+        layer: facts.world.layer,
+        point: facts.world.point,
+        simulation_tick: facts.simulation_tick,
+        tape_frame: facts.tape_frame,
+        player_position: facts.player.position_f32_bits.map(f32::from_bits),
+        player_velocity: facts
+            .player
+            .velocity_f32_bits
+            .map(|bits| bits.map(f32::from_bits)),
+        player_procedure: facts.player.procedure,
+        player_contacts: facts.player.contacts,
+        event_running: facts.event.as_ref().map(|event| event.running),
+        event_id: facts.event.as_ref().map(|event| event.event_id),
+        terminal_reached: facts.terminal.reached,
+        actor_count: facts.actors.len(),
+        same_room_actor_count: facts
+            .actors
+            .iter()
+            .filter(|actor| actor.current_room == room)
+            .count(),
+        recent_option_id: facts
+            .recent_option
+            .as_ref()
+            .map(|option| option.option_id.clone()),
     })
 }
 

@@ -66,7 +66,7 @@ Route speed does not matter for this first proof.
 | Blueprint composition asset model | Working: canonical bounded assets reference executable catalog entries through `Invoke`, `Sequence`, `Layer`, `Conditional`, `Until`, and `Fallback`; static sequences compile into one exact tape with contiguous per-option execution records, layers compile through DUSKCTRL ownership rules, and ambiguous writers, unbounded control flow, unavailable conditions, invalid catalog plans, and any loss of exact PAD fail closed |
 | Live online option-Q campaign | Working: authenticated tactic boundaries feed duration-aware replay, refit, ranking, reward shaping, hindsight, checkpoint/resume, final-result export, and an exact observed-state greedy table that prevents sparse fitted-Q extrapolation from overriding known successful decisions |
 | Automatic checkpoint branching driven by learned tactic value | Working: campaigns retain replayable quality-diversity frontiers, sample root plus frontier branches, reject detached restores, detect collapse/cycles/connectivity loss, and project checkpoint-keyed state/tactic graphs |
-| One-action workbench launch | Working: `Learn route` launches the tactic-Q campaign directly from the selected authenticated start and authored goal with bounded defaults and no generated request or demonstration editing |
+| Learning workbench | Working: `Learn route` launches the tactic-Q campaign directly from the selected authenticated start and authored goal with bounded defaults and no generated request or demonstration editing; the latest completed tactic boundary shows before/after facts, named measurements, the chosen tactic, every applicable tactic/Q value, reward components, and the resulting state change without projecting per-tick evidence |
 | Blueprint-like user-authored tactic assets | Working in the engine; content-browser authoring and CRUD remain missing |
 | A route learned from goal, facts, and tactics | Working: seed 181081 reached the terminal after 70 no-demonstration decisions; the frozen policy then reached it in 13 greedy decisions and cold-proved tape `872f7f...`. See `docs/glitch-hunting/benchmarks/ordon-tactic-q-first-proof-20260724.json` |
 
@@ -169,8 +169,6 @@ states instead of replaying the entire route for every decision.
 
 ## P1 — Make the learning loop usable
 
-- [ ] Show current facts, derived measurements, applicable tactics, chosen
-  tactic, Q values, reward components, and the resulting state change.
 - [ ] Show the retained frontier and learned state/tactic graph without flooding
   the screen with per-tick evidence.
 - [ ] Allow inspection and replay of any tactic edge or complete candidate path.

@@ -2,7 +2,7 @@
 
 use super::*;
 use dusklight_orchestration::native_tactic_route_runner::{
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V3, NativeTacticRouteRunConfig, run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4, NativeTacticRouteRunConfig, run_native_tactic_route,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use serde_json::Value;
@@ -71,6 +71,7 @@ pub(super) fn tactic_route_learning_projection(
         successful_seeds: 0,
         total_decisions: 0,
         total_native_ticks: 0,
+        latest_decision: None,
         output: None,
         report: None,
         blocker: None,
@@ -101,12 +102,13 @@ pub(super) fn tactic_route_learning_projection(
     };
     projection.output = output.strip_prefix(root).ok().map(repository_path_text);
     project_completed_seed_results(&output, &seeds, &mut projection);
+    projection.latest_decision = project_latest_decision(&output, &seeds);
     let report_path = output.join("report.json");
     if report_path.exists() {
         match bounded_json::<Value>(&report_path) {
             Some(report)
                 if report.get("schema").and_then(Value::as_str)
-                    == Some(NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V3)
+                    == Some(NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4)
                     && report
                         .get("optimization_request_sha256")
                         .and_then(Value::as_str)
@@ -361,6 +363,33 @@ fn project_completed_seed_results(
     }
 }
 
+fn project_latest_decision(output: &Path, seeds: &[u64]) -> Option<GraphTacticDecisionTrace> {
+    for (index, seed) in seeds.iter().enumerate().rev() {
+        let directory = output
+            .join(format!("seed-{index:03}-{seed}"))
+            .join("decision-trace");
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        let Some(latest) = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("decision-") && name.ends_with(".json"))
+            })
+            .max()
+        else {
+            continue;
+        };
+        if let Some(trace) = bounded_json(&latest) {
+            return Some(trace);
+        }
+    }
+    None
+}
+
 fn tactic_route_error(error: impl fmt::Display) -> WorkbenchError {
     WorkbenchError::new(error.to_string())
 }
@@ -395,10 +424,89 @@ mod tests {
         optimization.refresh_content_sha256().unwrap();
         let output = root.join(&relative).join("tactic-route");
         fs::create_dir_all(&output).unwrap();
+        let trace_root = output.join("seed-003-181081/decision-trace");
+        fs::create_dir_all(&trace_root).unwrap();
+        let state = GraphTacticStateTrace {
+            snapshot_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .into(),
+            stage: "F_SP103".into(),
+            room: 1,
+            layer: Some(0),
+            point: Some(0),
+            simulation_tick: 100,
+            tape_frame: 506,
+            player_position: [1.0, 2.0, 3.0],
+            player_velocity: Some([0.0, 0.0, 1.0]),
+            player_procedure: Some(7),
+            player_contacts: Some(1),
+            event_running: Some(false),
+            event_id: Some(-1),
+            terminal_reached: Some(false),
+            actor_count: 3,
+            same_room_actor_count: 2,
+            recent_option_id: None,
+        };
+        fs::write(
+            trace_root.join("decision-000069.json"),
+            serde_json::to_vec(&GraphTacticDecisionTrace {
+                decision_index: 69,
+                episode: 18,
+                selected_option_id: "goal.seek.coordinate.17".into(),
+                selection_reason: "epsilon".into(),
+                selected_q: Some(4.5),
+                best_q: Some(5.0),
+                reward: 96.0,
+                reward_components: GraphTacticRewardTrace {
+                    terminal_observed: true,
+                    endpoint_novel: true,
+                    duration_ticks: 32,
+                    terminal_component: 100.0,
+                    tick_cost_component: -0.032,
+                    novelty_component: 0.05,
+                    base_reward: 100.018,
+                    potential: Some(GraphTacticPotentialRewardTrace {
+                        source_potential: -4.0,
+                        next_potential: 0.0,
+                        effective_next_potential: 0.0,
+                        shaping_reward: 4.0,
+                        components: vec![GraphTacticPotentialComponentTrace {
+                            name: "goal_distance".into(),
+                            source_fact: 10.0,
+                            next_fact: 0.0,
+                            shaping_reward: 4.0,
+                        }],
+                    }),
+                    training_reward: 96.0,
+                },
+                goal_distance_before: 10.0,
+                goal_distance_after: 0.0,
+                terminal: true,
+                frontier_cells: 52,
+                visited_states: 39,
+                before: state.clone(),
+                after: GraphTacticStateTrace {
+                    terminal_reached: Some(true),
+                    ..state
+                },
+                measurements: vec![GraphTacticMeasurementTrace {
+                    name: "goal_planar_distance".into(),
+                    before: 10.0,
+                    after: 0.0,
+                }],
+                applicable_tactics: vec![GraphTacticValueTrace {
+                    option_id: "goal.seek.coordinate.17".into(),
+                    mean_q: Some(4.5),
+                    ensemble_variance: Some(0.25),
+                    selected: true,
+                }],
+            })
+            .unwrap(),
+        )
+        .unwrap();
         fs::write(
             output.join("report.json"),
             serde_json::to_vec(&serde_json::json!({
-                "schema": NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V3,
+                "schema": NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
                 "optimization_request_sha256": optimization.content_sha256,
                 "successful_seeds": 1,
                 "total_decisions": 70,
@@ -415,6 +523,13 @@ mod tests {
         assert_eq!(projection.successful_seeds, 1);
         assert_eq!(projection.total_decisions, 70);
         assert_eq!(projection.total_native_ticks, 2266);
+        assert_eq!(
+            projection
+                .latest_decision
+                .as_ref()
+                .map(|decision| decision.selected_option_id.as_str()),
+            Some("goal.seek.coordinate.17")
+        );
         let expected_report = format!("{relative}/tactic-route/report.json");
         assert_eq!(projection.report.as_deref(), Some(expected_report.as_str()));
         fs::remove_dir_all(root.join(relative)).unwrap();

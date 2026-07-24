@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v18";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v19";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -221,6 +221,8 @@ pub struct GraphTacticRouteLearning {
     pub total_decisions: u64,
     pub total_native_ticks: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_decision: Option<GraphTacticDecisionTrace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<String>,
@@ -228,6 +230,93 @@ pub struct GraphTacticRouteLearning {
     pub blocker: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticDecisionTrace {
+    pub decision_index: u64,
+    pub episode: u64,
+    pub selected_option_id: String,
+    pub selection_reason: String,
+    pub selected_q: Option<f64>,
+    pub best_q: Option<f64>,
+    pub reward: f32,
+    pub reward_components: GraphTacticRewardTrace,
+    pub goal_distance_before: f32,
+    pub goal_distance_after: f32,
+    pub terminal: bool,
+    pub frontier_cells: usize,
+    pub visited_states: usize,
+    pub before: GraphTacticStateTrace,
+    pub after: GraphTacticStateTrace,
+    pub measurements: Vec<GraphTacticMeasurementTrace>,
+    pub applicable_tactics: Vec<GraphTacticValueTrace>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticRewardTrace {
+    pub terminal_observed: bool,
+    pub endpoint_novel: bool,
+    pub duration_ticks: u32,
+    pub terminal_component: f32,
+    pub tick_cost_component: f32,
+    pub novelty_component: f32,
+    pub base_reward: f32,
+    pub potential: Option<GraphTacticPotentialRewardTrace>,
+    pub training_reward: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticPotentialRewardTrace {
+    pub source_potential: f64,
+    pub next_potential: f64,
+    pub effective_next_potential: f64,
+    pub shaping_reward: f64,
+    pub components: Vec<GraphTacticPotentialComponentTrace>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticPotentialComponentTrace {
+    pub name: String,
+    pub source_fact: f32,
+    pub next_fact: f32,
+    pub shaping_reward: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticStateTrace {
+    pub snapshot_sha256: String,
+    pub stage: String,
+    pub room: i8,
+    pub layer: Option<i8>,
+    pub point: Option<i16>,
+    pub simulation_tick: u64,
+    pub tape_frame: u64,
+    pub player_position: [f32; 3],
+    pub player_velocity: Option<[f32; 3]>,
+    pub player_procedure: Option<u16>,
+    pub player_contacts: Option<u8>,
+    pub event_running: Option<bool>,
+    pub event_id: Option<i16>,
+    pub terminal_reached: Option<bool>,
+    pub actor_count: usize,
+    pub same_room_actor_count: usize,
+    pub recent_option_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticMeasurementTrace {
+    pub name: String,
+    pub before: f32,
+    pub after: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticValueTrace {
+    pub option_id: String,
+    pub mean_q: Option<f64>,
+    pub ensemble_variance: Option<f64>,
+    pub selected: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
