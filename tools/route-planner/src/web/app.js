@@ -11,6 +11,7 @@ const WORKSPACE_ASSET_SAVE_SCHEMA = "dusklight.route-planner.workspace-asset-sav
 const WORKSPACE_ASSET_COMMAND_SCHEMA = "dusklight.route-planner.workspace-asset-command/v1";
 const WORKSPACE_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-trash-command/v1";
 const WORKSPACE_LIBRARY_FORK_SCHEMA = "dusklight.route-planner.workspace-library-fork/v1";
+const WORKSPACE_EXPORT_SCHEMA = "dusklight.route-planner.workspace-export/v1";
 const LIBRARY_DRAG_TYPE = "application/x-dusklight-library";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
@@ -21,7 +22,8 @@ const elements = Object.fromEntries([
   "content-browser-list", "new-workspace-dialog", "new-workspace-form",
   "new-workspace-label", "new-workspace-id", "new-workspace-error", "cancel-new-workspace",
   "new-asset", "new-asset-dialog", "new-asset-form", "new-asset-label", "new-asset-id",
-  "new-asset-error", "cancel-new-asset",
+  "new-asset-error", "cancel-new-asset", "import-asset", "workspace-asset-file",
+  "import-workspace", "export-workspace", "workspace-file",
   "add-node-menu", "add-node-search", "add-node-results",
   "project-list", "new-project", "open-project", "save-project", "save-as-project",
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
@@ -80,6 +82,9 @@ elements["cancel-new-workspace"].addEventListener("click", () => {
   elements["new-workspace-dialog"].close();
 });
 elements["new-workspace-form"].addEventListener("submit", createWorkspace);
+elements["import-workspace"].addEventListener("click", () => elements["workspace-file"].click());
+elements["export-workspace"].addEventListener("click", exportWorkspace);
+elements["workspace-file"].addEventListener("change", importWorkspace);
 elements["new-asset"].addEventListener("click", () => {
   elements["new-asset-error"].textContent = "";
   elements["new-asset-dialog"].showModal();
@@ -89,6 +94,8 @@ elements["cancel-new-asset"].addEventListener("click", () => {
   elements["new-asset-dialog"].close();
 });
 elements["new-asset-form"].addEventListener("submit", createCustomNodeAsset);
+elements["import-asset"].addEventListener("click", () => elements["workspace-asset-file"].click());
+elements["workspace-asset-file"].addEventListener("change", importWorkspaceAsset);
 elements["workspace-tab"].addEventListener("click", () => selectContentSource("workspace"));
 elements["library-tab"].addEventListener("click", () => selectContentSource("library"));
 elements["content-search"].addEventListener("input", renderContentBrowser);
@@ -202,6 +209,50 @@ async function createWorkspace(event) {
   }
 }
 
+async function exportWorkspace() {
+  if (!state.workspace) return;
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    const bundle = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/export`,
+    );
+    downloadJson(bundle, `${slug(state.workspace.manifest.label)}.workspace.json`);
+    setStatus("Workspace exported with all assets and exact Library pins", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function importWorkspace(event) {
+  const [file] = event.target.files;
+  event.target.value = "";
+  if (!file) return;
+  if (state.dirty && !confirm("Discard unsaved planner changes and import this workspace?")) return;
+  try {
+    const bundle = JSON.parse(await file.text());
+    if (bundle?.schema !== WORKSPACE_EXPORT_SCHEMA || !bundle.manifest || !Array.isArray(bundle.assets)) {
+      throw new Error("Choose a Dusklight workspace export");
+    }
+    const id = prompt("Imported workspace folder ID", `${bundle.manifest.id}-imported`);
+    if (id == null) return;
+    const label = prompt("Imported workspace name", `${bundle.manifest.label} imported`);
+    if (label == null) return;
+    bundle.manifest.id = id.trim();
+    bundle.manifest.label = label.trim();
+    const record = await projectApi("/api/workspaces/import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(bundle),
+    });
+    await openWorkspaceRecord(record);
+    await refreshWorkspaces(record.manifest.id);
+    elements["workspace-list"].value = record.manifest.id;
+    setStatus(`Imported ${record.assets.length} workspace assets`, "good");
+  } catch (error) {
+    setStatus(`Workspace import failed: ${error.message}`, "bad");
+  }
+}
+
 async function createCustomNodeAsset(event) {
   event.preventDefault();
   if (!state.workspace) return;
@@ -253,6 +304,51 @@ async function createCustomNodeAsset(event) {
     setStatus("Hypothetical custom node created", "good");
   } catch (error) {
     elements["new-asset-error"].textContent = error.message;
+  }
+}
+
+async function importWorkspaceAsset(event) {
+  const [file] = event.target.files;
+  event.target.value = "";
+  if (!file || !state.workspace) return;
+  try {
+    const exported = JSON.parse(await file.text());
+    const asset = exported?.asset ?? exported;
+    if (asset?.schema !== WORKSPACE_ASSET_SCHEMA || !asset.header?.id || !asset.header?.kind) {
+      throw new Error("Choose a Dusklight workspace asset export");
+    }
+    if (state.workspace.assets.some((listing) => listing.id === asset.header.id)) {
+      throw new Error(
+        `Stable asset ID ${asset.header.id} already exists; move or duplicate the existing asset first`,
+      );
+    }
+    const suggestedPath = exported?.relative_path
+      ?? `${workspaceAssetRoot(asset.header.kind)}/${slug(asset.header.id)}.json`;
+    const relativePath = prompt("Workspace-relative destination", suggestedPath);
+    if (relativePath == null) return;
+    const workspaceId = state.workspace.manifest.id;
+    const record = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(asset.header.id)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schema: WORKSPACE_ASSET_SAVE_SCHEMA,
+          relative_path: relativePath.trim(),
+          expected_revision_sha256: null,
+          asset,
+        }),
+      },
+    );
+    await loadWorkspace(workspaceId);
+    await inspectWorkspaceAsset({
+      ...record.asset.header,
+      relative_path: record.relative_path,
+      revision_sha256: record.revision_sha256,
+    });
+    setStatus("Asset imported with its stable identity and references", "good");
+  } catch (error) {
+    setStatus(`Asset import failed: ${error.message}`, "bad");
   }
 }
 
@@ -358,6 +454,7 @@ function selectContentSource(source) {
     elements[`${name}-tab`].setAttribute("aria-selected", String(active));
   }
   elements["new-asset"].disabled = source !== "workspace" || !state.workspace;
+  elements["import-asset"].disabled = source !== "workspace" || !state.workspace;
   renderContentBrowser();
 }
 
@@ -612,6 +709,7 @@ function contentAssetItem(asset, iconText) {
     ["Rename", () => renameWorkspaceAsset(asset)],
     ["Move", () => moveWorkspaceAsset(asset)],
     ["Duplicate", () => duplicateWorkspaceAsset(asset)],
+    ["Export", () => exportWorkspaceAsset(asset)],
     ["Delete to Trash", () => trashWorkspaceAsset(asset)],
   ]) {
     const button = document.createElement("button");
@@ -625,6 +723,19 @@ function contentAssetItem(asset, iconText) {
   }
   row.append(actions);
   return row;
+}
+
+async function exportWorkspaceAsset(asset) {
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    const record = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(asset.id)}`,
+    );
+    downloadJson(record, `${slug(asset.label)}.asset.json`);
+    setStatus("Asset exported with its stable identity and references", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 function trashAssetItem(asset) {
@@ -3575,12 +3686,7 @@ async function saveProjectAs() {
 function exportProject() {
   if (!state.project) return;
   const project = projectWithPresentation();
-  const blob = new Blob([`${JSON.stringify(project, null, 2)}\n`], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `${slug(project.label)}.planner.json`;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 0);
+  downloadJson(project, `${slug(project.label)}.planner.json`);
 }
 
 function markDirty() {
@@ -3591,6 +3697,7 @@ function markDirty() {
 
 function updateProjectControls() {
   const loaded = Boolean(state.project);
+  elements["export-workspace"].disabled = !state.workspace;
   elements["save-project"].disabled = !loaded || state.readOnly || !state.dirty;
   elements["save-as-project"].disabled = !loaded;
   elements["export-project"].disabled = !loaded;
@@ -3621,6 +3728,30 @@ function elide(value, length) {
 
 function slug(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "route";
+}
+
+function workspaceAssetRoot(kind) {
+  return {
+    scenario: "scenarios",
+    route_graph: "route-graphs",
+    reusable_subgraph: "subgraphs",
+    custom_node_definition: "custom-nodes",
+    state_seed: "state-seeds",
+    query_goal: "queries",
+    route_book: "route-books",
+    layout: "layouts",
+  }[kind] ?? "assets";
+}
+
+function downloadJson(document, filename) {
+  const blob = new Blob([`${JSON.stringify(document, null, 2)}\n`], {
+    type: "application/json",
+  });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 0);
 }
 
 function setStatus(message, kind = "") {

@@ -34,8 +34,8 @@ pub const WORKSPACE_ASSET_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-asset-command/v1";
 pub const WORKSPACE_TRASH_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-trash-command/v1";
-pub const WORKSPACE_LIBRARY_FORK_SCHEMA: &str =
-    "dusklight.route-planner.workspace-library-fork/v1";
+pub const WORKSPACE_LIBRARY_FORK_SCHEMA: &str = "dusklight.route-planner.workspace-library-fork/v1";
+pub const WORKSPACE_EXPORT_SCHEMA: &str = "dusklight.route-planner.workspace-export/v1";
 pub const BUILTIN_LIBRARY_VERSION: &str = "builtin-v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
@@ -305,6 +305,21 @@ pub struct WorkspaceRecord {
     pub schema: String,
     pub manifest: WorkspaceManifest,
     pub assets: Vec<WorkspaceAssetListing>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceExport {
+    pub schema: String,
+    pub manifest: WorkspaceManifest,
+    pub assets: Vec<WorkspaceExportAsset>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceExportAsset {
+    pub relative_path: PathBuf,
+    pub asset: WorkspaceAsset,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -800,6 +815,101 @@ impl WorkspaceRegistry {
             )));
         }
         let store = WorkspaceStore::open(path, &self.available_libraries)?;
+        workspace_record(&store)
+    }
+
+    pub fn export(&self, id: &str) -> Result<WorkspaceExport, WorkspaceError> {
+        let store = self.open_workspace(id)?;
+        let assets = store
+            .list_assets()?
+            .into_iter()
+            .map(|listing| {
+                let (asset, relative_path) = store.load_asset(&listing.id)?;
+                Ok(WorkspaceExportAsset {
+                    relative_path,
+                    asset,
+                })
+            })
+            .collect::<Result<Vec<_>, WorkspaceError>>()?;
+        Ok(WorkspaceExport {
+            schema: WORKSPACE_EXPORT_SCHEMA.into(),
+            manifest: store.manifest().clone(),
+            assets,
+        })
+    }
+
+    pub fn import(&self, bundle: WorkspaceExport) -> Result<WorkspaceRecord, WorkspaceError> {
+        if bundle.schema != WORKSPACE_EXPORT_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace export schema is unsupported",
+            ));
+        }
+        bundle.manifest.validate()?;
+        let issues = dependency_issues(&bundle.manifest, &self.available_libraries);
+        if !issues.is_empty() {
+            return Err(WorkspaceError::new(format_dependency_issues(&issues)));
+        }
+        let root = self.workspace_path(&bundle.manifest.id)?;
+        if root.exists() {
+            return Err(WorkspaceError::new(format!(
+                "workspace {} already exists",
+                bundle.manifest.id
+            )));
+        }
+        let mut ids = BTreeSet::new();
+        let mut paths = BTreeSet::new();
+        for record in &bundle.assets {
+            record.asset.validate()?;
+            validate_relative_path("workspace import asset path", &record.relative_path)?;
+            let expected_root = bundle
+                .manifest
+                .asset_roots
+                .get(&record.asset.header.kind)
+                .expect("validated manifest contains every asset root");
+            if !record.relative_path.starts_with(expected_root)
+                || record
+                    .relative_path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    != Some("json")
+            {
+                return Err(WorkspaceError::new(format!(
+                    "{:?} import asset must be a JSON file below {}",
+                    record.asset.header.kind, expected_root
+                )));
+            }
+            if !ids.insert(record.asset.header.id.clone()) {
+                return Err(WorkspaceError::new(format!(
+                    "workspace import duplicates asset identity {}",
+                    record.asset.header.id
+                )));
+            }
+            if !paths.insert(record.relative_path.clone()) {
+                return Err(WorkspaceError::new(format!(
+                    "workspace import duplicates asset path {}",
+                    record.relative_path.display()
+                )));
+            }
+        }
+        let store = WorkspaceStore::create(&root, bundle.manifest)?;
+        let mutations = bundle
+            .assets
+            .into_iter()
+            .map(|record| WorkspaceMutation::Put {
+                relative_path: record.relative_path,
+                expected_revision_sha256: None,
+                asset: record.asset,
+            })
+            .collect::<Vec<_>>();
+        if let Err(error) = store.transact(&mutations) {
+            let cleanup = fs::remove_dir_all(&root);
+            return match cleanup {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(WorkspaceError::new(format!(
+                    "{error}; failed to remove incomplete imported workspace: {cleanup}"
+                ))),
+            };
+        }
         workspace_record(&store)
     }
 
@@ -2586,6 +2696,93 @@ mod tests {
                 .iter()
                 .all(|listing| listing.id != "graph.ordon")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registry_export_import_round_trips_independent_assets() {
+        let root = temporary_directory("workspace-export-import");
+        let registry = WorkspaceRegistry::open(root.join("workspaces"), BTreeMap::new()).unwrap();
+        registry
+            .create(WorkspaceCreateRequest {
+                schema: WORKSPACE_CREATE_SCHEMA.into(),
+                id: "source".into(),
+                label: "Source workspace".into(),
+            })
+            .unwrap();
+        let asset = graph_asset("graph.ordon", "Ordon route");
+        registry
+            .save_asset(
+                "source",
+                "graph.ordon",
+                WorkspaceAssetSaveRequest {
+                    schema: WORKSPACE_ASSET_SAVE_SCHEMA.into(),
+                    relative_path: "route-graphs/routes/ordon.json".into(),
+                    expected_revision_sha256: None,
+                    asset: asset.clone(),
+                },
+            )
+            .unwrap();
+
+        let mut bundle = registry.export("source").unwrap();
+        assert_eq!(bundle.schema, WORKSPACE_EXPORT_SCHEMA);
+        assert_eq!(bundle.assets.len(), 1);
+        assert_eq!(
+            bundle.assets[0].relative_path,
+            Path::new("route-graphs/routes/ordon.json")
+        );
+        assert_eq!(bundle.assets[0].asset, asset);
+
+        bundle.manifest.id = "imported".into();
+        bundle.manifest.label = "Imported workspace".into();
+        let imported = registry.import(bundle.clone()).unwrap();
+        assert_eq!(imported.manifest.id, "imported");
+        assert_eq!(imported.assets.len(), 1);
+        assert_eq!(imported.assets[0].id, "graph.ordon");
+        assert_eq!(
+            imported.assets[0].relative_path,
+            Path::new("route-graphs/routes/ordon.json")
+        );
+        assert_eq!(
+            registry
+                .load_asset("imported", "graph.ordon")
+                .unwrap()
+                .asset,
+            asset
+        );
+        assert!(
+            registry
+                .import(bundle)
+                .unwrap_err()
+                .to_string()
+                .contains("already exists")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn registry_import_rejects_duplicate_paths_before_creating_workspace() {
+        let root = temporary_directory("workspace-import-collision");
+        let registry = WorkspaceRegistry::open(root.join("workspaces"), BTreeMap::new()).unwrap();
+        let manifest = WorkspaceManifest::new("collision", "Collision").unwrap();
+        let bundle = WorkspaceExport {
+            schema: WORKSPACE_EXPORT_SCHEMA.into(),
+            manifest,
+            assets: vec![
+                WorkspaceExportAsset {
+                    relative_path: "route-graphs/same.json".into(),
+                    asset: graph_asset("graph.first", "First"),
+                },
+                WorkspaceExportAsset {
+                    relative_path: "route-graphs/same.json".into(),
+                    asset: graph_asset("graph.second", "Second"),
+                },
+            ],
+        };
+
+        let error = registry.import(bundle).unwrap_err();
+        assert!(error.to_string().contains("duplicates asset path"));
+        assert!(!root.join("workspaces/collision").exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -24,7 +24,8 @@ planner.
 The browser now has a graph-first shell and file-backed workspaces with
 independently serialized typed assets. A user can create a workspace, create a
 grounded scenario from an exact read-only Library template, edit custom-node
-contracts, and perform recoverable asset CRUD without editing JSON.
+contracts, perform recoverable asset CRUD, and import or export individual
+assets and complete workspaces without editing JSON.
 
 The remaining usability gap is direct route authoring:
 
@@ -35,7 +36,7 @@ The remaining usability gap is direct route authoring:
 - The canvas can place compatible catalogue mechanics into a legacy-backed
   route, but it does not yet author typed pins, branches, subgraphs, or general
   semantic graph rewiring.
-- Folder CRUD, import/export, multiple editors, undo/redo, and keyboard-first
+- Folder CRUD, multiple editors, undo/redo, and keyboard-first
   authoring remain incomplete.
 - Presentation regions are not reusable semantic subgraphs.
 - The browser acceptance test exercises one preassembled keyed-door example and
@@ -107,8 +108,6 @@ or test fixture does not count as progress by itself.
 - [ ] Use fixed virtual roots for typed assets while allowing user folders below
       those roots.
 - [ ] Validate names, collisions, references, and permissions before mutation.
-- [ ] Add import/export for individual assets and complete workspaces.
-
 ## 4. Application shell and information hierarchy
 
 - [ ] Support multiple asset editor tabs with breadcrumbs and unsaved-state

@@ -17,6 +17,9 @@
       <details class="more-menu">
         <summary aria-label="More commands">More</summary>
         <div>
+          <label>Workspace files</label>
+          <button id="import-workspace" type="button">Import workspace</button>
+          <button id="export-workspace" type="button" disabled>Export workspace</button>
           <label for="project-list">Examples</label>
           <select id="project-list" aria-label="Planner examples"><option value="">Examples</option></select>
           <button id="new-project" type="button">New legacy project</button>
@@ -26,6 +29,8 @@
         </div>
       </details>
       <input id="project-file" type="file" accept="application/json,.json" hidden>
+      <input id="workspace-file" type="file" accept="application/json,.json" hidden>
+      <input id="workspace-asset-file" type="file" accept="application/json,.json" hidden>
       <span id="project-name" class="project-name">No workspace open</span>
       <span id="status" class="status">Connecting&hellip;</span>
     </header>
@@ -34,7 +39,10 @@
         <div class="browser-heading">
           <div class="browser-title">
             <strong>Content Browser</strong>
-            <button id="new-asset" type="button" disabled aria-label="Create workspace asset">+</button>
+            <span class="browser-actions">
+              <button id="import-asset" type="button" disabled>Import</button>
+              <button id="new-asset" type="button" disabled aria-label="Create workspace asset">+</button>
+            </span>
           </div>
           <div class="source-tabs" role="tablist" aria-label="Content source">
             <button id="workspace-tab" class="active" type="button" role="tab" aria-selected="true">Workspace</button>

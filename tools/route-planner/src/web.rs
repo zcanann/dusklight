@@ -4,7 +4,7 @@ use crate::project::{ProjectSaveRequest, ProjectStore};
 use crate::service::{PlannerServiceEnvelope, error_response, handle_envelope};
 use crate::workspace::{
     BUILTIN_LIBRARY_VERSION, WorkspaceAssetCommandRequest, WorkspaceAssetSaveRequest,
-    WorkspaceCreateRequest, WorkspaceLibraryForkRequest, WorkspaceRegistry,
+    WorkspaceCreateRequest, WorkspaceExport, WorkspaceLibraryForkRequest, WorkspaceRegistry,
     WorkspaceTrashCommandRequest,
 };
 use std::collections::BTreeMap;
@@ -243,6 +243,21 @@ fn dispatch(request: HttpRequest, state: &WebState) -> HttpResponse {
                 registry.create(create).map_err(|error| error.to_string())
             })
         }
+        ("POST", "/api/workspaces/import") => {
+            let bundle = match serde_json::from_slice::<WorkspaceExport>(&request.body) {
+                Ok(bundle) => bundle,
+                Err(error) => {
+                    return project_error_response(400, "Bad Request", &error.to_string());
+                }
+            };
+            project_response(|| {
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry.import(bundle).map_err(|error| error.to_string())
+            })
+        }
         ("GET", "/api/project-template") => project_response(|| {
             let store = state
                 .projects
@@ -294,6 +309,15 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
             }),
             _ => project_error_response(405, "Method Not Allowed", "unsupported workspace method"),
         },
+        [_, "export"] if request.method == "GET" => project_response(|| {
+            let registry = state
+                .workspaces
+                .lock()
+                .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+            registry
+                .export(workspace_id)
+                .map_err(|error| error.to_string())
+        }),
         [_, "assets", asset_id] if !asset_id.is_empty() => {
             dispatch_workspace_asset(request, state, workspace_id, asset_id)
         }
@@ -330,17 +354,11 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
                     .lock()
                     .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
                 registry
-                    .add_library_reference(
-                        workspace_id,
-                        &project.project,
-                        project.revision_sha256,
-                    )
+                    .add_library_reference(workspace_id, &project.project, project.revision_sha256)
                     .map_err(|error| error.to_string())
             })
         }
-        [_, "library-forks", library_id]
-            if request.method == "POST" && !library_id.is_empty() =>
-        {
+        [_, "library-forks", library_id] if request.method == "POST" && !library_id.is_empty() => {
             let fork = match serde_json::from_slice::<WorkspaceLibraryForkRequest>(&request.body) {
                 Ok(fork) => fork,
                 Err(error) => {
@@ -844,8 +862,8 @@ mod tests {
         let referenced = dispatch(
             HttpRequest {
                 method: "POST".into(),
-                target:
-                    "/api/workspaces/ordon-route/library-references/demo-forest-keyed-door".into(),
+                target: "/api/workspaces/ordon-route/library-references/demo-forest-keyed-door"
+                    .into(),
                 body: Vec::new(),
             },
             &state,
@@ -1042,6 +1060,45 @@ mod tests {
             &state,
         );
         assert_eq!(restored.status, 200);
+
+        let exported = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces/ordon-route/export".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(exported.status, 200);
+        let mut bundle =
+            serde_json::from_slice::<crate::workspace::WorkspaceExport>(&exported.body).unwrap();
+        assert_eq!(bundle.schema, crate::workspace::WORKSPACE_EXPORT_SCHEMA);
+        assert!(bundle.assets.iter().any(|record| {
+            record.asset.header.id == "custom.roll"
+                && record.relative_path == std::path::Path::new("custom-nodes/roll.json")
+        }));
+        bundle.manifest.id = "ordon-route-copy".into();
+        bundle.manifest.label = "Ordon route copy".into();
+        let imported_workspace = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/import".into(),
+                body: serde_json::to_vec(&bundle).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(imported_workspace.status, 200);
+        let imported_workspace: serde_json::Value =
+            serde_json::from_slice(&imported_workspace.body).unwrap();
+        assert_eq!(imported_workspace["manifest"]["id"], "ordon-route-copy");
+        assert_eq!(
+            imported_workspace["assets"].as_array().unwrap().len(),
+            bundle.assets.len()
+        );
+        assert!(
+            root.join("workspaces/ordon-route-copy/custom-nodes/roll.json")
+                .is_file()
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }
