@@ -6,7 +6,8 @@
 
 use crate::artifact::Digest;
 use crate::native_generic_tactic::{
-    GenericTactic, NATIVE_GENERIC_TACTIC_SCHEMA_V1, NativeGenericTacticPlan,
+    GenericTactic, NATIVE_GENERIC_TACTIC_SCHEMA_V1, NativeGenericTacticCandidate,
+    NativeGenericTacticPlan,
 };
 use crate::option_policy::TacticOptionCandidate;
 use crate::option_values::OptionActionDescriptor;
@@ -21,6 +22,7 @@ use dusklight_control::option_execution::{
     MAX_OPTION_CONDITIONS, OptionCondition, OptionEndReason, OptionExecution, OptionParameter,
     OptionType, TapeRange, validate_condition,
 };
+use dusklight_control::roll_option::{ROLL_OPTION_SCHEMA_V1, RollOptionPlan};
 use dusklight_control::tape::{InputFrame, InputTape};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -29,6 +31,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const TACTIC_ASSET_ADAPTER_SCHEMA_V1: &str = "dusklight-tactic-asset-adapter/v1";
+pub const MAX_TACTIC_CATALOG_ENTRIES: usize = 512;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -36,6 +39,7 @@ pub enum TacticAssetKind {
     GameTactic,
     NativeGenericTactic,
     MotionPath,
+    Roll,
     ReactiveController,
 }
 
@@ -203,6 +207,230 @@ pub trait TacticAssetAdapter {
     ) -> Result<Option<ExactTacticRealization>, TacticAssetError>;
 }
 
+/// In-memory sum of the existing plan types. It is intentionally not
+/// serializable: each variant keeps using its source plan's current encoding.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TacticAssetSource {
+    GameTactic(GameTacticPlan),
+    NativeGenericTactic(NativeGenericTacticPlan),
+    MotionPath(MotionPathPlan),
+    Roll(RollOptionPlan),
+    ReactiveController(ControllerProgram),
+}
+
+impl TacticAssetAdapter for TacticAssetSource {
+    fn describe(&self, option_id: &str) -> Result<TacticAssetDescription, TacticAssetError> {
+        match self {
+            Self::GameTactic(plan) => plan.describe(option_id),
+            Self::NativeGenericTactic(plan) => plan.describe(option_id),
+            Self::MotionPath(plan) => plan.describe(option_id),
+            Self::Roll(plan) => plan.describe(option_id),
+            Self::ReactiveController(plan) => plan.describe(option_id),
+        }
+    }
+
+    fn canonical_bytes(&self) -> Result<Vec<u8>, TacticAssetError> {
+        match self {
+            Self::GameTactic(plan) => TacticAssetAdapter::canonical_bytes(plan),
+            Self::NativeGenericTactic(plan) => TacticAssetAdapter::canonical_bytes(plan),
+            Self::MotionPath(plan) => TacticAssetAdapter::canonical_bytes(plan),
+            Self::Roll(plan) => TacticAssetAdapter::canonical_bytes(plan),
+            Self::ReactiveController(plan) => TacticAssetAdapter::canonical_bytes(plan),
+        }
+    }
+
+    fn static_frames(&self) -> Result<Option<Vec<InputFrame>>, TacticAssetError> {
+        match self {
+            Self::GameTactic(plan) => plan.static_frames(),
+            Self::NativeGenericTactic(plan) => plan.static_frames(),
+            Self::MotionPath(plan) => plan.static_frames(),
+            Self::Roll(plan) => plan.static_frames(),
+            Self::ReactiveController(plan) => plan.static_frames(),
+        }
+    }
+
+    fn exact_static_realization(
+        &self,
+        option_id: &str,
+    ) -> Result<Option<ExactTacticRealization>, TacticAssetError> {
+        match self {
+            Self::GameTactic(plan) => plan.exact_static_realization(option_id),
+            Self::NativeGenericTactic(plan) => plan.exact_static_realization(option_id),
+            Self::MotionPath(plan) => plan.exact_static_realization(option_id),
+            Self::Roll(plan) => plan.exact_static_realization(option_id),
+            Self::ReactiveController(plan) => plan.exact_static_realization(option_id),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticCatalogEntry {
+    option_id: String,
+    source: TacticAssetSource,
+    description: TacticAssetDescription,
+}
+
+impl TacticCatalogEntry {
+    pub fn new(
+        option_id: impl Into<String>,
+        source: TacticAssetSource,
+    ) -> Result<Self, TacticAssetError> {
+        let option_id = option_id.into();
+        let description = source.describe(&option_id)?;
+        let entry = Self {
+            option_id,
+            source,
+            description,
+        };
+        entry.validate()?;
+        Ok(entry)
+    }
+
+    pub fn option_id(&self) -> &str {
+        &self.option_id
+    }
+
+    pub fn source(&self) -> &TacticAssetSource {
+        &self.source
+    }
+
+    pub fn description(&self) -> &TacticAssetDescription {
+        &self.description
+    }
+
+    pub fn exact_static_realization(
+        &self,
+    ) -> Result<Option<ExactTacticRealization>, TacticAssetError> {
+        let realization = self.source.exact_static_realization(&self.option_id)?;
+        if let Some(realization) = &realization {
+            realization.validate_against(&self.description)?;
+        } else if self.description.statically_realizable {
+            return Err(invalid(
+                "catalog entry promised a static realization but produced none",
+            ));
+        }
+        Ok(realization)
+    }
+
+    fn validate(&self) -> Result<(), TacticAssetError> {
+        validate_option_id(&self.option_id)?;
+        self.description.validate()?;
+        if self.description.option.option_id != self.option_id
+            || self.source.describe(&self.option_id)? != self.description
+        {
+            return Err(invalid(
+                "catalog entry description differs from its source plan",
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TacticAssetCatalog {
+    entries: Vec<TacticCatalogEntry>,
+    action_schema_sha256: Digest,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum PreparedTacticExecution<'a> {
+    Static(ExactTacticRealization),
+    NativeGeneric(NativeGenericTacticCandidate),
+    ReactiveController(&'a ControllerProgram),
+}
+
+impl TacticAssetCatalog {
+    pub fn new(mut entries: Vec<TacticCatalogEntry>) -> Result<Self, TacticAssetError> {
+        if entries.is_empty() {
+            return Err(TacticAssetError::EmptyCatalog);
+        }
+        if entries.len() > MAX_TACTIC_CATALOG_ENTRIES {
+            return Err(TacticAssetError::CatalogTooLarge);
+        }
+        entries.sort_by(|left, right| left.option_id.cmp(&right.option_id));
+        if entries
+            .windows(2)
+            .any(|pair| pair[0].option_id == pair[1].option_id)
+        {
+            return Err(TacticAssetError::DuplicateOptionId);
+        }
+        for entry in &entries {
+            entry.validate()?;
+        }
+        let action_schema_sha256 = digest(
+            &serde_json::to_vec(
+                &entries
+                    .iter()
+                    .map(|entry| &entry.description.option)
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(serialization)?,
+        );
+        Ok(Self {
+            entries,
+            action_schema_sha256,
+        })
+    }
+
+    pub fn entries(&self) -> &[TacticCatalogEntry] {
+        &self.entries
+    }
+
+    pub fn entry(&self, option_id: &str) -> Option<&TacticCatalogEntry> {
+        self.entries
+            .binary_search_by_key(&option_id, |entry| entry.option_id.as_str())
+            .ok()
+            .map(|index| &self.entries[index])
+    }
+
+    pub fn descriptions(&self) -> impl ExactSizeIterator<Item = &TacticAssetDescription> {
+        self.entries.iter().map(|entry| &entry.description)
+    }
+
+    pub fn option_descriptors(&self) -> impl ExactSizeIterator<Item = &OptionActionDescriptor> {
+        self.entries.iter().map(|entry| &entry.description.option)
+    }
+
+    pub fn action_schema_sha256(&self) -> Digest {
+        self.action_schema_sha256
+    }
+
+    pub fn prepare_execution(
+        &self,
+        option_id: &str,
+    ) -> Result<PreparedTacticExecution<'_>, TacticAssetError> {
+        let entry = self
+            .entry(option_id)
+            .ok_or_else(|| TacticAssetError::UnknownOptionId(option_id.into()))?;
+        match entry.description.executor {
+            TacticExecutor::StaticPlan => entry
+                .exact_static_realization()?
+                .map(PreparedTacticExecution::Static)
+                .ok_or_else(|| {
+                    invalid("static tactic catalog entry produced no exact realization")
+                }),
+            TacticExecutor::NativeGenericObservationLoop => match &entry.source {
+                TacticAssetSource::NativeGenericTactic(plan) => {
+                    NativeGenericTacticCandidate::new(entry.option_id.clone(), plan.clone())
+                        .map(PreparedTacticExecution::NativeGeneric)
+                        .map_err(|error| invalid(error.to_string()))
+                }
+                _ => Err(invalid(
+                    "native generic executor does not own a native generic tactic plan",
+                )),
+            },
+            TacticExecutor::ReactiveControllerProgram => match &entry.source {
+                TacticAssetSource::ReactiveController(program) => {
+                    Ok(PreparedTacticExecution::ReactiveController(program))
+                }
+                _ => Err(invalid(
+                    "reactive controller executor does not own a controller program",
+                )),
+            },
+        }
+    }
+}
+
 impl TacticAssetAdapter for GameTacticPlan {
     fn describe(&self, option_id: &str) -> Result<TacticAssetDescription, TacticAssetError> {
         validate_option_id(option_id)?;
@@ -348,6 +576,62 @@ impl TacticAssetAdapter for MotionPathPlan {
             )
             .map_err(|error| invalid(error.to_string()))?;
         let exact = ExactTacticRealization { tape, execution };
+        exact.validate_against(&description)?;
+        Ok(Some(exact))
+    }
+}
+
+impl TacticAssetAdapter for RollOptionPlan {
+    fn describe(&self, option_id: &str) -> Result<TacticAssetDescription, TacticAssetError> {
+        validate_option_id(option_id)?;
+        self.validate()
+            .map_err(|error| invalid(error.to_string()))?;
+        let exact = exact_roll_realization(self, option_id)?;
+        let canonical = self.canonical_bytes()?;
+        checked(TacticAssetDescription {
+            schema: TACTIC_ASSET_ADAPTER_SCHEMA_V1.into(),
+            kind: TacticAssetKind::Roll,
+            source_schema: ROLL_OPTION_SCHEMA_V1.into(),
+            content_sha256: digest(&canonical),
+            option: descriptor(&exact.execution),
+            duration: TacticDurationBounds {
+                minimum_ticks: 1,
+                maximum_ticks: self
+                    .planned_ticks()
+                    .map_err(|error| invalid(error.to_string()))?,
+            },
+            applicability: TacticApplicability::GameContextRequired,
+            required_observations: BTreeSet::new(),
+            executor: TacticExecutor::StaticPlan,
+            stopping: TacticStoppingContract {
+                termination: exact.execution.termination_condition.clone(),
+                cancellation: exact.execution.cancellation_conditions.clone(),
+            },
+            statically_realizable: true,
+        })
+    }
+
+    fn canonical_bytes(&self) -> Result<Vec<u8>, TacticAssetError> {
+        self.validate()
+            .map_err(|error| invalid(error.to_string()))?;
+        serde_json::to_vec(self).map_err(serialization)
+    }
+
+    fn static_frames(&self) -> Result<Option<Vec<InputFrame>>, TacticAssetError> {
+        let start = compatible_roll_start(self);
+        Ok(Some(
+            self.realize(start, None)
+                .map_err(|error| invalid(error.to_string()))?
+                .frames,
+        ))
+    }
+
+    fn exact_static_realization(
+        &self,
+        option_id: &str,
+    ) -> Result<Option<ExactTacticRealization>, TacticAssetError> {
+        let description = self.describe(option_id)?;
+        let exact = exact_roll_realization(self, option_id)?;
         exact.validate_against(&description)?;
         Ok(Some(exact))
     }
@@ -505,6 +789,34 @@ fn checked(
     Ok(description)
 }
 
+fn compatible_roll_start(plan: &RollOptionPlan) -> u64 {
+    let period = u64::from(plan.spacing.period_ticks);
+    let button_phase = u64::from(plan.button_frame) % period;
+    (u64::from(plan.spacing.phase_tick) + period - button_phase) % period
+}
+
+fn exact_roll_realization(
+    plan: &RollOptionPlan,
+    option_id: &str,
+) -> Result<ExactTacticRealization, TacticAssetError> {
+    validate_option_id(option_id)?;
+    let start_frame = compatible_roll_start(plan);
+    let realization = plan
+        .realize(start_frame, None)
+        .map_err(|error| invalid(error.to_string()))?;
+    let mut frames = vec![InputFrame::default(); start_frame as usize];
+    frames.extend(realization.frames);
+    let tape = tape(frames);
+    let range = TapeRange {
+        start_frame,
+        end_frame_exclusive: tape.frames.len() as u64,
+    };
+    let execution = plan
+        .capture_execution(option_id.into(), &tape, range, None)
+        .map_err(|error| invalid(error.to_string()))?;
+    Ok(ExactTacticRealization { tape, execution })
+}
+
 fn descriptor(
     execution: &dusklight_control::option_execution::OptionExecution,
 ) -> OptionActionDescriptor {
@@ -612,6 +924,10 @@ fn serialization(error: serde_json::Error) -> TacticAssetError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TacticAssetError {
     InvalidOptionId,
+    EmptyCatalog,
+    CatalogTooLarge,
+    DuplicateOptionId,
+    UnknownOptionId(String),
     InvalidAsset(String),
     Serialization(String),
 }
@@ -620,6 +936,14 @@ impl fmt::Display for TacticAssetError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidOptionId => formatter.write_str("tactic option ID is invalid"),
+            Self::EmptyCatalog => formatter.write_str("tactic catalog is empty"),
+            Self::CatalogTooLarge => formatter.write_str("tactic catalog exceeds its finite bound"),
+            Self::DuplicateOptionId => {
+                formatter.write_str("tactic catalog option IDs are not unique")
+            }
+            Self::UnknownOptionId(option_id) => {
+                write!(formatter, "tactic catalog has no option named {option_id}")
+            }
             Self::InvalidAsset(message) => write!(formatter, "tactic asset is invalid: {message}"),
             Self::Serialization(message) => {
                 write!(formatter, "tactic asset serialization failed: {message}")
@@ -636,6 +960,7 @@ mod tests {
     use dusklight_control::controller_program::ControllerProgram;
     use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
     use dusklight_control::motion_path::{MotionPathPlan, SamplePhase, StickPath, StickPoint};
+    use dusklight_control::roll_option::{RollOptionPlan, RollSpacing};
 
     #[test]
     fn existing_plan_types_share_one_adapter_without_changing_realization() {
@@ -665,6 +990,7 @@ mod tests {
             },
             8,
         );
+        let roll = RollOptionPlan::new(0, 100, 2);
         let controller = ControllerProgram::parse(
             "duskcontrol 1\nframes 4\nbezier replace from 0 for 4 p0 0 127 p1 20 100 p2 40 80 p3 60 60\n",
         )
@@ -673,12 +999,14 @@ mod tests {
         let game_description = game.describe("interact").unwrap();
         let path_description = path.describe("curve").unwrap();
         let native_description = native.describe("seek").unwrap();
+        let roll_description = roll.describe("roll").unwrap();
         let controller_description = controller.describe("controller").unwrap();
 
         for description in [
             &game_description,
             &path_description,
             &native_description,
+            &roll_description,
             &controller_description,
         ] {
             description.validate().unwrap();
@@ -689,6 +1017,7 @@ mod tests {
         assert_eq!(game_description.kind, TacticAssetKind::GameTactic);
         assert_eq!(path_description.option.option_type, OptionType::Bezier);
         assert_eq!(native_description.option.option_type, OptionType::Move);
+        assert_eq!(roll_description.option.option_type, OptionType::Roll);
         assert_eq!(
             controller_description.option.option_type,
             OptionType::Custom("reactive_controller".into())
@@ -704,6 +1033,8 @@ mod tests {
         path_exact.validate_against(&path_description).unwrap();
         assert!(native.static_frames().unwrap().is_none());
         assert!(native.exact_static_realization("seek").unwrap().is_none());
+        let roll_exact = roll.exact_static_realization("roll").unwrap().unwrap();
+        roll_exact.validate_against(&roll_description).unwrap();
         assert!(controller.static_frames().unwrap().is_some());
         let controller_exact = controller
             .exact_static_realization("controller")
@@ -730,12 +1061,13 @@ mod tests {
                 game_description.content_sha256,
                 path_description.content_sha256,
                 native_description.content_sha256,
+                roll_description.content_sha256,
                 controller_description.content_sha256,
             ]
             .into_iter()
             .collect::<BTreeSet<_>>()
             .len(),
-            4
+            5
         );
     }
 
@@ -815,5 +1147,142 @@ mod tests {
             target: "unrelated".into(),
         };
         assert!(realization.validate_against(&description).is_err());
+    }
+
+    #[test]
+    fn one_finite_catalog_holds_all_existing_plan_families() {
+        let game = TacticCatalogEntry::new(
+            "game.interact",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Interact {
+                press_frames: 1,
+                recovery_frames: 1,
+            })),
+        )
+        .unwrap();
+        let path = TacticCatalogEntry::new(
+            "path.waypoint",
+            TacticAssetSource::MotionPath(MotionPathPlan::new(
+                StickPath::Waypoint {
+                    points: vec![StickPoint { x: 0, y: 100 }],
+                },
+                2,
+            )),
+        )
+        .unwrap();
+        let native = TacticCatalogEntry::new(
+            "native.heading",
+            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+                GenericTactic::MaintainRelativeHeading {
+                    heading_radians_f32_bits: 0.0_f32.to_bits(),
+                    magnitude: 90,
+                },
+                3,
+            )),
+        )
+        .unwrap();
+        let mut roll_plan = RollOptionPlan::new(0, 100, 1);
+        roll_plan.button_frame = 1;
+        roll_plan.spacing = RollSpacing {
+            period_ticks: 4,
+            phase_tick: 3,
+        };
+        let roll =
+            TacticCatalogEntry::new("roll.forward", TacticAssetSource::Roll(roll_plan)).unwrap();
+        let controller = TacticCatalogEntry::new(
+            "controller.buttons",
+            TacticAssetSource::ReactiveController(
+                ControllerProgram::parse("duskcontrol 1\nframes 2\nbuttons from 0 for 2 B\n")
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
+
+        let catalog = TacticAssetCatalog::new(vec![path, native, controller, game, roll]).unwrap();
+        assert_eq!(
+            catalog
+                .entries()
+                .iter()
+                .map(TacticCatalogEntry::option_id)
+                .collect::<Vec<_>>(),
+            vec![
+                "controller.buttons",
+                "game.interact",
+                "native.heading",
+                "path.waypoint",
+                "roll.forward",
+            ]
+        );
+        assert_eq!(catalog.descriptions().len(), 5);
+        for option_id in [
+            "controller.buttons",
+            "game.interact",
+            "path.waypoint",
+            "roll.forward",
+        ] {
+            let PreparedTacticExecution::Static(realization) =
+                catalog.prepare_execution(option_id).unwrap()
+            else {
+                panic!("expected exact static execution");
+            };
+            realization
+                .validate_against(catalog.entry(option_id).unwrap().description())
+                .unwrap();
+        }
+        let PreparedTacticExecution::NativeGeneric(native) =
+            catalog.prepare_execution("native.heading").unwrap()
+        else {
+            panic!("expected native generic executor input");
+        };
+        assert_eq!(native.descriptor().option_id, "native.heading");
+        assert_eq!(
+            catalog.option_descriptors().count(),
+            catalog.entries().len()
+        );
+        assert_ne!(catalog.action_schema_sha256(), Digest::ZERO);
+        assert_eq!(
+            catalog.prepare_execution("missing").unwrap_err(),
+            TacticAssetError::UnknownOptionId("missing".into())
+        );
+    }
+
+    #[test]
+    fn catalog_dispatches_observation_driven_controller_to_existing_program() {
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "controller.seek",
+                TacticAssetSource::ReactiveController(
+                    ControllerProgram::parse(
+                        "duskcontrol 1\nframes 3\nseek coordinate replace from 0 for 3 frame world target 1 2 3 offset 0 0 0 magnitude 100 stop 1\n",
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+
+        let PreparedTacticExecution::ReactiveController(program) =
+            catalog.prepare_execution("controller.seek").unwrap()
+        else {
+            panic!("expected reactive controller executor input");
+        };
+        assert_eq!(program.duration_frames, 3);
+    }
+
+    #[test]
+    fn catalog_rejects_duplicate_concrete_option_identity() {
+        let entry = || {
+            TacticCatalogEntry::new(
+                "duplicate",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            TacticAssetCatalog::new(vec![entry(), entry()]).unwrap_err(),
+            TacticAssetError::DuplicateOptionId
+        );
     }
 }
