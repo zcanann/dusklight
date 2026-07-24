@@ -286,18 +286,17 @@ impl FactSnapshot {
         let actors = self
             .actors
             .iter()
-            .map(|actor| {
-                Ok(crate::native_generic_tactic::NativeTacticActor {
-                    selector: actor
-                        .portable_selector
-                        .clone()
-                        .ok_or(FactSnapshotError::IncompleteSource)?,
-                    runtime_generation: actor.runtime_generation,
-                    current_room: actor.current_room,
-                    position_f32_bits: actor.position_f32_bits,
+            .filter_map(|actor| {
+                actor.portable_selector.clone().map(|selector| {
+                    crate::native_generic_tactic::NativeTacticActor {
+                        selector,
+                        runtime_generation: actor.runtime_generation,
+                        current_room: actor.current_room,
+                        position_f32_bits: actor.position_f32_bits,
+                    }
                 })
             })
-            .collect::<Result<Vec<_>, FactSnapshotError>>()?;
+            .collect();
         let observation = NativeTacticObservation {
             boundary_index: self.boundary_index,
             simulation_tick,
@@ -635,7 +634,7 @@ fn actor_from_native(
     actor: &NativeActorObservation,
 ) -> Result<ActorFactSnapshot, FactSnapshotError> {
     Ok(ActorFactSnapshot {
-        portable_selector: Some(PlacedActorSelector {
+        portable_selector: (actor.set_id != u16::MAX).then(|| PlacedActorSelector {
             stage: stage.into(),
             home_room: actor.home_room,
             set_id: actor.set_id,
@@ -896,6 +895,37 @@ mod tests {
         assert_eq!(tactic.simulation_tick, snapshot.simulation_tick + 1);
         assert_eq!(tactic.tape_frame, snapshot.tape_frame + 1);
         assert_eq!(tactic.state_identity, snapshot.state_identity);
+    }
+
+    #[test]
+    fn actors_without_portable_set_ids_do_not_block_non_actor_tactics() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let mut native = shard.episodes[0].steps[0].pre_input.clone();
+        let actor = native
+            .actors
+            .first_mut()
+            .expect("fixture must contain an actor");
+        actor.set_id = u16::MAX;
+        let snapshot = FactSnapshot::from_native_learning(&native, &[], None, Vec::new()).unwrap();
+        assert!(
+            snapshot
+                .actors
+                .iter()
+                .any(|actor| actor.portable_selector.is_none())
+        );
+        let tactic = snapshot.to_native_tactic_observation().unwrap();
+        let direct =
+            crate::native_generic_tactic::NativeTacticObservation::from_native(&native).unwrap();
+        assert!(tactic.actor_set_complete);
+        assert_eq!(direct.actors, tactic.actors);
+        assert_eq!(
+            tactic.actors.len() + 1,
+            snapshot.actors.len(),
+            "only the unaddressable actor is omitted"
+        );
     }
 
     #[test]

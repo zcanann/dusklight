@@ -15,6 +15,7 @@ pub mod native_residual_campaign;
 pub mod native_residual_campaign_runner;
 pub mod native_suffix_result;
 pub mod native_suffix_worker;
+pub mod native_tactic_route_runner;
 pub mod native_tactic_worker;
 pub mod optimization_request;
 pub mod optimization_resume;

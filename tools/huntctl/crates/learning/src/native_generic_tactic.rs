@@ -346,6 +346,7 @@ impl NativeTacticObservation {
         let actors = value
             .actors
             .iter()
+            .filter(|actor| actor.set_id != u16::MAX)
             .map(|actor| actor_snapshot(&value.stage, actor, finite3))
             .collect::<Result<Vec<_>, _>>()?;
         let observation = Self {

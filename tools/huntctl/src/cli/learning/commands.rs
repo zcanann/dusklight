@@ -86,6 +86,11 @@ use huntctl::offline_rl::{
     movement_feature_schema_digest_v1,
 };
 use huntctl::reward_shaping::{PotentialShapingSpec, REWARD_REPORT_SCHEMA_V1};
+use huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding;
+use huntctl::search_evaluator::native_tactic_route_runner::{
+    NativeTacticRouteRunConfig, run_native_tactic_route,
+};
+use huntctl::search_evaluator::optimization_request::OptimizationRequest;
 use huntctl::tape::InputTape;
 use huntctl::trace_diff::SiblingTraceDiff;
 use huntctl::transition_corpus::TransitionCorpus;
@@ -675,6 +680,59 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("prioritized-q") => cli::learning::command_prioritized_q(&args[1..]),
         Some("ablate-q") => cli::learning::command_q_ablation(&args[1..]),
         Some("option-values") => cli::learning::command_option_values(&args[1..]),
+        Some("tactic-route") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let output_argument = required_path(learn_args, "--output")?;
+            let output = if output_argument.is_absolute() {
+                output_argument
+            } else {
+                repository_root.join(output_argument)
+            };
+            let mut seeds = repeated_option(learn_args, "--seed")
+                .into_iter()
+                .map(|seed| seed.parse::<u64>())
+                .collect::<Result<Vec<_>, _>>()?;
+            if seeds.is_empty() {
+                seeds = vec![1, 2, 3];
+            }
+            seeds.sort_unstable();
+            seeds.dedup();
+            let report = run_native_tactic_route(&NativeTacticRouteRunConfig {
+                repository_root: &repository_root,
+                optimization: &request,
+                execution: &execution,
+                output_root: &output,
+                exploration_seeds: &seeds,
+                decisions_per_seed: u64_option(learn_args, "--decisions-per-seed", 256)?,
+                branch_every_decisions: u64_option(learn_args, "--branch-every", 8)?,
+                epsilon_per_million: option(learn_args, "--epsilon-per-million")
+                    .map(|value| value.parse())
+                    .transpose()?
+                    .unwrap_or(350_000),
+            })?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "report": output.join("report.json"),
+                    "successful_seeds": report.successful_seeds,
+                    "exploration_seeds": report.exploration_seeds,
+                    "total_decisions": report.total_decisions,
+                    "total_native_ticks": report.total_native_ticks,
+                    "demonstration_transitions": report.demonstration_transitions,
+                }))?
+            );
+            Ok(())
+        }
         Some("diff-episodes") => {
             let learn_args = &args[1..];
             let success_trace_path = required_path(learn_args, "--success-trace")?;
