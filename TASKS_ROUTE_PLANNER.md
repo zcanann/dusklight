@@ -21,25 +21,26 @@ The planner engine contains useful typed state, transition, route-book,
 validation, and solving machinery. That machinery is not yet a usable route
 planner.
 
-The current browser is a transition-composer prototype over preassembled demo
-documents:
+The browser now has a graph-first shell and file-backed workspaces with
+independently serialized typed assets. A user can create a workspace, create a
+grounded scenario from an exact read-only Library template, edit custom-node
+contracts, and perform recoverable asset CRUD without editing JSON.
 
-- New Project starts with an empty mechanics catalogue, no start state, no goal,
-  and therefore no useful node palette.
-- A user cannot select a game context, mount a mechanics library, choose an
-  initial state, or author a meaningful route from a blank project.
-- The browser can append and rearrange transitions that were already embedded in
-  a demo, but it cannot create the assets needed to express a route.
-- The current project document embeds a composed catalogue, start state, route
-  book, overlays, equivalence sets, and presentation data in one JSON document.
-- Built-in demonstrations are constructed in Rust rather than loaded as ordinary
-  independently serialized assets.
+The remaining usability gap is direct route authoring:
+
+- Library browsing is still coarse-grained around whole example projects rather
+  than mechanics, contexts, fixtures, templates, and reusable graphs.
+- Scenario roots, anchors, goals, and exact contexts cannot yet be chosen through
+  a complete blank-scenario flow.
+- The canvas can place compatible catalogue mechanics into a legacy-backed
+  route, but it does not yet author typed pins, branches, subgraphs, or general
+  semantic graph rewiring.
+- Folder CRUD, import/export, multiple editors, undo/redo, and keyboard-first
+  authoring remain incomplete.
 - Presentation regions are not reusable semantic subgraphs.
-- The default screen prioritizes raw model payloads and controls over the route
-  authoring task.
-- The browser acceptance test exercises one preassembled keyed-door demo and can
-  skip without running on unsupported hosts. It does not prove that a blank user
-  project can express a route.
+- The browser acceptance test exercises one preassembled keyed-door example and
+  can skip without running on unsupported hosts. It does not prove that a blank
+  user workspace can express a route.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 
@@ -94,43 +95,8 @@ or test fixture does not count as progress by itself.
 
 ## 3. Workspace and asset architecture
 
-### 3.1 Replace the monolithic project document
-
-- [x] Introduce a workspace manifest that contains identity, version, mounted
-      libraries, exact-context defaults, and asset roots without embedding
-      catalogues, route graphs, snapshots, or layouts.
-- [x] Store each mutable asset in its own canonical JSON file using the existing
-      typed serialization and validation infrastructure. Do not introduce YAML.
-- [x] Separate semantic graph data from presentation layout so moving a node
-      cannot change a route or invalidate semantic identity.
-- [x] Give every asset a stable identity independent of its file path. Rename and
-      move operations must preserve references.
-- [x] Seal library dependencies by exact identity and digest. Opening a workspace
-      with missing or changed dependencies must produce an actionable dependency
-      error rather than silently rebinding.
-- [x] Support schema migration explicitly. Never make users repair serialized
-      files by hand after an application update.
-- [x] Define crash-safe transactions for multi-file operations such as moving a
-      graph with dependent layouts or deleting an asset with references.
-
-The initial mutable asset types are:
-
-- Scenario
-- Route graph
-- Reusable subgraph
-- Custom node definition
-- State seed
-- Query/goal
-- Route book
-- Layout
-
 ### 3.2 Separate Workspace and Library content
 
-- [x] Add a **Workspace** browser tab containing only mutable user assets.
-- [x] Add a **Library** browser tab containing immutable mechanics, exact
-      contexts, verified fixtures, templates, and source-backed examples.
-- [x] Keep read-only and writable items out of the same undifferentiated tree.
-      Cross-source search results must carry an unmistakable source badge.
 - [ ] Make library operations contextual: Open, Inspect, Add Reference, Create
       Scenario From Template, and Fork to Workspace. Do not show disabled
       Rename/Delete commands.
@@ -146,29 +112,10 @@ The initial mutable asset types are:
 - [ ] Use fixed virtual roots for typed assets while allowing user folders below
       those roots.
 - [ ] Validate names, collisions, references, and permissions before mutation.
-- [x] Show inbound references before delete and preserve resolvable broken-link
-      records when deletion is confirmed.
-- [x] Add revision-checked save and conflict resolution for independently open
-      editor tabs.
 - [ ] Add import/export for individual assets and complete workspaces.
-- [x] Add filesystem change detection so external edits or Git operations do not
-      leave stale in-memory documents.
-- [ ] Move hard-coded Rust demonstrations into ordinary read-only serialized
-      Library assets loaded through the same validation path as user content.
 
 ## 4. Application shell and information hierarchy
 
-- [x] Replace the current wall-of-panels layout with a graph-first workspace:
-      Content Browser, central canvas, selection-driven Details panel, and a
-      collapsed diagnostics drawer.
-- [x] Keep the canvas as the dominant surface at ordinary desktop sizes.
-- [x] Open diagnostics automatically only for errors, explicit trace requests, or
-      completed solve results.
-- [x] Show no raw payload or full state dump on initial load.
-- [x] Put rare commands in contextual menus instead of a permanent toolbar of
-      unrelated buttons.
-- [x] Limit the persistent toolbar to workspace navigation, Save, Undo/Redo,
-      Validate, Solve/Play, and view controls.
 - [ ] Support multiple asset editor tabs with breadcrumbs and unsaved-state
       indicators.
 - [ ] Add command-palette access and consistent keyboard shortcuts for every
@@ -277,11 +224,8 @@ scenario is.
 
 ### 7.2 Blueprint-like custom nodes
 
-- [x] Let users define a custom transition node with typed inputs, guards,
-      effects, costs, obligations, outputs, scope, and evidence status.
 - [ ] Compile custom transition nodes through the existing refinement/validation
       machinery instead of interpreting browser-owned behavior.
-- [x] Default new custom mechanics to hypothetical/research status.
 - [ ] Require explicit evidence and review before a custom node can become an
       established Library mechanic.
 - [ ] Support custom macro nodes backed by subgraphs without duplicating their

@@ -1,0 +1,437 @@
+{
+  "schema": "dusklight.route-planner.web-project/v3",
+  "id": "demo-hypothetical-local-bank-rebind",
+  "label": "Hypothetical local-bank rebind",
+  "catalog": {
+    "schema": "dusklight.route-planner.composed-catalog/v16",
+    "base_fact_catalog_sha256": "984fb553a64c846ca3fb60e95eb309e59df1cb8e7228e4a25257099965d3aef0",
+    "base_mechanics_catalog_sha256": "bb28b74a683f3f19e12650192a31cf26bff723e3d1bfd09f868da4ff27b5a892",
+    "facts": {
+      "schema": "dusklight.route-planner.fact-catalog/v9",
+      "aliases": [
+        {
+          "id": "local.forest-switch",
+          "label": "Forest local switch",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "raw": {
+            "component_kind": {
+              "kind": "stage_memory"
+            },
+            "binding": {
+              "kind": "exact",
+              "binding": {
+                "kind": "stage",
+                "stage": "D_MN05"
+              }
+            },
+            "byte_offset": 0,
+            "mask": [
+              1
+            ],
+            "expected": [
+              1
+            ]
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.local-bank-binding-model",
+                "kind": "source_audited",
+                "source_sha256": "6161616161616161616161616161616161616161616161616161616161616161",
+                "note": "Stage-local values derive meaning from their current backing binding."
+              }
+            ]
+          }
+        },
+        {
+          "id": "local.tot-switch",
+          "label": "Temple of Time local switch",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "raw": {
+            "component_kind": {
+              "kind": "stage_memory"
+            },
+            "binding": {
+              "kind": "exact",
+              "binding": {
+                "kind": "stage",
+                "stage": "D_MN06"
+              }
+            },
+            "byte_offset": 0,
+            "mask": [
+              1
+            ],
+            "expected": [
+              1
+            ]
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.local-bank-binding-model",
+                "kind": "source_audited",
+                "source_sha256": "6161616161616161616161616161616161616161616161616161616161616161",
+                "note": "Stage-local values derive meaning from their current backing binding."
+              }
+            ]
+          }
+        }
+      ],
+      "derived_facts": [
+        {
+          "id": "path.tot-open",
+          "label": "Temple of Time local path is open",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "rule": {
+            "kind": "fact",
+            "fact_id": "local.tot-switch"
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.local-bank-binding-model",
+                "kind": "source_audited",
+                "source_sha256": "6161616161616161616161616161616161616161616161616161616161616161",
+                "note": "Stage-local values derive meaning from their current backing binding."
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "mechanics": {
+      "schema": "dusklight.route-planner.mechanics-catalog/v30",
+      "transitions": [
+        {
+          "id": "transition.enter-temple-path",
+          "label": "Enter the Temple of Time path opened by the rebound value",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "actor_driven",
+          "approach_id": "approach.temple-local-path",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "STAGE_A"
+                    }
+                  }
+                },
+                {
+                  "kind": "fact",
+                  "fact_id": "path.tot-open"
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "set_location",
+                "location": {
+                  "stage": "STAGE_B",
+                  "room": 0,
+                  "layer": 0,
+                  "spawn": 0
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.local-bank-binding-model",
+                "kind": "source_audited",
+                "source_sha256": "6161616161616161616161616161616161616161616161616161616161616161",
+                "note": "Stage-local values derive meaning from their current backing binding."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.hypothetical-local-bank-rebind",
+          "label": "Hypothetically preserve Forest memory and rebind it to Temple of Time",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "technique",
+          "approach_id": "approach.hypothetical-local-bank-rebind",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "STAGE_A"
+                    }
+                  }
+                },
+                {
+                  "kind": "fact",
+                  "fact_id": "local.forest-switch"
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "preserve",
+                "selector": {
+                  "kind": "id",
+                  "component_id": "stage.local-bank"
+                }
+              },
+              {
+                "kind": "rebind",
+                "selector": {
+                  "kind": "id",
+                  "component_id": "stage.local-bank"
+                },
+                "binding": {
+                  "kind": "stage",
+                  "stage": "D_MN06"
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "hypothetical",
+            "records": [
+              {
+                "id": "hypothesis.local-bank-rebind",
+                "kind": "theorycraft",
+                "source_sha256": null,
+                "note": "Explicit research-only transfer of one preserved local bank."
+              }
+            ]
+          }
+        }
+      ],
+      "obligations": [],
+      "writers": [],
+      "gates": [],
+      "readers": [],
+      "reconstruction_rules": [],
+      "obstructions": [],
+      "resolvers": [],
+      "techniques": [],
+      "microtraces": [],
+      "goals": [
+        {
+          "id": "goal.enter-rebound-temple-path",
+          "label": "Enter the path exposed by the hypothetical rebind",
+          "predicate": {
+            "kind": "compare",
+            "left": {
+              "kind": "location_stage"
+            },
+            "operator": "equal",
+            "right": {
+              "kind": "literal",
+              "value": {
+                "kind": "text",
+                "value": "STAGE_B"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "refinement_stack": {
+      "schema": "dusklight.route-planner.refinement-stack/v2",
+      "entries": []
+    },
+    "obstruction_bindings": []
+  },
+  "theorycraft_base_catalog": null,
+  "theorycraft_overlays": [],
+  "evidence_mode": "research",
+  "route_book": null,
+  "start_state": {
+    "schema": "dusklight.route-planner.execution-state/v15",
+    "snapshot": {
+      "schema": "dusklight.route-planner.state-snapshot/v8",
+      "id": "snapshot.before-hypothetical-local-bank-rebind",
+      "sequence": 0,
+      "environment": {
+        "schema": "dusklight.route-planner.execution-environment/v7",
+        "runtime_configuration": {
+          "schema": "dusklight.route-planner.runtime-configuration/v1",
+          "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+          "language": "en",
+          "settings": {}
+        },
+        "active_runtime_file": {
+          "id": "file-0",
+          "origin": {
+            "kind": "new_file"
+          },
+          "backing": {
+            "kind": "memory_only"
+          },
+          "allowed_serialization_targets": [
+            1
+          ],
+          "lifecycle": "active"
+        },
+        "inactive_runtime_files": [],
+        "physical_slots": [],
+        "physical_slot_observations": [],
+        "execution_context": {
+          "kind": "world"
+        },
+        "location": {
+          "stage": "STAGE_A",
+          "room": 0,
+          "layer": 0,
+          "spawn": 0
+        },
+        "player": {
+          "form": {
+            "kind": "human"
+          },
+          "mount": null,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "attention_position": null,
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "has_control": true,
+          "action": "idle"
+        },
+        "components": [
+          {
+            "id": "stage.local-bank",
+            "component_kind": {
+              "kind": "stage_memory"
+            },
+            "payload": {
+              "kind": "raw",
+              "bytes": [
+                1
+              ],
+              "known_mask": [
+                255
+              ]
+            },
+            "binding": {
+              "kind": "stage",
+              "stage": "D_MN05"
+            },
+            "lifetime": "stage_load",
+            "serialization_owner": {
+              "kind": "stage_bank",
+              "runtime_file_id": "file-0",
+              "stage": "D_MN05"
+            },
+            "provenance": [
+              {
+                "source_kind": "trace_observation",
+                "source_id": "trace.forest-local-bank",
+                "source_sha256": "6262626262626262626262626262626262626262626262626262626262626262",
+                "transition_id": null
+              }
+            ]
+          }
+        ],
+        "static_world_objects": [],
+        "spatial_volumes": [],
+        "spatial_connections": [],
+        "spatial_planes": [],
+        "persisted_object_controls": [],
+        "live_world_objects": []
+      },
+      "semantic_observations": []
+    },
+    "gate_states": {},
+    "serialized_component_stores": [],
+    "persistent_file_images": [],
+    "preserved_component_ids": [],
+    "scheduled_cleanup_ids": [],
+    "interruption_log": [],
+    "execution_history": []
+  },
+  "equivalence_sets": [],
+  "presentation": {
+    "positions": {},
+    "regions": [],
+    "node_region_ids": {}
+  }
+}

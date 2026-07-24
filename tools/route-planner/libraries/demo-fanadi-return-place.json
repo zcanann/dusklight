@@ -1,0 +1,543 @@
+{
+  "schema": "dusklight.route-planner.web-project/v3",
+  "id": "demo-fanadi-return-place",
+  "label": "Fanadi return-place locking",
+  "catalog": {
+    "schema": "dusklight.route-planner.composed-catalog/v16",
+    "base_fact_catalog_sha256": "d3808ec767a7216d829dfded5a92e220f8f63896d995de276eadd91a181c1346",
+    "base_mechanics_catalog_sha256": "5cdba8e21d094b8e2fb68539e43122c0bb96ca6f44d3bbca68cfea83b0a69314",
+    "facts": {
+      "schema": "dusklight.route-planner.fact-catalog/v9",
+      "aliases": [],
+      "derived_facts": []
+    },
+    "mechanics": {
+      "schema": "dusklight.route-planner.mechanics-catalog/v30",
+      "transitions": [
+        {
+          "id": "transition.savewarp.from-player-return-place",
+          "label": "Savewarp to the stored player return place",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "save_warp",
+          "approach_id": "savewarp.player-return-place",
+          "activation": {
+            "hard_guards": {
+              "kind": "true"
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "set_location_from_fields",
+                "component_id": "return-place",
+                "stage_field": "stage",
+                "room_field": "room",
+                "spawn_field": "player_status",
+                "layer": -1
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.game-start.return-place-reader",
+                "kind": "source_audited",
+                "source_sha256": "b9b37aed0b76eef2d27b35a2ece6ee077086a970f98d18936a83649303f15761",
+                "note": "dComIfGs_gameStart passes the stored return-place stage, player status, and room to setNextStage."
+              }
+            ]
+          }
+        }
+      ],
+      "obligations": [],
+      "writers": [
+        {
+          "id": "writer.r_sp107.r03.savmem.1.return-place",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "activation": {
+            "kind": "all",
+            "terms": [
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "location_stage"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "text",
+                    "value": "R_SP107"
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "location_room"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "signed",
+                    "value": 3
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "component_field",
+                  "component_id": "actor.r_sp107.r03.savmem.1.execution",
+                  "field": "executing"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "boolean",
+                    "value": true
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "bound_raw_bits",
+                  "component_kind": {
+                    "kind": "custom",
+                    "id": "persistent-event-registers"
+                  },
+                  "binding": {
+                    "kind": "active_runtime_file"
+                  },
+                  "byte_offset": 5,
+                  "byte_width": 1,
+                  "mask": 8
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "unsigned",
+                    "value": 8
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "bound_raw_bits",
+                  "component_kind": {
+                    "kind": "custom",
+                    "id": "persistent-event-registers"
+                  },
+                  "binding": {
+                    "kind": "active_runtime_file"
+                  },
+                  "byte_offset": 5,
+                  "byte_width": 1,
+                  "mask": 2
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "unsigned",
+                    "value": 0
+                  }
+                }
+              }
+            ]
+          },
+          "operation": {
+            "kind": "write_fields",
+            "component_id": "return-place",
+            "fields": {
+              "player_status": {
+                "kind": "unsigned",
+                "value": 1
+              },
+              "room": {
+                "kind": "signed",
+                "value": 3
+              },
+              "stage": {
+                "kind": "text",
+                "value": "R_SP107"
+              }
+            }
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "resource.r_sp107.r03.savmem.1",
+                "kind": "extracted",
+                "source_sha256": "ff9ac474c6c282be807b78c289a31a9358f752033b586ecc6888f497c0647370",
+                "note": "Exact room.dzr placement: unlayered Savmem record 1, parameters 0x0000ff01, angles [45,47,-1], home room 3."
+              },
+              {
+                "id": "source.kytag14.return-place-writer",
+                "kind": "source_audited",
+                "source_sha256": "57744385e319f4f6df99298ce4ebeeb48b67558e557dd8dc0d56af35b22d9283",
+                "note": "Savmem decodes placement guards and atomically writes stage, room, and player-status/spawn when eligible."
+              }
+            ]
+          }
+        }
+      ],
+      "gates": [
+        {
+          "id": "gate.temporary.no-telop",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "active_when": {
+            "kind": "compare",
+            "left": {
+              "kind": "bound_raw_bits",
+              "component_kind": {
+                "kind": "temporary_flags"
+              },
+              "binding": {
+                "kind": "active_runtime_file"
+              },
+              "byte_offset": 19,
+              "byte_width": 1,
+              "mask": 1
+            },
+            "operator": "equal",
+            "right": {
+              "kind": "literal",
+              "value": {
+                "kind": "unsigned",
+                "value": 1
+              }
+            }
+          },
+          "blocked_writer_ids": [
+            "writer.r_sp107.r03.savmem.1.return-place"
+          ],
+          "lifetime": "runtime_file",
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.kytag14.return-place-writer",
+                "kind": "source_audited",
+                "source_sha256": "57744385e319f4f6df99298ce4ebeeb48b67558e557dd8dc0d56af35b22d9283",
+                "note": "Savmem decodes placement guards and atomically writes stage, room, and player-status/spawn when eligible."
+              }
+            ]
+          }
+        }
+      ],
+      "readers": [
+        {
+          "id": "reader.savewarp.return-place.player_status",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "source": {
+            "kind": "component_field",
+            "component_id": "return-place",
+            "field": "player_status"
+          },
+          "consuming_transition_id": "transition.savewarp.from-player-return-place",
+          "interpretation_fact_id": null,
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.game-start.return-place-reader",
+                "kind": "source_audited",
+                "source_sha256": "b9b37aed0b76eef2d27b35a2ece6ee077086a970f98d18936a83649303f15761",
+                "note": "dComIfGs_gameStart passes the stored return-place stage, player status, and room to setNextStage."
+              }
+            ]
+          }
+        },
+        {
+          "id": "reader.savewarp.return-place.room",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "source": {
+            "kind": "component_field",
+            "component_id": "return-place",
+            "field": "room"
+          },
+          "consuming_transition_id": "transition.savewarp.from-player-return-place",
+          "interpretation_fact_id": null,
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.game-start.return-place-reader",
+                "kind": "source_audited",
+                "source_sha256": "b9b37aed0b76eef2d27b35a2ece6ee077086a970f98d18936a83649303f15761",
+                "note": "dComIfGs_gameStart passes the stored return-place stage, player status, and room to setNextStage."
+              }
+            ]
+          }
+        },
+        {
+          "id": "reader.savewarp.return-place.stage",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "source": {
+            "kind": "component_field",
+            "component_id": "return-place",
+            "field": "stage"
+          },
+          "consuming_transition_id": "transition.savewarp.from-player-return-place",
+          "interpretation_fact_id": null,
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.game-start.return-place-reader",
+                "kind": "source_audited",
+                "source_sha256": "b9b37aed0b76eef2d27b35a2ece6ee077086a970f98d18936a83649303f15761",
+                "note": "dComIfGs_gameStart passes the stored return-place stage, player status, and room to setNextStage."
+              }
+            ]
+          }
+        }
+      ],
+      "reconstruction_rules": [],
+      "obstructions": [],
+      "resolvers": [],
+      "techniques": [],
+      "microtraces": [],
+      "goals": [
+        {
+          "id": "goal.reach-fanadi-return-place",
+          "label": "Reach the stored Fanadi return place",
+          "predicate": {
+            "kind": "all",
+            "terms": [
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "location_stage"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "text",
+                    "value": "R_SP107"
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "location_room"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "signed",
+                    "value": 3
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "refinement_stack": {
+      "schema": "dusklight.route-planner.refinement-stack/v2",
+      "entries": []
+    },
+    "obstruction_bindings": []
+  },
+  "theorycraft_base_catalog": null,
+  "theorycraft_overlays": [],
+  "evidence_mode": "established_only",
+  "route_book": null,
+  "start_state": {
+    "schema": "dusklight.route-planner.execution-state/v15",
+    "snapshot": {
+      "schema": "dusklight.route-planner.state-snapshot/v8",
+      "id": "snapshot.fanadi-before-savewarp",
+      "sequence": 0,
+      "environment": {
+        "schema": "dusklight.route-planner.execution-environment/v7",
+        "runtime_configuration": {
+          "schema": "dusklight.route-planner.runtime-configuration/v1",
+          "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+          "language": "en",
+          "settings": {}
+        },
+        "active_runtime_file": {
+          "id": "file-0",
+          "origin": {
+            "kind": "new_file"
+          },
+          "backing": {
+            "kind": "memory_only"
+          },
+          "allowed_serialization_targets": [
+            1
+          ],
+          "lifecycle": "active"
+        },
+        "inactive_runtime_files": [],
+        "physical_slots": [],
+        "physical_slot_observations": [],
+        "execution_context": {
+          "kind": "world"
+        },
+        "location": {
+          "stage": "F_SP103",
+          "room": 0,
+          "layer": 0,
+          "spawn": 0
+        },
+        "player": {
+          "form": {
+            "kind": "human"
+          },
+          "mount": null,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "attention_position": null,
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "has_control": true,
+          "action": "idle"
+        },
+        "components": [
+          {
+            "id": "return-place",
+            "component_kind": {
+              "kind": "custom",
+              "id": "return-place"
+            },
+            "payload": {
+              "kind": "structured",
+              "fields": {
+                "player_status": {
+                  "kind": "unsigned",
+                  "value": 1
+                },
+                "room": {
+                  "kind": "signed",
+                  "value": 3
+                },
+                "stage": {
+                  "kind": "text",
+                  "value": "R_SP107"
+                }
+              }
+            },
+            "binding": {
+              "kind": "runtime_file",
+              "runtime_file_id": "file-0"
+            },
+            "lifetime": "runtime_file",
+            "serialization_owner": {
+              "kind": "runtime_file",
+              "runtime_file_id": "file-0"
+            },
+            "provenance": [
+              {
+                "source_kind": "extracted_fact",
+                "source_id": "demo.fanadi-return-place",
+                "source_sha256": null,
+                "transition_id": null
+              }
+            ]
+          }
+        ],
+        "static_world_objects": [],
+        "spatial_volumes": [],
+        "spatial_connections": [],
+        "spatial_planes": [],
+        "persisted_object_controls": [],
+        "live_world_objects": []
+      },
+      "semantic_observations": []
+    },
+    "gate_states": {},
+    "serialized_component_stores": [],
+    "persistent_file_images": [],
+    "preserved_component_ids": [],
+    "scheduled_cleanup_ids": [],
+    "interruption_log": [],
+    "execution_history": []
+  },
+  "equivalence_sets": [],
+  "presentation": {
+    "positions": {},
+    "regions": [],
+    "node_region_ids": {}
+  }
+}

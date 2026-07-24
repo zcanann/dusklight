@@ -1,0 +1,658 @@
+{
+  "schema": "dusklight.route-planner.web-project/v3",
+  "id": "demo-auru-recent-item-transfer",
+  "label": "Auru recent-item transfer",
+  "catalog": {
+    "schema": "dusklight.route-planner.composed-catalog/v16",
+    "base_fact_catalog_sha256": "d3808ec767a7216d829dfded5a92e220f8f63896d995de276eadd91a181c1346",
+    "base_mechanics_catalog_sha256": "8fc8b50c535210582d8a2c021fe53d469928cda059e8ec4261549475e6ad49b7",
+    "facts": {
+      "schema": "dusklight.route-planner.fact-catalog/v9",
+      "aliases": [],
+      "derived_facts": []
+    },
+    "mechanics": {
+      "schema": "dusklight.route-planner.mechanics-catalog/v30",
+      "transitions": [
+        {
+          "id": "transition.auru-demo-01-present-fishing-rod",
+          "label": "Present the Fishing Rod on file A",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "item_acquisition",
+          "approach_id": "approach.auru-recent-item-transfer",
+          "activation": {
+            "hard_guards": {
+              "kind": "compare",
+              "left": {
+                "kind": "component_field",
+                "component_id": "event.recent-item",
+                "field": "get_item_no"
+              },
+              "operator": "equal",
+              "right": {
+                "kind": "literal",
+                "value": {
+                  "kind": "unsigned",
+                  "value": 255
+                }
+              }
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "event.recent-item",
+                  "field": "get_item_no"
+                },
+                "value": {
+                  "kind": "unsigned",
+                  "value": 74
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.auru-recent-item-store-audit",
+                "kind": "source_audited",
+                "source_sha256": "7171717171717171717171717171717171717171717171717171717171717171",
+                "note": "Generic presentation state is session-owned and DEFAULT_GETITEM consumes its current item ID."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.auru-demo-02-begin-file-b",
+          "label": "Begin file B while preserving session recent-item state",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "save_load",
+          "approach_id": "approach.auru-recent-item-transfer",
+          "activation": {
+            "hard_guards": {
+              "kind": "compare",
+              "left": {
+                "kind": "component_field",
+                "component_id": "event.recent-item",
+                "field": "get_item_no"
+              },
+              "operator": "equal",
+              "right": {
+                "kind": "literal",
+                "value": {
+                  "kind": "unsigned",
+                  "value": 74
+                }
+              }
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "begin_runtime_file_lifetime",
+                "destination_id_suffix": "file-b",
+                "origin": {
+                  "kind": "loaded_slot",
+                  "slot": 1
+                },
+                "backing": {
+                  "kind": "card_backed",
+                  "slot": 1
+                },
+                "allowed_serialization_targets": [
+                  1
+                ]
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.auru-recent-item-store-audit",
+                "kind": "source_audited",
+                "source_sha256": "7171717171717171717171717171717171717171717171717171717171717171",
+                "note": "Generic presentation state is session-owned and DEFAULT_GETITEM consumes its current item ID."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.auru-demo-03-hypothetical-gcn-geometry",
+          "label": "Hypothetically resolve Auru's GCN interaction geometry",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "technique",
+          "approach_id": "approach.auru-recent-item-transfer",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.auru",
+                    "field": "live"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.auru",
+                    "field": "activation_ready"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": false
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "player_control"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "player_action"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "talk"
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.auru",
+                  "field": "activation_ready"
+                },
+                "value": {
+                  "kind": "boolean",
+                  "value": true
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "hypothetical",
+            "records": [
+              {
+                "id": "hypothesis.auru-gcn-interaction-geometry",
+                "kind": "theorycraft",
+                "source_sha256": null,
+                "note": "No enabled GCN setup currently proves the required talk-volume/outside-trigger geometry."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.auru-demo-04-generic-get-item",
+          "label": "Consume the session recent item through Auru DEFAULT_GETITEM",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "item_acquisition",
+          "approach_id": "approach.auru-recent-item-transfer",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "event.recent-item",
+                    "field": "get_item_no"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "unsigned",
+                      "value": 74
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.auru",
+                    "field": "activation_ready"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "set_bit_from_value",
+                "source": {
+                  "component_id": "event.recent-item",
+                  "field": "get_item_no"
+                },
+                "target": {
+                  "component_id": "inventory.active",
+                  "field": "owned_item_ids"
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.auru-recent-item-store-audit",
+                "kind": "source_audited",
+                "source_sha256": "7171717171717171717171717171717171717171717171717171717171717171",
+                "note": "Generic presentation state is session-owned and DEFAULT_GETITEM consumes its current item ID."
+              }
+            ]
+          }
+        }
+      ],
+      "obligations": [],
+      "writers": [],
+      "gates": [],
+      "readers": [
+        {
+          "id": "reader.auru-default-get-item-recent-item",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "source": {
+            "kind": "component_field",
+            "component_id": "event.recent-item",
+            "field": "get_item_no"
+          },
+          "consuming_transition_id": "transition.auru-demo-04-generic-get-item",
+          "interpretation_fact_id": null,
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.auru-recent-item-store-audit",
+                "kind": "source_audited",
+                "source_sha256": "7171717171717171717171717171717171717171717171717171717171717171",
+                "note": "Generic presentation state is session-owned and DEFAULT_GETITEM consumes its current item ID."
+              }
+            ]
+          }
+        }
+      ],
+      "reconstruction_rules": [],
+      "obstructions": [],
+      "resolvers": [],
+      "techniques": [],
+      "microtraces": [],
+      "goals": [
+        {
+          "id": "goal.auru-grant-fishing-rod-on-file-b",
+          "label": "Grant file B the Fishing Rod through Auru's shared consumer",
+          "predicate": {
+            "kind": "compare",
+            "left": {
+              "kind": "component_field",
+              "component_id": "inventory.active",
+              "field": "owned_item_ids"
+            },
+            "operator": "contains_bits",
+            "right": {
+              "kind": "literal",
+              "value": {
+                "kind": "bytes",
+                "value": [
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  4,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0,
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "refinement_stack": {
+      "schema": "dusklight.route-planner.refinement-stack/v2",
+      "entries": []
+    },
+    "obstruction_bindings": []
+  },
+  "theorycraft_base_catalog": null,
+  "theorycraft_overlays": [],
+  "evidence_mode": "research",
+  "route_book": null,
+  "start_state": {
+    "schema": "dusklight.route-planner.execution-state/v15",
+    "snapshot": {
+      "schema": "dusklight.route-planner.state-snapshot/v8",
+      "id": "snapshot.auru-recent-item-file-a",
+      "sequence": 0,
+      "environment": {
+        "schema": "dusklight.route-planner.execution-environment/v7",
+        "runtime_configuration": {
+          "schema": "dusklight.route-planner.runtime-configuration/v1",
+          "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+          "language": "en",
+          "settings": {}
+        },
+        "active_runtime_file": {
+          "id": "file-a",
+          "origin": {
+            "kind": "new_file"
+          },
+          "backing": {
+            "kind": "memory_only"
+          },
+          "allowed_serialization_targets": [
+            1
+          ],
+          "lifecycle": "active"
+        },
+        "inactive_runtime_files": [],
+        "physical_slots": [],
+        "physical_slot_observations": [],
+        "execution_context": {
+          "kind": "world"
+        },
+        "location": {
+          "stage": "AURU_SITE",
+          "room": 0,
+          "layer": 0,
+          "spawn": 0
+        },
+        "player": {
+          "form": {
+            "kind": "human"
+          },
+          "mount": null,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "attention_position": null,
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "has_control": true,
+          "action": "talk"
+        },
+        "components": [
+          {
+            "id": "actor.auru",
+            "component_kind": {
+              "kind": "actor_instance"
+            },
+            "payload": {
+              "kind": "structured",
+              "fields": {
+                "activation_ready": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "live": {
+                  "kind": "boolean",
+                  "value": true
+                }
+              }
+            },
+            "binding": {
+              "kind": "actor",
+              "instance_id": "actor.auru"
+            },
+            "lifetime": "room_load",
+            "serialization_owner": {
+              "kind": "none"
+            },
+            "provenance": [
+              {
+                "source_kind": "extracted_fact",
+                "source_id": "actor.auru-shared-consumer",
+                "source_sha256": "7474747474747474747474747474747474747474747474747474747474747474",
+                "transition_id": null
+              }
+            ]
+          },
+          {
+            "id": "event.recent-item",
+            "component_kind": {
+              "kind": "session"
+            },
+            "payload": {
+              "kind": "structured",
+              "fields": {
+                "get_item_no": {
+                  "kind": "unsigned",
+                  "value": 255
+                }
+              }
+            },
+            "binding": {
+              "kind": "session",
+              "session_id": "session-1"
+            },
+            "lifetime": "session",
+            "serialization_owner": {
+              "kind": "none"
+            },
+            "provenance": [
+              {
+                "source_kind": "initialized",
+                "source_id": "d_com_inf_game:mgtitm",
+                "source_sha256": "7272727272727272727272727272727272727272727272727272727272727272",
+                "transition_id": null
+              }
+            ]
+          },
+          {
+            "id": "inventory.active",
+            "component_kind": {
+              "kind": "inventory"
+            },
+            "payload": {
+              "kind": "structured",
+              "fields": {
+                "owned_item_ids": {
+                  "kind": "bytes",
+                  "value": [
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0
+                  ]
+                }
+              }
+            },
+            "binding": {
+              "kind": "runtime_file",
+              "runtime_file_id": "file-a"
+            },
+            "lifetime": "runtime_file",
+            "serialization_owner": {
+              "kind": "runtime_file",
+              "runtime_file_id": "file-a"
+            },
+            "provenance": [
+              {
+                "source_kind": "initialized",
+                "source_id": "fixture.file-a-empty-inventory",
+                "source_sha256": "7373737373737373737373737373737373737373737373737373737373737373",
+                "transition_id": null
+              }
+            ]
+          }
+        ],
+        "static_world_objects": [],
+        "spatial_volumes": [],
+        "spatial_connections": [],
+        "spatial_planes": [],
+        "persisted_object_controls": [],
+        "live_world_objects": []
+      },
+      "semantic_observations": []
+    },
+    "gate_states": {},
+    "serialized_component_stores": [],
+    "persistent_file_images": [],
+    "preserved_component_ids": [],
+    "scheduled_cleanup_ids": [],
+    "interruption_log": [],
+    "execution_history": []
+  },
+  "equivalence_sets": [],
+  "presentation": {
+    "positions": {},
+    "regions": [],
+    "node_region_ids": {}
+  }
+}

@@ -1,0 +1,1965 @@
+{
+  "schema": "dusklight.route-planner.web-project/v3",
+  "id": "demo-forest-keyed-door",
+  "label": "Forest Temple small-key door",
+  "catalog": {
+    "schema": "dusklight.route-planner.composed-catalog/v16",
+    "base_fact_catalog_sha256": "d3808ec767a7216d829dfded5a92e220f8f63896d995de276eadd91a181c1346",
+    "base_mechanics_catalog_sha256": "cfb960247d86defa6678b4b105b183f5f56b49f5a9357c1f4ecb061ff8d4f0f1",
+    "facts": {
+      "schema": "dusklight.route-planner.fact-catalog/v9",
+      "aliases": [],
+      "derived_facts": []
+    },
+    "mechanics": {
+      "schema": "dusklight.route-planner.mechanics-catalog/v30",
+      "transitions": [
+        {
+          "id": "transition.gz2e01-door1-01-offer-event",
+          "label": "Offer the front-side shutter event",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "all",
+                  "terms": [
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_stage"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "text",
+                          "value": "D_MN05"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_room"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "signed",
+                          "value": 1
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "adjoining_room_loaded"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "approach_permitted"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "event_offered"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": false
+                    }
+                  }
+                },
+                {
+                  "kind": "any",
+                  "terms": [
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "bound_component_field",
+                        "component_kind": {
+                          "kind": "dungeon_memory"
+                        },
+                        "binding": {
+                          "kind": "exact",
+                          "binding": {
+                            "kind": "dungeon",
+                            "dungeon": "forest-temple"
+                          }
+                        },
+                        "field": "switch_0b"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "boolean",
+                          "value": true
+                        }
+                      }
+                    },
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "bound_component_field",
+                        "component_kind": {
+                          "kind": "dungeon_memory"
+                        },
+                        "binding": {
+                          "kind": "exact",
+                          "binding": {
+                            "kind": "dungeon",
+                            "dungeon": "forest-temple"
+                          }
+                        },
+                        "field": "small_keys"
+                      },
+                      "operator": "greater_than",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "unsigned",
+                          "value": 0
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "event_offered"
+                },
+                "value": {
+                  "kind": "boolean",
+                  "value": true
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gz2e01-door1-02-demo-action8",
+          "label": "Run keyed shutter demo action 8",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "all",
+                  "terms": [
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_stage"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "text",
+                          "value": "D_MN05"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_room"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "signed",
+                          "value": 1
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "event_offered"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "front_option"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "unsigned",
+                      "value": 2
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "locked"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "bound_component_field",
+                    "component_kind": {
+                      "kind": "dungeon_memory"
+                    },
+                    "binding": {
+                      "kind": "exact",
+                      "binding": {
+                        "kind": "dungeon",
+                        "dungeon": "forest-temple"
+                      }
+                    },
+                    "field": "switch_0b"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": false
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "bound_component_field",
+                    "component_kind": {
+                      "kind": "dungeon_memory"
+                    },
+                    "binding": {
+                      "kind": "exact",
+                      "binding": {
+                        "kind": "dungeon",
+                        "dungeon": "forest-temple"
+                      }
+                    },
+                    "field": "small_keys"
+                  },
+                  "operator": "greater_than",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "unsigned",
+                      "value": 0
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "session.pending-key-delta",
+                    "field": "pending_delta"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 0
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "dungeon.d-mn05-memory",
+                  "field": "switch_0b"
+                },
+                "value": {
+                  "kind": "boolean",
+                  "value": true
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "session.pending-key-delta",
+                  "field": "pending_delta"
+                },
+                "value": {
+                  "kind": "signed",
+                  "value": -1
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "keyhole_animation"
+                },
+                "value": {
+                  "kind": "text",
+                  "value": "keyhole-opening"
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gz2e01-door1-03-finish-keyhole",
+          "label": "Finish the keyhole child animation",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "all",
+                  "terms": [
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_stage"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "text",
+                          "value": "D_MN05"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_room"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "signed",
+                          "value": 1
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "bound_component_field",
+                    "component_kind": {
+                      "kind": "dungeon_memory"
+                    },
+                    "binding": {
+                      "kind": "exact",
+                      "binding": {
+                        "kind": "dungeon",
+                        "dungeon": "forest-temple"
+                      }
+                    },
+                    "field": "switch_0b"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "locked"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "keyhole_animation"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "keyhole-opening"
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "locked"
+                },
+                "value": {
+                  "kind": "boolean",
+                  "value": false
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "keyhole_animation"
+                },
+                "value": {
+                  "kind": "text",
+                  "value": "open"
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gz2e01-door1-04-flush-key-delta",
+          "label": "Apply the pending key delta to active stage memory",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "compare",
+              "left": {
+                "kind": "component_field",
+                "component_id": "session.pending-key-delta",
+                "field": "pending_delta"
+              },
+              "operator": "equal",
+              "right": {
+                "kind": "literal",
+                "value": {
+                  "kind": "signed",
+                  "value": -1
+                }
+              }
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "adjust",
+                "target": {
+                  "component_id": "dungeon.d-mn05-memory",
+                  "field": "small_keys"
+                },
+                "delta": -1
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "session.pending-key-delta",
+                  "field": "pending_delta"
+                },
+                "value": {
+                  "kind": "signed",
+                  "value": 0
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gz2e01-door1-05-open-init",
+          "label": "Release shutter collision and select room 2",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "all",
+                  "terms": [
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_stage"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "text",
+                          "value": "D_MN05"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_room"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "signed",
+                          "value": 1
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "event_offered"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "locked"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": false
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "collision_registered"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "door_animation"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "closed"
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "bound_component_field",
+                    "component_kind": {
+                      "kind": "dungeon_memory"
+                    },
+                    "binding": {
+                      "kind": "exact",
+                      "binding": {
+                        "kind": "dungeon",
+                        "dungeon": "forest-temple"
+                      }
+                    },
+                    "field": "switch_0b"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "collision_registered"
+                },
+                "value": {
+                  "kind": "boolean",
+                  "value": false
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "door_animation"
+                },
+                "value": {
+                  "kind": "text",
+                  "value": "opening"
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "next_room"
+                },
+                "value": {
+                  "kind": "unsigned",
+                  "value": 2
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gz2e01-door1-06-open-proc",
+          "label": "Finish the wooden shutter opening animation",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "all",
+                  "terms": [
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_stage"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "text",
+                          "value": "D_MN05"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_room"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "signed",
+                          "value": 1
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "collision_registered"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": false
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "door_animation"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "opening"
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "door_animation"
+                },
+                "value": {
+                  "kind": "text",
+                  "value": "open"
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gz2e01-door1-07-cross-room-adjacency",
+          "label": "Cross the encoded room-1 to room-2 adjacency",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "all",
+                  "terms": [
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_stage"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "text",
+                          "value": "D_MN05"
+                        }
+                      }
+                    },
+                    {
+                      "kind": "compare",
+                      "left": {
+                        "kind": "location_room"
+                      },
+                      "operator": "equal",
+                      "right": {
+                        "kind": "literal",
+                        "value": {
+                          "kind": "signed",
+                          "value": 1
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "next_room"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "unsigned",
+                      "value": 2
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "collision_registered"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": false
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "door_animation"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "open"
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "set_location",
+                "location": {
+                  "stage": "D_MN05",
+                  "room": 2,
+                  "layer": 0,
+                  "spawn": 0
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gz2e01-door1-08-close-init",
+          "label": "Re-register shutter collision after crossing",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "D_MN05"
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_room"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 2
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "collision_registered"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": false
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "door_animation"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "open"
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "collision_registered"
+                },
+                "value": {
+                  "kind": "boolean",
+                  "value": true
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "door_animation"
+                },
+                "value": {
+                  "kind": "text",
+                  "value": "closing"
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gz2e01-door1-09-close-end",
+          "label": "Finish closing the unlocked shutter",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "door",
+          "approach_id": "approach.gz2e01-d-mn05-door1-front",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "D_MN05"
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_room"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 2
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "collision_registered"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "boolean",
+                      "value": true
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "component_field",
+                    "component_id": "actor.gz2e01-d-mn05-door-1",
+                    "field": "door_animation"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "closing"
+                    }
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "door_animation"
+                },
+                "value": {
+                  "kind": "text",
+                  "value": "closed"
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "keyhole_present"
+                },
+                "value": {
+                  "kind": "boolean",
+                  "value": false
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "keyhole_animation"
+                },
+                "value": {
+                  "kind": "text",
+                  "value": "deleted"
+                }
+              },
+              {
+                "kind": "write",
+                "target": {
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "event_offered"
+                },
+                "value": {
+                  "kind": "boolean",
+                  "value": false
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        }
+      ],
+      "obligations": [],
+      "writers": [],
+      "gates": [],
+      "readers": [],
+      "reconstruction_rules": [
+        {
+          "id": "reconstruct.gz2e01-door1-locked",
+          "label": "Reconstruct GZ2E01 Forest door 1 as locked",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "actor_type": "door20",
+          "instantiate_when": {
+            "kind": "compare",
+            "left": {
+              "kind": "bound_component_field",
+              "component_kind": {
+                "kind": "dungeon_memory"
+              },
+              "binding": {
+                "kind": "exact",
+                "binding": {
+                  "kind": "dungeon",
+                  "dungeon": "forest-temple"
+                }
+              },
+              "field": "switch_0b"
+            },
+            "operator": "equal",
+            "right": {
+              "kind": "literal",
+              "value": {
+                "kind": "boolean",
+                "value": false
+              }
+            }
+          },
+          "initialization_operations": [
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "locked"
+              },
+              "value": {
+                "kind": "boolean",
+                "value": true
+              }
+            },
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "keyhole_present"
+              },
+              "value": {
+                "kind": "boolean",
+                "value": true
+              }
+            },
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "collision_registered"
+              },
+              "value": {
+                "kind": "boolean",
+                "value": true
+              }
+            },
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "door_animation"
+              },
+              "value": {
+                "kind": "text",
+                "value": "closed"
+              }
+            },
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "keyhole_animation"
+              },
+              "value": {
+                "kind": "text",
+                "value": "closed"
+              }
+            }
+          ],
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        },
+        {
+          "id": "reconstruct.gz2e01-door1-unlocked",
+          "label": "Reconstruct GZ2E01 Forest door 1 as unlocked",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "actor_type": "door20",
+          "instantiate_when": {
+            "kind": "compare",
+            "left": {
+              "kind": "bound_component_field",
+              "component_kind": {
+                "kind": "dungeon_memory"
+              },
+              "binding": {
+                "kind": "exact",
+                "binding": {
+                  "kind": "dungeon",
+                  "dungeon": "forest-temple"
+                }
+              },
+              "field": "switch_0b"
+            },
+            "operator": "equal",
+            "right": {
+              "kind": "literal",
+              "value": {
+                "kind": "boolean",
+                "value": true
+              }
+            }
+          },
+          "initialization_operations": [
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "locked"
+              },
+              "value": {
+                "kind": "boolean",
+                "value": false
+              }
+            },
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "keyhole_present"
+              },
+              "value": {
+                "kind": "boolean",
+                "value": false
+              }
+            },
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "collision_registered"
+              },
+              "value": {
+                "kind": "boolean",
+                "value": true
+              }
+            },
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "door_animation"
+              },
+              "value": {
+                "kind": "text",
+                "value": "closed"
+              }
+            },
+            {
+              "kind": "write",
+              "target": {
+                "component_id": "actor.gz2e01-d-mn05-door-1",
+                "field": "keyhole_animation"
+              },
+              "value": {
+                "kind": "text",
+                "value": "deleted"
+              }
+            }
+          ],
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.gz2e01-forest-door-1-audit",
+                "kind": "source_audited",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "note": "GZ2E01 D_MN05 Door[1] placement and DOOR20 event program audit."
+              }
+            ]
+          }
+        }
+      ],
+      "obstructions": [],
+      "resolvers": [],
+      "techniques": [],
+      "microtraces": [],
+      "goals": [
+        {
+          "id": "goal.gz2e01-forest-door1-complete",
+          "label": "Cross and close Forest Temple door 1",
+          "predicate": {
+            "kind": "all",
+            "terms": [
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "location_stage"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "text",
+                    "value": "D_MN05"
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "location_room"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "signed",
+                    "value": 2
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "bound_component_field",
+                  "component_kind": {
+                    "kind": "dungeon_memory"
+                  },
+                  "binding": {
+                    "kind": "exact",
+                    "binding": {
+                      "kind": "dungeon",
+                      "dungeon": "forest-temple"
+                    }
+                  },
+                  "field": "switch_0b"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "boolean",
+                    "value": true
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "bound_component_field",
+                  "component_kind": {
+                    "kind": "dungeon_memory"
+                  },
+                  "binding": {
+                    "kind": "exact",
+                    "binding": {
+                      "kind": "dungeon",
+                      "dungeon": "forest-temple"
+                    }
+                  },
+                  "field": "small_keys"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "unsigned",
+                    "value": 0
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "component_field",
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "collision_registered"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "boolean",
+                    "value": true
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "component_field",
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "door_animation"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "text",
+                    "value": "closed"
+                  }
+                }
+              },
+              {
+                "kind": "compare",
+                "left": {
+                  "kind": "component_field",
+                  "component_id": "actor.gz2e01-d-mn05-door-1",
+                  "field": "keyhole_present"
+                },
+                "operator": "equal",
+                "right": {
+                  "kind": "literal",
+                  "value": {
+                    "kind": "boolean",
+                    "value": false
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "refinement_stack": {
+      "schema": "dusklight.route-planner.refinement-stack/v2",
+      "entries": []
+    },
+    "obstruction_bindings": []
+  },
+  "theorycraft_base_catalog": null,
+  "theorycraft_overlays": [],
+  "evidence_mode": "established_only",
+  "route_book": null,
+  "start_state": {
+    "schema": "dusklight.route-planner.execution-state/v15",
+    "snapshot": {
+      "schema": "dusklight.route-planner.state-snapshot/v8",
+      "id": "snapshot.gz2e01-d-mn05-r01-door1-closed",
+      "sequence": 0,
+      "environment": {
+        "schema": "dusklight.route-planner.execution-environment/v7",
+        "runtime_configuration": {
+          "schema": "dusklight.route-planner.runtime-configuration/v1",
+          "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+          "language": "en",
+          "settings": {}
+        },
+        "active_runtime_file": {
+          "id": "file-0",
+          "origin": {
+            "kind": "loaded_slot",
+            "slot": 1
+          },
+          "backing": {
+            "kind": "card_backed",
+            "slot": 1
+          },
+          "allowed_serialization_targets": [
+            1
+          ],
+          "lifecycle": "active"
+        },
+        "inactive_runtime_files": [],
+        "physical_slots": [],
+        "physical_slot_observations": [],
+        "execution_context": {
+          "kind": "world"
+        },
+        "location": {
+          "stage": "D_MN05",
+          "room": 1,
+          "layer": 0,
+          "spawn": 0
+        },
+        "player": {
+          "form": {
+            "kind": "human"
+          },
+          "mount": null,
+          "position": [
+            10436,
+            3752,
+            4870
+          ],
+          "attention_position": null,
+          "rotation": [
+            0,
+            -16384,
+            0
+          ],
+          "has_control": true,
+          "action": "door-approach"
+        },
+        "components": [
+          {
+            "id": "actor.gz2e01-d-mn05-door-1",
+            "component_kind": {
+              "kind": "actor_instance"
+            },
+            "payload": {
+              "kind": "structured",
+              "fields": {
+                "adjoining_room_loaded": {
+                  "kind": "boolean",
+                  "value": true
+                },
+                "approach_permitted": {
+                  "kind": "boolean",
+                  "value": true
+                },
+                "back_option": {
+                  "kind": "unsigned",
+                  "value": 0
+                },
+                "back_room": {
+                  "kind": "unsigned",
+                  "value": 2
+                },
+                "collision_registered": {
+                  "kind": "boolean",
+                  "value": true
+                },
+                "door_animation": {
+                  "kind": "text",
+                  "value": "closed"
+                },
+                "event_offered": {
+                  "kind": "boolean",
+                  "value": false
+                },
+                "front_option": {
+                  "kind": "unsigned",
+                  "value": 2
+                },
+                "front_room": {
+                  "kind": "unsigned",
+                  "value": 1
+                },
+                "keyhole_animation": {
+                  "kind": "text",
+                  "value": "closed"
+                },
+                "keyhole_present": {
+                  "kind": "boolean",
+                  "value": true
+                },
+                "kind": {
+                  "kind": "unsigned",
+                  "value": 1
+                },
+                "locked": {
+                  "kind": "boolean",
+                  "value": true
+                },
+                "next_room": {
+                  "kind": "unsigned",
+                  "value": 1
+                },
+                "parameters": {
+                  "kind": "unsigned",
+                  "value": 1812996609
+                },
+                "unlock_switch": {
+                  "kind": "unsigned",
+                  "value": 11
+                }
+              }
+            },
+            "binding": {
+              "kind": "actor",
+              "instance_id": "actor.gz2e01-d-mn05-door-1"
+            },
+            "lifetime": "room_load",
+            "serialization_owner": {
+              "kind": "none"
+            },
+            "provenance": [
+              {
+                "source_kind": "extracted_fact",
+                "source_id": "gz2e01:d_mn05/stage.dzs/door/1",
+                "source_sha256": "9d08ac55fce27a6a741a6a502a4a2502146c3ff91abeb7d8c44824a6df8325a4",
+                "transition_id": null
+              }
+            ]
+          },
+          {
+            "id": "dungeon.d-mn05-memory",
+            "component_kind": {
+              "kind": "dungeon_memory"
+            },
+            "payload": {
+              "kind": "structured",
+              "fields": {
+                "small_keys": {
+                  "kind": "unsigned",
+                  "value": 1
+                },
+                "switch_0b": {
+                  "kind": "boolean",
+                  "value": false
+                }
+              }
+            },
+            "binding": {
+              "kind": "dungeon",
+              "dungeon": "forest-temple"
+            },
+            "lifetime": "stage_load",
+            "serialization_owner": {
+              "kind": "stage_bank",
+              "runtime_file_id": "file-0",
+              "stage": "D_MN05"
+            },
+            "provenance": [
+              {
+                "source_kind": "trace_observation",
+                "source_id": "gz2e01:dsv-memory/d-mn05",
+                "source_sha256": "4545454545454545454545454545454545454545454545454545454545454545",
+                "transition_id": null
+              }
+            ]
+          },
+          {
+            "id": "session.pending-key-delta",
+            "component_kind": {
+              "kind": "session"
+            },
+            "payload": {
+              "kind": "structured",
+              "fields": {
+                "pending_delta": {
+                  "kind": "signed",
+                  "value": 0
+                }
+              }
+            },
+            "binding": {
+              "kind": "session",
+              "session_id": "session-1"
+            },
+            "lifetime": "session",
+            "serialization_owner": {
+              "kind": "none"
+            },
+            "provenance": [
+              {
+                "source_kind": "initialized",
+                "source_id": "gz2e01:dcomifgp-item-key-delta",
+                "source_sha256": "4646464646464646464646464646464646464646464646464646464646464646",
+                "transition_id": null
+              }
+            ]
+          }
+        ],
+        "static_world_objects": [],
+        "spatial_volumes": [],
+        "spatial_connections": [],
+        "spatial_planes": [],
+        "persisted_object_controls": [],
+        "live_world_objects": []
+      },
+      "semantic_observations": []
+    },
+    "gate_states": {},
+    "serialized_component_stores": [],
+    "persistent_file_images": [],
+    "preserved_component_ids": [],
+    "scheduled_cleanup_ids": [],
+    "interruption_log": [],
+    "execution_history": []
+  },
+  "equivalence_sets": [],
+  "presentation": {
+    "positions": {},
+    "regions": [],
+    "node_region_ids": {}
+  }
+}

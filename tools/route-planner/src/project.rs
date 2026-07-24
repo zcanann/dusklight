@@ -672,7 +672,59 @@ fn sync_parent(path: &Path) -> Result<(), ProjectError> {
     }
 }
 
+const BUILTIN_PROJECT_ASSETS: &[(&str, &[u8])] = &[
+    (
+        "demo-auru-recent-item-transfer",
+        include_bytes!("../libraries/demo-auru-recent-item-transfer.json"),
+    ),
+    (
+        "demo-fanadi-return-place",
+        include_bytes!("../libraries/demo-fanadi-return-place.json"),
+    ),
+    (
+        "demo-forest-keyed-door",
+        include_bytes!("../libraries/demo-forest-keyed-door.json"),
+    ),
+    (
+        "demo-hypothetical-local-bank-rebind",
+        include_bytes!("../libraries/demo-hypothetical-local-bank-rebind.json"),
+    ),
+    (
+        "demo-opening-flow",
+        include_bytes!("../libraries/demo-opening-flow.json"),
+    ),
+    (
+        "demo-text-displacement-goron-mines",
+        include_bytes!("../libraries/demo-text-displacement-goron-mines.json"),
+    ),
+];
+
 fn builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
+    let mut projects = Vec::with_capacity(BUILTIN_PROJECT_ASSETS.len());
+    let mut identities = BTreeSet::new();
+    for (expected_id, bytes) in BUILTIN_PROJECT_ASSETS {
+        let project: PlannerWebProject =
+            serde_json::from_slice(bytes).map_err(ProjectError::json)?;
+        project.validate()?;
+        if project.id != *expected_id {
+            return Err(project_error(format!(
+                "serialized Library asset {expected_id} contains project identity {}",
+                project.id
+            )));
+        }
+        if !identities.insert(project.id.clone()) {
+            return Err(project_error(format!(
+                "serialized Library identity {} is duplicated",
+                project.id
+            )));
+        }
+        projects.push(project);
+    }
+    Ok(projects)
+}
+
+#[allow(dead_code)]
+fn authored_builtin_projects() -> Result<Vec<PlannerWebProject>, ProjectError> {
     let (content, runtime) = gz2e01_context();
     let facts = FactCatalog {
         schema: FACT_CATALOG_SCHEMA.into(),
@@ -2817,6 +2869,21 @@ mod tests {
         );
         assert_eq!(text_displacement.project.catalog.mechanics.readers.len(), 4);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn serialized_libraries_match_their_typed_authored_sources() {
+        let serialized = builtin_projects()
+            .unwrap()
+            .into_iter()
+            .map(|project| (project.id.clone(), project))
+            .collect::<BTreeMap<_, _>>();
+        let authored = authored_builtin_projects()
+            .unwrap()
+            .into_iter()
+            .map(|project| (project.id.clone(), project))
+            .collect::<BTreeMap<_, _>>();
+        assert_eq!(serialized, authored);
     }
 
     #[test]

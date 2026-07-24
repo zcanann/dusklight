@@ -1,0 +1,1307 @@
+{
+  "schema": "dusklight.route-planner.web-project/v3",
+  "id": "demo-text-displacement-goron-mines",
+  "label": "Text Displacement toward Goron Mines",
+  "catalog": {
+    "schema": "dusklight.route-planner.composed-catalog/v16",
+    "base_fact_catalog_sha256": "fea45c8981ef0105d2e80cdaac655e8f9c9b1b2ee883a0e70dbb50f47e7a2808",
+    "base_mechanics_catalog_sha256": "31709b8753989caa8306148816f80e7867aad0fc7cfc9aadd7e6a2e4d2d02238",
+    "facts": {
+      "schema": "dusklight.route-planner.fact-catalog/v9",
+      "aliases": [
+        {
+          "id": "event.gor-coron-won",
+          "label": "M029: won Gor Coron match",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "raw": {
+            "component_kind": {
+              "kind": "persistent_save"
+            },
+            "binding": {
+              "kind": "exact",
+              "binding": {
+                "kind": "runtime_file",
+                "runtime_file_id": "file-0"
+              }
+            },
+            "byte_offset": 7,
+            "mask": [
+              4
+            ],
+            "expected": [
+              4
+            ]
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "event.goron-mines-clear",
+          "label": "M031: Goron Mines clear",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "raw": {
+            "component_kind": {
+              "kind": "persistent_save"
+            },
+            "binding": {
+              "kind": "exact",
+              "binding": {
+                "kind": "runtime_file",
+                "runtime_file_id": "file-0"
+              }
+            },
+            "byte_offset": 7,
+            "mask": [
+              1
+            ],
+            "expected": [
+              1
+            ]
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "message.flow-a",
+          "label": "Shared message flow-control A",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "raw": {
+            "component_kind": {
+              "kind": "temporary_flags"
+            },
+            "binding": {
+              "kind": "exact",
+              "binding": {
+                "kind": "session",
+                "session_id": "process"
+              }
+            },
+            "byte_offset": 0,
+            "mask": [
+              4
+            ],
+            "expected": [
+              4
+            ]
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "message.flow-b",
+          "label": "Shared message flow-control B",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "raw": {
+            "component_kind": {
+              "kind": "temporary_flags"
+            },
+            "binding": {
+              "kind": "exact",
+              "binding": {
+                "kind": "session",
+                "session_id": "process"
+              }
+            },
+            "byte_offset": 0,
+            "mask": [
+              2
+            ],
+            "expected": [
+              2
+            ]
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "message.flow-c",
+          "label": "Shared message flow-control C",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "raw": {
+            "component_kind": {
+              "kind": "temporary_flags"
+            },
+            "binding": {
+              "kind": "exact",
+              "binding": {
+                "kind": "session",
+                "session_id": "process"
+              }
+            },
+            "byte_offset": 0,
+            "mask": [
+              1
+            ],
+            "expected": [
+              1
+            ]
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        }
+      ],
+      "derived_facts": []
+    },
+    "mechanics": {
+      "schema": "dusklight.route-planner.mechanics-catalog/v30",
+      "transitions": [
+        {
+          "id": "transition.enter-r-sp110-with-displaced-bit",
+          "label": "Carry displaced B into the Goron Elder hall",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "message_action",
+          "approach_id": "approach.text-displacement-goron-coron",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "TEXT_SETUP"
+                    }
+                  }
+                },
+                {
+                  "kind": "fact",
+                  "fact_id": "message.flow-b"
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "set_location",
+                "location": {
+                  "stage": "R_SP110",
+                  "room": 0,
+                  "layer": 1,
+                  "spawn": 0
+                }
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gor-coron-flow6-b-to-c",
+          "label": "First Gor Coron talk reads displaced B and sets C",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "message_action",
+          "approach_id": "approach.text-displacement-goron-coron",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "R_SP110"
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_room"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 0
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_layer"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 1
+                    }
+                  }
+                },
+                {
+                  "kind": "not",
+                  "term": {
+                    "kind": "fact",
+                    "fact_id": "event.goron-mines-clear"
+                  }
+                },
+                {
+                  "kind": "fact",
+                  "fact_id": "message.flow-b"
+                },
+                {
+                  "kind": "not",
+                  "term": {
+                    "kind": "fact",
+                    "fact_id": "message.flow-c"
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write_raw",
+                "component_id": "temporary.event-flags",
+                "byte_offset": 0,
+                "mask": [
+                  1
+                ],
+                "value": [
+                  1
+                ]
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gor-coron-flow9-prime-a",
+          "label": "Second Gor Coron talk follows C and primes A",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "message_action",
+          "approach_id": "approach.text-displacement-goron-coron",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "R_SP110"
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_room"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 0
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_layer"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 1
+                    }
+                  }
+                },
+                {
+                  "kind": "fact",
+                  "fact_id": "message.flow-c"
+                },
+                {
+                  "kind": "not",
+                  "term": {
+                    "kind": "fact",
+                    "fact_id": "message.flow-a"
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write_raw",
+                "component_id": "temporary.event-flags",
+                "byte_offset": 0,
+                "mask": [
+                  4
+                ],
+                "value": [
+                  4
+                ]
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.gor-coron-flow9-write-m029",
+          "label": "Third Gor Coron talk consumes A/C and writes M029",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "message_action",
+          "approach_id": "approach.text-displacement-goron-coron",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "R_SP110"
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_room"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 0
+                    }
+                  }
+                },
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_layer"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "signed",
+                      "value": 1
+                    }
+                  }
+                },
+                {
+                  "kind": "fact",
+                  "fact_id": "message.flow-a"
+                },
+                {
+                  "kind": "fact",
+                  "fact_id": "message.flow-c"
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write_raw",
+                "component_id": "persistent.event-flags",
+                "byte_offset": 7,
+                "mask": [
+                  4
+                ],
+                "value": [
+                  4
+                ]
+              },
+              {
+                "kind": "write_raw",
+                "component_id": "temporary.event-flags",
+                "byte_offset": 0,
+                "mask": [
+                  7
+                ],
+                "value": [
+                  0
+                ]
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.td-producer-auru",
+          "label": "Retain displaced B through Auru's two-talk producer",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "message_action",
+          "approach_id": "approach.text-displacement-goron-coron",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "TEXT_SETUP"
+                    }
+                  }
+                },
+                {
+                  "kind": "not",
+                  "term": {
+                    "kind": "fact",
+                    "fact_id": "message.flow-b"
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write_raw",
+                "component_id": "temporary.event-flags",
+                "byte_offset": 0,
+                "mask": [
+                  2
+                ],
+                "value": [
+                  2
+                ]
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.td-producer-coro",
+          "label": "Retain displaced B through Coro's bottle-text interruption",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "message_action",
+          "approach_id": "approach.text-displacement-goron-coron",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "TEXT_SETUP"
+                    }
+                  }
+                },
+                {
+                  "kind": "not",
+                  "term": {
+                    "kind": "fact",
+                    "fact_id": "message.flow-b"
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write_raw",
+                "component_id": "temporary.event-flags",
+                "byte_offset": 0,
+                "mask": [
+                  2
+                ],
+                "value": [
+                  2
+                ]
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.td-producer-ooccoo",
+          "label": "Retain displaced B through Zombie Ooccoo's two-step producer",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "message_action",
+          "approach_id": "approach.text-displacement-goron-coron",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "TEXT_SETUP"
+                    }
+                  }
+                },
+                {
+                  "kind": "not",
+                  "term": {
+                    "kind": "fact",
+                    "fact_id": "message.flow-b"
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write_raw",
+                "component_id": "temporary.event-flags",
+                "byte_offset": 0,
+                "mask": [
+                  2
+                ],
+                "value": [
+                  2
+                ]
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "transition.td-producer-yeta",
+          "label": "Retain displaced B through Yeta's map-talk interruption",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "transition_kind": "message_action",
+          "approach_id": "approach.text-displacement-goron-coron",
+          "activation": {
+            "hard_guards": {
+              "kind": "all",
+              "terms": [
+                {
+                  "kind": "compare",
+                  "left": {
+                    "kind": "location_stage"
+                  },
+                  "operator": "equal",
+                  "right": {
+                    "kind": "literal",
+                    "value": {
+                      "kind": "text",
+                      "value": "TEXT_SETUP"
+                    }
+                  }
+                },
+                {
+                  "kind": "not",
+                  "term": {
+                    "kind": "fact",
+                    "fact_id": "message.flow-b"
+                  }
+                }
+              ]
+            },
+            "physical_obligation_ids": [],
+            "effects": [
+              {
+                "kind": "write_raw",
+                "component_id": "temporary.event-flags",
+                "byte_offset": 0,
+                "mask": [
+                  2
+                ],
+                "value": [
+                  2
+                ]
+              }
+            ],
+            "unknown_requirements": []
+          },
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        }
+      ],
+      "obligations": [],
+      "writers": [],
+      "gates": [],
+      "readers": [
+        {
+          "id": "reader.gor-coron-b-to-c-b",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "source": {
+            "kind": "raw_bits",
+            "component_id": "temporary.event-flags",
+            "byte_offset": 0,
+            "byte_width": 1,
+            "mask": 2
+          },
+          "consuming_transition_id": "transition.gor-coron-flow6-b-to-c",
+          "interpretation_fact_id": "message.flow-b",
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "reader.gor-coron-prime-a-c",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "source": {
+            "kind": "raw_bits",
+            "component_id": "temporary.event-flags",
+            "byte_offset": 0,
+            "byte_width": 1,
+            "mask": 1
+          },
+          "consuming_transition_id": "transition.gor-coron-flow9-prime-a",
+          "interpretation_fact_id": "message.flow-c",
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "reader.gor-coron-write-m029-a",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "source": {
+            "kind": "raw_bits",
+            "component_id": "temporary.event-flags",
+            "byte_offset": 0,
+            "byte_width": 1,
+            "mask": 4
+          },
+          "consuming_transition_id": "transition.gor-coron-flow9-write-m029",
+          "interpretation_fact_id": "message.flow-a",
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        },
+        {
+          "id": "reader.gor-coron-write-m029-c",
+          "scope": {
+            "selectors": [
+              {
+                "kind": "exact",
+                "context": {
+                  "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+                  "runtime_configuration_sha256": "862f97754d99c8fe8abe9ebe5d94f55aadaa9d9593f8ec6408de60880b752a32"
+                }
+              }
+            ]
+          },
+          "source": {
+            "kind": "raw_bits",
+            "component_id": "temporary.event-flags",
+            "byte_offset": 0,
+            "byte_width": 1,
+            "mask": 1
+          },
+          "consuming_transition_id": "transition.gor-coron-flow9-write-m029",
+          "interpretation_fact_id": "message.flow-c",
+          "evidence": {
+            "truth": "established",
+            "records": [
+              {
+                "id": "source.text-displacement-message-state-audit",
+                "kind": "source_audited",
+                "source_sha256": "8181818181818181818181818181818181818181818181818181818181818181",
+                "note": "GZ2E01 message handlers and Gor Coron flow consume the same audited temporary A/B/C backing."
+              }
+            ]
+          }
+        }
+      ],
+      "reconstruction_rules": [],
+      "obstructions": [],
+      "resolvers": [],
+      "techniques": [],
+      "microtraces": [],
+      "goals": [
+        {
+          "id": "goal.text-displacement-write-m029",
+          "label": "Use displaced text state to write Gor Coron M029",
+          "predicate": {
+            "kind": "fact",
+            "fact_id": "event.gor-coron-won"
+          }
+        }
+      ]
+    },
+    "refinement_stack": {
+      "schema": "dusklight.route-planner.refinement-stack/v2",
+      "entries": []
+    },
+    "obstruction_bindings": []
+  },
+  "theorycraft_base_catalog": null,
+  "theorycraft_overlays": [],
+  "evidence_mode": "established_only",
+  "route_book": null,
+  "start_state": {
+    "schema": "dusklight.route-planner.execution-state/v15",
+    "snapshot": {
+      "schema": "dusklight.route-planner.state-snapshot/v8",
+      "id": "snapshot.text-displacement-producer-selection",
+      "sequence": 0,
+      "environment": {
+        "schema": "dusklight.route-planner.execution-environment/v7",
+        "runtime_configuration": {
+          "schema": "dusklight.route-planner.runtime-configuration/v1",
+          "content_sha256": "6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa",
+          "language": "en",
+          "settings": {}
+        },
+        "active_runtime_file": {
+          "id": "file-0",
+          "origin": {
+            "kind": "new_file"
+          },
+          "backing": {
+            "kind": "memory_only"
+          },
+          "allowed_serialization_targets": [
+            1
+          ],
+          "lifecycle": "active"
+        },
+        "inactive_runtime_files": [],
+        "physical_slots": [],
+        "physical_slot_observations": [],
+        "execution_context": {
+          "kind": "world"
+        },
+        "location": {
+          "stage": "TEXT_SETUP",
+          "room": 0,
+          "layer": 0,
+          "spawn": 0
+        },
+        "player": {
+          "form": {
+            "kind": "human"
+          },
+          "mount": null,
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "attention_position": null,
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "has_control": true,
+          "action": "talk"
+        },
+        "components": [
+          {
+            "id": "persistent.event-flags",
+            "component_kind": {
+              "kind": "persistent_save"
+            },
+            "payload": {
+              "kind": "raw",
+              "bytes": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ],
+              "known_mask": [
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255
+              ]
+            },
+            "binding": {
+              "kind": "runtime_file",
+              "runtime_file_id": "file-0"
+            },
+            "lifetime": "runtime_file",
+            "serialization_owner": {
+              "kind": "runtime_file",
+              "runtime_file_id": "file-0"
+            },
+            "provenance": [
+              {
+                "source_kind": "extracted_fact",
+                "source_id": "gz2e01.persistent-event-backing",
+                "source_sha256": "8282828282828282828282828282828282828282828282828282828282828282",
+                "transition_id": null
+              }
+            ]
+          },
+          {
+            "id": "temporary.event-flags",
+            "component_kind": {
+              "kind": "temporary_flags"
+            },
+            "payload": {
+              "kind": "raw",
+              "bytes": [
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+              ],
+              "known_mask": [
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255
+              ]
+            },
+            "binding": {
+              "kind": "session",
+              "session_id": "process"
+            },
+            "lifetime": "session",
+            "serialization_owner": {
+              "kind": "none"
+            },
+            "provenance": [
+              {
+                "source_kind": "extracted_fact",
+                "source_id": "gz2e01.temporary-event-backing",
+                "source_sha256": "8383838383838383838383838383838383838383838383838383838383838383",
+                "transition_id": null
+              }
+            ]
+          }
+        ],
+        "static_world_objects": [],
+        "spatial_volumes": [],
+        "spatial_connections": [],
+        "spatial_planes": [],
+        "persisted_object_controls": [],
+        "live_world_objects": []
+      },
+      "semantic_observations": []
+    },
+    "gate_states": {},
+    "serialized_component_stores": [],
+    "persistent_file_images": [],
+    "preserved_component_ids": [],
+    "scheduled_cleanup_ids": [],
+    "interruption_log": [],
+    "execution_history": []
+  },
+  "equivalence_sets": [],
+  "presentation": {
+    "positions": {},
+    "regions": [],
+    "node_region_ids": {}
+  }
+}
