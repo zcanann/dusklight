@@ -263,7 +263,7 @@ impl BehaviorArchive {
         let replace = self
             .tactic_entries
             .get(&state_descriptor)
-            .is_none_or(|incumbent| tactic_quality_cmp(&entry, incumbent).is_gt());
+            .is_none_or(|incumbent| tactic_cell_elite_cmp(&entry, incumbent).is_gt());
         if replace {
             self.tactic_entries.insert(state_descriptor, entry);
         }
@@ -855,6 +855,42 @@ fn tactic_quality_cmp(
         })
 }
 
+/// Compare two restorable endpoints that occupy the same semantic state cell.
+///
+/// A shorter route strictly dominates a longer route to the same state because
+/// it preserves more of the bounded exploration horizon for downstream tactic
+/// composition. Reward only breaks ties between equally short routes; in
+/// particular, a first-visit novelty bonus must not pin a longer route in the
+/// archive.
+fn tactic_cell_elite_cmp(
+    left: &TacticFrontierEntry,
+    right: &TacticFrontierEntry,
+) -> std::cmp::Ordering {
+    left.transition
+        .value_sample
+        .terminal
+        .cmp(&right.transition.value_sample.terminal)
+        .then_with(|| {
+            right
+                .route_tape
+                .frames
+                .len()
+                .cmp(&left.route_tape.frames.len())
+        })
+        .then_with(|| {
+            left.transition
+                .value_sample
+                .reward
+                .total_cmp(&right.transition.value_sample.reward)
+        })
+        .then_with(|| {
+            right
+                .transition
+                .after_state_sha256
+                .cmp(&left.transition.after_state_sha256)
+        })
+}
+
 fn tactic_frontier_novelty(
     descriptor: &TacticEndpointDescriptor,
     reference: &[TacticEndpointDescriptor],
@@ -1137,6 +1173,19 @@ mod tests {
                 .value_sample
                 .reward,
             2.0
+        );
+
+        let retained = archive.select_tactic_frontier(&[], 1).remove(0);
+        let mut shorter_lower_reward = retained.clone();
+        shorter_lower_reward.route_tape.frames.pop();
+        shorter_lower_reward.transition.value_sample.reward = 1.0;
+        assert!(
+            tactic_cell_elite_cmp(&shorter_lower_reward, &retained).is_gt(),
+            "a shorter route to the same semantic cell must dominate novelty-inflated reward"
+        );
+        assert!(
+            tactic_quality_cmp(&shorter_lower_reward, &retained).is_lt(),
+            "cross-cell frontier quality remains reward-first"
         );
 
         let mut detached = transition;
