@@ -316,6 +316,9 @@ fn print_usage() {
         "  huntctl learn freeze-tactic-policy --checkpoint TACTIC-Q.json --output POLICY.json"
     );
     eprintln!(
+        "  huntctl learn execute-tactic-policy --request OPTIMIZATION.json --execution EXECUTION.json --policy POLICY.json --output build/DIR [--maximum-decisions N] [--repository-root DIR]"
+    );
+    eprintln!(
         "  huntctl learn tactic-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N]... [--decisions-per-seed N] [--branch-every N] [--epsilon-per-million N] [--repository-root DIR]"
     );
     eprintln!(

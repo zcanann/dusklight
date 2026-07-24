@@ -54,6 +54,7 @@ use huntctl::learning::native_goal_trajectory::{
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
+use huntctl::learning::tactic_frozen_policy::TacticFrozenPolicy;
 use huntctl::learning::trainable_set_encoder::TrainableSetConfig;
 use huntctl::low_data_baselines::{
     LocalFeature, LocalReturnConfig, NearestNeighborReturn, TabularAxis, TabularReturn,
@@ -88,6 +89,9 @@ use huntctl::offline_rl::{
 };
 use huntctl::reward_shaping::{PotentialShapingSpec, REWARD_REPORT_SCHEMA_V1};
 use huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding;
+use huntctl::search_evaluator::native_tactic_policy_runner::{
+    NativeTacticPolicyRunConfig, run_native_tactic_policy,
+};
 use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticRouteRunConfig, run_native_tactic_route,
 };
@@ -714,6 +718,50 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "source_campaign_sha256": policy.source_campaign_sha256,
                     "training_rows": policy.training_batch.samples.len(),
                     "exploration": "disabled",
+                }))?
+            );
+            Ok(())
+        }
+        Some("execute-tactic-policy") => {
+            let learn_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(learn_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--execution")?)?)?;
+            let policy: TacticFrozenPolicy =
+                serde_json::from_slice(&fs::read(required_path(learn_args, "--policy")?)?)?;
+            let output_argument = required_path(learn_args, "--output")?;
+            let output = if output_argument.is_absolute() {
+                output_argument
+            } else {
+                repository_root.join(output_argument)
+            };
+            let report = run_native_tactic_policy(&NativeTacticPolicyRunConfig {
+                repository_root: &repository_root,
+                optimization: &request,
+                execution: &execution,
+                policy: &policy,
+                output_root: &output,
+                maximum_decisions: u64_option(learn_args, "--maximum-decisions", 256)?,
+            })?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "report": output.join("report.json"),
+                    "policy_sha256": report.policy_sha256,
+                    "exploration_enabled": report.exploration_enabled,
+                    "success": report.success,
+                    "stop_reason": report.stop_reason,
+                    "decisions": report.decisions,
+                    "native_ticks": report.native_ticks,
+                    "realized_tape": report.realized_tape,
+                    "realized_tape_sha256": report.realized_tape_sha256,
                 }))?
             );
             Ok(())

@@ -121,6 +121,17 @@ impl PersistentTacticBatchWorker for NativeSuffixWorkerSession {
     }
 }
 
+/// Stable identity of the authenticated native source across worker launches.
+/// The emulator's internal restore handle is intentionally excluded because it
+/// is process-local and changes after every cold launch.
+pub fn tactic_root_checkpoint_sha256(
+    identity: &NativeSuffixWorkerIdentity,
+) -> Result<Digest, NativeTacticWorkerError> {
+    let bytes = serde_json::to_vec(identity)
+        .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?;
+    Ok(sha256(&bytes))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
     worker: &mut W,
@@ -131,6 +142,7 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
     route_prefix: &InputTape,
     paths: &NativeTacticWorkerPaths,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
+    let root_checkpoint_sha256 = tactic_root_checkpoint_sha256(worker.identity())?;
     before
         .validate()
         .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
@@ -155,6 +167,7 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
     match prepare_selected(selected, catalog, blueprints)? {
         PreparedNativeExecution::Static(prepared) => execute_static_tactic(
             worker,
+            root_checkpoint_sha256,
             selected,
             before,
             route_prefix,
@@ -169,6 +182,7 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
             termination,
         } => execute_native_generic_tactic(
             worker,
+            root_checkpoint_sha256,
             selected,
             before,
             route_prefix,
@@ -186,6 +200,7 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
             cancellation,
         } => execute_reactive_controller(
             worker,
+            root_checkpoint_sha256,
             selected,
             before,
             route_prefix,
@@ -203,6 +218,7 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
 #[allow(clippy::too_many_arguments)]
 fn execute_static_tactic<W: PersistentTacticBatchWorker>(
     worker: &mut W,
+    root_checkpoint_sha256: Digest,
     selected: &SelectedTactic,
     before: &FactSnapshot,
     route_prefix: &InputTape,
@@ -224,6 +240,7 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
     observe_outcome(
+        root_checkpoint_sha256,
         selected,
         before,
         route_prefix,
@@ -239,6 +256,7 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
 #[allow(clippy::too_many_arguments)]
 fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
     worker: &mut W,
+    root_checkpoint_sha256: Digest,
     selected: &SelectedTactic,
     before: &FactSnapshot,
     route_prefix: &InputTape,
@@ -322,6 +340,7 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             )
             .map_err(|error| NativeTacticWorkerError::Execution(error.to_string()))?;
             return observe_outcome(
+                root_checkpoint_sha256,
                 selected,
                 before,
                 route_prefix,
@@ -354,6 +373,7 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
 #[allow(clippy::too_many_arguments)]
 fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
     worker: &mut W,
+    root_checkpoint_sha256: Digest,
     selected: &SelectedTactic,
     before: &FactSnapshot,
     route_prefix: &InputTape,
@@ -398,6 +418,7 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
                 &option_tape,
             )?;
             return observe_outcome(
+                root_checkpoint_sha256,
                 selected,
                 before,
                 route_prefix,
@@ -470,6 +491,7 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
                 &option_tape,
             )?;
             return observe_outcome(
+                root_checkpoint_sha256,
                 selected,
                 before,
                 route_prefix,
@@ -873,6 +895,7 @@ fn pad_runs(frames: &[InputFrame]) -> Result<Vec<MacroAction>, NativeTacticWorke
 }
 
 fn observe_outcome(
+    root_checkpoint_sha256: Digest,
     selected: &SelectedTactic,
     before: &FactSnapshot,
     route_prefix: &InputTape,
@@ -997,7 +1020,7 @@ fn observe_outcome(
     }
     Ok(NativeTacticWorkerOutcome {
         schema: NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2.into(),
-        source_checkpoint_sha256: sha256(validated.restore_identity.as_bytes()),
+        source_checkpoint_sha256: root_checkpoint_sha256,
         checkpoint_identity: validated.restore_identity,
         episode_shard_sha256: shard.content_sha256,
         selected: selected.clone(),
@@ -1448,6 +1471,7 @@ mod tests {
             ..InputTape::default()
         };
         let outcome = observe_outcome(
+            Digest([12; 32]),
             &selected,
             &before,
             &route_prefix,

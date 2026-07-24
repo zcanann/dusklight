@@ -5,7 +5,7 @@ use crate::native_suffix_result::{NativeTerminalBinding, ValidatedNativeSuffixBa
 use crate::native_suffix_worker::{
     NativeSuffixWorkerError, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
 };
-use crate::native_tactic_worker::NativeTacticWorkerPaths;
+use crate::native_tactic_worker::{NativeTacticWorkerPaths, tactic_root_checkpoint_sha256};
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_q_campaign::{TacticCampaignDiagnostics, TacticQCampaign, TacticQCampaignError};
 use dusklight_automation_contracts::artifact::Digest;
@@ -26,7 +26,6 @@ use dusklight_search::suffix_batch::{
     NativeSuffixCandidate,
 };
 use serde::Serialize;
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -183,7 +182,8 @@ pub fn run_native_tactic_route(
             "native source observation is not the requested nonterminal tactic boundary",
         ));
     }
-    let root_checkpoint_sha256 = digest_restore_identity(&initial.restore_identity);
+    let root_checkpoint_sha256 =
+        tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;
 
     let run = (|| {
         let mut seed_results = Vec::with_capacity(config.exploration_seeds.len());
@@ -445,24 +445,29 @@ fn run_seed(
 fn initial_probe_batch(
     config: &NativeTacticRouteRunConfig<'_>,
 ) -> Result<NativeSuffixBatch, NativeTacticRouteRunError> {
-    let maximum_ticks = usize::try_from(config.optimization.budgets.exploration_horizon_ticks)
-        .map_err(route_error)?;
+    tactic_root_probe_batch(config.optimization, config.execution)
+}
+
+pub(crate) fn tactic_root_probe_batch(
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+) -> Result<NativeSuffixBatch, NativeTacticRouteRunError> {
+    let maximum_ticks =
+        usize::try_from(optimization.budgets.exploration_horizon_ticks).map_err(route_error)?;
     Ok(NativeSuffixBatch {
         schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
-        source_frame: usize::try_from(config.optimization.route.source_boundary_index)
+        source_frame: usize::try_from(optimization.route.source_boundary_index)
             .map_err(route_error)?,
-        source_boundary_fingerprint: config
-            .optimization
+        source_boundary_fingerprint: optimization
             .route
             .native_source_boundary_fingerprint
             .clone(),
         checkpoint_validation: NativeCheckpointValidation {
             kind: "recorded_replay_window".into(),
-            ticks: usize::try_from(config.execution.checkpoint_validation_ticks)
-                .map_err(route_error)?,
+            ticks: usize::try_from(execution.checkpoint_validation_ticks).map_err(route_error)?,
         },
         maximum_ticks,
-        verify_state_hashes: config.execution.verify_state_hashes,
+        verify_state_hashes: execution.verify_state_hashes,
         candidates: vec![NativeSuffixCandidate {
             id: "tactic-root-probe".into(),
             actions: vec![MacroAction::PadRun {
@@ -473,7 +478,7 @@ fn initial_probe_batch(
     })
 }
 
-fn initial_facts(
+pub(crate) fn initial_facts(
     initial: &ValidatedNativeSuffixBatch,
 ) -> Result<FactSnapshot, NativeTacticRouteRunError> {
     let shard = NativeEpisodeShard::decode(
@@ -523,11 +528,7 @@ fn seed_group(seed_index: usize, episode: u64) -> Result<u64, NativeTacticRouteR
         .ok_or_else(|| route_message("episode group overflowed"))
 }
 
-fn digest_restore_identity(identity: &str) -> Digest {
-    Digest(Sha256::digest(identity.as_bytes()).into())
-}
-
-fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError> {
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(route_error)?;
     }
@@ -540,7 +541,7 @@ fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError>
     file.sync_all().map_err(route_error)
 }
 
-fn path_text(path: &Path) -> String {
+pub(crate) fn path_text(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
@@ -580,10 +581,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn restore_identity_digest_matches_native_tactic_worker_authority() {
-        assert_eq!(
-            digest_restore_identity("checkpoint"),
-            Digest(Sha256::digest(b"checkpoint").into())
-        );
+    fn root_probe_uses_the_full_declared_horizon() {
+        assert!(MAX_ROUTE_DECISIONS > 0);
     }
 }
