@@ -12,8 +12,13 @@
                 "--projects", "${workspaceFolder}/tools/route-planner/projects"
             ],
             "cwd": "${workspaceFolder}",
-            "terminal": "integrated",
-            "preLaunchTask": "Route Planner: Build"
+            "terminal": "console",
+            "preLaunchTask": "Route Planner: Build",
+            "serverReadyAction": {
+                "pattern": "route planner: (http://\\S+)",
+                "uriFormat": "%s",
+                "action": "openExternally"
+            }
         },
         {
             "name": "Glitch Hunt: Route Workbench",
