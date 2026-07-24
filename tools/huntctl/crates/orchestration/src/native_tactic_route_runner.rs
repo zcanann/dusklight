@@ -827,7 +827,11 @@ fn goal_tactic_maximum_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunEr
     if horizon == 0 {
         return Err(route_message("goal tactic requires a nonzero horizon"));
     }
-    Ok((horizon / 2).clamp(1, 80))
+    // Route-relative seeks are navigation decisions, not whole-route
+    // controllers. Reserve room for four reactive decisions so the learner can
+    // redirect around contact geometry instead of spending half its horizon on
+    // one stalled target.
+    Ok((horizon / 4).clamp(1, 80))
 }
 
 fn route_tactic_reward_spec(
@@ -1040,6 +1044,14 @@ mod tests {
         assert!(selected_tactic_fits_horizon(152, 8, 160));
         assert!(!selected_tactic_fits_horizon(88, 80, 160));
         assert!(!selected_tactic_fits_horizon(u64::MAX, 1, 160));
+    }
+
+    #[test]
+    fn goal_seek_reserves_room_for_reactive_redirection() {
+        assert_eq!(goal_tactic_maximum_ticks(160).unwrap(), 40);
+        assert_eq!(goal_tactic_maximum_ticks(3).unwrap(), 1);
+        assert_eq!(goal_tactic_maximum_ticks(1_000).unwrap(), 80);
+        assert!(goal_tactic_maximum_ticks(0).is_err());
     }
 
     #[test]
