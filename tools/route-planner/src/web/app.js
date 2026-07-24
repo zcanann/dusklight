@@ -11,6 +11,7 @@ const WORKSPACE_ASSET_SAVE_SCHEMA = "dusklight.route-planner.workspace-asset-sav
 const WORKSPACE_ASSET_COMMAND_SCHEMA = "dusklight.route-planner.workspace-asset-command/v1";
 const WORKSPACE_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-trash-command/v1";
 const WORKSPACE_LIBRARY_FORK_SCHEMA = "dusklight.route-planner.workspace-library-fork/v1";
+const LIBRARY_DRAG_TYPE = "application/x-dusklight-library";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
@@ -430,9 +431,16 @@ function renderContentBrowser() {
 function libraryContentItem(library) {
   const row = document.createElement("div");
   row.className = "content-asset-row";
-  row.append(contentItem("LIB", library.label, "Read-only verified example", true, () => {
+  const libraryButton = contentItem("LIB", library.label, "Read-only verified example", true, () => {
     loadStoredProject(library.id);
-  }));
+  });
+  libraryButton.draggable = true;
+  libraryButton.addEventListener("dragstart", (event) => {
+    event.dataTransfer.effectAllowed = "link";
+    event.dataTransfer.setData(LIBRARY_DRAG_TYPE, library.id);
+    setStatus(`Drop ${library.label} on the canvas to add an exact reference`);
+  });
+  row.append(libraryButton);
   const actions = document.createElement("details");
   actions.className = "asset-actions";
   const summary = document.createElement("summary");
@@ -2311,12 +2319,28 @@ function revealNode(node) {
 }
 
 function allowTransitionDrop(event) {
+  if (state.workspace && Array.from(event.dataTransfer.types).includes(LIBRARY_DRAG_TYPE)) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "link";
+    return;
+  }
   if (!state.project?.start_state || state.readOnly) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = "copy";
 }
 
 async function dropTransitionAtRouteFrontier(event) {
+  const libraryId = event.dataTransfer.getData(LIBRARY_DRAG_TYPE);
+  if (libraryId && state.workspace) {
+    event.preventDefault();
+    const library = state.libraries.find((candidate) => candidate.id === libraryId);
+    if (!library) {
+      setStatus("The dropped Library item is no longer available", "bad");
+      return;
+    }
+    await addLibraryReference(library);
+    return;
+  }
   if (!state.project?.start_state || state.readOnly) return;
   event.preventDefault();
   const nodeId = event.dataTransfer.getData("text/plain");
