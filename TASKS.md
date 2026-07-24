@@ -60,6 +60,7 @@ Route speed does not matter for this first proof.
 | Controller composition | Working separately for concurrent movement/camera/button/clamp layers and sequential static search actions |
 | Game-specific and generic bounded tactics | Working, including exact PAD/query capture and experience-mined initiation/termination predicates |
 | Semi-Markov option values | Working: duration-aware fitted Q iteration, typed option catalogs, ranking, and deterministic selected-option execution |
+| Common tactic adapter | Working: existing game tactics, native generic tactics, motion paths, and DUSKCTRL programs share validated identity, duration, observation-requirement, descriptor, and static-realization metadata without a new action encoding |
 | Replay corpora, critics, policies, and checkpoint archives | Working as separate components |
 | Exact realized tape and cold-replay proof | Working |
 | Unified tactic/composition asset model | Missing |
@@ -190,9 +191,6 @@ Work in this order.
 
 ### 1. Unify the existing action systems
 
-- [ ] Define one `TacticAsset` adapter contract for identity, typed parameters,
-  applicability, execution, stopping, duration, queried facts, and exact
-  realization. Do not invent new encodings for existing plan types.
 - [ ] Adapt `GameTacticPlan`, `NativeGenericTacticPlan`, `MotionPathPlan`, and
   reactive-controller programs into the same executable catalog.
 - [ ] Expose the already implemented world-seek, heading/offset, waypoint, rail,

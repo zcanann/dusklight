@@ -629,6 +629,22 @@ impl NativeGenericTacticPlan {
             parameters,
         })
     }
+
+    pub fn termination_condition(&self) -> Result<OptionCondition, NativeTacticError> {
+        self.validate()?;
+        if matches!(
+            self.tactic,
+            GenericTactic::MaintainRelativeHeading { .. }
+                | GenericTactic::ShortCurve { .. }
+                | GenericTactic::CameraWhileMoving { .. }
+        ) {
+            return Ok(OptionCondition::DurationElapsed);
+        }
+        Ok(OptionCondition::Observation {
+            observation_schema_sha256: observation_schema_sha256(),
+            expression_sha256: Digest(Sha256::digest(canonical(self)?).into()),
+        })
+    }
 }
 
 pub fn select_and_execute_generic(
@@ -685,7 +701,7 @@ fn execute_selected(
     tape.validate()
         .map_err(|error| NativeTacticError::Tape(error.to_string()))?;
     let end_frame_exclusive = tape.frames.len() as u64;
-    let termination_condition = termination_condition(&candidate.plan)?;
+    let termination_condition = candidate.plan.termination_condition()?;
     let execution = OptionExecution::capture(
         candidate.descriptor.option_id.clone(),
         candidate.descriptor.option_type.clone(),
@@ -1079,23 +1095,6 @@ fn insert_target(
         ),
     );
     Ok(())
-}
-
-fn termination_condition(
-    plan: &NativeGenericTacticPlan,
-) -> Result<OptionCondition, NativeTacticError> {
-    if matches!(
-        plan.tactic,
-        GenericTactic::MaintainRelativeHeading { .. }
-            | GenericTactic::ShortCurve { .. }
-            | GenericTactic::CameraWhileMoving { .. }
-    ) {
-        return Ok(OptionCondition::DurationElapsed);
-    }
-    Ok(OptionCondition::Observation {
-        observation_schema_sha256: observation_schema_sha256(),
-        expression_sha256: Digest(Sha256::digest(canonical(plan)?).into()),
-    })
 }
 
 fn observation_schema_sha256() -> Digest {

@@ -26,6 +26,28 @@ pub struct OptionActionDescriptor {
     pub parameters: BTreeMap<String, OptionParameter>,
 }
 
+impl OptionActionDescriptor {
+    pub fn validate(&self) -> Result<(), OptionValueError> {
+        if !valid_name(&self.option_id, 96)
+            || matches!(
+                &self.option_type,
+                OptionType::Custom(name) if !valid_name(name, 96)
+            )
+            || self.parameters.len() > 64
+            || self
+                .parameters
+                .keys()
+                .any(|name| !valid_name(name, 64))
+            || self.parameters.values().any(invalid_parameter)
+        {
+            return Err(OptionValueError::Invalid(
+                "invalid option action descriptor",
+            ));
+        }
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OptionValueSample {
@@ -275,19 +297,8 @@ fn validate_sample(
     feature_width: usize,
     sample: &OptionValueSample,
 ) -> Result<(), OptionValueError> {
-    if !valid_name(&sample.action.option_id, 96)
-        || matches!(
-            &sample.action.option_type,
-            OptionType::Custom(name) if !valid_name(name, 96)
-        )
-        || sample.action.parameters.len() > 64
-        || sample
-            .action
-            .parameters
-            .keys()
-            .any(|name| !valid_name(name, 64))
-        || sample.action.parameters.values().any(invalid_parameter)
-        || sample.state.len() != feature_width
+    sample.action.validate()?;
+    if sample.state.len() != feature_width
         || sample.next_state.len() != feature_width
         || sample
             .state

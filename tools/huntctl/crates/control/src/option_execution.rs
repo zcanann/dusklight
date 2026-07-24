@@ -378,7 +378,7 @@ fn checked_range(
     Ok((start, end))
 }
 
-pub(crate) fn validate_condition(condition: &OptionCondition) -> Result<(), OptionExecutionError> {
+pub fn validate_condition(condition: &OptionCondition) -> Result<(), OptionExecutionError> {
     match condition {
         OptionCondition::DurationElapsed => Ok(()),
         OptionCondition::Predicate {
