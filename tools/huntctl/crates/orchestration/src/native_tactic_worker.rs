@@ -1082,7 +1082,13 @@ fn tactic_batch(
                 .map_err(|_| NativeTacticWorkerError::InvalidDuration)?,
         },
         maximum_ticks: tape.frames.len(),
-        verify_state_hashes: true,
+        // These batches collect learning transitions, not promotion proof.
+        // The persistent session already authenticates its source checkpoint
+        // with a recorded replay window, while per-tick state hashing makes
+        // failed exploration branches dramatically more expensive than the
+        // simulation itself. Successful policies are state-hash verified by
+        // the separate frozen-policy and cold-replay gates.
+        verify_state_hashes: false,
         candidates: vec![NativeSuffixCandidate {
             id,
             actions,
@@ -1126,7 +1132,9 @@ fn tactic_controller_batch(
                 .map_err(|_| NativeTacticWorkerError::InvalidDuration)?,
         },
         maximum_ticks,
-        verify_state_hashes: true,
+        // Keep reactive exploration on the same evidence boundary as static
+        // tactic exploration. Exact per-tick proof belongs to promotion.
+        verify_state_hashes: false,
         candidates: vec![NativeSuffixCandidate {
             id,
             actions: pad_runs(prefix_frames)?,
@@ -1521,7 +1529,7 @@ mod tests {
                 .sum::<u32>(),
             3
         );
-        assert!(batch.verify_state_hashes);
+        assert!(!batch.verify_state_hashes);
     }
 
     #[test]

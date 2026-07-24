@@ -554,7 +554,7 @@ impl TacticQCampaign {
         fs::create_dir_all(directory)
             .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
         let final_path = directory.join(format!("tactic-q-{}.json", checkpoint.content_sha256));
-        let bytes = serde_json::to_vec_pretty(&checkpoint)
+        let bytes = serde_json::to_vec(&checkpoint)
             .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
         if final_path.exists() {
             let existing = fs::read(&final_path)
@@ -770,12 +770,15 @@ impl TacticQCampaign {
             encode,
             entry_applicable,
             reward,
+            true,
         )
     }
 
     /// Reward-policy variant of [`Self::execute_and_refit`]. It composes
     /// terminal bonus, exact tick cost, first-visit novelty, and optional
     /// potential shaping without granting any of them terminal authority.
+    /// Replay is retained on every call; callers may batch the fitted-Q rebuild
+    /// after the first model exists. A terminal outcome always forces a refit.
     #[allow(clippy::too_many_arguments)]
     pub fn execute_and_refit_rewarded<W, E, F, A>(
         &mut self,
@@ -787,6 +790,7 @@ impl TacticQCampaign {
         encode: &F,
         entry_applicable: A,
         reward_spec: &TacticRewardSpec,
+        refit_model: bool,
     ) -> Result<RewardedTacticQCampaignStep, TacticQCampaignError>
     where
         W: PersistentTacticBatchWorker,
@@ -813,6 +817,7 @@ impl TacticQCampaign {
             encode,
             entry_applicable,
             reward_spec,
+            refit_model,
         )
     }
 
@@ -827,6 +832,7 @@ impl TacticQCampaign {
         encode: &F,
         entry_applicable: A,
         reward_spec: &TacticRewardSpec,
+        refit_model: bool,
     ) -> Result<RewardedTacticQCampaignStep, TacticQCampaignError>
     where
         E: fmt::Display,
@@ -847,6 +853,7 @@ impl TacticQCampaign {
             !self.visited_states.contains(&endpoint),
         )?;
         let training_reward = reward.training_reward;
+        let refit_model = refit_model || outcome.terminal;
         let step = self.retain_and_refit(
             decision,
             outcome,
@@ -856,6 +863,7 @@ impl TacticQCampaign {
             encode,
             entry_applicable,
             move |_, _, _| training_reward,
+            refit_model,
         )?;
         Ok(RewardedTacticQCampaignStep { step, reward })
     }
@@ -874,6 +882,7 @@ impl TacticQCampaign {
         encode: &F,
         entry_applicable: A,
         reward: R,
+        refit_model: bool,
     ) -> Result<TacticQCampaignStep, TacticQCampaignError>
     where
         E: fmt::Display,
@@ -881,6 +890,11 @@ impl TacticQCampaign {
         A: Fn(&TacticAssetDescription) -> bool,
         R: Fn(&FactSnapshot, &FactSnapshot, &OptionExecution) -> f32,
     {
+        if !refit_model && self.model.is_none() {
+            return Err(TacticQCampaignError::InvalidState(
+                "a tactic campaign needs an initial fitted model before batching refits",
+            ));
+        }
         if decision.selected != outcome.selected
             || decision.selected.decision_index != self.decision_index
             || decision.selected.learner_snapshot_sha256 != self.current.snapshot_sha256
@@ -927,18 +941,22 @@ impl TacticQCampaign {
         replay_routes.push(outcome.route_tape.clone());
         let mut episode_groups = self.episode_groups.clone();
         episode_groups.push(self.episode_group);
-        let feature_width = transition.value_sample.state.len();
-        let batch = OptionValueBatch::new(
-            self.feature_schema_sha256,
-            self.objective_sha256,
-            feature_width,
-            replay
-                .iter()
-                .map(|sample| sample.value_sample.clone())
-                .collect(),
-            episode_groups.clone(),
-        )?;
-        let model = OptionValueModel::fit_batch(&batch, &self.model_config)?;
+        let model = if refit_model {
+            let feature_width = transition.value_sample.state.len();
+            let batch = OptionValueBatch::new(
+                self.feature_schema_sha256,
+                self.objective_sha256,
+                feature_width,
+                replay
+                    .iter()
+                    .map(|sample| sample.value_sample.clone())
+                    .collect(),
+                episode_groups.clone(),
+            )?;
+            Some(OptionValueModel::fit_batch(&batch, &self.model_config)?)
+        } else {
+            None
+        };
 
         self.visited_states.insert(tactic_state_descriptor(
             &next.snapshot,
@@ -949,7 +967,9 @@ impl TacticQCampaign {
         self.replay = replay;
         self.replay_routes = replay_routes;
         self.episode_groups = episode_groups;
-        self.model = Some(model);
+        if let Some(model) = model {
+            self.model = Some(model);
+        }
         self.decision_index =
             self.decision_index
                 .checked_add(1)
@@ -1573,6 +1593,7 @@ mod tests {
                 &encode,
                 |_| true,
                 &reward_spec,
+                true,
             )
             .unwrap();
 

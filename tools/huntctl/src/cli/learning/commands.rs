@@ -800,6 +800,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 exploration_seeds: &seeds,
                 decisions_per_seed: u64_option(learn_args, "--decisions-per-seed", 256)?,
                 branch_every_decisions: u64_option(learn_args, "--branch-every", 8)?,
+                refit_every_decisions: u64_option(learn_args, "--refit-every", 4)?,
                 epsilon_per_million: option(learn_args, "--epsilon-per-million")
                     .map(|value| value.parse())
                     .transpose()?

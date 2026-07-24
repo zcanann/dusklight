@@ -40,7 +40,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V2: &str = "dusklight-native-tactic-route-report/v2";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V3: &str = "dusklight-native-tactic-route-report/v3";
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
@@ -55,6 +55,7 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub exploration_seeds: &'a [u64],
     pub decisions_per_seed: u64,
     pub branch_every_decisions: u64,
+    pub refit_every_decisions: u64,
     pub epsilon_per_million: u32,
 }
 
@@ -72,6 +73,7 @@ pub struct NativeTacticRouteReport {
     pub demonstration_transitions: u64,
     pub exploration_seeds: Vec<u64>,
     pub decisions_per_seed: u64,
+    pub refit_every_decisions: u64,
     pub successful_seeds: u64,
     pub total_native_ticks: u64,
     pub total_decisions: u64,
@@ -232,7 +234,7 @@ pub fn run_native_tactic_route(
     shutdown?;
 
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V2.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V3.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -243,6 +245,7 @@ pub fn run_native_tactic_route(
         demonstration_transitions: 0,
         exploration_seeds: config.exploration_seeds.to_vec(),
         decisions_per_seed: config.decisions_per_seed,
+        refit_every_decisions: config.refit_every_decisions,
         successful_seeds: seed_results.iter().filter(|seed| seed.success).count() as u64,
         total_native_ticks: seed_results.iter().map(|seed| seed.native_ticks).sum(),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
@@ -395,6 +398,12 @@ fn run_seed(
         }
 
         let decision_index = campaign.decision_index;
+        let refit_model = tactic_model_refit_due(
+            decision_index
+                .checked_add(1)
+                .ok_or_else(|| route_message("decision index overflowed"))?,
+            config.refit_every_decisions,
+        );
         let paths_root = seed_root
             .join("native")
             .join(format!("decision-{decision_index:06}"));
@@ -412,6 +421,7 @@ fn run_seed(
                 &encode,
                 |_| true,
                 reward_spec,
+                refit_model,
             )
             .map_err(route_error)?;
         let selected = &step.step.decision.selected;
@@ -465,10 +475,21 @@ fn run_seed(
             frontier_cells: diagnostics.frontier_cells,
             visited_states: campaign.visited_state_count(),
         });
-        let checkpoint = campaign
-            .write_checkpoint(&checkpoint_root)
-            .map_err(route_error)?;
-        advance_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint, checkpoint)?;
+        let run_finished = step.step.transition.value_sample.terminal
+            || campaign.decision_index >= config.decisions_per_seed
+            || native_ticks >= config.optimization.budgets.simulated_tick_budget;
+        if !run_finished
+            && tactic_checkpoint_due(
+                campaign.decision_index,
+                config.optimization.resume.checkpoint_every_candidates,
+                false,
+            )
+        {
+            let checkpoint = campaign
+                .write_checkpoint(&checkpoint_root)
+                .map_err(route_error)?;
+            advance_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint, checkpoint)?;
+        }
         if step.step.transition.value_sample.terminal {
             break;
         }
@@ -520,6 +541,14 @@ fn run_seed(
 
 fn frontier_sampling_round(episode: u64) -> u64 {
     episode.saturating_sub(1 + episode / 4)
+}
+
+fn tactic_checkpoint_due(decision_index: u64, interval: u64, terminal: bool) -> bool {
+    terminal || decision_index % interval == 0
+}
+
+fn tactic_model_refit_due(decision_count: u64, interval: u64) -> bool {
+    decision_count == 1 || decision_count % interval == 0
 }
 
 fn advance_rolling_checkpoint(
@@ -1000,6 +1029,8 @@ fn validate_config(
         || config.decisions_per_seed > MAX_ROUTE_DECISIONS
         || config.branch_every_decisions == 0
         || config.branch_every_decisions > config.decisions_per_seed
+        || config.refit_every_decisions == 0
+        || config.refit_every_decisions > config.decisions_per_seed
         || config.epsilon_per_million > 1_000_000
         || config
             .exploration_seeds
@@ -1115,6 +1146,23 @@ mod tests {
             .map(frontier_sampling_round)
             .collect::<Vec<_>>();
         assert_eq!(frontier_rounds, (0..9).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn tactic_checkpoints_follow_the_sealed_resume_interval_and_terminal() {
+        assert!(!tactic_checkpoint_due(1, 64, false));
+        assert!(!tactic_checkpoint_due(63, 64, false));
+        assert!(tactic_checkpoint_due(64, 64, false));
+        assert!(tactic_checkpoint_due(65, 64, true));
+    }
+
+    #[test]
+    fn tactic_model_refits_once_initially_and_then_in_batches() {
+        assert!(tactic_model_refit_due(1, 4));
+        assert!(!tactic_model_refit_due(2, 4));
+        assert!(!tactic_model_refit_due(3, 4));
+        assert!(tactic_model_refit_due(4, 4));
+        assert!(tactic_model_refit_due(8, 4));
     }
 
     #[test]
