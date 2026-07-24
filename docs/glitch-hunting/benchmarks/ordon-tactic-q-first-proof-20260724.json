@@ -1,0 +1,66 @@
+{
+  "schema": "dusklight-tactic-q-first-proof/v1",
+  "date": "2026-07-24",
+  "claim": "A no-demonstration tactic-Q campaign learned an Ordon Springs route, its frozen exploration-free greedy policy reached the authored terminal, and the exact realized PAD tape reproduced identical gameplay state at every recorded process-boot boundary.",
+  "implementation": {
+    "campaign_revision": "4ffa83bb5f",
+    "frozen_policy_revision": "073640f4ea",
+    "game_revision": "bce175f9ed48d4de011f43350f3c8f4b7134ea81"
+  },
+  "bindings": {
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "execution_binding_sha256": "767629119340e9e47004a0675cf7c02a75575b0b0bdab8bb83527d45512bba5a",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+    "feature_schema_sha256": "be03e8360126d502306be142f800480e4c53cacd0970dc41bfca0d9f20ef0148",
+    "action_schema_sha256": "ef31114f330b6f643e92bfe47815fe7757b2d997d89649a6491d1158304b4c7b",
+    "game_sha256": "e1b559148ac617d61f4074bfee554d8de1811c2c94f0d07508a00ceb65945629",
+    "dvd_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "terminal_program_sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653"
+  },
+  "discovery": {
+    "demonstration_transitions": 0,
+    "exploration_seed": 181081,
+    "decision_budget": 256,
+    "decisions_to_terminal": 70,
+    "episodes": 18,
+    "native_ticks": 2266,
+    "visited_states": 39,
+    "frontier_cells": 52,
+    "unique_selected_actions": 36,
+    "successful": true,
+    "terminal_decision": {
+      "option_id": "goal.seek.coordinate.17",
+      "reward": 96.76931
+    }
+  },
+  "frozen_policy": {
+    "schema": "dusklight-tactic-frozen-policy/v2",
+    "content_sha256": "be67781a189bc9f11b67988dddc5bcb9c96fab8ed146b35a43c38024b1b35631",
+    "source_campaign_sha256": "e28f61b7acfae084cfb8d2cdda12f20403d542bce912c9ae65605c1101f5a215",
+    "training_rows": 70,
+    "exploration_enabled": false,
+    "greedy_decisions": 13,
+    "native_ticks": 426,
+    "terminal_state_sha256": "c1cbb310f91df566f6996b2fac3df3e8b382f1721ccfa5882ba5b7ce2408d471",
+    "successful": true
+  },
+  "realized_tape": {
+    "sha256": "872f7f43053d5770021f8bd8fa78f89d8b4d8ed4cbd274b332bad0f1c502d28e",
+    "boot": "process",
+    "frames": 932
+  },
+  "cold_replay": {
+    "repetitions": 2,
+    "controller_in_loop": false,
+    "model_in_loop": false,
+    "goal": "ordon_spring_load_committed",
+    "goal_reached_in_each_trace": true,
+    "sim_tick": 931,
+    "tape_frame": 931,
+    "terminal_boundary_fingerprint": "201beef524bdc97dcd8f7184ea7d95d9",
+    "compared_boundaries": 932,
+    "semantic_state_series_sha256": "5b111202b753aa5a0df9fe3734af21c372dce5eee63bf5c3585039f60fa34447",
+    "gameplay_trace_sha256": "60fc99ef24fd437c8284bad1af2603c3ba44835f3566cdfe97ad0bfefda82249",
+    "per_boundary_state_identical": true
+  }
+}

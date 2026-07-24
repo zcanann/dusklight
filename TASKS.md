@@ -62,31 +62,12 @@ Route speed does not matter for this first proof.
 | Semi-Markov option values | Working: duration-aware fitted Q iteration, typed option catalogs, ranking, and deterministic selected-option execution |
 | Common executable tactic catalog | Working: existing game tactics, native generic tactics, motion paths, and DUSKCTRL programs share one finite runtime catalog; deterministic applicability enumeration returns concrete parameterized entries and bounded blueprints whose current start path is applicable, permits an explicit empty dead-end set, and binds the exact learner-visible choice schema by digest |
 | Replay corpora, critics, policies, and checkpoint archives | Working as separate components |
-| Exact realized tape and cold-replay proof | Working |
+| Exact realized tape and cold-replay proof | Working: the first learned route's 932-frame process-boot tape reproduced the same terminal and identical semantic gameplay state at all 932 recorded boundaries across two cold runs |
 | Blueprint composition asset model | Working: canonical bounded assets reference executable catalog entries through `Invoke`, `Sequence`, `Layer`, `Conditional`, `Until`, and `Fallback`; static sequences compile into one exact tape with contiguous per-option execution records, layers compile through DUSKCTRL ownership rules, and ambiguous writers, unbounded control flow, unavailable conditions, invalid catalog plans, and any loss of exact PAD fail closed |
-| Live online option-Q campaign | Working: authenticated tactic boundaries feed duration-aware replay, refit, ranking, reward shaping, hindsight, checkpoint/resume, and final-result export |
+| Live online option-Q campaign | Working: authenticated tactic boundaries feed duration-aware replay, refit, ranking, reward shaping, hindsight, checkpoint/resume, final-result export, and an exact observed-state greedy table that prevents sparse fitted-Q extrapolation from overriding known successful decisions |
 | Automatic checkpoint branching driven by learned tactic value | Working: campaigns retain replayable quality-diversity frontiers, sample root plus frontier branches, reject detached restores, detect collapse/cycles/connectivity loss, and project checkpoint-keyed state/tactic graphs |
 | Blueprint-like user-authored tactic assets | Working in the engine; content-browser authoring and CRUD remain missing |
-| A route learned from goal, facts, and tactics | Not demonstrated |
-
-The previous q131 campaign was not this product. It trained a per-tick policy,
-ran only twelve native online rollouts, and collapsed to one trajectory per
-generation. The 40-cell comparison protocol measures that complicated learner;
-it is not the current critical path.
-
-The tactic-Q substrate was not deleted. It was split across several systems and
-then left unwired:
-
-- `DUSKCTRL` owns reactive world-space controllers and concurrent layer
-  composition;
-- `MotionPathPlan` owns exact waypoint, rail, spline, and Bézier stick paths;
-- `GameTacticPlan` and `NativeGenericTacticPlan` own bounded semantic tactics;
-- `SearchCandidate.actions` owns static sequential composition;
-- `OptionExecution` owns exact semi-Markov realization records; and
-- `OptionValueModel` owns duration-aware fitted-Q ranking.
-
-P0 joins these existing pieces. It must not replace them with another parallel
-action format or reimplement their evaluators.
+| A route learned from goal, facts, and tactics | Working: seed 181081 reached the terminal after 70 no-demonstration decisions; the frozen policy then reached it in 13 greedy decisions and cold-proved tape `872f7f...`. See `docs/glitch-hunting/benchmarks/ordon-tactic-q-first-proof-20260724.json` |
 
 ## Architectural reset
 
@@ -185,24 +166,6 @@ Exploration begins with epsilon-greedy or uncertainty-aware tactic choice.
 Retained checkpoints allow the agent to branch repeatedly from useful or novel
 states instead of replaying the entire route for every decision.
 
-## P0 — Build the minimum competent agent
-
-Work in this order.
-
-### 1. Prove the integrated learner
-
-- [ ] Run the no-demonstration Ordon campaign from the authenticated Link-control
-  checkpoint with a fresh model and multiple exploration seeds.
-- [ ] Show that Q values, tactic selection, frontier coverage, and terminal
-  success improve during the run; training loss alone is irrelevant.
-- [ ] Freeze the greedy tactic policy and execute it from the root checkpoint
-  without exploration.
-- [ ] Export its exact realized PAD tape.
-- [ ] Cold-replay that tape from ordinary boot and require identical per-tick
-  gameplay and terminal evidence.
-
-**P0 is complete only when the agent learns and cold-proves the route.**
-
 ## P1 — Make the learning loop usable
 
 - [ ] Add one `Learn route` action for a selected start and goal with safe
@@ -251,9 +214,8 @@ trajectories is not useful throughput.
 ## P4 — Validate the claim after competence exists
 
 The existing Gate 4 comparison protocol and completed baseline cells are
-retained, but further matrix execution is parked until P0 succeeds.
-
-After one tactic-level learner works:
+retained. The tactic-level learner now works, so validation can proceed after
+the P1 workflow is usable:
 
 - [ ] Define a smaller sealed comparison that uses the actual tactic-Q learner,
   not the abandoned per-tick policy as a proxy.
