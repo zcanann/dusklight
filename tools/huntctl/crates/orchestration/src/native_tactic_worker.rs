@@ -10,7 +10,9 @@ use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState, W
 use dusklight_control::option_execution::{
     OptionCondition, OptionEndReason, OptionExecution, TapeRange,
 };
-use dusklight_evidence::native_episode_shard::{NativeEpisodeShard, NativeRawPad};
+use dusklight_evidence::native_episode_shard::{
+    NativeEpisodeShard, NativeObservationPhase, NativeRawPad,
+};
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::tactic_asset::{
     PreparedTacticExecution, TacticAssetCatalog, TacticDurationBounds,
@@ -367,15 +369,25 @@ fn observe_outcome(
         .collect::<Vec<_>>();
     let mut prior = prior.into_iter().rev().collect::<Vec<_>>();
     prior.retain(|observation| observation.boundary_index < last.post_simulation.boundary_index);
-    let next_facts = FactSnapshot::from_native_learning(
-        &last.post_simulation,
-        &prior,
-        Some(&execution),
-        Vec::new(),
-    )
-    .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
-    if next_facts.tape_frame + 1 != end_frame_exclusive
-        || next_facts.simulation_tick + 1
+    // The post-simulation row owns the next boundary's state identity, but its
+    // simulation/tape coordinates still name the input that produced it.
+    // Project it onto the immediately following pre-input boundary so another
+    // tactic can extend the route without an off-by-one state/tape mismatch.
+    let mut next_boundary = last.post_simulation.clone();
+    next_boundary.phase = NativeObservationPhase::PreInput;
+    next_boundary.simulation_tick = next_boundary
+        .simulation_tick
+        .checked_add(1)
+        .ok_or(NativeTacticWorkerError::DetachedResult("next boundary"))?;
+    next_boundary.tape_frame = next_boundary
+        .tape_frame
+        .checked_add(1)
+        .ok_or(NativeTacticWorkerError::DetachedResult("next boundary"))?;
+    let next_facts =
+        FactSnapshot::from_native_learning(&next_boundary, &prior, Some(&execution), Vec::new())
+            .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+    if next_facts.tape_frame != end_frame_exclusive
+        || next_facts.simulation_tick
             != before.simulation_tick + u64::try_from(realized_ticks).unwrap()
         || next_facts.terminal.reached != Some(terminal)
     {
@@ -714,7 +726,7 @@ mod tests {
                 end_frame_exclusive: before.tape_frame + 1,
             }
         );
-        assert_eq!(outcome.next_facts.tape_frame, before.tape_frame);
+        assert_eq!(outcome.next_facts.tape_frame, before.tape_frame + 1);
         assert_eq!(outcome.terminal, episode.success);
         assert_eq!(
             outcome.route_tape.frames.len(),
