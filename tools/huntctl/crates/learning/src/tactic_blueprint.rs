@@ -12,8 +12,8 @@ use crate::tactic_asset::{
 use dusklight_control::controller_compilation::compile_static_controller;
 use dusklight_control::controller_program::ControllerProgram;
 use dusklight_control::option_execution::{
-    validate_condition, OptionCondition, OptionEndReason, OptionExecution, OptionParameter,
-    OptionType, TapeRange, MAX_OPTION_TICKS,
+    MAX_OPTION_TICKS, OptionCondition, OptionEndReason, OptionExecution, OptionParameter,
+    OptionType, TapeRange, validate_condition,
 };
 use dusklight_control::tape::{InputFrame, InputTape};
 use serde::{Deserialize, Serialize};
@@ -270,7 +270,9 @@ pub struct ApplicableTacticChoices {
     pub schema: String,
     pub catalog_action_schema_sha256: Digest,
     pub choice_schema_sha256: Digest,
-    pub choices: Vec<ConcreteTacticChoice>,
+    pub applicability_sha256: Digest,
+    pub candidates: Vec<ConcreteTacticChoice>,
+    pub applicable_mask: Vec<bool>,
 }
 
 impl ApplicableTacticChoices {
@@ -297,12 +299,16 @@ impl ApplicableTacticChoices {
         let mut choices = catalog
             .entries()
             .iter()
-            .filter(|entry| applicable_entries.contains(entry.option_id()))
-            .map(|entry| ConcreteTacticChoice {
-                choice_id: entry.option_id().into(),
-                kind: ConcreteTacticChoiceKind::CatalogEntry,
-                descriptor: entry.description().option.clone(),
-                duration: entry.description().duration,
+            .map(|entry| {
+                (
+                    ConcreteTacticChoice {
+                        choice_id: entry.option_id().into(),
+                        kind: ConcreteTacticChoiceKind::CatalogEntry,
+                        descriptor: entry.description().option.clone(),
+                        duration: entry.description().duration,
+                    },
+                    applicable_entries.contains(entry.option_id()),
+                )
             })
             .collect::<Vec<_>>();
 
@@ -314,13 +320,11 @@ impl ApplicableTacticChoices {
                     blueprint.asset_id.clone(),
                 ));
             }
-            if !blueprint_start_applicable(
+            let applicable = blueprint_start_applicable(
                 &blueprint.root,
                 &applicable_entries,
                 &mut condition_value,
-            ) {
-                continue;
-            }
+            );
             let blueprint_sha256 = blueprint.content_sha256()?;
             let mut parameters = BTreeMap::new();
             parameters.insert(
@@ -332,30 +336,45 @@ impl ApplicableTacticChoices {
                 OptionParameter::Digest(catalog.action_schema_sha256()),
             );
             let choice_id = format!("blueprint/{}", blueprint.asset_id);
-            choices.push(ConcreteTacticChoice {
-                descriptor: crate::option_values::OptionActionDescriptor {
-                    option_id: choice_id.clone(),
-                    option_type: OptionType::Custom("tactic_blueprint".into()),
-                    parameters,
+            choices.push((
+                ConcreteTacticChoice {
+                    descriptor: crate::option_values::OptionActionDescriptor {
+                        option_id: choice_id.clone(),
+                        option_type: OptionType::Custom("tactic_blueprint".into()),
+                        parameters,
+                    },
+                    choice_id,
+                    kind: ConcreteTacticChoiceKind::Blueprint,
+                    duration: blueprint_duration(&blueprint.root, catalog)?,
                 },
-                choice_id,
-                kind: ConcreteTacticChoiceKind::Blueprint,
-                duration: blueprint_duration(&blueprint.root, catalog)?,
-            });
+                applicable,
+            ));
         }
-        choices.sort_by(|left, right| left.choice_id.cmp(&right.choice_id));
+        choices.sort_by(|left, right| left.0.choice_id.cmp(&right.0.choice_id));
         if choices
             .windows(2)
-            .any(|pair| pair[0].choice_id == pair[1].choice_id)
+            .any(|pair| pair[0].0.choice_id == pair[1].0.choice_id)
         {
             return Err(TacticBlueprintError::DuplicateChoiceId);
         }
+        let (candidates, applicable_mask): (Vec<_>, Vec<_>) = choices.into_iter().unzip();
         let choice_schema_sha256 = Digest(
             Sha256::digest(
                 serde_json::to_vec(&(
                     APPLICABLE_TACTIC_CHOICES_SCHEMA_V1,
                     catalog.action_schema_sha256(),
-                    &choices,
+                    &candidates,
+                ))
+                .map_err(|error| TacticBlueprintError::Serialization(error.to_string()))?,
+            )
+            .into(),
+        );
+        let applicability_sha256 = Digest(
+            Sha256::digest(
+                serde_json::to_vec(&(
+                    APPLICABLE_TACTIC_CHOICES_SCHEMA_V1,
+                    choice_schema_sha256,
+                    &applicable_mask,
                 ))
                 .map_err(|error| TacticBlueprintError::Serialization(error.to_string()))?,
             )
@@ -365,7 +384,9 @@ impl ApplicableTacticChoices {
             schema: APPLICABLE_TACTIC_CHOICES_SCHEMA_V1.into(),
             catalog_action_schema_sha256: catalog.action_schema_sha256(),
             choice_schema_sha256,
-            choices,
+            applicability_sha256,
+            candidates,
+            applicable_mask,
         })
     }
 }
@@ -1147,11 +1168,15 @@ mod tests {
 
     #[test]
     fn blueprint_rejects_unknown_catalog_references() {
-        let catalog = TacticAssetCatalog::new(vec![TacticCatalogEntry::new(
-            "wait",
-            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
-        )
-        .unwrap()])
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "wait",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
         .unwrap();
         let blueprint = TacticBlueprint::new(
             "unknown.reference",
@@ -1346,11 +1371,15 @@ mod tests {
 
     #[test]
     fn execution_validation_rejects_conditions_absent_from_the_fact_registry() {
-        let catalog = TacticAssetCatalog::new(vec![TacticCatalogEntry::new(
-            "wait",
-            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
-        )
-        .unwrap()])
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "wait",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
         .unwrap();
         let blueprint = TacticBlueprint::new(
             "fact.availability",
@@ -1412,7 +1441,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             choices
-                .choices
+                .candidates
                 .iter()
                 .map(|choice| choice.choice_id.as_str())
                 .collect::<Vec<_>>(),
@@ -1423,21 +1452,23 @@ mod tests {
                 "shield.short",
             ]
         );
+        assert_eq!(choices.applicable_mask, vec![true; 4]);
         assert_ne!(choices.choice_schema_sha256, Digest::ZERO);
+        assert_ne!(choices.applicability_sha256, Digest::ZERO);
         assert_eq!(
-            choices.choices[0].duration,
+            choices.candidates[0].duration,
             TacticDurationBounds {
                 minimum_ticks: 2,
                 maximum_ticks: 3,
             }
         );
         let short = choices
-            .choices
+            .candidates
             .iter()
             .find(|choice| choice.choice_id == "shield.short")
             .unwrap();
         let long = choices
-            .choices
+            .candidates
             .iter()
             .find(|choice| choice.choice_id == "shield.long")
             .unwrap();
@@ -1446,11 +1477,15 @@ mod tests {
 
     #[test]
     fn applicability_excludes_blueprints_with_unavailable_inputs() {
-        let catalog = TacticAssetCatalog::new(vec![TacticCatalogEntry::new(
-            "wait",
-            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
-        )
-        .unwrap()])
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "wait",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
         .unwrap();
         let conditional = TacticBlueprint::new(
             "conditional",
@@ -1465,8 +1500,16 @@ mod tests {
         let choices =
             ApplicableTacticChoices::enumerate(&catalog, &[conditional], |_| true, |_| None)
                 .unwrap();
-        assert_eq!(choices.choices.len(), 1);
-        assert_eq!(choices.choices[0].choice_id, "wait");
+        assert_eq!(choices.candidates.len(), 2);
+        assert_eq!(
+            choices
+                .candidates
+                .iter()
+                .map(|choice| choice.choice_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["blueprint/conditional", "wait"]
+        );
+        assert_eq!(choices.applicable_mask, vec![false, true]);
     }
 
     #[test]
@@ -1524,26 +1567,42 @@ mod tests {
         .unwrap();
         assert_eq!(
             choices
-                .choices
+                .candidates
                 .iter()
                 .map(|choice| choice.choice_id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["available", "blueprint/conditional", "blueprint/sequence"]
+            vec![
+                "available",
+                "blocked",
+                "blueprint/conditional",
+                "blueprint/sequence",
+                "blueprint/until",
+            ]
+        );
+        assert_eq!(
+            choices.applicable_mask,
+            vec![true, false, true, true, false]
         );
     }
 
     #[test]
     fn applicability_can_report_an_empty_bounded_choice_set() {
-        let catalog = TacticAssetCatalog::new(vec![TacticCatalogEntry::new(
-            "blocked",
-            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
-        )
-        .unwrap()])
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "blocked",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
         .unwrap();
 
         let choices =
             ApplicableTacticChoices::enumerate(&catalog, &[], |_| false, |_| None).unwrap();
-        assert!(choices.choices.is_empty());
+        assert_eq!(choices.candidates.len(), 1);
+        assert_eq!(choices.applicable_mask, vec![false]);
         assert_ne!(choices.choice_schema_sha256, Digest::ZERO);
+        assert_ne!(choices.applicability_sha256, Digest::ZERO);
     }
 }

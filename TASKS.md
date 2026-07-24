@@ -53,7 +53,7 @@ Route speed does not matter for this first proof.
 | Capability | State |
 |---|---|
 | Deterministic checkpoints and persistent native workers | Working |
-| Learner-facing state | Working: each authenticated `FactSnapshot` uses the shared typed query/measurement registry and is paired with the complete concrete tactic/blueprint universe, per-choice applicability mask, parameters and duration, plus separate fact/action/applicability schema digests |
+| Learner-facing state | Working: each authenticated `FactSnapshot` uses the shared typed query/measurement registry and carries the full action universe, applicability mask, parameters, duration, schema digests, and a compact bounded infodump derived from that same state |
 | Authored terminal predicates | Working |
 | Reactive world-space movement | Working: seek coordinate, actor, path point, opening, plane, heading, offset, and distance |
 | Static motion paths | Working: waypoint, rail, Catmull-Rom spline, and cubic Bézier |
@@ -193,8 +193,6 @@ Work in this order.
 
 ### 2. Present one fact and measurement view
 
-- [ ] Generate a readable infodump from the same view without additional hidden
-  state.
 - [ ] Prove the adapters do not change existing native queries, controller
   composition, option boundaries, or emitted PAD on a multi-tactic trace.
 
