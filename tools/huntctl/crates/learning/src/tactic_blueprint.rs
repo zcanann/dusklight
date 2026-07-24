@@ -12,8 +12,8 @@ use crate::tactic_asset::{
 use dusklight_control::controller_compilation::compile_static_controller;
 use dusklight_control::controller_program::ControllerProgram;
 use dusklight_control::option_execution::{
-    MAX_OPTION_TICKS, OptionCondition, OptionEndReason, OptionExecution, OptionParameter,
-    OptionType, TapeRange, validate_condition,
+    validate_condition, OptionCondition, OptionEndReason, OptionExecution, OptionParameter,
+    OptionType, TapeRange, MAX_OPTION_TICKS,
 };
 use dusklight_control::tape::{InputFrame, InputTape};
 use serde::{Deserialize, Serialize};
@@ -278,11 +278,11 @@ impl ApplicableTacticChoices {
         catalog: &TacticAssetCatalog,
         blueprints: &[TacticBlueprint],
         mut entry_applicable: FA,
-        mut condition_available: FC,
+        mut condition_value: FC,
     ) -> Result<Self, TacticBlueprintError>
     where
         FA: FnMut(&TacticAssetDescription) -> bool,
-        FC: FnMut(&OptionCondition) -> bool,
+        FC: FnMut(&OptionCondition) -> Option<bool>,
     {
         if catalog.entries().len().saturating_add(blueprints.len()) > MAX_APPLICABLE_TACTIC_CHOICES
         {
@@ -314,14 +314,11 @@ impl ApplicableTacticChoices {
                     blueprint.asset_id.clone(),
                 ));
             }
-            if !blueprint
-                .referenced_option_ids()
-                .iter()
-                .all(|option_id| applicable_entries.contains(option_id))
-                || blueprint
-                    .validate_for_execution(catalog, &mut condition_available)
-                    .is_err()
-            {
+            if !blueprint_start_applicable(
+                &blueprint.root,
+                &applicable_entries,
+                &mut condition_value,
+            ) {
                 continue;
             }
             let blueprint_sha256 = blueprint.content_sha256()?;
@@ -347,9 +344,6 @@ impl ApplicableTacticChoices {
             });
         }
         choices.sort_by(|left, right| left.choice_id.cmp(&right.choice_id));
-        if choices.is_empty() {
-            return Err(TacticBlueprintError::NoApplicableChoices);
-        }
         if choices
             .windows(2)
             .any(|pair| pair[0].choice_id == pair[1].choice_id)
@@ -358,12 +352,11 @@ impl ApplicableTacticChoices {
         }
         let choice_schema_sha256 = Digest(
             Sha256::digest(
-                serde_json::to_vec(
-                    &choices
-                        .iter()
-                        .map(|choice| &choice.descriptor)
-                        .collect::<Vec<_>>(),
-                )
+                serde_json::to_vec(&(
+                    APPLICABLE_TACTIC_CHOICES_SCHEMA_V1,
+                    catalog.action_schema_sha256(),
+                    &choices,
+                ))
                 .map_err(|error| TacticBlueprintError::Serialization(error.to_string()))?,
             )
             .into(),
@@ -374,6 +367,51 @@ impl ApplicableTacticChoices {
             choice_schema_sha256,
             choices,
         })
+    }
+}
+
+fn blueprint_start_applicable<FC>(
+    node: &TacticBlueprintNode,
+    applicable_entries: &BTreeSet<&str>,
+    condition_value: &mut FC,
+) -> bool
+where
+    FC: FnMut(&OptionCondition) -> Option<bool>,
+{
+    match node {
+        TacticBlueprintNode::Invoke { option_id } => {
+            applicable_entries.contains(option_id.as_str())
+        }
+        TacticBlueprintNode::Sequence { steps } => steps.first().is_some_and(|first| {
+            blueprint_start_applicable(first, applicable_entries, condition_value)
+        }),
+        TacticBlueprintNode::Layer { layers } => layers
+            .iter()
+            .all(|layer| blueprint_start_applicable(layer, applicable_entries, condition_value)),
+        TacticBlueprintNode::Conditional {
+            condition,
+            when_true,
+            when_false,
+        } => match condition_value(condition) {
+            Some(true) => {
+                blueprint_start_applicable(when_true, applicable_entries, condition_value)
+            }
+            Some(false) => {
+                blueprint_start_applicable(when_false, applicable_entries, condition_value)
+            }
+            None => false,
+        },
+        TacticBlueprintNode::Until {
+            condition, body, ..
+        } => match condition_value(condition) {
+            // An already-satisfied loop emits no option and is not a concrete
+            // learner action at this decision boundary.
+            Some(true) | None => false,
+            Some(false) => blueprint_start_applicable(body, applicable_entries, condition_value),
+        },
+        TacticBlueprintNode::Fallback { attempts } => attempts.iter().any(|attempt| {
+            blueprint_start_applicable(attempt, applicable_entries, condition_value)
+        }),
     }
 }
 
@@ -969,7 +1007,6 @@ pub enum TacticBlueprintError {
     StaticExecution(String),
     InvalidCompiled(String),
     TooManyApplicableChoices,
-    NoApplicableChoices,
     DuplicateBlueprintId(String),
     DuplicateChoiceId,
     InvalidCompositeDuration,
@@ -1025,9 +1062,6 @@ impl fmt::Display for TacticBlueprintError {
             }
             Self::TooManyApplicableChoices => {
                 formatter.write_str("applicable tactic choice set exceeds its finite bound")
-            }
-            Self::NoApplicableChoices => {
-                formatter.write_str("no concrete tactic choice is currently applicable")
             }
             Self::DuplicateBlueprintId(asset_id) => {
                 write!(formatter, "duplicate tactic blueprint asset ID {asset_id}")
@@ -1113,15 +1147,11 @@ mod tests {
 
     #[test]
     fn blueprint_rejects_unknown_catalog_references() {
-        let catalog = TacticAssetCatalog::new(vec![
-            TacticCatalogEntry::new(
-                "wait",
-                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
-                    frames: 1,
-                })),
-            )
-            .unwrap(),
-        ])
+        let catalog = TacticAssetCatalog::new(vec![TacticCatalogEntry::new(
+            "wait",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
+        )
+        .unwrap()])
         .unwrap();
         let blueprint = TacticBlueprint::new(
             "unknown.reference",
@@ -1316,15 +1346,11 @@ mod tests {
 
     #[test]
     fn execution_validation_rejects_conditions_absent_from_the_fact_registry() {
-        let catalog = TacticAssetCatalog::new(vec![
-            TacticCatalogEntry::new(
-                "wait",
-                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
-                    frames: 1,
-                })),
-            )
-            .unwrap(),
-        ])
+        let catalog = TacticAssetCatalog::new(vec![TacticCatalogEntry::new(
+            "wait",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
+        )
+        .unwrap()])
         .unwrap();
         let blueprint = TacticBlueprint::new(
             "fact.availability",
@@ -1382,7 +1408,8 @@ mod tests {
         .unwrap();
 
         let choices =
-            ApplicableTacticChoices::enumerate(&catalog, &[blueprint], |_| true, |_| true).unwrap();
+            ApplicableTacticChoices::enumerate(&catalog, &[blueprint], |_| true, |_| Some(true))
+                .unwrap();
         assert_eq!(
             choices
                 .choices
@@ -1419,15 +1446,11 @@ mod tests {
 
     #[test]
     fn applicability_excludes_blueprints_with_unavailable_inputs() {
-        let catalog = TacticAssetCatalog::new(vec![
-            TacticCatalogEntry::new(
-                "wait",
-                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
-                    frames: 1,
-                })),
-            )
-            .unwrap(),
-        ])
+        let catalog = TacticAssetCatalog::new(vec![TacticCatalogEntry::new(
+            "wait",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
+        )
+        .unwrap()])
         .unwrap();
         let conditional = TacticBlueprint::new(
             "conditional",
@@ -1440,9 +1463,87 @@ mod tests {
         .unwrap();
 
         let choices =
-            ApplicableTacticChoices::enumerate(&catalog, &[conditional], |_| true, |_| false)
+            ApplicableTacticChoices::enumerate(&catalog, &[conditional], |_| true, |_| None)
                 .unwrap();
         assert_eq!(choices.choices.len(), 1);
         assert_eq!(choices.choices[0].choice_id, "wait");
+    }
+
+    #[test]
+    fn composite_applicability_uses_only_the_current_start_path() {
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "available",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+            TacticCatalogEntry::new(
+                "blocked",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Interact {
+                    press_frames: 1,
+                    recovery_frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let sequence = TacticBlueprint::new(
+            "sequence",
+            TacticBlueprintNode::Sequence {
+                steps: vec![invoke("available"), invoke("blocked")],
+            },
+        )
+        .unwrap();
+        let conditional = TacticBlueprint::new(
+            "conditional",
+            TacticBlueprintNode::Conditional {
+                condition: condition(),
+                when_true: Box::new(invoke("available")),
+                when_false: Box::new(invoke("blocked")),
+            },
+        )
+        .unwrap();
+        let until = TacticBlueprint::new(
+            "until",
+            TacticBlueprintNode::Until {
+                condition: condition(),
+                max_iterations: 2,
+                body: Box::new(invoke("available")),
+            },
+        )
+        .unwrap();
+
+        let choices = ApplicableTacticChoices::enumerate(
+            &catalog,
+            &[sequence, conditional, until],
+            |description| description.option.option_id == "available",
+            |_| Some(true),
+        )
+        .unwrap();
+        assert_eq!(
+            choices
+                .choices
+                .iter()
+                .map(|choice| choice.choice_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["available", "blueprint/conditional", "blueprint/sequence"]
+        );
+    }
+
+    #[test]
+    fn applicability_can_report_an_empty_bounded_choice_set() {
+        let catalog = TacticAssetCatalog::new(vec![TacticCatalogEntry::new(
+            "blocked",
+            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield { frames: 1 })),
+        )
+        .unwrap()])
+        .unwrap();
+
+        let choices =
+            ApplicableTacticChoices::enumerate(&catalog, &[], |_| false, |_| None).unwrap();
+        assert!(choices.choices.is_empty());
+        assert_ne!(choices.choice_schema_sha256, Digest::ZERO);
     }
 }
