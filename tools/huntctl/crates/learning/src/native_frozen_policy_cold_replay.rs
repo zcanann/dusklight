@@ -313,16 +313,15 @@ fn validate_batch_result<'a>(
     let terminal_boundary_valid = !matches!(
         schema.as_str(),
         "dusklight-suffix-batch-result/v6" | "dusklight-suffix-batch-result/v7"
-    )
-        || candidate
-            .get("terminal_boundary_fingerprint")
-            .and_then(Value::as_str)
-            .is_some_and(|value| {
-                value.len() == 32
-                    && value
-                        .bytes()
-                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            });
+    ) || candidate
+        .get("terminal_boundary_fingerprint")
+        .and_then(Value::as_str)
+        .is_some_and(|value| {
+            value.len() == 32
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
     if matching.next().is_some()
         || u64_field(candidate, "ticks_executed")? != reinference.transition_count as u64
         || !terminal_boundary_valid
@@ -350,7 +349,10 @@ fn valid_rollout_exploration(value: &Value) -> bool {
         && KEYS.iter().all(|key| object.contains_key(*key))
         && object.get("schema").and_then(Value::as_str)
             == Some("dusklight-native-policy-rollout-exploration/v1")
-        && object.get("seed").and_then(Value::as_u64).is_some_and(|value| value > 0)
+        && object
+            .get("seed")
+            .and_then(Value::as_u64)
+            .is_some_and(|value| value > 0)
         && object
             .get("stick_axis_delta_probability_millionths")
             .and_then(Value::as_u64)
@@ -764,8 +766,7 @@ mod tests {
         let mut fixture = fixture();
         let mut batch: Value = serde_json::from_slice(&fixture.batch).unwrap();
         batch["schema"] = Value::String("dusklight-suffix-batch-result/v7".into());
-        batch["policy_model"]["schema"] =
-            Value::String("dusklight-native-frozen-policy/v2".into());
+        batch["policy_model"]["schema"] = Value::String("dusklight-native-frozen-policy/v2".into());
         batch["policy_model"]["rollout_exploration"] = json!({
             "schema": "dusklight-native-policy-rollout-exploration/v1",
             "seed": 17,
@@ -774,8 +775,7 @@ mod tests {
             "button_flip_probability_millionths": 0,
             "button_flip_mask": 3967,
         });
-        batch["candidates"][0]["terminal_boundary_fingerprint"] =
-            Value::String("a".repeat(32));
+        batch["candidates"][0]["terminal_boundary_fingerprint"] = Value::String("a".repeat(32));
         fixture.batch = serde_json::to_vec(&batch).unwrap();
         verify(
             &fixture,

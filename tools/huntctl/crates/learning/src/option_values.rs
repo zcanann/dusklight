@@ -34,10 +34,7 @@ impl OptionActionDescriptor {
                 OptionType::Custom(name) if !valid_name(name, 96)
             )
             || self.parameters.len() > 64
-            || self
-                .parameters
-                .keys()
-                .any(|name| !valid_name(name, 64))
+            || self.parameters.keys().any(|name| !valid_name(name, 64))
             || self.parameters.values().any(invalid_parameter)
         {
             return Err(OptionValueError::Invalid(
@@ -380,10 +377,8 @@ fn validate_sample(
         || sample.after_state_sha256 == Digest::ZERO
         || sample.source_checkpoint_sha256 == Digest::ZERO
         || sample.next_checkpoint_sha256 == Digest::ZERO
-        || sample.realized_tape_range.end_frame_exclusive
-            <= sample.realized_tape_range.start_frame
-        || sample.realized_tape_range.end_frame_exclusive
-            - sample.realized_tape_range.start_frame
+        || sample.realized_tape_range.end_frame_exclusive <= sample.realized_tape_range.start_frame
+        || sample.realized_tape_range.end_frame_exclusive - sample.realized_tape_range.start_frame
             != u64::from(sample.duration_ticks)
         || sample.realized_tape_sha256 == Digest::ZERO
     {

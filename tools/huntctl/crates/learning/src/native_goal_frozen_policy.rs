@@ -1510,10 +1510,7 @@ milestone reach_goal {
     fn failed_action_contrast_is_directional_and_stops_at_its_margin() {
         assert!(bounded_continuous_contrast_gradient(0.5, 0.5) > 0.0);
         assert!(bounded_continuous_contrast_gradient(-0.25, -0.25) < 0.0);
-        assert_eq!(
-            bounded_continuous_contrast_gradient(0.7, 0.5),
-            0.0
-        );
+        assert_eq!(bounded_continuous_contrast_gradient(0.7, 0.5), 0.0);
 
         let near_pressed = logit(0.95);
         let near_released = logit(0.05);

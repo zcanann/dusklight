@@ -1113,10 +1113,7 @@ mod tests {
         assert_eq!(first.button_flip_probability_millionths, 2_000);
         assert_ne!(baseline.seed, first.seed);
         assert_ne!(first.seed, second.seed);
-        assert_eq!(
-            first,
-            rollout_exploration(0x474f_414c_5452_4a01, 3, 1)
-        );
+        assert_eq!(first, rollout_exploration(0x474f_414c_5452_4a01, 3, 1));
         assert_ne!(first, rollout_exploration(0x474f_414c_5452_4a01, 4, 1));
     }
 

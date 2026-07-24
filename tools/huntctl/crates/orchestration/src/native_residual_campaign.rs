@@ -121,12 +121,8 @@ impl NativeResidualExecutionBinding {
             .parent()
             .ok_or_else(|| native_message("native residual executable has no parent directory"))?;
         for dependency in &self.runtime_dependencies {
-            let path = validate_artifact(
-                &root,
-                "executable runtime dependency",
-                dependency,
-                false,
-            )?;
+            let path =
+                validate_artifact(&root, "executable runtime dependency", dependency, false)?;
             if path.parent() != Some(executable_parent) || !is_runtime_dependency(&path) {
                 return Err(native_message(
                     "native residual runtime dependency is not an adjacent dynamic library",
