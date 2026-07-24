@@ -53,7 +53,7 @@ Route speed does not matter for this first proof.
 | Capability | State |
 |---|---|
 | Deterministic checkpoints and persistent native workers | Working |
-| Typed native observations and complete PAD authority | Working through one versioned `FactSnapshot` and canonical `FactRegistry`: full native and tactic-loop observations, milestone fields/queries, goals, actor/flag/spatial queries, blueprint conditions, terminal state, recent option/PAD, and bounded history now share one typed read path |
+| Typed facts and generic measurements | Working through one versioned `FactSnapshot` and canonical `FactRegistry`: native/tactic observations, milestone and goal queries, blueprint conditions, terminal/history/PAD, plus actor distance/angle/relative velocity, contact/surface change, state/event change, and elapsed ticks share one typed path |
 | Authored terminal predicates | Working |
 | Reactive world-space movement | Working: seek coordinate, actor, path point, opening, plane, heading, offset, and distance |
 | Static motion paths | Working: waypoint, rail, Catmull-Rom spline, and cubic Bézier |
@@ -193,8 +193,6 @@ Work in this order.
 
 ### 2. Present one fact and measurement view
 
-- [ ] Expose generic relational measures: distance, angle, relative velocity,
-  contact/surface relation, state change, event change, and elapsed ticks.
 - [ ] Expose the applicable tactic/composite mask and concrete parameters
   alongside each learner state.
 - [ ] Generate a readable infodump from the same view without additional hidden

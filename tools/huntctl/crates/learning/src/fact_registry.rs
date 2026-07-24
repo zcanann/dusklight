@@ -12,6 +12,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::cmp::Ordering;
 use std::error::Error;
+use std::f32::consts::{PI, TAU};
 use std::fmt;
 
 pub const FACT_REGISTRY_SCHEMA_V1: &str = "dusklight-fact-registry/v1";
@@ -70,6 +71,68 @@ pub enum FactRead {
     Available(FactValue),
     Absent,
     Unavailable,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "target", rename_all = "snake_case")]
+pub enum MeasurementQuery {
+    DistanceToActor(dusklight_automation_contracts::actor_identity::PlacedActorSelector),
+    RelativeAngleToActor(dusklight_automation_contracts::actor_identity::PlacedActorSelector),
+    RelativeVelocityToActor(dusklight_automation_contracts::actor_identity::PlacedActorSelector),
+    ContactSurfaceChange,
+    StateChange,
+    EventChange,
+    ElapsedTicks,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum MeasurementValue {
+    F32Bits(u32),
+    Vec3F32Bits([u32; 3]),
+    ContactSurface(ContactSurfaceMeasurement),
+    StateChange(StateChangeMeasurement),
+    EventChange(EventChangeMeasurement),
+    U64(u64),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", content = "value", rename_all = "snake_case")]
+pub enum MeasurementRead {
+    Available(MeasurementValue),
+    Absent,
+    Unavailable,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContactSurfaceMeasurement {
+    pub before_contacts: u8,
+    pub after_contacts: u8,
+    pub activated_contacts: u8,
+    pub cleared_contacts: u8,
+    pub before_ground_clearance_f32_bits: Option<u32>,
+    pub after_ground_clearance_f32_bits: Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StateChangeMeasurement {
+    pub identity_changed: bool,
+    pub stage_changed: bool,
+    pub room_changed: bool,
+    pub player_position_changed: bool,
+    pub player_procedure_changed: bool,
+    pub actor_population_changed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventChangeMeasurement {
+    pub availability_changed: bool,
+    pub running_changed: bool,
+    pub event_id_changed: bool,
+    pub event_name_changed: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -211,6 +274,120 @@ impl FactRegistry {
         }
     }
 
+    pub fn measure(
+        &self,
+        before: &FactSnapshot,
+        after: &FactSnapshot,
+        query: &MeasurementQuery,
+    ) -> Result<MeasurementRead, FactRegistryError> {
+        self.validate()?;
+        before
+            .validate()
+            .map_err(|error| FactRegistryError::InvalidSnapshot(error.to_string()))?;
+        after
+            .validate()
+            .map_err(|error| FactRegistryError::InvalidSnapshot(error.to_string()))?;
+        if after.simulation_tick < before.simulation_tick
+            || after.boundary_index < before.boundary_index
+        {
+            return Err(FactRegistryError::InvalidMeasurementOrder);
+        }
+        match query {
+            MeasurementQuery::DistanceToActor(selector) => {
+                let Some(actor) = unique_actor(after, selector)? else {
+                    return Ok(MeasurementRead::Absent);
+                };
+                let actor = actor.position_f32_bits.map(f32::from_bits);
+                let player = after.player.position_f32_bits.map(f32::from_bits);
+                let distance = ((actor[0] - player[0]).powi(2)
+                    + (actor[1] - player[1]).powi(2)
+                    + (actor[2] - player[2]).powi(2))
+                .sqrt();
+                finite_measurement(distance)
+            }
+            MeasurementQuery::RelativeAngleToActor(selector) => {
+                let Some(actor) = unique_actor(after, selector)? else {
+                    return Ok(MeasurementRead::Absent);
+                };
+                let Some(current_angle) = after.player.current_angle else {
+                    return Ok(MeasurementRead::Unavailable);
+                };
+                let actor = actor.position_f32_bits.map(f32::from_bits);
+                let player = after.player.position_f32_bits.map(f32::from_bits);
+                let world_bearing = (actor[0] - player[0]).atan2(actor[2] - player[2]);
+                let player_yaw = f32::from(current_angle[1]) * PI / 32768.0;
+                let relative = (world_bearing - player_yaw + PI).rem_euclid(TAU) - PI;
+                finite_measurement(relative)
+            }
+            MeasurementQuery::RelativeVelocityToActor(selector) => {
+                let Some(actor) = unique_actor(after, selector)? else {
+                    return Ok(MeasurementRead::Absent);
+                };
+                let (Some(actor_velocity), Some(player_velocity)) =
+                    (actor.velocity_f32_bits, after.player.velocity_f32_bits)
+                else {
+                    return Ok(MeasurementRead::Unavailable);
+                };
+                let actor_velocity = actor_velocity.map(f32::from_bits);
+                let player_velocity = player_velocity.map(f32::from_bits);
+                let relative = [
+                    actor_velocity[0] - player_velocity[0],
+                    actor_velocity[1] - player_velocity[1],
+                    actor_velocity[2] - player_velocity[2],
+                ];
+                if relative.iter().any(|value| !value.is_finite()) {
+                    return Err(FactRegistryError::InvalidMeasurement);
+                }
+                Ok(MeasurementRead::Available(MeasurementValue::Vec3F32Bits(
+                    relative.map(f32::to_bits),
+                )))
+            }
+            MeasurementQuery::ContactSurfaceChange => {
+                let (Some(before_contacts), Some(after_contacts)) =
+                    (before.player.contacts, after.player.contacts)
+                else {
+                    return Ok(MeasurementRead::Unavailable);
+                };
+                Ok(MeasurementRead::Available(
+                    MeasurementValue::ContactSurface(ContactSurfaceMeasurement {
+                        before_contacts,
+                        after_contacts,
+                        activated_contacts: after_contacts & !before_contacts,
+                        cleared_contacts: before_contacts & !after_contacts,
+                        before_ground_clearance_f32_bits: ground_clearance(before)?,
+                        after_ground_clearance_f32_bits: ground_clearance(after)?,
+                    }),
+                ))
+            }
+            MeasurementQuery::StateChange => Ok(MeasurementRead::Available(
+                MeasurementValue::StateChange(StateChangeMeasurement {
+                    identity_changed: before.state_identity != after.state_identity,
+                    stage_changed: before.world.stage != after.world.stage,
+                    room_changed: before.world.room != after.world.room,
+                    player_position_changed: before.player.position_f32_bits
+                        != after.player.position_f32_bits,
+                    player_procedure_changed: before.player.procedure != after.player.procedure,
+                    actor_population_changed: actor_population_identity(before)
+                        != actor_population_identity(after),
+                }),
+            )),
+            MeasurementQuery::EventChange => Ok(MeasurementRead::Available(
+                MeasurementValue::EventChange(EventChangeMeasurement {
+                    availability_changed: before.event.is_some() != after.event.is_some(),
+                    running_changed: before.event.as_ref().map(|event| event.running)
+                        != after.event.as_ref().map(|event| event.running),
+                    event_id_changed: before.event.as_ref().map(|event| event.event_id)
+                        != after.event.as_ref().map(|event| event.event_id),
+                    event_name_changed: before.event.as_ref().and_then(|event| event.name_hash)
+                        != after.event.as_ref().and_then(|event| event.name_hash),
+                }),
+            )),
+            MeasurementQuery::ElapsedTicks => Ok(MeasurementRead::Available(
+                MeasurementValue::U64(after.simulation_tick - before.simulation_tick),
+            )),
+        }
+    }
+
     fn evaluate_comparison(
         &self,
         snapshot: &FactSnapshot,
@@ -223,6 +400,60 @@ impl FactRegistry {
         };
         Ok(compare(&actual, operator, expected))
     }
+}
+
+fn unique_actor<'a>(
+    snapshot: &'a FactSnapshot,
+    selector: &dusklight_automation_contracts::actor_identity::PlacedActorSelector,
+) -> Result<Option<&'a ActorFactSnapshot>, FactRegistryError> {
+    selector
+        .validate()
+        .map_err(|_| FactRegistryError::InvalidQuery)?;
+    let mut matches = snapshot
+        .actors
+        .iter()
+        .filter(|actor| actor.portable_selector.as_ref() == Some(selector));
+    let actor = matches.next();
+    if matches.next().is_some() {
+        return Err(FactRegistryError::AmbiguousActor);
+    }
+    Ok(actor)
+}
+
+fn finite_measurement(value: f32) -> Result<MeasurementRead, FactRegistryError> {
+    if !value.is_finite() {
+        return Err(FactRegistryError::InvalidMeasurement);
+    }
+    Ok(MeasurementRead::Available(MeasurementValue::F32Bits(
+        value.to_bits(),
+    )))
+}
+
+fn ground_clearance(snapshot: &FactSnapshot) -> Result<Option<u32>, FactRegistryError> {
+    let Some(ground_height) = snapshot.player.ground_height_f32_bits else {
+        return Ok(None);
+    };
+    let clearance =
+        f32::from_bits(snapshot.player.position_f32_bits[1]) - f32::from_bits(ground_height);
+    if !clearance.is_finite() {
+        return Err(FactRegistryError::InvalidMeasurement);
+    }
+    Ok(Some(clearance.to_bits()))
+}
+
+fn actor_population_identity(snapshot: &FactSnapshot) -> Vec<(u64, i16, u16, i8)> {
+    snapshot
+        .actors
+        .iter()
+        .map(|actor| {
+            (
+                actor.runtime_generation,
+                actor.actor_name,
+                actor.set_id,
+                actor.current_room,
+            )
+        })
+        .collect()
 }
 
 fn read_core(snapshot: &FactSnapshot, fact: CoreFact) -> FactRead {
@@ -617,6 +848,8 @@ pub enum FactRegistryError {
     InvalidSnapshot(String),
     InvalidQuery,
     AmbiguousActor,
+    InvalidMeasurementOrder,
+    InvalidMeasurement,
 }
 
 impl fmt::Display for FactRegistryError {
@@ -628,6 +861,10 @@ impl fmt::Display for FactRegistryError {
             }
             Self::InvalidQuery => formatter.write_str("fact query is invalid"),
             Self::AmbiguousActor => formatter.write_str("fact query matched multiple actors"),
+            Self::InvalidMeasurementOrder => {
+                formatter.write_str("fact measurement snapshots are out of order")
+            }
+            Self::InvalidMeasurement => formatter.write_str("fact measurement is invalid"),
         }
     }
 }
@@ -714,6 +951,59 @@ mod tests {
                 .evaluate_expression(&snapshot, &expression)
                 .unwrap(),
             Some(true)
+        );
+    }
+
+    #[test]
+    fn generic_measurements_share_the_same_before_after_snapshots() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let step = &shard.episodes[0].steps[0];
+        let before =
+            FactSnapshot::from_native_learning(&step.pre_input, &[], None, Vec::new()).unwrap();
+        let after =
+            FactSnapshot::from_native_learning(&step.post_simulation, &[], None, Vec::new())
+                .unwrap();
+        let registry = FactRegistry::canonical();
+        let selector = after.actors[0].portable_selector.clone().unwrap();
+
+        for query in [
+            MeasurementQuery::DistanceToActor(selector.clone()),
+            MeasurementQuery::RelativeAngleToActor(selector.clone()),
+            MeasurementQuery::RelativeVelocityToActor(selector),
+            MeasurementQuery::ContactSurfaceChange,
+            MeasurementQuery::StateChange,
+            MeasurementQuery::EventChange,
+            MeasurementQuery::ElapsedTicks,
+        ] {
+            assert!(matches!(
+                registry.measure(&before, &after, &query).unwrap(),
+                MeasurementRead::Available(_)
+            ));
+        }
+        assert_eq!(
+            registry
+                .measure(&before, &after, &MeasurementQuery::ElapsedTicks)
+                .unwrap(),
+            MeasurementRead::Available(MeasurementValue::U64(
+                after.simulation_tick - before.simulation_tick
+            ))
+        );
+    }
+
+    #[test]
+    fn measurements_reject_reverse_time() {
+        let snapshot = snapshot();
+        let mut later = snapshot.clone();
+        later.simulation_tick += 1;
+        later.boundary_index += 1;
+        assert_eq!(
+            FactRegistry::canonical()
+                .measure(&later, &snapshot, &MeasurementQuery::ElapsedTicks)
+                .unwrap_err(),
+            FactRegistryError::InvalidMeasurementOrder
         );
     }
 }
