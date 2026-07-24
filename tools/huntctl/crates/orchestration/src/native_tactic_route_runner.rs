@@ -213,7 +213,7 @@ pub fn run_native_tactic_route(
     let run = (|| {
         let mut seed_results = Vec::with_capacity(config.exploration_seeds.len());
         for (seed_index, seed) in config.exploration_seeds.iter().copied().enumerate() {
-            seed_results.push(run_seed(
+            let result = run_seed(
                 config,
                 &mut worker,
                 &catalog,
@@ -225,7 +225,16 @@ pub fn run_native_tactic_route(
                 root_checkpoint_sha256,
                 seed_index,
                 seed,
-            )?);
+            )?;
+            let seed_result_path = config
+                .output_root
+                .join(format!("seed-{seed_index:03}-{seed}"))
+                .join("seed-result.json");
+            write_new(
+                &seed_result_path,
+                &serde_json::to_vec_pretty(&result).map_err(route_error)?,
+            )?;
+            seed_results.push(result);
         }
         Ok::<_, NativeTacticRouteRunError>(seed_results)
     })();
