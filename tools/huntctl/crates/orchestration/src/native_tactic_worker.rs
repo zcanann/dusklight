@@ -412,7 +412,9 @@ fn native_generic_controller_program(
             //
             // -sin(player - offset - camera) == sin(camera + offset - player)
             frame: CoordinateFrame::Player,
-            heading_radians: -f32::from_bits(*heading_radians_f32_bits),
+            heading_radians: canonical_controller_heading(-f32::from_bits(
+                *heading_radians_f32_bits,
+            )),
             magnitude: *magnitude,
         },
         GenericTactic::ShortCurve { control } => Operation::CubicBezier {
@@ -433,6 +435,16 @@ fn native_generic_controller_program(
         .encode()
         .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
     Ok(Some(program))
+}
+
+fn canonical_controller_heading(heading: f32) -> f32 {
+    let mut wrapped = heading;
+    if wrapped >= std::f32::consts::PI {
+        wrapped -= std::f32::consts::TAU;
+    } else if wrapped < -std::f32::consts::PI {
+        wrapped += std::f32::consts::TAU;
+    }
+    wrapped
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1531,6 +1543,24 @@ mod tests {
         assert_eq!(frame, CoordinateFrame::Player);
         assert_eq!(heading_radians.to_bits(), (-authored_heading).to_bits());
         assert_eq!(magnitude, 96);
+
+        let endpoint_plan = NativeGenericTacticPlan {
+            tactic: GenericTactic::MaintainRelativeHeading {
+                heading_radians_f32_bits: (-std::f32::consts::PI).to_bits(),
+                magnitude: 96,
+            },
+            ..plan.clone()
+        };
+        let endpoint_program = native_generic_controller_program(&endpoint_plan, duration)
+            .unwrap()
+            .expect("the -pi catalog endpoint must remain encodable");
+        let Operation::MaintainHeading {
+            heading_radians, ..
+        } = endpoint_program.layers[0].operation
+        else {
+            panic!("relative heading must compile to maintain-heading");
+        };
+        assert_eq!(heading_radians.to_bits(), (-std::f32::consts::PI).to_bits());
 
         let descriptor = plan.descriptor("heading".into()).unwrap();
         let selected = SelectedTactic {
