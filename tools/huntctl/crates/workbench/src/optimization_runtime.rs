@@ -133,9 +133,9 @@ pub(super) fn start_optimization_campaign(
         ));
     }
     let request_sha256 = optimization.content_sha256.to_string();
-    if goal_learning_campaign_active(&request_sha256) {
+    if tactic_route_campaign_active(&request_sha256) {
         return Err(WorkbenchError::new(
-            "goal learning must stop before residual optimization can resume",
+            "route learning must stop before residual optimization can resume",
         ));
     }
     let cancellation = Arc::new(AtomicBool::new(false));
@@ -318,16 +318,16 @@ pub(super) fn cleanup_optimization_campaign(
             "optimization candidate promotion must finish before cleanup",
         ));
     }
-    if goal_learning_campaign_active(&request_sha256) {
+    if tactic_route_campaign_active(&request_sha256) {
         return Err(WorkbenchError::new(
-            "goal learning must stop before campaign cleanup",
+            "route learning must stop before campaign cleanup",
         ));
     }
     let artifacts_removed = remove_optimization_campaign_artifacts(&root, &optimization)?;
     if let Ok(mut runs) = optimization_runs().lock() {
         runs.remove(&request_sha256);
     }
-    forget_goal_learning_campaign(&request_sha256);
+    forget_tactic_route_campaign(&request_sha256);
     forget_optimization_promotions(&request_sha256);
     Ok(OptimizationLifecycleResponse {
         schema: OPTIMIZATION_LIFECYCLE_SCHEMA,

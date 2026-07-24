@@ -104,9 +104,10 @@ or test fixture does not count as progress by itself.
 
 ### 3.3 Implement real CRUD
 
+- [ ] Define stable folder identity, reference remapping, and grouped-trash
+      semantics for mutable Workspace folders.
 - [ ] Add create, rename, move, duplicate, delete-to-trash, restore, and permanent
-      delete operations for Workspace assets and folders.
-- [ ] Validate names, collisions, references, and permissions before mutation.
+      delete for folders with collision, reference, and permission validation.
 ## 4. Application shell and information hierarchy
 
 - [ ] Support multiple asset editor tabs with breadcrumbs and unsaved-state

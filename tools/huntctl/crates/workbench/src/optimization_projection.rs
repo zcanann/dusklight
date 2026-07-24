@@ -592,7 +592,7 @@ fn campaign_projection(
         blocker: None,
         error: None,
         audit: None,
-        learning: goal_learning_projection(root, request, runtime_config),
+        learning: tactic_route_learning_projection(root, request, runtime_config),
     };
     let state_path = root.join(&request.resume.state_path);
     let mut resume_state = None;

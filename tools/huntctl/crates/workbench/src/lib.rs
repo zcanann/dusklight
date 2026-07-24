@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v17";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v18";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -177,7 +177,7 @@ pub struct GraphOptimizationCampaign {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audit: Option<GraphResidualCampaignAudit>,
-    pub learning: GraphGoalLearningLoop,
+    pub learning: GraphTacticRouteLearning,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -207,48 +207,27 @@ pub struct GraphResidualCampaignAudit {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct GraphGoalLearningLoop {
+pub struct GraphTacticRouteLearning {
     pub status: String,
+    pub goal: String,
+    pub source_boundary_index: u64,
+    pub exploration_seeds: Vec<u64>,
+    pub decisions_per_seed: u64,
+    pub branch_every_decisions: u64,
+    pub refit_every_decisions: u64,
+    pub epsilon_per_million: u32,
+    pub completed_seeds: u64,
+    pub successful_seeds: u64,
+    pub total_decisions: u64,
+    pub total_native_ticks: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub request: Option<String>,
+    pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_sha256: Option<String>,
-    pub generation_limit: u16,
-    pub committed_generations: u16,
-    pub rollouts_per_generation: u16,
-    pub charged_simulated_ticks: u64,
-    pub simulated_tick_budget: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_corpus_sha256: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub proposal_source: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stopped_reason: Option<String>,
-    pub cold_replayable_tapes: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub collapse: Option<GraphGoalLearningCollapse>,
+    pub report: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-pub struct GraphGoalLearningCollapse {
-    pub generation: u16,
-    pub collapse_detected: bool,
-    pub warnings: Vec<String>,
-    pub rollouts: u64,
-    pub unique_parent_states: u64,
-    pub unique_consumed_actions: u64,
-    pub unique_action_trajectories: u64,
-    pub unique_state_identities: u64,
-    pub contact_observations: u64,
-    pub unique_contact_signatures: u64,
-    pub successes: u64,
-    pub failures: u64,
-    pub unique_success_ticks: u64,
-    pub artifact: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1242,8 +1221,8 @@ mod optimization_promotion;
 use optimization_promotion::*;
 mod optimization_runtime;
 use optimization_runtime::*;
-mod goal_learning_runtime;
-use goal_learning_runtime::*;
+mod tactic_route_runtime;
+use tactic_route_runtime::*;
 mod draft_store;
 use draft_store::*;
 mod playback;

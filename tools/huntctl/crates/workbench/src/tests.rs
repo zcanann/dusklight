@@ -9,7 +9,7 @@ use crate::option_execution::{
 use crate::tape::{InputFrame, RawPadState};
 use dusklight_harness_contracts::objective_suite::ArtifactReference;
 use dusklight_orchestration::native_residual_campaign::{
-    NativeResidualAttempt, NativeResidualCampaignEvaluation,
+    NativeResidualAttempt, NativeResidualCampaignEvaluation, resolve_card_fixture_manifest,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use dusklight_orchestration::optimization_resume::{
@@ -529,7 +529,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v17");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v18");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1319,24 +1319,16 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/optimization/start",
         "/api/optimization/cancel",
         "/api/optimization/cleanup",
-        "/api/goal-learning/start",
-        "/api/goal-learning/cancel",
+        "/api/tactic-route/start",
         "cancelOptimization(button)",
         "cleanupOptimization(button)",
-        "startGoalLearning(button)",
-        "cancelGoalLearning(button)",
-        "data-start-goal-learning",
-        "data-cancel-goal-learning",
-        "Goal learning",
-        "Proposal source",
-        "Cold-replayable tapes",
-        "Collapse status",
-        "Parent states",
-        "Consumed actions",
-        "State / contact coverage",
-        "Outcome distribution",
-        "Collapse warnings:",
-        "Baseline retained",
+        "startTacticRoute(button)",
+        "data-start-tactic-route",
+        "Learn route",
+        "Route learning",
+        "Tactic decisions",
+        "Safe defaults",
+        "No generated request file or demonstration route is used.",
         "Stop campaign",
         "Stopping workers…",
         "Clean local campaign…",
@@ -2114,6 +2106,33 @@ fn completed_optimization_candidate_projects_as_a_playable_ephemeral_sibling() {
     let campaign_root = repository.join(&campaign_relative);
     request.resume.state_path = format!("{campaign_relative}/state.json");
     request.resume.journal_path = format!("{campaign_relative}/journal.jsonl");
+    if resolve_card_fixture_manifest(&repository, &request).is_err() {
+        let manifest_root = repository.join("routes/Glitch Exhibition/intro/benchmarks");
+        for entry in fs::read_dir(manifest_root).unwrap() {
+            let path = entry.unwrap().path();
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !name.starts_with("process_boot.") || !name.ends_with(".fixture.json") {
+                continue;
+            }
+            let manifest: serde_json::Value =
+                serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+            for boundary in manifest["source_boundaries"].as_array().unwrap() {
+                if boundary["source_frame"].as_u64() != Some(request.route.source_boundary_index) {
+                    continue;
+                }
+                request.route.native_source_boundary_fingerprint =
+                    boundary["fingerprint"].as_str().unwrap().into();
+                if resolve_card_fixture_manifest(&repository, &request).is_ok() {
+                    break;
+                }
+            }
+            if resolve_card_fixture_manifest(&repository, &request).is_ok() {
+                break;
+            }
+        }
+    }
     request.refresh_content_sha256().unwrap();
     request.validate_files(&repository).unwrap();
 
@@ -2335,7 +2354,7 @@ fn optimization_start_api_requires_explicit_world_context() {
         campaign["learning"]["blocker"]
             .as_str()
             .unwrap()
-            .contains("native execution binding")
+            .contains("--world-context")
     );
     let response = call_http(
         &config,
@@ -2352,7 +2371,7 @@ fn optimization_start_api_requires_explicit_world_context() {
     let learning = call_http(
         &config,
         "POST",
-        "/api/goal-learning/start",
+        "/api/tactic-route/start",
         br#"{"campaign":"ordon-q125-residual-cem-v3"}"#,
     );
     assert_eq!(learning.status, 400);
@@ -2364,7 +2383,7 @@ fn optimization_start_api_requires_explicit_world_context() {
     let smuggled = call_http(
         &config,
         "POST",
-        "/api/goal-learning/start",
+        "/api/tactic-route/start",
         br#"{"campaign":"ordon-q125-residual-cem-v3","generations":1,"game":"forged"}"#,
     );
     assert_eq!(smuggled.status, 400);
