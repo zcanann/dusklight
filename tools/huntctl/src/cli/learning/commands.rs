@@ -805,6 +805,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .unwrap_or(350_000),
                 cancellation: None,
                 resume: false,
+                blueprints: &[],
             })?;
             println!(
                 "{}",

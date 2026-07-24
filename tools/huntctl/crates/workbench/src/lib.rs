@@ -24,6 +24,7 @@ mod project_catalog;
 mod server;
 mod stage_catalog;
 mod subgraph_store;
+mod tactic_blueprint_store;
 
 pub use graph_projection::{
     ThumbnailPruneEntry, ThumbnailPruneReport, graph_from_timeline, prune_thumbnails,
@@ -34,6 +35,7 @@ use graph_projection::*;
 use native_reveal::*;
 use project_catalog::*;
 use subgraph_store::*;
+use tactic_blueprint_store::*;
 
 #[cfg(test)]
 use server::{HttpResponse, handle_http, origin_allowed, thumbnail_response};
@@ -60,7 +62,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v22";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v23";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -124,6 +126,7 @@ pub struct WorkbenchGraph {
     pub goals: Vec<GraphGoal>,
     pub drafts: Vec<GraphDraft>,
     pub projects: GraphProjectCatalog,
+    pub tactics: GraphTacticCatalog,
     pub campaigns: Vec<GraphOptimizationCampaign>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub draft_graph_revision: Option<String>,
@@ -230,6 +233,29 @@ pub struct GraphTacticRouteLearning {
     pub report: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocker: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct GraphTacticCatalog {
+    pub schema: String,
+    pub built_ins: Vec<GraphTacticAsset>,
+    pub authored: Vec<GraphTacticAsset>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct GraphTacticAsset {
+    pub asset_id: String,
+    pub source: String,
+    pub read_only: bool,
+    pub revision: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimum_ticks: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub maximum_ticks: Option<u32>,
+    pub steps: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

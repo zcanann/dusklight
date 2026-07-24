@@ -67,7 +67,7 @@ Route speed does not matter for this first proof.
 | Live online option-Q campaign | Working: authenticated tactic boundaries feed duration-aware replay, refit, ranking, reward shaping, hindsight, checkpoint/resume, final-result export, and an exact observed-state greedy table that prevents sparse fitted-Q extrapolation from overriding known successful decisions |
 | Automatic checkpoint branching driven by learned tactic value | Working: campaigns retain replayable quality-diversity frontiers, sample root plus frontier branches, reject detached restores, detect collapse/cycles/connectivity loss, and project checkpoint-keyed state/tactic graphs |
 | Learning workbench | Working: `Learn route` launches the tactic-Q campaign directly from the selected authenticated start and authored goal with bounded defaults and no generated request or demonstration editing; the primary projection carries only a compact latest-decision summary, while authenticated on-demand inspection loads its before/after facts, named measurements, applicable tactic/Q values, reward components, and resulting state change; a compact spatial graph shows checkpoint states, tactic edges, retained frontier cells, the current state, and terminals without loading duplicated route tapes; every projected edge is inspectable and its exact candidate path replays on demand through an ordinary process-boot launch; pause seals a content-addressed campaign checkpoint, resume cold-launches a fresh append-only native-worker attempt and reuses sealed seeds, cancel preserves authenticated evidence behind a durable marker, and cleanup remains unavailable until worker shutdown |
-| Blueprint-like user-authored tactic assets | Working in the engine; content-browser authoring and CRUD remain missing |
+| Blueprint-like user-authored tactic assets | Working end to end: the content browser separates 136 immutable Library tactics from independently serialized Workspace assets; sequence blueprints support stale-safe create, edit, rename, duplicate, and recoverable delete; advanced typed blueprints remain visible without lossy editing; and the exact authored set is loaded into live learning and authenticated by the route action-schema digest |
 | A route learned from goal, facts, and tactics | Working: seed 181081 reached the terminal after 70 no-demonstration decisions; the frozen policy then reached it in 13 greedy decisions and cold-proved tape `872f7f...`. See `docs/glitch-hunting/benchmarks/ordon-tactic-q-first-proof-20260724.json` |
 
 ## Architectural reset
@@ -167,10 +167,6 @@ Exploration begins with epsilon-greedy or uncertainty-aware tactic choice.
 Retained checkpoints allow the agent to branch repeatedly from useful or novel
 states instead of replaying the entire route for every decision.
 
-## P1 — Make the learning loop usable
-
-- [ ] Add content-browser CRUD for user-authored blueprint tactics while keeping
-  built-in tactics visible and read-only.
 ## P2 — Add demonstrations and refinement without corrupting the model
 
 - [ ] Import an optional human tape as replay transitions or tactic examples
@@ -203,8 +199,8 @@ trajectories is not useful throughput.
 ## P4 — Validate the claim after competence exists
 
 The existing Gate 4 comparison protocol and completed baseline cells are
-retained. The tactic-level learner now works, so validation can proceed after
-the P1 workflow is usable:
+retained. The tactic-level learner and its authoring workflow now work, so
+validation can proceed:
 
 - [ ] Define a smaller sealed comparison that uses the actual tactic-Q learner,
   not the abandoned per-tick policy as a proxy.
