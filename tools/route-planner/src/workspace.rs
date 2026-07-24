@@ -557,6 +557,12 @@ impl WorkspaceManifest {
                 .get(&kind)
                 .ok_or_else(|| WorkspaceError::new(format!("missing {kind:?} asset root")))?;
             validate_relative_path("asset root", Path::new(root))?;
+            if root != kind.root_name() {
+                return Err(WorkspaceError::new(format!(
+                    "{kind:?} asset root is fixed at {}; found {root}",
+                    kind.root_name()
+                )));
+            }
             if !roots.insert(root) {
                 return Err(WorkspaceError::new("asset roots must be unique"));
             }
@@ -2364,13 +2370,26 @@ mod tests {
 
     #[test]
     fn manifest_is_small_and_defines_fixed_typed_roots() {
-        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        let mut manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
         let value = serde_json::to_value(&manifest).unwrap();
         assert_eq!(manifest.asset_roots.len(), WorkspaceAssetKind::ALL.len());
+        for kind in WorkspaceAssetKind::ALL {
+            assert_eq!(manifest.asset_roots[&kind], kind.root_name());
+        }
         for forbidden in ["catalog", "graph", "snapshot", "layout", "route_book"] {
             assert!(value.get(forbidden).is_none());
         }
         assert!(manifest.canonical_bytes().unwrap().ends_with(b"\n"));
+        manifest
+            .asset_roots
+            .insert(WorkspaceAssetKind::RouteGraph, "user-selected-root".into());
+        assert!(
+            manifest
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("asset root is fixed at route-graphs")
+        );
     }
 
     #[test]
@@ -2456,8 +2475,9 @@ mod tests {
         let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
         let store = WorkspaceStore::create(&root, manifest).unwrap();
         let mut asset = graph_asset("graph.ordon", "Ordon route");
-        let path = Path::new("route-graphs/ordon.json");
+        let path = Path::new("route-graphs/ordon/routes/ordon.json");
         let first_revision = store.save_asset(path, None, &asset).unwrap();
+        assert!(root.join("route-graphs/ordon/routes").is_dir());
         assert_eq!(
             fs::read(root.join(path)).unwrap(),
             asset.canonical_bytes().unwrap()
@@ -2481,6 +2501,15 @@ mod tests {
                 .to_string()
                 .contains("without traversal")
         );
+        let wrong_root = Path::new("custom-nodes/ordon.json");
+        assert!(
+            store
+                .save_asset(wrong_root, None, &asset)
+                .unwrap_err()
+                .to_string()
+                .contains("must be stored under route-graphs")
+        );
+        assert!(!root.join(wrong_root).exists());
         fs::remove_dir_all(root).unwrap();
     }
 

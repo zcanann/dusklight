@@ -100,8 +100,6 @@ or test fixture does not count as progress by itself.
 
 - [ ] Add create, rename, move, duplicate, delete-to-trash, restore, and permanent
       delete operations for Workspace assets and folders.
-- [ ] Use fixed virtual roots for typed assets while allowing user folders below
-      those roots.
 - [ ] Validate names, collisions, references, and permissions before mutation.
 ## 4. Application shell and information hierarchy
 
