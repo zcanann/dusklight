@@ -511,12 +511,13 @@ impl TacticQCampaign {
     }
 
     /// Seal the fitted critic as an independently reloadable greedy policy.
-    /// The supplied digest identifies the complete executable catalog, while
-    /// the training payload remains the existing semi-Markov value batch.
-    pub fn freeze_greedy_policy(
-        &self,
-        action_universe_sha256: Digest,
-    ) -> Result<TacticFrozenPolicy, TacticQCampaignError> {
+    ///
+    /// The executable action schema is derived from the checkpoint's complete
+    /// action mask. This is intentionally not supplied by the caller: campaigns
+    /// may extend the default catalog with goal-conditioned tactics, and
+    /// freezing against a separately reconstructed default catalog would stamp
+    /// the policy with the wrong executable universe.
+    pub fn freeze_greedy_policy(&self) -> Result<TacticFrozenPolicy, TacticQCampaignError> {
         let checkpoint = self.checkpoint()?;
         let first = self
             .replay
@@ -534,6 +535,20 @@ impl TacticQCampaign {
                 .collect(),
             self.episode_groups.clone(),
         )?;
+        let action_universe_sha256 = Digest(
+            Sha256::digest(
+                serde_json::to_vec(
+                    &self
+                        .current
+                        .action_mask
+                        .iter()
+                        .map(|entry| &entry.descriptor)
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?,
+            )
+            .into(),
+        );
         TacticFrozenPolicy::freeze(
             checkpoint.content_sha256,
             self.root_checkpoint_sha256,
@@ -1640,6 +1655,11 @@ mod tests {
         assert_eq!(restored.replay, campaign.replay);
         assert_eq!(restored.replay_routes, campaign.replay_routes);
         assert!(restored.model().is_some());
+        let policy = restored.freeze_greedy_policy().unwrap();
+        assert_eq!(
+            policy.action_universe_sha256,
+            catalog.action_schema_sha256()
+        );
         let archive = restored.frontier_archive().unwrap();
         assert_eq!(archive.tactic_len(), 1);
         let graph = restored.graph().unwrap();

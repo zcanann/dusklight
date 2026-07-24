@@ -18,7 +18,6 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::learning::batch::load_fqi_batch;
-use huntctl::learning::default_tactic_catalog::default_route_tactic_catalog;
 use huntctl::learning::factorized_policy_suffix_batch::{
     FactorizedPolicyOutputSet, NativeFactorizedPolicyBatchConfig, NativeFactorizedPolicySuffixBatch,
 };
@@ -690,8 +689,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             let learn_args = &args[1..];
             let checkpoint =
                 TacticQCampaign::read_checkpoint(&required_path(learn_args, "--checkpoint")?)?;
-            let catalog = default_route_tactic_catalog()?;
-            let policy = checkpoint.freeze_greedy_policy(catalog.action_schema_sha256())?;
+            let policy = checkpoint.freeze_greedy_policy()?;
             let output = required_path(learn_args, "--output")?;
             if output.exists() {
                 return Err(format!(
