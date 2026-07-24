@@ -308,6 +308,35 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
         [_, "trash", asset_id] if !asset_id.is_empty() => {
             dispatch_workspace_trash(request, state, workspace_id, asset_id)
         }
+        [_, "library-references", library_id]
+            if request.method == "POST" && !library_id.is_empty() =>
+        {
+            project_response(|| {
+                let project = {
+                    let projects = state
+                        .projects
+                        .lock()
+                        .map_err(|_| "project store lock is poisoned".to_owned())?;
+                    projects
+                        .load(library_id)
+                        .map_err(|error| error.to_string())?
+                };
+                if !project.read_only {
+                    return Err("only read-only Library content can be referenced".into());
+                }
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry
+                    .add_library_reference(
+                        workspace_id,
+                        &project.project,
+                        project.revision_sha256,
+                    )
+                    .map_err(|error| error.to_string())
+            })
+        }
         [_, "library-scenarios", library_id]
             if request.method == "POST" && !library_id.is_empty() =>
         {
@@ -774,6 +803,26 @@ mod tests {
         let loaded: serde_json::Value = serde_json::from_slice(&loaded.body).unwrap();
         assert_eq!(loaded["manifest"]["id"], "ordon-route");
         assert!(root.join("workspaces/ordon-route/workspace.json").is_file());
+
+        let referenced = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target:
+                    "/api/workspaces/ordon-route/library-references/demo-forest-keyed-door".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(referenced.status, 200);
+        let referenced: serde_json::Value = serde_json::from_slice(&referenced.body).unwrap();
+        assert_eq!(
+            referenced["manifest"]["mounted_libraries"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(referenced["assets"].as_array().unwrap().is_empty());
 
         let imported = dispatch(
             HttpRequest {

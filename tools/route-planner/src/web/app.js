@@ -438,18 +438,90 @@ function libraryContentItem(library) {
   summary.textContent = "⋯";
   summary.setAttribute("aria-label", `Actions for ${library.label}`);
   actions.append(summary);
-  const inspect = document.createElement("button");
-  inspect.type = "button";
-  inspect.textContent = "Open read-only";
-  inspect.addEventListener("click", () => loadStoredProject(library.id));
-  const create = document.createElement("button");
-  create.type = "button";
-  create.textContent = "Create Scenario";
-  create.disabled = !state.workspace;
-  create.addEventListener("click", () => createScenarioFromLibrary(library));
-  actions.append(inspect, create);
+  for (const [label, command, requiresWorkspace] of [
+    ["Open", () => loadStoredProject(library.id), false],
+    ["Inspect", () => inspectLibrary(library), false],
+    ["Add Reference", () => addLibraryReference(library), true],
+    ["Create Scenario from Template", () => createScenarioFromLibrary(library), true],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.disabled = requiresWorkspace && !state.workspace;
+    button.addEventListener("click", () => {
+      actions.open = false;
+      command();
+    });
+    actions.append(button);
+  }
   row.append(actions);
   return row;
+}
+
+async function inspectLibrary(library) {
+  try {
+    const record = await projectApi(`/api/projects/${encodeURIComponent(library.id)}`);
+    const project = record.project;
+    const runtime = project.start_state?.snapshot?.environment?.runtime_configuration;
+    const mechanics = project.catalog?.mechanics ?? {};
+    elements["detail-title"].textContent = project.label;
+    elements["detail-subtitle"].textContent = "Read-only Library content";
+    elements["workspace-asset-editor"].hidden = true;
+    elements["workspace-asset-editor"].replaceChildren();
+    elements["contract-inspector"].hidden = true;
+    const inspector = elements["state-inspector"];
+    inspector.hidden = false;
+    inspector.replaceChildren();
+    const heading = document.createElement("h3");
+    heading.textContent = "Library summary";
+    const card = document.createElement("section");
+    card.className = "state-card";
+    const title = document.createElement("h4");
+    title.textContent = "Exact read-only source";
+    const metrics = document.createElement("dl");
+    for (const [name, value] of [
+      ["Source", "Library"],
+      ["Version", "1"],
+      ["Content", runtime?.content_sha256 ?? "No exact context"],
+      ["Language", runtime?.language ?? "Unspecified"],
+      ["Mechanics", mechanics.transitions?.length ?? 0],
+      ["Goals", mechanics.goals?.length ?? 0],
+      ["Readers", mechanics.readers?.length ?? 0],
+    ]) {
+      const term = document.createElement("dt");
+      term.textContent = name;
+      const detail = document.createElement("dd");
+      detail.textContent = String(value);
+      detail.title = String(value);
+      metrics.append(term, detail);
+    }
+    card.append(title, metrics);
+    inspector.append(heading, card);
+    elements["detail-json"].textContent = JSON.stringify(record, null, 2);
+    setStatus(`Inspecting ${library.label}`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function addLibraryReference(library) {
+  if (!state.workspace) {
+    setStatus("Create or open a workspace first", "bad");
+    return;
+  }
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    state.workspace = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/library-references/${encodeURIComponent(library.id)}`,
+      { method: "POST" },
+    );
+    state.workspaceSignature = workspaceSignature(state.workspace);
+    await refreshWorkspaces(workspaceId);
+    renderContentBrowser();
+    setStatus(`Referenced exact Library ${library.label}`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 async function createScenarioFromLibrary(library) {

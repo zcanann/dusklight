@@ -927,6 +927,39 @@ impl WorkspaceRegistry {
         workspace_record(&store)
     }
 
+    pub fn add_library_reference(
+        &self,
+        workspace_id: &str,
+        project: &PlannerWebProject,
+        library_sha256: Digest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        project
+            .validate()
+            .map_err(|error| WorkspaceError::new(error.to_string()))?;
+        if library_sha256 == Digest::ZERO {
+            return Err(WorkspaceError::new("library digest must be nonzero"));
+        }
+        let exact_context = project
+            .start_state
+            .as_ref()
+            .ok_or_else(|| WorkspaceError::new("Library has no exact context to reference"))?
+            .snapshot
+            .environment
+            .runtime_configuration
+            .exact_context()?;
+        let mut store = self.open_workspace(workspace_id)?;
+        store.mount_library(
+            MountedLibrary {
+                id: project.id.clone(),
+                version: BUILTIN_LIBRARY_VERSION.into(),
+                sha256: library_sha256,
+                source: format!("builtin:{}", project.id),
+            },
+            exact_context,
+        )?;
+        workspace_record(&store)
+    }
+
     fn open_workspace(&self, id: &str) -> Result<WorkspaceStore, WorkspaceError> {
         let path = self.workspace_path(id)?;
         if !path.is_dir() {
