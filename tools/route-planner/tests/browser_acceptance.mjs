@@ -130,6 +130,102 @@ try {
     "planner application load",
     `document.readyState === "complete" && document.querySelectorAll("#project-list option").length >= 7`,
   );
+  await evaluate(`(async () => {
+    const create = await fetch("/api/workspaces", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        schema: "dusklight.route-planner.workspace-create/v1",
+        id: "browser-workspace",
+        label: "Browser workspace",
+      }),
+    });
+    if (!create.ok) throw new Error(await create.text());
+    const scenario = await fetch(
+      "/api/workspaces/browser-workspace/library-scenarios/demo-forest-keyed-door",
+      { method: "POST" },
+    );
+    if (!scenario.ok) throw new Error(await scenario.text());
+    location.reload();
+    return true;
+  })()`);
+  await browserUntil(
+    "workspace reload",
+    `document.readyState === "complete"
+      && [...document.querySelectorAll("#workspace-list option")]
+        .some((option) => option.value === "browser-workspace")`,
+  );
+  await evaluate(`(() => {
+    const list = document.getElementById("workspace-list");
+    list.value = "browser-workspace";
+    list.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await browserUntil(
+    "file-backed workspace assets",
+    `document.getElementById("status").textContent.includes("workspace assets")`,
+  );
+  await evaluate(`(() => {
+    const graph = [...document.querySelectorAll("#content-browser-list .content-item")]
+      .find((item) => item.querySelector("small")?.textContent.includes("route-graphs"));
+    if (!graph) throw new Error("workspace route graph is absent");
+    graph.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "workspace graph authoring context",
+    `document.getElementById("status").textContent
+      .includes("Workspace route opened with exact Library mechanics")
+      && document.querySelector('#node-kind-list [data-node-kind="mechanic"]') != null`,
+  );
+  await evaluate(`(() => {
+    const canvas = document.getElementById("canvas");
+    canvas.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 420,
+      clientY: 260,
+    }));
+    if (document.getElementById("add-node-menu").hidden) {
+      throw new Error("workspace graph did not open the Add Node menu");
+    }
+    if (!document.querySelector("#add-node-results .add-node-result")) {
+      throw new Error("workspace graph has no exact Library mechanics to add");
+    }
+    return true;
+  })()`);
+  await evaluate(`(() => {
+    const executable = document.querySelector(
+      "#add-node-results .add-node-result .compatibility.executable",
+    )?.closest(".add-node-result");
+    if (!executable) throw new Error("workspace Add Node menu has no executable mechanic");
+    executable.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "first workspace route step",
+    `document.getElementById("status").textContent.includes("inserted as step.route-0000")
+      && !document.getElementById("save-project").disabled`,
+  );
+  await evaluate(`document.getElementById("save-project").click()`);
+  await browserUntil(
+    "atomic workspace route save",
+    `document.getElementById("status").textContent
+      .includes("Route Book, graph projection, and layout saved atomically")`,
+  );
+  await browserUntil(
+    "persisted workspace route semantics",
+    `(async () => {
+      const workspace = await fetch("/api/workspaces/browser-workspace").then((response) => response.json());
+      const routeBook = workspace.assets.find((asset) => asset.kind === "route_book");
+      if (!routeBook) throw new Error("workspace Route Book listing is absent");
+      const record = await fetch(
+        "/api/workspaces/browser-workspace/assets/" + encodeURIComponent(routeBook.id),
+      ).then((response) => response.json());
+      return record.asset.payload.route_book.steps.length === 1
+        && record.asset.payload.route_book.methods[0].step_ids[0] === "step.route-0000";
+    })()`,
+  );
   await evaluate(`(() => {
     const list = document.getElementById("project-list");
     list.value = "demo-forest-keyed-door";

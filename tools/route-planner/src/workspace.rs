@@ -9,9 +9,10 @@ use dusklight_route_planner::PlannerContractError;
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::execution::PlannerExecutionStateDocument;
 use dusklight_route_planner::graph::PlannerGraph;
-use dusklight_route_planner::identity::ExactContext;
-use dusklight_route_planner::logic::PredicateExpression;
-use dusklight_route_planner::route_book::RouteBook;
+use dusklight_route_planner::identity::{ContextSelector, ExactContext};
+use dusklight_route_planner::logic::{ContextScope, PredicateExpression};
+use dusklight_route_planner::refinement::ComposedPlannerCatalog;
+use dusklight_route_planner::route_book::{ROUTE_BOOK_SCHEMA, RouteBook, RouteBookManifest};
 use dusklight_route_planner::transition::StateOperation;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -32,6 +33,10 @@ pub const WORKSPACE_ASSET_RECORD_SCHEMA: &str = "dusklight.route-planner.workspa
 pub const WORKSPACE_ASSET_SAVE_SCHEMA: &str = "dusklight.route-planner.workspace-asset-save/v1";
 pub const WORKSPACE_ASSET_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-asset-command/v1";
+pub const WORKSPACE_ROUTE_GRAPH_SAVE_SCHEMA: &str =
+    "dusklight.route-planner.workspace-route-graph-save/v1";
+pub const WORKSPACE_ROUTE_GRAPH_EDIT_RECORD_SCHEMA: &str =
+    "dusklight.route-planner.workspace-route-graph-edit-record/v1";
 pub const WORKSPACE_TRASH_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-trash-command/v1";
 pub const WORKSPACE_LIBRARY_FORK_SCHEMA: &str = "dusklight.route-planner.workspace-library-fork/v1";
@@ -338,6 +343,36 @@ pub struct WorkspaceAssetRecord {
     pub relative_path: PathBuf,
     pub revision_sha256: Digest,
     pub asset: WorkspaceAsset,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRouteGraphSaveRequest {
+    pub schema: String,
+    pub expected_graph_revision_sha256: Digest,
+    pub route_book_id: String,
+    pub expected_route_book_revision_sha256: Digest,
+    pub route_book: RouteBook,
+    pub layout: Option<WorkspaceRouteGraphLayoutEdit>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRouteGraphLayoutEdit {
+    pub asset_id: String,
+    pub expected_revision_sha256: Digest,
+    pub positions: BTreeMap<String, LayoutPoint>,
+    pub viewport: Option<LayoutViewport>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRouteGraphEditRecord {
+    pub schema: String,
+    pub workspace: WorkspaceRecord,
+    pub graph: WorkspaceAssetRecord,
+    pub route_book: WorkspaceAssetRecord,
+    pub layout: Option<WorkspaceAssetRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -965,6 +1000,122 @@ impl WorkspaceRegistry {
         })
     }
 
+    pub fn save_route_graph(
+        &self,
+        workspace_id: &str,
+        graph_id: &str,
+        request: WorkspaceRouteGraphSaveRequest,
+        catalog: &ComposedPlannerCatalog,
+    ) -> Result<WorkspaceRouteGraphEditRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_ROUTE_GRAPH_SAVE_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace route-graph save request schema is unsupported",
+            ));
+        }
+        catalog.validate()?;
+        request.route_book.validate_against_composed(catalog)?;
+        let store = self.open_workspace(workspace_id)?;
+        let (mut graph_asset, graph_path) = store.load_asset(graph_id)?;
+        if graph_asset.header.kind != WorkspaceAssetKind::RouteGraph {
+            return Err(WorkspaceError::new(format!(
+                "asset {graph_id} is not a route graph"
+            )));
+        }
+        if graph_asset.digest()? != request.expected_graph_revision_sha256 {
+            return Err(WorkspaceError::new(
+                "route graph revision conflict before save",
+            ));
+        }
+        if !graph_asset.references.iter().any(|reference| {
+            reference.asset_id == request.route_book_id
+                && reference.kind == WorkspaceAssetKind::RouteBook
+        }) {
+            return Err(WorkspaceError::new(format!(
+                "route graph {graph_id} does not reference route book {}",
+                request.route_book_id
+            )));
+        }
+        let (mut route_book_asset, route_book_path) = store.load_asset(&request.route_book_id)?;
+        if route_book_asset.header.kind != WorkspaceAssetKind::RouteBook {
+            return Err(WorkspaceError::new(format!(
+                "asset {} is not a route book",
+                request.route_book_id
+            )));
+        }
+        if route_book_asset.digest()? != request.expected_route_book_revision_sha256 {
+            return Err(WorkspaceError::new(
+                "route book revision conflict before save",
+            ));
+        }
+        graph_asset.payload = WorkspaceAssetPayload::RouteGraph {
+            graph: PlannerGraph::project_composed_with_route_book(catalog, &request.route_book)?,
+        };
+        route_book_asset.payload = WorkspaceAssetPayload::RouteBook {
+            route_book: request.route_book,
+        };
+
+        let mut mutations = vec![
+            WorkspaceMutation::Put {
+                relative_path: graph_path.clone(),
+                expected_revision_sha256: Some(request.expected_graph_revision_sha256),
+                asset: graph_asset.clone(),
+            },
+            WorkspaceMutation::Put {
+                relative_path: route_book_path.clone(),
+                expected_revision_sha256: Some(request.expected_route_book_revision_sha256),
+                asset: route_book_asset.clone(),
+            },
+        ];
+        let mut saved_layout = None;
+        if let Some(edit) = request.layout {
+            let (mut asset, path) = store.load_asset(&edit.asset_id)?;
+            if asset.digest()? != edit.expected_revision_sha256 {
+                return Err(WorkspaceError::new("layout revision conflict before save"));
+            }
+            let WorkspaceAssetPayload::Layout(layout) = &mut asset.payload else {
+                return Err(WorkspaceError::new(format!(
+                    "asset {} is not a layout",
+                    edit.asset_id
+                )));
+            };
+            if layout.semantic_asset_id != graph_id {
+                return Err(WorkspaceError::new(format!(
+                    "layout {} presents {}, not route graph {graph_id}",
+                    edit.asset_id, layout.semantic_asset_id
+                )));
+            }
+            layout.positions = edit.positions;
+            layout.viewport = edit.viewport;
+            mutations.push(WorkspaceMutation::Put {
+                relative_path: path.clone(),
+                expected_revision_sha256: Some(edit.expected_revision_sha256),
+                asset: asset.clone(),
+            });
+            saved_layout = Some((asset, path));
+        }
+        store.transact(&mutations)?;
+
+        let asset_record = |asset: WorkspaceAsset,
+                            relative_path: PathBuf|
+         -> Result<WorkspaceAssetRecord, WorkspaceError> {
+            Ok(WorkspaceAssetRecord {
+                schema: WORKSPACE_ASSET_RECORD_SCHEMA.into(),
+                revision_sha256: asset.digest()?,
+                relative_path,
+                asset,
+            })
+        };
+        Ok(WorkspaceRouteGraphEditRecord {
+            schema: WORKSPACE_ROUTE_GRAPH_EDIT_RECORD_SCHEMA.into(),
+            workspace: workspace_record(&store)?,
+            graph: asset_record(graph_asset, graph_path)?,
+            route_book: asset_record(route_book_asset, route_book_path)?,
+            layout: saved_layout
+                .map(|(asset, path)| asset_record(asset, path))
+                .transpose()?,
+        })
+    }
+
     pub fn command_asset(
         &self,
         workspace_id: &str,
@@ -1586,10 +1737,7 @@ impl WorkspaceStore {
         let scenario_id = format!("scenario.{fragment}");
         let graph_id = format!("route-graph.{fragment}");
         let state_id = format!("state-seed.{fragment}");
-        let route_book_id = project
-            .route_book
-            .as_ref()
-            .map(|_| format!("route-book.{fragment}"));
+        let route_book_id = format!("route-book.{fragment}");
         let layout_id = format!("layout.{fragment}");
         let origin = |source_asset_id: String| {
             Some(WorkspaceAssetOrigin {
@@ -1599,12 +1747,49 @@ impl WorkspaceStore {
                 source_asset_id,
             })
         };
-        let graph = match &project.route_book {
-            Some(route_book) => {
-                PlannerGraph::project_composed_with_route_book(&project.catalog, route_book)?
+        let route_book = match &project.route_book {
+            Some(route_book) => route_book.clone(),
+            None => {
+                let scope = ContextScope {
+                    selectors: vec![ContextSelector::Exact {
+                        context: exact_context.clone(),
+                    }],
+                };
+                let goal_id = project
+                    .catalog
+                    .mechanics
+                    .goals
+                    .first()
+                    .ok_or_else(|| {
+                        WorkspaceError::new(
+                            "Library template needs a goal before authoring a route",
+                        )
+                    })?
+                    .id
+                    .clone();
+                RouteBook {
+                    schema: ROUTE_BOOK_SCHEMA.into(),
+                    manifest: RouteBookManifest {
+                        id: route_book_id.clone(),
+                        version: "1.0.0".into(),
+                        label: format!("{} authored route", project.label),
+                        author: "Route Planner".into(),
+                        source: "Workspace-authored exact transition sequence".into(),
+                        scope: scope.clone(),
+                        refinement_stack_sha256: Some(project.catalog.refinement_stack.digest()?),
+                    },
+                    goal_ids: vec![goal_id],
+                    constraints: Vec::new(),
+                    directives: Vec::new(),
+                    steps: Vec::new(),
+                    methods: Vec::new(),
+                    regions: Vec::new(),
+                    annotations: Vec::new(),
+                }
             }
-            None => PlannerGraph::project_composed(&project.catalog)?,
         };
+        route_book.validate_against_composed(&project.catalog)?;
+        let graph = PlannerGraph::project_composed_with_route_book(&project.catalog, &route_book)?;
         let state_asset = WorkspaceAsset {
             schema: WORKSPACE_ASSET_SCHEMA.into(),
             header: WorkspaceAssetHeader {
@@ -1617,14 +1802,10 @@ impl WorkspaceStore {
             references: Vec::new(),
             payload: WorkspaceAssetPayload::StateSeed { state },
         };
-        let mut graph_references = route_book_id
-            .iter()
-            .map(|id| WorkspaceAssetReference {
-                asset_id: id.clone(),
-                kind: WorkspaceAssetKind::RouteBook,
-            })
-            .collect::<Vec<_>>();
-        graph_references.sort();
+        let graph_references = vec![WorkspaceAssetReference {
+            asset_id: route_book_id.clone(),
+            kind: WorkspaceAssetKind::RouteBook,
+        }];
         let graph_asset = WorkspaceAsset {
             schema: WORKSPACE_ASSET_SCHEMA.into(),
             header: WorkspaceAssetHeader {
@@ -1679,12 +1860,10 @@ impl WorkspaceStore {
                 kind: WorkspaceAssetKind::StateSeed,
             },
         ];
-        if let Some(route_book_id) = &route_book_id {
-            scenario_references.push(WorkspaceAssetReference {
-                asset_id: route_book_id.clone(),
-                kind: WorkspaceAssetKind::RouteBook,
-            });
-        }
+        scenario_references.push(WorkspaceAssetReference {
+            asset_id: route_book_id.clone(),
+            kind: WorkspaceAssetKind::RouteBook,
+        });
         scenario_references.sort();
         let scenario_asset = WorkspaceAsset {
             schema: WORKSPACE_ASSET_SCHEMA.into(),
@@ -1703,7 +1882,7 @@ impl WorkspaceStore {
                 },
                 route_graph_id: graph_id,
                 state_seed_id: Some(state_id),
-                route_book_id: route_book_id.clone(),
+                route_book_id: Some(route_book_id.clone()),
             }),
         };
         let mut mutations = vec![
@@ -1728,25 +1907,22 @@ impl WorkspaceStore {
                 asset: layout_asset,
             },
         ];
-        if let (Some(route_book_id), Some(route_book)) = (route_book_id, project.route_book.clone())
-        {
-            mutations.push(WorkspaceMutation::Put {
-                relative_path: Path::new("route-books").join(format!("{fragment}.json")),
-                expected_revision_sha256: None,
-                asset: WorkspaceAsset {
-                    schema: WORKSPACE_ASSET_SCHEMA.into(),
-                    header: WorkspaceAssetHeader {
-                        id: route_book_id,
-                        label: route_book.manifest.label.clone(),
-                        kind: WorkspaceAssetKind::RouteBook,
-                        version: 1,
-                        origin: origin(format!("{}:route-book", project.id)),
-                    },
-                    references: Vec::new(),
-                    payload: WorkspaceAssetPayload::RouteBook { route_book },
+        mutations.push(WorkspaceMutation::Put {
+            relative_path: Path::new("route-books").join(format!("{fragment}.json")),
+            expected_revision_sha256: None,
+            asset: WorkspaceAsset {
+                schema: WORKSPACE_ASSET_SCHEMA.into(),
+                header: WorkspaceAssetHeader {
+                    id: route_book_id,
+                    label: route_book.manifest.label.clone(),
+                    kind: WorkspaceAssetKind::RouteBook,
+                    version: 1,
+                    origin: origin(format!("{}:route-book", project.id)),
                 },
-            });
-        }
+                references: Vec::new(),
+                payload: WorkspaceAssetPayload::RouteBook { route_book },
+            },
+        });
         self.transact(&mutations)?;
         self.mount_library(
             MountedLibrary {

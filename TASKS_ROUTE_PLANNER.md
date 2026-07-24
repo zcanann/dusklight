@@ -33,15 +33,16 @@ The remaining usability gap is direct route authoring:
   than mechanics, contexts, fixtures, templates, and reusable graphs.
 - Scenario roots, anchors, goals, and exact contexts cannot yet be chosen through
   a complete blank-scenario flow.
-- The canvas can place compatible catalogue mechanics into a legacy-backed
-  route, but it does not yet author typed pins, branches, subgraphs, or general
-  semantic graph rewiring.
+- The canvas can place compatible catalogue mechanics into an independently
+  serialized Workspace Route Book and persist its derived graph and layout
+  atomically, but it does not yet author typed pins, branches, subgraphs, or
+  general semantic graph rewiring.
 - Folder CRUD, multiple editors, undo/redo, and keyboard-first
   authoring remain incomplete.
 - Presentation regions are not reusable semantic subgraphs.
-- The browser acceptance test exercises one preassembled keyed-door example and
-  can skip without running on unsupported hosts. It does not prove that a blank
-  user workspace can express a route.
+- The browser acceptance test proves that a file-backed Workspace can add and
+  persist a route step, then continues through the preassembled keyed-door
+  example. It does not yet drive the complete blank-workspace UI flow.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 
@@ -226,8 +227,6 @@ scenario is.
       rather than embedding a private catalogue in every scenario.
 - [ ] Let an author build, insert, remove, replace, branch, and reconnect route
       steps directly on the canvas.
-- [ ] Keep the route book as an independently serialized semantic asset referenced
-      by scenarios and graphs.
 - [ ] Let the solver propose complete or partial producer chains as a preview
       graph that the user can accept, edit, or reject.
 - [ ] Explain solver failure in route-author language: missing producer, blocked

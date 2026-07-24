@@ -1533,49 +1533,51 @@ fn append_transition_to_route_book(
         let method = book
             .methods
             .iter()
-            .find(|method| method.id == AUTHORED_METHOD_ID)
-            .ok_or_else(|| {
-                dusklight_route_planner::PlannerContractError::new(
-                    "route_book.methods",
-                    "does not contain the browser-authored route method",
-                )
-            })?;
-        for (index, step_id) in method.step_ids.iter().enumerate() {
-            let step = book
-                .steps
-                .iter()
-                .find(|step| &step.id == step_id)
-                .ok_or_else(|| {
-                    dusklight_route_planner::PlannerContractError::new(
-                        "route_book.methods.step_ids",
-                        "references a missing authored step",
-                    )
-                })?;
-            let RouteActionRef::Transition {
-                transition_id: replay_id,
-            } = &step.action
-            else {
-                return Err(dusklight_route_planner::PlannerContractError::new(
-                    "route_book.steps.action",
-                    "authored route propagation currently requires transition steps",
-                ));
-            };
-            let evaluation = assess_and_apply_transition(
-                &mut state,
-                catalog,
-                equivalence_sets,
-                replay_id,
-                evidence_mode,
-                &format!("route.replay-{index:04}"),
-            )?;
-            if evaluation.assessment.classification != TransitionClassification::Executable {
-                return Err(dusklight_route_planner::PlannerContractError::new(
-                    "route_book.steps",
-                    format!(
-                        "existing step {step_id} no longer composes: {:?}",
-                        evaluation.assessment.classification
-                    ),
-                ));
+            .find(|method| method.id == AUTHORED_METHOD_ID);
+        if method.is_none() && (!book.steps.is_empty() || !book.methods.is_empty()) {
+            return Err(dusklight_route_planner::PlannerContractError::new(
+                "route_book.methods",
+                "does not contain the browser-authored route method and is not empty",
+            ));
+        }
+        if let Some(method) = method {
+            for (index, step_id) in method.step_ids.iter().enumerate() {
+                let step = book
+                    .steps
+                    .iter()
+                    .find(|step| &step.id == step_id)
+                    .ok_or_else(|| {
+                        dusklight_route_planner::PlannerContractError::new(
+                            "route_book.methods.step_ids",
+                            "references a missing authored step",
+                        )
+                    })?;
+                let RouteActionRef::Transition {
+                    transition_id: replay_id,
+                } = &step.action
+                else {
+                    return Err(dusklight_route_planner::PlannerContractError::new(
+                        "route_book.steps.action",
+                        "authored route propagation currently requires transition steps",
+                    ));
+                };
+                let evaluation = assess_and_apply_transition(
+                    &mut state,
+                    catalog,
+                    equivalence_sets,
+                    replay_id,
+                    evidence_mode,
+                    &format!("route.replay-{index:04}"),
+                )?;
+                if evaluation.assessment.classification != TransitionClassification::Executable {
+                    return Err(dusklight_route_planner::PlannerContractError::new(
+                        "route_book.steps",
+                        format!(
+                            "existing step {step_id} no longer composes: {:?}",
+                            evaluation.assessment.classification
+                        ),
+                    ));
+                }
             }
         }
     }
@@ -1615,20 +1617,47 @@ fn append_transition_to_route_book(
         annotation_ids: Vec::new(),
     };
     let book = if let Some(book) = route_book {
-        let mut method = book
+        let method = book
             .methods
             .iter()
             .find(|method| method.id == AUTHORED_METHOD_ID)
-            .expect("validated authored method")
-            .clone();
+            .cloned();
+        let scope = transition.scope.clone();
+        let mut method = method.unwrap_or(PlanMethod {
+            id: AUTHORED_METHOD_ID.into(),
+            label: "Authored route".into(),
+            scope: scope.clone(),
+            region_id: AUTHORED_REGION_ID.into(),
+            step_ids: Vec::new(),
+        });
         method.step_ids.push(step_id.clone());
+        let mut edits = vec![
+            RouteBookEdit::UpsertStep { step },
+            RouteBookEdit::UpsertMethod { method },
+        ];
+        if !book
+            .regions
+            .iter()
+            .any(|region| region.id == AUTHORED_REGION_ID)
+        {
+            edits.push(RouteBookEdit::UpsertRegion {
+                region: PlanRegion {
+                    id: AUTHORED_REGION_ID.into(),
+                    label: "Authored route".into(),
+                    scope,
+                    parent_region_id: None,
+                    entry_predicate: None,
+                    outcome_predicate: PredicateExpression::True,
+                    method_ids: vec![AUTHORED_METHOD_ID.into()],
+                    selected_method_id: Some(AUTHORED_METHOD_ID.into()),
+                    collapse_policy: CollapsePolicy::Never,
+                },
+            });
+        }
         RouteBookEditBatch {
             schema: ROUTE_BOOK_EDIT_BATCH_SCHEMA.into(),
             expected_route_book_sha256: book.digest()?,
-            edits: vec![
-                RouteBookEdit::UpsertStep { step },
-                RouteBookEdit::UpsertMethod { method },
-            ],
+            edits,
         }
         .apply_composed(&book, catalog)?
     } else {
@@ -2491,6 +2520,51 @@ mod tests {
             closest_before.snapshot.environment.location.stage,
             "F_SP103"
         );
+
+        let exact_scope = catalog.mechanics.transitions[0].scope.clone();
+        let blank = RouteBook {
+            schema: ROUTE_BOOK_SCHEMA.into(),
+            manifest: RouteBookManifest {
+                id: "route.blank-workspace".into(),
+                version: "1.0.0".into(),
+                label: "Blank workspace route".into(),
+                author: "Route Planner".into(),
+                source: "Workspace-authored exact transition sequence".into(),
+                scope: exact_scope,
+                refinement_stack_sha256: Some(catalog.refinement_stack.digest().unwrap()),
+            },
+            goal_ids: vec![catalog.mechanics.goals[0].id.clone()],
+            constraints: Vec::new(),
+            directives: Vec::new(),
+            steps: Vec::new(),
+            methods: Vec::new(),
+            regions: Vec::new(),
+            annotations: Vec::new(),
+        };
+        let from_blank = handle_request(PlannerServiceRequest::AppendTransition {
+            request_id: "request.append-blank-workspace".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: Some(Box::new(blank)),
+            route_book_id: "route.blank-workspace".into(),
+            route_book_label: "Blank workspace route".into(),
+            transition_id: "transition.enter-forest".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = from_blank.outcome else {
+            panic!("a blank workspace Route Book should accept its first transition");
+        };
+        let PlannerServicePayload::AppendedTransition {
+            book,
+            previous_route_book_sha256,
+            ..
+        } = *payload
+        else {
+            panic!("blank workspace append should return an authored Route Book");
+        };
+        assert!(previous_route_book_sha256.is_some());
+        assert_eq!(book.methods[0].step_ids, ["step.route-0000"]);
 
         let first = handle_request(PlannerServiceRequest::AppendTransition {
             request_id: "request.append-first".into(),

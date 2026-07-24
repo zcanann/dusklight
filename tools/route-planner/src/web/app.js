@@ -12,6 +12,7 @@ const WORKSPACE_ASSET_COMMAND_SCHEMA = "dusklight.route-planner.workspace-asset-
 const WORKSPACE_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-trash-command/v1";
 const WORKSPACE_LIBRARY_FORK_SCHEMA = "dusklight.route-planner.workspace-library-fork/v1";
 const WORKSPACE_EXPORT_SCHEMA = "dusklight.route-planner.workspace-export/v1";
+const WORKSPACE_ROUTE_GRAPH_SAVE_SCHEMA = "dusklight.route-planner.workspace-route-graph-save/v1";
 const LIBRARY_DRAG_TYPE = "application/x-dusklight-library";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
@@ -131,6 +132,7 @@ const state = {
   groupSelection: new Set(),
   emptyActions: { primary: null, secondary: null },
   nodeKindFilter: "mechanic",
+  workspaceEdit: null,
 };
 
 elements["workspace-list"].addEventListener("change", () => {
@@ -451,6 +453,7 @@ async function openWorkspaceRecord(record) {
   state.dirty = false;
   state.selected = null;
   state.selectedWorkspaceAsset = null;
+  state.workspaceEdit = null;
   state.positions = new Map();
   state.contentSource = "workspace";
   elements.nodes.replaceChildren();
@@ -1032,27 +1035,80 @@ async function inspectWorkspaceAsset(asset) {
 }
 
 async function openWorkspaceGraph(record) {
-  state.project = null;
-  state.graph = record.asset.payload.graph;
-  state.selected = null;
-  state.positions = new Map();
-  for (const listing of state.workspace.assets.filter((asset) => asset.kind === "layout")) {
-    const layout = await projectApi(
-      `/api/workspaces/${encodeURIComponent(state.workspace.manifest.id)}/assets/${encodeURIComponent(listing.id)}`,
-    );
-    if (layout.asset.payload.semantic_asset_id === record.asset.header.id) {
-      state.positions = new Map(Object.entries(layout.asset.payload.positions ?? {}));
-      break;
-    }
+  const workspaceId = state.workspace.manifest.id;
+  const graphId = record.asset.header.id;
+  const origin = record.asset.header.origin;
+  const routeBookReference = record.asset.references.find((reference) =>
+    reference.kind === "route_book");
+  if (!origin || !routeBookReference) {
+    state.project = null;
+    state.workspaceEdit = null;
+    state.graph = record.asset.payload.graph;
+    state.selected = null;
+    state.positions = new Map();
+    ensurePositions();
+    elements["empty-state"].hidden = true;
+    render();
+    requestAnimationFrame(fitGraph);
+    setStatus("This graph has no exact Library-backed Route Book and is inspect-only", "bad");
+    return;
   }
-  state.transitionSearch = new Map();
-  state.activeRegionId = null;
-  state.collapsedRegionIds = new Set();
-  state.knownRegionIds = new Set();
-  ensurePositions();
-  elements["empty-state"].hidden = true;
-  render();
-  requestAnimationFrame(fitGraph);
+  const loadWorkspaceAsset = (id) => projectApi(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(id)}`,
+  );
+  const scenarioRecords = await Promise.all(
+    state.workspace.assets
+      .filter((asset) => asset.kind === "scenario")
+      .map((asset) => loadWorkspaceAsset(asset.id)),
+  );
+  const scenarioRecord = scenarioRecords.find((candidate) =>
+    candidate.asset.payload.route_graph_id === graphId);
+  const stateSeedId = scenarioRecord?.asset.payload.state_seed_id;
+  if (!scenarioRecord || !stateSeedId) {
+    throw new Error("Route graph is not owned by a grounded workspace scenario");
+  }
+  const layoutRecords = await Promise.all(
+    state.workspace.assets
+      .filter((asset) => asset.kind === "layout")
+      .map((asset) => loadWorkspaceAsset(asset.id)),
+  );
+  const [library, routeBookRecord, stateSeedRecord] = await Promise.all([
+    projectApi(`/api/projects/${encodeURIComponent(origin.library_id)}`),
+    loadWorkspaceAsset(routeBookReference.asset_id),
+    loadWorkspaceAsset(stateSeedId),
+  ]);
+  if (!library.read_only
+    || library.revision_sha256 !== origin.library_sha256
+    || origin.library_version !== "builtin-v1") {
+    throw new Error("The exact read-only Library authority for this graph is missing or changed");
+  }
+  const layoutRecord = layoutRecords.find((candidate) =>
+    candidate.asset.payload.semantic_asset_id === graphId) ?? null;
+  const project = JSON.parse(JSON.stringify(library.project));
+  project.id = `${workspaceId}.${graphId}`;
+  project.label = record.asset.header.label;
+  project.start_state = stateSeedRecord.asset.payload.state;
+  project.route_book = routeBookRecord.asset.payload.route_book;
+  project.presentation ??= { positions: {}, regions: [] };
+  project.presentation.positions = layoutRecord?.asset.payload.positions ?? {};
+  const viewport = layoutRecord?.asset.payload.viewport ?? null;
+  await loadProject(project, {
+    revision: null,
+    readOnly: false,
+    dirty: false,
+    fit: viewport == null,
+    workspaceEdit: {
+      graph: record,
+      routeBook: routeBookRecord,
+      layout: layoutRecord,
+      scenario: scenarioRecord,
+    },
+  });
+  if (viewport) {
+    state.transform = { x: viewport.x, y: viewport.y, scale: viewport.zoom };
+    applyTransform();
+  }
+  setStatus("Workspace route opened with exact Library mechanics", "good");
   elements["project-name"].textContent = `${state.workspace.manifest.label} · ${record.asset.header.label}`;
 }
 
@@ -1348,6 +1404,7 @@ async function loadProject(project, options) {
   state.revision = options.revision;
   state.readOnly = options.readOnly;
   state.dirty = options.dirty;
+  state.workspaceEdit = options.workspaceEdit ?? null;
   state.selected = null;
   state.transitionEvaluation = null;
   state.replacementStep = null;
@@ -3770,6 +3827,10 @@ async function persistProject(project, expectedRevision) {
 async function saveProject() {
   if (!state.project || state.readOnly) return;
   try {
+    if (state.workspaceEdit) {
+      await saveWorkspaceRouteGraph();
+      return;
+    }
     const record = await persistProject(projectWithPresentation(), state.revision);
     state.project = record.project;
     state.revision = record.revision_sha256;
@@ -3781,6 +3842,58 @@ async function saveProject() {
   } catch (error) {
     setStatus(error.message, "bad");
   }
+}
+
+async function saveWorkspaceRouteGraph() {
+  const edit = state.workspaceEdit;
+  const workspaceId = state.workspace.manifest.id;
+  const positions = Object.fromEntries(
+    [...state.positions.entries()].map(([id, position]) => [
+      id,
+      { x: position.x, y: position.y },
+    ]),
+  );
+  const layout = edit.layout ? {
+    asset_id: edit.layout.asset.header.id,
+    expected_revision_sha256: edit.layout.revision_sha256,
+    positions,
+    viewport: {
+      x: state.transform.x,
+      y: state.transform.y,
+      zoom: state.transform.scale,
+    },
+  } : null;
+  const saved = await projectApi(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/route-graphs/${encodeURIComponent(edit.graph.asset.header.id)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        schema: WORKSPACE_ROUTE_GRAPH_SAVE_SCHEMA,
+        expected_graph_revision_sha256: edit.graph.revision_sha256,
+        route_book_id: edit.routeBook.asset.header.id,
+        expected_route_book_revision_sha256: edit.routeBook.revision_sha256,
+        route_book: state.project.route_book,
+        layout,
+      }),
+    },
+  );
+  state.workspace = saved.workspace;
+  state.workspaceSignature = workspaceSignature(saved.workspace);
+  state.workspaceEdit = {
+    ...edit,
+    graph: saved.graph,
+    routeBook: saved.route_book,
+    layout: saved.layout,
+  };
+  state.selectedWorkspaceAsset = saved.graph;
+  state.project.route_book = saved.route_book.asset.payload.route_book;
+  state.graph = saved.graph.asset.payload.graph;
+  state.dirty = false;
+  updateProjectControls();
+  await refreshWorkspaces(workspaceId);
+  renderContentBrowser();
+  setStatus("Workspace Route Book, graph projection, and layout saved atomically", "good");
 }
 
 async function saveProjectAs() {

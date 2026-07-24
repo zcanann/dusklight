@@ -5,7 +5,7 @@ use crate::service::{PlannerServiceEnvelope, error_response, handle_envelope};
 use crate::workspace::{
     BUILTIN_LIBRARY_VERSION, WorkspaceAssetCommandRequest, WorkspaceAssetSaveRequest,
     WorkspaceCreateRequest, WorkspaceExport, WorkspaceLibraryForkRequest, WorkspaceRegistry,
-    WorkspaceTrashCommandRequest,
+    WorkspaceRouteGraphSaveRequest, WorkspaceTrashCommandRequest,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -320,6 +320,53 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
         }),
         [_, "assets", asset_id] if !asset_id.is_empty() => {
             dispatch_workspace_asset(request, state, workspace_id, asset_id)
+        }
+        [_, "route-graphs", graph_id] if request.method == "POST" && !graph_id.is_empty() => {
+            let save = match serde_json::from_slice::<WorkspaceRouteGraphSaveRequest>(&request.body)
+            {
+                Ok(save) => save,
+                Err(error) => {
+                    return project_error_response(400, "Bad Request", &error.to_string());
+                }
+            };
+            project_response(|| {
+                let graph = {
+                    let registry = state
+                        .workspaces
+                        .lock()
+                        .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                    registry
+                        .load_asset(workspace_id, graph_id)
+                        .map_err(|error| error.to_string())?
+                };
+                let origin = graph.asset.header.origin.ok_or_else(|| {
+                    "workspace route graph has no exact Library origin".to_owned()
+                })?;
+                let library = {
+                    let projects = state
+                        .projects
+                        .lock()
+                        .map_err(|_| "project store lock is poisoned".to_owned())?;
+                    projects
+                        .load(&origin.library_id)
+                        .map_err(|error| error.to_string())?
+                };
+                if !library.read_only
+                    || library.revision_sha256 != origin.library_sha256
+                    || origin.library_version != BUILTIN_LIBRARY_VERSION
+                {
+                    return Err(
+                        "workspace route graph Library authority is missing or changed".into(),
+                    );
+                }
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry
+                    .save_route_graph(workspace_id, graph_id, save, &library.project.catalog)
+                    .map_err(|error| error.to_string())
+            })
         }
         [_, "trash"] if request.method == "GET" => project_response(|| {
             let registry = state
@@ -890,7 +937,12 @@ mod tests {
             },
             &state,
         );
-        assert_eq!(imported.status, 200);
+        assert_eq!(
+            imported.status,
+            200,
+            "{}",
+            String::from_utf8_lossy(&imported.body)
+        );
         let imported: serde_json::Value = serde_json::from_slice(&imported.body).unwrap();
         assert_eq!(
             imported["manifest"]["mounted_libraries"]
@@ -917,6 +969,78 @@ mod tests {
                 .all(|asset| asset["id"] == "custom.roll"
                     || asset["kind"] == "route_book"
                     || asset.get("revision_sha256").is_some())
+        );
+        let asset_listing = |kind: &str| {
+            imported["assets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|asset| asset["kind"] == kind)
+                .unwrap()
+                .clone()
+        };
+        let graph_listing = asset_listing("route_graph");
+        let route_book_listing = asset_listing("route_book");
+        let layout_listing = asset_listing("layout");
+        let route_book_asset = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: format!(
+                    "/api/workspaces/ordon-route/assets/{}",
+                    route_book_listing["id"].as_str().unwrap()
+                ),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        let route_book_asset: serde_json::Value =
+            serde_json::from_slice(&route_book_asset.body).unwrap();
+        let mut route_book = route_book_asset["asset"]["payload"]["route_book"].clone();
+        route_book["manifest"]["author"] = "Browser route author".into();
+        let save_route = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_ROUTE_GRAPH_SAVE_SCHEMA,
+            "expected_graph_revision_sha256": graph_listing["revision_sha256"],
+            "route_book_id": route_book_listing["id"],
+            "expected_route_book_revision_sha256": route_book_listing["revision_sha256"],
+            "route_book": route_book,
+            "layout": {
+                "asset_id": layout_listing["id"],
+                "expected_revision_sha256": layout_listing["revision_sha256"],
+                "positions": {
+                    "node.authored": { "x": 320.0, "y": 180.0 }
+                },
+                "viewport": { "x": 12.0, "y": 24.0, "zoom": 1.25 }
+            }
+        });
+        let route_saved = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: format!(
+                    "/api/workspaces/ordon-route/route-graphs/{}",
+                    graph_listing["id"].as_str().unwrap()
+                ),
+                body: serde_json::to_vec(&save_route).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(route_saved.status, 200);
+        let route_saved: serde_json::Value = serde_json::from_slice(&route_saved.body).unwrap();
+        assert_eq!(
+            route_saved["schema"],
+            crate::workspace::WORKSPACE_ROUTE_GRAPH_EDIT_RECORD_SCHEMA
+        );
+        assert_eq!(
+            route_saved["route_book"]["asset"]["payload"]["route_book"]["manifest"]["author"],
+            "Browser route author"
+        );
+        assert_eq!(
+            route_saved["layout"]["asset"]["payload"]["positions"]["node.authored"]["x"],
+            320.0
+        );
+        assert!(
+            route_saved["graph"]["asset"]["payload"]["graph"]["route_book_sha256"]
+                .as_str()
+                .is_some()
         );
 
         let fork = serde_json::json!({
