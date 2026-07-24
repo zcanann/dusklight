@@ -43,7 +43,7 @@ use std::path::Path;
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V2: &str = "dusklight-native-tactic-route-report/v2";
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
-const ROUTE_TACTIC_TICK_COST: f32 = 0.001;
+const ROUTE_TACTIC_DISCOUNT: f32 = 1.0;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
 
 #[derive(Clone, Debug)]
@@ -282,15 +282,7 @@ fn run_seed(
         seed_group(seed_index, 0)?,
         current,
         route_prefix.clone(),
-        OptionValueConfig {
-            fitted_q: FqiConfig {
-                iterations: 12,
-                trees_per_action: 15,
-                max_tree_depth: 8,
-                seed: 0xd15c_a11d_5eed_f017 ^ seed,
-                ..FqiConfig::default()
-            },
-        },
+        route_option_value_config(seed),
         TacticExplorationConfig {
             seed,
             epsilon_per_million: config.epsilon_per_million,
@@ -865,10 +857,27 @@ fn route_tactic_base_reward_spec() -> TacticRewardSpec {
     TacticRewardSpec {
         schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
         terminal_reward: 100.0,
-        tick_cost: ROUTE_TACTIC_TICK_COST,
+        // The first route-learning proof is about competence, not speed. Keep
+        // temporary detours value-neutral so the learner can discover paths
+        // around collision geometry without paying an implicit route-time
+        // objective that the product contract explicitly excludes.
+        tick_cost: 0.0,
         novelty_reward: ROUTE_TACTIC_NOVELTY_REWARD,
-        per_tick_discount: 0.995,
+        per_tick_discount: ROUTE_TACTIC_DISCOUNT,
         potential: None,
+    }
+}
+
+fn route_option_value_config(seed: u64) -> OptionValueConfig {
+    OptionValueConfig {
+        fitted_q: FqiConfig {
+            iterations: 12,
+            trees_per_action: 15,
+            max_tree_depth: 8,
+            discount: ROUTE_TACTIC_DISCOUNT,
+            seed: 0xd15c_a11d_5eed_f017 ^ seed,
+            ..FqiConfig::default()
+        },
     }
 }
 
@@ -1014,22 +1023,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn semantic_frontier_progress_outweighs_one_bounded_tactic() {
-        let catalog =
-            dusklight_learning::default_tactic_catalog::default_route_tactic_catalog().unwrap();
-        let maximum_ticks = catalog
-            .entries()
-            .iter()
-            .map(|entry| entry.description().duration.maximum_ticks)
-            .max()
-            .unwrap();
+    fn first_route_proof_does_not_optimize_speed() {
         let reward = route_tactic_base_reward_spec();
+        let values = route_option_value_config(42);
 
-        assert!(reward.tick_cost > 0.0);
-        assert!(
-            reward.novelty_reward > reward.tick_cost * maximum_ticks as f32,
-            "a new semantic frontier cell must beat the cost of the longest tactic"
-        );
+        assert_eq!(reward.tick_cost, 0.0);
+        assert_eq!(reward.per_tick_discount, 1.0);
+        assert_eq!(values.fitted_q.discount, 1.0);
+        assert!(reward.novelty_reward > 0.0);
         assert!(reward.terminal_reward > reward.novelty_reward);
     }
 
