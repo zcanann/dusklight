@@ -8,6 +8,8 @@ const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const WORKSPACE_CREATE_SCHEMA = "dusklight.route-planner.workspace-create/v1";
 const WORKSPACE_ASSET_SCHEMA = "dusklight.route-planner.workspace-asset/v1";
 const WORKSPACE_ASSET_SAVE_SCHEMA = "dusklight.route-planner.workspace-asset-save/v1";
+const WORKSPACE_ASSET_COMMAND_SCHEMA = "dusklight.route-planner.workspace-asset-command/v1";
+const WORKSPACE_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-trash-command/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
@@ -34,6 +36,7 @@ const elements = Object.fromEntries([
 const state = {
   workspace: null,
   workspaceList: [],
+  trash: [],
   libraries: [],
   contentSource: "workspace",
   project: null,
@@ -263,6 +266,7 @@ async function loadWorkspace(id) {
 
 async function openWorkspaceRecord(record) {
   state.workspace = record;
+  await refreshTrash();
   state.project = null;
   state.graph = null;
   state.revision = null;
@@ -286,6 +290,16 @@ async function openWorkspaceRecord(record) {
   elements["detail-json"].textContent = "{}";
   updateProjectControls();
   selectContentSource("workspace");
+}
+
+async function refreshTrash() {
+  if (!state.workspace) {
+    state.trash = [];
+    return;
+  }
+  state.trash = await projectApi(
+    `/api/workspaces/${encodeURIComponent(state.workspace.manifest.id)}/trash`,
+  );
 }
 
 function selectContentSource(source) {
@@ -352,17 +366,201 @@ function renderContentBrowser() {
     summary.textContent = `${label}  ${assets.length}`;
     group.append(summary);
     for (const asset of assets) {
-      group.append(contentItem(
-        kind === "layout" ? "LAY" : "AST",
-        asset.label,
-        asset.relative_path,
-        false,
-        () => inspectWorkspaceAsset(asset),
-      ));
+      group.append(contentAssetItem(asset, kind === "layout" ? "LAY" : "AST"));
     }
     list.append(group);
   }
+  if (!query || "trash".includes(query)) {
+    const trashGroup = document.createElement("details");
+    trashGroup.className = "content-group";
+    const summary = document.createElement("summary");
+    summary.textContent = `Trash  ${state.trash.length}`;
+    trashGroup.append(summary);
+    for (const asset of state.trash) trashGroup.append(trashAssetItem(asset));
+    list.append(trashGroup);
+  }
   if (query && !list.childElementCount) list.append(contentMessage("No matching workspace assets."));
+}
+
+function contentAssetItem(asset, iconText) {
+  const row = document.createElement("div");
+  row.className = "content-asset-row";
+  row.append(contentItem(
+    iconText,
+    asset.label,
+    asset.relative_path,
+    false,
+    () => inspectWorkspaceAsset(asset),
+  ));
+  const actions = document.createElement("details");
+  actions.className = "asset-actions";
+  const summary = document.createElement("summary");
+  summary.setAttribute("aria-label", `Actions for ${asset.label}`);
+  summary.textContent = "⋯";
+  actions.append(summary);
+  for (const [label, command] of [
+    ["Rename", () => renameWorkspaceAsset(asset)],
+    ["Move", () => moveWorkspaceAsset(asset)],
+    ["Duplicate", () => duplicateWorkspaceAsset(asset)],
+    ["Delete to Trash", () => trashWorkspaceAsset(asset)],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      actions.open = false;
+      command();
+    });
+    actions.append(button);
+  }
+  row.append(actions);
+  return row;
+}
+
+function trashAssetItem(asset) {
+  const row = document.createElement("div");
+  row.className = "content-asset-row";
+  row.append(contentItem("BIN", asset.label, asset.original_relative_path, false, () => {
+    elements["detail-title"].textContent = asset.label;
+    elements["detail-subtitle"].textContent = `Deleted ${asset.kind.replaceAll("_", " ")}`;
+    elements["detail-json"].textContent = JSON.stringify(asset, null, 2);
+  }));
+  const actions = document.createElement("details");
+  actions.className = "asset-actions";
+  const summary = document.createElement("summary");
+  summary.textContent = "⋯";
+  summary.setAttribute("aria-label", `Trash actions for ${asset.label}`);
+  actions.append(summary);
+  for (const [label, command] of [
+    ["Restore", "restore"],
+    ["Delete permanently", "permanently_delete"],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", () => runTrashCommand(asset, command));
+    actions.append(button);
+  }
+  row.append(actions);
+  return row;
+}
+
+async function workspaceAssetCommand(asset, command) {
+  const workspaceId = state.workspace.manifest.id;
+  const record = await projectApi(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(asset.id)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ schema: WORKSPACE_ASSET_COMMAND_SCHEMA, command }),
+    },
+  );
+  state.workspace = record;
+  await refreshTrash();
+  await refreshWorkspaces(workspaceId);
+  renderContentBrowser();
+}
+
+async function renameWorkspaceAsset(asset) {
+  const label = prompt("Asset name", asset.label);
+  if (label == null || !label.trim() || label.trim() === asset.label) return;
+  try {
+    await workspaceAssetCommand(asset, {
+      kind: "rename",
+      expected_revision_sha256: asset.revision_sha256,
+      label: label.trim(),
+    });
+    setStatus("Asset renamed; stable references preserved", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function moveWorkspaceAsset(asset) {
+  const relativePath = prompt("Workspace-relative path", asset.relative_path);
+  if (relativePath == null || relativePath === asset.relative_path) return;
+  try {
+    await workspaceAssetCommand(asset, {
+      kind: "move",
+      expected_revision_sha256: asset.revision_sha256,
+      relative_path: relativePath,
+    });
+    setStatus("Asset moved; stable references preserved", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function duplicateWorkspaceAsset(asset) {
+  const newId = prompt("New stable ID", `${asset.id}-copy`);
+  if (newId == null) return;
+  const newLabel = prompt("Copy name", `${asset.label} copy`);
+  if (newLabel == null) return;
+  const folder = String(asset.relative_path).split(/[\\/]/).slice(0, -1).join("/");
+  const relativePath = prompt("Workspace-relative path", `${folder}/${slug(newId)}.json`);
+  if (relativePath == null) return;
+  try {
+    await workspaceAssetCommand(asset, {
+      kind: "duplicate",
+      new_id: newId.trim(),
+      new_label: newLabel.trim(),
+      relative_path: relativePath,
+    });
+    setStatus("Asset duplicated with a new stable identity", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function trashWorkspaceAsset(asset) {
+  if (!confirm(`Move “${asset.label}” to Trash?`)) return;
+  const command = {
+    kind: "delete_to_trash",
+    expected_revision_sha256: asset.revision_sha256,
+    allow_broken_references: false,
+  };
+  try {
+    await workspaceAssetCommand(asset, command);
+    setStatus("Asset moved to Trash", "good");
+  } catch (error) {
+    if (!error.message.includes("is referenced by")
+      || !confirm(`${error.message}\n\nDelete anyway and keep broken references visible?`)) {
+      setStatus(error.message, "bad");
+      return;
+    }
+    try {
+      await workspaceAssetCommand(asset, { ...command, allow_broken_references: true });
+      setStatus("Asset moved to Trash; inbound references remain visibly broken", "good");
+    } catch (confirmedError) {
+      setStatus(confirmedError.message, "bad");
+    }
+  }
+}
+
+async function runTrashCommand(asset, command) {
+  if (command === "permanently_delete"
+    && !confirm(`Permanently delete “${asset.label}”? This cannot be undone.`)) return;
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    state.workspace = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/trash/${encodeURIComponent(asset.id)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schema: WORKSPACE_TRASH_COMMAND_SCHEMA,
+          expected_revision_sha256: asset.revision_sha256,
+          command,
+        }),
+      },
+    );
+    await refreshTrash();
+    await refreshWorkspaces(workspaceId);
+    renderContentBrowser();
+    setStatus(command === "restore" ? "Asset restored" : "Asset permanently deleted", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 function contentItem(iconText, label, subtitle, readOnly, action) {

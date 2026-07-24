@@ -2,7 +2,10 @@
 
 use crate::project::{ProjectSaveRequest, ProjectStore};
 use crate::service::{PlannerServiceEnvelope, error_response, handle_envelope};
-use crate::workspace::{WorkspaceAssetSaveRequest, WorkspaceCreateRequest, WorkspaceRegistry};
+use crate::workspace::{
+    WorkspaceAssetCommandRequest, WorkspaceAssetSaveRequest, WorkspaceCreateRequest,
+    WorkspaceRegistry, WorkspaceTrashCommandRequest,
+};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -274,6 +277,18 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
         [_, "assets", asset_id] if !asset_id.is_empty() => {
             dispatch_workspace_asset(request, state, workspace_id, asset_id)
         }
+        [_, "trash"] if request.method == "GET" => project_response(|| {
+            let registry = state
+                .workspaces
+                .lock()
+                .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+            registry
+                .list_trash(workspace_id)
+                .map_err(|error| error.to_string())
+        }),
+        [_, "trash", asset_id] if !asset_id.is_empty() => {
+            dispatch_workspace_trash(request, state, workspace_id, asset_id)
+        }
         _ => project_error_response(404, "Not Found", "workspace endpoint not found"),
     }
 }
@@ -311,8 +326,50 @@ fn dispatch_workspace_asset(
                     .map_err(|error| error.to_string())
             })
         }
+        "POST" => {
+            let command =
+                match serde_json::from_slice::<WorkspaceAssetCommandRequest>(&request.body) {
+                    Ok(command) => command,
+                    Err(error) => {
+                        return project_error_response(400, "Bad Request", &error.to_string());
+                    }
+                };
+            project_response(|| {
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry
+                    .command_asset(workspace_id, asset_id, command)
+                    .map_err(|error| error.to_string())
+            })
+        }
         _ => project_error_response(405, "Method Not Allowed", "unsupported asset method"),
     }
+}
+
+fn dispatch_workspace_trash(
+    request: HttpRequest,
+    state: &WebState,
+    workspace_id: &str,
+    asset_id: &str,
+) -> HttpResponse {
+    if request.method != "POST" {
+        return project_error_response(405, "Method Not Allowed", "unsupported trash method");
+    }
+    let command = match serde_json::from_slice::<WorkspaceTrashCommandRequest>(&request.body) {
+        Ok(command) => command,
+        Err(error) => return project_error_response(400, "Bad Request", &error.to_string()),
+    };
+    project_response(|| {
+        let registry = state
+            .workspaces
+            .lock()
+            .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+        registry
+            .command_trash(workspace_id, asset_id, command)
+            .map_err(|error| error.to_string())
+    })
 }
 
 fn dispatch_project_record(request: HttpRequest, state: &WebState) -> HttpResponse {
@@ -722,6 +779,73 @@ mod tests {
             loaded_asset["asset"]["payload"]["evidence_status"],
             "hypothetical"
         );
+        let revision = loaded_asset["revision_sha256"].as_str().unwrap();
+        let rename = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_ASSET_COMMAND_SCHEMA,
+            "command": {
+                "kind": "rename",
+                "expected_revision_sha256": revision,
+                "label": "Roll quickly",
+            },
+        });
+        let renamed = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/assets/custom.roll".into(),
+                body: serde_json::to_vec(&rename).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(renamed.status, 200);
+        let renamed: serde_json::Value = serde_json::from_slice(&renamed.body).unwrap();
+        let renamed_asset = renamed["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|asset| asset["id"] == "custom.roll")
+            .unwrap();
+        assert_eq!(renamed_asset["label"], "Roll quickly");
+        let trash = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_ASSET_COMMAND_SCHEMA,
+            "command": {
+                "kind": "delete_to_trash",
+                "expected_revision_sha256": renamed_asset["revision_sha256"],
+                "allow_broken_references": false,
+            },
+        });
+        let trashed = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/assets/custom.roll".into(),
+                body: serde_json::to_vec(&trash).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(trashed.status, 200);
+        let trash_list = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces/ordon-route/trash".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        let trash_list: serde_json::Value = serde_json::from_slice(&trash_list.body).unwrap();
+        assert_eq!(trash_list.as_array().unwrap().len(), 1);
+        let restore = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_TRASH_COMMAND_SCHEMA,
+            "expected_revision_sha256": trash_list[0]["revision_sha256"],
+            "command": "restore",
+        });
+        let restored = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/trash/custom.roll".into(),
+                body: serde_json::to_vec(&restore).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(restored.status, 200);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

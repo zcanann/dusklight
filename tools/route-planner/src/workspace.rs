@@ -29,6 +29,10 @@ pub const WORKSPACE_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-rec
 pub const WORKSPACE_CREATE_SCHEMA: &str = "dusklight.route-planner.workspace-create/v1";
 pub const WORKSPACE_ASSET_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-asset-record/v1";
 pub const WORKSPACE_ASSET_SAVE_SCHEMA: &str = "dusklight.route-planner.workspace-asset-save/v1";
+pub const WORKSPACE_ASSET_COMMAND_SCHEMA: &str =
+    "dusklight.route-planner.workspace-asset-command/v1";
+pub const WORKSPACE_TRASH_COMMAND_SCHEMA: &str =
+    "dusklight.route-planner.workspace-trash-command/v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
 const LEGACY_WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v0";
@@ -304,6 +308,50 @@ pub struct WorkspaceTrashListing {
     pub kind: WorkspaceAssetKind,
     pub original_relative_path: PathBuf,
     pub revision_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceAssetCommandRequest {
+    pub schema: String,
+    pub command: WorkspaceAssetCommand,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkspaceAssetCommand {
+    Rename {
+        expected_revision_sha256: Digest,
+        label: String,
+    },
+    Move {
+        expected_revision_sha256: Digest,
+        relative_path: PathBuf,
+    },
+    Duplicate {
+        new_id: String,
+        new_label: String,
+        relative_path: PathBuf,
+    },
+    DeleteToTrash {
+        expected_revision_sha256: Digest,
+        allow_broken_references: bool,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceTrashCommandRequest {
+    pub schema: String,
+    pub expected_revision_sha256: Digest,
+    pub command: WorkspaceTrashCommand,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceTrashCommand {
+    Restore,
+    PermanentlyDelete,
 }
 
 #[derive(Debug)]
@@ -738,6 +786,82 @@ impl WorkspaceRegistry {
             revision_sha256,
             asset: request.asset,
         })
+    }
+
+    pub fn command_asset(
+        &self,
+        workspace_id: &str,
+        asset_id: &str,
+        request: WorkspaceAssetCommandRequest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_ASSET_COMMAND_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace asset command schema is unsupported",
+            ));
+        }
+        let store = self.open_workspace(workspace_id)?;
+        match request.command {
+            WorkspaceAssetCommand::Rename {
+                expected_revision_sha256,
+                label,
+            } => {
+                store.rename_asset(asset_id, label, expected_revision_sha256)?;
+            }
+            WorkspaceAssetCommand::Move {
+                expected_revision_sha256,
+                relative_path,
+            } => {
+                store.move_asset(asset_id, &relative_path, expected_revision_sha256)?;
+            }
+            WorkspaceAssetCommand::Duplicate {
+                new_id,
+                new_label,
+                relative_path,
+            } => {
+                store.duplicate_asset(asset_id, new_id, new_label, &relative_path)?;
+            }
+            WorkspaceAssetCommand::DeleteToTrash {
+                expected_revision_sha256,
+                allow_broken_references,
+            } => {
+                store.delete_to_trash(
+                    asset_id,
+                    expected_revision_sha256,
+                    allow_broken_references,
+                )?;
+            }
+        }
+        workspace_record(&store)
+    }
+
+    pub fn list_trash(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<WorkspaceTrashListing>, WorkspaceError> {
+        self.open_workspace(workspace_id)?.list_trash()
+    }
+
+    pub fn command_trash(
+        &self,
+        workspace_id: &str,
+        asset_id: &str,
+        request: WorkspaceTrashCommandRequest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_TRASH_COMMAND_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace trash command schema is unsupported",
+            ));
+        }
+        let store = self.open_workspace(workspace_id)?;
+        match request.command {
+            WorkspaceTrashCommand::Restore => {
+                store.restore_from_trash(asset_id, request.expected_revision_sha256)?;
+            }
+            WorkspaceTrashCommand::PermanentlyDelete => {
+                store.permanently_delete_from_trash(asset_id, request.expected_revision_sha256)?;
+            }
+        }
+        workspace_record(&store)
     }
 
     fn open_workspace(&self, id: &str) -> Result<WorkspaceStore, WorkspaceError> {

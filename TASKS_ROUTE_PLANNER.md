@@ -146,7 +146,7 @@ The initial mutable asset types are:
 - [ ] Use fixed virtual roots for typed assets while allowing user folders below
       those roots.
 - [ ] Validate names, collisions, references, and permissions before mutation.
-- [ ] Show inbound references before delete and preserve resolvable broken-link
+- [x] Show inbound references before delete and preserve resolvable broken-link
       records when deletion is confirmed.
 - [ ] Add revision-checked save and conflict resolution for independently open
       editor tabs.
