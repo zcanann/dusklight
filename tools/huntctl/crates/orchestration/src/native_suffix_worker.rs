@@ -23,6 +23,8 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+const MAXIMUM_PERSISTENT_BATCH_TICKS: usize = 4_096;
+
 #[derive(Clone, Debug)]
 pub struct NativeSuffixWorkerLaunch {
     pub executable: PathBuf,
@@ -708,7 +710,6 @@ fn validate_batch_identity(
         || batch.source_boundary_fingerprint != identity.source_boundary_fingerprint
         || batch.checkpoint_validation.kind != identity.checkpoint_validation_kind
         || batch.checkpoint_validation.ticks as u64 != identity.checkpoint_validation_ticks
-        || batch.maximum_ticks as u64 != identity.maximum_ticks
     {
         return Err(worker_message(
             "next suffix batch differs from the authenticated session source",
@@ -762,6 +763,7 @@ fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWor
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
         || batch.maximum_ticks == 0
+        || batch.maximum_ticks > MAXIMUM_PERSISTENT_BATCH_TICKS
         || batch.checkpoint_validation.kind != "recorded_replay_window"
         || batch.checkpoint_validation.ticks == 0
     {
@@ -1088,6 +1090,18 @@ mod tests {
         for cvar in FIXED_AUTOMATION_CVARS {
             assert!(prepared.args.iter().any(|argument| argument == cvar));
         }
+    }
+
+    #[test]
+    fn persistent_source_accepts_a_different_bounded_tactic_horizon() {
+        let (_root, launch) = fixture();
+        let prepared = prepare_launch(&launch).unwrap();
+        let mut next = prepared.batch;
+        next.maximum_ticks = 1;
+        validate_batch_identity(&next, &prepared.identity).unwrap();
+
+        next.maximum_ticks = MAXIMUM_PERSISTENT_BATCH_TICKS + 1;
+        assert!(validate_batch_identity(&next, &prepared.identity).is_err());
     }
 
     #[test]
