@@ -7,6 +7,7 @@
 pub use dusklight_automation_contracts::{artifact, controller_program, tape};
 
 pub mod controller_compilation;
+pub mod controller_runtime;
 pub mod game_tactic;
 pub mod motion_path;
 pub mod option_diagnostics;

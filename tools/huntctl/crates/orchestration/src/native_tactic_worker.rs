@@ -7,13 +7,18 @@ use crate::native_suffix_worker::{
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState, WaitCondition};
+use dusklight_control::controller_runtime::{
+    ControllerProgramStepper, ControllerRuntimeActor, ControllerRuntimeEnd,
+    ControllerRuntimeObservation, ControllerRuntimeQueryRecord, MAX_CONTROLLER_RUNTIME_ACTORS,
+};
 use dusklight_control::option_execution::{
     OptionCondition, OptionEndReason, OptionExecution, TapeRange,
 };
 use dusklight_evidence::native_episode_shard::{
-    NativeEpisode, NativeEpisodeShard, NativeObservationPhase, NativeRawPad,
+    NativeEpisode, NativeEpisodeShard, NativeLearningObservation, NativeObservationPhase,
+    NativeRawPad,
 };
-use dusklight_learning::fact_snapshot::FactSnapshot;
+use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot};
 use dusklight_learning::native_generic_tactic::{
     NativeGenericTacticStepper, NativeTacticObservation, NativeTacticQueryRecord,
 };
@@ -55,10 +60,17 @@ pub struct NativeTacticWorkerOutcome {
     pub episode_shard_sha256: Digest,
     pub selected: SelectedTactic,
     pub execution: OptionExecution,
-    pub native_queries: Vec<NativeTacticQueryRecord>,
+    pub native_queries: Vec<TacticRuntimeQuery>,
     pub route_tape: InputTape,
     pub next_facts: FactSnapshot,
     pub terminal: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", content = "query", rename_all = "snake_case")]
+pub enum TacticRuntimeQuery {
+    NativeGeneric(NativeTacticQueryRecord),
+    ReactiveController(ControllerRuntimeQueryRecord),
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +87,12 @@ enum PreparedNativeExecution {
         stepper: NativeGenericTacticStepper,
         duration: TacticDurationBounds,
         termination: OptionCondition,
+    },
+    ReactiveController {
+        stepper: ControllerProgramStepper,
+        duration: TacticDurationBounds,
+        termination: OptionCondition,
+        cancellation: Vec<OptionCondition>,
     },
 }
 
@@ -160,6 +178,24 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
             stepper,
             duration,
             termination,
+        ),
+        PreparedNativeExecution::ReactiveController {
+            stepper,
+            duration,
+            termination,
+            cancellation,
+        } => execute_reactive_controller(
+            worker,
+            selected,
+            before,
+            route_prefix,
+            paths,
+            source_frame,
+            candidate_prefix_ticks,
+            stepper,
+            duration,
+            termination,
+            cancellation,
         ),
     }
 }
@@ -298,7 +334,10 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
                 candidate_prefix_ticks,
                 request,
                 validated,
-                queries,
+                queries
+                    .into_iter()
+                    .map(TacticRuntimeQuery::NativeGeneric)
+                    .collect(),
             );
         }
 
@@ -310,6 +349,325 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
     }
     Err(NativeTacticWorkerError::InvalidDuration)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
+    worker: &mut W,
+    selected: &SelectedTactic,
+    before: &FactSnapshot,
+    route_prefix: &InputTape,
+    paths: &NativeTacticWorkerPaths,
+    source_frame: usize,
+    candidate_prefix_ticks: usize,
+    mut stepper: ControllerProgramStepper,
+    duration: TacticDurationBounds,
+    termination: OptionCondition,
+    cancellation: Vec<OptionCondition>,
+) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
+    let mut observation = controller_observation_from_facts(before)?;
+    let mut option_tape = InputTape {
+        boot: route_prefix.boot.clone(),
+        tick_rate_numerator: route_prefix.tick_rate_numerator,
+        tick_rate_denominator: route_prefix.tick_rate_denominator,
+        frames: Vec::new(),
+    };
+    let mut queries = Vec::new();
+    let mut last_run: Option<(InputTape, NativeSuffixBatch, ValidatedNativeSuffixBatch)> = None;
+
+    for local_tick in 0..duration.maximum_ticks {
+        let step = stepper
+            .step(&observation)
+            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+        queries.push(step.query);
+        if matches!(step.end, Some(ControllerRuntimeEnd::TargetLost { .. })) {
+            let Some((candidate_tape, request, validated)) = last_run else {
+                return Err(NativeTacticWorkerError::Observation(
+                    "reactive controller lost its exact target before emitting any input".into(),
+                ));
+            };
+            if cancellation.is_empty() {
+                return Err(NativeTacticWorkerError::DetachedSelection);
+            }
+            let local_execution = capture_local_execution(
+                selected,
+                duration,
+                termination.clone(),
+                cancellation.clone(),
+                OptionEndReason::Cancelled { condition_index: 0 },
+                &option_tape,
+            )?;
+            return observe_outcome(
+                selected,
+                before,
+                route_prefix,
+                PreparedNativeTactic {
+                    option_tape,
+                    execution: local_execution,
+                    duration,
+                },
+                candidate_tape,
+                candidate_prefix_ticks,
+                request,
+                validated,
+                queries
+                    .into_iter()
+                    .map(TacticRuntimeQuery::ReactiveController)
+                    .collect(),
+            );
+        }
+
+        let frame = step.frame.ok_or_else(|| {
+            NativeTacticWorkerError::Observation(
+                "reactive controller returned neither PAD nor stopping condition".into(),
+            )
+        })?;
+        option_tape.frames.push(frame);
+        let mut candidate_tape = InputTape {
+            boot: route_prefix.boot.clone(),
+            tick_rate_numerator: route_prefix.tick_rate_numerator,
+            tick_rate_denominator: route_prefix.tick_rate_denominator,
+            frames: route_prefix.frames[source_frame..].to_vec(),
+        };
+        candidate_tape.frames.extend_from_slice(&option_tape.frames);
+        let request = tactic_batch(worker.identity(), selected, &candidate_tape)?;
+        let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
+        write_new_json(&iteration_paths.request, &request)?;
+        let validated =
+            worker.run_tactic_batch(&iteration_paths.request, &iteration_paths.result)?;
+        let episode = inspect_candidate_episode(&request, &validated, &candidate_tape)?;
+        if episode.steps.len() <= candidate_prefix_ticks {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "route prefix terminated before the selected tactic",
+            ));
+        }
+        let realized_ticks = episode.steps.len() - candidate_prefix_ticks;
+        if realized_ticks != option_tape.frames.len() {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "reactive controller replay diverged",
+            ));
+        }
+
+        let controller_complete = matches!(step.end, Some(ControllerRuntimeEnd::MaximumDuration));
+        if episode.success || controller_complete {
+            let mut final_cancellation = cancellation.clone();
+            let end_reason = if episode.success && !controller_complete {
+                let condition_index = u32::try_from(final_cancellation.len())
+                    .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+                final_cancellation.push(OptionCondition::TargetReached {
+                    target: "authored_goal".into(),
+                });
+                OptionEndReason::Cancelled { condition_index }
+            } else {
+                OptionEndReason::Completed
+            };
+            let local_execution = capture_local_execution(
+                selected,
+                duration,
+                termination.clone(),
+                final_cancellation,
+                end_reason,
+                &option_tape,
+            )?;
+            return observe_outcome(
+                selected,
+                before,
+                route_prefix,
+                PreparedNativeTactic {
+                    option_tape,
+                    execution: local_execution,
+                    duration,
+                },
+                candidate_tape,
+                candidate_prefix_ticks,
+                request,
+                validated,
+                queries
+                    .into_iter()
+                    .map(TacticRuntimeQuery::ReactiveController)
+                    .collect(),
+            );
+        }
+
+        let last = episode
+            .steps
+            .last()
+            .ok_or(NativeTacticWorkerError::DetachedResult("empty episode"))?;
+        observation = controller_observation_from_post_simulation(&last.post_simulation)?;
+        last_run = Some((candidate_tape, request, validated));
+    }
+    Err(NativeTacticWorkerError::InvalidDuration)
+}
+
+fn capture_local_execution(
+    selected: &SelectedTactic,
+    duration: TacticDurationBounds,
+    termination: OptionCondition,
+    cancellation: Vec<OptionCondition>,
+    end_reason: OptionEndReason,
+    option_tape: &InputTape,
+) -> Result<OptionExecution, NativeTacticWorkerError> {
+    OptionExecution::capture(
+        selected.descriptor.option_id.clone(),
+        selected.descriptor.option_type.clone(),
+        selected.descriptor.parameters.clone(),
+        duration.minimum_ticks,
+        duration.maximum_ticks,
+        termination,
+        cancellation,
+        end_reason,
+        option_tape,
+        TapeRange {
+            start_frame: 0,
+            end_frame_exclusive: option_tape.frames.len() as u64,
+        },
+    )
+    .map_err(|error| NativeTacticWorkerError::Execution(error.to_string()))
+}
+
+fn controller_observation_from_facts(
+    facts: &FactSnapshot,
+) -> Result<ControllerRuntimeObservation, NativeTacticWorkerError> {
+    facts
+        .validate()
+        .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+    let offset = u64::from(facts.phase == FactPhase::PostSimulation);
+    let simulation_tick = facts.simulation_tick.checked_add(offset).ok_or(
+        NativeTacticWorkerError::DetachedResult("controller boundary"),
+    )?;
+    let tape_frame =
+        facts
+            .tape_frame
+            .checked_add(offset)
+            .ok_or(NativeTacticWorkerError::DetachedResult(
+                "controller boundary",
+            ))?;
+    let player_yaw_radians = facts
+        .player
+        .current_angle
+        .map(|angle| angle_to_radians(angle[1]));
+    let player_velocity_xz = facts
+        .player
+        .velocity_f32_bits
+        .map(|bits| [f32::from_bits(bits[0]), f32::from_bits(bits[2])]);
+    let actors = facts
+        .actors
+        .iter()
+        .map(|actor| ControllerRuntimeActor {
+            actor_name: actor.actor_name,
+            stable_id: actor.runtime_generation,
+            set_id: actor.set_id,
+            home_room: actor.home_room,
+            position: actor.position_f32_bits.map(f32::from_bits),
+        })
+        .collect::<Vec<_>>();
+    build_controller_observation(
+        facts.boundary_index,
+        simulation_tick,
+        tape_frame,
+        facts.state_identity,
+        facts.player.present,
+        facts.player.position_f32_bits.map(f32::from_bits),
+        player_yaw_radians,
+        player_velocity_xz,
+        facts.player.camera_yaw_radians_f32_bits.map(f32::from_bits),
+        facts.world.stage.clone(),
+        facts.actors_complete,
+        actors,
+    )
+}
+
+fn controller_observation_from_post_simulation(
+    value: &NativeLearningObservation,
+) -> Result<ControllerRuntimeObservation, NativeTacticWorkerError> {
+    if value.phase != NativeObservationPhase::PostSimulation {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "controller observation phase",
+        ));
+    }
+    let simulation_tick =
+        value
+            .simulation_tick
+            .checked_add(1)
+            .ok_or(NativeTacticWorkerError::DetachedResult(
+                "controller boundary",
+            ))?;
+    let tape_frame =
+        value
+            .tape_frame
+            .checked_add(1)
+            .ok_or(NativeTacticWorkerError::DetachedResult(
+                "controller boundary",
+            ))?;
+    let actors = value
+        .actors
+        .iter()
+        .map(|actor| ControllerRuntimeActor {
+            actor_name: actor.actor_name,
+            stable_id: actor.runtime_generation,
+            set_id: actor.set_id,
+            home_room: actor.home_room,
+            position: actor.position,
+        })
+        .collect::<Vec<_>>();
+    build_controller_observation(
+        value.boundary_index,
+        simulation_tick,
+        tape_frame,
+        value.state_identity,
+        value.player_present,
+        value.player_position,
+        Some(angle_to_radians(value.player_current_angle[1])),
+        Some([value.player_velocity[0], value.player_velocity[2]]),
+        value.camera_yaw_radians,
+        value.stage.clone(),
+        !value.actors_truncated && value.actor_observed_count as usize == value.actors.len(),
+        actors,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_controller_observation(
+    boundary_index: u64,
+    simulation_tick: u64,
+    tape_frame: u64,
+    state_identity: [u8; 16],
+    player_present: bool,
+    player_position: [f32; 3],
+    player_yaw_radians: Option<f32>,
+    player_velocity_xz: Option<[f32; 2]>,
+    camera_yaw_radians: Option<f32>,
+    stage: String,
+    mut actors_complete: bool,
+    mut actors: Vec<ControllerRuntimeActor>,
+) -> Result<ControllerRuntimeObservation, NativeTacticWorkerError> {
+    actors.sort_by_key(|actor| actor.stable_id);
+    if actors.len() > MAX_CONTROLLER_RUNTIME_ACTORS {
+        actors.truncate(MAX_CONTROLLER_RUNTIME_ACTORS);
+        actors_complete = false;
+    }
+    let observation = ControllerRuntimeObservation {
+        boundary_index,
+        simulation_tick,
+        tape_frame,
+        state_identity,
+        player_present,
+        player_position,
+        player_yaw_radians,
+        player_velocity_xz,
+        camera_yaw_radians,
+        stage,
+        actors_complete,
+        actors,
+    };
+    observation
+        .validate()
+        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+    Ok(observation)
+}
+
+fn angle_to_radians(angle: i16) -> f32 {
+    f32::from(angle) * std::f32::consts::PI / 32_768.0
 }
 
 fn iteration_paths(
@@ -399,9 +757,15 @@ fn prepare_selected(
                     termination: entry.description().stopping.termination.clone(),
                 })
             }
-            PreparedTacticExecution::ReactiveController(_) => Err(
-                NativeTacticWorkerError::ObservationDriven(selected.descriptor.option_id.clone()),
-            ),
+            PreparedTacticExecution::ReactiveController(program) => {
+                Ok(PreparedNativeExecution::ReactiveController {
+                    stepper: ControllerProgramStepper::new(program.clone())
+                        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?,
+                    duration: entry.description().duration,
+                    termination: entry.description().stopping.termination.clone(),
+                    cancellation: entry.description().stopping.cancellation.clone(),
+                })
+            }
         };
     }
 
@@ -517,7 +881,7 @@ fn observe_outcome(
     candidate_prefix_ticks: usize,
     request: NativeSuffixBatch,
     validated: ValidatedNativeSuffixBatch,
-    native_queries: Vec<NativeTacticQueryRecord>,
+    native_queries: Vec<TacticRuntimeQuery>,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     if validated.candidates.len() != 1
         || validated.candidates[0].id != request.candidates[0].id
@@ -781,6 +1145,7 @@ impl From<TacticBlueprintError> for NativeTacticWorkerError {
 mod tests {
     use super::*;
     use crate::native_suffix_result::ValidatedNativeSuffixCandidate;
+    use dusklight_control::controller_program::ControllerProgram;
     use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
     use dusklight_control::option_execution::{OptionParameter, OptionType};
     use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
@@ -916,6 +1281,66 @@ mod tests {
         assert_eq!(step.frame.pads[0].stick_y, -21);
         assert_eq!(step.end_reason, Some(OptionEndReason::MaximumDuration));
         assert_eq!(step.query.local_tick, 0);
+    }
+
+    #[test]
+    fn selected_reactive_controller_dispatches_to_the_observed_program_stepper() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let before = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "controller.seek",
+                TacticAssetSource::ReactiveController(
+                    ControllerProgram::parse(
+                        "duskcontrol 1\nframes 1\nseek coordinate replace from 0 for 1 frame world target 100 0 0 offset 0 0 0 magnitude 90 stop 1\n",
+                    )
+                    .unwrap(),
+                ),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let selected = SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: before.content_sha256().unwrap(),
+            decision_index: 3,
+            descriptor: catalog
+                .entry("controller.seek")
+                .unwrap()
+                .description()
+                .option
+                .clone(),
+            reason: TacticSelectionReason::Greedy,
+            exploration_draw: 0,
+        };
+        let PreparedNativeExecution::ReactiveController {
+            mut stepper,
+            duration,
+            ..
+        } = prepare_selected(&selected, &catalog, &[]).unwrap()
+        else {
+            panic!("reactive controller must keep its observed program");
+        };
+        let step = stepper
+            .step(&controller_observation_from_facts(&before).unwrap())
+            .unwrap();
+
+        assert_eq!(duration.maximum_ticks, 1);
+        assert!(step.frame.is_some());
+        assert_eq!(step.end, Some(ControllerRuntimeEnd::MaximumDuration));
+        assert_eq!(step.query.controller_frame, 0);
+        assert!(step.query.queried_fields.contains(
+            &dusklight_control::controller_compilation::ControllerObservationField::PlayerPosition
+        ));
     }
 
     #[test]

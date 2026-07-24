@@ -15,7 +15,9 @@ use dusklight_control::controller_compilation::{
     ControllerObservationField, ControllerObservationProvenance, StaticControllerError,
     compile_static_controller,
 };
-use dusklight_control::controller_program::{ControllerProgram, VERSION_MAJOR, VERSION_MINOR};
+use dusklight_control::controller_program::{
+    ActorSelector, ControllerProgram, Operation, VERSION_MAJOR, VERSION_MINOR,
+};
 use dusklight_control::game_tactic::{GAME_TACTIC_SCHEMA_V1, GameTacticPlan};
 use dusklight_control::motion_path::{MOTION_PATH_SCHEMA_V1, MotionPathPlan};
 use dusklight_control::option_execution::{
@@ -733,7 +735,25 @@ impl TacticAssetAdapter for ControllerProgram {
             },
             stopping: TacticStoppingContract {
                 termination: OptionCondition::DurationElapsed,
-                cancellation: Vec::new(),
+                cancellation: self
+                    .layers
+                    .iter()
+                    .any(|layer| {
+                        matches!(
+                            &layer.operation,
+                            Operation::SeekActor {
+                                selector: ActorSelector::Process { .. }
+                                    | ActorSelector::Placed { .. },
+                                ..
+                            }
+                        )
+                    })
+                    .then(|| {
+                        vec![OptionCondition::TargetLost {
+                            target: "controller_exact_actor".into(),
+                        }]
+                    })
+                    .unwrap_or_default(),
             },
             statically_realizable,
         })
@@ -1098,6 +1118,19 @@ mod tests {
                 .exact_static_realization("seek-world")
                 .unwrap()
                 .is_none()
+        );
+
+        let exact_actor = ControllerProgram::parse(
+            "duskcontrol 1\nframes 3\nseek actor replace from 0 for 3 actor 42 set 7 room 1 stage F_SP103 offset 0 0 0 magnitude 100 stop 1\n",
+        )
+        .unwrap()
+        .describe("seek-exact-actor")
+        .unwrap();
+        assert_eq!(
+            exact_actor.stopping.cancellation,
+            vec![OptionCondition::TargetLost {
+                target: "controller_exact_actor".into(),
+            }]
         );
 
         let native = NativeGenericTacticPlan::new(
