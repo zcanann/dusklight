@@ -729,6 +729,7 @@ impl PlannerExecutionState {
             | StateOperation::CopyValue { target, .. }
             | StateOperation::SetBitFromValue { target, .. }
             | StateOperation::Adjust { target, .. }
+            | StateOperation::DebitUnsigned { target, .. }
             | StateOperation::ClearField { target }
             | StateOperation::InvalidateField { target } => vec![target.component_id.clone()],
             StateOperation::ClampUnsignedMinimum { target, minimum } => self
@@ -1331,6 +1332,29 @@ impl PlannerExecutionState {
                     PlannerContractError::new("operation.adjust", "references an absent field")
                 })?;
                 adjust_value(value, *delta)?;
+                mark_transition(component, application_id);
+            }
+            StateOperation::DebitUnsigned { target, amount } => {
+                let component = self.component_mut(&target.component_id)?;
+                let ComponentPayload::Structured { fields } = &mut component.payload else {
+                    return Err(PlannerContractError::new(
+                        "operation.debit_unsigned",
+                        "requires a structured destination component",
+                    ));
+                };
+                let value = fields.get_mut(&target.field).ok_or_else(|| {
+                    PlannerContractError::new(
+                        "operation.debit_unsigned",
+                        "references an absent field",
+                    )
+                })?;
+                let StateValue::Unsigned(current) = value else {
+                    return Err(PlannerContractError::new(
+                        "operation.debit_unsigned",
+                        "requires an unsigned destination field",
+                    ));
+                };
+                *current = current.saturating_sub(*amount);
                 mark_transition(component, application_id);
             }
             StateOperation::ClampUnsignedMinimum { target, minimum } => {
@@ -3298,6 +3322,7 @@ fn history_event_writes_field(
             | StateOperation::CopyValue { target, .. }
             | StateOperation::SetBitFromValue { target, .. }
             | StateOperation::Adjust { target, .. }
+            | StateOperation::DebitUnsigned { target, .. }
             | StateOperation::ClearField { target }
             | StateOperation::InvalidateField { target } => {
                 target.component_id == component_id && target.field == field
@@ -4553,6 +4578,61 @@ mod tests {
                 .unwrap()
                 .application_id,
             "fixture.high-life"
+        );
+    }
+
+    #[test]
+    fn unsigned_debit_subtracts_or_saturates_at_zero() {
+        let target = ComponentFieldTarget {
+            component_id: "save.main".into(),
+            field: "rupees".into(),
+        };
+        let mut state = PlannerExecutionState::new(snapshot()).unwrap();
+        state
+            .apply_operations(
+                "fixture.rupees",
+                "snapshot.rupees-500",
+                &[StateOperation::Write {
+                    target: target.clone(),
+                    value: StateValue::Unsigned(500),
+                }],
+            )
+            .unwrap();
+        state
+            .apply_operations(
+                "message.debit-300",
+                "snapshot.rupees-200",
+                &[StateOperation::DebitUnsigned {
+                    target: target.clone(),
+                    amount: 300,
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            field(&state, "save.main", "rupees"),
+            &StateValue::Unsigned(200)
+        );
+
+        state
+            .apply_operations(
+                "message.debit-300-again",
+                "snapshot.rupees-zero",
+                &[StateOperation::DebitUnsigned {
+                    target,
+                    amount: 300,
+                }],
+            )
+            .unwrap();
+        assert_eq!(
+            field(&state, "save.main", "rupees"),
+            &StateValue::Unsigned(0)
+        );
+        assert_eq!(
+            state
+                .last_field_writer("save.main", "rupees")
+                .unwrap()
+                .application_id,
+            "message.debit-300-again"
         );
     }
 

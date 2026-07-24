@@ -41,6 +41,18 @@ bit to equal zero and branch outcome 0 requires the selected bit to be set. The
 compiled reader references the same backing store as the guard, so backward
 relevance can find writers without a hand-authored `text_displacement` Boolean.
 
+Generic query 4 is also decidable for nonzero parameters when the exact import
+profile names the structured rupee field. Outcome 0 requires the current count
+to be at least the parameter and outcome 1 requires it to be below the
+parameter. Parameter zero reads the wallet maximum and remains unknown until
+that separate runtime value is represented.
+
+Generic event 3 uses the same exact-profile rupee field. Retail first queues a
+negative delta and the meter consumer applies it with a zero floor, so mechanics
+catalog v30 represents it as one unsigned saturating debit. It is not compiled
+for a structural profile without that field binding. Event 2 remains unresolved
+because its positive delta also depends on the current wallet maximum.
+
 Unknown node types are retained in `unresolved_nodes` and receive no invented
 successor. Unknown query handlers expose both encoded outcomes only behind an
 explicit unknown requirement. Unsupported event handlers similarly retain an

@@ -16,6 +16,8 @@ stand in for it.
 | --- | --- | --- |
 | `dComIfGs_{on,off,is}TmpBit` | `TemporaryFlags` on `active_runtime_file` | `d_msg_flow.cpp`, `d_save.h`, and the exact temporary-label table |
 | `dComIfGs_{on,off,is}EventBit` | custom `persistent-event-registers` raw store on `active_runtime_file` | `d_msg_flow.cpp`, `d_save.h`, and audited `saveBitLabels` coordinates |
+| query 4 with a nonzero threshold | `inventory-and-resources.rupees` | `d_msg_flow.cpp::query004` and the native player-resource projection |
+| event 3 rupee debit | saturating unsigned debit of `inventory-and-resources.rupees` | `d_msg_flow.cpp::event003` queues the negative delta; `d_meter2.cpp::moveRupee` applies it and clamps at zero |
 | query 22 / event 17 for item `0xa3` | custom `player-light-drop` raw store on `active_runtime_file`, byte `0x04`, mask `0x04` | `d_msg_flow.cpp`, `d_item.cpp`, and `dSv_player_info_c::mLightDrop` |
 | `dComIfGs_{on,off,is}SaveSwitch` | `DungeonMemory` on `current_stage`, byte base `0x08`, four-byte big-endian words, 128 switches | `d_msg_flow.cpp` and `dSv_memBit_c::mSwitch` |
 
@@ -25,6 +27,7 @@ The source identities carried by the profile are:
 | --- | --- |
 | `src/d/d_item.cpp` | `524ce52fb8bb9f6ebbe90dfba67a1eb1e6d7327da5d0c447081818ff902fd1a6` |
 | `src/d/d_msg_flow.cpp` | `b50cdeea6508cb997172570fb31531c18def39e84b47e535563c40c93e45f2c1` |
+| `src/d/d_meter2.cpp` | `b58ed135700865df0f0cb9ce0e4115de6ec1f9f6dbb8fff8cc1ff99b437d5569` |
 | `include/d/d_save.h` | `74a211e5d2ee2c0fe4ce259905fe1f479f373d5b2459d654871cbbd2f61e8756` |
 | `src/d/d_save.cpp` | `7e6f09aa36af30932e8ce64423284f885ed0b4e632b22f18d6f0a6b4d104b453` |
 
@@ -61,11 +64,24 @@ compiled with explicit `switch-backing` or `branch-predicate` unknown
 requirements and no guessed raw read/write. A later actor-entry and zone-context
 model can discharge those unknowns without changing the extracted resources.
 
+Rupee query parameter zero is deliberately different: retail compares the
+current count with the wallet maximum. Because the native snapshot does not yet
+publish that maximum, both outcomes remain explicit `branch-predicate`
+unknowns. A nonzero parameter is complete: outcome 0 requires
+`rupees >= parameter`, outcome 1 requires `rupees < parameter`, and both
+transitions publish a reader over the same structured field.
+
 ## Exact extraction smoke test
 
 Against the audited GZ2E01 bundle, the profile constructs all nine selected
 programs and the sealed compiler retains every FLW1/FLI1 node. The current base
-compile contains explicit unknowns for unsupported generic handlers, unmapped
+compile contains 153 query-4 nodes: all 150 nonzero thresholds compile to
+complementary exact predicates, while the three parameter-zero nodes remain
+unknown. Group 8 node 182 therefore carries the exact 300-rupee threshold
+reader used by the cannon-payment graph. All 142 event-3 nodes compile to a
+zero-clamped debit, including group 8 node 190's 300-rupee payment. The compile
+also retains explicit
+unknowns for unsupported generic handlers, unmapped
 persistent-label coordinates, and 123 event-side `switch-backing` requirements; additional
 unresolved switch branch predicates are retained under their branch
 requirements. This count is an audit observation, not a schema invariant.

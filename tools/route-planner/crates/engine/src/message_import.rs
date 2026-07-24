@@ -1925,6 +1925,7 @@ mod tests {
             bindings: MessageFlowBindings {
                 temporary_flags: None,
                 persistent_flags: None,
+                rupees: None,
                 item_ownership: vec![MessageItemOwnershipBinding {
                     item_id: 7,
                     label: "Fixture item owned".into(),

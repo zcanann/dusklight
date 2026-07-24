@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v29";
+pub const MECHANICS_CATALOG_SCHEMA: &str = "dusklight.route-planner.mechanics-catalog/v30";
 pub const MAX_MECHANICS_RECORDS: usize = 65_536;
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -143,6 +143,12 @@ pub enum StateOperation {
     Adjust {
         target: ComponentFieldTarget,
         delta: i64,
+    },
+    /// Subtracts an unsigned amount and clamps the result at zero. This is
+    /// distinct from `Adjust`, whose underflow is an execution error.
+    DebitUnsigned {
+        target: ComponentFieldTarget,
+        amount: u64,
     },
     /// Raises a known unsigned structured value to the supplied floor while
     /// preserving values already at or above it.
@@ -879,6 +885,16 @@ impl StateOperation {
                 if *delta == 0 {
                     return Err(PlannerContractError::new(
                         "operation.adjust.delta",
+                        "must be nonzero",
+                    ));
+                }
+                Ok(())
+            }
+            Self::DebitUnsigned { target, amount } => {
+                validate_field_target(target)?;
+                if *amount == 0 {
+                    return Err(PlannerContractError::new(
+                        "operation.debit_unsigned.amount",
                         "must be nonzero",
                     ));
                 }
@@ -2541,6 +2557,21 @@ mod tests {
         assert_eq!(
             operation.validate().unwrap_err().field(),
             "operation.clamp_unsigned_minimum.minimum"
+        );
+    }
+
+    #[test]
+    fn unsigned_debit_requires_a_nonzero_amount() {
+        let operation = StateOperation::DebitUnsigned {
+            target: ComponentFieldTarget {
+                component_id: "save.main".into(),
+                field: "rupees".into(),
+            },
+            amount: 0,
+        };
+        assert_eq!(
+            operation.validate().unwrap_err().field(),
+            "operation.debit_unsigned.amount"
         );
     }
 

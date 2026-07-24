@@ -43,6 +43,8 @@ const MAX_EVENT_CONTRACTS: usize = 16_384;
 const MAX_CLEANUP_EDGES: usize = 256;
 const BUNDLED_GZ2E01_ENGLISH_IMPORT_PROFILE: &[u8] =
     include_bytes!("../data/message-import-profiles/gz2e01-en.json");
+const BUNDLED_GZ2P01_STRUCTURAL_IMPORT_PROFILE: &[u8] =
+    include_bytes!("../data/message-import-profiles/gz2p01-structural.json");
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -66,6 +68,10 @@ pub struct MessageFlowProgram {
 pub struct MessageFlowBindings {
     pub temporary_flags: Option<MessageRawStoreBinding>,
     pub persistent_flags: Option<MessageRawStoreBinding>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rupees: Option<ComponentFieldTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub life: Option<ComponentFieldTarget>,
     pub item_ownership: Vec<MessageItemOwnershipBinding>,
     pub switch_stores: Vec<MessageSwitchStoreBinding>,
 }
@@ -271,6 +277,24 @@ impl MessageFlowImportProfile {
 pub fn bundled_gz2e01_english_message_flow_profile()
 -> Result<MessageFlowImportProfile, PlannerContractError> {
     MessageFlowImportProfile::decode_canonical(BUNDLED_GZ2E01_ENGLISH_IMPORT_PROFILE)
+}
+
+pub fn bundled_gz2p01_structural_message_flow_profile()
+-> Result<MessageFlowImportProfile, PlannerContractError> {
+    let profile =
+        MessageFlowImportProfile::decode_canonical(BUNDLED_GZ2P01_STRUCTURAL_IMPORT_PROFILE)?;
+    if profile.bindings.temporary_flags.is_some()
+        || profile.bindings.persistent_flags.is_some()
+        || profile.bindings.rupees.is_some()
+        || !profile.bindings.item_ownership.is_empty()
+        || !profile.bindings.switch_stores.is_empty()
+    {
+        return Err(PlannerContractError::new(
+            "message_flow_import_profile.bindings",
+            "GZ2P01 structural profile must not authorize handler backings",
+        ));
+    }
+    Ok(profile)
 }
 
 impl MessageFlowProgramSet {
@@ -648,6 +672,7 @@ impl MessageFlowProgram {
                     index,
                     next_target_index,
                     query_handler_index,
+                    parameter,
                     ..
                 } => {
                     let target_index = usize::from(*next_target_index);
@@ -676,6 +701,20 @@ impl MessageFlowProgram {
                                 source: access.reference.clone(),
                                 consuming_transition_id: transition_id.clone(),
                                 interpretation_fact_id: access.alias_id.clone(),
+                                evidence: self.evidence.clone(),
+                            });
+                        } else if let Some((guard, source)) =
+                            self.compile_numeric_branch(*query_handler_index, *parameter, outcome)
+                        {
+                            guards.push(guard);
+                            readers.push(ReaderRule {
+                                id: format!(
+                                    "reader.message-flow.{token}.node-{index}.outcome-{outcome}"
+                                ),
+                                scope: self.scope.clone(),
+                                source,
+                                consuming_transition_id: transition_id.clone(),
+                                interpretation_fact_id: None,
                                 evidence: self.evidence.clone(),
                             });
                         } else {
@@ -859,6 +898,22 @@ impl MessageFlowProgram {
         let mut unknowns = Vec::new();
         let mut continuation = MessageEventContinuation::EncodedSuccessor;
         let fully_decoded = match event_index {
+            3 => {
+                if raw_parameter_u32 == 0 {
+                    true
+                } else if let Some(target) = &self.bindings.rupees {
+                    operations.push((
+                        0,
+                        StateOperation::DebitUnsigned {
+                            target: target.clone(),
+                            amount: raw_parameter_u32.into(),
+                        },
+                    ));
+                    true
+                } else {
+                    false
+                }
+            }
             0 | 1 => {
                 for access in self
                     .extracted
@@ -1068,6 +1123,42 @@ impl MessageFlowProgram {
             unknowns,
             fully_decoded,
             continuation,
+        ))
+    }
+
+    fn compile_numeric_branch(
+        &self,
+        query_handler_index: Option<u16>,
+        parameter: u16,
+        outcome: u8,
+    ) -> Option<(PredicateExpression, ValueReference)> {
+        // query004 returns 0 when the current rupee count is at least a
+        // nonzero parameter and 1 when it is below that threshold. Parameter
+        // zero compares against the runtime wallet maximum, which is not part
+        // of the current native snapshot and therefore remains unknown.
+        let target = match query_handler_index {
+            Some(4) if parameter != 0 => self.bindings.rupees.as_ref()?,
+            Some(32) => self.bindings.life.as_ref()?,
+            _ => return None,
+        };
+        let source = ValueReference::ComponentField {
+            component_id: target.component_id.clone(),
+            field: target.field.clone(),
+        };
+        let operator = match outcome {
+            0 => ComparisonOperator::GreaterThanOrEqual,
+            1 => ComparisonOperator::LessThan,
+            _ => return None,
+        };
+        Some((
+            PredicateExpression::Compare {
+                left: source.clone(),
+                operator,
+                right: ValueReference::Literal {
+                    value: StateValue::Unsigned(parameter.into()),
+                },
+            },
+            source,
         ))
     }
 
@@ -1319,6 +1410,20 @@ impl MessageFlowBindings {
         }
         if let Some(binding) = &self.persistent_flags {
             binding.validate("message_flow_program.bindings.persistent_flags")?;
+        }
+        if let Some(target) = &self.rupees {
+            validate_stable_id(
+                "message_flow_program.bindings.rupees.component_id",
+                &target.component_id,
+            )?;
+            validate_stable_id("message_flow_program.bindings.rupees.field", &target.field)?;
+        }
+        if let Some(target) = &self.life {
+            validate_stable_id(
+                "message_flow_program.bindings.life.component_id",
+                &target.component_id,
+            )?;
+            validate_stable_id("message_flow_program.bindings.life.field", &target.field)?;
         }
         let mut prior_item = None;
         for item in &self.item_ownership {
@@ -2446,6 +2551,8 @@ mod tests {
                     component_kind: ComponentKind::PersistentSave,
                     binding: ComponentBindingReference::ActiveRuntimeFile,
                 }),
+                rupees: None,
+                life: None,
                 item_ownership: Vec::new(),
                 switch_stores: vec![MessageSwitchStoreBinding {
                     store: MessageFlowSwitchStore::LoadedStageMemory,
@@ -2628,6 +2735,136 @@ mod tests {
             CompiledMessageFlowProgram::decode_canonical(&compiled.canonical_bytes().unwrap())
                 .unwrap(),
             compiled
+        );
+    }
+
+    #[test]
+    fn compiles_nonzero_rupee_query_without_guessing_wallet_capacity() {
+        let mut program = program();
+        let MessageFlowNode::Branch {
+            raw_query_index,
+            query_handler_index,
+            parameter,
+            ..
+        } = &mut program.extracted.nodes[1]
+        else {
+            panic!("fixture node 1 must be a branch");
+        };
+        *raw_query_index = 6;
+        *query_handler_index = Some(4);
+        *parameter = 300;
+        program
+            .extracted
+            .temporary_flag_accesses
+            .retain(|access| access.node_index != 1);
+        program.bindings.rupees = Some(ComponentFieldTarget {
+            component_id: "inventory-and-resources".into(),
+            field: "rupees".into(),
+        });
+
+        let compiled = program.compile().unwrap();
+        for (outcome, operator) in [
+            (0, ComparisonOperator::GreaterThanOrEqual),
+            (1, ComparisonOperator::LessThan),
+        ] {
+            let transition = compiled
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| {
+                    transition.label == format!("Take message branch {outcome} at node 1")
+                })
+                .unwrap();
+            let transition_id = &transition.id;
+            assert!(transition.activation.unknown_requirements.is_empty());
+            assert!(matches!(
+                &transition.activation.hard_guards,
+                PredicateExpression::All { terms }
+                    if matches!(
+                        &terms[1],
+                        PredicateExpression::Compare {
+                            left: ValueReference::ComponentField {
+                                component_id,
+                                field,
+                            },
+                            operator: actual_operator,
+                            right: ValueReference::Literal {
+                                value: StateValue::Unsigned(300),
+                            },
+                        } if component_id == "inventory-and-resources"
+                            && field == "rupees"
+                            && *actual_operator == operator
+                    )
+            ));
+            let reader = compiled
+                .mechanics
+                .readers
+                .iter()
+                .find(|reader| reader.consuming_transition_id == *transition_id)
+                .unwrap();
+            assert!(matches!(
+                &reader.source,
+                ValueReference::ComponentField {
+                    component_id,
+                    field,
+                } if component_id == "inventory-and-resources" && field == "rupees"
+            ));
+        }
+
+        let MessageFlowNode::Event {
+            event_index,
+            parameter_0,
+            parameter_1,
+            raw_parameter_u32,
+            raw_parameters,
+            ..
+        } = &mut program.extracted.nodes[2]
+        else {
+            panic!("fixture node 2 must be an event");
+        };
+        *event_index = 3;
+        *parameter_0 = 0;
+        *parameter_1 = 300;
+        *raw_parameter_u32 = 300;
+        *raw_parameters = 300_u32.to_be_bytes();
+        program
+            .extracted
+            .persistent_flag_accesses
+            .retain(|access| access.node_index != 2);
+        let compiled = program.compile().unwrap();
+        let debit = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label == "Execute message event 3 at node 2")
+            .unwrap();
+        assert!(debit.activation.unknown_requirements.is_empty());
+        assert!(matches!(
+            debit.activation.effects.as_slice(),
+            [
+                StateOperation::DebitUnsigned {
+                    target: ComponentFieldTarget {
+                        component_id,
+                        field,
+                    },
+                    amount: 300,
+                },
+                StateOperation::AdvanceFlow { .. },
+            ] if component_id == "inventory-and-resources" && field == "rupees"
+        ));
+
+        let MessageFlowNode::Branch { parameter, .. } = &mut program.extracted.nodes[1] else {
+            unreachable!()
+        };
+        *parameter = 0;
+        let compiled = program.compile().unwrap();
+        assert!(
+            compiled
+                .mechanics
+                .transitions
+                .iter()
+                .filter(|transition| transition.label.contains("at node 1"))
+                .all(|transition| transition.activation.unknown_requirements.len() == 1)
         );
     }
 
@@ -3012,6 +3249,13 @@ mod tests {
                 binding: ComponentBindingReference::ActiveRuntimeFile,
             })
         );
+        assert_eq!(
+            profile.bindings.rupees,
+            Some(ComponentFieldTarget {
+                component_id: "inventory-and-resources".into(),
+                field: "rupees".into(),
+            })
+        );
         assert_eq!(profile.bindings.item_ownership.len(), 1);
         assert_eq!(profile.bindings.item_ownership[0].item_id, 0xa3);
         assert_eq!(profile.bindings.item_ownership[0].byte_offset, 4);
@@ -3030,6 +3274,31 @@ mod tests {
                 .iter()
                 .all(|record| record.kind == EvidenceKind::SourceAudited)
         );
+    }
+
+    #[test]
+    fn bundled_gz2p01_profile_selects_all_pal_resources_without_semantic_backings() {
+        let profile = bundled_gz2p01_structural_message_flow_profile().unwrap();
+        assert_eq!(profile.id, "gcn-pal-1.0-gz2p01-structural");
+        assert_eq!(
+            profile.content_sha256.to_string(),
+            "b1a8934598abc52dba2b23241664dd50521f45c9c6b6b18d5aaf0bc7a99d8170"
+        );
+        assert_eq!(
+            profile.language_bundles,
+            BTreeMap::from([
+                ("de".into(), "de".into()),
+                ("en".into(), "uk".into()),
+                ("es".into(), "sp".into()),
+                ("fr".into(), "fr".into()),
+                ("it".into(), "it".into()),
+            ])
+        );
+        assert!(profile.bindings.temporary_flags.is_none());
+        assert!(profile.bindings.persistent_flags.is_none());
+        assert!(profile.bindings.rupees.is_none());
+        assert!(profile.bindings.item_ownership.is_empty());
+        assert!(profile.bindings.switch_stores.is_empty());
     }
 
     #[test]

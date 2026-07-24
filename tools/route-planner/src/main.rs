@@ -898,6 +898,31 @@ fn compile_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
         ),
         sha256: resource.archive_sha256,
     }));
+    let has_storage_bindings = profile.bindings.temporary_flags.is_some()
+        || profile.bindings.persistent_flags.is_some()
+        || profile.bindings.rupees.is_some()
+        || !profile.bindings.item_ownership.is_empty()
+        || !profile.bindings.switch_stores.is_empty();
+    let storage_binding_coverage = if has_storage_bindings {
+        FactPackCoverage {
+            domain: CoverageDomain::StorageBindings,
+            scope: "message-flow".into(),
+            status: CoverageStatus::Partial,
+            detail: "The exact import profile supplies one or more audited storage bindings; additional handler-owned stores remain open.".into(),
+        }
+    } else {
+        FactPackCoverage {
+            domain: CoverageDomain::StorageBindings,
+            scope: "message-flow".into(),
+            status: CoverageStatus::Unavailable,
+            detail: "The structural import profile supplies no temporary, persistent, rupee, item-ownership, or switch-store bindings; every state-backed handler remains an explicit unknown requirement.".into(),
+        }
+    };
+    let hard_guard_detail = if has_storage_bindings {
+        "Branch predicates with audited bindings are executable; actor entry, interaction, and unsupported event guards remain separate."
+    } else {
+        "Encoded branch outcomes are retained, but this structural profile authorizes no state-backed predicate; actor entry, interaction, and event guards remain separate."
+    };
     let manifest = FactPackManifest::build(
         format!(
             "message-flow.{}.{}",
@@ -919,17 +944,12 @@ fn compile_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
                 status: CoverageStatus::Partial,
                 detail: "Every selected FLW1/FLI1 node is retained; known generic handlers compile and unsupported handlers remain explicit unknown requirements.".into(),
             },
-            FactPackCoverage {
-                domain: CoverageDomain::StorageBindings,
-                scope: "message-flow".into(),
-                status: CoverageStatus::Partial,
-                detail: "The exact import profile supplies known temporary, persistent, and switch layouts; additional handler-owned stores remain open.".into(),
-            },
+            storage_binding_coverage,
             FactPackCoverage {
                 domain: CoverageDomain::HardGuards,
                 scope: "message-flow".into(),
                 status: CoverageStatus::Partial,
-                detail: "Known branch predicates are executable; actor entry, interaction, and unsupported event guards remain separate.".into(),
+                detail: hard_guard_detail.into(),
             },
             FactPackCoverage {
                 domain: CoverageDomain::PhysicalFeasibility,

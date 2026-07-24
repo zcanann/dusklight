@@ -313,13 +313,16 @@ pack where licensing permits, so ordinary planner users do not necessarily need
 an `orig/` directory. Supplying `orig/` is an opt-in path for reproducible
 extraction, verification, unsupported revisions, and new research.
 
-A comparison of PAL language variants should expose the commonly reported French
-cannon-payment divergence through the extracted message-flow graphs and their
-actual reads, writes, and branches. If the French flow reaches the launch path
-without the ordinary 300-rupee guard or debit, the solver derives that cheaper
-route; it does not consume a hand-authored `french_cannon_skip` Boolean. Any
-timing, positioning, or interruption requirement that data alone cannot prove is
-still an explicit obstruction or unknown obligation.
+The commonly reported French cannon behavior must be scoped to the exact build
+that exhibits it and exposed through actual message/actor/event reads, writes,
+and branches. The exact GZ2P01 `Msguk`/`Msgfr` and RZDE01 `Msgus`/`Msgfr`
+group-8 control-flow arrays are identical, while the repository report names
+specific French Wii versions. No supported context therefore receives a
+hand-authored `french_cannon_skip` Boolean. If an affected Wii PAL extraction
+later proves a path that bypasses the ordinary 300-rupee guard or debit, the
+solver may derive that cheaper route; any remaining timing, positioning, or
+interruption requirement stays an explicit obstruction or unknown obligation.
+See `docs/route-planner/cannon-payment-flow-audit.md`.
 
 ### 2.12 Reachability composition and subgraph encapsulation
 
@@ -898,9 +901,10 @@ Before claiming completeness, inventory:
   writes/clears, terminal cleanup, and actor-specific flow selection.
 - Exact disc/executable/resource digests, available language bundles, language
   selection lifetime, and semantic equivalence across supported revisions.
-- The PAL French cannon-payment flow versus other PAL language flows: exact graph
-  divergence, rupee guard/debit behavior, entry conditions, and whether any
-  remaining exploit-specific obligation exists.
+- The affected Wii PAL French cannon behavior versus unaffected runtime/build
+  contexts: exact graph or message-selection divergence, rupee guard/debit
+  behavior, entry conditions, and whether any remaining exploit-specific
+  obligation exists.
 - Known dialogue interruption windows, input/control constraints, and which
   cleanup operations each interruption avoids.
 - Goron Mines entrance actor placements, invisible-wall/elevator/NPC control
@@ -2308,6 +2312,11 @@ Deliverable: replayable state evidence that can validate transition rules.
           dungeon-session, zone, and one-zone stores remain explicit unknowns
           pending distinct backing and speaker-zone modeling. See
           `docs/route-planner/gz2e01-message-import-profile.md`.
+    - [x] Publish the exact GZ2P01 structural profile for all five PAL locale
+          bundles. It carries no handler backing bindings, so exact English and
+          French resources compile into distinct control-flow programs while
+          temporary, persistent, item, and switch effects remain unknown. See
+          `docs/route-planner/pal-structural-message-contexts.md`.
     - [x] Publish and exact-compile the first concrete GZ2E01 stage/actor entry
           pack: F_SP115 STAG group 8 plus the separate R01 layer-13 `Seirei`
           placement into flow 21, with switch `0x0c`, actor/control obligation,
@@ -2335,6 +2344,15 @@ Deliverable: replayable state evidence that can validate transition rules.
     - [x] Resolve each requested item's exact ownership backing and compile one
           shared generic get-item consumer whose presentation-actor execution
           is an auto-bound actor-state obligation, not an inferred success.
+    - [x] Import generic rupee query 4 for nonzero thresholds through an
+          exact-profile structured-field binding. The GZ2E01 acceptance compile
+          turns all 150 nonzero uses into complementary `<`/`>=` guards and
+          reader records, including group-8 node 182's 300-rupee test; its three
+          parameter-zero wallet-capacity comparisons remain explicit unknowns.
+          Mechanics v30 also compiles all 142 generic event-3 uses through the
+          same binding as zero-clamped unsigned debits, including group-8 node
+          190's 300-rupee payment; positive event 2 remains wallet-capacity
+          dependent and unresolved.
 - [ ] Import cutscene phase graphs, embedded scene changes, return/restart-place
       writers, actor/resource archive requests, load-failure/fallback branches,
       and ordered cleanup where decidable.
@@ -2366,12 +2384,17 @@ Deliverable: replayable state evidence that can validate transition rules.
         input to the ordinary savewarp reader.
   - [ ] Import concrete ordered phase branches and affected-bit masks from
         evidence instead of authoring guessed suffix effects.
-- [ ] Produce semantic/raw build and language diffs, with explicit unknown or
-      uncovered fields rather than assumed equivalence.
+- [x] Produce semantic/raw build and language diffs, with explicit unknown or
+      uncovered fields rather than assumed equivalence. Raw
+      `orig-bundle-diff/v2` reports represented archive records, ignored
+      candidates, one-sided coverage, and every deliberately unrepresented
+      domain; `semantic-context-comparison/v1` independently evaluates exact
+      planner contexts, joins facts and mechanics by stable identity, and
+      exposes changed, one-sided, and inapplicable semantics without fallback.
   - [x] Compare canonical extracted stage/message records and ignored archive
         candidates by raw and decoded digests; explicit locale pairing reports
-        per-side group counts and one-sided coverage. Broader decoded domains
-        and rule-level semantic equivalence remain open.
+        per-side group counts and one-sided coverage. Planner fact/rule
+        semantics are compared separately by `compare-semantic-contexts`.
   - [x] Seal the comparison-domain boundary itself. `orig-bundle-diff/v2`
         recomputes per-side coverage for represented archive domains and marks
         executable code, runtime language selection, actor semantics, cutscene
@@ -3724,21 +3747,47 @@ sequence.
 
 #### 11N. Build/language fact-pack comparison
 
-- [ ] Generate, serialize, reload, and deterministically reproduce fact packs for
+- [x] Generate, serialize, reload, and deterministically reproduce fact packs for
       at least two exact content identities from verified `orig/` inputs.
-- [ ] Generate separate resolved contexts for PAL English and PAL French resources
+      GZ2E01 and GZ2P01 canonical bundles and manifests were installed into the
+      immutable cache, materialized by manifest digest, and compared
+      byte-for-byte. See `docs/route-planner/pal-structural-message-contexts.md`.
+- [x] Generate separate resolved contexts for PAL English and PAL French resources
       without pretending they are different discs or universally equivalent.
-- [ ] Audit the cannon-payment message flows and express any route divergence as
+      Both contexts use content identity `gcn-pal-1.0-gz2p01`; their exact
+      runtime configurations select `Msguk` and `Msgfr` and produce distinct
+      sealed program/compiled-set digests. The structural profile grants no
+      unaudited state effects or equivalence claim.
+- [x] Audit the cannon-payment message flows and express any route divergence as
       graph guards/writes/effects plus remaining feasibility obligations, not a
-      named version-skip Boolean.
-- [ ] Verify an exact PAL French query can use only its evidenced divergence, an
-      exact PAL English query cannot inherit it, and a portable multi-context
-      query excludes it or supplies a distinct valid witness for every context.
-- [ ] Remove the source `orig/` inputs and verify the planner can reproduce the
-      same queries from the derived packs and their recorded provenance.
-- [ ] Perturb an input digest, fact-pack schema version, and extractor version in
+      named version-skip Boolean. The exact supported inputs evidence no
+      locale-specific group-8 graph divergence: GZ2P01 English/French and
+      RZDE01 English/French have identical nodes, targets, and labels; the
+      300-rupee flow-4 guard/debit is present identically. The imported report
+      instead names specific French Wii versions, so no shortcut is authored
+      without an exact affected Wii PAL identity and actor/event audit. See
+      `docs/route-planner/cannon-payment-flow-audit.md`.
+- [ ] Verify an exact affected Wii PAL French query can use only its evidenced
+      divergence, an unaffected exact query cannot inherit it, and a portable
+      multi-context query excludes it or supplies a distinct valid witness for
+      every context.
+- [x] Remove the source `orig/` inputs and verify the planner can reproduce the
+      same queries from the derived packs and their recorded provenance. The
+      cache replay regression installs a canonical composed catalog whose
+      manifest seals the fixture `orig/main.dol`, solves a real route query,
+      deletes the entire temporary `orig/` tree, materializes the catalog by
+      manifest digest, checks the retained source provenance, and reproduces the
+      identical `SearchResult`. This exercises the same immutable cache path
+      already used to byte-compare the exact GZ2E01/GZ2P01 derived packs without
+      destructively moving the repository's retail inputs.
+- [x] Perturb an input digest, fact-pack schema version, and extractor version in
       fixtures; each mismatch must invalidate or migrate explicitly rather than
-      reuse stale facts.
+      reuse stale facts. The cache regression changes both the exact content/
+      source digests and extractor version and proves each valid manifest gets a
+      distinct immutable cache key with `reused = false`; an unsupported
+      fact-pack schema is rejected before installation. Reopening every key
+      yields only its matching manifest, while reinstalling the unchanged
+      baseline is the sole reuse case.
 
 #### 11O. Zelda tower cutscene failure and retained return place
 
@@ -3949,8 +3998,10 @@ These should remain explicit unknowns until evidence closes them:
   and every abnormal exit that preserves or clears them.
 - Complete executable/resource digest catalogue and semantic equivalence matrix
   across supported revisions and selectable languages.
-- Exact PAL French cannon-flow divergence, payment guard/debit behavior, language
-  switching constraints, and any residual physical or temporal setup.
+- Exact affected Wii PAL French cannon behavior, payment guard/debit behavior,
+  language switching constraints, actor/event handoff, and any residual
+  physical or temporal setup. The supported GZ2P01 and RZDE01 locale resources
+  do not exhibit a group-8 control-flow divergence.
 - Exact one-frame interruption windows and player-control/input behavior across
   GCN, Wii, and externally documented HD routes.
 - Exact Gor Coron displaced predicate, entrance event/switch effects, live NPC

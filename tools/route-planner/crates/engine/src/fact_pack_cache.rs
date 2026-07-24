@@ -239,8 +239,29 @@ mod tests {
         CoverageDomain, CoverageStatus, ExtractorIdentity, FactPackCoverage, FactPackSource,
         SourceArtifactKind,
     };
-    use crate::identity::{ContentFingerprint, ContentIdentity, GamePlatform, GameRegion};
+    use crate::identity::{
+        ContentFingerprint, ContentIdentity, ContextSelector, GamePlatform, GameRegion,
+        RuntimeConfiguration,
+    };
+    use crate::logic::{
+        ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, FACT_CATALOG_SCHEMA,
+        FactCatalog, PredicateExpression, RuleEvidence, TruthStatus, ValueReference,
+    };
+    use crate::refinement::{COMPOSED_CATALOG_SCHEMA, ComposedPlannerCatalog};
+    use crate::snapshot::{STATE_SNAPSHOT_SCHEMA, StateSnapshot};
+    use crate::solver::{ForwardSolver, SearchStatus, SolverOptions};
+    use crate::state::{
+        BackingAttachment, EXECUTION_ENVIRONMENT_SCHEMA, ExecutionEnvironment, PlayerForm,
+        PlayerState, RuntimeFile, RuntimeFileLifecycle, RuntimeFileOrigin, SceneLocation,
+        StateValue,
+    };
+    use crate::transition::{
+        ActivationContract, CandidateTransition, MECHANICS_CATALOG_SCHEMA, MechanicsCatalog,
+        StateOperation, TransitionKind,
+    };
+    use crate::{execution::PlannerExecutionState, identity::RUNTIME_CONFIGURATION_SCHEMA};
     use sha2::{Digest as _, Sha256};
+    use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -338,6 +359,252 @@ mod tests {
         .unwrap();
         assert!(load_fact_pack(&fixture.0, receipt.manifest_sha256).is_err());
         assert!(store_fact_pack(&fixture.0, &manifest, payload).is_err());
+    }
+
+    #[test]
+    fn cache_never_reuses_a_pack_across_input_schema_or_extractor_drift() {
+        let fixture = Fixture::new();
+        let payload = b"derived facts\n";
+        let baseline = manifest(payload);
+        let baseline_receipt = store_fact_pack(&fixture.0, &baseline, payload).unwrap();
+
+        let mut changed_input = baseline.clone();
+        changed_input.sources[0].sha256 = Digest([7; 32]);
+        changed_input.content.fingerprint.resource_manifest_sha256 = Digest([8; 32]);
+        changed_input.validate().unwrap();
+        let changed_input_receipt = store_fact_pack(&fixture.0, &changed_input, payload).unwrap();
+        assert!(!changed_input_receipt.reused);
+        assert_ne!(
+            changed_input_receipt.manifest_sha256,
+            baseline_receipt.manifest_sha256
+        );
+        assert_ne!(
+            changed_input_receipt.manifest_relative_path,
+            baseline_receipt.manifest_relative_path
+        );
+
+        let mut changed_extractor = baseline.clone();
+        changed_extractor.extractor.version = "2".into();
+        changed_extractor.validate().unwrap();
+        let changed_extractor_receipt =
+            store_fact_pack(&fixture.0, &changed_extractor, payload).unwrap();
+        assert!(!changed_extractor_receipt.reused);
+        assert_ne!(
+            changed_extractor_receipt.manifest_sha256,
+            baseline_receipt.manifest_sha256
+        );
+        assert_ne!(
+            changed_extractor_receipt.manifest_sha256,
+            changed_input_receipt.manifest_sha256
+        );
+
+        let mut unsupported_schema = baseline.clone();
+        unsupported_schema.schema = "dusklight.route-planner.fact-pack/v2".into();
+        let error = store_fact_pack(&fixture.0, &unsupported_schema, payload).unwrap_err();
+        assert_eq!(error.field(), "schema");
+        assert!(
+            FactPackManifest::decode_canonical(&serde_json::to_vec(&unsupported_schema).unwrap())
+                .is_err()
+        );
+
+        let baseline_again = store_fact_pack(&fixture.0, &baseline, payload).unwrap();
+        assert!(baseline_again.reused);
+        assert_eq!(
+            baseline_again.manifest_sha256,
+            baseline_receipt.manifest_sha256
+        );
+        assert_eq!(
+            load_fact_pack(&fixture.0, baseline_receipt.manifest_sha256)
+                .unwrap()
+                .manifest,
+            baseline
+        );
+        assert_eq!(
+            load_fact_pack(&fixture.0, changed_input_receipt.manifest_sha256)
+                .unwrap()
+                .manifest,
+            changed_input
+        );
+        assert_eq!(
+            load_fact_pack(&fixture.0, changed_extractor_receipt.manifest_sha256)
+                .unwrap()
+                .manifest,
+            changed_extractor
+        );
+    }
+
+    #[test]
+    fn cached_catalog_replays_the_same_query_after_fixture_orig_is_removed() {
+        let fixture = Fixture::new();
+        let orig = fixture.0.join("orig");
+        fs::create_dir_all(&orig).unwrap();
+        let source_bytes = b"fixture retail input bytes\n";
+        fs::write(orig.join("main.dol"), source_bytes).unwrap();
+        let source_sha256 = Digest(Sha256::digest(source_bytes).into());
+
+        let content = manifest(b"placeholder").content;
+        let runtime = RuntimeConfiguration::new(&content, "en", BTreeMap::new()).unwrap();
+        let start = StateSnapshot {
+            schema: STATE_SNAPSHOT_SCHEMA.into(),
+            id: "snapshot.cache-replay-start".into(),
+            sequence: 1,
+            environment: ExecutionEnvironment {
+                schema: EXECUTION_ENVIRONMENT_SCHEMA.into(),
+                runtime_configuration: RuntimeConfiguration {
+                    schema: RUNTIME_CONFIGURATION_SCHEMA.into(),
+                    ..runtime.clone()
+                },
+                active_runtime_file: RuntimeFile {
+                    id: "file-0".into(),
+                    origin: RuntimeFileOrigin::TitleFile0,
+                    backing: BackingAttachment::MemoryOnly,
+                    allowed_serialization_targets: Vec::new(),
+                    lifecycle: RuntimeFileLifecycle::Active,
+                },
+                inactive_runtime_files: Vec::new(),
+                physical_slots: Vec::new(),
+                physical_slot_observations: Vec::new(),
+                execution_context: crate::state::ExecutionContext::World,
+                location: SceneLocation {
+                    stage: "STAGE_A".into(),
+                    room: 0,
+                    layer: 0,
+                    spawn: 0,
+                },
+                player: PlayerState {
+                    form: PlayerForm::Human,
+                    mount: None,
+                    position: [0.0; 3],
+                    attention_position: None,
+                    rotation: [0; 3],
+                    has_control: Some(true),
+                    action: "idle".into(),
+                },
+                components: Vec::new(),
+                static_world_objects: Vec::new(),
+                spatial_volumes: Vec::new(),
+                spatial_connections: Vec::new(),
+                spatial_planes: Vec::new(),
+                persisted_object_controls: Vec::new(),
+                live_world_objects: Vec::new(),
+            },
+            semantic_observations: Vec::new(),
+        };
+        start.validate().unwrap();
+        let scope = ContextScope {
+            selectors: vec![ContextSelector::Exact {
+                context: runtime.exact_context().unwrap(),
+            }],
+        };
+        let stage_is = |stage: &str| PredicateExpression::Compare {
+            left: ValueReference::LocationStage,
+            operator: ComparisonOperator::Equal,
+            right: ValueReference::Literal {
+                value: StateValue::Text(stage.into()),
+            },
+        };
+        let evidence = RuleEvidence {
+            truth: TruthStatus::Established,
+            records: vec![EvidenceRecord {
+                id: "fixture.orig-main-dol".into(),
+                kind: EvidenceKind::Extracted,
+                source_sha256: Some(source_sha256),
+                note: "Fixture source digest retained by the derived pack.".into(),
+            }],
+        };
+        let facts = FactCatalog {
+            schema: FACT_CATALOG_SCHEMA.into(),
+            aliases: Vec::new(),
+            derived_facts: Vec::new(),
+        };
+        let mechanics = MechanicsCatalog {
+            schema: MECHANICS_CATALOG_SCHEMA.into(),
+            transitions: vec![CandidateTransition {
+                id: "transition.cache-replay-a-to-b".into(),
+                label: "Replay cached transition from A to B".into(),
+                scope,
+                transition_kind: TransitionKind::Other,
+                approach_id: "approach.cache-replay".into(),
+                activation: ActivationContract {
+                    hard_guards: stage_is("STAGE_A"),
+                    physical_obligation_ids: Vec::new(),
+                    effects: vec![StateOperation::SetLocation {
+                        location: SceneLocation {
+                            stage: "STAGE_B".into(),
+                            room: 0,
+                            layer: 0,
+                            spawn: 0,
+                        },
+                    }],
+                    unknown_requirements: Vec::new(),
+                },
+                evidence,
+            }],
+            obligations: Vec::new(),
+            writers: Vec::new(),
+            gates: Vec::new(),
+            readers: Vec::new(),
+            reconstruction_rules: Vec::new(),
+            obstructions: Vec::new(),
+            resolvers: Vec::new(),
+            techniques: Vec::new(),
+            microtraces: Vec::new(),
+            goals: Vec::new(),
+        };
+        let catalog = ComposedPlannerCatalog::compose(&facts, &mechanics, &[]).unwrap();
+        let payload = catalog.canonical_bytes().unwrap();
+        let manifest = FactPackManifest::build(
+            "fixture.query-replay",
+            content,
+            ExtractorIdentity {
+                name: "fixture-query-extractor".into(),
+                version: "1".into(),
+                executable_sha256: Digest([4; 32]),
+                schema_sha256: Digest([5; 32]),
+            },
+            vec![FactPackSource {
+                kind: SourceArtifactKind::Executable,
+                id: "orig/main-dol".into(),
+                sha256: source_sha256,
+            }],
+            vec![FactPackCoverage {
+                domain: CoverageDomain::Topology,
+                scope: "fixture-query".into(),
+                status: CoverageStatus::Complete,
+                detail: "The fixture transition is fully represented.".into(),
+            }],
+            COMPOSED_CATALOG_SCHEMA,
+            Digest(Sha256::digest(&payload).into()),
+        )
+        .unwrap();
+        let receipt = store_fact_pack(&fixture.0.join("cache"), &manifest, &payload).unwrap();
+        let goal = stage_is("STAGE_B");
+        let before = ForwardSolver::new(
+            &catalog.facts,
+            &catalog.mechanics,
+            &[],
+            SolverOptions::default(),
+        )
+        .unwrap()
+        .solve(PlannerExecutionState::new(start.clone()).unwrap(), &goal)
+        .unwrap();
+        assert_eq!(before.status, SearchStatus::Reached);
+
+        fs::remove_dir_all(&orig).unwrap();
+        assert!(!orig.exists());
+        let cached = load_fact_pack(&fixture.0.join("cache"), receipt.manifest_sha256).unwrap();
+        assert_eq!(cached.manifest.sources[0].sha256, source_sha256);
+        let replayed = ComposedPlannerCatalog::decode_canonical(&cached.payload_bytes).unwrap();
+        let after = ForwardSolver::new(
+            &replayed.facts,
+            &replayed.mechanics,
+            &[],
+            SolverOptions::default(),
+        )
+        .unwrap()
+        .solve(PlannerExecutionState::new(start).unwrap(), &goal)
+        .unwrap();
+        assert_eq!(after, before);
     }
 
     #[cfg(unix)]

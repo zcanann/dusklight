@@ -698,7 +698,9 @@ impl RelevanceBuilder {
                     byte_width: u32::from(*byte_width),
                 });
             }
-            StateOperation::ClampUnsignedMinimum { target, .. } => {
+            StateOperation::Adjust { target, .. }
+            | StateOperation::DebitUnsigned { target, .. }
+            | StateOperation::ClampUnsignedMinimum { target, .. } => {
                 self.dependencies.insert(StateDependency::ComponentField {
                     component_id: target.component_id.clone(),
                     field: target.field.clone(),
@@ -815,7 +817,6 @@ impl RelevanceBuilder {
             | StateOperation::WriteBoundRaw { .. }
             | StateOperation::InvalidateRaw { .. }
             | StateOperation::InvalidateBoundRaw { .. }
-            | StateOperation::Adjust { .. }
             | StateOperation::ClearComponent { .. }
             | StateOperation::ClearField { .. }
             | StateOperation::InvalidateField { .. }
@@ -870,6 +871,7 @@ pub(crate) fn operation_outputs(operation: &StateOperation) -> Vec<StateDependen
         StateOperation::Write { target, .. }
         | StateOperation::WriteBytesField { target, .. }
         | StateOperation::Adjust { target, .. }
+        | StateOperation::DebitUnsigned { target, .. }
         | StateOperation::ClampUnsignedMinimum { target, .. }
         | StateOperation::ClearField { target }
         | StateOperation::InvalidateField { target }
