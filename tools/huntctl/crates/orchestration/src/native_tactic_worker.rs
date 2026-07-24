@@ -113,10 +113,34 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
     }
 
     let prepared = prepare_selected(selected, catalog, blueprints)?;
-    let request = tactic_batch(worker.identity(), selected, &prepared.option_tape)?;
+    let source_frame = usize::try_from(worker.identity().source_frame)
+        .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+    if source_frame > route_prefix.frames.len() {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+    let candidate_prefix_ticks = route_prefix.frames.len() - source_frame;
+    let mut candidate_tape = InputTape {
+        boot: route_prefix.boot.clone(),
+        tick_rate_numerator: route_prefix.tick_rate_numerator,
+        tick_rate_denominator: route_prefix.tick_rate_denominator,
+        frames: route_prefix.frames[source_frame..].to_vec(),
+    };
+    candidate_tape
+        .frames
+        .extend_from_slice(&prepared.option_tape.frames);
+    let request = tactic_batch(worker.identity(), selected, &candidate_tape)?;
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
-    observe_outcome(selected, before, route_prefix, prepared, request, validated)
+    observe_outcome(
+        selected,
+        before,
+        route_prefix,
+        prepared,
+        candidate_tape,
+        candidate_prefix_ticks,
+        request,
+        validated,
+    )
 }
 
 fn prepare_selected(
@@ -250,6 +274,8 @@ fn observe_outcome(
     before: &FactSnapshot,
     route_prefix: &InputTape,
     prepared: PreparedNativeTactic,
+    candidate_tape: InputTape,
+    candidate_prefix_ticks: usize,
     request: NativeSuffixBatch,
     validated: ValidatedNativeSuffixBatch,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
@@ -279,11 +305,16 @@ fn observe_outcome(
     {
         return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
     }
-    let realized_ticks = episode.steps.len();
+    if episode.steps.len() <= candidate_prefix_ticks {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "route prefix terminated before the selected tactic",
+        ));
+    }
+    let realized_ticks = episode.steps.len() - candidate_prefix_ticks;
     for (step, expected) in episode
         .steps
         .iter()
-        .zip(&prepared.option_tape.frames[..realized_ticks])
+        .zip(&candidate_tape.frames[..episode.steps.len()])
     {
         if !same_pad(step.chosen_pad, expected.pads[0])
             || !same_pad(step.consumed_pad, expected.pads[0])
@@ -669,6 +700,8 @@ mod tests {
             &before,
             &route_prefix,
             prepared,
+            option_tape,
+            0,
             request,
             validated,
         )
