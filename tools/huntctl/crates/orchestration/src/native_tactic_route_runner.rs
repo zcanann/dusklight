@@ -43,7 +43,7 @@ use std::path::Path;
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V2: &str = "dusklight-native-tactic-route-report/v2";
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
-const ROUTE_TACTIC_DISCOUNT: f32 = 1.0;
+const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
 
 #[derive(Clone, Debug)]
@@ -863,7 +863,7 @@ fn route_tactic_base_reward_spec() -> TacticRewardSpec {
         // objective that the product contract explicitly excludes.
         tick_cost: 0.0,
         novelty_reward: ROUTE_TACTIC_NOVELTY_REWARD,
-        per_tick_discount: ROUTE_TACTIC_DISCOUNT,
+        per_tick_discount: 1.0,
         potential: None,
     }
 }
@@ -874,7 +874,10 @@ fn route_option_value_config(seed: u64) -> OptionValueConfig {
             iterations: 12,
             trees_per_action: 15,
             max_tree_depth: 8,
-            discount: ROUTE_TACTIC_DISCOUNT,
+            // Keep a mild contraction so zero-reward waypoint holds lose
+            // value, without erasing a terminal reached late in the declared
+            // discovery horizon.
+            discount: ROUTE_TACTIC_VALUE_DISCOUNT,
             seed: 0xd15c_a11d_5eed_f017 ^ seed,
             ..FqiConfig::default()
         },
@@ -1029,7 +1032,9 @@ mod tests {
 
         assert_eq!(reward.tick_cost, 0.0);
         assert_eq!(reward.per_tick_discount, 1.0);
-        assert_eq!(values.fitted_q.discount, 1.0);
+        assert_eq!(values.fitted_q.discount, ROUTE_TACTIC_VALUE_DISCOUNT);
+        assert!(values.fitted_q.discount > 0.995);
+        assert!(values.fitted_q.discount < 1.0);
         assert!(reward.novelty_reward > 0.0);
         assert!(reward.terminal_reward > reward.novelty_reward);
     }
