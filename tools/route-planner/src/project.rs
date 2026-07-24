@@ -2830,6 +2830,17 @@ mod tests {
         let fanadi = store.load("demo-fanadi-return-place").unwrap();
         assert!(fanadi.project.start_state.is_some());
         assert_eq!(fanadi.project.catalog.mechanics.goals.len(), 1);
+        let immutable_error = store
+            .save(
+                "demo-fanadi-return-place",
+                ProjectSaveRequest {
+                    schema: WEB_PROJECT_SAVE_SCHEMA.into(),
+                    expected_revision_sha256: Some(fanadi.revision_sha256),
+                    project: fanadi.project.clone(),
+                },
+            )
+            .unwrap_err();
+        assert!(immutable_error.to_string().contains("read-only"));
         let opening = store.load("demo-opening-flow").unwrap();
         assert!(opening.project.start_state.is_some());
         assert_eq!(opening.project.catalog.mechanics.goals.len(), 2);

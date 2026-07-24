@@ -365,8 +365,6 @@ closes a documented unknown.
 - [ ] Add CRUD tests for every mutable asset type, including rename/move reference
       preservation, trash/restore, collision rejection, conflict handling, and
       crash recovery.
-- [ ] Add tests proving Library assets are immutable and Fork to Workspace
-      preserves provenance.
 - [ ] Add graph tests for right-click creation, compatible-pin filtering,
       insertion, rewiring, branches, subgraph extraction, and undo/redo.
 - [ ] Add scenario tests for every anchor kind and every grounding status.

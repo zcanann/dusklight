@@ -938,6 +938,34 @@ mod tests {
                 && asset["kind"] == "route_graph"
                 && asset.get("revision_sha256").is_some()
         }));
+        let forked_graph = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces/ordon-route/assets/route-graph.forest-alternate".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(forked_graph.status, 200);
+        let forked_graph: serde_json::Value = serde_json::from_slice(&forked_graph.body).unwrap();
+        let source_library = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/projects/demo-forest-keyed-door".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        let source_library: serde_json::Value =
+            serde_json::from_slice(&source_library.body).unwrap();
+        let origin = &forked_graph["asset"]["header"]["origin"];
+        assert_eq!(origin["library_id"], "demo-forest-keyed-door");
+        assert_eq!(
+            origin["library_version"],
+            crate::workspace::BUILTIN_LIBRARY_VERSION
+        );
+        assert_eq!(origin["library_sha256"], source_library["revision_sha256"]);
+        assert_eq!(origin["source_asset_id"], "demo-forest-keyed-door:graph");
 
         let asset = crate::workspace::WorkspaceAsset {
             schema: crate::workspace::WORKSPACE_ASSET_SCHEMA.into(),
