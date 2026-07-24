@@ -162,7 +162,7 @@ impl PotentialTerm {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PotentialKind {
     Distance,
@@ -171,7 +171,7 @@ pub enum PotentialKind {
     EventProgress,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RewardComponent {
     pub name: String,
     pub kind: PotentialKind,
@@ -185,7 +185,7 @@ pub struct RewardComponent {
     pub shaping_reward: f64,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RewardBreakdown {
     pub base_reward: f32,
     pub duration_ticks: u32,
@@ -232,7 +232,7 @@ impl Default for TacticRewardSpec {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TacticRewardBreakdown {
     pub terminal_observed: bool,
     pub endpoint_novel: bool,

@@ -890,9 +890,9 @@
         const reveal=`<button class="reveal" type="button" data-reveal-kind="campaign" data-id="${escapeHtml(campaign.id)}">View campaign request</button>`;
         const active=['running','preparing'].includes(campaign.status),cancelling=campaign.status==='cancelling';
         const learning=campaign.learning||{status:'blocked',blocker:'Route-learning projection is unavailable.'};
-        const learningActive=['running','preparing'].includes(learning.status);
+        const learningActive=['running','preparing','pausing','cancelling'].includes(learning.status);
         const action=campaign.status==='invalid'?'<button class="record" type="button" disabled>Campaign invalid</button>':active?`<button class="delete" type="button" data-cancel-campaign="${escapeHtml(campaign.id)}">Stop campaign</button>`:cancelling?'<button class="delete" type="button" disabled>Stopping workers…</button>':campaign.status==='completed'?'<button class="record" type="button" disabled>Campaign complete</button>':campaign.blocker?'<button class="record" type="button" disabled>Campaign blocked</button>':`<button class="record" type="button" data-start-campaign="${escapeHtml(campaign.id)}">${['resumable','failed','cancelled'].includes(campaign.status)?'Resume optimization':'Run optimization'}</button>`;
-        const learningAction=learning.status==='invalid'?'<button class="record" type="button" disabled>Learning invalid</button>':learningActive?'<button class="record" type="button" disabled>Learning route…</button>':['succeeded','completed'].includes(learning.status)?'<button class="record" type="button" disabled>Learning complete</button>':learning.status==='interrupted'?'<button class="record" type="button" disabled>Learning interrupted</button>':learning.blocker?'<button class="record" type="button" disabled>Learning blocked</button>':`<button class="record" type="button" data-start-tactic-route="${escapeHtml(campaign.id)}">Learn route</button>`;
+        const learningAction=learning.status==='invalid'?'<button class="record" type="button" disabled>Learning invalid</button>':['running','preparing'].includes(learning.status)?`<button class="record" type="button" data-pause-tactic-route="${escapeHtml(campaign.id)}">Pause learning</button><button class="delete" type="button" data-cancel-tactic-route="${escapeHtml(campaign.id)}">Cancel learning…</button>`:learning.status==='pausing'?`<button class="record" type="button" disabled>Pausing learner…</button><button class="delete" type="button" data-cancel-tactic-route="${escapeHtml(campaign.id)}">Cancel learning…</button>`:learning.status==='cancelling'?'<button class="delete" type="button" disabled>Cancelling learner…</button>':['succeeded','completed'].includes(learning.status)?'<button class="record" type="button" disabled>Learning complete</button>':learning.status==='paused'?`<button class="record" type="button" data-resume-tactic-route="${escapeHtml(campaign.id)}">Resume learning</button><button class="delete" type="button" data-cancel-tactic-route="${escapeHtml(campaign.id)}">Cancel learning…</button>`:learning.status==='cancelled'?'<button class="delete" type="button" disabled>Learning cancelled</button>':learning.status==='interrupted'?'<button class="record" type="button" disabled>Learning interrupted</button>':learning.blocker?'<button class="record" type="button" disabled>Learning blocked</button>':`<button class="record" type="button" data-start-tactic-route="${escapeHtml(campaign.id)}">Learn route</button>`;
         const cleanup=campaign.artifacts_present&&!active&&!cancelling&&!learningActive?`<button class="delete" type="button" data-cleanup-campaign="${escapeHtml(campaign.id)}">Clean local campaign…</button>`:'';
         const audit=campaign.audit;
         const auditFields=audit?field('Search diagnosis',label(audit.diagnosis))+field('Episode success rate',`${(audit.successful_episode_rate_millionths/10000).toFixed(2)}% · ${audit.successful_episodes} / ${audit.evaluated_episodes}`)+field('Unique compiled tapes',audit.unique_compiled_tapes)+field('Successful basin',`${audit.successful_behavior_classes} behavior classes`)+field('Action coverage',`${audit.covered_action_categories} / ${audit.available_action_categories} categories`)+field('Temporal coverage',`${audit.covered_temporal_categories} / ${audit.available_temporal_categories} bases`)+field('Proposal pressure',`${audit.rejected_invalid_genomes} invalid · ${audit.rejected_duplicate_tapes} duplicate · ${audit.rejected_unclassified_genomes} legacy unclassified · ${(audit.proposal_rejection_millionths/10000).toFixed(2)}% total`)+(audit.most_concentrated_category_millionths==null?'':field('CEM concentration',`${(audit.most_concentrated_category_millionths/10000).toFixed(2)}% max category mass`))+field('Tick-indexed improvements',audit.improvements?`${audit.improvements} · latest at ${audit.latest_improvement_simulated_tick} simulated ticks`:'None yet')+field('Audit evidence',audit.evidence_sha256,true):'';
@@ -1028,6 +1028,9 @@
       root.querySelectorAll('[data-start-campaign]').forEach(button=>button.addEventListener('click',()=>startOptimization(button)));
       root.querySelectorAll('[data-cancel-campaign]').forEach(button=>button.addEventListener('click',()=>cancelOptimization(button)));
       root.querySelectorAll('[data-start-tactic-route]').forEach(button=>button.addEventListener('click',()=>startTacticRoute(button)));
+      root.querySelectorAll('[data-pause-tactic-route]').forEach(button=>button.addEventListener('click',()=>pauseTacticRoute(button)));
+      root.querySelectorAll('[data-cancel-tactic-route]').forEach(button=>button.addEventListener('click',()=>cancelTacticRoute(button)));
+      root.querySelectorAll('[data-resume-tactic-route]').forEach(button=>button.addEventListener('click',()=>resumeTacticRoute(button)));
       root.querySelectorAll('[data-replay-tactic-edge]').forEach(button=>button.addEventListener('click',()=>replayTacticEdge(button)));
       root.querySelectorAll('[data-cleanup-campaign]').forEach(button=>button.addEventListener('click',()=>cleanupOptimization(button)));
       root.querySelectorAll('[data-promote-candidate]').forEach(button=>button.addEventListener('click',()=>promoteOptimizationCandidate(button)));
@@ -1544,6 +1547,34 @@
         const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
         $('status').textContent='Route learning running';$('status').className='status ok';toast(`Learning ${label(campaign.goal)} from the selected start. Progress will refresh automatically.`);await load();
       } catch(error) { $('status').textContent='Route learning failed to start';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent=original; }
+    }
+    async function pauseTacticRoute(button) {
+      const campaign=(graph.campaigns||[]).find(item=>item.id===button.dataset.pauseTacticRoute);if(!campaign)return;
+      button.disabled=true;button.textContent='Requesting pause…';
+      try {
+        const response=await fetch('/api/tactic-route/pause',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign:campaign.id,request_sha256:campaign.request_sha256})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        $('status').textContent='Pausing route learner';$('status').className='status';toast('The current tactic decision will finish, then an immutable resume checkpoint will be sealed.');await load();
+      } catch(error) { $('status').textContent='Route learning pause failed';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent='Pause learning'; }
+    }
+    async function cancelTacticRoute(button) {
+      const campaign=(graph.campaigns||[]).find(item=>item.id===button.dataset.cancelTacticRoute);if(!campaign)return;
+      if(!window.confirm(`Cancel route learning for ${label(campaign.goal)}?\n\nThe current tactic decision will finish, the best authenticated route evidence will be preserved, and the campaign will remain available for inspection until you explicitly clean it.`))return;
+      button.disabled=true;button.textContent='Requesting cancellation…';
+      try {
+        const response=await fetch('/api/tactic-route/cancel',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign:campaign.id,request_sha256:campaign.request_sha256})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        $('status').textContent='Cancelling route learner';$('status').className='status';toast('Cancellation requested. Authenticated route evidence is preserved until explicit cleanup.');await load();
+      } catch(error) { $('status').textContent='Route learning cancellation failed';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent='Cancel learning…'; }
+    }
+    async function resumeTacticRoute(button) {
+      const campaign=(graph.campaigns||[]).find(item=>item.id===button.dataset.resumeTacticRoute);if(!campaign)return;
+      button.disabled=true;button.textContent='Resuming learner…';
+      try {
+        const response=await fetch('/api/tactic-route/resume',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign:campaign.id,request_sha256:campaign.request_sha256})});
+        const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.error||`HTTP ${response.status}`);
+        $('status').textContent='Route learning resumed';$('status').className='status ok';toast('Learning resumed from the latest authenticated pause checkpoint.');await load();
+      } catch(error) { $('status').textContent='Route learning failed to resume';$('status').className='status error';toast(error.message,true);button.disabled=false;button.textContent='Resume learning'; }
     }
     async function replayTacticEdge(button) {
       const campaign=(graph.campaigns||[]).find(item=>item.id===button.dataset.replayTacticEdge);if(!campaign)return;

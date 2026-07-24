@@ -1320,12 +1320,21 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/optimization/cancel",
         "/api/optimization/cleanup",
         "/api/tactic-route/start",
+        "/api/tactic-route/pause",
+        "/api/tactic-route/cancel",
+        "/api/tactic-route/resume",
         "/api/tactic-route/replay",
         "cancelOptimization(button)",
         "cleanupOptimization(button)",
         "startTacticRoute(button)",
+        "pauseTacticRoute(button)",
+        "cancelTacticRoute(button)",
+        "resumeTacticRoute(button)",
         "replayTacticEdge(button)",
         "data-start-tactic-route",
+        "data-pause-tactic-route",
+        "data-cancel-tactic-route",
+        "data-resume-tactic-route",
         "data-replay-tactic-edge",
         "Learn route",
         "Route learning",
@@ -2421,6 +2430,24 @@ fn optimization_start_api_requires_explicit_world_context() {
     );
     assert_eq!(smuggled_pause.status, 400);
     assert!(String::from_utf8_lossy(&smuggled_pause.body).contains("unknown field"));
+
+    let smuggled_cancel = call_http(
+        &config,
+        "POST",
+        "/api/tactic-route/cancel",
+        br#"{"campaign":"ordon-q125-residual-cem-v3","request_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","game":"forged"}"#,
+    );
+    assert_eq!(smuggled_cancel.status, 400);
+    assert!(String::from_utf8_lossy(&smuggled_cancel.body).contains("unknown field"));
+
+    let smuggled_resume = call_http(
+        &config,
+        "POST",
+        "/api/tactic-route/resume",
+        br#"{"campaign":"ordon-q125-residual-cem-v3","request_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","game":"forged"}"#,
+    );
+    assert_eq!(smuggled_resume.status, 400);
+    assert!(String::from_utf8_lossy(&smuggled_resume.body).contains("unknown field"));
     fs::remove_dir_all(repository).unwrap();
 }
 

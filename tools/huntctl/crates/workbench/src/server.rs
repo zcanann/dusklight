@@ -204,6 +204,36 @@ pub(super) fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/tactic-route/cancel") => {
+                    let result = serde_json::from_slice::<BrowserOptimizationLifecycleRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!("invalid tactic-route cancel request: {error}"))
+                    })
+                    .and_then(|cancel| cancel_tactic_route_learning(config, &cancel));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
+                ("POST", "/api/tactic-route/resume") => {
+                    let result = serde_json::from_slice::<BrowserOptimizationLifecycleRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!("invalid tactic-route resume request: {error}"))
+                    })
+                    .and_then(|resume| resume_tactic_route_learning(config, &resume));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/tactic-route/replay") => {
                     let result =
                         serde_json::from_slice::<BrowserTacticRouteReplayRequest>(&request.body)

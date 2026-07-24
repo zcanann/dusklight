@@ -7,7 +7,9 @@ use crate::native_suffix_worker::{
 };
 use crate::native_tactic_worker::{NativeTacticWorkerPaths, tactic_root_checkpoint_sha256};
 use crate::optimization_request::OptimizationRequest;
-use crate::tactic_q_campaign::{TacticCampaignDiagnostics, TacticQCampaign, TacticQCampaignError};
+use crate::tactic_q_campaign::{
+    TacticCampaignDiagnostics, TacticQCampaign, TacticQCampaignCheckpoint, TacticQCampaignError,
+};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
@@ -32,7 +34,7 @@ use dusklight_search::suffix_batch::{
 use dusklight_world::world_context::WorldContext;
 use dusklight_world::world_geometry::KclReconstruction;
 use dusklight_world::world_inventory::WorldInventory;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -46,6 +48,8 @@ const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
+const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_ROUTE_ATTEMPTS: usize = 10_000;
 
 #[derive(Clone, Debug)]
 pub struct NativeTacticRouteRunConfig<'a> {
@@ -59,6 +63,7 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub refit_every_decisions: u64,
     pub epsilon_per_million: u32,
     pub cancellation: Option<&'a AtomicBool>,
+    pub resume: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -82,7 +87,7 @@ pub struct NativeTacticRouteReport {
     pub seeds: Vec<NativeTacticSeedResult>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticSeedResult {
     pub seed: u64,
@@ -101,7 +106,7 @@ pub struct NativeTacticSeedResult {
     pub trace: Vec<NativeTacticDecisionTrace>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticDecisionTrace {
     pub decision_index: u64,
@@ -124,7 +129,7 @@ pub struct NativeTacticDecisionTrace {
     pub applicable_tactics: Vec<NativeTacticValueTrace>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticStateTrace {
     pub snapshot_sha256: Digest,
@@ -146,7 +151,7 @@ pub struct NativeTacticStateTrace {
     pub recent_option_id: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticMeasurementTrace {
     pub name: String,
@@ -154,7 +159,7 @@ pub struct NativeTacticMeasurementTrace {
     pub after: f32,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticValueTrace {
     pub option_id: String,
@@ -172,13 +177,23 @@ pub fn run_native_tactic_route(
         .execution
         .validate_files(&root, config.optimization)
         .map_err(route_error)?;
-    if config.output_root.exists() {
+    if config.output_root.exists() && !config.resume {
         return Err(route_message(format!(
             "tactic route output already exists: {}",
             config.output_root.display()
         )));
     }
+    if !config.output_root.exists() && config.resume {
+        return Err(route_message(format!(
+            "tactic route output does not exist to resume: {}",
+            config.output_root.display()
+        )));
+    }
+    if config.output_root.join("report.json").exists() {
+        return Err(route_message("completed tactic route cannot be resumed"));
+    }
     fs::create_dir_all(config.output_root).map_err(route_error)?;
+    let attempt_root = reserve_attempt_root(config.output_root)?;
 
     let registry = FactRegistry::canonical();
     let process_tape = InputTape::decode(
@@ -201,7 +216,7 @@ pub fn run_native_tactic_route(
     route_prefix.validate().map_err(route_error)?;
 
     let initial_batch = initial_probe_batch(config)?;
-    let initial_root = config.output_root.join("initial");
+    let initial_root = attempt_root.join("initial");
     fs::create_dir_all(&initial_root).map_err(route_error)?;
     let initial_batch_path = initial_root.join("request.json");
     write_new(
@@ -225,7 +240,7 @@ pub fn run_native_tactic_route(
         card_fixture,
         card_fixture_sha256: config.execution.card_fixture_manifest.sha256,
         working_directory: root.clone(),
-        state_root: config.output_root.join("native-state"),
+        state_root: attempt_root.join("native-state"),
         world_context_sha256: config.execution.world_context.sha256,
         terminal,
         initial_batch: initial_batch_path,
@@ -258,6 +273,21 @@ pub fn run_native_tactic_route(
     let run = (|| {
         let mut seed_results = Vec::with_capacity(config.exploration_seeds.len());
         for (seed_index, seed) in config.exploration_seeds.iter().copied().enumerate() {
+            let seed_root = config
+                .output_root
+                .join(format!("seed-{seed_index:03}-{seed}"));
+            let seed_result_path = seed_root.join("seed-result.json");
+            if seed_result_path.exists() {
+                if !config.resume {
+                    return Err(route_message("unexpected pre-existing tactic seed result"));
+                }
+                seed_results.push(read_completed_seed_result(
+                    &seed_result_path,
+                    seed,
+                    config.decisions_per_seed,
+                )?);
+                continue;
+            }
             let result = run_seed(
                 config,
                 &mut worker,
@@ -271,10 +301,6 @@ pub fn run_native_tactic_route(
                 seed_index,
                 seed,
             )?;
-            let seed_result_path = config
-                .output_root
-                .join(format!("seed-{seed_index:03}-{seed}"))
-                .join("seed-result.json");
             write_new(
                 &seed_result_path,
                 &serde_json::to_vec_pretty(&result).map_err(route_error)?,
@@ -332,27 +358,42 @@ fn run_seed(
     let seed_root = config
         .output_root
         .join(format!("seed-{seed_index:03}-{seed}"));
-    fs::create_dir_all(&seed_root).map_err(route_error)?;
-    let current = LearnerState::build(initial_facts.clone(), registry, catalog, &[], |_| true)
-        .map_err(route_error)?;
-    let mut campaign = TacticQCampaign::new(
-        encoder.schema_sha256,
-        config.optimization.terminal_predicate.definition_sha256,
-        root_checkpoint_sha256,
-        seed_group(seed_index, 0)?,
-        current,
-        route_prefix.clone(),
-        route_option_value_config(seed),
-        TacticExplorationConfig {
-            seed,
-            epsilon_per_million: config.epsilon_per_million,
-        },
-    )
-    .map_err(route_error)?;
-    let mut trace = Vec::new();
-    let mut selection_counts = BTreeMap::<String, u64>::new();
-    let mut native_ticks = 0_u64;
-    let mut episode = 0_u64;
+    let (mut campaign, mut trace, mut selection_counts, mut native_ticks, mut episode) =
+        if seed_root.exists() {
+            if !config.resume {
+                return Err(route_message(
+                    "unexpected pre-existing tactic seed evidence",
+                ));
+            }
+            resume_seed(
+                config,
+                &seed_root,
+                encoder.schema_sha256,
+                root_checkpoint_sha256,
+                seed_index,
+                seed,
+            )?
+        } else {
+            fs::create_dir_all(&seed_root).map_err(route_error)?;
+            let current =
+                LearnerState::build(initial_facts.clone(), registry, catalog, &[], |_| true)
+                    .map_err(route_error)?;
+            let campaign = TacticQCampaign::new(
+                encoder.schema_sha256,
+                config.optimization.terminal_predicate.definition_sha256,
+                root_checkpoint_sha256,
+                seed_group(seed_index, 0)?,
+                current,
+                route_prefix.clone(),
+                route_option_value_config(seed),
+                TacticExplorationConfig {
+                    seed,
+                    epsilon_per_million: config.epsilon_per_million,
+                },
+            )
+            .map_err(route_error)?;
+            (campaign, Vec::new(), BTreeMap::new(), 0, 0)
+        };
     let source_frame = config.optimization.route.source_boundary_index;
     let horizon = config.optimization.budgets.exploration_horizon_ticks;
     let maximum_tactic_ticks = catalog
@@ -367,6 +408,7 @@ fn run_seed(
 
     while campaign.decision_index < config.decisions_per_seed
         && native_ticks < config.optimization.budgets.simulated_tick_budget
+        && campaign.current.snapshot.terminal.reached != Some(true)
     {
         if cancellation_requested(config) {
             pause_tactic_campaign(&seed_root, &campaign)?;
@@ -685,6 +727,227 @@ fn pause_tactic_campaign(
                 .join(format!("decision-{:06}", campaign.decision_index)),
         )
         .map_err(route_error)
+}
+
+type ResumedSeedState = (
+    TacticQCampaign,
+    Vec<NativeTacticDecisionTrace>,
+    BTreeMap<String, u64>,
+    u64,
+    u64,
+);
+
+fn resume_seed(
+    config: &NativeTacticRouteRunConfig<'_>,
+    seed_root: &Path,
+    feature_schema_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+    seed_index: usize,
+    seed: u64,
+) -> Result<ResumedSeedState, NativeTacticRouteRunError> {
+    let (checkpoint_decision, checkpoint_path) = latest_pause_checkpoint(seed_root)?;
+    let checkpoint: TacticQCampaignCheckpoint = read_bounded_json(&checkpoint_path)?;
+    let expected_exploration = TacticExplorationConfig {
+        seed,
+        epsilon_per_million: config.epsilon_per_million,
+    };
+    if checkpoint.decision_index != checkpoint_decision
+        || checkpoint.decision_index > config.decisions_per_seed
+        || checkpoint.feature_schema_sha256 != feature_schema_sha256
+        || checkpoint.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
+        || checkpoint.root_checkpoint_sha256 != root_checkpoint_sha256
+        || checkpoint.model_config != route_option_value_config(seed)
+        || checkpoint.exploration != expected_exploration
+    {
+        return Err(route_message(
+            "paused tactic checkpoint does not match this authenticated run",
+        ));
+    }
+    let campaign = TacticQCampaign::resume(checkpoint).map_err(route_error)?;
+    if campaign.replay.len() as u64 != campaign.decision_index {
+        return Err(route_message(
+            "paused tactic checkpoint has a detached decision history",
+        ));
+    }
+    let trace = read_resumed_trace(seed_root, campaign.decision_index)?;
+    let episode = trace.last().map_or(0, |decision| decision.episode);
+    if campaign.episode_group != seed_group(seed_index, episode)?
+        || trace
+            .iter()
+            .zip(&campaign.replay)
+            .any(|(decision, replay)| decision.selected_option_id != replay.execution.option_id)
+    {
+        return Err(route_message(
+            "paused tactic checkpoint and decision trace disagree",
+        ));
+    }
+    let mut selection_counts = BTreeMap::new();
+    let mut native_ticks = 0_u64;
+    for decision in &trace {
+        *selection_counts
+            .entry(decision.selected_option_id.clone())
+            .or_default() += 1;
+        native_ticks = native_ticks
+            .checked_add(u64::from(decision.reward_components.duration_ticks))
+            .ok_or_else(|| route_message("resumed native tick count overflowed"))?;
+    }
+    if native_ticks > config.optimization.budgets.simulated_tick_budget {
+        return Err(route_message(
+            "paused tactic checkpoint exceeds the simulated tick budget",
+        ));
+    }
+    Ok((campaign, trace, selection_counts, native_ticks, episode))
+}
+
+fn latest_pause_checkpoint(seed_root: &Path) -> Result<(u64, PathBuf), NativeTacticRouteRunError> {
+    let pause_root = seed_root.join("pause-checkpoints");
+    let mut checkpoints = Vec::new();
+    for entry in fs::read_dir(&pause_root).map_err(|error| {
+        route_message(format!(
+            "paused tactic checkpoint is unavailable at {}: {error}",
+            pause_root.display()
+        ))
+    })? {
+        let entry = entry.map_err(route_error)?;
+        let metadata = entry.file_type().map_err(route_error)?;
+        if !metadata.is_dir() || metadata.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some(decision) = name
+            .strip_prefix("decision-")
+            .and_then(|value| value.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        let mut files = fs::read_dir(entry.path())
+            .map_err(route_error)?
+            .filter_map(Result::ok)
+            .filter(|candidate| {
+                candidate
+                    .file_type()
+                    .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
+                    && candidate
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("tactic-q-")
+                    && candidate
+                        .path()
+                        .extension()
+                        .is_some_and(|value| value == "json")
+            })
+            .map(|candidate| candidate.path())
+            .collect::<Vec<_>>();
+        if files.len() != 1 {
+            return Err(route_message(
+                "paused tactic checkpoint directory must contain exactly one checkpoint",
+            ));
+        }
+        checkpoints.push((decision, files.remove(0)));
+    }
+    checkpoints
+        .into_iter()
+        .max_by_key(|(decision, _)| *decision)
+        .ok_or_else(|| route_message("no resumable paused tactic checkpoint exists"))
+}
+
+fn read_resumed_trace(
+    seed_root: &Path,
+    decision_count: u64,
+) -> Result<Vec<NativeTacticDecisionTrace>, NativeTacticRouteRunError> {
+    let trace_root = seed_root.join("decision-trace");
+    if decision_count == 0 && !trace_root.exists() {
+        return Ok(Vec::new());
+    }
+    let actual_count = fs::read_dir(&trace_root)
+        .map_err(route_error)?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_type()
+                .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|value| value == "json")
+        })
+        .count() as u64;
+    if actual_count != decision_count {
+        return Err(route_message(
+            "paused tactic decision trace does not exactly match its checkpoint",
+        ));
+    }
+    let mut trace = Vec::with_capacity(usize::try_from(decision_count).map_err(route_error)?);
+    for decision_index in 0..decision_count {
+        let path = trace_root.join(format!("decision-{decision_index:06}.json"));
+        let decision: NativeTacticDecisionTrace = read_bounded_json(&path)?;
+        if decision.decision_index != decision_index {
+            return Err(route_message(
+                "paused tactic decision trace has a detached index",
+            ));
+        }
+        trace.push(decision);
+    }
+    Ok(trace)
+}
+
+fn read_completed_seed_result(
+    path: &Path,
+    seed: u64,
+    decisions_per_seed: u64,
+) -> Result<NativeTacticSeedResult, NativeTacticRouteRunError> {
+    let result: NativeTacticSeedResult = read_bounded_json(path)?;
+    if result.seed != seed
+        || result.decisions > decisions_per_seed
+        || result.trace.len() as u64 != result.decisions
+        || result
+            .trace
+            .iter()
+            .enumerate()
+            .any(|(index, decision)| decision.decision_index != index as u64)
+        || result.native_ticks
+            != result
+                .trace
+                .iter()
+                .map(|decision| u64::from(decision.reward_components.duration_ticks))
+                .sum::<u64>()
+    {
+        return Err(route_message(
+            "completed tactic seed result is invalid or belongs to another run",
+        ));
+    }
+    Ok(result)
+}
+
+fn read_bounded_json<T: for<'de> Deserialize<'de>>(
+    path: &Path,
+) -> Result<T, NativeTacticRouteRunError> {
+    let metadata = fs::symlink_metadata(path).map_err(route_error)?;
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > MAX_RESUME_JSON_BYTES
+    {
+        return Err(route_message(format!(
+            "resumable tactic JSON is invalid or oversized: {}",
+            path.display()
+        )));
+    }
+    serde_json::from_slice(&fs::read(path).map_err(route_error)?).map_err(route_error)
+}
+
+fn reserve_attempt_root(output_root: &Path) -> Result<PathBuf, NativeTacticRouteRunError> {
+    let attempts = output_root.join("attempts");
+    fs::create_dir_all(&attempts).map_err(route_error)?;
+    for index in 0..MAX_ROUTE_ATTEMPTS {
+        let attempt = attempts.join(format!("attempt-{index:04}"));
+        match fs::create_dir(&attempt) {
+            Ok(()) => return Ok(attempt),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(route_error(error)),
+        }
+    }
+    Err(route_message("tactic route attempt capacity is exhausted"))
 }
 
 fn tactic_state_trace(
@@ -1420,6 +1683,50 @@ mod tests {
         assert!(!second.exists());
         assert!(current.is_none());
 
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn route_attempts_are_append_only_across_resume_launches() {
+        let directory = std::env::temp_dir().join(format!(
+            "dusklight-tactic-route-attempts-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+
+        let first = reserve_attempt_root(&directory).unwrap();
+        let second = reserve_attempt_root(&directory).unwrap();
+
+        assert_eq!(first.file_name().unwrap(), "attempt-0000");
+        assert_eq!(second.file_name().unwrap(), "attempt-0001");
+        assert!(first.is_dir());
+        assert!(second.is_dir());
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn resume_selects_the_latest_single_immutable_pause_checkpoint() {
+        let directory = std::env::temp_dir().join(format!(
+            "dusklight-tactic-route-pause-checkpoint-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        for decision in [2_u64, 7] {
+            let checkpoint = directory
+                .join("pause-checkpoints")
+                .join(format!("decision-{decision:06}"));
+            fs::create_dir_all(&checkpoint).unwrap();
+            fs::write(
+                checkpoint.join(format!("tactic-q-{decision}.json")),
+                b"checkpoint",
+            )
+            .unwrap();
+        }
+
+        let (decision, path) = latest_pause_checkpoint(&directory).unwrap();
+        assert_eq!(decision, 7);
+        assert_eq!(path.file_name().unwrap(), "tactic-q-7.json");
         fs::remove_dir_all(directory).unwrap();
     }
 }

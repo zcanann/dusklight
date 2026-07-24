@@ -6,11 +6,15 @@ use dusklight_orchestration::native_tactic_route_runner::{
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use serde_json::Value;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const TACTIC_ROUTE_START_SCHEMA: &str = "dusklight.route-workbench.tactic-route-start.v1";
 const TACTIC_ROUTE_LIFECYCLE_SCHEMA: &str = "dusklight.route-workbench.tactic-route-lifecycle.v1";
+const TACTIC_ROUTE_CANCEL_MARKER_SCHEMA: &str =
+    "dusklight.route-workbench.tactic-route-cancelled.v1";
 const TACTIC_ROUTE_DECISIONS_PER_SEED: u64 = 256;
 const TACTIC_ROUTE_BRANCH_EVERY_DECISIONS: u64 = 8;
 const TACTIC_ROUTE_REFIT_EVERY_DECISIONS: u64 = 32;
@@ -74,8 +78,12 @@ fn tactic_route_runs() -> &'static Mutex<BTreeMap<String, TacticRouteRuntimeEntr
 
 pub(super) fn tactic_route_campaign_active(optimization_request_sha256: &str) -> bool {
     tactic_route_runs().lock().ok().is_some_and(|runs| {
-        runs.get(optimization_request_sha256)
-            .is_some_and(|run| matches!(run.status.status, "preparing" | "running" | "pausing"))
+        runs.get(optimization_request_sha256).is_some_and(|run| {
+            matches!(
+                run.status.status,
+                "preparing" | "running" | "pausing" | "cancelling"
+            )
+        })
     })
 }
 
@@ -185,11 +193,17 @@ pub(super) fn tactic_route_learning_projection(
             }
         }
     } else if output.exists() {
-        projection.status = "interrupted".into();
-        projection.error = Some(
-            "the tactic-route output is incomplete; resumable runner state is not implemented yet"
-                .into(),
-        );
+        if tactic_route_cancel_marker_valid(&output, &optimization.content_sha256.to_string()) {
+            projection.status = "cancelled".into();
+        } else if tactic_route_pause_evidence_exists(&output) {
+            projection.status = "paused".into();
+        } else {
+            projection.status = "interrupted".into();
+            projection.error = Some(
+                "the tactic-route output is incomplete and has no immutable pause checkpoint"
+                    .into(),
+            );
+        }
     }
 
     if let Ok(runs) = tactic_route_runs().lock()
@@ -210,16 +224,37 @@ pub(super) fn start_tactic_route_learning(
     let _lifecycle = optimization_lifecycle_edits()
         .lock()
         .map_err(|_| WorkbenchError::new("optimization lifecycle lock is unavailable"))?;
-    let world_context = config.world_context.as_ref().ok_or_else(|| {
-        WorkbenchError::new(
-            "route learning requires a sealed world context; restart the workbench with --world-context WORLD.json",
-        )
-    })?;
     let root = config
         .repository_root
         .canonicalize()
         .map_err(tactic_route_error)?;
     let optimization = selected_optimization(config, &root, &browser.campaign)?;
+    launch_tactic_route_learning(config, root, optimization, browser.campaign.clone(), false)
+}
+
+pub(super) fn resume_tactic_route_learning(
+    config: &WorkbenchConfig,
+    browser: &BrowserOptimizationLifecycleRequest,
+) -> Result<TacticRouteStartResponse, WorkbenchError> {
+    let _lifecycle = optimization_lifecycle_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("optimization lifecycle lock is unavailable"))?;
+    let (root, optimization) = checked_optimization_request(config, browser)?;
+    launch_tactic_route_learning(config, root, optimization, browser.campaign.clone(), true)
+}
+
+fn launch_tactic_route_learning(
+    config: &WorkbenchConfig,
+    root: PathBuf,
+    optimization: OptimizationRequest,
+    campaign: String,
+    resume: bool,
+) -> Result<TacticRouteStartResponse, WorkbenchError> {
+    let world_context = config.world_context.as_ref().ok_or_else(|| {
+        WorkbenchError::new(
+            "route learning requires a sealed world context; restart the workbench with --world-context WORLD.json",
+        )
+    })?;
     let request_sha256 = optimization.content_sha256.to_string();
     if optimization_runtime_status(&request_sha256)
         .is_some_and(|status| matches!(status.status, "preparing" | "running" | "cancelling"))
@@ -235,9 +270,17 @@ pub(super) fn start_tactic_route_learning(
         ));
     }
     let output = tactic_route_output_root(&root, &optimization)?;
-    if output.exists() {
+    if output.exists() && !resume {
         return Err(WorkbenchError::new(
             "route-learning evidence already exists for this start and goal",
+        ));
+    }
+    if resume
+        && (tactic_route_cancel_marker_valid(&output, &request_sha256)
+            || !tactic_route_pause_evidence_exists(&output))
+    {
+        return Err(WorkbenchError::new(
+            "route learning has no immutable paused checkpoint to resume",
         ));
     }
     let execution = prepare_optimization_execution(
@@ -255,10 +298,12 @@ pub(super) fn start_tactic_route_learning(
         let mut runs = tactic_route_runs()
             .lock()
             .map_err(|_| WorkbenchError::new("route-learning runtime registry is unavailable"))?;
-        if runs
-            .get(&request_sha256)
-            .is_some_and(|run| matches!(run.status.status, "preparing" | "running" | "pausing"))
-        {
+        if runs.get(&request_sha256).is_some_and(|run| {
+            matches!(
+                run.status.status,
+                "preparing" | "running" | "pausing" | "cancelling"
+            )
+        }) {
             return Err(WorkbenchError::new("route learning is already running"));
         }
         runs.insert(
@@ -289,6 +334,7 @@ pub(super) fn start_tactic_route_learning(
                 refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,
                 epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
                 cancellation: Some(&thread_cancellation),
+                resume,
             });
             let status = match result {
                 Ok(report) if report.successful_seeds > 0 => TacticRouteRuntimeStatus {
@@ -310,7 +356,15 @@ pub(super) fn start_tactic_route_learning(
             };
             if let Ok(mut runs) = tactic_route_runs().lock() {
                 if let Some(entry) = runs.get_mut(&thread_request_sha256) {
-                    entry.status = status;
+                    entry.status =
+                        if status.status == "paused" && entry.status.status == "cancelling" {
+                            TacticRouteRuntimeStatus {
+                                status: "cancelled",
+                                error: None,
+                            }
+                        } else {
+                            status
+                        };
                 }
             }
         });
@@ -332,7 +386,7 @@ pub(super) fn start_tactic_route_learning(
     }
     Ok(TacticRouteStartResponse {
         schema: TACTIC_ROUTE_START_SCHEMA,
-        campaign: browser.campaign.clone(),
+        campaign,
         optimization_request_sha256: request_sha256,
         output: output_text,
         status: "running",
@@ -349,6 +403,26 @@ pub(super) fn pause_tactic_route_learning(
     let (_, optimization) = checked_optimization_request(config, browser)?;
     let request_sha256 = optimization.content_sha256.to_string();
     let status = request_tactic_route_pause(&request_sha256)?;
+    Ok(TacticRouteLifecycleResponse {
+        schema: TACTIC_ROUTE_LIFECYCLE_SCHEMA,
+        campaign: optimization.id,
+        optimization_request_sha256: request_sha256,
+        status,
+    })
+}
+
+pub(super) fn cancel_tactic_route_learning(
+    config: &WorkbenchConfig,
+    browser: &BrowserOptimizationLifecycleRequest,
+) -> Result<TacticRouteLifecycleResponse, WorkbenchError> {
+    let _lifecycle = optimization_lifecycle_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("optimization lifecycle lock is unavailable"))?;
+    let (root, optimization) = checked_optimization_request(config, browser)?;
+    let request_sha256 = optimization.content_sha256.to_string();
+    let output = tactic_route_output_root(&root, &optimization)?;
+    let status = request_tactic_route_cancel(&request_sha256, &output)?;
+    write_tactic_route_cancel_marker(&output, &request_sha256)?;
     Ok(TacticRouteLifecycleResponse {
         schema: TACTIC_ROUTE_LIFECYCLE_SCHEMA,
         campaign: optimization.id,
@@ -378,6 +452,45 @@ fn request_tactic_route_pause(
         "pausing" => Ok("pausing"),
         "paused" => Ok("paused"),
         _ => Err(WorkbenchError::new("route learning is not running")),
+    }
+}
+
+fn request_tactic_route_cancel(
+    optimization_request_sha256: &str,
+    output: &Path,
+) -> Result<&'static str, WorkbenchError> {
+    let mut runs = tactic_route_runs()
+        .lock()
+        .map_err(|_| WorkbenchError::new("route-learning runtime registry is unavailable"))?;
+    let Some(entry) = runs.get_mut(optimization_request_sha256) else {
+        return if tactic_route_pause_evidence_exists(output) {
+            Ok("cancelled")
+        } else {
+            Err(WorkbenchError::new(
+                "route learning is not running or paused",
+            ))
+        };
+    };
+    match entry.status.status {
+        "preparing" | "running" | "pausing" => {
+            entry.cancellation.store(true, Ordering::Release);
+            entry.status = TacticRouteRuntimeStatus {
+                status: "cancelling",
+                error: None,
+            };
+            Ok("cancelling")
+        }
+        "cancelling" => Ok("cancelling"),
+        "paused" | "cancelled" => {
+            entry.status = TacticRouteRuntimeStatus {
+                status: "cancelled",
+                error: None,
+            };
+            Ok("cancelled")
+        }
+        _ => Err(WorkbenchError::new(
+            "route learning is not running or paused",
+        )),
     }
 }
 
@@ -519,6 +632,97 @@ fn tactic_route_output_root(
     optimization: &OptimizationRequest,
 ) -> Result<PathBuf, WorkbenchError> {
     Ok(optimization_campaign_root(root, optimization)?.join("tactic-route"))
+}
+
+fn tactic_route_pause_evidence_exists(output: &Path) -> bool {
+    fs::read_dir(output)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_type()
+                .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
+                && entry.file_name().to_string_lossy().starts_with("seed-")
+        })
+        .any(|seed| {
+            fs::read_dir(seed.path().join("pause-checkpoints"))
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter(|entry| {
+                    entry
+                        .file_type()
+                        .is_ok_and(|kind| kind.is_dir() && !kind.is_symlink())
+                })
+                .any(|checkpoint| {
+                    fs::read_dir(checkpoint.path())
+                        .ok()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Result::ok)
+                        .any(|file| {
+                            file.file_type()
+                                .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
+                                && file.file_name().to_string_lossy().starts_with("tactic-q-")
+                                && file.path().extension().is_some_and(|value| value == "json")
+                        })
+                })
+        })
+}
+
+fn tactic_route_cancel_marker_path(output: &Path) -> PathBuf {
+    output.join("lifecycle").join("cancelled.json")
+}
+
+fn tactic_route_cancel_marker_valid(output: &Path, request_sha256: &str) -> bool {
+    bounded_json::<Value>(&tactic_route_cancel_marker_path(output)).is_some_and(|marker| {
+        marker.get("schema").and_then(Value::as_str) == Some(TACTIC_ROUTE_CANCEL_MARKER_SCHEMA)
+            && marker
+                .get("optimization_request_sha256")
+                .and_then(Value::as_str)
+                == Some(request_sha256)
+    })
+}
+
+fn write_tactic_route_cancel_marker(
+    output: &Path,
+    request_sha256: &str,
+) -> Result<(), WorkbenchError> {
+    let path = tactic_route_cancel_marker_path(output);
+    let parent = path
+        .parent()
+        .ok_or_else(|| WorkbenchError::new("route-learning cancel marker has no parent"))?;
+    fs::create_dir_all(parent).map_err(tactic_route_error)?;
+    let bytes = serde_json::to_vec_pretty(&serde_json::json!({
+        "schema": TACTIC_ROUTE_CANCEL_MARKER_SCHEMA,
+        "optimization_request_sha256": request_sha256,
+    }))
+    .map_err(tactic_route_error)?;
+    if path.exists() {
+        if fs::read(&path).map_err(tactic_route_error)? == bytes {
+            return Ok(());
+        }
+        return Err(WorkbenchError::new(
+            "route-learning cancel marker contains different evidence",
+        ));
+    }
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(tactic_route_error)?
+        .as_nanos();
+    let partial = parent.join(format!(".cancelled.{}.{nonce}.partial", std::process::id()));
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&partial)
+        .map_err(tactic_route_error)?;
+    file.write_all(&bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(tactic_route_error)?;
+    fs::rename(partial, path).map_err(tactic_route_error)
 }
 
 fn project_completed_seed_results(
@@ -893,8 +1097,42 @@ mod tests {
         assert!(cancellation.load(Ordering::Acquire));
         assert_eq!(request_tactic_route_pause(&key).unwrap(), "pausing");
         assert!(tactic_route_campaign_active(&key));
+        assert_eq!(
+            request_tactic_route_cancel(&key, Path::new("unused")).unwrap(),
+            "cancelling"
+        );
+        assert!(tactic_route_campaign_active(&key));
 
         forget_tactic_route_campaign(&key);
+    }
+
+    #[test]
+    fn only_immutable_pause_checkpoints_make_route_evidence_resumable() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-route-resume-evidence-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("seed-000-42").join("native")).unwrap();
+        assert!(!tactic_route_pause_evidence_exists(&root));
+
+        let pause = root
+            .join("seed-000-42")
+            .join("pause-checkpoints")
+            .join("decision-000003");
+        fs::create_dir_all(&pause).unwrap();
+        fs::write(pause.join("tactic-q-proof.json"), b"checkpoint").unwrap();
+        assert!(tactic_route_pause_evidence_exists(&root));
+        assert_eq!(
+            request_tactic_route_cancel("unregistered-pause", &root).unwrap(),
+            "cancelled"
+        );
+        let request_sha256 = "a".repeat(64);
+        write_tactic_route_cancel_marker(&root, &request_sha256).unwrap();
+        assert!(tactic_route_cancel_marker_valid(&root, &request_sha256));
+        assert!(!tactic_route_cancel_marker_valid(&root, &"b".repeat(64)));
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
 

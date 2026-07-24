@@ -202,7 +202,7 @@ pub struct TacticCampaignGraphProjectionEdge {
     pub end_frame_exclusive: u64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticCampaignDiagnostics {
     pub replay_rows: usize,
