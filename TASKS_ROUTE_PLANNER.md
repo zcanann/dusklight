@@ -148,10 +148,10 @@ The initial mutable asset types are:
 - [ ] Validate names, collisions, references, and permissions before mutation.
 - [x] Show inbound references before delete and preserve resolvable broken-link
       records when deletion is confirmed.
-- [ ] Add revision-checked save and conflict resolution for independently open
+- [x] Add revision-checked save and conflict resolution for independently open
       editor tabs.
 - [ ] Add import/export for individual assets and complete workspaces.
-- [ ] Add filesystem change detection so external edits or Git operations do not
+- [x] Add filesystem change detection so external edits or Git operations do not
       leave stale in-memory documents.
 - [ ] Move hard-coded Rust demonstrations into ordinary read-only serialized
       Library assets loaded through the same validation path as user content.
@@ -277,7 +277,7 @@ scenario is.
 
 ### 7.2 Blueprint-like custom nodes
 
-- [ ] Let users define a custom transition node with typed inputs, guards,
+- [x] Let users define a custom transition node with typed inputs, guards,
       effects, costs, obligations, outputs, scope, and evidence status.
 - [ ] Compile custom transition nodes through the existing refinement/validation
       machinery instead of interpreting browser-owned behavior.

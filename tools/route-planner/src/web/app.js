@@ -35,6 +35,8 @@ const elements = Object.fromEntries([
 
 const state = {
   workspace: null,
+  workspaceSignature: null,
+  workspacePollActive: false,
   workspaceList: [],
   trash: [],
   libraries: [],
@@ -143,6 +145,7 @@ window.addEventListener("beforeunload", (event) => {
 
 applyTransform();
 start();
+window.setInterval(pollWorkspaceChanges, 3000);
 
 async function start() {
   try {
@@ -268,6 +271,7 @@ async function loadWorkspace(id) {
 
 async function openWorkspaceRecord(record) {
   state.workspace = record;
+  state.workspaceSignature = workspaceSignature(record);
   await refreshTrash();
   state.project = null;
   state.graph = null;
@@ -305,6 +309,43 @@ async function refreshTrash() {
   state.trash = await projectApi(
     `/api/workspaces/${encodeURIComponent(state.workspace.manifest.id)}/trash`,
   );
+}
+
+function workspaceSignature(record) {
+  return JSON.stringify((record?.assets ?? []).map((asset) => [
+    asset.id,
+    asset.relative_path,
+    asset.revision_sha256,
+  ]).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+async function pollWorkspaceChanges() {
+  if (!state.workspace || state.workspacePollActive) return;
+  state.workspacePollActive = true;
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    const fresh = await projectApi(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
+    const signature = workspaceSignature(fresh);
+    if (signature === state.workspaceSignature) return;
+    const selectedId = state.selectedWorkspaceAsset?.asset?.header?.id;
+    state.workspace = fresh;
+    state.workspaceSignature = signature;
+    await refreshTrash();
+    renderContentBrowser();
+    if (selectedId && fresh.assets.some((asset) => asset.id === selectedId)) {
+      await inspectWorkspaceAsset(fresh.assets.find((asset) => asset.id === selectedId));
+    } else if (selectedId) {
+      state.selectedWorkspaceAsset = null;
+      elements["workspace-asset-editor"].hidden = true;
+      setStatus("The selected asset changed or was removed on disk", "bad");
+      return;
+    }
+    setStatus("Workspace changes from disk were reloaded", "good");
+  } catch (error) {
+    setStatus(`Workspace refresh failed: ${error.message}`, "bad");
+  } finally {
+    state.workspacePollActive = false;
+  }
 }
 
 function selectContentSource(source) {
@@ -461,6 +502,7 @@ async function workspaceAssetCommand(asset, command) {
     },
   );
   state.workspace = record;
+  state.workspaceSignature = workspaceSignature(record);
   await refreshTrash();
   await refreshWorkspaces(workspaceId);
   renderContentBrowser();
@@ -559,6 +601,7 @@ async function runTrashCommand(asset, command) {
         }),
       },
     );
+    state.workspaceSignature = workspaceSignature(state.workspace);
     await refreshTrash();
     await refreshWorkspaces(workspaceId);
     renderContentBrowser();
@@ -812,6 +855,7 @@ async function saveCustomNodeAsset(record, asset) {
     );
     state.selectedWorkspaceAsset = saved;
     state.workspace = await projectApi(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
+    state.workspaceSignature = workspaceSignature(state.workspace);
     await refreshWorkspaces(workspaceId);
     renderContentBrowser();
     elements["detail-title"].textContent = saved.asset.header.label;
@@ -819,6 +863,17 @@ async function saveCustomNodeAsset(record, asset) {
     renderWorkspaceAssetEditor(saved);
     setStatus("Custom node saved", "good");
   } catch (error) {
+    if (error.message.includes("revision conflict")
+      && confirm(`${error.message}\n\nReload the version currently on disk?`)) {
+      const workspaceId = state.workspace.manifest.id;
+      const fresh = await projectApi(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
+      state.workspace = fresh;
+      state.workspaceSignature = workspaceSignature(fresh);
+      const listing = fresh.assets.find((item) => item.id === asset.header.id);
+      if (listing) await inspectWorkspaceAsset(listing);
+      setStatus("Reloaded the current asset from disk; local edits were not applied", "good");
+      return;
+    }
     setStatus(error.message, "bad");
   }
 }
