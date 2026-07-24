@@ -17,6 +17,7 @@ const LIBRARY_DRAG_TYPE = "application/x-dusklight-library";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
+const AUTHORING_HISTORY_LIMIT = 100;
 const FRIENDLY_KINDS = {
   scenario: "Scenario",
   route_graph: "Route graph",
@@ -87,7 +88,7 @@ const elements = Object.fromEntries([
   "new-asset-error", "cancel-new-asset", "import-asset", "workspace-asset-file",
   "import-workspace", "export-workspace", "workspace-file",
   "add-node-menu", "add-node-search", "add-node-results",
-  "project-list", "open-project", "save-project", "save-as-project",
+  "project-list", "open-project", "save-project", "save-as-project", "undo", "redo",
   "export-project", "project-file", "project-name", "status", "search", "node-kind-list", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state",
   "empty-primary", "empty-secondary", "zoom-in",
@@ -133,6 +134,9 @@ const state = {
   emptyActions: { primary: null, secondary: null },
   nodeKindFilter: "mechanic",
   workspaceEdit: null,
+  undoStack: [],
+  redoStack: [],
+  historyBusy: false,
 };
 
 elements["workspace-list"].addEventListener("change", () => {
@@ -175,6 +179,8 @@ elements["open-project"].addEventListener("click", () => elements["project-file"
 elements["project-file"].addEventListener("change", importProject);
 elements["save-project"].addEventListener("click", saveProject);
 elements["save-as-project"].addEventListener("click", saveProjectAs);
+elements.undo.addEventListener("click", undoAuthoringCommand);
+elements.redo.addEventListener("click", redoAuthoringCommand);
 elements["export-project"].addEventListener("click", exportProject);
 elements.search.addEventListener("input", () => renderPalette());
 elements["zoom-in"].addEventListener("click", () => zoomAt(1.2));
@@ -211,6 +217,20 @@ window.addEventListener("pointerdown", (event) => {
 });
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") closeAddNodeMenu();
+  const editingText = event.target instanceof HTMLInputElement
+    || event.target instanceof HTMLTextAreaElement
+    || event.target instanceof HTMLSelectElement
+    || event.target?.isContentEditable;
+  if (editingText || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+  const key = event.key.toLowerCase();
+  if (key === "z") {
+    event.preventDefault();
+    if (event.shiftKey) redoAuthoringCommand();
+    else undoAuthoringCommand();
+  } else if (key === "y" && !event.shiftKey) {
+    event.preventDefault();
+    redoAuthoringCommand();
+  }
 });
 elements["add-node-search"].addEventListener("input", renderAddNodeMenu);
 window.addEventListener("beforeunload", (event) => {
@@ -1416,6 +1436,7 @@ async function loadProject(project, options) {
   state.readOnly = options.readOnly;
   state.dirty = options.dirty;
   state.workspaceEdit = options.workspaceEdit ?? null;
+  clearAuthoringHistory();
   state.selected = null;
   state.transitionEvaluation = null;
   state.replacementStep = null;
@@ -1835,6 +1856,7 @@ function bindingSummary(binding) {
 async function editTheorycraftOverlays(edit) {
   if (!state.project?.start_state || state.readOnly) return;
   if (edit.kind === "clear" && !confirm("Remove every authored theorycraft overlay from this project?")) return;
+  const historyBefore = captureAuthoringState();
   try {
     setStatus("Recomposing theorycraft sandbox...");
     const baseCatalog = state.project.theorycraft_base_catalog ?? state.project.catalog;
@@ -1873,7 +1895,7 @@ async function editTheorycraftOverlays(edit) {
     ensurePositions();
     const selected = state.graph.nodes.find((candidate) => candidate.id === selectedId);
     state.selected = selected ? { type: "node", value: selected } : null;
-    markDirty();
+    commitAuthoringCommand("Change theorycraft overlays", historyBefore);
     render();
     const action = payload.added_pack
       ? `Enabled ${payload.added_pack.manifest.id}`
@@ -1947,6 +1969,7 @@ function catalogCostAxes(catalog) {
 
 async function changeEvidenceMode(mode) {
   if (!state.project || state.readOnly || mode === state.project.evidence_mode) return;
+  const historyBefore = captureAuthoringState();
   const previous = state.project.evidence_mode;
   state.project.evidence_mode = mode;
   try {
@@ -1954,7 +1977,7 @@ async function changeEvidenceMode(mode) {
     await refreshAuthoredRouteInspections();
     state.selected = null;
     state.transitionEvaluation = null;
-    markDirty();
+    commitAuthoringCommand("Change evidence policy", historyBefore);
     render();
     setStatus(`Evidence policy changed to ${taggedValue(mode)}; save to persist`, "good");
   } catch (error) {
@@ -2780,6 +2803,7 @@ function createRegionDerivative(kind) {
   };
   const label = prompt("Derived region name", defaultLabels[kind])?.trim();
   if (!label) return;
+  const historyBefore = captureAuthoringState();
   const boundary = inspectRegionBoundary(source);
   const derived = {
     id: nextPresentationRegionId(label),
@@ -2796,7 +2820,7 @@ function createRegionDerivative(kind) {
   state.project.presentation.regions.push(derived);
   state.activeRegionId = derived.id;
   state.selected = { type: "region", value: inspectRegionBoundary(derived) };
-  markDirty();
+  commitAuthoringCommand(`Create ${kind} region`, historyBefore);
   render();
   requestAnimationFrame(fitGraph);
   setStatus(`${derived.label} created as ${kind} of ${source.label}; save to persist`, "good");
@@ -2815,6 +2839,7 @@ function replaceRegionFromSelection() {
     setStatus("Replacement target must be an existing presentation region ID", "bad");
     return;
   }
+  const historyBefore = captureAuthoringState();
   const boundary = inspectRegionBoundary(source);
   target.version = (target.version ?? 1) + 1;
   target.snapshot_node_ids = [...boundary.enclosed_node_ids].sort();
@@ -2825,7 +2850,7 @@ function replaceRegionFromSelection() {
   };
   state.activeRegionId = target.id;
   state.selected = { type: "region", value: inspectRegionBoundary(target) };
-  markDirty();
+  commitAuthoringCommand("Replace region", historyBefore);
   render();
   requestAnimationFrame(fitGraph);
   setStatus(`${target.label} replaced from ${source.label} at version ${target.version}; save to persist`, "good");
@@ -2849,6 +2874,7 @@ function groupSelectedNodes() {
   if (!state.groupSelection.size || state.readOnly) return;
   const label = prompt("Nested region name", "New region")?.trim();
   if (!label) return;
+  const historyBefore = captureAuthoringState();
   const id = nextPresentationRegionId(label);
   const presentation = state.project.presentation ?? { positions: {} };
   const regions = [...(presentation.regions ?? []), {
@@ -2869,7 +2895,7 @@ function groupSelectedNodes() {
   state.groupSelection = new Set();
   state.activeRegionId = id;
   state.collapsedRegionIds.delete(id);
-  markDirty();
+  commitAuthoringCommand("Group nodes", historyBefore);
   render();
   requestAnimationFrame(fitGraph);
   setStatus(`${label} grouped as presentation-only graph region; save to persist`, "good");
@@ -3098,6 +3124,7 @@ async function toggleSelectedMethod() {
 }
 
 async function editRouteBook(edits, message) {
+  const historyBefore = captureAuthoringState();
   try {
     setStatus("Validating route-book revision...");
     const validated = await service({
@@ -3137,7 +3164,7 @@ async function editRouteBook(edits, message) {
     ensurePositions();
     const selected = state.graph.nodes.find((candidate) => candidate.id === selectedId);
     state.selected = selected ? { type: "node", value: selected } : null;
-    markDirty();
+    commitAuthoringCommand(message, historyBefore);
     render();
     setStatus(`${message}; save to persist`, "good");
   } catch (error) {
@@ -3239,6 +3266,7 @@ async function removeSelectedRouteStep() {
   const node = state.selected?.type === "node" ? state.selected.value : null;
   if (node?.payload.kind !== "reference_step" || !state.project?.start_state
     || !state.project?.route_book || state.readOnly) return;
+  const historyBefore = captureAuthoringState();
   try {
     setStatus(`Replaying route without ${node.label}...`);
     const payload = await service({
@@ -3285,7 +3313,7 @@ async function removeSelectedRouteStep() {
     state.selected = null;
     state.transitionEvaluation = null;
     ensurePositions();
-    markDirty();
+    commitAuthoringCommand(`Remove ${node.label}`, historyBefore);
     render();
     setStatus(`${node.label} removed; downstream state replayed; save to persist`, "good");
   } catch (error) {
@@ -3305,6 +3333,7 @@ async function replaceSelectedRouteStep() {
   }
   if (node.payload.kind !== "transition" || !state.replacementStep) return;
   const replacement = state.replacementStep;
+  const historyBefore = captureAuthoringState();
   try {
     setStatus(`Replaying route with ${node.label} replacing ${replacement.label}...`);
     const payload = await service({
@@ -3368,7 +3397,7 @@ async function replaceSelectedRouteStep() {
       candidate.payload.kind === "reference_step" && candidate.payload.step_id === payload.step_id);
     if (stepNode) selectNode(stepNode);
     else state.selected = null;
-    markDirty();
+    commitAuthoringCommand(`Replace ${replacement.label}`, historyBefore);
     render();
     setStatus(`${replacement.label} replaced with ${node.label}; downstream state replayed; save to persist`, "good");
   } catch (error) {
@@ -3379,6 +3408,7 @@ async function replaceSelectedRouteStep() {
 async function insertSelectedTransition() {
   const node = state.selected?.type === "node" ? state.selected.value : null;
   if (node?.payload.kind !== "transition" || !state.project?.start_state || state.readOnly) return;
+  const historyBefore = captureAuthoringState();
   try {
     setStatus(`Propagating and inserting ${node.label}...`);
     const payload = await service({
@@ -3437,7 +3467,7 @@ async function insertSelectedTransition() {
     const stepNode = state.graph.nodes.find((candidate) =>
       candidate.payload.kind === "reference_step" && candidate.payload.step_id === payload.step_id);
     if (stepNode) selectNode(stepNode);
-    markDirty();
+    commitAuthoringCommand(`Insert ${node.label}`, historyBefore);
     render();
     setStatus(`${node.label} inserted as ${payload.step_id}; save to persist`, "good");
   } catch (error) {
@@ -3489,6 +3519,7 @@ async function suggestOrInsertSelectedTransitionChain() {
 async function insertSuggestedTransitionChain(suggestion) {
   const node = state.selected?.type === "node" ? state.selected.value : null;
   if (node?.payload.kind !== "transition" || !suggestion.transition_ids.length || state.readOnly) return;
+  const historyBefore = captureAuthoringState();
   try {
     setStatus(`Validating and inserting ${suggestion.transition_ids.length}-step producer chain...`);
     let book = state.project.route_book ?? null;
@@ -3528,7 +3559,7 @@ async function insertSuggestedTransitionChain(suggestion) {
       candidate.payload.kind === "reference_step" && candidate.payload.step_id === appended.step_id);
     if (stepNode) selectNode(stepNode);
     else state.selected = null;
-    markDirty();
+    commitAuthoringCommand("Insert suggested transition chain", historyBefore);
     render();
     setStatus(`${suggestion.transition_ids.length}-step producer chain inserted; save to persist`, "good");
   } catch (error) {
@@ -3708,7 +3739,16 @@ function beginNodeDrag(event, node) {
   elements.canvas.setPointerCapture(event.pointerId);
   const position = state.positions.get(node.id);
   selectNode(node);
-  state.gesture = { kind: "node", pointerId: event.pointerId, nodeId: node.id, startX: event.clientX, startY: event.clientY, x: position.x, y: position.y };
+  state.gesture = {
+    kind: "node",
+    pointerId: event.pointerId,
+    nodeId: node.id,
+    startX: event.clientX,
+    startY: event.clientY,
+    x: position.x,
+    y: position.y,
+    historyBefore: captureAuthoringState(),
+  };
   renderDetails();
 }
 
@@ -3732,11 +3772,12 @@ function moveGesture(event) {
 
 function endGesture(event) {
   if (!state.gesture || event.pointerId !== state.gesture.pointerId) return;
-  const changedLayout = state.gesture.kind === "node"
-    && (event.clientX !== state.gesture.startX || event.clientY !== state.gesture.startY);
+  const gesture = state.gesture;
+  const changedLayout = gesture.kind === "node"
+    && (event.clientX !== gesture.startX || event.clientY !== gesture.startY);
   state.gesture = null;
   if (elements.canvas.hasPointerCapture(event.pointerId)) elements.canvas.releasePointerCapture(event.pointerId);
-  if (changedLayout) markDirty();
+  if (changedLayout) commitAuthoringCommand("Move node", gesture.historyBefore);
 }
 
 function onWheel(event) {
@@ -3847,6 +3888,7 @@ async function saveProject() {
     state.revision = record.revision_sha256;
     state.readOnly = record.read_only;
     state.dirty = false;
+    clearAuthoringHistory();
     updateProjectControls();
     await refreshProjects(false, state.project.id);
     setStatus("Project saved", "good");
@@ -3901,6 +3943,7 @@ async function saveWorkspaceRouteGraph() {
   state.project.route_book = saved.route_book.asset.payload.route_book;
   state.graph = saved.graph.asset.payload.graph;
   state.dirty = false;
+  clearAuthoringHistory();
   updateProjectControls();
   await refreshWorkspaces(workspaceId);
   renderContentBrowser();
@@ -3921,6 +3964,7 @@ async function saveProjectAs() {
     state.revision = record.revision_sha256;
     state.readOnly = false;
     state.dirty = false;
+    clearAuthoringHistory();
     updateProjectControls();
     await refreshProjects(false, state.project.id);
     setStatus("Project copy saved", "good");
@@ -3941,12 +3985,119 @@ function markDirty() {
   updateProjectControls();
 }
 
+function captureAuthoringState() {
+  if (!state.project) return null;
+  return {
+    catalog: state.project.catalog,
+    theorycraftBaseCatalog: state.project.theorycraft_base_catalog ?? null,
+    theorycraftOverlays: structuredClone(state.project.theorycraft_overlays ?? []),
+    routeBook: structuredClone(state.project.route_book ?? null),
+    evidenceMode: state.project.evidence_mode,
+    presentation: structuredClone(state.project.presentation ?? null),
+    positions: [...state.positions.entries()].map(([id, position]) => [id, { ...position }]),
+    transform: { ...state.transform },
+    dirty: state.dirty,
+  };
+}
+
+function commitAuthoringCommand(label, before) {
+  if (!before || state.historyBusy) return;
+  markDirty();
+  state.undoStack.push({ label, before, after: captureAuthoringState() });
+  if (state.undoStack.length > AUTHORING_HISTORY_LIMIT) state.undoStack.shift();
+  state.redoStack = [];
+  updateProjectControls();
+}
+
+function clearAuthoringHistory() {
+  state.undoStack = [];
+  state.redoStack = [];
+  state.historyBusy = false;
+  updateProjectControls();
+}
+
+async function restoreAuthoringState(snapshot) {
+  state.project.catalog = snapshot.catalog;
+  state.project.theorycraft_base_catalog = snapshot.theorycraftBaseCatalog;
+  state.project.theorycraft_overlays = structuredClone(snapshot.theorycraftOverlays);
+  state.project.route_book = structuredClone(snapshot.routeBook);
+  state.project.evidence_mode = snapshot.evidenceMode;
+  state.project.presentation = structuredClone(snapshot.presentation);
+  state.positions = new Map(snapshot.positions.map(([id, position]) => [id, { ...position }]));
+  state.transform = { ...snapshot.transform };
+  state.transitionSearch = new Map(state.project.catalog.mechanics.transitions.map((transition) => [
+    transition.id,
+    transitionSearchText(transition),
+  ]));
+  state.selected = null;
+  state.transitionEvaluation = null;
+  state.replacementStep = null;
+  state.solveReport = null;
+  await refreshAuthoredRouteInspections();
+  if (!state.project.start_state) {
+    const projected = await service({
+      command: "project_graph",
+      request_id: requestId("project-after-history"),
+      catalog: state.project.catalog,
+      route_book: state.project.route_book,
+    });
+    if (projected.kind !== "graph") throw new Error(`Unexpected response ${projected.kind}`);
+    state.graph = projected.graph;
+  }
+  ensurePositions();
+  state.dirty = snapshot.dirty;
+  applyTransform();
+  render();
+  updateProjectControls();
+}
+
+async function undoAuthoringCommand() {
+  if (state.historyBusy || !state.undoStack.length || state.readOnly) return;
+  const command = state.undoStack.pop();
+  state.historyBusy = true;
+  updateProjectControls();
+  try {
+    await restoreAuthoringState(command.before);
+    state.redoStack.push(command);
+    setStatus(`Undid: ${command.label}`, "good");
+  } catch (error) {
+    state.undoStack.push(command);
+    setStatus(`Undo failed: ${error.message}`, "bad");
+  } finally {
+    state.historyBusy = false;
+    updateProjectControls();
+  }
+}
+
+async function redoAuthoringCommand() {
+  if (state.historyBusy || !state.redoStack.length || state.readOnly) return;
+  const command = state.redoStack.pop();
+  state.historyBusy = true;
+  updateProjectControls();
+  try {
+    await restoreAuthoringState(command.after);
+    state.undoStack.push(command);
+    setStatus(`Redid: ${command.label}`, "good");
+  } catch (error) {
+    state.redoStack.push(command);
+    setStatus(`Redo failed: ${error.message}`, "bad");
+  } finally {
+    state.historyBusy = false;
+    updateProjectControls();
+  }
+}
+
 function updateProjectControls() {
   const loaded = Boolean(state.project);
+  elements.canvas.dataset.routeStepCount = String(state.project?.route_book?.steps?.length ?? 0);
   elements["export-workspace"].disabled = !state.workspace;
   elements["save-project"].disabled = !loaded || state.readOnly || !state.dirty;
   elements["save-as-project"].disabled = !loaded;
   elements["export-project"].disabled = !loaded;
+  elements.undo.disabled = !loaded || state.readOnly || state.historyBusy || !state.undoStack.length;
+  elements.redo.disabled = !loaded || state.readOnly || state.historyBusy || !state.redoStack.length;
+  elements.undo.title = state.undoStack.length ? `Undo ${state.undoStack.at(-1).label} (Ctrl+Z)` : "Undo (Ctrl+Z)";
+  elements.redo.title = state.redoStack.length ? `Redo ${state.redoStack.at(-1).label} (Ctrl+Y)` : "Redo (Ctrl+Y)";
   elements["project-name"].textContent = loaded
     ? `${state.project.label}${state.readOnly ? " (read-only demo)" : ""}`
     : state.workspace?.manifest?.label ?? "No workspace open";

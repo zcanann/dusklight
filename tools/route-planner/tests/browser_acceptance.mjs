@@ -185,8 +185,42 @@ try {
   await browserUntil(
     "first workspace route step",
     `document.getElementById("status").textContent.includes("inserted as step.route-0000")
-      && !document.getElementById("save-project").disabled`,
+      && !document.getElementById("save-project").disabled
+      && !document.getElementById("undo").disabled`,
   );
+  await evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "z",
+    ctrlKey: true,
+    bubbles: true,
+  }))`);
+  await browserUntil(
+    "semantic route undo",
+    `document.getElementById("status").textContent.includes("Undid: Insert")
+      && document.getElementById("undo").disabled
+      && !document.getElementById("redo").disabled
+      && document.getElementById("save-project").disabled
+      && document.getElementById("canvas").dataset.routeStepCount === "0"`,
+  );
+  await evaluate(`document.getElementById("redo").click()`);
+  await browserUntil(
+    "semantic route redo completion",
+    `document.getElementById("status").textContent.includes("Redid:")
+      || document.getElementById("status").textContent.includes("Redo failed:")`,
+  );
+  const redoState = await evaluate(`({
+    status: document.getElementById("status").textContent,
+    undoDisabled: document.getElementById("undo").disabled,
+    redoDisabled: document.getElementById("redo").disabled,
+    saveDisabled: document.getElementById("save-project").disabled,
+    routeSteps: Number(document.getElementById("canvas").dataset.routeStepCount),
+  })`);
+  if (!redoState.status.includes("Redid: Insert")
+    || redoState.undoDisabled
+    || !redoState.redoDisabled
+    || redoState.saveDisabled
+    || redoState.routeSteps !== 1) {
+    throw new Error(`semantic route redo did not restore the authored step: ${JSON.stringify(redoState)}`);
+  }
   await evaluate(`document.getElementById("save-project").click()`);
   await browserUntil(
     "atomic workspace route save",

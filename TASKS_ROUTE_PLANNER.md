@@ -37,13 +37,15 @@ The remaining usability gap is direct route authoring:
   serialized Workspace Route Book and persist its derived graph and layout
   atomically, but it does not yet author typed pins, branches, subgraphs, or
   general semantic graph rewiring.
-- Folder CRUD, multiple editors, undo/redo, and keyboard-first
-  authoring remain incomplete.
+- Folder CRUD, multiple editors, asset-level undo/redo, and broader
+  keyboard-first authoring remain incomplete. Route Book edits, presentation
+  regions, evidence changes, and node moves have semantic undo/redo now.
 - Presentation regions are not reusable semantic subgraphs.
 - The browser acceptance test creates a blank Workspace through the UI, creates
-  a grounded scenario from a direct Library action, adds and persists its first
-  route step, then continues through the preassembled keyed-door example. Root,
-  anchor, goal, and context selection are not yet independently authorable.
+  a grounded scenario from a direct Library action, adds, undoes, redoes, and
+  persists its first route step, then continues through the preassembled
+  keyed-door example. Root, anchor, goal, and context selection are not yet
+  independently authorable.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 
@@ -126,8 +128,7 @@ or test fixture does not count as progress by itself.
       and text relevance.
 - [ ] Support keyboard placement, copy/paste, duplicate, multi-select, delete,
       alignment, comments, and reroute nodes.
-- [ ] Implement undo/redo as semantic commands, including asset creation and
-      graph rewiring.
+- [ ] Extend semantic undo/redo to asset creation and general graph rewiring.
 
 ### 5.2 Connections and pins
 
