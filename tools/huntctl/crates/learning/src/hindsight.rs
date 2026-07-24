@@ -5,13 +5,16 @@
 //! recomputed from the relabeled predicate; an observed reward is never copied.
 
 use super::goal_conditioning::{CompiledObjectiveVector, GoalConditioningError};
-use super::option_values::OptionValueSample;
+use super::option_values::{
+    OptionValueBatch, OptionValueConfig, OptionValueModel, OptionValueSample,
+};
 use crate::artifact::Digest;
 use crate::milestone_dsl::{
     CompiledMilestones, EvaluationPhase, Expression, Field, MilestoneDefinition, decode,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -130,6 +133,107 @@ pub struct RelabeledHindsightOption {
     pub reward_recomputed: bool,
     pub evidence: HindsightPredicateEvidence,
     pub promotion_authority: bool,
+}
+
+impl RelabeledHindsightOption {
+    pub fn validate(&self) -> Result<(), HindsightError> {
+        self.objective.validate()?;
+        let goal = AdmittedHindsightGoal {
+            objective: self.objective.clone(),
+            semantic_class: "single_snapshot_post_simulation_predicate",
+            reward_policy: "recompute_from_authenticated_pre_post_observations",
+        };
+        self.evidence.validate(&goal, &self.transition)?;
+        if self.schema != HINDSIGHT_RELABELED_OPTION_SCHEMA_V1
+            || !self.original_reward.is_finite()
+            || !self.transition.reward.is_finite()
+            || !self.transition.terminal
+            || !self.reward_recomputed
+            || self.promotion_authority
+        {
+            return Err(HindsightError::InvalidRelabeledTransition);
+        }
+        Ok(())
+    }
+}
+
+/// Objective-separated replay for hindsight rows.
+///
+/// Relabeled samples never enter the primary objective's batch. Each compiled
+/// objective gets its own option-value model, preventing an achieved alternate
+/// goal from changing the native terminal authority or targets of another.
+#[derive(Debug)]
+pub struct HindsightOptionReplay {
+    feature_schema: Digest,
+    rows: Vec<RelabeledHindsightOption>,
+    episode_groups: Vec<u64>,
+    models: BTreeMap<Digest, OptionValueModel>,
+}
+
+impl HindsightOptionReplay {
+    pub fn new(feature_schema: Digest) -> Result<Self, HindsightError> {
+        if feature_schema == Digest::ZERO {
+            return Err(HindsightError::InvalidFeatureSchema);
+        }
+        Ok(Self {
+            feature_schema,
+            rows: Vec::new(),
+            episode_groups: Vec::new(),
+            models: BTreeMap::new(),
+        })
+    }
+
+    pub fn rows(&self) -> &[RelabeledHindsightOption] {
+        &self.rows
+    }
+
+    pub fn model(&self, objective_sha256: Digest) -> Option<&OptionValueModel> {
+        self.models.get(&objective_sha256)
+    }
+
+    pub fn admit_and_refit(
+        &mut self,
+        row: RelabeledHindsightOption,
+        episode_group: u64,
+        config: &OptionValueConfig,
+    ) -> Result<&OptionValueModel, HindsightError> {
+        row.validate()?;
+        if self.rows.iter().any(|existing| {
+            existing.objective.definition_sha256 == row.objective.definition_sha256
+                && existing.evidence.pre_observation_sha256 == row.evidence.pre_observation_sha256
+                && existing.evidence.post_observation_sha256 == row.evidence.post_observation_sha256
+                && existing.transition.realized_tape_sha256 == row.transition.realized_tape_sha256
+        }) {
+            return Err(HindsightError::DuplicateRelabeledTransition);
+        }
+        let objective_sha256 = row.objective.definition_sha256;
+        let mut samples = Vec::new();
+        let mut groups = Vec::new();
+        for (existing, group) in self.rows.iter().zip(&self.episode_groups) {
+            if existing.objective.definition_sha256 == objective_sha256 {
+                samples.push(existing.transition.clone());
+                groups.push(*group);
+            }
+        }
+        samples.push(row.transition.clone());
+        groups.push(episode_group);
+        let feature_width = samples[0].state.len();
+        let batch = OptionValueBatch::new(
+            self.feature_schema,
+            objective_sha256,
+            feature_width,
+            samples,
+            groups,
+        )
+        .map_err(|error| HindsightError::OptionValues(error.to_string()))?;
+        let model = OptionValueModel::fit_batch(&batch, config)
+            .map_err(|error| HindsightError::OptionValues(error.to_string()))?;
+
+        self.rows.push(row);
+        self.episode_groups.push(episode_group);
+        self.models.insert(objective_sha256, model);
+        Ok(self.models.get(&objective_sha256).unwrap())
+    }
 }
 
 impl AdmittedHindsightGoal {
@@ -254,6 +358,10 @@ pub enum HindsightError {
     Ineligible(Vec<HindsightRejection>),
     InvalidEvidence,
     InvalidReward,
+    InvalidRelabeledTransition,
+    InvalidFeatureSchema,
+    DuplicateRelabeledTransition,
+    OptionValues(String),
 }
 
 impl fmt::Display for HindsightError {
@@ -277,6 +385,18 @@ impl fmt::Display for HindsightError {
             ),
             Self::InvalidReward => {
                 formatter.write_str("hindsight achievement reward must be finite")
+            }
+            Self::InvalidRelabeledTransition => {
+                formatter.write_str("hindsight relabeled transition is invalid or authoritative")
+            }
+            Self::InvalidFeatureSchema => {
+                formatter.write_str("hindsight replay feature schema is zero")
+            }
+            Self::DuplicateRelabeledTransition => {
+                formatter.write_str("hindsight replay already contains this native transition")
+            }
+            Self::OptionValues(message) => {
+                write!(formatter, "hindsight option-value replay failed: {message}")
             }
         }
     }
@@ -435,6 +555,21 @@ mod tests {
         assert!(relabeled.transition.terminal);
         assert!(relabeled.reward_recomputed);
         assert!(!relabeled.promotion_authority);
+        relabeled.validate().unwrap();
+
+        let objective_sha256 = relabeled.objective.definition_sha256;
+        let mut replay = HindsightOptionReplay::new(Digest([9; 32])).unwrap();
+        replay
+            .admit_and_refit(relabeled.clone(), 12, &OptionValueConfig::default())
+            .unwrap();
+        assert_eq!(replay.rows(), std::slice::from_ref(&relabeled));
+        assert!(replay.model(objective_sha256).is_some());
+        assert_eq!(
+            replay
+                .admit_and_refit(relabeled, 12, &OptionValueConfig::default())
+                .unwrap_err(),
+            HindsightError::DuplicateRelabeledTransition
+        );
     }
 
     #[test]

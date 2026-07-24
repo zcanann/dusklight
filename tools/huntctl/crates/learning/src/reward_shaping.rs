@@ -13,6 +13,7 @@ use std::fmt;
 
 pub const POTENTIAL_SHAPING_SCHEMA_V1: &str = "dusklight-potential-shaping/v1";
 pub const REWARD_REPORT_SCHEMA_V1: &str = "dusklight-reward-components/v1";
+pub const TACTIC_REWARD_SPEC_SCHEMA_V1: &str = "dusklight-tactic-reward-spec/v1";
 const MAX_TERMS: usize = 64;
 const MAX_ORDERED_VALUES: usize = 64;
 const MAX_NAME_BYTES: usize = 64;
@@ -202,6 +203,149 @@ pub struct RewardBreakdown {
     pub shaping_reward: f64,
     pub training_reward: f32,
     pub components: Vec<RewardComponent>,
+}
+
+/// Campaign-level reward configuration. Every component is training-only:
+/// native terminal evidence remains the sole success and promotion authority.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticRewardSpec {
+    pub schema: String,
+    pub terminal_reward: f32,
+    pub tick_cost: f32,
+    pub novelty_reward: f32,
+    pub per_tick_discount: f32,
+    #[serde(default)]
+    pub potential: Option<PotentialShapingSpec>,
+}
+
+impl Default for TacticRewardSpec {
+    fn default() -> Self {
+        Self {
+            schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
+            terminal_reward: 1.0,
+            tick_cost: 0.001,
+            novelty_reward: 0.01,
+            per_tick_discount: 0.995,
+            potential: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TacticRewardBreakdown {
+    pub terminal_observed: bool,
+    pub endpoint_novel: bool,
+    pub duration_ticks: u32,
+    pub terminal_component: f32,
+    pub tick_cost_component: f32,
+    pub novelty_component: f32,
+    pub base_reward: f32,
+    pub potential: Option<RewardBreakdown>,
+    pub training_reward: f32,
+    pub terminal_objective_unchanged: bool,
+    pub promotion_authority: bool,
+}
+
+impl TacticRewardSpec {
+    pub fn evaluate(
+        &self,
+        feature_schema: Digest,
+        state: &[f32],
+        next_state: &[f32],
+        duration_ticks: u32,
+        terminal_observed: bool,
+        endpoint_novel: bool,
+    ) -> Result<TacticRewardBreakdown, ShapingError> {
+        if self.schema != TACTIC_REWARD_SPEC_SCHEMA_V1 {
+            return Err(ShapingError::InvalidSchema(self.schema.clone()));
+        }
+        validate_finite(self.terminal_reward, "terminal_reward")?;
+        validate_finite(self.tick_cost, "tick_cost")?;
+        validate_finite(self.novelty_reward, "novelty_reward")?;
+        if self.tick_cost < 0.0
+            || self.novelty_reward < 0.0
+            || !self.per_tick_discount.is_finite()
+            || !(0.0..=1.0).contains(&self.per_tick_discount)
+            || self.per_tick_discount == 0.0
+        {
+            return Err(ShapingError::InvalidCampaignReward);
+        }
+        if duration_ticks == 0 {
+            return Err(ShapingError::ZeroDuration);
+        }
+        if state.is_empty()
+            || state.len() != next_state.len()
+            || state
+                .iter()
+                .chain(next_state)
+                .any(|value| !value.is_finite())
+        {
+            return Err(ShapingError::FeatureWidthMismatch {
+                expected: state.len(),
+                state: state.len(),
+                next_state: next_state.len(),
+            });
+        }
+        let terminal_component = if terminal_observed {
+            self.terminal_reward
+        } else {
+            0.0
+        };
+        let tick_cost_component_f64 = -f64::from(self.tick_cost) * f64::from(duration_ticks);
+        let tick_cost_component = tick_cost_component_f64 as f32;
+        let novelty_component = if endpoint_novel {
+            self.novelty_reward
+        } else {
+            0.0
+        };
+        let base_reward_f64 =
+            f64::from(terminal_component) + tick_cost_component_f64 + f64::from(novelty_component);
+        let base_reward = base_reward_f64 as f32;
+        if !base_reward_f64.is_finite()
+            || !base_reward.is_finite()
+            || !tick_cost_component.is_finite()
+        {
+            return Err(ShapingError::NonFiniteResult("campaign_base_reward".into()));
+        }
+        let potential = self
+            .potential
+            .as_ref()
+            .map(|potential| {
+                if potential.feature_schema != feature_schema {
+                    return Err(ShapingError::FeatureSchemaMismatch {
+                        expected: potential.feature_schema,
+                        actual: feature_schema,
+                    });
+                }
+                potential.shape_reward(
+                    state.len(),
+                    state,
+                    next_state,
+                    base_reward,
+                    duration_ticks,
+                    terminal_observed,
+                    self.per_tick_discount,
+                )
+            })
+            .transpose()?;
+        let training_reward = potential
+            .as_ref()
+            .map_or(base_reward, |breakdown| breakdown.training_reward);
+        Ok(TacticRewardBreakdown {
+            terminal_observed,
+            endpoint_novel,
+            duration_ticks,
+            terminal_component,
+            tick_cost_component,
+            novelty_component,
+            base_reward,
+            potential,
+            training_reward,
+            terminal_objective_unchanged: true,
+            promotion_authority: false,
+        })
+    }
 }
 
 impl PotentialShapingSpec {
@@ -405,6 +549,11 @@ pub enum ShapingError {
         state: usize,
         next_state: usize,
     },
+    FeatureSchemaMismatch {
+        expected: Digest,
+        actual: Digest,
+    },
+    InvalidCampaignReward,
     ZeroDuration,
     InvalidDiscount(f32),
     NonFiniteResult(String),
@@ -467,6 +616,12 @@ impl fmt::Display for ShapingError {
                 formatter,
                 "shaping feature widths are {state}/{next_state}; expected {expected}"
             ),
+            Self::FeatureSchemaMismatch { expected, actual } => write!(
+                formatter,
+                "shaping feature schema {actual} differs from configured schema {expected}"
+            ),
+            Self::InvalidCampaignReward => formatter
+                .write_str("tactic tick cost and novelty reward must be finite and non-negative"),
             Self::ZeroDuration => {
                 formatter.write_str("shaping transition duration must be nonzero")
             }
@@ -486,6 +641,59 @@ impl Error for ShapingError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tactic_reward_composes_cost_novelty_terminal_and_potential_without_authority() {
+        let feature_schema = Digest([9; 32]);
+        let reward = TacticRewardSpec {
+            schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
+            terminal_reward: 10.0,
+            tick_cost: 0.25,
+            novelty_reward: 2.0,
+            per_tick_discount: 0.5,
+            potential: Some(PotentialShapingSpec {
+                schema: POTENTIAL_SHAPING_SCHEMA_V1.into(),
+                feature_schema,
+                terms: vec![PotentialTerm::CorridorProgress {
+                    name: "progress".into(),
+                    feature: 0,
+                    start: 0.0,
+                    end: 4.0,
+                    weight: 4.0,
+                    unavailable_value: None,
+                }],
+            }),
+        }
+        .evaluate(feature_schema, &[0.0], &[4.0], 2, false, true)
+        .unwrap();
+
+        assert_eq!(reward.terminal_component, 0.0);
+        assert_eq!(reward.tick_cost_component, -0.5);
+        assert_eq!(reward.novelty_component, 2.0);
+        assert_eq!(reward.base_reward, 1.5);
+        assert_eq!(reward.training_reward, 2.5);
+        assert!(reward.potential.is_some());
+        assert!(reward.terminal_objective_unchanged);
+        assert!(!reward.promotion_authority);
+
+        let terminal = TacticRewardSpec::default()
+            .evaluate(feature_schema, &[0.0], &[1.0], 1, true, false)
+            .unwrap();
+        assert_eq!(terminal.terminal_component, 1.0);
+        assert!(!terminal.endpoint_novel);
+        assert!(terminal.terminal_objective_unchanged);
+        assert!(!terminal.promotion_authority);
+
+        assert!(matches!(
+            TacticRewardSpec {
+                per_tick_discount: 0.0,
+                ..TacticRewardSpec::default()
+            }
+            .evaluate(feature_schema, &[0.0], &[1.0], 1, false, false)
+            .unwrap_err(),
+            ShapingError::InvalidCampaignReward
+        ));
+    }
 
     fn spec() -> PotentialShapingSpec {
         PotentialShapingSpec {
