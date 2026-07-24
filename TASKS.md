@@ -195,8 +195,9 @@ Work in this order.
 
 ### 3. Wire the existing Q and tactic executors into a campaign
 
-- [ ] Execute the selected tactic or composite against a persistent native
-  checkpoint worker and observe its real stopping condition and next state.
+- [ ] Extend persistent execution from exact static tactics and static
+  composites to native-generic and reactive-controller observation loops,
+  preserving their real stopping condition and next state.
 - [ ] Refit the existing option-value model from accumulated replay and repeat:
   `restore -> observe -> enumerate -> choose -> execute -> retain -> refit`.
 - [ ] Add configurable potential shaping, tick cost, novelty, terminal reward,
