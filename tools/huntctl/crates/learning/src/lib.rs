@@ -84,6 +84,7 @@ pub mod tactic_asset;
 pub mod tactic_blueprint;
 pub mod tactic_exploration;
 pub mod tactic_features;
+pub mod tactic_frozen_policy;
 pub mod trainable_set_encoder;
 pub mod training_guard;
 pub mod transfer_learning;

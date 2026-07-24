@@ -28,6 +28,7 @@ use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, choose_tactic,
 };
+use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
     BehaviorArchive, TacticEndpointDescriptor, TacticFrontierEntry,
 };
@@ -499,6 +500,43 @@ impl TacticQCampaign {
         checkpoint.content_sha256 = checkpoint_digest(&checkpoint)?;
         validate_checkpoint(&checkpoint)?;
         Ok(checkpoint)
+    }
+
+    /// Seal the fitted critic as an independently reloadable greedy policy.
+    /// The supplied digest identifies the complete executable catalog, while
+    /// the training payload remains the existing semi-Markov value batch.
+    pub fn freeze_greedy_policy(
+        &self,
+        action_universe_sha256: Digest,
+    ) -> Result<TacticFrozenPolicy, TacticQCampaignError> {
+        let checkpoint = self.checkpoint()?;
+        let first = self
+            .replay
+            .first()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "freezing a tactic policy requires replay",
+            ))?;
+        let training_batch = OptionValueBatch::new(
+            self.feature_schema_sha256,
+            self.objective_sha256,
+            first.value_sample.state.len(),
+            self.replay
+                .iter()
+                .map(|transition| transition.value_sample.clone())
+                .collect(),
+            self.episode_groups.clone(),
+        )?;
+        TacticFrozenPolicy::freeze(
+            checkpoint.content_sha256,
+            self.root_checkpoint_sha256,
+            first.before_state_sha256,
+            self.feature_schema_sha256,
+            action_universe_sha256,
+            self.objective_sha256,
+            training_batch,
+            checkpoint.model_config,
+        )
+        .map_err(TacticQCampaignError::FrozenPolicy)
     }
 
     /// Writes one immutable, content-addressed checkpoint. A completed file is
@@ -1199,6 +1237,7 @@ pub enum TacticQCampaignError {
     Values(OptionValueError),
     Shaping(ShapingError),
     Hindsight(HindsightError),
+    FrozenPolicy(TacticFrozenPolicyError),
     Native(NativeTacticWorkerError),
 }
 
@@ -1222,6 +1261,7 @@ impl fmt::Display for TacticQCampaignError {
             Self::Values(error) => write!(formatter, "tactic-Q refit failed: {error}"),
             Self::Shaping(error) => write!(formatter, "tactic-Q reward failed: {error}"),
             Self::Hindsight(error) => write!(formatter, "tactic-Q hindsight failed: {error}"),
+            Self::FrozenPolicy(error) => write!(formatter, "tactic-Q freeze failed: {error}"),
             Self::Native(error) => write!(formatter, "tactic-Q native execution failed: {error}"),
         }
     }
@@ -1237,6 +1277,7 @@ impl Error for TacticQCampaignError {
             Self::Values(error) => Some(error),
             Self::Shaping(error) => Some(error),
             Self::Hindsight(error) => Some(error),
+            Self::FrozenPolicy(error) => Some(error),
             Self::Native(error) => Some(error),
             _ => None,
         }

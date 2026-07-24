@@ -18,6 +18,7 @@ use huntctl::fqi::{
     MAX_FQI_TRANSITIONS, MAX_FQI_TREE_DEPTH, MAX_FQI_TREES_PER_ACTION, Transition as FqiTransition,
 };
 use huntctl::learning::batch::load_fqi_batch;
+use huntctl::learning::default_tactic_catalog::default_route_tactic_catalog;
 use huntctl::learning::factorized_policy_suffix_batch::{
     FactorizedPolicyOutputSet, NativeFactorizedPolicyBatchConfig, NativeFactorizedPolicySuffixBatch,
 };
@@ -91,6 +92,7 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticRouteRunConfig, run_native_tactic_route,
 };
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
+use huntctl::search_evaluator::tactic_q_campaign::TacticQCampaign;
 use huntctl::tape::InputTape;
 use huntctl::trace_diff::SiblingTraceDiff;
 use huntctl::transition_corpus::TransitionCorpus;
@@ -680,6 +682,42 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("prioritized-q") => cli::learning::command_prioritized_q(&args[1..]),
         Some("ablate-q") => cli::learning::command_q_ablation(&args[1..]),
         Some("option-values") => cli::learning::command_option_values(&args[1..]),
+        Some("freeze-tactic-policy") => {
+            let learn_args = &args[1..];
+            let checkpoint =
+                TacticQCampaign::read_checkpoint(&required_path(learn_args, "--checkpoint")?)?;
+            let catalog = default_route_tactic_catalog()?;
+            let policy = checkpoint.freeze_greedy_policy(catalog.action_schema_sha256())?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "frozen tactic policy output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut bytes = serde_json::to_vec_pretty(&policy)?;
+            bytes.push(b'\n');
+            fs::write(&output, bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": policy.schema,
+                    "policy": output,
+                    "content_sha256": policy.content_sha256,
+                    "source_campaign_sha256": policy.source_campaign_sha256,
+                    "training_rows": policy.training_batch.samples.len(),
+                    "exploration": "disabled",
+                }))?
+            );
+            Ok(())
+        }
         Some("tactic-route") => {
             let learn_args = &args[1..];
             let repository_root = fs::canonicalize(
