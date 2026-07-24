@@ -13,7 +13,7 @@ const MAX_RARC_FILE_ENTRIES: usize = 100_000;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
 const MAX_EVENT_RECORDS: usize = 1_000_000;
-pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v7";
+pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v8";
 pub const EXTRACTED_EVENT_LIST_SCHEMA: &str = "dusklight.route-planner.extracted-event-list/v1";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -26,12 +26,42 @@ pub struct ExtractedStageData {
     pub room_read_table: Vec<ExtractedRoomRead>,
     pub cameras: Vec<ExtractedCamera>,
     pub camera_arrows: Vec<ExtractedCameraArrow>,
+    pub paths: Vec<ExtractedPath>,
+    pub path_points: Vec<ExtractedPathPoint>,
     pub scene_transitions: Vec<ExtractedSceneTransition>,
     pub map_events: Vec<ExtractedMapEvent>,
     pub demo_archive_banks: Vec<ExtractedDemoArchiveBank>,
     pub actor_placements: Vec<ExtractedActorPlacement>,
     pub treasure_placements: Vec<ExtractedActorPlacement>,
     pub player_spawns: Vec<ExtractedActorPlacement>,
+}
+
+/// One `RPAT` rail/path record. `point_offset` is relative to the paired
+/// `RPPN` table and is also normalized to `first_point_index`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedPath {
+    pub record_index: u32,
+    pub point_count: u16,
+    pub next_path_index: Option<u16>,
+    pub path_argument: u8,
+    pub closed: bool,
+    pub closed_raw: u8,
+    pub switch_no: Option<u8>,
+    pub unknown_07: u8,
+    pub point_offset: u32,
+    pub first_point_index: u32,
+    pub raw_hex: String,
+}
+
+/// One `RPPN` point record referenced by one or more `RPAT` paths.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedPathPoint {
+    pub record_index: u32,
+    pub arguments: [u8; 4],
+    pub position: [f32; 3],
+    pub raw_hex: String,
 }
 
 /// One `RCAM` map-tool camera record. The final field is `0xffff` when the
@@ -505,6 +535,10 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     let mut room_read_table = Vec::new();
     let mut cameras = Vec::new();
     let mut camera_arrows = Vec::new();
+    let mut paths = Vec::new();
+    let mut path_points = Vec::new();
+    let mut saw_path_table = false;
+    let mut saw_path_point_table = false;
     let mut saw_room_read_table = false;
     let mut scene_transitions = Vec::new();
     let mut map_events = Vec::new();
@@ -648,7 +682,10 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
                     read_f32(record, 0, "orig.stage.mult.translation_x")?,
                     read_f32(record, 4, "orig.stage.mult.translation_z")?,
                 ];
-                if !translation_xz.iter().all(|coordinate| coordinate.is_finite()) {
+                if !translation_xz
+                    .iter()
+                    .all(|coordinate| coordinate.is_finite())
+                {
                     return Err(PlannerContractError::new(
                         "orig.stage.mult.translation_xz",
                         "must be finite",
@@ -755,6 +792,74 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
                         read_i16(record, 0x10, "orig.stage.raro.angle_z")?,
                     ],
                     trailing_i16: read_i16(record, 0x12, "orig.stage.raro.trailing_i16")?,
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
+        if tag == "RPAT" {
+            if saw_path_table {
+                return Err(PlannerContractError::new(
+                    "orig.stage.rpat",
+                    "must contain one unique chunk",
+                ));
+            }
+            saw_path_table = true;
+            for record_index in 0..record_count {
+                let offset = start + record_index as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let point_offset = read_u32(record, 8, "orig.stage.rpat.point_offset")?;
+                if point_offset as usize % 0x10 != 0 {
+                    return Err(PlannerContractError::new(
+                        "orig.stage.rpat.point_offset",
+                        "must align to an RPPN record",
+                    ));
+                }
+                let next_raw = read_u16(record, 2, "orig.stage.rpat.next_path_index")?;
+                paths.push(ExtractedPath {
+                    record_index,
+                    point_count: read_u16(record, 0, "orig.stage.rpat.point_count")?,
+                    next_path_index: (next_raw != u16::MAX).then_some(next_raw),
+                    path_argument: record[4],
+                    closed: record[5] & 1 != 0,
+                    closed_raw: record[5],
+                    switch_no: (record[6] != u8::MAX).then_some(record[6]),
+                    unknown_07: record[7],
+                    point_offset,
+                    first_point_index: point_offset / 0x10,
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
+        if tag == "RPPN" {
+            if saw_path_point_table {
+                return Err(PlannerContractError::new(
+                    "orig.stage.rppn",
+                    "must contain one unique chunk",
+                ));
+            }
+            saw_path_point_table = true;
+            for record_index in 0..record_count {
+                let offset = start + record_index as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let position = [
+                    read_f32(record, 4, "orig.stage.rppn.position_x")?,
+                    read_f32(record, 8, "orig.stage.rppn.position_y")?,
+                    read_f32(record, 12, "orig.stage.rppn.position_z")?,
+                ];
+                if !position.iter().all(|coordinate| coordinate.is_finite()) {
+                    return Err(PlannerContractError::new(
+                        "orig.stage.rppn.position",
+                        "must be finite",
+                    ));
+                }
+                path_points.push(ExtractedPathPoint {
+                    record_index,
+                    arguments: [record[3], record[0], record[1], record[2]],
+                    position,
                     raw_hex: hex_bytes(record),
                 });
             }
@@ -898,6 +1003,23 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
             ));
         }
     }
+    for path in &paths {
+        let first = path.first_point_index as usize;
+        let end = first
+            .checked_add(usize::from(path.point_count))
+            .ok_or_else(|| PlannerContractError::new("orig.stage.rpat", "point range overflow"))?;
+        if !saw_path_point_table
+            || end > path_points.len()
+            || path
+                .next_path_index
+                .is_some_and(|next| usize::from(next) >= paths.len())
+        {
+            return Err(PlannerContractError::new(
+                "orig.stage.rpat",
+                "contains an out-of-range RPPN span or next-path index",
+            ));
+        }
+    }
     Ok(ExtractedStageData {
         chunks,
         stage_information,
@@ -906,6 +1028,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
         room_read_table,
         cameras,
         camera_arrows,
+        paths,
+        path_points,
         scene_transitions,
         map_events,
         demo_archive_banks,
@@ -1318,6 +1442,8 @@ fn recognized_stage_record_size(tag: &str) -> Option<usize> {
         "FILI" => Some(0x20),
         "RCAM" => Some(0x18),
         "RARO" => Some(0x14),
+        "RPAT" => Some(0x0c),
+        "RPPN" => Some(0x10),
         _ => None,
     }
 }
@@ -2369,6 +2495,77 @@ mod tests {
         assert_eq!(parsed.camera_arrows[0].position, [10.5, -20.0, 30.25]);
         assert_eq!(parsed.camera_arrows[0].angle, [-1024, 0x4000, 7]);
         assert_eq!(parsed.camera_arrows[0].trailing_i16, -1);
+    }
+
+    #[test]
+    fn parses_path_graphs_and_normalizes_point_spans() {
+        let mut stage = vec![0; 0x70];
+        stage[..4].copy_from_slice(&2_u32.to_be_bytes());
+        stage[4..8].copy_from_slice(b"RPAT");
+        stage[8..12].copy_from_slice(&2_u32.to_be_bytes());
+        stage[12..16].copy_from_slice(&0x20_u32.to_be_bytes());
+        stage[16..20].copy_from_slice(b"RPPN");
+        stage[20..24].copy_from_slice(&3_u32.to_be_bytes());
+        stage[24..28].copy_from_slice(&0x40_u32.to_be_bytes());
+
+        stage[0x20..0x22].copy_from_slice(&2_u16.to_be_bytes());
+        stage[0x22..0x24].copy_from_slice(&1_u16.to_be_bytes());
+        stage[0x24..0x28].copy_from_slice(&[9, 0x81, 7, 0xaa]);
+        stage[0x28..0x2c].copy_from_slice(&0_u32.to_be_bytes());
+        stage[0x2c..0x2e].copy_from_slice(&1_u16.to_be_bytes());
+        stage[0x2e..0x30].copy_from_slice(&u16::MAX.to_be_bytes());
+        stage[0x30..0x34].copy_from_slice(&[4, 0, 0xff, 0xbb]);
+        stage[0x34..0x38].copy_from_slice(&0x20_u32.to_be_bytes());
+
+        for (index, (arguments, position)) in [
+            ([10_u8, 11, 12, 13], [1.0_f32, 2.0, 3.0]),
+            ([20, 21, 22, 23], [4.0, 5.0, 6.0]),
+            ([30, 31, 32, 33], [7.0, 8.0, 9.0]),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let offset = 0x40 + index * 0x10;
+            // On disc the point arguments are ordered arg1, arg2, arg3, arg0.
+            stage[offset..offset + 4].copy_from_slice(&[
+                arguments[1],
+                arguments[2],
+                arguments[3],
+                arguments[0],
+            ]);
+            for (axis, value) in position.into_iter().enumerate() {
+                stage[offset + 4 + axis * 4..offset + 8 + axis * 4]
+                    .copy_from_slice(&value.to_bits().to_be_bytes());
+            }
+        }
+
+        let parsed = parse_stage_data(&stage).unwrap();
+        assert_eq!(parsed.paths.len(), 2);
+        assert_eq!(parsed.path_points.len(), 3);
+        assert_eq!(parsed.paths[0].point_count, 2);
+        assert_eq!(parsed.paths[0].next_path_index, Some(1));
+        assert_eq!(parsed.paths[0].path_argument, 9);
+        assert!(parsed.paths[0].closed);
+        assert_eq!(parsed.paths[0].closed_raw, 0x81);
+        assert_eq!(parsed.paths[0].switch_no, Some(7));
+        assert_eq!(parsed.paths[0].first_point_index, 0);
+        assert_eq!(parsed.paths[1].next_path_index, None);
+        assert_eq!(parsed.paths[1].switch_no, None);
+        assert_eq!(parsed.paths[1].first_point_index, 2);
+        assert_eq!(parsed.path_points[0].arguments, [10, 11, 12, 13]);
+        assert_eq!(parsed.path_points[2].position, [7.0, 8.0, 9.0]);
+
+        let mut bad_next = stage.clone();
+        bad_next[0x22..0x24].copy_from_slice(&2_u16.to_be_bytes());
+        assert_eq!(
+            parse_stage_data(&bad_next).unwrap_err().field(),
+            "orig.stage.rpat"
+        );
+        stage[0x34..0x38].copy_from_slice(&0x30_u32.to_be_bytes());
+        assert_eq!(
+            parse_stage_data(&stage).unwrap_err().field(),
+            "orig.stage.rpat"
+        );
     }
 
     #[test]

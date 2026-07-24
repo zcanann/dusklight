@@ -125,7 +125,8 @@ The canonical bundle contains only:
 - decoded DZS/DZR chunk, actor/scaled/door placement, treasure, player-spawn,
   STAG, SCLS, stage-level `MULT` room-background transform, normal stage/room
   `FILI` file-list records, pointer-backed `RTBL` room-read tables, and linked
-  `RCAM` camera / `RARO` camera-arrow records;
+  `RCAM` camera / `RARO` camera-arrow records, plus `RPAT` route graphs and
+  paired `RPPN` points;
 - decoded BMG flow graphs with temporary, persistent, and switch accesses; and
 - explicit records for candidate archives containing no numbered message-flow
   resource, including their sorted resource-name inventory.
@@ -136,7 +137,7 @@ schema digests, source archive digests, and per-domain coverage. Physical
 feasibility remains unavailable rather than being inferred from an encoded
 destination.
 
-Stage-data schema v7 keeps `actor_placements`, `treasure_placements`, and
+Stage-data schema v8 keeps `actor_placements`, `treasure_placements`, and
 `player_spawns` distinct. It also retains the raw 12-byte `MULT` room transform
 whose second translation is applied to Z by the room background actor's model,
 and the raw 32-byte normal `FILI` record with source-audited minimap, wind,
@@ -149,15 +150,15 @@ the conditional retail regression reruns that check when `orig/` is present.
 
 `construct-world-inventories` groups the decoded archives by their exact
 `files/res/Stage/STAGE/{STG_00,RNN_00}.arc` coordinates, orders one stage source
-before its room sources, and emits `extracted-orig-world-inventories/v4`. The
+before its room sources, and emits `extracted-orig-world-inventories/v5`. The
 artifact binds the content, game-data, and source-bundle digests and retains all
-decoded chunk, placement, spawn, SCLS, `MULT`, `FILI`, `RTBL`, `RCAM`, and
-`RARO` source identities. Validation independently
+decoded chunk, placement, spawn, SCLS, `MULT`, `FILI`, `RTBL`, `RCAM`, `RARO`,
+`RPAT`, and `RPPN` source identities. Validation independently
 reconstructs every represented field from the retained lowercase raw hex and
 proves complete coverage of every recognized placement, SCLS, transform,
-file-list, room-read, camera, and camera-arrow chunk. Collision coverage is
-explicitly `unavailable`: the command does not manufacture KCL/PLC paths,
-spatial digests, prisms, or load-trigger joins.
+file-list, room-read, camera, camera-arrow, path, and path-point chunk. Collision
+coverage is explicitly `unavailable`: the command does not manufacture KCL/PLC
+paths, spatial digests, prisms, or load-trigger joins.
 
 `RTBL` decoding follows the loader's relative pointer table and retains each
 indexed room record, referenced load-room byte, source offset, raw reverb byte,
@@ -173,11 +174,20 @@ all 20 raw bytes. Inventory validation requires every camera arrow index to
 resolve within the same source archive. GZ2E01 contains 356 paired chunks with
 1,260 records of each kind.
 
-`extract-native-world` produces `extracted-world-facts/v20` directly from that
+Fixed-size `RPAT` records retain point counts, optional next-path links, path
+arguments, closed/switch fields, unknown bytes, and exact relative point-table
+offsets. Paired `RPPN` records retain all four authored arguments, positions,
+and raw bytes. Validation normalizes each aligned offset to a point index and
+requires every point span and optional next-path link to resolve in the same
+source archive. GZ2E01 contains 180 paired chunks with 2,703 paths and 16,997
+points.
+
+`extract-native-world` produces `extracted-world-facts/v21` directly from that
 set. It binds the exact content/runtime and inventory-set digests, leaves the
 world-context and every per-stage spatial-index digest `null`, imports every
 placement/spawn/SCLS record plus all 344 room transforms, 305 file-list records,
-1,652 room-read records, 1,260 cameras, and 1,260 camera-arrow transforms. It
+1,652 room-read records, 1,260 cameras, 1,260 camera-arrow transforms, 2,703
+paths, and 16,997 path points. It
 compiles only source-audited actor rules. Its fact-pack manifest marks collision
 `unavailable` and physical feasibility
 `partial` because exact actor-local shapes remain represented. The exact GZ2E01

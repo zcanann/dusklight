@@ -8,7 +8,8 @@ use crate::artifact::Digest;
 use crate::orig_discovery::{ExtractedOrigBundle, ExtractedOrigStageArchive};
 use crate::orig_extraction::{
     ExtractedActorPlacement, ExtractedCamera, ExtractedCameraArrow, ExtractedFileList,
-    ExtractedRoomRead, ExtractedRoomTransform, ExtractedSceneTransition,
+    ExtractedPath, ExtractedPathPoint, ExtractedRoomRead, ExtractedRoomTransform,
+    ExtractedSceneTransition,
 };
 use crate::world_data::{
     PlacementKind, PlacementRecord, SourceKind, SourceScope, StageChunkSummary, StageExitRecord,
@@ -20,7 +21,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const EXTRACTED_ORIG_WORLD_INVENTORIES_SCHEMA: &str =
-    "dusklight.route-planner.extracted-orig-world-inventories/v4";
+    "dusklight.route-planner.extracted-orig-world-inventories/v5";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -84,6 +85,24 @@ pub struct NativeCameraArrowRecord {
     pub arrow: ExtractedCameraArrow,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePathRecord {
+    pub stage: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub path: ExtractedPath,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativePathPointRecord {
+    pub stage: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub point: ExtractedPathPoint,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeStageMetadata {
@@ -93,6 +112,8 @@ pub struct NativeStageMetadata {
     pub room_reads: Vec<NativeRoomReadRecord>,
     pub cameras: Vec<NativeCameraRecord>,
     pub camera_arrows: Vec<NativeCameraArrowRecord>,
+    pub paths: Vec<NativePathRecord>,
+    pub path_points: Vec<NativePathPointRecord>,
 }
 
 impl NativeStageMetadata {
@@ -163,8 +184,7 @@ impl NativeStageMetadata {
                         room: Some(0..=i8::MAX)
                     }
                 )
-                || !room_read_keys
-                    .insert((record.source_sha256, record.room_read.room_index))
+                || !room_read_keys.insert((record.source_sha256, record.room_read.room_index))
                 || previous_room_read.is_some_and(|previous| previous >= order)
             {
                 return Err(PlannerContractError::new(
@@ -210,6 +230,42 @@ impl NativeStageMetadata {
             }
             validate_camera_arrow_raw(&record.arrow)?;
             previous_arrow = Some(order);
+        }
+        let mut path_keys = BTreeSet::new();
+        let mut previous_path = None;
+        for record in &self.paths {
+            let order = (scope_order(record.scope), record.path.record_index);
+            if record.stage != self.stage
+                || record.source_sha256 == Digest::ZERO
+                || !valid_stage_or_room_scope(record.scope)
+                || !path_keys.insert((record.source_sha256, record.path.record_index))
+                || previous_path.is_some_and(|previous| previous >= order)
+            {
+                return Err(PlannerContractError::new(
+                    "orig_world.paths",
+                    "must be ordered unique records with valid stage or room scope",
+                ));
+            }
+            validate_path_raw(&record.path)?;
+            previous_path = Some(order);
+        }
+        let mut point_keys = BTreeSet::new();
+        let mut previous_point = None;
+        for record in &self.path_points {
+            let order = (scope_order(record.scope), record.point.record_index);
+            if record.stage != self.stage
+                || record.source_sha256 == Digest::ZERO
+                || !valid_stage_or_room_scope(record.scope)
+                || !point_keys.insert((record.source_sha256, record.point.record_index))
+                || previous_point.is_some_and(|previous| previous >= order)
+            {
+                return Err(PlannerContractError::new(
+                    "orig_world.path_points",
+                    "must be ordered unique records with valid stage or room scope",
+                ));
+            }
+            validate_path_point_raw(&record.point)?;
+            previous_point = Some(order);
         }
         Ok(())
     }
@@ -284,7 +340,7 @@ impl ExtractedOrigWorldInventories {
         if self.coverage != expected_coverage() {
             return Err(PlannerContractError::new(
                 "orig_world.coverage",
-                "v4 requires complete chunk, placement, SCLS, and map/room metadata coverage and unavailable collision coverage",
+                "v5 requires complete chunk, placement, SCLS, and map/room metadata coverage and unavailable collision coverage",
             ));
         }
         if self.inventories.is_empty() || self.inventories.len() > 256 {
@@ -360,6 +416,8 @@ fn build_stage_metadata(
     let mut room_reads = Vec::new();
     let mut cameras = Vec::new();
     let mut camera_arrows = Vec::new();
+    let mut paths = Vec::new();
+    let mut path_points = Vec::new();
     for archive in archives {
         let (archive_stage, scope) = archive_scope(&archive.relative_path, &archive.resource_name)?;
         if archive_stage != stage {
@@ -368,14 +426,19 @@ fn build_stage_metadata(
                 "does not match its archive stage",
             ));
         }
-        room_transforms.extend(archive.stage.room_transforms.iter().cloned().map(|transform| {
-            NativeRoomTransformRecord {
-                stage: stage.into(),
-                source_sha256: archive.resource_sha256,
-                scope,
-                transform,
-            }
-        }));
+        room_transforms.extend(
+            archive
+                .stage
+                .room_transforms
+                .iter()
+                .cloned()
+                .map(|transform| NativeRoomTransformRecord {
+                    stage: stage.into(),
+                    source_sha256: archive.resource_sha256,
+                    scope,
+                    transform,
+                }),
+        );
         file_lists.extend(archive.stage.file_lists.iter().cloned().map(|file_list| {
             NativeFileListRecord {
                 stage: stage.into(),
@@ -397,20 +460,46 @@ fn build_stage_metadata(
                     room_read,
                 }),
         );
-        cameras.extend(archive.stage.cameras.iter().cloned().map(|camera| {
-            NativeCameraRecord {
-                stage: stage.into(),
-                source_sha256: archive.resource_sha256,
-                scope,
-                camera,
-            }
-        }));
+        cameras.extend(
+            archive
+                .stage
+                .cameras
+                .iter()
+                .cloned()
+                .map(|camera| NativeCameraRecord {
+                    stage: stage.into(),
+                    source_sha256: archive.resource_sha256,
+                    scope,
+                    camera,
+                }),
+        );
         camera_arrows.extend(archive.stage.camera_arrows.iter().cloned().map(|arrow| {
             NativeCameraArrowRecord {
                 stage: stage.into(),
                 source_sha256: archive.resource_sha256,
                 scope,
                 arrow,
+            }
+        }));
+        paths.extend(
+            archive
+                .stage
+                .paths
+                .iter()
+                .cloned()
+                .map(|path| NativePathRecord {
+                    stage: stage.into(),
+                    source_sha256: archive.resource_sha256,
+                    scope,
+                    path,
+                }),
+        );
+        path_points.extend(archive.stage.path_points.iter().cloned().map(|point| {
+            NativePathPointRecord {
+                stage: stage.into(),
+                source_sha256: archive.resource_sha256,
+                scope,
+                point,
             }
         }));
     }
@@ -421,6 +510,8 @@ fn build_stage_metadata(
         room_reads,
         cameras,
         camera_arrows,
+        paths,
+        path_points,
     })
 }
 
@@ -1088,6 +1179,41 @@ fn validate_stage_metadata(
         }
     }
 
+    for record in &metadata.paths {
+        let path_count = chunk_count(record.source_sha256, "RPAT");
+        let point_count = chunk_count(record.source_sha256, "RPPN");
+        let first = record.path.first_point_index as usize;
+        let end = first
+            .checked_add(usize::from(record.path.point_count))
+            .ok_or_else(|| PlannerContractError::new("orig_world.paths", "point range overflow"))?;
+        if record.stage != inventory.stage
+            || source_scopes.get(&record.source_sha256) != Some(&record.scope)
+            || record.path.record_index as usize >= path_count
+            || end > point_count
+            || record
+                .path
+                .next_path_index
+                .is_some_and(|next| usize::from(next) >= path_count)
+        {
+            return Err(PlannerContractError::new(
+                "orig_world.paths",
+                "contains an RPAT record outside its source chunk or referencing an absent path/point",
+            ));
+        }
+    }
+
+    for record in &metadata.path_points {
+        if record.stage != inventory.stage
+            || source_scopes.get(&record.source_sha256) != Some(&record.scope)
+            || record.point.record_index as usize >= chunk_count(record.source_sha256, "RPPN")
+        {
+            return Err(PlannerContractError::new(
+                "orig_world.path_points",
+                "contains an RPPN record outside its exact source chunk",
+            ));
+        }
+    }
+
     let expected_transforms = inventory
         .chunks
         .iter()
@@ -1118,15 +1244,29 @@ fn validate_stage_metadata(
         .filter(|chunk| chunk.tag == "RARO")
         .map(|chunk| chunk.record_count)
         .sum::<usize>();
+    let expected_paths = inventory
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.tag == "RPAT")
+        .map(|chunk| chunk.record_count)
+        .sum::<usize>();
+    let expected_path_points = inventory
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.tag == "RPPN")
+        .map(|chunk| chunk.record_count)
+        .sum::<usize>();
     if metadata.room_transforms.len() != expected_transforms
         || metadata.file_lists.len() != expected_file_lists
         || metadata.room_reads.len() != expected_room_reads
         || metadata.cameras.len() != expected_cameras
         || metadata.camera_arrows.len() != expected_camera_arrows
+        || metadata.paths.len() != expected_paths
+        || metadata.path_points.len() != expected_path_points
     {
         return Err(PlannerContractError::new(
             "orig_world.stage_metadata",
-            "does not completely cover its recognized MULT, FILI, RTBL, RCAM, and RARO chunks",
+            "does not completely cover its recognized MULT, FILI, RTBL, RCAM, RARO, RPAT, and RPPN chunks",
         ));
     }
     Ok(())
@@ -1281,6 +1421,51 @@ fn validate_camera_arrow_raw(arrow: &ExtractedCameraArrow) -> Result<(), Planner
     Ok(())
 }
 
+fn validate_path_raw(path: &ExtractedPath) -> Result<(), PlannerContractError> {
+    let raw = decode_hex_exact(&path.raw_hex, 0x0c, "orig_world.rpat.raw_hex")?;
+    let next_raw = u16::from_be_bytes(raw[2..4].try_into().unwrap());
+    let point_offset = u32::from_be_bytes(raw[8..12].try_into().unwrap());
+    if u16::from_be_bytes(raw[0..2].try_into().unwrap()) != path.point_count
+        || (next_raw != u16::MAX).then_some(next_raw) != path.next_path_index
+        || raw[4] != path.path_argument
+        || (raw[5] & 1 != 0) != path.closed
+        || raw[5] != path.closed_raw
+        || (raw[6] != u8::MAX).then_some(raw[6]) != path.switch_no
+        || raw[7] != path.unknown_07
+        || point_offset != path.point_offset
+        || point_offset % 0x10 != 0
+        || point_offset / 0x10 != path.first_point_index
+    {
+        return Err(PlannerContractError::new(
+            "orig_world.paths",
+            "decoded fields do not match the retained raw RPAT record",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_path_point_raw(point: &ExtractedPathPoint) -> Result<(), PlannerContractError> {
+    let raw = decode_hex_exact(&point.raw_hex, 0x10, "orig_world.rppn.raw_hex")?;
+    let position = [
+        f32::from_bits(u32::from_be_bytes(raw[4..8].try_into().unwrap())),
+        f32::from_bits(u32::from_be_bytes(raw[8..12].try_into().unwrap())),
+        f32::from_bits(u32::from_be_bytes(raw[12..16].try_into().unwrap())),
+    ];
+    if [raw[3], raw[0], raw[1], raw[2]] != point.arguments
+        || !position.iter().all(|coordinate| coordinate.is_finite())
+        || position
+            .iter()
+            .zip(point.position)
+            .any(|(raw, decoded)| raw.to_bits() != decoded.to_bits())
+    {
+        return Err(PlannerContractError::new(
+            "orig_world.path_points",
+            "decoded fields do not match the retained raw RPPN record",
+        ));
+    }
+    Ok(())
+}
+
 fn source_record_id(scope: SourceScope, digest: Digest, tag: &str, record_index: usize) -> String {
     let prefix = match scope.kind {
         SourceKind::Stage => "dzs",
@@ -1342,6 +1527,8 @@ fn recognized_record_size(tag: &str) -> Option<usize> {
         "FILI" => Some(32),
         "RCAM" => Some(24),
         "RARO" => Some(20),
+        "RPAT" => Some(12),
+        "RPPN" => Some(16),
         _ => None,
     }
 }
@@ -1418,8 +1605,9 @@ mod tests {
         RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
     };
     use crate::orig_extraction::{
-        ExtractedCamera, ExtractedCameraArrow, ExtractedLoadedRoom, ExtractedRoomRead,
-        ExtractedStageChunk, ExtractedStageData, extract_unique_rarc_resource, parse_stage_data,
+        ExtractedCamera, ExtractedCameraArrow, ExtractedLoadedRoom, ExtractedPath,
+        ExtractedPathPoint, ExtractedRoomRead, ExtractedStageChunk, ExtractedStageData,
+        extract_unique_rarc_resource, parse_stage_data,
     };
     use crate::world_import::ExtractedWorldFacts;
     use std::fs;
@@ -1526,6 +1714,8 @@ mod tests {
                 }],
                 cameras: Vec::new(),
                 camera_arrows: Vec::new(),
+                paths: Vec::new(),
+                path_points: Vec::new(),
                 scene_transitions: Vec::new(),
                 map_events: Vec::new(),
                 demo_archive_banks: Vec::new(),
@@ -1570,6 +1760,18 @@ mod tests {
                         data_offset: 168,
                         recognized_record_size: Some(20),
                     },
+                    ExtractedStageChunk {
+                        tag: "RPAT".into(),
+                        record_count: 1,
+                        data_offset: 188,
+                        recognized_record_size: Some(12),
+                    },
+                    ExtractedStageChunk {
+                        tag: "RPPN".into(),
+                        record_count: 1,
+                        data_offset: 200,
+                        recognized_record_size: Some(16),
+                    },
                 ],
                 stage_information: None,
                 room_transforms: Vec::new(),
@@ -1592,6 +1794,25 @@ mod tests {
                     angle: [-1024, 0x4000, 7],
                     trailing_i16: -1,
                     raw_hex: "41280000c1a0000041f20000fc0040000007ffff".into(),
+                }],
+                paths: vec![ExtractedPath {
+                    record_index: 0,
+                    point_count: 1,
+                    next_path_index: None,
+                    path_argument: 4,
+                    closed: false,
+                    closed_raw: 0,
+                    switch_no: None,
+                    unknown_07: 0xbb,
+                    point_offset: 0,
+                    first_point_index: 0,
+                    raw_hex: "0001ffff0400ffbb00000000".into(),
+                }],
+                path_points: vec![ExtractedPathPoint {
+                    record_index: 0,
+                    arguments: [10, 11, 12, 13],
+                    position: [7.0, 8.0, 9.0],
+                    raw_hex: "0b0c0d0a40e000004100000041100000".into(),
                 }],
                 scene_transitions: vec![ExtractedSceneTransition {
                     exit_id: 0,
@@ -1639,6 +1860,12 @@ mod tests {
             ExtractedOrigWorldInventories::decode_canonical(&bytes).unwrap(),
             set
         );
+        let mut tampered_path = set.clone();
+        tampered_path.stage_metadata[0].paths[0].path.path_argument = 5;
+        assert_eq!(
+            tampered_path.validate().unwrap_err().field(),
+            "orig_world.paths"
+        );
         let content = ContentIdentity {
             schema: CONTENT_IDENTITY_SCHEMA.into(),
             id: "gcn-us-native-fixture".into(),
@@ -1673,6 +1900,8 @@ mod tests {
         assert_eq!(facts.native_stage_metadata[0].room_reads.len(), 1);
         assert_eq!(facts.native_stage_metadata[0].cameras.len(), 1);
         assert_eq!(facts.native_stage_metadata[0].camera_arrows.len(), 1);
+        assert_eq!(facts.native_stage_metadata[0].paths.len(), 1);
+        assert_eq!(facts.native_stage_metadata[0].path_points.len(), 1);
         assert_eq!(facts.spawns.len(), 1);
         assert_eq!(facts.encoded_exits.len(), 1);
         assert!(
@@ -1726,6 +1955,8 @@ mod tests {
             room_reads: Vec::new(),
             cameras: Vec::new(),
             camera_arrows: Vec::new(),
+            paths: Vec::new(),
+            path_points: Vec::new(),
         };
         metadata.validate_records().unwrap();
         metadata.room_transforms[0].transform.room = 4;
@@ -1790,6 +2021,8 @@ mod tests {
         let mut room_reads = 0_usize;
         let mut cameras = 0_usize;
         let mut camera_arrows = 0_usize;
+        let mut paths = 0_usize;
+        let mut path_points = 0_usize;
         for stage_dir in &stage_dirs {
             let stage = stage_dir.file_name().unwrap().to_str().unwrap();
             let mut archive_paths = fs::read_dir(stage_dir)
@@ -1828,8 +2061,7 @@ mod tests {
                     Digest(Sha256::digest(&resource_bytes).into()),
                     parse_stage_data(&resource_bytes).unwrap(),
                 ));
-                archives.last_mut().unwrap().archive_sha256 =
-                    Digest(Sha256::digest(&bytes).into());
+                archives.last_mut().unwrap().archive_sha256 = Digest(Sha256::digest(&bytes).into());
             }
             let refs = archives.iter().collect::<Vec<_>>();
             let inventory = build_inventory(stage, refs.clone()).unwrap();
@@ -1838,11 +2070,15 @@ mod tests {
             room_reads += metadata.room_reads.len();
             cameras += metadata.cameras.len();
             camera_arrows += metadata.camera_arrows.len();
+            paths += metadata.paths.len();
+            path_points += metadata.path_points.len();
         }
         assert_eq!(stage_dirs.len(), 79);
         assert_eq!(room_reads, 1_652);
         assert_eq!(cameras, 1_260);
         assert_eq!(camera_arrows, 1_260);
+        assert_eq!(paths, 2_703);
+        assert_eq!(path_points, 16_997);
     }
 
     fn repository_root() -> Option<PathBuf> {

@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v20";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v21";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 const DUNGEON_SESSION_SWITCH_LABEL_KIND: &str = "observed-dungeon-session-switch-labels";
@@ -610,8 +610,7 @@ impl ExtractedWorldFacts {
             ));
         }
         if compatible_provenance && !self.native_stage_metadata.is_empty()
-            || native_provenance
-                && self.native_stage_metadata.len() != self.inventories.len()
+            || native_provenance && self.native_stage_metadata.len() != self.inventories.len()
         {
             return Err(PlannerContractError::new(
                 "native_stage_metadata",
@@ -877,6 +876,8 @@ impl ExtractedWorldFacts {
                         + metadata.room_reads.len()
                         + metadata.cameras.len()
                         + metadata.camera_arrows.len()
+                        + metadata.paths.len()
+                        + metadata.path_points.len()
                 })
                 .sum::<usize>()
             + self.spatial_volumes.len()

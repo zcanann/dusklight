@@ -9,7 +9,7 @@ revision, platform, or language bundle.
 The earlier `DOOR20`, L1-family boss-door, and L5 boss-door audits remain the
 authoritative family-specific records for those actors. This document covers
 the remaining exact-build census and records which semantics are executable in
-`extracted-world-facts/v20` and which remain explicit boundaries.
+`extracted-world-facts/v21` and which remain explicit boundaries.
 
 ## Census method and source identities
 
@@ -188,7 +188,7 @@ selected retail cuts:
 
 ## Executable v20 boundary
 
-For exact GZ2E01 content, `extracted-world-facts/v20` imports:
+For exact GZ2E01 content, `extracted-world-facts/v21` imports:
 
 - the six front-side option-2 mini-boss placements as distinct first-open and
   already-unlocked `Door` branches joined to their unique SCLS destinations;
