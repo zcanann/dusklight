@@ -3,6 +3,7 @@
 use crate::artifact::Digest;
 use crate::live_tactic_catalog::LiveTacticRanking;
 use crate::option_values::OptionActionDescriptor;
+use dusklight_control::option_execution::OptionParameter;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
@@ -99,10 +100,11 @@ pub fn choose_tactic(
     } else if exploration_draw < config.epsilon_per_million {
         // Finite tactic catalogs should spend exploratory decisions on choices
         // for which the learner has no transition evidence before resampling a
-        // known action. Prefer typed spatial targets while any remain untried;
-        // they are the goal-conditioned navigation basis, whereas generic
-        // headings remain available after spatial coverage. This is still
-        // epsilon-greedy—the greedy branch is unchanged.
+        // known action. Prefer typed spatial targets and long full-strength
+        // heading probes while either remains untried. The former exploit the
+        // goal-relative corridor; the latter make lateral detours around contact
+        // geometry discoverable without prioritizing every short control
+        // variant. This is still epsilon-greedy—the greedy branch is unchanged.
         let exploratory = if ranking.values.unsupported.is_empty() {
             available
         } else {
@@ -132,14 +134,25 @@ pub fn choose_tactic(
 }
 
 fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&OptionActionDescriptor> {
-    let spatial = unsupported
+    let navigation = unsupported
         .iter()
-        .filter(|descriptor| descriptor.parameters.contains_key("coordinate"))
+        .filter(|descriptor| {
+            descriptor.parameters.contains_key("coordinate")
+                || (descriptor.parameters.contains_key("heading_radians")
+                    && matches!(
+                        descriptor.parameters.get("magnitude"),
+                        Some(OptionParameter::Unsigned(127))
+                    )
+                    && matches!(
+                        descriptor.parameters.get("maximum_ticks"),
+                        Some(OptionParameter::Unsigned(16))
+                    ))
+        })
         .collect::<Vec<_>>();
-    if spatial.is_empty() {
+    if navigation.is_empty() {
         unsupported.iter().collect()
     } else {
-        spatial
+        navigation
     }
 }
 
@@ -374,9 +387,28 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_spatial_tactics_are_covered_before_generic_controls() {
+    fn unsupported_spatial_and_directional_probes_are_covered_before_short_controls() {
         let known = descriptor("known", OptionType::Neutral);
-        let generic = descriptor("generic", OptionType::MaintainHeading);
+        let mut directional = descriptor("directional", OptionType::MaintainHeading);
+        directional
+            .parameters
+            .insert("heading_radians".into(), OptionParameter::F32Bits(0));
+        directional
+            .parameters
+            .insert("magnitude".into(), OptionParameter::Unsigned(127));
+        directional
+            .parameters
+            .insert("maximum_ticks".into(), OptionParameter::Unsigned(16));
+        let mut short = descriptor("short", OptionType::MaintainHeading);
+        short
+            .parameters
+            .insert("heading_radians".into(), OptionParameter::F32Bits(0));
+        short
+            .parameters
+            .insert("magnitude".into(), OptionParameter::Unsigned(80));
+        short
+            .parameters
+            .insert("maximum_ticks".into(), OptionParameter::Unsigned(4));
         let mut spatial = descriptor("spatial", OptionType::Move);
         spatial.parameters.insert(
             "coordinate".into(),
@@ -386,8 +418,9 @@ mod tests {
             learner_snapshot_sha256: Digest([5; 32]),
             action_universe_sha256: Digest([6; 32]),
             choices: vec![
-                choice(generic.clone()),
+                choice(directional.clone()),
                 choice(known.clone()),
+                choice(short.clone()),
                 choice(spatial.clone()),
             ],
             values: AvailableOptionRanking {
@@ -397,10 +430,11 @@ mod tests {
                     mean_q: 5.0,
                     ensemble_variance: 0.0,
                 }],
-                unsupported: vec![generic, spatial.clone()],
+                unsupported: vec![directional.clone(), short, spatial.clone()],
             },
         };
-        for seed in 0..16 {
+        let mut selected_ids = std::collections::BTreeSet::new();
+        for seed in 0..64 {
             let selected = choose_tactic(
                 &ranking,
                 0,
@@ -410,8 +444,16 @@ mod tests {
                 },
             )
             .unwrap();
-            assert_eq!(selected.descriptor, spatial);
+            assert!(
+                selected.descriptor == spatial || selected.descriptor == directional,
+                "short control was incorrectly prioritized"
+            );
+            selected_ids.insert(selected.descriptor.option_id);
             assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
         }
+        assert_eq!(
+            selected_ids,
+            std::collections::BTreeSet::from(["directional".into(), "spatial".into()])
+        );
     }
 }
