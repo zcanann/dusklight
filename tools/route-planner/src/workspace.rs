@@ -191,6 +191,8 @@ pub struct CustomNodeDefinitionAsset {
     pub guard: PredicateExpression,
     pub effects: Vec<StateOperation>,
     pub evidence_status: CustomNodeEvidenceStatus,
+    #[serde(default)]
+    pub evidence: Vec<CustomNodeEvidenceRecord>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -199,6 +201,14 @@ pub struct CustomNodePin {
     pub id: String,
     pub label: String,
     pub value_type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustomNodeEvidenceRecord {
+    pub id: String,
+    pub source: String,
+    pub note: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -610,6 +620,25 @@ impl WorkspaceAsset {
                 node.guard.validate()?;
                 validate_pins("custom node inputs", &node.inputs)?;
                 validate_pins("custom node outputs", &node.outputs)?;
+                let mut evidence_ids = BTreeSet::new();
+                for evidence in &node.evidence {
+                    validate_stable_id("custom node evidence id", &evidence.id)?;
+                    validate_label("custom node evidence source", &evidence.source)?;
+                    validate_label("custom node evidence note", &evidence.note)?;
+                    if !evidence_ids.insert(&evidence.id) {
+                        return Err(WorkspaceError::new(format!(
+                            "custom node evidence contains duplicate {}",
+                            evidence.id
+                        )));
+                    }
+                }
+                if node.evidence_status == CustomNodeEvidenceStatus::Established
+                    && node.evidence.is_empty()
+                {
+                    return Err(WorkspaceError::new(
+                        "an established custom node requires explicit evidence",
+                    ));
+                }
             }
             WorkspaceAssetPayload::StateSeed { state } => state.validate()?,
             WorkspaceAssetPayload::QueryGoal(goal) => goal.predicate.validate()?,

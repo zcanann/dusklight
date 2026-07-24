@@ -25,7 +25,7 @@ const elements = Object.fromEntries([
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
-  "contract-inspector",
+  "contract-inspector", "workspace-asset-editor",
   "model-context", "model-context-body",
   "region-nav", "region-breadcrumbs", "region-children",
   "evaluate-transition", "solve-goal", "insert-transition", "suggest-transition-chain", "replace-step", "remove-step",
@@ -39,6 +39,7 @@ const state = {
   trash: [],
   libraries: [],
   contentSource: "workspace",
+  selectedWorkspaceAsset: null,
   project: null,
   graph: null,
   positions: new Map(),
@@ -218,6 +219,7 @@ async function createCustomNodeAsset(event) {
       guard: { kind: "true" },
       effects: [],
       evidence_status: "hypothetical",
+      evidence: [],
     },
   };
   elements["new-asset-error"].textContent = "";
@@ -273,6 +275,7 @@ async function openWorkspaceRecord(record) {
   state.readOnly = false;
   state.dirty = false;
   state.selected = null;
+  state.selectedWorkspaceAsset = null;
   state.positions = new Map();
   state.contentSource = "workspace";
   elements.nodes.replaceChildren();
@@ -288,6 +291,8 @@ async function openWorkspaceRecord(record) {
   elements["detail-title"].textContent = "Nothing selected";
   elements["detail-subtitle"].textContent = "Choose an asset, node, or connection to inspect it.";
   elements["detail-json"].textContent = "{}";
+  elements["workspace-asset-editor"].hidden = true;
+  elements["workspace-asset-editor"].replaceChildren();
   updateProjectControls();
   selectContentSource("workspace");
 }
@@ -586,10 +591,236 @@ function contentMessage(message) {
   return paragraph;
 }
 
-function inspectWorkspaceAsset(asset) {
+async function inspectWorkspaceAsset(asset) {
   elements["detail-title"].textContent = asset.label;
   elements["detail-subtitle"].textContent = `${asset.kind.replaceAll("_", " ")} · ${asset.relative_path}`;
   elements["detail-json"].textContent = JSON.stringify(asset, null, 2);
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    const record = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(asset.id)}`,
+    );
+    state.selectedWorkspaceAsset = record;
+    elements["detail-json"].textContent = JSON.stringify(record.asset, null, 2);
+    renderWorkspaceAssetEditor(record);
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+function renderWorkspaceAssetEditor(record) {
+  const form = elements["workspace-asset-editor"];
+  form.replaceChildren();
+  if (record.asset.header.kind !== "custom_node_definition") {
+    form.hidden = true;
+    return;
+  }
+  form.hidden = false;
+  const node = record.asset.payload;
+  const status = document.createElement("span");
+  status.className = `evidence-badge ${node.evidence_status}`;
+  status.textContent = node.evidence_status;
+  const label = document.createElement("input");
+  label.required = true;
+  label.value = record.asset.header.label;
+  form.append(status, labeledEditorField("Name", label));
+
+  const guard = document.createElement("select");
+  guard.append(new Option("Always applicable", "true"), new Option("Never applicable", "false"));
+  if (!["true", "false"].includes(node.guard.kind)) {
+    guard.prepend(new Option("Keep Library-backed predicate", "preserve"));
+  }
+  guard.value = ["true", "false"].includes(node.guard.kind) ? node.guard.kind : "preserve";
+  form.append(labeledEditorField("Guard", guard));
+  if (!["true", "false"].includes(node.guard.kind)) {
+    const warning = contentMessage("This Library-backed guard is preserved until replaced.");
+    warning.className = "editor-warning";
+    form.append(warning);
+  }
+
+  const inputs = pinEditor("Inputs", node.inputs);
+  const outputs = pinEditor("Outputs", node.outputs);
+  form.append(inputs.fieldset, outputs.fieldset);
+
+  const locationEffect = node.effects.find((effect) => effect.kind === "set_location");
+  const effect = document.createElement("fieldset");
+  effect.className = "effect-editor";
+  const effectLegend = document.createElement("legend");
+  effectLegend.textContent = "Effect";
+  const enabled = document.createElement("input");
+  enabled.type = "checkbox";
+  enabled.checked = Boolean(locationEffect);
+  const enableLabel = document.createElement("label");
+  enableLabel.className = "inline-check";
+  enableLabel.append(enabled, document.createTextNode(" Set location"));
+  const stage = document.createElement("input");
+  stage.value = locationEffect?.location?.stage ?? "";
+  const room = numericEditor(locationEffect?.location?.room ?? 0);
+  const layer = numericEditor(locationEffect?.location?.layer ?? 0);
+  const spawn = numericEditor(locationEffect?.location?.spawn ?? 0);
+  const locationFields = document.createElement("div");
+  locationFields.className = "location-fields";
+  locationFields.append(
+    labeledEditorField("Stage", stage),
+    labeledEditorField("Room", room),
+    labeledEditorField("Layer", layer),
+    labeledEditorField("Spawn", spawn),
+  );
+  const updateLocationEnabled = () => {
+    locationFields.querySelectorAll("input").forEach((input) => {
+      input.disabled = !enabled.checked;
+    });
+  };
+  enabled.addEventListener("change", updateLocationEnabled);
+  updateLocationEnabled();
+  effect.append(effectLegend, enableLabel, locationFields);
+  form.append(effect);
+
+  const evidence = node.evidence?.[0];
+  const evidenceSource = document.createElement("input");
+  evidenceSource.placeholder = "Test, trace, citation, or research note";
+  evidenceSource.value = evidence?.source ?? "";
+  const evidenceNote = document.createElement("textarea");
+  evidenceNote.rows = 3;
+  evidenceNote.placeholder = "What was observed or hypothesized?";
+  evidenceNote.value = evidence?.note ?? "";
+  form.append(
+    labeledEditorField("Evidence source (optional)", evidenceSource),
+    labeledEditorField("Evidence note", evidenceNote),
+  );
+
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.textContent = "Save custom node";
+  form.append(save);
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const updated = structuredClone(record.asset);
+    updated.header.label = label.value.trim();
+    updated.payload.inputs = collectPins(inputs.rows);
+    updated.payload.outputs = collectPins(outputs.rows);
+    if (guard.value !== "preserve") updated.payload.guard = { kind: guard.value };
+    const effects = updated.payload.effects.filter((item) => item.kind !== "set_location");
+    if (enabled.checked) {
+      effects.push({
+        kind: "set_location",
+        location: {
+          stage: stage.value.trim(),
+          room: Number(room.value),
+          layer: Number(layer.value),
+          spawn: Number(spawn.value),
+        },
+      });
+    }
+    updated.payload.effects = effects;
+    const source = evidenceSource.value.trim();
+    const note = evidenceNote.value.trim();
+    if (Boolean(source) !== Boolean(note)) {
+      setStatus("Evidence source and note must be supplied together", "bad");
+      return;
+    }
+    updated.payload.evidence = source ? [{
+      id: evidence?.id ?? `evidence.${slug(updated.header.id)}.1`,
+      source,
+      note,
+    }, ...(updated.payload.evidence ?? []).slice(1)] : [];
+    await saveCustomNodeAsset(record, updated);
+  };
+}
+
+function labeledEditorField(labelText, control) {
+  const label = document.createElement("label");
+  const text = document.createElement("span");
+  text.textContent = labelText;
+  label.append(text, control);
+  return label;
+}
+
+function numericEditor(value) {
+  const input = document.createElement("input");
+  input.type = "number";
+  input.step = "1";
+  input.value = String(value);
+  return input;
+}
+
+function pinEditor(label, pins) {
+  const fieldset = document.createElement("fieldset");
+  const legend = document.createElement("legend");
+  legend.textContent = label;
+  const rows = document.createElement("div");
+  rows.className = "pin-rows";
+  for (const pin of pins) appendPinRow(rows, pin);
+  const add = document.createElement("button");
+  add.type = "button";
+  add.textContent = `Add ${label.slice(0, -1).toLowerCase()}`;
+  add.addEventListener("click", () => appendPinRow(rows, {
+    id: `${label.toLowerCase().slice(0, -1)}.${rows.childElementCount + 1}`,
+    label: "",
+    value_type: "state.value",
+  }));
+  fieldset.append(legend, rows, add);
+  return { fieldset, rows };
+}
+
+function appendPinRow(container, pin) {
+  const row = document.createElement("div");
+  row.className = "pin-row";
+  for (const [field, placeholder] of [
+    ["id", "Stable pin ID"],
+    ["label", "Label"],
+    ["value_type", "Type"],
+  ]) {
+    const input = document.createElement("input");
+    input.dataset.field = field;
+    input.placeholder = placeholder;
+    input.value = pin[field];
+    row.append(input);
+  }
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "×";
+  remove.setAttribute("aria-label", `Remove ${pin.label || pin.id}`);
+  remove.addEventListener("click", () => row.remove());
+  row.append(remove);
+  container.append(row);
+}
+
+function collectPins(container) {
+  return [...container.querySelectorAll(".pin-row")].map((row) =>
+    Object.fromEntries([...row.querySelectorAll("input[data-field]")].map((input) => [
+      input.dataset.field,
+      input.value.trim(),
+    ])));
+}
+
+async function saveCustomNodeAsset(record, asset) {
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    const saved = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(asset.header.id)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schema: WORKSPACE_ASSET_SAVE_SCHEMA,
+          relative_path: record.relative_path,
+          expected_revision_sha256: record.revision_sha256,
+          asset,
+        }),
+      },
+    );
+    state.selectedWorkspaceAsset = saved;
+    state.workspace = await projectApi(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
+    await refreshWorkspaces(workspaceId);
+    renderContentBrowser();
+    elements["detail-title"].textContent = saved.asset.header.label;
+    elements["detail-json"].textContent = JSON.stringify(saved.asset, null, 2);
+    renderWorkspaceAssetEditor(saved);
+    setStatus("Custom node saved", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 async function refreshProjects(openFirst = false, selectedId = null) {

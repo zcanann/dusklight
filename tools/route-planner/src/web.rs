@@ -741,6 +741,7 @@ mod tests {
                     guard: dusklight_route_planner::logic::PredicateExpression::True,
                     effects: Vec::new(),
                     evidence_status: crate::workspace::CustomNodeEvidenceStatus::Hypothetical,
+                    evidence: Vec::new(),
                 },
             ),
         };
