@@ -33,6 +33,12 @@ pub struct NativeResidualExecutionBinding {
     pub content_sha256: Digest,
     pub optimization_request_sha256: Digest,
     pub executable: ArtifactReference,
+    /// Adjacent dynamically loaded libraries copied with the executable.
+    ///
+    /// Empty lists are omitted so previously sealed, self-contained execution
+    /// bindings retain their exact v1 identity.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_dependencies: Vec<ArtifactReference>,
     pub game_data: ArtifactReference,
     pub process_boot_tape: ArtifactReference,
     pub milestone_program: ArtifactReference,
@@ -48,6 +54,7 @@ pub struct NativeResidualExecutionValidationReport {
     pub schema: &'static str,
     pub execution_sha256: Digest,
     pub optimization_request_sha256: Digest,
+    pub runtime_dependencies: u64,
     pub source_frame: u64,
     pub exploration_horizon_ticks: u64,
     pub process_boot_tape_frames: u64,
@@ -71,11 +78,13 @@ impl NativeResidualExecutionBinding {
         verify_state_hashes: bool,
     ) -> Result<Self, NativeResidualCampaignError> {
         let root = repository_root.canonicalize().map_err(native_error)?;
+        let runtime_dependencies = runtime_dependency_references(&root, executable)?;
         let mut binding = Self {
             schema: NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1.into(),
             content_sha256: Digest::ZERO,
             optimization_request_sha256: optimization.content_sha256,
             executable: artifact_reference(&root, executable, false)?,
+            runtime_dependencies,
             game_data: artifact_reference(&root, game_data, true)?,
             process_boot_tape: artifact_reference(&root, process_boot_tape, false)?,
             milestone_program: artifact_reference(&root, milestone_program, false)?,
@@ -97,7 +106,33 @@ impl NativeResidualExecutionBinding {
         let root = repository_root.canonicalize().map_err(native_error)?;
         optimization.validate_files(&root).map_err(native_error)?;
         self.validate_seal(optimization)?;
-        let _executable = validate_artifact(&root, "executable", &self.executable, false)?;
+        let executable = validate_artifact(&root, "executable", &self.executable, false)?;
+        if self.runtime_dependencies.len() > 256
+            || self
+                .runtime_dependencies
+                .windows(2)
+                .any(|pair| pair[0].path >= pair[1].path)
+        {
+            return Err(native_message(
+                "native residual runtime dependencies must be bounded, unique, and path-sorted",
+            ));
+        }
+        let executable_parent = executable
+            .parent()
+            .ok_or_else(|| native_message("native residual executable has no parent directory"))?;
+        for dependency in &self.runtime_dependencies {
+            let path = validate_artifact(
+                &root,
+                "executable runtime dependency",
+                dependency,
+                false,
+            )?;
+            if path.parent() != Some(executable_parent) || !is_runtime_dependency(&path) {
+                return Err(native_message(
+                    "native residual runtime dependency is not an adjacent dynamic library",
+                ));
+            }
+        }
         // Development disc images are commonly ignored repository-relative
         // symlinks to an external immutable image. Preserve the repository
         // path in the binding and authenticate the target bytes, while keeping
@@ -190,6 +225,7 @@ impl NativeResidualExecutionBinding {
             schema: NATIVE_RESIDUAL_EXECUTION_SCHEMA_V1,
             execution_sha256: self.content_sha256,
             optimization_request_sha256: optimization.content_sha256,
+            runtime_dependencies: self.runtime_dependencies.len() as u64,
             source_frame: optimization.route.source_boundary_index,
             exploration_horizon_ticks: optimization.budgets.exploration_horizon_ticks,
             process_boot_tape_frames: tape.frames.len() as u64,
@@ -837,6 +873,39 @@ impl NativeResidualCampaignEvaluation {
     }
 }
 
+fn runtime_dependency_references(
+    root: &Path,
+    executable: &Path,
+) -> Result<Vec<ArtifactReference>, NativeResidualCampaignError> {
+    let executable = executable.canonicalize().map_err(native_error)?;
+    let parent = executable
+        .parent()
+        .ok_or_else(|| native_message("native residual executable has no parent directory"))?;
+    let mut paths = fs::read_dir(parent)
+        .map_err(native_error)?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(native_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.retain(|path| path != &executable && path.is_file() && is_runtime_dependency(path));
+    paths.sort();
+    let mut references = paths
+        .iter()
+        .map(|path| artifact_reference(root, path, false))
+        .collect::<Result<Vec<_>, _>>()?;
+    references.sort_by(|left, right| left.path.cmp(&right.path));
+    Ok(references)
+}
+
+fn is_runtime_dependency(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    name.ends_with(".dll")
+        || name.ends_with(".dylib")
+        || name.ends_with(".so")
+        || name.contains(".so.")
+}
+
 fn artifact_reference(
     root: &Path,
     path: &Path,
@@ -1059,14 +1128,23 @@ mod tests {
         let request_path = repository.join(
             "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-residual-campaign.request.json",
         );
-        let optimization: OptimizationRequest =
+        let mut optimization: OptimizationRequest =
             serde_json::from_slice(&fs::read(request_path).unwrap()).unwrap();
+        if resolve_card_fixture_manifest(&repository, &optimization).is_err() {
+            optimization.route.native_source_boundary_fingerprint =
+                optimization.route.source_boundary_fingerprint.clone();
+            optimization.refresh_content_sha256().unwrap();
+            resolve_card_fixture_manifest(&repository, &optimization).unwrap();
+        }
         let executable = artifacts.0.join("Dusklight");
         let game_data = artifacts.0.join("game.iso");
         let tape_path = artifacts.0.join("full.tape");
         let program_path = artifacts.0.join("goal.dmsp");
         let world_context_path = artifacts.0.join("world.context.json");
         fs::write(&executable, b"executable").unwrap();
+        fs::write(artifacts.0.join("renderer.dll"), b"renderer").unwrap();
+        fs::write(artifacts.0.join("support.DLL"), b"support").unwrap();
+        fs::write(artifacts.0.join("not-a-library.txt"), b"ignored").unwrap();
         fs::write(&game_data, b"game-data").unwrap();
         fs::write(
             &world_context_path,
@@ -1121,9 +1199,14 @@ mod tests {
         assert_eq!(report.exploration_horizon_ticks, 160);
         assert_eq!(report.process_boot_tape_frames, 666);
         assert_eq!(report.materialized_route_frames, 632);
+        assert_eq!(report.runtime_dependencies, 2);
+        assert_eq!(binding.runtime_dependencies.len(), 2);
         assert_eq!(report.workers, 4);
         binding.validate_seal(&optimization).unwrap();
 
+        fs::write(_artifacts.0.join("renderer.dll"), b"tampered").unwrap();
+        assert!(binding.validate_files(&root, &optimization).is_err());
+        fs::write(_artifacts.0.join("renderer.dll"), b"renderer").unwrap();
         fs::write(&program, b"tampered").unwrap();
         // Lineage validation consumes the sealed execution identity and a
         // checkpoint bound to it, not the old runtime files. A fresh launch

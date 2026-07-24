@@ -2260,6 +2260,7 @@ mod tests {
             content_sha256: Digest([9; 32]),
             optimization_request_sha256: optimization.content_sha256,
             executable: placeholder("build/test/Dusklight", 1),
+            runtime_dependencies: vec![],
             game_data: placeholder("build/test/game.iso", 2),
             process_boot_tape: placeholder("build/test/process.tape", 3),
             milestone_program: placeholder("build/test/terminal.dmsp", 4),

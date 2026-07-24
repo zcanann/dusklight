@@ -1156,6 +1156,7 @@ mod tests {
             content_sha256: Digest([2; 32]),
             optimization_request_sha256: optimization.content_sha256,
             executable: reference("missing/executable", 3),
+            runtime_dependencies: vec![],
             game_data: reference("missing/game", 4),
             process_boot_tape: reference("missing/tape", 5),
             milestone_program: reference("missing/milestones", 6),

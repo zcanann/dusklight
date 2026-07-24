@@ -1319,6 +1319,7 @@ mod tests {
             content_sha256: ArtifactDigest([2; 32]),
             optimization_request_sha256: request.content_sha256,
             executable: reference("build/Dusklight", 3),
+            runtime_dependencies: vec![],
             game_data: reference("build/game.iso", 4),
             process_boot_tape: reference("build/process.tape", 5),
             milestone_program: reference("build/goal.dmsp", 6),

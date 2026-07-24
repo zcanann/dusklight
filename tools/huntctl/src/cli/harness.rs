@@ -888,6 +888,20 @@ pub(crate) fn command_campaign(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .ok_or("game executable path has no file name")?,
         );
         fs::copy(&executable, &pinned_executable)?;
+        let executable_parent = executable
+            .parent()
+            .ok_or("game executable path has no parent directory")?;
+        let mut runtime_dependencies = fs::read_dir(executable_parent)?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<Result<Vec<_>, _>>()?;
+        runtime_dependencies.retain(|path| path.is_file() && is_runtime_dependency_path(path));
+        runtime_dependencies.sort();
+        for dependency in runtime_dependencies {
+            let file_name = dependency
+                .file_name()
+                .ok_or("runtime dependency path has no file name")?;
+            fs::copy(&dependency, output.join(file_name))?;
+        }
         let tape_path = output.join("process-route.tape");
         let program_path = output.join("terminal.dmsp");
         let binding_path = output.join("execution.json");
@@ -1428,6 +1442,17 @@ fn repository_build_output(
         return Err(format!("{label} output must be a repository-relative build/ path").into());
     }
     Ok(repository_root.join(path))
+}
+
+fn is_runtime_dependency_path(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let name = name.to_ascii_lowercase();
+    name.ends_with(".dll")
+        || name.ends_with(".dylib")
+        || name.ends_with(".so")
+        || name.contains(".so.")
 }
 
 fn refuse_existing_output(path: &Path, label: &str) -> Result<(), Box<dyn Error>> {
