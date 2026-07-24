@@ -12,8 +12,8 @@ name might suggest.
 |---|---|---|
 | `orig-input-scan/v1` | Disc-header product/platform/region/revision, normalized `sys/` and `files/` manifest, executable/game-data/resource digests, candidate archive paths | Friendly identity, runtime language selection, decoded records, behavior |
 | `supported-build-registry/v1` | Exact full-fingerprint-to-friendly-ID mapping | Nearest-build fallback, implied cross-build equivalence |
-| `extracted-orig-bundle/v6` | Source manifest; separate generic actor/scaled/door, treasure (`TRES`/`TRE*`), and player-spawn (`PLYR`) placements with raw records; STAG message group; indexed SCLS destinations; stage-level `MULT` room-background transforms; normal stage/room `FILI` metadata; pointer-backed `RTBL` room-read/load tables; REVT event/exit coordinates; LBNK demo-archive selections; decoded numbered BMG flow graphs; explicit ignored message candidates | KCL/PLC, most other DZS/DZR chunk bodies, field-map-only `FILI` layout, actor/treasure parameter meaning, JStudio cutscene internals, message text, runtime bindings |
-| `extracted-orig-world-inventories/v3` | Planner-native, content-addressed stage grouping of every decoded DZS/DZR source, chunk directory, actor/treasure placement, player spawn, raw/normalized SCLS record, `MULT` room transform, normal `FILI` record, and indexed `RTBL` room reads; explicit domain coverage | KCL/PLC and collision joins are explicitly `unavailable`; actor-specific semantics and physical reachability are not inferred |
+| `extracted-orig-bundle/v7` | Source manifest; separate generic actor/scaled/door, treasure (`TRES`/`TRE*`), and player-spawn (`PLYR`) placements with raw records; STAG message group; indexed SCLS destinations; stage-level `MULT` room-background transforms; normal stage/room `FILI` metadata; pointer-backed `RTBL` room-read/load tables; fixed-layout `RCAM` cameras and `RARO` camera-arrow transforms; REVT event/exit coordinates; LBNK demo-archive selections; decoded numbered BMG flow graphs; explicit ignored message candidates | KCL/PLC, most other DZS/DZR chunk bodies, field-map-only `FILI` layout, actor/treasure parameter meaning, JStudio cutscene internals, message text, runtime bindings |
+| `extracted-orig-world-inventories/v4` | Planner-native, content-addressed stage grouping of every decoded DZS/DZR source, chunk directory, actor/treasure placement, player spawn, raw/normalized SCLS record, `MULT` room transform, normal `FILI` record, indexed `RTBL` room reads, and linked `RCAM`/`RARO` metadata; explicit domain coverage | KCL/PLC and collision joins are explicitly `unavailable`; actor-specific semantics and physical reachability are not inferred |
 | `cutscene-wrapper-topology/v1` | Exact joins among one REVT event, layer LBNK demo archive, `event_list.dat` staff/cut/data paths, map-tool ID, and normal/skip SCLS records | JStudio phase semantics, exceptional resource-failure dispatch, return/restart writers, executable transition effects |
 | `binary-function-evidence/v1` | Exact DOL/symbol-table identities, one bounded text symbol, DOL section/address/file coordinates, selected code bytes and digest, and exact `blr`-only immediate-return classification | Call-site reachability, function-name semantics, larger-function disassembly, source control flow, or cross-build equivalence |
 | `binary-range-evidence/v1` | Exact DOL identity, one bounded virtual-address range wholly contained in exactly one loadable text/data section, section/address/file coordinates, and selected bytes/digest | Semantic meaning, proof that code references the bytes, pointer/control-flow analysis, BSS, or cross-build equivalence |
@@ -27,17 +27,17 @@ name might suggest.
 | `message-flow-entry-contract-set/v4` and `compiled-message-flow-entry-set/v4` | Exact compiled-flow schema/digest, stage/message resource joins, optional raw actor placement identity, resolved flow label, authored guards, obligations, unknowns, speaker context, source-pinned presentation requests, resolved generic item backings, and deterministic entry mechanics | Unauthored callers, presentation-actor execution, inferred interaction geometry, actor behavior not established by placement, or equivalence across builds/languages |
 | `dusklight-world-context/v1` | One game-data digest and sorted stage-to-inventory/spatial-index digests | Product/revision identity, runtime configuration, the inventory or spatial records themselves |
 | `dusklight-world-inventory/v1` | Source records; chunk directory; actor/scaled/door/treasure/player placements; SCLS; KCL prisms and decoded PLC words; inferred same-room collision/SCLS joins | Actor-specific guards and lifecycle, dynamic collision, paths/rails/volumes, source-confirmed activation behavior |
-| `extracted-world-facts/v19` | Exact context; exclusive compatible-world-context or planner-native-inventory-set provenance; optional per-stage spatial identity; native `MULT` room transforms, normal `FILI` metadata, and indexed `RTBL` room-load sets; static objects; player spawns; encoded exits; compatible collision-join candidates and approach geometry; exact-GZ2E01 audited actor families and mechanics-v29 staged obligations | Native imports explicitly omit unavailable KCL/PLC approaches; collision navigation/connectivity, proof that a same-room spawn reaches a trigger, unaudited actor exits, item/NPC/event producers, unavailable native attention positions, and actor families without an audited reconstruction rule |
+| `extracted-world-facts/v20` | Exact context; exclusive compatible-world-context or planner-native-inventory-set provenance; optional per-stage spatial identity; native `MULT` room transforms, normal `FILI` metadata, indexed `RTBL` room-load sets, and linked `RCAM`/`RARO` camera metadata; static objects; player spawns; encoded exits; compatible collision-join candidates and approach geometry; exact-GZ2E01 audited actor families and mechanics-v29 staged obligations | Native imports explicitly omit unavailable KCL/PLC approaches; collision navigation/connectivity, proof that a same-room spawn reaches a trigger, unaudited actor exits, item/NPC/event producers, unresolved actor-to-camera selection outside audited consumers, and actor families without an audited reconstruction rule |
 | `orig-bundle-diff/v2` | Exact input-bundle/content digests; raw-versus-decoded stage/message/ignored-candidate differences; explicit one-sided locale coverage; a sealed domain matrix that marks executable code, runtime language selection, actor semantics, cutscene semantics, and rule semantics `not_represented` | Comparison data for domains explicitly reported as unrepresented |
 | `fact-pack/v1` plus immutable cache | Exact content, extractor, source, coverage, payload, and manifest identities; verified reuse without `orig/` | Any implication that a partial coverage declaration is complete |
 
 The planner owns its copies of the `WorldContext` and `WorldInventory` wire
 contracts in `world_data.rs`. The compatible producer currently lives elsewhere
 in the repository, but the planner has no Rust dependency on Huntctl and must
-not acquire one. `extracted-orig-bundle/v6` and
-`extracted-orig-world-inventories/v3` are planner-native. The latter is built
+not acquire one. `extracted-orig-bundle/v7` and
+`extracted-orig-world-inventories/v4` are planner-native. The latter is built
 directly from the former by `orig_world.rs`; it never imports Huntctl types or
-artifacts. World facts v19 consume the native set directly. They represent its
+artifacts. World facts v20 consume the native set directly. They represent its
 absent world context and per-stage spatial identities as `null`, bind the
 native-set digest instead, and preserve the compatible world-context path as a
 distinct exclusive provenance mode. Complete physical facts still await
@@ -49,7 +49,7 @@ The retail acceptance bundle contains:
 
 - 3,661 sealed input files;
 - 384 decoded stage/room archives;
-- 6,128 DZS/DZR chunk entries with their tag, count, and offset retained; v6
+- 6,128 DZS/DZR chunk entries with their tag, count, and offset retained; v7
   additionally decodes every `PLYR`, `TRES`, and layered `TRE*` record instead
   of leaving those chunk bodies opaque;
 - STAG data in 79 archives;
@@ -63,13 +63,14 @@ gameplay semantics. In particular, an SCLS destination is inert until an
 activation contract is known, and a placement's raw parameters do not prove its
 guard, switch ownership, lifecycle, or interaction geometry.
 
-V6 retains the placement-layout parity work from v4 and adds source-audited
-`MULT`, normal `FILI`, and pointer-backed `RTBL` records. `PLYR` appears in 304
-archives and `TRES` in 128, and the planner-native extractor now emits their
+V7 retains all prior placement-layout parity work and adds source-audited
+`MULT`, normal `FILI`, pointer-backed `RTBL`, and linked `RCAM`/`RARO` records.
+`PLYR` appears in 304 archives and `TRES` in 128, and the planner-native
+extractor now emits their
 same 32-byte name/parameter/position/angle/set-ID records into separate
 `player_spawns` and `treasure_placements` collections. Layered `TRE*` chunks
-retain their decoded layer. Frequent still-undecoded families include `RARO`,
-`RCAM`, field-map-only `FILI`, `LGT*`, `RPAT`, `RPPN`, and
+retain their decoded layer. Frequent still-undecoded families include
+field-map-only `FILI`, `LGT*`, `RPAT`, `RPPN`, and
 environment/color records.
 Their chunk tag, count, and offset remain visible; their record bodies and
 meanings do not.
@@ -77,17 +78,17 @@ meanings do not.
 The exact R_SP116 room-6 resource
 `10487ef6754fec1f454c93aa33f605ee9781b4db4b91eed8e864721d76304d40`
 is the retail parity witness: both the independent compatible inventory and
-planner-native v6 extraction produce 95 actor placements, five player spawns,
+planner-native v7 extraction produce 95 actor placements, five player spawns,
 zero treasures, and one 32-byte `PLYR` chunk with five records. The engine test
 reproduces this comparison whenever the original tree is present.
 
 The complete exact-tree acceptance run groups all 384 decoded archives into 79
 sorted stage inventories and retains 6,128 chunk directories, 29,575 ordinary
 actor/treasure placements, 1,277 player spawns, 1,036 SCLS records, 344 room
-transforms, 305 file lists, and 1,652 indexed room-read records. The
-inventory-set validator rechecks decoded placement, SCLS, `MULT`, `FILI`, and
-`RTBL` fields against each retained raw record, requires complete recognized-
-chunk coverage, and rejects
+transforms, 305 file lists, 1,652 indexed room-read records, 1,260 cameras, and
+1,260 camera-arrow transforms. The inventory-set validator rechecks decoded
+placement, SCLS, `MULT`, `FILI`, `RTBL`, `RCAM`, and `RARO` fields against each
+retained raw record, requires complete recognized-chunk coverage, and rejects
 duplicate scopes, sources, chunks, or record identities. Its collision domain
 is explicitly unavailable rather than represented by invented empty geometry.
 
@@ -108,7 +109,7 @@ digests, then imports:
 - every SCLS record as an encoded destination; and
 - each precomputed collision/SCLS join as an encoded-map-exit candidate.
 
-For exact GZ2E01 L1/L5 boss doors, v19 also imports the actor-local `checkArea`
+For exact GZ2E01 L1/L5 boss doors, v20 also imports the actor-local `checkArea`
 rectangle (`|x| <= 200`, `|z| <= 100`) using the placement's binary-angle yaw,
 and the shortest-circular-facing obligation around `door_yaw - 0x7fff`. L5
 adds the strict positive-local-Z `checkFront` plane. L1 adds form-selected
@@ -117,7 +118,7 @@ current-position local-X strip. These observations are bound to both the world
 inventory and audited actor source. They do not discharge the separate loaded-
 actor/event-phase obligation.
 
-For the exact D_MN07 room-6 `dr` placement, v19 separately imports the two
+For the exact D_MN07 room-6 `dr` placement, v20 separately imports the two
 source branches. Outside layer 3, a positive small-key count and the exact
 world-X/Z start box lead to SCLS 6 without consuming a key or writing the
 bridge switch. On layer 3, actor creation requires switch `0x18` clear, but the
@@ -125,7 +126,7 @@ event itself has no key guard; its confirmed suffix writes switch `0x18` and
 selects SCLS 7. Event acceptance, camera/player ownership, and bridge animation
 completion remain staged actor/interaction obligations.
 
-For every exact F_SP109 room-0 `R_Gate` layer, v19 keeps three causal states
+For every exact F_SP109 room-0 `R_Gate` layer, v20 keeps three causal states
 separate: a locked key event can decrement one key and set memory switch
 `0x6b`; an already-set switch permits physical pushing; and persistent event
 bit M_035 (`saveBitLabels[68]`, raw coordinate `0x0810`) forces both leaves
@@ -135,7 +136,7 @@ copies, binding switches `0x82` and `0x81` to the complete 64-byte
 dungeon-session Boolean view instead of misclassifying them as stage-memory
 switches.
 
-For the exact R_SP116 room-6 pair, v19 imports the one-shot `Wchain` producer and
+For the exact R_SP116 room-6 pair, v20 imports the one-shot `Wchain` producer and
 state-neutral `vshuter` consumer separately. The chain's `0x00000fef`
 parameters normalize repeat nibble `0xf` to false; a wolf pull past the exact
 94-unit switch offset writes current-room one-zone switch `0xef`. The shutter
@@ -145,7 +146,7 @@ opening/collision phases remain explicit staged obligations. The exact world
 inventory is SHA-256
 `44d58b8a8b8b4b8ba5f24bf192c61092a9176075d0e2409a797905406c384601`.
 
-For the exact F_SP118 room-1 and room-2 `CrvGate` parents, v19 imports normal
+For the exact F_SP118 room-1 and room-2 `CrvGate` parents, v20 imports normal
 and high-count key-event branches whose only persistent effect is the eventual
 one-key decrement. The parent-created child leaf, paired transient `SetOpen`,
 camera/event completion, and absence of any unlock switch remain one staged
@@ -179,7 +180,7 @@ exact-GZ2E01 families above; every other placement remains opaque.
 ### Topology and activation
 
 - Add planner-owned KCL/PLC decoding and spatial artifacts to enrich native
-  facts; v19 already imports the non-spatial bundle domains directly and marks
+  facts; v20 already imports the non-spatial bundle domains directly and marks
   every absent native spatial identity explicitly.
 - Import actor-driven map changes, doors, portals, elevators, warps, event
   transitions, cutscene scene changes, restart/savewarp, void, death, and title

@@ -124,7 +124,8 @@ The canonical bundle contains only:
 - normalized relative paths, sizes, and source digests;
 - decoded DZS/DZR chunk, actor/scaled/door placement, treasure, player-spawn,
   STAG, SCLS, stage-level `MULT` room-background transform, normal stage/room
-  `FILI` file-list records, and pointer-backed `RTBL` room-read tables;
+  `FILI` file-list records, pointer-backed `RTBL` room-read tables, and linked
+  `RCAM` camera / `RARO` camera-arrow records;
 - decoded BMG flow graphs with temporary, persistent, and switch accesses; and
 - explicit records for candidate archives containing no numbered message-flow
   resource, including their sorted resource-name inventory.
@@ -135,7 +136,7 @@ schema digests, source archive digests, and per-domain coverage. Physical
 feasibility remains unavailable rather than being inferred from an encoded
 destination.
 
-Stage-data schema v6 keeps `actor_placements`, `treasure_placements`, and
+Stage-data schema v7 keeps `actor_placements`, `treasure_placements`, and
 `player_spawns` distinct. It also retains the raw 12-byte `MULT` room transform
 whose second translation is applied to Z by the room background actor's model,
 and the raw 32-byte normal `FILI` record with source-audited minimap, wind,
@@ -148,13 +149,13 @@ the conditional retail regression reruns that check when `orig/` is present.
 
 `construct-world-inventories` groups the decoded archives by their exact
 `files/res/Stage/STAGE/{STG_00,RNN_00}.arc` coordinates, orders one stage source
-before its room sources, and emits `extracted-orig-world-inventories/v3`. The
+before its room sources, and emits `extracted-orig-world-inventories/v4`. The
 artifact binds the content, game-data, and source-bundle digests and retains all
-decoded chunk, placement,
-spawn, SCLS, `MULT`, `FILI`, and `RTBL` source identities. Validation independently
+decoded chunk, placement, spawn, SCLS, `MULT`, `FILI`, `RTBL`, `RCAM`, and
+`RARO` source identities. Validation independently
 reconstructs every represented field from the retained lowercase raw hex and
 proves complete coverage of every recognized placement, SCLS, transform,
-file-list, and room-read chunk. Collision coverage is
+file-list, room-read, camera, and camera-arrow chunk. Collision coverage is
 explicitly `unavailable`: the command does not manufacture KCL/PLC paths,
 spatial digests, prisms, or load-trigger joins.
 
@@ -165,12 +166,20 @@ tables, 1,652 indexed room-read records, and 1,089 referenced load-room bytes.
 No retail load byte sets the background-load bit; 645 set unknown bit 6, which
 remains explicitly uninterpreted.
 
-`extract-native-world` produces `extracted-world-facts/v19` directly from that
+Fixed-size `RCAM` records retain the source camera type, arrow index, FOV,
+opaque arguments, optional pre-resolved camera-type index, and all 24 raw bytes.
+Their `RARO` targets retain position, angles, the unknown trailing halfword, and
+all 20 raw bytes. Inventory validation requires every camera arrow index to
+resolve within the same source archive. GZ2E01 contains 356 paired chunks with
+1,260 records of each kind.
+
+`extract-native-world` produces `extracted-world-facts/v20` directly from that
 set. It binds the exact content/runtime and inventory-set digests, leaves the
 world-context and every per-stage spatial-index digest `null`, imports every
 placement/spawn/SCLS record plus all 344 room transforms, 305 file-list records,
-and 1,652 room-read records, and compiles only source-audited actor rules. Its
-fact-pack manifest marks collision `unavailable` and physical feasibility
+1,652 room-read records, 1,260 cameras, and 1,260 camera-arrow transforms. It
+compiles only source-audited actor rules. Its fact-pack manifest marks collision
+`unavailable` and physical feasibility
 `partial` because exact actor-local shapes remain represented. The exact GZ2E01
 acceptance output contains 30,852 static objects, 1,277 spawns, 1,036 encoded
 exits, 119 source-audited actor/door transitions, 121 staged obligations, and no

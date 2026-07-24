@@ -13,7 +13,7 @@ const MAX_RARC_FILE_ENTRIES: usize = 100_000;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
 const MAX_EVENT_RECORDS: usize = 1_000_000;
-pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v6";
+pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v7";
 pub const EXTRACTED_EVENT_LIST_SCHEMA: &str = "dusklight.route-planner.extracted-event-list/v1";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -24,12 +24,41 @@ pub struct ExtractedStageData {
     pub room_transforms: Vec<ExtractedRoomTransform>,
     pub file_lists: Vec<ExtractedFileList>,
     pub room_read_table: Vec<ExtractedRoomRead>,
+    pub cameras: Vec<ExtractedCamera>,
+    pub camera_arrows: Vec<ExtractedCameraArrow>,
     pub scene_transitions: Vec<ExtractedSceneTransition>,
     pub map_events: Vec<ExtractedMapEvent>,
     pub demo_archive_banks: Vec<ExtractedDemoArchiveBank>,
     pub actor_placements: Vec<ExtractedActorPlacement>,
     pub treasure_placements: Vec<ExtractedActorPlacement>,
     pub player_spawns: Vec<ExtractedActorPlacement>,
+}
+
+/// One `RCAM` map-tool camera record. The final field is `0xffff` when the
+/// runtime resolves the camera implementation from `camera_type` instead.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedCamera {
+    pub record_index: u32,
+    pub camera_type: String,
+    pub arrow_index: u8,
+    pub field_of_view_y: u8,
+    pub argument_0: u8,
+    pub argument_1: u8,
+    pub argument_2: u16,
+    pub camera_type_index: Option<u16>,
+    pub raw_hex: String,
+}
+
+/// One `RARO` map-tool camera/attention transform referenced by `RCAM`.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedCameraArrow {
+    pub record_index: u32,
+    pub position: [f32; 3],
+    pub angle: [i16; 3],
+    pub trailing_i16: i16,
+    pub raw_hex: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -474,6 +503,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     let mut room_transforms = Vec::new();
     let mut file_lists = Vec::new();
     let mut room_read_table = Vec::new();
+    let mut cameras = Vec::new();
+    let mut camera_arrows = Vec::new();
     let mut saw_room_read_table = false;
     let mut scene_transitions = Vec::new();
     let mut map_events = Vec::new();
@@ -676,6 +707,60 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
             continue;
         }
 
+        if tag == "RCAM" {
+            for record_index in 0..record_count {
+                let offset = start + record_index as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let raw_type_index = read_u16(record, 0x16, "orig.stage.rcam.camera_type_index")?;
+                cameras.push(ExtractedCamera {
+                    record_index,
+                    camera_type: parse_fixed_ascii(
+                        &record[..0x10],
+                        "orig.stage.rcam.camera_type",
+                        false,
+                    )?,
+                    arrow_index: record[0x10],
+                    field_of_view_y: record[0x11],
+                    argument_0: record[0x12],
+                    argument_1: record[0x13],
+                    argument_2: read_u16(record, 0x14, "orig.stage.rcam.argument_2")?,
+                    camera_type_index: (raw_type_index != u16::MAX).then_some(raw_type_index),
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
+        if tag == "RARO" {
+            for record_index in 0..record_count {
+                let offset = start + record_index as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let position = [
+                    read_f32(record, 0, "orig.stage.raro.position_x")?,
+                    read_f32(record, 4, "orig.stage.raro.position_y")?,
+                    read_f32(record, 8, "orig.stage.raro.position_z")?,
+                ];
+                if !position.iter().all(|coordinate| coordinate.is_finite()) {
+                    return Err(PlannerContractError::new(
+                        "orig.stage.raro.position",
+                        "must be finite",
+                    ));
+                }
+                camera_arrows.push(ExtractedCameraArrow {
+                    record_index,
+                    position,
+                    angle: [
+                        read_i16(record, 0x0c, "orig.stage.raro.angle_x")?,
+                        read_i16(record, 0x0e, "orig.stage.raro.angle_y")?,
+                        read_i16(record, 0x10, "orig.stage.raro.angle_z")?,
+                    ],
+                    trailing_i16: read_i16(record, 0x12, "orig.stage.raro.trailing_i16")?,
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
         if tag == "REVT" {
             for record_index in 0..record_count {
                 let offset = start + record_index as usize * record_size;
@@ -819,6 +904,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
         room_transforms,
         file_lists,
         room_read_table,
+        cameras,
+        camera_arrows,
         scene_transitions,
         map_events,
         demo_archive_banks,
@@ -1229,6 +1316,8 @@ fn recognized_stage_record_size(tag: &str) -> Option<usize> {
         "LBNK" => Some(0x03),
         "MULT" => Some(0x0c),
         "FILI" => Some(0x20),
+        "RCAM" => Some(0x18),
+        "RARO" => Some(0x14),
         _ => None,
     }
 }
@@ -2238,6 +2327,48 @@ mod tests {
         assert_eq!(fili.default_camera, 4);
         assert_eq!(fili.bit_switch, 0xff);
         assert_eq!(fili.message_id, 123);
+    }
+
+    #[test]
+    fn parses_room_camera_and_arrow_records_without_inventing_arguments() {
+        let mut stage = vec![0; 0x54];
+        stage[..4].copy_from_slice(&2_u32.to_be_bytes());
+        stage[4..8].copy_from_slice(b"RCAM");
+        stage[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        stage[12..16].copy_from_slice(&0x20_u32.to_be_bytes());
+        stage[16..20].copy_from_slice(b"RARO");
+        stage[20..24].copy_from_slice(&1_u32.to_be_bytes());
+        stage[24..28].copy_from_slice(&0x40_u32.to_be_bytes());
+
+        let camera = &mut stage[0x20..0x38];
+        camera[..10].copy_from_slice(b"FixedFrame");
+        camera[0x10..0x14].copy_from_slice(&[0, 55, 2, 3]);
+        camera[0x14..0x16].copy_from_slice(&0xa123_u16.to_be_bytes());
+        camera[0x16..0x18].copy_from_slice(&u16::MAX.to_be_bytes());
+
+        let arrow = &mut stage[0x40..0x54];
+        arrow[0..4].copy_from_slice(&10.5_f32.to_bits().to_be_bytes());
+        arrow[4..8].copy_from_slice(&(-20.0_f32).to_bits().to_be_bytes());
+        arrow[8..12].copy_from_slice(&30.25_f32.to_bits().to_be_bytes());
+        arrow[0x0c..0x0e].copy_from_slice(&(-1024_i16).to_be_bytes());
+        arrow[0x0e..0x10].copy_from_slice(&0x4000_i16.to_be_bytes());
+        arrow[0x10..0x12].copy_from_slice(&7_i16.to_be_bytes());
+        arrow[0x12..0x14].copy_from_slice(&(-1_i16).to_be_bytes());
+
+        let parsed = parse_stage_data(&stage).unwrap();
+        assert_eq!(parsed.chunks[0].recognized_record_size, Some(0x18));
+        assert_eq!(parsed.chunks[1].recognized_record_size, Some(0x14));
+        assert_eq!(parsed.cameras.len(), 1);
+        assert_eq!(parsed.cameras[0].camera_type, "FixedFrame");
+        assert_eq!(parsed.cameras[0].arrow_index, 0);
+        assert_eq!(parsed.cameras[0].field_of_view_y, 55);
+        assert_eq!(parsed.cameras[0].argument_0, 2);
+        assert_eq!(parsed.cameras[0].argument_1, 3);
+        assert_eq!(parsed.cameras[0].argument_2, 0xa123);
+        assert_eq!(parsed.cameras[0].camera_type_index, None);
+        assert_eq!(parsed.camera_arrows[0].position, [10.5, -20.0, 30.25]);
+        assert_eq!(parsed.camera_arrows[0].angle, [-1024, 0x4000, 7]);
+        assert_eq!(parsed.camera_arrows[0].trailing_i16, -1);
     }
 
     #[test]

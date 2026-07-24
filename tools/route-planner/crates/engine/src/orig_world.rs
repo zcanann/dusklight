@@ -7,8 +7,8 @@
 use crate::artifact::Digest;
 use crate::orig_discovery::{ExtractedOrigBundle, ExtractedOrigStageArchive};
 use crate::orig_extraction::{
-    ExtractedActorPlacement, ExtractedFileList, ExtractedRoomRead, ExtractedRoomTransform,
-    ExtractedSceneTransition,
+    ExtractedActorPlacement, ExtractedCamera, ExtractedCameraArrow, ExtractedFileList,
+    ExtractedRoomRead, ExtractedRoomTransform, ExtractedSceneTransition,
 };
 use crate::world_data::{
     PlacementKind, PlacementRecord, SourceKind, SourceScope, StageChunkSummary, StageExitRecord,
@@ -20,7 +20,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const EXTRACTED_ORIG_WORLD_INVENTORIES_SCHEMA: &str =
-    "dusklight.route-planner.extracted-orig-world-inventories/v3";
+    "dusklight.route-planner.extracted-orig-world-inventories/v4";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +66,24 @@ pub struct NativeRoomReadRecord {
     pub room_read: ExtractedRoomRead,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCameraRecord {
+    pub stage: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub camera: ExtractedCamera,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCameraArrowRecord {
+    pub stage: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub arrow: ExtractedCameraArrow,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeStageMetadata {
@@ -73,6 +91,8 @@ pub struct NativeStageMetadata {
     pub room_transforms: Vec<NativeRoomTransformRecord>,
     pub file_lists: Vec<NativeFileListRecord>,
     pub room_reads: Vec<NativeRoomReadRecord>,
+    pub cameras: Vec<NativeCameraRecord>,
+    pub camera_arrows: Vec<NativeCameraArrowRecord>,
 }
 
 impl NativeStageMetadata {
@@ -155,6 +175,42 @@ impl NativeStageMetadata {
             validate_room_read_raw(&record.room_read)?;
             previous_room_read = Some(order);
         }
+        let mut camera_keys = BTreeSet::new();
+        let mut previous_camera = None;
+        for record in &self.cameras {
+            let order = (scope_order(record.scope), record.camera.record_index);
+            if record.stage != self.stage
+                || record.source_sha256 == Digest::ZERO
+                || !valid_stage_or_room_scope(record.scope)
+                || !camera_keys.insert((record.source_sha256, record.camera.record_index))
+                || previous_camera.is_some_and(|previous| previous >= order)
+            {
+                return Err(PlannerContractError::new(
+                    "orig_world.cameras",
+                    "must be ordered unique records with valid stage or room scope",
+                ));
+            }
+            validate_camera_raw(&record.camera)?;
+            previous_camera = Some(order);
+        }
+        let mut arrow_keys = BTreeSet::new();
+        let mut previous_arrow = None;
+        for record in &self.camera_arrows {
+            let order = (scope_order(record.scope), record.arrow.record_index);
+            if record.stage != self.stage
+                || record.source_sha256 == Digest::ZERO
+                || !valid_stage_or_room_scope(record.scope)
+                || !arrow_keys.insert((record.source_sha256, record.arrow.record_index))
+                || previous_arrow.is_some_and(|previous| previous >= order)
+            {
+                return Err(PlannerContractError::new(
+                    "orig_world.camera_arrows",
+                    "must be ordered unique records with valid stage or room scope",
+                ));
+            }
+            validate_camera_arrow_raw(&record.arrow)?;
+            previous_arrow = Some(order);
+        }
         Ok(())
     }
 }
@@ -228,7 +284,7 @@ impl ExtractedOrigWorldInventories {
         if self.coverage != expected_coverage() {
             return Err(PlannerContractError::new(
                 "orig_world.coverage",
-                "v3 requires complete chunk, placement, SCLS, and map/room metadata coverage and unavailable collision coverage",
+                "v4 requires complete chunk, placement, SCLS, and map/room metadata coverage and unavailable collision coverage",
             ));
         }
         if self.inventories.is_empty() || self.inventories.len() > 256 {
@@ -302,6 +358,8 @@ fn build_stage_metadata(
     let mut room_transforms = Vec::new();
     let mut file_lists = Vec::new();
     let mut room_reads = Vec::new();
+    let mut cameras = Vec::new();
+    let mut camera_arrows = Vec::new();
     for archive in archives {
         let (archive_stage, scope) = archive_scope(&archive.relative_path, &archive.resource_name)?;
         if archive_stage != stage {
@@ -339,12 +397,30 @@ fn build_stage_metadata(
                     room_read,
                 }),
         );
+        cameras.extend(archive.stage.cameras.iter().cloned().map(|camera| {
+            NativeCameraRecord {
+                stage: stage.into(),
+                source_sha256: archive.resource_sha256,
+                scope,
+                camera,
+            }
+        }));
+        camera_arrows.extend(archive.stage.camera_arrows.iter().cloned().map(|arrow| {
+            NativeCameraArrowRecord {
+                stage: stage.into(),
+                source_sha256: archive.resource_sha256,
+                scope,
+                arrow,
+            }
+        }));
     }
     Ok(NativeStageMetadata {
         stage: stage.into(),
         room_transforms,
         file_lists,
         room_reads,
+        cameras,
+        camera_arrows,
     })
 }
 
@@ -542,6 +618,19 @@ fn scope_order(scope: SourceScope) -> (u8, i16) {
         } => (1, i16::from(room)),
         _ => (2, i16::MAX),
     }
+}
+
+fn valid_stage_or_room_scope(scope: SourceScope) -> bool {
+    matches!(
+        scope,
+        SourceScope {
+            kind: SourceKind::Stage,
+            room: None
+        } | SourceScope {
+            kind: SourceKind::Room,
+            room: Some(0..=i8::MAX)
+        }
+    )
 }
 
 fn actor_kind(placement: &ExtractedActorPlacement) -> PlacementKind {
@@ -973,6 +1062,32 @@ fn validate_stage_metadata(
         }
     }
 
+    for record in &metadata.cameras {
+        let arrow_count = chunk_count(record.source_sha256, "RARO");
+        if record.stage != inventory.stage
+            || source_scopes.get(&record.source_sha256) != Some(&record.scope)
+            || record.camera.record_index as usize >= chunk_count(record.source_sha256, "RCAM")
+            || usize::from(record.camera.arrow_index) >= arrow_count
+        {
+            return Err(PlannerContractError::new(
+                "orig_world.cameras",
+                "contains an RCAM record outside its exact source chunk or referencing a missing RARO record",
+            ));
+        }
+    }
+
+    for record in &metadata.camera_arrows {
+        if record.stage != inventory.stage
+            || source_scopes.get(&record.source_sha256) != Some(&record.scope)
+            || record.arrow.record_index as usize >= chunk_count(record.source_sha256, "RARO")
+        {
+            return Err(PlannerContractError::new(
+                "orig_world.camera_arrows",
+                "contains a RARO record outside its exact source chunk",
+            ));
+        }
+    }
+
     let expected_transforms = inventory
         .chunks
         .iter()
@@ -991,13 +1106,27 @@ fn validate_stage_metadata(
         .filter(|chunk| chunk.tag == "RTBL")
         .map(|chunk| chunk.record_count)
         .sum::<usize>();
+    let expected_cameras = inventory
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.tag == "RCAM")
+        .map(|chunk| chunk.record_count)
+        .sum::<usize>();
+    let expected_camera_arrows = inventory
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.tag == "RARO")
+        .map(|chunk| chunk.record_count)
+        .sum::<usize>();
     if metadata.room_transforms.len() != expected_transforms
         || metadata.file_lists.len() != expected_file_lists
         || metadata.room_reads.len() != expected_room_reads
+        || metadata.cameras.len() != expected_cameras
+        || metadata.camera_arrows.len() != expected_camera_arrows
     {
         return Err(PlannerContractError::new(
             "orig_world.stage_metadata",
-            "does not completely cover its recognized MULT, FILI, and RTBL chunks",
+            "does not completely cover its recognized MULT, FILI, RTBL, RCAM, and RARO chunks",
         ));
     }
     Ok(())
@@ -1099,6 +1228,59 @@ fn validate_room_read_raw(room_read: &ExtractedRoomRead) -> Result<(), PlannerCo
     Ok(())
 }
 
+fn validate_camera_raw(camera: &ExtractedCamera) -> Result<(), PlannerContractError> {
+    let raw = decode_hex_exact(&camera.raw_hex, 0x18, "orig_world.rcam.raw_hex")?;
+    let type_end = raw[..0x10]
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(0x10);
+    let raw_type_index = u16::from_be_bytes(raw[0x16..0x18].try_into().unwrap());
+    if type_end == 0
+        || !raw[..type_end].iter().all(u8::is_ascii_graphic)
+        || &raw[..type_end] != camera.camera_type.as_bytes()
+        || raw[0x10] != camera.arrow_index
+        || raw[0x11] != camera.field_of_view_y
+        || raw[0x12] != camera.argument_0
+        || raw[0x13] != camera.argument_1
+        || u16::from_be_bytes(raw[0x14..0x16].try_into().unwrap()) != camera.argument_2
+        || (raw_type_index != u16::MAX).then_some(raw_type_index) != camera.camera_type_index
+    {
+        return Err(PlannerContractError::new(
+            "orig_world.cameras",
+            "decoded fields do not match the retained raw RCAM record",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_camera_arrow_raw(arrow: &ExtractedCameraArrow) -> Result<(), PlannerContractError> {
+    let raw = decode_hex_exact(&arrow.raw_hex, 0x14, "orig_world.raro.raw_hex")?;
+    let position = [
+        f32::from_bits(u32::from_be_bytes(raw[0..4].try_into().unwrap())),
+        f32::from_bits(u32::from_be_bytes(raw[4..8].try_into().unwrap())),
+        f32::from_bits(u32::from_be_bytes(raw[8..12].try_into().unwrap())),
+    ];
+    let angle = [
+        i16::from_be_bytes(raw[0x0c..0x0e].try_into().unwrap()),
+        i16::from_be_bytes(raw[0x0e..0x10].try_into().unwrap()),
+        i16::from_be_bytes(raw[0x10..0x12].try_into().unwrap()),
+    ];
+    if !position.iter().all(|coordinate| coordinate.is_finite())
+        || position
+            .iter()
+            .zip(arrow.position)
+            .any(|(raw, decoded)| raw.to_bits() != decoded.to_bits())
+        || angle != arrow.angle
+        || i16::from_be_bytes(raw[0x12..0x14].try_into().unwrap()) != arrow.trailing_i16
+    {
+        return Err(PlannerContractError::new(
+            "orig_world.camera_arrows",
+            "decoded fields do not match the retained raw RARO record",
+        ));
+    }
+    Ok(())
+}
+
 fn source_record_id(scope: SourceScope, digest: Digest, tag: &str, record_index: usize) -> String {
     let prefix = match scope.kind {
         SourceKind::Stage => "dzs",
@@ -1158,6 +1340,8 @@ fn recognized_record_size(tag: &str) -> Option<usize> {
         "LBNK" => Some(3),
         "MULT" => Some(12),
         "FILI" => Some(32),
+        "RCAM" => Some(24),
+        "RARO" => Some(20),
         _ => None,
     }
 }
@@ -1234,8 +1418,8 @@ mod tests {
         RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
     };
     use crate::orig_extraction::{
-        ExtractedLoadedRoom, ExtractedRoomRead, ExtractedStageChunk, ExtractedStageData,
-        extract_unique_rarc_resource, parse_stage_data,
+        ExtractedCamera, ExtractedCameraArrow, ExtractedLoadedRoom, ExtractedRoomRead,
+        ExtractedStageChunk, ExtractedStageData, extract_unique_rarc_resource, parse_stage_data,
     };
     use crate::world_import::ExtractedWorldFacts;
     use std::fs;
@@ -1340,6 +1524,8 @@ mod tests {
                     raw_header_hex: "01050b0000000080".into(),
                     raw_room_list_hex: "82".into(),
                 }],
+                cameras: Vec::new(),
+                camera_arrows: Vec::new(),
                 scene_transitions: Vec::new(),
                 map_events: Vec::new(),
                 demo_archive_banks: Vec::new(),
@@ -1372,11 +1558,41 @@ mod tests {
                         data_offset: 128,
                         recognized_record_size: Some(13),
                     },
+                    ExtractedStageChunk {
+                        tag: "RCAM".into(),
+                        record_count: 1,
+                        data_offset: 144,
+                        recognized_record_size: Some(24),
+                    },
+                    ExtractedStageChunk {
+                        tag: "RARO".into(),
+                        record_count: 1,
+                        data_offset: 168,
+                        recognized_record_size: Some(20),
+                    },
                 ],
                 stage_information: None,
                 room_transforms: Vec::new(),
                 file_lists: Vec::new(),
                 room_read_table: Vec::new(),
+                cameras: vec![ExtractedCamera {
+                    record_index: 0,
+                    camera_type: "FixedFrame".into(),
+                    arrow_index: 0,
+                    field_of_view_y: 55,
+                    argument_0: 2,
+                    argument_1: 3,
+                    argument_2: 0xa123,
+                    camera_type_index: None,
+                    raw_hex: "46697865644672616d6500000000000000370203a123ffff".into(),
+                }],
+                camera_arrows: vec![ExtractedCameraArrow {
+                    record_index: 0,
+                    position: [10.5, -20.0, 30.25],
+                    angle: [-1024, 0x4000, 7],
+                    trailing_i16: -1,
+                    raw_hex: "41280000c1a0000041f20000fc0040000007ffff".into(),
+                }],
                 scene_transitions: vec![ExtractedSceneTransition {
                     exit_id: 0,
                     destination_stage: "F_SP00".into(),
@@ -1455,6 +1671,8 @@ mod tests {
         assert_eq!(facts.static_world_objects.len(), 3);
         assert_eq!(facts.native_stage_metadata, import_set.stage_metadata);
         assert_eq!(facts.native_stage_metadata[0].room_reads.len(), 1);
+        assert_eq!(facts.native_stage_metadata[0].cameras.len(), 1);
+        assert_eq!(facts.native_stage_metadata[0].camera_arrows.len(), 1);
         assert_eq!(facts.spawns.len(), 1);
         assert_eq!(facts.encoded_exits.len(), 1);
         assert!(
@@ -1506,6 +1724,8 @@ mod tests {
             }],
             file_lists: Vec::new(),
             room_reads: Vec::new(),
+            cameras: Vec::new(),
+            camera_arrows: Vec::new(),
         };
         metadata.validate_records().unwrap();
         metadata.room_transforms[0].transform.room = 4;
@@ -1553,7 +1773,7 @@ mod tests {
     }
 
     #[test]
-    fn exact_native_room_read_metadata_validates_for_every_stage_when_available() {
+    fn exact_native_map_room_metadata_validates_for_every_stage_when_available() {
         let Some(root) = repository_root() else {
             return;
         };
@@ -1568,6 +1788,8 @@ mod tests {
             .collect::<Vec<_>>();
         stage_dirs.sort();
         let mut room_reads = 0_usize;
+        let mut cameras = 0_usize;
+        let mut camera_arrows = 0_usize;
         for stage_dir in &stage_dirs {
             let stage = stage_dir.file_name().unwrap().to_str().unwrap();
             let mut archive_paths = fs::read_dir(stage_dir)
@@ -1614,9 +1836,13 @@ mod tests {
             let metadata = build_stage_metadata(stage, refs).unwrap();
             validate_stage_metadata(&inventory, &metadata).unwrap();
             room_reads += metadata.room_reads.len();
+            cameras += metadata.cameras.len();
+            camera_arrows += metadata.camera_arrows.len();
         }
         assert_eq!(stage_dirs.len(), 79);
         assert_eq!(room_reads, 1_652);
+        assert_eq!(cameras, 1_260);
+        assert_eq!(camera_arrows, 1_260);
     }
 
     fn repository_root() -> Option<PathBuf> {

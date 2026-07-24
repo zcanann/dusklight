@@ -489,6 +489,8 @@ mod tests {
             room_transforms: Vec::new(),
             file_lists: Vec::new(),
             room_read_table: Vec::new(),
+            cameras: Vec::new(),
+            camera_arrows: Vec::new(),
             scene_transitions: vec![
                 ExtractedSceneTransition {
                     exit_id: 1,
