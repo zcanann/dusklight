@@ -96,21 +96,21 @@ or test fixture does not count as progress by itself.
 
 ### 3.1 Replace the monolithic project document
 
-- [ ] Introduce a workspace manifest that contains identity, version, mounted
+- [x] Introduce a workspace manifest that contains identity, version, mounted
       libraries, exact-context defaults, and asset roots without embedding
       catalogues, route graphs, snapshots, or layouts.
-- [ ] Store each mutable asset in its own canonical JSON file using the existing
+- [x] Store each mutable asset in its own canonical JSON file using the existing
       typed serialization and validation infrastructure. Do not introduce YAML.
-- [ ] Separate semantic graph data from presentation layout so moving a node
+- [x] Separate semantic graph data from presentation layout so moving a node
       cannot change a route or invalidate semantic identity.
-- [ ] Give every asset a stable identity independent of its file path. Rename and
+- [x] Give every asset a stable identity independent of its file path. Rename and
       move operations must preserve references.
-- [ ] Seal library dependencies by exact identity and digest. Opening a workspace
+- [x] Seal library dependencies by exact identity and digest. Opening a workspace
       with missing or changed dependencies must produce an actionable dependency
       error rather than silently rebinding.
-- [ ] Support schema migration explicitly. Never make users repair serialized
+- [x] Support schema migration explicitly. Never make users repair serialized
       files by hand after an application update.
-- [ ] Define crash-safe transactions for multi-file operations such as moving a
+- [x] Define crash-safe transactions for multi-file operations such as moving a
       graph with dependent layouts or deleting an asset with references.
 
 The initial mutable asset types are:

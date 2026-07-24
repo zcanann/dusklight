@@ -26,6 +26,9 @@ pub const WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v
 pub const WORKSPACE_ASSET_SCHEMA: &str = "dusklight.route-planner.workspace-asset/v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
+const LEGACY_WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v0";
+const TRANSACTION_ROOT: &str = ".dusklight/transactions";
+const TRANSACTION_SCHEMA: &str = "dusklight.route-planner.workspace-transaction/v1";
 static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -236,6 +239,19 @@ pub struct WorkspaceAssetListing {
     pub revision_sha256: Digest,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum WorkspaceMutation {
+    Put {
+        relative_path: PathBuf,
+        expected_revision_sha256: Option<Digest>,
+        asset: WorkspaceAsset,
+    },
+    Delete {
+        relative_path: PathBuf,
+        expected_revision_sha256: Digest,
+    },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum LibraryDependencyIssue {
     Missing {
@@ -292,6 +308,40 @@ impl From<PlannerContractError> for WorkspaceError {
 pub struct WorkspaceStore {
     root: PathBuf,
     manifest: WorkspaceManifest,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyWorkspaceManifest {
+    schema: String,
+    id: String,
+    label: String,
+    mounted_libraries: Vec<MountedLibrary>,
+    exact_context_defaults: Vec<ExactContext>,
+    asset_roots: BTreeMap<WorkspaceAssetKind, String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceTransactionJournal {
+    schema: String,
+    id: String,
+    operations: Vec<JournalOperation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+enum JournalOperation {
+    Put {
+        relative_path: String,
+        staged_file: String,
+        expected_revision_sha256: Option<Digest>,
+        new_revision_sha256: Digest,
+    },
+    Delete {
+        relative_path: String,
+        expected_revision_sha256: Digest,
+    },
 }
 
 impl WorkspaceManifest {
@@ -498,7 +548,9 @@ impl WorkspaceStore {
         }
         write_atomically(&root.join(MANIFEST_FILE), &manifest.canonical_bytes()?)?;
         let root = root.canonicalize().map_err(WorkspaceError::io)?;
-        Ok(Self { root, manifest })
+        let store = Self { root, manifest };
+        store.ensure_transaction_root()?;
+        Ok(store)
     }
 
     pub fn open(
@@ -506,12 +558,15 @@ impl WorkspaceStore {
         available_libraries: &BTreeMap<(String, String), Digest>,
     ) -> Result<Self, WorkspaceError> {
         let root = root.into().canonicalize().map_err(WorkspaceError::io)?;
-        let manifest = read_manifest(&root.join(MANIFEST_FILE))?;
+        let manifest = read_manifest_and_migrate(&root.join(MANIFEST_FILE))?;
         let issues = dependency_issues(&manifest, available_libraries);
         if !issues.is_empty() {
             return Err(WorkspaceError::new(format_dependency_issues(&issues)));
         }
-        Ok(Self { root, manifest })
+        let store = Self { root, manifest };
+        store.ensure_transaction_root()?;
+        store.recover_transactions()?;
+        Ok(store)
     }
 
     pub fn manifest(&self) -> &WorkspaceManifest {
@@ -583,21 +638,7 @@ impl WorkspaceStore {
         asset: &WorkspaceAsset,
     ) -> Result<Digest, WorkspaceError> {
         asset.validate()?;
-        validate_relative_path("asset path", relative_path)?;
-        if relative_path.extension().and_then(|value| value.to_str()) != Some("json") {
-            return Err(WorkspaceError::new("asset path must end in .json"));
-        }
-        let expected_root = self
-            .manifest
-            .asset_roots
-            .get(&asset.header.kind)
-            .expect("validated manifest has every root");
-        if !relative_path.starts_with(expected_root) {
-            return Err(WorkspaceError::new(format!(
-                "{:?} asset must be stored under {}",
-                asset.header.kind, expected_root
-            )));
-        }
+        self.validate_asset_path(relative_path, asset.header.kind)?;
         if self
             .list_assets()?
             .iter()
@@ -625,6 +666,289 @@ impl WorkspaceStore {
         }
         write_atomically(&path, &asset.canonical_bytes()?)?;
         asset.digest()
+    }
+
+    /// Durably commits a set of asset writes and deletes as one recoverable unit.
+    ///
+    /// A crash can interrupt the visible filesystem updates, but the prepared
+    /// journal is replayed on the next open before assets are returned.
+    pub fn transact(&self, mutations: &[WorkspaceMutation]) -> Result<(), WorkspaceError> {
+        if mutations.is_empty() {
+            return Err(WorkspaceError::new(
+                "workspace transaction must contain at least one mutation",
+            ));
+        }
+        self.validate_mutations(mutations)?;
+        let id = format!(
+            "transaction-{}-{}",
+            std::process::id(),
+            NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        );
+        let transaction_root = self.root.join(TRANSACTION_ROOT).join(&id);
+        fs::create_dir(&transaction_root).map_err(WorkspaceError::io)?;
+        let mut operations = Vec::with_capacity(mutations.len());
+        for (index, mutation) in mutations.iter().enumerate() {
+            match mutation {
+                WorkspaceMutation::Put {
+                    relative_path,
+                    expected_revision_sha256,
+                    asset,
+                } => {
+                    let staged_file = format!("asset-{index:04}.json");
+                    let bytes = asset.canonical_bytes()?;
+                    write_new_synced(&transaction_root.join(&staged_file), &bytes)?;
+                    operations.push(JournalOperation::Put {
+                        relative_path: path_to_slashes(relative_path)?,
+                        staged_file,
+                        expected_revision_sha256: *expected_revision_sha256,
+                        new_revision_sha256: asset.digest()?,
+                    });
+                }
+                WorkspaceMutation::Delete {
+                    relative_path,
+                    expected_revision_sha256,
+                } => operations.push(JournalOperation::Delete {
+                    relative_path: path_to_slashes(relative_path)?,
+                    expected_revision_sha256: *expected_revision_sha256,
+                }),
+            }
+        }
+        let journal = WorkspaceTransactionJournal {
+            schema: TRANSACTION_SCHEMA.into(),
+            id,
+            operations,
+        };
+        write_atomically(
+            &transaction_root.join("transaction.json"),
+            &canonical_json(&journal)?,
+        )?;
+        self.apply_transaction(&transaction_root, &journal)?;
+        remove_transaction_directory(&self.root, &transaction_root)
+    }
+
+    pub fn move_asset(
+        &self,
+        id: &str,
+        destination: &Path,
+        expected_revision_sha256: Digest,
+    ) -> Result<(), WorkspaceError> {
+        let (asset, source) = self.load_asset(id)?;
+        if source == destination {
+            return Ok(());
+        }
+        self.transact(&[
+            WorkspaceMutation::Put {
+                relative_path: destination.to_path_buf(),
+                expected_revision_sha256: None,
+                asset,
+            },
+            WorkspaceMutation::Delete {
+                relative_path: source,
+                expected_revision_sha256,
+            },
+        ])
+    }
+
+    fn ensure_transaction_root(&self) -> Result<(), WorkspaceError> {
+        fs::create_dir_all(self.root.join(TRANSACTION_ROOT)).map_err(WorkspaceError::io)
+    }
+
+    fn recover_transactions(&self) -> Result<(), WorkspaceError> {
+        let root = self.root.join(TRANSACTION_ROOT);
+        let mut transactions = fs::read_dir(&root)
+            .map_err(WorkspaceError::io)?
+            .map(|entry| entry.map(|entry| entry.path()).map_err(WorkspaceError::io))
+            .collect::<Result<Vec<_>, _>>()?;
+        transactions.sort();
+        for transaction_root in transactions {
+            if !transaction_root.is_dir() {
+                return Err(WorkspaceError::new(format!(
+                    "unexpected file in transaction journal: {}",
+                    transaction_root.display()
+                )));
+            }
+            let bytes =
+                fs::read(transaction_root.join("transaction.json")).map_err(WorkspaceError::io)?;
+            let journal: WorkspaceTransactionJournal =
+                serde_json::from_slice(&bytes).map_err(WorkspaceError::json)?;
+            if journal.schema != TRANSACTION_SCHEMA
+                || transaction_root.file_name().and_then(|name| name.to_str())
+                    != Some(journal.id.as_str())
+            {
+                return Err(WorkspaceError::new(format!(
+                    "workspace transaction journal {} is invalid",
+                    transaction_root.display()
+                )));
+            }
+            self.apply_transaction(&transaction_root, &journal)?;
+            remove_transaction_directory(&self.root, &transaction_root)?;
+        }
+        Ok(())
+    }
+
+    fn validate_mutations(&self, mutations: &[WorkspaceMutation]) -> Result<(), WorkspaceError> {
+        let listings = self.list_assets()?;
+        let mut paths = BTreeSet::new();
+        let deleted_paths = mutations
+            .iter()
+            .filter_map(|mutation| match mutation {
+                WorkspaceMutation::Delete { relative_path, .. } => Some(relative_path),
+                WorkspaceMutation::Put { .. } => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let mut put_ids = BTreeSet::new();
+        for mutation in mutations {
+            let (relative_path, expected_revision) = match mutation {
+                WorkspaceMutation::Put {
+                    relative_path,
+                    expected_revision_sha256,
+                    asset,
+                } => {
+                    asset.validate()?;
+                    self.validate_asset_path(relative_path, asset.header.kind)?;
+                    if !put_ids.insert(&asset.header.id) {
+                        return Err(WorkspaceError::new(format!(
+                            "transaction writes asset identity {} more than once",
+                            asset.header.id
+                        )));
+                    }
+                    if let Some(existing) = listings
+                        .iter()
+                        .find(|listing| listing.id == asset.header.id)
+                        && existing.relative_path != *relative_path
+                        && !deleted_paths.contains(&existing.relative_path)
+                    {
+                        return Err(WorkspaceError::new(format!(
+                            "asset identity {} already exists at another path",
+                            asset.header.id
+                        )));
+                    }
+                    (relative_path, *expected_revision_sha256)
+                }
+                WorkspaceMutation::Delete {
+                    relative_path,
+                    expected_revision_sha256,
+                } => {
+                    validate_relative_path("asset path", relative_path)?;
+                    (relative_path, Some(*expected_revision_sha256))
+                }
+            };
+            if !paths.insert(relative_path) {
+                return Err(WorkspaceError::new(format!(
+                    "transaction mutates {} more than once",
+                    relative_path.display()
+                )));
+            }
+            let current_revision = self.revision_at(relative_path)?;
+            if current_revision != expected_revision {
+                return Err(WorkspaceError::new(format!(
+                    "asset revision conflict at {}: expected {}, current {}",
+                    relative_path.display(),
+                    display_digest(expected_revision),
+                    display_digest(current_revision)
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_asset_path(
+        &self,
+        relative_path: &Path,
+        kind: WorkspaceAssetKind,
+    ) -> Result<(), WorkspaceError> {
+        validate_relative_path("asset path", relative_path)?;
+        if relative_path.extension().and_then(|value| value.to_str()) != Some("json") {
+            return Err(WorkspaceError::new("asset path must end in .json"));
+        }
+        let expected_root = self
+            .manifest
+            .asset_roots
+            .get(&kind)
+            .expect("validated manifest has every root");
+        if !relative_path.starts_with(expected_root) {
+            return Err(WorkspaceError::new(format!(
+                "{kind:?} asset must be stored under {expected_root}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn revision_at(&self, relative_path: &Path) -> Result<Option<Digest>, WorkspaceError> {
+        let path = self.root.join(relative_path);
+        path.is_file()
+            .then(|| read_asset(&path).and_then(|asset| asset.digest()))
+            .transpose()
+    }
+
+    fn apply_transaction(
+        &self,
+        transaction_root: &Path,
+        journal: &WorkspaceTransactionJournal,
+    ) -> Result<(), WorkspaceError> {
+        for operation in &journal.operations {
+            match operation {
+                JournalOperation::Put {
+                    relative_path,
+                    staged_file,
+                    expected_revision_sha256,
+                    new_revision_sha256,
+                } => {
+                    let relative_path = Path::new(relative_path);
+                    validate_relative_path("transaction target", relative_path)?;
+                    validate_relative_path("transaction staged file", Path::new(staged_file))?;
+                    let current = self.revision_at(relative_path)?;
+                    if current == Some(*new_revision_sha256) {
+                        continue;
+                    }
+                    if current != *expected_revision_sha256 {
+                        return Err(WorkspaceError::new(format!(
+                            "cannot recover transaction {}: {} expected {}, current {}",
+                            journal.id,
+                            relative_path.display(),
+                            display_digest(*expected_revision_sha256),
+                            display_digest(current)
+                        )));
+                    }
+                    let bytes =
+                        fs::read(transaction_root.join(staged_file)).map_err(WorkspaceError::io)?;
+                    let staged_asset: WorkspaceAsset =
+                        serde_json::from_slice(&bytes).map_err(WorkspaceError::json)?;
+                    if staged_asset.digest()? != *new_revision_sha256 {
+                        return Err(WorkspaceError::new(format!(
+                            "transaction {} staged asset digest changed",
+                            journal.id
+                        )));
+                    }
+                    let target = self.root.join(relative_path);
+                    if let Some(parent) = target.parent() {
+                        fs::create_dir_all(parent).map_err(WorkspaceError::io)?;
+                    }
+                    write_atomically(&target, &bytes)?;
+                }
+                JournalOperation::Delete {
+                    relative_path,
+                    expected_revision_sha256,
+                } => {
+                    let relative_path = Path::new(relative_path);
+                    validate_relative_path("transaction target", relative_path)?;
+                    let Some(current) = self.revision_at(relative_path)? else {
+                        continue;
+                    };
+                    if current != *expected_revision_sha256 {
+                        return Err(WorkspaceError::new(format!(
+                            "cannot recover transaction {}: {} expected {}, current {}",
+                            journal.id,
+                            relative_path.display(),
+                            expected_revision_sha256,
+                            current
+                        )));
+                    }
+                    fs::remove_file(self.root.join(relative_path)).map_err(WorkspaceError::io)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn asset_root(&self, kind: WorkspaceAssetKind) -> Result<PathBuf, WorkspaceError> {
@@ -693,20 +1017,40 @@ fn format_dependency_issues(issues: &[LibraryDependencyIssue]) -> String {
     format!("workspace library dependencies are not satisfied: {details}")
 }
 
-fn read_manifest(path: &Path) -> Result<WorkspaceManifest, WorkspaceError> {
+fn read_manifest_and_migrate(path: &Path) -> Result<WorkspaceManifest, WorkspaceError> {
     let bytes = fs::read(path).map_err(WorkspaceError::io)?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(WorkspaceError::json)?;
     let schema = value
         .get("schema")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| WorkspaceError::new("workspace manifest has no schema"))?;
-    if schema != WORKSPACE_MANIFEST_SCHEMA {
-        return Err(WorkspaceError::new(format!(
-            "workspace schema {schema} is unsupported; migrate it with a compatible application version"
-        )));
-    }
-    let manifest: WorkspaceManifest =
-        serde_json::from_value(value).map_err(WorkspaceError::json)?;
+    let manifest = match schema {
+        WORKSPACE_MANIFEST_SCHEMA => serde_json::from_value(value).map_err(WorkspaceError::json)?,
+        LEGACY_WORKSPACE_MANIFEST_SCHEMA => {
+            let legacy: LegacyWorkspaceManifest =
+                serde_json::from_value(value).map_err(WorkspaceError::json)?;
+            if legacy.schema != LEGACY_WORKSPACE_MANIFEST_SCHEMA {
+                return Err(WorkspaceError::new("legacy workspace schema is invalid"));
+            }
+            let migrated = WorkspaceManifest {
+                schema: WORKSPACE_MANIFEST_SCHEMA.into(),
+                format_version: WORKSPACE_FORMAT_VERSION,
+                id: legacy.id,
+                label: legacy.label,
+                mounted_libraries: legacy.mounted_libraries,
+                exact_context_defaults: legacy.exact_context_defaults,
+                asset_roots: legacy.asset_roots,
+            };
+            migrated.validate()?;
+            write_atomically(path, &migrated.canonical_bytes()?)?;
+            migrated
+        }
+        _ => {
+            return Err(WorkspaceError::new(format!(
+                "workspace schema {schema} is unsupported; migrate it with a compatible application version"
+            )));
+        }
+    };
     manifest.validate()?;
     Ok(manifest)
 }
@@ -803,6 +1147,38 @@ fn canonical_json<T: Serialize>(value: &T) -> Result<Vec<u8>, WorkspaceError> {
     let mut bytes = serde_json::to_vec(value).map_err(WorkspaceError::json)?;
     bytes.push(b'\n');
     Ok(bytes)
+}
+
+fn path_to_slashes(path: &Path) -> Result<String, WorkspaceError> {
+    validate_relative_path("asset path", path)?;
+    Ok(path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
+}
+
+fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), WorkspaceError> {
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(WorkspaceError::io)?;
+    output.write_all(bytes).map_err(WorkspaceError::io)?;
+    output.sync_all().map_err(WorkspaceError::io)
+}
+
+fn remove_transaction_directory(root: &Path, transaction: &Path) -> Result<(), WorkspaceError> {
+    let expected_parent = root.join(TRANSACTION_ROOT);
+    if transaction.parent() != Some(expected_parent.as_path())
+        || transaction.file_name().is_none()
+        || !transaction.is_dir()
+    {
+        return Err(WorkspaceError::new(
+            "refusing to remove an invalid transaction directory",
+        ));
+    }
+    fs::remove_dir_all(transaction).map_err(WorkspaceError::io)
 }
 
 fn display_digest(value: Option<Digest>) -> String {
@@ -1045,6 +1421,103 @@ mod tests {
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         let error = WorkspaceStore::open(&root, &BTreeMap::new()).unwrap_err();
         assert!(error.to_string().contains("migrate"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn known_manifest_schema_migrates_automatically_and_canonically() {
+        let root = temporary_directory("known-migration");
+        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        WorkspaceStore::create(&root, manifest).unwrap();
+        let path = root.join(MANIFEST_FILE);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        value["schema"] = LEGACY_WORKSPACE_MANIFEST_SCHEMA.into();
+        value.as_object_mut().unwrap().remove("format_version");
+        fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+        let opened = WorkspaceStore::open(&root, &BTreeMap::new()).unwrap();
+        assert_eq!(opened.manifest().schema, WORKSPACE_MANIFEST_SCHEMA);
+        assert_eq!(opened.manifest().format_version, WORKSPACE_FORMAT_VERSION);
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            opened.manifest().canonical_bytes().unwrap()
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn move_is_one_recoverable_transaction_and_preserves_identity() {
+        let root = temporary_directory("transactional-move");
+        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        let store = WorkspaceStore::create(&root, manifest).unwrap();
+        let asset = graph_asset("graph.ordon", "Ordon route");
+        let source = Path::new("route-graphs/ordon.json");
+        let revision = store.save_asset(source, None, &asset).unwrap();
+        let destination = Path::new("route-graphs/routes/ordon.json");
+        store
+            .move_asset("graph.ordon", destination, revision)
+            .unwrap();
+
+        assert!(!root.join(source).exists());
+        assert!(root.join(destination).is_file());
+        let (loaded, path) = store.load_asset("graph.ordon").unwrap();
+        assert_eq!(loaded.header.id, "graph.ordon");
+        assert_eq!(path, destination);
+        assert_eq!(
+            fs::read_dir(root.join(TRANSACTION_ROOT)).unwrap().count(),
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn open_finishes_a_transaction_interrupted_between_operations() {
+        let root = temporary_directory("transaction-recovery");
+        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        let store = WorkspaceStore::create(&root, manifest).unwrap();
+        let asset = graph_asset("graph.ordon", "Ordon route");
+        let source = Path::new("route-graphs/ordon.json");
+        let source_revision = store.save_asset(source, None, &asset).unwrap();
+        let destination = Path::new("route-graphs/routes/ordon.json");
+        fs::create_dir_all(root.join("route-graphs/routes")).unwrap();
+
+        let id = "transaction-interrupted";
+        let transaction_root = root.join(TRANSACTION_ROOT).join(id);
+        fs::create_dir(&transaction_root).unwrap();
+        let staged_file = "asset-0000.json";
+        let bytes = asset.canonical_bytes().unwrap();
+        fs::write(transaction_root.join(staged_file), &bytes).unwrap();
+        let journal = WorkspaceTransactionJournal {
+            schema: TRANSACTION_SCHEMA.into(),
+            id: id.into(),
+            operations: vec![
+                JournalOperation::Put {
+                    relative_path: path_to_slashes(destination).unwrap(),
+                    staged_file: staged_file.into(),
+                    expected_revision_sha256: None,
+                    new_revision_sha256: asset.digest().unwrap(),
+                },
+                JournalOperation::Delete {
+                    relative_path: path_to_slashes(source).unwrap(),
+                    expected_revision_sha256: source_revision,
+                },
+            ],
+        };
+        fs::write(
+            transaction_root.join("transaction.json"),
+            canonical_json(&journal).unwrap(),
+        )
+        .unwrap();
+        // Simulate a crash after the first replacement but before source delete.
+        fs::write(root.join(destination), &bytes).unwrap();
+        drop(store);
+
+        let recovered = WorkspaceStore::open(&root, &BTreeMap::new()).unwrap();
+        assert!(!root.join(source).exists());
+        assert!(root.join(destination).is_file());
+        assert_eq!(recovered.load_asset("graph.ordon").unwrap().1, destination);
+        assert!(!transaction_root.exists());
         fs::remove_dir_all(root).unwrap();
     }
 }
