@@ -34,7 +34,7 @@ use dusklight_route_planner::transition::{MechanicsCatalog, StateOperation};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, VecDeque};
 
-pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v46";
+pub const PLANNER_SERVICE_SCHEMA: &str = "dusklight.route-planner.service/v47";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -177,6 +177,16 @@ pub enum PlannerServiceRequest {
         transition_id: String,
         evidence_mode: crate::RuntimeEvidenceMode,
     },
+    InsertTransitionAfter {
+        request_id: String,
+        state: Box<PlannerExecutionStateDocument>,
+        catalog: Box<ComposedPlannerCatalog>,
+        equivalence_sets: Vec<EquivalenceSet>,
+        route_book: Box<RouteBook>,
+        after_step_id: String,
+        transition_id: String,
+        evidence_mode: crate::RuntimeEvidenceMode,
+    },
     RemoveAuthoredStep {
         request_id: String,
         state: Box<PlannerExecutionStateDocument>,
@@ -249,6 +259,7 @@ impl PlannerServiceRequest {
             | Self::EvaluateTransition { request_id, .. }
             | Self::SuggestTransitionChain { request_id, .. }
             | Self::AppendTransition { request_id, .. }
+            | Self::InsertTransitionAfter { request_id, .. }
             | Self::RemoveAuthoredStep { request_id, .. }
             | Self::ReplaceAuthoredStep { request_id, .. }
             | Self::InspectAuthoredRoute { request_id, .. }
@@ -375,6 +386,16 @@ pub enum PlannerServicePayload {
         previous_route_book_sha256: Option<Digest>,
         route_book_sha256: Digest,
         step_id: String,
+        assessment: Box<TransitionAssessment>,
+        after: Box<PlannerExecutionStateDocument>,
+    },
+    InsertedTransition {
+        book: Box<RouteBook>,
+        previous_route_book_sha256: Digest,
+        route_book_sha256: Digest,
+        step_id: String,
+        after_step_id: String,
+        transition_id: String,
         assessment: Box<TransitionAssessment>,
         after: Box<PlannerExecutionStateDocument>,
     },
@@ -907,6 +928,26 @@ pub fn handle_request(request: PlannerServiceRequest) -> PlannerServiceResponse 
                 route_book.map(|book| *book),
                 route_book_id,
                 route_book_label,
+                &transition_id,
+                evidence_mode,
+            )
+        }),
+        PlannerServiceRequest::InsertTransitionAfter {
+            state,
+            catalog,
+            equivalence_sets,
+            route_book,
+            after_step_id,
+            transition_id,
+            evidence_mode,
+            ..
+        } => (*state).into_state().and_then(|state| {
+            insert_transition_after_route_step(
+                state,
+                &catalog,
+                &equivalence_sets,
+                *route_book,
+                &after_step_id,
                 &transition_id,
                 evidence_mode,
             )
@@ -1719,6 +1760,145 @@ fn append_transition_to_route_book(
         route_book_sha256,
         step_id,
         assessment: Box::new(evaluation.assessment),
+        after: Box::new(state.to_document()?),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_transition_after_route_step(
+    mut state: PlannerExecutionState,
+    catalog: &ComposedPlannerCatalog,
+    equivalence_sets: &[EquivalenceSet],
+    route_book: RouteBook,
+    after_step_id: &str,
+    transition_id: &str,
+    evidence_mode: crate::RuntimeEvidenceMode,
+) -> Result<PlannerServicePayload, dusklight_route_planner::PlannerContractError> {
+    route_book.validate_against_composed(catalog)?;
+    let previous_route_book_sha256 = route_book.digest()?;
+    let method = route_book
+        .methods
+        .iter()
+        .find(|method| method.id == AUTHORED_METHOD_ID)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "route_book.methods",
+                "does not contain the browser-authored route method",
+            )
+        })?;
+    let insertion_index = method
+        .step_ids
+        .iter()
+        .position(|candidate| candidate == after_step_id)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "after_step_id",
+                "does not name a step in the browser-authored route method",
+            )
+        })?;
+    let transition = catalog
+        .mechanics
+        .transitions
+        .iter()
+        .find(|transition| transition.id == transition_id)
+        .ok_or_else(|| {
+            dusklight_route_planner::PlannerContractError::new(
+                "transition_id",
+                "does not name a transition in the composed catalog",
+            )
+        })?;
+    let step_id = next_authored_step_id(Some(&route_book));
+    let mut insertion_assessment = None;
+    for (index, replay_step_id) in method.step_ids.iter().enumerate() {
+        let step = route_book
+            .steps
+            .iter()
+            .find(|step| &step.id == replay_step_id)
+            .expect("validated route method references existing steps");
+        let RouteActionRef::Transition {
+            transition_id: replay_transition_id,
+        } = &step.action
+        else {
+            return Err(dusklight_route_planner::PlannerContractError::new(
+                "route_book.steps.action",
+                "authored route propagation currently requires transition steps",
+            ));
+        };
+        let evaluation = assess_and_apply_transition(
+            &mut state,
+            catalog,
+            equivalence_sets,
+            replay_transition_id,
+            evidence_mode,
+            &format!("route.insert-replay-{index:04}"),
+        )?;
+        if evaluation.assessment.classification != TransitionClassification::Executable {
+            return Ok(PlannerServicePayload::RejectedRouteEdit {
+                step_id: step_id.clone(),
+                failed_step_id: replay_step_id.clone(),
+                assessment: Box::new(evaluation.assessment),
+                diagnostics: Box::new(evaluation.diagnostics),
+                closest_before: Box::new(state.to_document()?),
+            });
+        }
+        if index == insertion_index {
+            let inserted = assess_and_apply_transition(
+                &mut state,
+                catalog,
+                equivalence_sets,
+                transition_id,
+                evidence_mode,
+                "route.insert",
+            )?;
+            if inserted.assessment.classification != TransitionClassification::Executable {
+                return Ok(PlannerServicePayload::RejectedRouteEdit {
+                    step_id: step_id.clone(),
+                    failed_step_id: step_id,
+                    assessment: Box::new(inserted.assessment),
+                    diagnostics: Box::new(inserted.diagnostics),
+                    closest_before: Box::new(state.to_document()?),
+                });
+            }
+            insertion_assessment = Some(inserted.assessment);
+        }
+    }
+    let assessment = insertion_assessment.expect("insertion anchor is in the authored method");
+    let step = ReferenceStep {
+        id: step_id.clone(),
+        label: transition.label.clone(),
+        scope: transition.scope.clone(),
+        action: RouteActionRef::Transition {
+            transition_id: transition_id.into(),
+        },
+        precondition: None,
+        postcondition: None,
+        region_id: Some(AUTHORED_REGION_ID.into()),
+        annotation_ids: Vec::new(),
+    };
+    let mut edited_method = method.clone();
+    edited_method
+        .step_ids
+        .insert(insertion_index + 1, step_id.clone());
+    let book = RouteBookEditBatch {
+        schema: ROUTE_BOOK_EDIT_BATCH_SCHEMA.into(),
+        expected_route_book_sha256: previous_route_book_sha256,
+        edits: vec![
+            RouteBookEdit::UpsertStep { step },
+            RouteBookEdit::UpsertMethod {
+                method: edited_method,
+            },
+        ],
+    }
+    .apply_composed(&route_book, catalog)?;
+    let route_book_sha256 = book.digest()?;
+    Ok(PlannerServicePayload::InsertedTransition {
+        book: Box::new(book),
+        previous_route_book_sha256,
+        route_book_sha256,
+        step_id,
+        after_step_id: after_step_id.into(),
+        transition_id: transition_id.into(),
+        assessment: Box::new(assessment),
         after: Box::new(state.to_document()?),
     })
 }
@@ -2595,6 +2775,37 @@ mod tests {
         assert!(previous_route_book_sha256.is_none());
         assert_eq!(after.snapshot.environment.location.stage, "D_MN05");
         assert_eq!(book.methods[0].step_ids, ["step.route-0000"]);
+
+        let inserted = handle_request(PlannerServiceRequest::InsertTransitionAfter {
+            request_id: "request.insert-after-first".into(),
+            state: Box::new(state.clone()),
+            catalog: Box::new(catalog.clone()),
+            equivalence_sets: Vec::new(),
+            route_book: Box::new((*book).clone()),
+            after_step_id: "step.route-0000".into(),
+            transition_id: "transition.enter-boss".into(),
+            evidence_mode: crate::RuntimeEvidenceMode::EstablishedOnly,
+        });
+        let PlannerServiceOutcome::Ok { payload } = inserted.outcome else {
+            panic!("insertion after an authored step should replay downstream state");
+        };
+        let PlannerServicePayload::InsertedTransition {
+            book: inserted_book,
+            step_id,
+            after_step_id,
+            after,
+            ..
+        } = *payload
+        else {
+            panic!("insertion should return the edited route and propagated state");
+        };
+        assert_eq!(step_id, "step.route-0001");
+        assert_eq!(after_step_id, "step.route-0000");
+        assert_eq!(after.snapshot.environment.location.stage, "D_MN06");
+        assert_eq!(
+            inserted_book.methods[0].step_ids,
+            ["step.route-0000", "step.route-0001"]
+        );
 
         let second = handle_request(PlannerServiceRequest::AppendTransition {
             request_id: "request.append-second".into(),

@@ -35,17 +35,19 @@ The remaining usability gap is direct route authoring:
   a complete blank-scenario flow.
 - The canvas can place compatible catalogue mechanics into an independently
   serialized Workspace Route Book and persist its derived graph and layout
-  atomically, but it does not yet author typed pins, branches, subgraphs, or
-  general semantic graph rewiring.
+  atomically. A visible route step can be right-clicked to insert a mechanic
+  after it with authoritative downstream replay, but the canvas does not yet
+  author typed pins, branches, subgraphs, or general semantic graph rewiring.
 - Folder CRUD, multiple editors, asset-level undo/redo, and broader
   keyboard-first authoring remain incomplete. Route Book edits, presentation
   regions, evidence changes, and node moves have semantic undo/redo now.
 - Presentation regions are not reusable semantic subgraphs.
 - The browser acceptance test creates a blank Workspace through the UI, creates
   a grounded scenario from a direct Library action, adds, undoes, redoes, and
-  persists its first route step, then continues through the preassembled
-  keyed-door example. Root, anchor, goal, and context selection are not yet
-  independently authorable.
+  right-click-inserts after its first route step, then undoes that insertion and
+  persists the route. It continues through the preassembled keyed-door example.
+  Root, anchor, goal, and context selection are not yet independently
+  authorable.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 
@@ -140,8 +142,8 @@ or test fixture does not count as progress by itself.
       connections with distinct accessible treatments.
 - [ ] Recompute downstream state after every semantic edit and retain the closest
       valid state when a connection fails.
-- [ ] Support insertion between existing nodes, branch creation, alternative
-      methods, and reconnection without requiring ordered-list button workflows.
+- [ ] Support branch creation, alternative methods, and reconnection without
+      requiring ordered-list button workflows.
 - [ ] Keep visual connections non-authoritative until the Rust service validates
       and commits their semantic edit.
 

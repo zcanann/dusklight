@@ -1,4 +1,4 @@
-const SERVICE_SCHEMA = "dusklight.route-planner.service/v46";
+const SERVICE_SCHEMA = "dusklight.route-planner.service/v47";
 const PROJECT_SCHEMA = "dusklight.route-planner.web-project/v3";
 const LEGACY_PROJECT_SCHEMAS = new Set([
   "dusklight.route-planner.web-project/v1",
@@ -137,6 +137,7 @@ const state = {
   undoStack: [],
   redoStack: [],
   historyBusy: false,
+  addNodeAfterStepId: null,
 };
 
 elements["workspace-list"].addEventListener("change", () => {
@@ -2082,6 +2083,11 @@ function openAddNodeMenu(event) {
   if (!state.graph || !state.project) return;
   event.preventDefault();
   event.stopPropagation();
+  const targetNodeId = event.target.closest?.(".node.reference_step")?.dataset.nodeId;
+  const targetNode = state.graph.nodes.find((node) => node.id === targetNodeId);
+  state.addNodeAfterStepId = targetNode?.payload.kind === "reference_step"
+    ? targetNode.payload.step_id
+    : null;
   const bounds = elements["canvas-shell"].getBoundingClientRect();
   const menu = elements["add-node-menu"];
   menu.hidden = false;
@@ -2096,6 +2102,7 @@ function openAddNodeMenu(event) {
 
 function closeAddNodeMenu() {
   elements["add-node-menu"].hidden = true;
+  state.addNodeAfterStepId = null;
 }
 
 function renderAddNodeMenu() {
@@ -2150,6 +2157,7 @@ function renderAddNodeMenu() {
     source.textContent = `Model mechanic · ${friendlyEnum(match.contract?.transition_kind ?? "mechanic")}`;
     button.append(label, compatibility, source);
     button.addEventListener("click", async () => {
+      const afterStepId = state.addNodeAfterStepId;
       closeAddNodeMenu();
       selectNode(match.node);
       revealNode(match.node);
@@ -2159,7 +2167,7 @@ function renderAddNodeMenu() {
       } else if (!state.project?.start_state) {
         setStatus("This graph needs a grounded Scenario Root before a transition can be added", "bad");
       } else {
-        await insertSelectedTransition();
+        await insertSelectedTransition(afterStepId);
       }
     });
     results.append(button);
@@ -2675,20 +2683,12 @@ async function dropTransitionAtRouteFrontier(event) {
     return;
   }
   const targetElement = event.target.closest?.(".node.reference_step");
-  if (targetElement && state.project.route_book) {
-    const targetNode = state.graph.nodes.find((candidate) =>
-      candidate.id === targetElement.dataset.nodeId);
-    const method = state.project.route_book.methods.find((candidate) =>
-      candidate.id === "method.authored-route");
-    const frontierStepId = method?.step_ids.at(-1);
-    if (targetNode?.payload.step_id !== frontierStepId) {
-      setStatus(
-        `Drop on the current route frontier ${frontierStepId ?? "or the empty canvas"}; middle insertion is ambiguous`,
-        "bad",
-      );
-      return;
-    }
-  }
+  const targetNode = targetElement
+    ? state.graph.nodes.find((candidate) => candidate.id === targetElement.dataset.nodeId)
+    : null;
+  const afterStepId = targetNode?.payload.kind === "reference_step"
+    ? targetNode.payload.step_id
+    : null;
   const bounds = elements.canvas.getBoundingClientRect();
   state.positions.set(node.id, {
     x: (event.clientX - bounds.left - state.transform.x) / state.transform.scale - NODE_WIDTH / 2,
@@ -2697,7 +2697,7 @@ async function dropTransitionAtRouteFrontier(event) {
   state.selected = { type: "node", value: node };
   state.transitionEvaluation = null;
   render();
-  await insertSelectedTransition();
+  await insertSelectedTransition(afterStepId);
 }
 
 function renderDetails() {
@@ -3395,7 +3395,10 @@ async function replaceSelectedRouteStep() {
     ensurePositions();
     const stepNode = state.graph.nodes.find((candidate) =>
       candidate.payload.kind === "reference_step" && candidate.payload.step_id === payload.step_id);
-    if (stepNode) selectNode(stepNode);
+    if (stepNode) {
+      revealNode(stepNode);
+      selectNode(stepNode);
+    }
     else state.selected = null;
     commitAuthoringCommand(`Replace ${replacement.label}`, historyBefore);
     render();
@@ -3405,13 +3408,23 @@ async function replaceSelectedRouteStep() {
   }
 }
 
-async function insertSelectedTransition() {
+async function insertSelectedTransition(afterStepId = null) {
   const node = state.selected?.type === "node" ? state.selected.value : null;
   if (node?.payload.kind !== "transition" || !state.project?.start_state || state.readOnly) return;
   const historyBefore = captureAuthoringState();
   try {
     setStatus(`Propagating and inserting ${node.label}...`);
-    const payload = await service({
+    const payload = await service(afterStepId ? {
+      command: "insert_transition_after",
+      request_id: requestId("insert-transition-after"),
+      state: state.project.start_state,
+      catalog: state.project.catalog,
+      equivalence_sets: state.project.equivalence_sets ?? [],
+      route_book: state.project.route_book,
+      after_step_id: afterStepId,
+      transition_id: node.payload.transition_id,
+      evidence_mode: projectEvidenceMode(),
+    } : {
       command: "append_transition",
       request_id: requestId("append-transition"),
       state: state.project.start_state,
@@ -3423,6 +3436,22 @@ async function insertSelectedTransition() {
       transition_id: node.payload.transition_id,
       evidence_mode: projectEvidenceMode(),
     });
+    if (payload.kind === "rejected_route_edit") {
+      state.transitionEvaluation = {
+        ...payload,
+        state_change: await inspectStateChange(
+          state.project.start_state,
+          payload.closest_before,
+          "insert-rejection",
+        ),
+      };
+      render();
+      setStatus(
+        `${joinRejectionSummary(node.label, payload, "inserted")}; first broken step ${payload.failed_step_id}`,
+        "bad",
+      );
+      return;
+    }
     if (payload.kind === "rejected_transition_join") {
       state.transitionEvaluation = {
         ...payload,
@@ -3436,7 +3465,7 @@ async function insertSelectedTransition() {
       setStatus(joinRejectionSummary(node.label, payload), "bad");
       return;
     }
-    if (payload.kind !== "appended_transition") {
+    if (!["appended_transition", "inserted_transition"].includes(payload.kind)) {
       throw new Error(`Unexpected response ${payload.kind}`);
     }
     state.project.route_book = payload.book;
@@ -3455,7 +3484,7 @@ async function insertSelectedTransition() {
     };
     const projected = await service({
       command: "project_graph",
-      request_id: requestId("project-after-append"),
+      request_id: requestId("project-after-insert"),
       catalog: state.project.catalog,
       route_book: state.project.route_book,
     });
@@ -3466,10 +3495,14 @@ async function insertSelectedTransition() {
     ensurePositions();
     const stepNode = state.graph.nodes.find((candidate) =>
       candidate.payload.kind === "reference_step" && candidate.payload.step_id === payload.step_id);
-    if (stepNode) selectNode(stepNode);
+    if (stepNode) {
+      revealNode(stepNode);
+      selectNode(stepNode);
+    }
     commitAuthoringCommand(`Insert ${node.label}`, historyBefore);
     render();
-    setStatus(`${node.label} inserted as ${payload.step_id}; save to persist`, "good");
+    const placement = afterStepId ? ` after ${afterStepId}` : "";
+    setStatus(`${node.label} inserted as ${payload.step_id}${placement}; save to persist`, "good");
   } catch (error) {
     setStatus(error.message, "bad");
   }
@@ -3557,7 +3590,10 @@ async function insertSuggestedTransitionChain(suggestion) {
     ensurePositions();
     const stepNode = state.graph.nodes.find((candidate) =>
       candidate.payload.kind === "reference_step" && candidate.payload.step_id === appended.step_id);
-    if (stepNode) selectNode(stepNode);
+    if (stepNode) {
+      revealNode(stepNode);
+      selectNode(stepNode);
+    }
     else state.selected = null;
     commitAuthoringCommand("Insert suggested transition chain", historyBefore);
     render();

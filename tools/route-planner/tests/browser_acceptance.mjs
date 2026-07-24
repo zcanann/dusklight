@@ -221,6 +221,35 @@ try {
     || redoState.routeSteps !== 1) {
     throw new Error(`semantic route redo did not restore the authored step: ${JSON.stringify(redoState)}`);
   }
+  await evaluate(`(() => {
+    const step = document.querySelector("#nodes .node.reference_step");
+    if (!step) throw new Error("the authored route step is not visible on its graph");
+    step.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 520,
+      clientY: 320,
+    }));
+    const executable = document.querySelector(
+      "#add-node-results .add-node-result .compatibility.executable",
+    )?.closest(".add-node-result");
+    if (!executable) throw new Error("route-step context menu has no executable mechanic");
+    executable.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "route-step context insertion",
+    `document.getElementById("status").textContent.includes("after step.route-0000")
+      && document.getElementById("canvas").dataset.routeStepCount === "2"
+      && !document.getElementById("undo").disabled`,
+  );
+  await evaluate(`document.getElementById("undo").click()`);
+  await browserUntil(
+    "undo context insertion",
+    `document.getElementById("status").textContent.includes("Undid: Insert")
+      && document.getElementById("canvas").dataset.routeStepCount === "1"
+      && !document.getElementById("save-project").disabled`,
+  );
   await evaluate(`document.getElementById("save-project").click()`);
   await browserUntil(
     "atomic workspace route save",
