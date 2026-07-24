@@ -6,17 +6,19 @@
 
 use crate::artifact::Digest;
 use crate::tactic_asset::{
-    TacticAssetCatalog, TacticAssetSource, TacticCatalogEntry, TacticExecutor,
+    TacticAssetCatalog, TacticAssetDescription, TacticAssetSource, TacticCatalogEntry,
+    TacticDurationBounds, TacticExecutor,
 };
 use dusklight_control::controller_compilation::compile_static_controller;
 use dusklight_control::controller_program::ControllerProgram;
 use dusklight_control::option_execution::{
-    OptionCondition, OptionEndReason, OptionExecution, TapeRange, validate_condition,
+    MAX_OPTION_TICKS, OptionCondition, OptionEndReason, OptionExecution, OptionParameter,
+    OptionType, TapeRange, validate_condition,
 };
 use dusklight_control::tape::{InputFrame, InputTape};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -27,6 +29,8 @@ pub const MAX_BLUEPRINT_CHILDREN: usize = 64;
 pub const MAX_UNTIL_ITERATIONS: u32 = 256;
 pub const COMPILED_STATIC_BLUEPRINT_SCHEMA_V1: &str =
     "dusklight-compiled-static-tactic-blueprint/v1";
+pub const APPLICABLE_TACTIC_CHOICES_SCHEMA_V1: &str = "dusklight-applicable-tactic-choices/v1";
+pub const MAX_APPLICABLE_TACTIC_CHOICES: usize = 1_024;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -242,6 +246,223 @@ impl CompiledStaticBlueprint {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConcreteTacticChoiceKind {
+    CatalogEntry,
+    Blueprint,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConcreteTacticChoice {
+    pub choice_id: String,
+    pub kind: ConcreteTacticChoiceKind,
+    pub descriptor: crate::option_values::OptionActionDescriptor,
+    pub duration: TacticDurationBounds,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApplicableTacticChoices {
+    pub schema: String,
+    pub catalog_action_schema_sha256: Digest,
+    pub choice_schema_sha256: Digest,
+    pub choices: Vec<ConcreteTacticChoice>,
+}
+
+impl ApplicableTacticChoices {
+    pub fn enumerate<FA, FC>(
+        catalog: &TacticAssetCatalog,
+        blueprints: &[TacticBlueprint],
+        mut entry_applicable: FA,
+        mut condition_available: FC,
+    ) -> Result<Self, TacticBlueprintError>
+    where
+        FA: FnMut(&TacticAssetDescription) -> bool,
+        FC: FnMut(&OptionCondition) -> bool,
+    {
+        if catalog.entries().len().saturating_add(blueprints.len()) > MAX_APPLICABLE_TACTIC_CHOICES
+        {
+            return Err(TacticBlueprintError::TooManyApplicableChoices);
+        }
+        let applicable_entries = catalog
+            .entries()
+            .iter()
+            .filter(|entry| entry_applicable(entry.description()))
+            .map(|entry| entry.option_id())
+            .collect::<BTreeSet<_>>();
+        let mut choices = catalog
+            .entries()
+            .iter()
+            .filter(|entry| applicable_entries.contains(entry.option_id()))
+            .map(|entry| ConcreteTacticChoice {
+                choice_id: entry.option_id().into(),
+                kind: ConcreteTacticChoiceKind::CatalogEntry,
+                descriptor: entry.description().option.clone(),
+                duration: entry.description().duration,
+            })
+            .collect::<Vec<_>>();
+
+        let mut blueprint_ids = BTreeSet::new();
+        for blueprint in blueprints {
+            blueprint.validate_against_catalog(catalog)?;
+            if !blueprint_ids.insert(blueprint.asset_id.as_str()) {
+                return Err(TacticBlueprintError::DuplicateBlueprintId(
+                    blueprint.asset_id.clone(),
+                ));
+            }
+            if !blueprint
+                .referenced_option_ids()
+                .iter()
+                .all(|option_id| applicable_entries.contains(option_id))
+                || blueprint
+                    .validate_for_execution(catalog, &mut condition_available)
+                    .is_err()
+            {
+                continue;
+            }
+            let blueprint_sha256 = blueprint.content_sha256()?;
+            let mut parameters = BTreeMap::new();
+            parameters.insert(
+                "blueprint_sha256".into(),
+                OptionParameter::Digest(blueprint_sha256),
+            );
+            parameters.insert(
+                "catalog_action_schema_sha256".into(),
+                OptionParameter::Digest(catalog.action_schema_sha256()),
+            );
+            let choice_id = format!("blueprint/{}", blueprint.asset_id);
+            choices.push(ConcreteTacticChoice {
+                descriptor: crate::option_values::OptionActionDescriptor {
+                    option_id: choice_id.clone(),
+                    option_type: OptionType::Custom("tactic_blueprint".into()),
+                    parameters,
+                },
+                choice_id,
+                kind: ConcreteTacticChoiceKind::Blueprint,
+                duration: blueprint_duration(&blueprint.root, catalog)?,
+            });
+        }
+        choices.sort_by(|left, right| left.choice_id.cmp(&right.choice_id));
+        if choices.is_empty() {
+            return Err(TacticBlueprintError::NoApplicableChoices);
+        }
+        if choices
+            .windows(2)
+            .any(|pair| pair[0].choice_id == pair[1].choice_id)
+        {
+            return Err(TacticBlueprintError::DuplicateChoiceId);
+        }
+        let choice_schema_sha256 = Digest(
+            Sha256::digest(
+                serde_json::to_vec(
+                    &choices
+                        .iter()
+                        .map(|choice| &choice.descriptor)
+                        .collect::<Vec<_>>(),
+                )
+                .map_err(|error| TacticBlueprintError::Serialization(error.to_string()))?,
+            )
+            .into(),
+        );
+        Ok(Self {
+            schema: APPLICABLE_TACTIC_CHOICES_SCHEMA_V1.into(),
+            catalog_action_schema_sha256: catalog.action_schema_sha256(),
+            choice_schema_sha256,
+            choices,
+        })
+    }
+}
+
+fn blueprint_duration(
+    node: &TacticBlueprintNode,
+    catalog: &TacticAssetCatalog,
+) -> Result<TacticDurationBounds, TacticBlueprintError> {
+    let (minimum_ticks, maximum_ticks) = match node {
+        TacticBlueprintNode::Invoke { option_id } => {
+            let duration = catalog
+                .entry(option_id)
+                .ok_or_else(|| TacticBlueprintError::UnknownOption(option_id.clone()))?
+                .description()
+                .duration;
+            (duration.minimum_ticks, duration.maximum_ticks)
+        }
+        TacticBlueprintNode::Sequence { steps } => {
+            let mut minimum = 0_u32;
+            let mut maximum = 0_u32;
+            for child in steps {
+                let duration = blueprint_duration(child, catalog)?;
+                minimum = checked_duration_add(minimum, duration.minimum_ticks)?;
+                maximum = checked_duration_add(maximum, duration.maximum_ticks)?;
+            }
+            (minimum, maximum)
+        }
+        TacticBlueprintNode::Layer { layers } => {
+            let mut minimum = 0_u32;
+            let mut maximum = 0_u32;
+            for child in layers {
+                let duration = blueprint_duration(child, catalog)?;
+                minimum = minimum.max(duration.minimum_ticks);
+                maximum = maximum.max(duration.maximum_ticks);
+            }
+            (minimum, maximum)
+        }
+        TacticBlueprintNode::Conditional {
+            when_true,
+            when_false,
+            ..
+        } => {
+            let when_true = blueprint_duration(when_true, catalog)?;
+            let when_false = blueprint_duration(when_false, catalog)?;
+            (
+                when_true.minimum_ticks.min(when_false.minimum_ticks),
+                when_true.maximum_ticks.max(when_false.maximum_ticks),
+            )
+        }
+        TacticBlueprintNode::Until {
+            max_iterations,
+            body,
+            ..
+        } => {
+            let body = blueprint_duration(body, catalog)?;
+            (
+                body.minimum_ticks,
+                checked_duration_mul(body.maximum_ticks, *max_iterations)?,
+            )
+        }
+        TacticBlueprintNode::Fallback { attempts } => {
+            let mut minimum = u32::MAX;
+            let mut maximum = 0_u32;
+            for child in attempts {
+                let duration = blueprint_duration(child, catalog)?;
+                minimum = minimum.min(duration.minimum_ticks);
+                maximum = checked_duration_add(maximum, duration.maximum_ticks)?;
+            }
+            (minimum, maximum)
+        }
+    };
+    if minimum_ticks == 0 || minimum_ticks > maximum_ticks || maximum_ticks > MAX_OPTION_TICKS {
+        return Err(TacticBlueprintError::InvalidCompositeDuration);
+    }
+    Ok(TacticDurationBounds {
+        minimum_ticks,
+        maximum_ticks,
+    })
+}
+
+fn checked_duration_add(left: u32, right: u32) -> Result<u32, TacticBlueprintError> {
+    left.checked_add(right)
+        .filter(|value| *value <= MAX_OPTION_TICKS)
+        .ok_or(TacticBlueprintError::InvalidCompositeDuration)
+}
+
+fn checked_duration_mul(left: u32, right: u32) -> Result<u32, TacticBlueprintError> {
+    left.checked_mul(right)
+        .filter(|value| *value <= MAX_OPTION_TICKS)
+        .ok_or(TacticBlueprintError::InvalidCompositeDuration)
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -747,6 +968,11 @@ pub enum TacticBlueprintError {
     UnsupportedStaticNode(&'static str),
     StaticExecution(String),
     InvalidCompiled(String),
+    TooManyApplicableChoices,
+    NoApplicableChoices,
+    DuplicateBlueprintId(String),
+    DuplicateChoiceId,
+    InvalidCompositeDuration,
     Serialization(String),
 }
 
@@ -796,6 +1022,21 @@ impl fmt::Display for TacticBlueprintError {
             }
             Self::InvalidCompiled(message) => {
                 write!(formatter, "compiled tactic blueprint is invalid: {message}")
+            }
+            Self::TooManyApplicableChoices => {
+                formatter.write_str("applicable tactic choice set exceeds its finite bound")
+            }
+            Self::NoApplicableChoices => {
+                formatter.write_str("no concrete tactic choice is currently applicable")
+            }
+            Self::DuplicateBlueprintId(asset_id) => {
+                write!(formatter, "duplicate tactic blueprint asset ID {asset_id}")
+            }
+            Self::DuplicateChoiceId => {
+                formatter.write_str("applicable tactic choice IDs are not unique")
+            }
+            Self::InvalidCompositeDuration => {
+                formatter.write_str("tactic blueprint duration is invalid or unbounded")
             }
             Self::Serialization(message) => {
                 write!(
@@ -1103,5 +1344,105 @@ mod tests {
         blueprint
             .validate_for_execution(&catalog, |available| available == &condition())
             .unwrap();
+    }
+
+    #[test]
+    fn applicability_enumeration_is_finite_concrete_and_schema_bound() {
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "shield.short",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+            TacticCatalogEntry::new(
+                "shield.long",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 3,
+                })),
+            )
+            .unwrap(),
+            TacticCatalogEntry::new(
+                "interact",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Interact {
+                    press_frames: 1,
+                    recovery_frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let blueprint = TacticBlueprint::new(
+            "shield.then.interact",
+            TacticBlueprintNode::Sequence {
+                steps: vec![invoke("shield.short"), invoke("interact")],
+            },
+        )
+        .unwrap();
+
+        let choices =
+            ApplicableTacticChoices::enumerate(&catalog, &[blueprint], |_| true, |_| true).unwrap();
+        assert_eq!(
+            choices
+                .choices
+                .iter()
+                .map(|choice| choice.choice_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "blueprint/shield.then.interact",
+                "interact",
+                "shield.long",
+                "shield.short",
+            ]
+        );
+        assert_ne!(choices.choice_schema_sha256, Digest::ZERO);
+        assert_eq!(
+            choices.choices[0].duration,
+            TacticDurationBounds {
+                minimum_ticks: 2,
+                maximum_ticks: 3,
+            }
+        );
+        let short = choices
+            .choices
+            .iter()
+            .find(|choice| choice.choice_id == "shield.short")
+            .unwrap();
+        let long = choices
+            .choices
+            .iter()
+            .find(|choice| choice.choice_id == "shield.long")
+            .unwrap();
+        assert_ne!(short.descriptor.parameters, long.descriptor.parameters);
+    }
+
+    #[test]
+    fn applicability_excludes_blueprints_with_unavailable_inputs() {
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "wait",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let conditional = TacticBlueprint::new(
+            "conditional",
+            TacticBlueprintNode::Conditional {
+                condition: condition(),
+                when_true: Box::new(invoke("wait")),
+                when_false: Box::new(invoke("wait")),
+            },
+        )
+        .unwrap();
+
+        let choices =
+            ApplicableTacticChoices::enumerate(&catalog, &[conditional], |_| true, |_| false)
+                .unwrap();
+        assert_eq!(choices.choices.len(), 1);
+        assert_eq!(choices.choices[0].choice_id, "wait");
     }
 }
