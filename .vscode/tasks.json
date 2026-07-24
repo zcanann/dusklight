@@ -21,6 +21,21 @@
   ],
   "tasks": [
     {
+      "label": "Route Planner: Build",
+      "type": "process",
+      "command": "cargo",
+      "args": [
+        "build",
+        "--manifest-path", "${workspaceFolder}/tools/route-planner/Cargo.toml",
+        "--bin", "route-planner"
+      ],
+      "problemMatcher": "$rustc",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      }
+    },
+    {
       "label": "Glitch Hunt: Prepare Route Workbench",
       "dependsOrder": "sequence",
       "dependsOn": [

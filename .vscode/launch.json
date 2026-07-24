@@ -2,6 +2,20 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Route Planner: Web UI",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/tools/route-planner/target/debug/route-planner.exe",
+            "args": [
+                "serve-web",
+                "--listen", "127.0.0.1:32170",
+                "--projects", "${workspaceFolder}/tools/route-planner/projects"
+            ],
+            "cwd": "${workspaceFolder}",
+            "terminal": "integrated",
+            "preLaunchTask": "Route Planner: Build"
+        },
+        {
             "name": "Glitch Hunt: Route Workbench",
             "type": "cppvsdbg",
             "request": "launch",
