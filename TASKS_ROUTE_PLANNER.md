@@ -384,8 +384,6 @@ closes a documented unknown.
       `dusklight.route-planner.web-project/v3` into workspace assets.
 - [ ] Extract embedded catalogues, start states, route books, and layouts into
       separate files while preserving exact semantic identities where possible.
-- [ ] Convert built-in Rust demos into serialized Library fixtures and delete
-      their hand-assembled project constructors.
 - [ ] Delete or redesign toolbar and panel controls that expose implementation
       operations instead of user tasks.
 - [ ] Remove claims that the first usable release is complete until all release
