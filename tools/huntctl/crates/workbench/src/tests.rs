@@ -529,7 +529,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v20");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v21");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1320,10 +1320,13 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/optimization/cancel",
         "/api/optimization/cleanup",
         "/api/tactic-route/start",
+        "/api/tactic-route/replay",
         "cancelOptimization(button)",
         "cleanupOptimization(button)",
         "startTacticRoute(button)",
+        "replayTacticEdge(button)",
         "data-start-tactic-route",
+        "data-replay-tactic-edge",
         "Learn route",
         "Route learning",
         "Tactic decisions",
@@ -1335,6 +1338,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "applicable tactics and Q values",
         "Learned state / tactic graph",
         "retained frontier",
+        "Inspect and replay",
+        "Replay candidate path",
         "No generated request file or demonstration route is used.",
         "Stop campaign",
         "Stopping workers…",
@@ -2384,6 +2389,18 @@ fn optimization_start_api_requires_explicit_world_context() {
     assert_eq!(learning.status, 400);
     assert!(
         String::from_utf8_lossy(&learning.body)
+            .contains("restart the workbench with --world-context")
+    );
+
+    let replay = call_http(
+        &config,
+        "POST",
+        "/api/tactic-route/replay",
+        br#"{"campaign":"ordon-q125-residual-cem-v3","request_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","seed":104729,"edge_index":0,"handoff":false,"speed_percent":100}"#,
+    );
+    assert_eq!(replay.status, 400);
+    assert!(
+        String::from_utf8_lossy(&replay.body)
             .contains("restart the workbench with --world-context")
     );
 

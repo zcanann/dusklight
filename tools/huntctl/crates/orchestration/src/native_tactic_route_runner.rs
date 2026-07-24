@@ -572,6 +572,12 @@ fn run_seed(
             &decision_trace_root.join(format!("decision-{decision_index:06}.json")),
             &serde_json::to_vec_pretty(&decision_trace).map_err(route_error)?,
         )?;
+        write_new(
+            &seed_root
+                .join("edge-tapes")
+                .join(format!("edge-{decision_index:06}.tape")),
+            &campaign.route_tape.encode().map_err(route_error)?,
+        )?;
         trace.push(decision_trace);
         if step.step.transition.value_sample.terminal
             || campaign.decision_index % config.branch_every_decisions == 0

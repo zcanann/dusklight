@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v20";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v21";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -323,6 +323,10 @@ pub struct GraphTacticValueTrace {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GraphTacticKnowledgeGraph {
+    #[serde(default)]
+    pub seed_index: usize,
+    #[serde(default)]
+    pub seed: u64,
     pub root_connected: bool,
     pub frontier_cells: usize,
     pub nodes: Vec<GraphTacticKnowledgeNode>,
@@ -343,6 +347,7 @@ pub struct GraphTacticKnowledgeNode {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct GraphTacticKnowledgeEdge {
+    pub edge_index: u64,
     pub episode_group: u64,
     pub before_state_sha256: String,
     pub after_state_sha256: String,

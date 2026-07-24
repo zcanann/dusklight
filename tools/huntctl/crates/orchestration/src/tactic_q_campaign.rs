@@ -188,6 +188,7 @@ pub struct TacticCampaignGraphProjectionNode {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticCampaignGraphProjectionEdge {
+    pub edge_index: u64,
     pub episode_group: u64,
     pub before_state_sha256: Digest,
     pub after_state_sha256: Digest,
@@ -406,7 +407,9 @@ impl TacticQCampaign {
             .collect::<BTreeSet<_>>();
         let mut nodes = BTreeMap::<(Digest, Digest), TacticCampaignGraphProjectionNode>::new();
         let mut edges = Vec::with_capacity(self.replay.len());
-        for (transition, episode_group) in self.replay.iter().zip(&self.episode_groups) {
+        for (edge_index, (transition, episode_group)) in
+            self.replay.iter().zip(&self.episode_groups).enumerate()
+        {
             for (checkpoint_sha256, state_sha256, state) in [
                 (
                     transition.source_checkpoint_sha256,
@@ -442,6 +445,7 @@ impl TacticQCampaign {
                 nodes.entry(identity).or_insert(node);
             }
             edges.push(TacticCampaignGraphProjectionEdge {
+                edge_index: edge_index as u64,
                 episode_group: *episode_group,
                 before_state_sha256: transition.before_state_sha256,
                 after_state_sha256: transition.after_state_sha256,
@@ -1814,6 +1818,7 @@ mod tests {
         let projection = restored.graph_projection().unwrap();
         assert_eq!(projection.nodes.len(), 2);
         assert_eq!(projection.edges.len(), 1);
+        assert_eq!(projection.edges[0].edge_index, 0);
         assert_eq!(projection.frontier_cells, 1);
         assert!(projection.root_connected);
         assert!(

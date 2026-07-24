@@ -200,12 +200,10 @@ pub(super) fn launch_materialized(
     mut materialized: MaterializedPlayback,
     options: MaterializedLaunchOptions,
 ) -> Result<(PlayResponse, Child), WorkbenchError> {
-    if !materialized
-        .segment
-        .as_deref()
-        .is_some_and(|segment| segment.starts_with("project:"))
-        && let Some(configuration) =
-            active_timeline_boot_override(&config.repository_root, &config.timeline_path)?
+    if !materialized.segment.as_deref().is_some_and(|segment| {
+        segment.starts_with("project:") || segment.starts_with("tactic-route:")
+    }) && let Some(configuration) =
+        active_timeline_boot_override(&config.repository_root, &config.timeline_path)?
         && configuration.enabled
     {
         materialized.tape.boot = configuration.boot;

@@ -19,6 +19,22 @@ pub(super) struct BrowserTacticRouteStartRequest {
     pub campaign: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BrowserTacticRouteReplayRequest {
+    pub campaign: String,
+    pub request_sha256: String,
+    pub seed: u64,
+    pub edge_index: u64,
+    #[serde(default = "default_takeover")]
+    pub handoff: bool,
+    #[serde(
+        default = "default_speed_percent",
+        deserialize_with = "deserialize_playback_speed_percent"
+    )]
+    pub speed_percent: u16,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct TacticRouteStartResponse {
     pub schema: &'static str,
@@ -291,6 +307,99 @@ pub(super) fn start_tactic_route_learning(
     })
 }
 
+pub(super) fn replay_tactic_route_edge(
+    config: &WorkbenchConfig,
+    browser: &BrowserTacticRouteReplayRequest,
+) -> Result<PlayResponse, WorkbenchError> {
+    let root = config
+        .repository_root
+        .canonicalize()
+        .map_err(tactic_route_error)?;
+    let optimization = selected_optimization(config, &root, &browser.campaign)?;
+    if optimization.content_sha256.to_string() != browser.request_sha256 {
+        return Err(WorkbenchError::new(
+            "route-learning request changed; refresh before replaying",
+        ));
+    }
+    let seed_index = optimization
+        .execution
+        .deterministic_seeds
+        .iter()
+        .position(|seed| *seed == browser.seed)
+        .ok_or_else(|| WorkbenchError::new("route-learning seed is not part of this campaign"))?;
+    let output = tactic_route_output_root(&root, &optimization)?;
+    let graph = project_latest_graph(&output, &optimization.execution.deterministic_seeds)
+        .filter(|graph| graph.seed_index == seed_index && graph.seed == browser.seed)
+        .ok_or_else(|| WorkbenchError::new("route-learning graph is not available"))?;
+    let edge = graph
+        .edges
+        .iter()
+        .find(|edge| edge.edge_index == browser.edge_index)
+        .ok_or_else(|| WorkbenchError::new("route-learning edge is not available"))?;
+    let tape = load_tactic_route_edge_tape(&output, seed_index, browser.seed, edge)?;
+    let timeline = load_authoritative_timeline(&config.timeline_path)?;
+    let materialized = MaterializedPlayback {
+        lineage: None,
+        segment: Some(format!(
+            "tactic-route:{}:{}:{}",
+            browser.campaign, browser.seed, browser.edge_index
+        )),
+        tape,
+        seed_stage: None,
+        native_oracle: NativePlaybackOracle::None,
+    };
+    let (response, _child) = launch_materialized(
+        &timeline,
+        config,
+        materialized,
+        MaterializedLaunchOptions {
+            takeover: browser.handoff,
+            origin: PlaybackOrigin::Boot,
+            fast_forward_frames: None,
+            thumbnail: None,
+            playback: PlaybackSettings {
+                speed_percent: browser.speed_percent,
+                fast: false,
+            },
+        },
+    )?;
+    Ok(response)
+}
+
+fn load_tactic_route_edge_tape(
+    output: &Path,
+    seed_index: usize,
+    seed: u64,
+    edge: &GraphTacticKnowledgeEdge,
+) -> Result<InputTape, WorkbenchError> {
+    let tape_path = output
+        .join(format!("seed-{seed_index:03}-{seed}"))
+        .join("edge-tapes")
+        .join(format!("edge-{:06}.tape", edge.edge_index));
+    let metadata = fs::symlink_metadata(&tape_path).map_err(tactic_route_error)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return Err(WorkbenchError::new(
+            "route-learning edge tape is absent or not a physical file",
+        ));
+    }
+    let canonical_tape = tape_path.canonicalize().map_err(tactic_route_error)?;
+    let canonical_output = output.canonicalize().map_err(tactic_route_error)?;
+    if !canonical_tape.starts_with(&canonical_output) {
+        return Err(WorkbenchError::new(
+            "route-learning edge tape escapes its campaign",
+        ));
+    }
+    let tape = InputTape::decode(&fs::read(&canonical_tape).map_err(tactic_route_error)?)
+        .map_err(tactic_route_error)?
+        .tape;
+    if tape.frames.len() as u64 != edge.end_frame_exclusive {
+        return Err(WorkbenchError::new(
+            "route-learning edge tape does not end at the authenticated edge boundary",
+        ));
+    }
+    Ok(tape)
+}
+
 fn selected_optimization(
     config: &WorkbenchConfig,
     root: &Path,
@@ -424,7 +533,9 @@ fn project_latest_graph(output: &Path, seeds: &[u64]) -> Option<GraphTacticKnowl
         {
             continue;
         }
-        if let Ok(graph) = serde_json::from_value(value) {
+        if let Ok(mut graph) = serde_json::from_value::<GraphTacticKnowledgeGraph>(value) {
+            graph.seed_index = index;
+            graph.seed = *seed;
             return Some(graph);
         }
     }
@@ -583,6 +694,7 @@ mod tests {
                     }
                 ],
                 "edges": [{
+                    "edge_index": 69,
                     "episode_group": 18,
                     "before_state_sha256":
                         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -600,6 +712,18 @@ mod tests {
                     "end_frame_exclusive": 538
                 }]
             }))
+            .unwrap(),
+        )
+        .unwrap();
+        let edge_tape_root = output.join("seed-003-181081/edge-tapes");
+        fs::create_dir_all(&edge_tape_root).unwrap();
+        fs::write(
+            edge_tape_root.join("edge-000069.tape"),
+            InputTape {
+                frames: vec![crate::tape::InputFrame::default(); 538],
+                ..InputTape::default()
+            }
+            .encode()
             .unwrap(),
         )
         .unwrap();
@@ -634,6 +758,15 @@ mod tests {
         assert_eq!(graph.nodes.len(), 2);
         assert_eq!(graph.edges.len(), 1);
         assert_eq!(graph.frontier_cells, 1);
+        assert_eq!(graph.seed_index, 3);
+        assert_eq!(graph.seed, 181081);
+        assert_eq!(
+            load_tactic_route_edge_tape(&output, 3, 181081, &graph.edges[0])
+                .unwrap()
+                .frames
+                .len(),
+            538
+        );
         let expected_report = format!("{relative}/tactic-route/report.json");
         assert_eq!(projection.report.as_deref(), Some(expected_report.as_str()));
         fs::remove_dir_all(root.join(relative)).unwrap();
