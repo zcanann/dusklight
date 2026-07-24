@@ -180,7 +180,9 @@ button:disabled { opacity: .42; cursor: default; }
 .content-item small { grid-column: 2; color: var(--muted); font-size: 9px; }
 .content-item.read-only .asset-icon { color: #bc9ee8; }
 .content-asset-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 27px; align-items: stretch; }
+.library-content-row.has-primary-action { grid-template-columns: minmax(0, 1fr) auto 27px; }
 .content-asset-row > .content-item { min-width: 0; }
+.content-primary-action { align-self: center; margin: 0 3px; padding: 5px 7px; font-size: 9px; white-space: nowrap; }
 .asset-actions { position: relative; align-self: center; }
 .asset-actions > summary { list-style: none; cursor: pointer; padding: 5px; color: var(--muted); text-align: center; }
 .asset-actions > summary::-webkit-details-marker { display: none; }

@@ -634,7 +634,8 @@ function renderContentBrowser() {
 
 function libraryContentItem(library) {
   const row = document.createElement("div");
-  row.className = "content-asset-row";
+  row.className = "content-asset-row library-content-row";
+  row.dataset.libraryId = library.id;
   const libraryButton = contentItem("LIB", library.label, "Read-only verified example", true, () => {
     loadStoredProject(library.id);
   });
@@ -645,6 +646,16 @@ function libraryContentItem(library) {
     setStatus(`Drop ${library.label} on the canvas to add an exact reference`);
   });
   row.append(libraryButton);
+  if (state.workspace) {
+    row.classList.add("has-primary-action");
+    const createScenario = document.createElement("button");
+    createScenario.type = "button";
+    createScenario.className = "content-primary-action";
+    createScenario.textContent = "Create scenario";
+    createScenario.setAttribute("aria-label", `Create scenario from ${library.label}`);
+    createScenario.addEventListener("click", () => createScenarioFromLibrary(library));
+    row.append(createScenario);
+  }
   const actions = document.createElement("details");
   actions.className = "asset-actions";
   const summary = document.createElement("summary");

@@ -40,9 +40,10 @@ The remaining usability gap is direct route authoring:
 - Folder CRUD, multiple editors, undo/redo, and keyboard-first
   authoring remain incomplete.
 - Presentation regions are not reusable semantic subgraphs.
-- The browser acceptance test proves that a file-backed Workspace can add and
-  persist a route step, then continues through the preassembled keyed-door
-  example. It does not yet drive the complete blank-workspace UI flow.
+- The browser acceptance test creates a blank Workspace through the UI, creates
+  a grounded scenario from a direct Library action, adds and persists its first
+  route step, then continues through the preassembled keyed-door example. Root,
+  anchor, goal, and context selection are not yet independently authorable.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 

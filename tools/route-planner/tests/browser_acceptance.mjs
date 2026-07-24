@@ -130,52 +130,32 @@ try {
     "planner application load",
     `document.readyState === "complete" && document.querySelectorAll("#project-list option").length >= 7`,
   );
-  await evaluate(`(async () => {
-    const create = await fetch("/api/workspaces", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        schema: "dusklight.route-planner.workspace-create/v1",
-        id: "browser-workspace",
-        label: "Browser workspace",
-      }),
-    });
-    if (!create.ok) throw new Error(await create.text());
-    const scenario = await fetch(
-      "/api/workspaces/browser-workspace/library-scenarios/demo-forest-keyed-door",
-      { method: "POST" },
+  await evaluate(`(() => {
+    document.getElementById("new-workspace").click();
+    document.getElementById("new-workspace-label").value = "Browser workspace";
+    document.getElementById("new-workspace-id").value = "browser-workspace";
+    document.getElementById("new-workspace-form").requestSubmit();
+    return true;
+  })()`);
+  await browserUntil(
+    "workspace creation",
+    `document.getElementById("status").textContent === "Workspace created"
+      && document.getElementById("workspace-list").value === "browser-workspace"`,
+  );
+  await evaluate(`(() => {
+    document.getElementById("empty-primary").click();
+    const row = document.querySelector(
+      '.library-content-row[data-library-id="demo-forest-keyed-door"]',
     );
-    if (!scenario.ok) throw new Error(await scenario.text());
-    location.reload();
+    const create = row?.querySelector(".content-primary-action");
+    if (!create) throw new Error("Library template has no direct Create scenario action");
+    create.click();
     return true;
   })()`);
   await browserUntil(
-    "workspace reload",
-    `document.readyState === "complete"
-      && [...document.querySelectorAll("#workspace-list option")]
-        .some((option) => option.value === "browser-workspace")`,
-  );
-  await evaluate(`(() => {
-    const list = document.getElementById("workspace-list");
-    list.value = "browser-workspace";
-    list.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  })()`);
-  await browserUntil(
-    "file-backed workspace assets",
-    `document.getElementById("status").textContent.includes("workspace assets")`,
-  );
-  await evaluate(`(() => {
-    const graph = [...document.querySelectorAll("#content-browser-list .content-item")]
-      .find((item) => item.querySelector("small")?.textContent.includes("route-graphs"));
-    if (!graph) throw new Error("workspace route graph is absent");
-    graph.click();
-    return true;
-  })()`);
-  await browserUntil(
-    "workspace graph authoring context",
-    `document.getElementById("status").textContent
-      .includes("Workspace route opened with exact Library mechanics")
+    "grounded scenario authoring context",
+    `document.getElementById("status").textContent === "Grounded scenario created from exact Library content"
+      && document.getElementById("project-name").textContent.includes("Forest Temple small-key door")
       && document.querySelector('#node-kind-list [data-node-kind="mechanic"]') != null`,
   );
   await evaluate(`(() => {
