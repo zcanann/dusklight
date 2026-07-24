@@ -676,6 +676,10 @@ mod tests {
                 .windows(13)
                 .any(|window| window == b"Route Planner")
         );
+        let index_text = String::from_utf8(index.body).unwrap();
+        assert!(index_text.contains("id=\"empty-primary\""));
+        assert!(index_text.contains("Legacy file migration"));
+        assert!(!index_text.contains("New legacy project"));
         let app = dispatch(
             HttpRequest {
                 method: "GET".into(),
@@ -685,11 +689,9 @@ mod tests {
             &state,
         );
         assert_eq!(app.status, 200);
-        assert!(
-            String::from_utf8(app.body)
-                .unwrap()
-                .contains("evaluate_transition")
-        );
+        let app_text = String::from_utf8(app.body).unwrap();
+        assert!(app_text.contains("evaluate_transition"));
+        assert!(app_text.contains("Browse Library templates"));
 
         let health = dispatch(
             HttpRequest {

@@ -20,9 +20,9 @@
           <label>Workspace files</label>
           <button id="import-workspace" type="button">Import workspace</button>
           <button id="export-workspace" type="button" disabled>Export workspace</button>
-          <label for="project-list">Examples</label>
+          <label for="project-list">Library examples</label>
           <select id="project-list" aria-label="Planner examples"><option value="">Examples</option></select>
-          <button id="new-project" type="button">New legacy project</button>
+          <label>Legacy file migration</label>
           <button id="open-project" type="button">Import legacy project</button>
           <button id="save-as-project" type="button" disabled>Save legacy project as</button>
           <button id="export-project" type="button" disabled>Export legacy project</button>
@@ -76,6 +76,10 @@
         <div id="empty-state" class="empty-state">
           <strong>Create or open a workspace</strong>
           <span>Then create a grounded scenario or open a route graph from the Content Browser.</span>
+          <div class="empty-actions">
+            <button id="empty-primary" type="button">New workspace</button>
+            <button id="empty-secondary" type="button">Import workspace</button>
+          </div>
         </div>
         <div id="add-node-menu" class="add-node-menu" hidden>
           <header><strong>Add Node</strong><kbd>Esc</kbd></header>

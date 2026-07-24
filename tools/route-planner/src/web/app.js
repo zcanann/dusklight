@@ -25,9 +25,10 @@ const elements = Object.fromEntries([
   "new-asset-error", "cancel-new-asset", "import-asset", "workspace-asset-file",
   "import-workspace", "export-workspace", "workspace-file",
   "add-node-menu", "add-node-search", "add-node-results",
-  "project-list", "new-project", "open-project", "save-project", "save-as-project",
+  "project-list", "open-project", "save-project", "save-as-project",
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
-  "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
+  "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state",
+  "empty-primary", "empty-secondary", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
   "contract-inspector", "workspace-asset-editor",
   "model-context", "model-context-body",
@@ -67,6 +68,7 @@ const state = {
   selectedStateFeasibility: null,
   solveReport: null,
   groupSelection: new Set(),
+  emptyActions: { primary: null, secondary: null },
 };
 
 elements["workspace-list"].addEventListener("change", () => {
@@ -85,6 +87,8 @@ elements["new-workspace-form"].addEventListener("submit", createWorkspace);
 elements["import-workspace"].addEventListener("click", () => elements["workspace-file"].click());
 elements["export-workspace"].addEventListener("click", exportWorkspace);
 elements["workspace-file"].addEventListener("change", importWorkspace);
+elements["empty-primary"].addEventListener("click", () => state.emptyActions.primary?.());
+elements["empty-secondary"].addEventListener("click", () => state.emptyActions.secondary?.());
 elements["new-asset"].addEventListener("click", () => {
   elements["new-asset-error"].textContent = "";
   elements["new-asset-dialog"].showModal();
@@ -103,7 +107,6 @@ elements["project-list"].addEventListener("change", () => {
   const id = elements["project-list"].value;
   if (id) loadStoredProject(id);
 });
-elements["new-project"].addEventListener("click", newProject);
 elements["open-project"].addEventListener("click", () => elements["project-file"].click());
 elements["project-file"].addEventListener("change", importProject);
 elements["save-project"].addEventListener("click", saveProject);
@@ -153,6 +156,14 @@ window.addEventListener("beforeunload", (event) => {
 });
 
 applyTransform();
+setEmptyState(
+  "Create or open a workspace",
+  "Build a grounded scenario from exact Library content, or import an existing workspace.",
+  "New workspace",
+  () => elements["new-workspace"].click(),
+  "Import workspace",
+  () => elements["workspace-file"].click(),
+);
 start();
 window.setInterval(pollWorkspaceChanges, 3000);
 
@@ -384,12 +395,25 @@ async function openWorkspaceRecord(record) {
   elements.edges.replaceChildren();
   elements["region-nav"].hidden = true;
   elements["empty-state"].hidden = false;
-  elements["empty-state"].querySelector("strong").textContent = record.assets.length
-    ? "Open a route graph"
-    : "Create a grounded scenario";
-  elements["empty-state"].querySelector("span").textContent = record.assets.length
-    ? "Choose an asset in the Content Browser."
-    : "Mount an exact Library, then create a Scenario Root.";
+  if (record.assets.length) {
+    setEmptyState(
+      "Open a route graph",
+      "Choose an existing graph, or browse exact Library content to add another scenario.",
+      "Browse workspace assets",
+      () => focusContentBrowser("workspace"),
+      "Browse Library",
+      () => focusContentBrowser("library"),
+    );
+  } else {
+    setEmptyState(
+      "Create a grounded scenario",
+      "Choose an exact Library template; its context and anchor will ground the new scenario.",
+      "Browse Library templates",
+      () => focusContentBrowser("library"),
+      "Import asset",
+      () => elements["workspace-asset-file"].click(),
+    );
+  }
   elements["detail-title"].textContent = "Nothing selected";
   elements["detail-subtitle"].textContent = "Choose an asset, node, or connection to inspect it.";
   elements["detail-json"].textContent = "{}";
@@ -456,6 +480,24 @@ function selectContentSource(source) {
   elements["new-asset"].disabled = source !== "workspace" || !state.workspace;
   elements["import-asset"].disabled = source !== "workspace" || !state.workspace;
   renderContentBrowser();
+}
+
+function focusContentBrowser(source) {
+  selectContentSource(source);
+  elements["content-search"].focus();
+}
+
+function setEmptyState(title, detail, primaryLabel, primaryAction, secondaryLabel, secondaryAction) {
+  const empty = elements["empty-state"];
+  empty.querySelector("strong").textContent = title;
+  empty.querySelector("span").textContent = detail;
+  elements["empty-primary"].textContent = primaryLabel;
+  elements["empty-secondary"].textContent = secondaryLabel;
+  elements["empty-secondary"].hidden = !secondaryAction;
+  state.emptyActions = {
+    primary: primaryAction,
+    secondary: secondaryAction ?? null,
+  };
 }
 
 function renderContentBrowser() {
@@ -1208,23 +1250,6 @@ async function loadStoredProject(id, confirmDiscard = true) {
       fit: true,
     });
     elements["project-list"].value = id;
-  } catch (error) {
-    setStatus(error.message, "bad");
-  }
-}
-
-async function newProject() {
-  if (state.dirty && !confirm("Discard unsaved planner changes?")) return;
-  try {
-    const record = await projectApi("/api/project-template");
-    const id = prompt("Project ID", "new-route");
-    if (id == null) return;
-    const label = prompt("Project name", "New route");
-    if (label == null) return;
-    record.project.id = id.trim();
-    record.project.label = label.trim();
-    await loadProject(record.project, { revision: null, readOnly: false, dirty: true, fit: true });
-    elements["project-list"].value = "";
   } catch (error) {
     setStatus(error.message, "bad");
   }

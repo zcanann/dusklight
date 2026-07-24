@@ -391,8 +391,6 @@ closes a documented unknown.
       separate files while preserving exact semantic identities where possible.
 - [ ] Convert built-in Rust demos into serialized Library fixtures and delete
       their hand-assembled project constructors.
-- [ ] Delete the legacy New Project flow that creates an empty, unusable
-      catalogue.
 - [ ] Delete or redesign toolbar and panel controls that expose implementation
       operations instead of user tasks.
 - [ ] Remove claims that the first usable release is complete until all release
