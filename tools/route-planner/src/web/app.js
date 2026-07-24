@@ -5,11 +5,15 @@ const LEGACY_PROJECT_SCHEMAS = new Set([
   "dusklight.route-planner.web-project/v2",
 ]);
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
+const WORKSPACE_CREATE_SCHEMA = "dusklight.route-planner.workspace-create/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
 
 const elements = Object.fromEntries([
+  "workspace-list", "new-workspace", "workspace-tab", "library-tab", "content-search",
+  "content-browser-list", "new-workspace-dialog", "new-workspace-form",
+  "new-workspace-label", "new-workspace-id", "new-workspace-error", "cancel-new-workspace",
   "project-list", "new-project", "open-project", "save-project", "save-as-project",
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
   "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state", "zoom-in",
@@ -23,6 +27,10 @@ const elements = Object.fromEntries([
 ].map((id) => [id, document.getElementById(id)]));
 
 const state = {
+  workspace: null,
+  workspaceList: [],
+  libraries: [],
+  contentSource: "workspace",
   project: null,
   graph: null,
   positions: new Map(),
@@ -46,6 +54,22 @@ const state = {
   groupSelection: new Set(),
 };
 
+elements["workspace-list"].addEventListener("change", () => {
+  const id = elements["workspace-list"].value;
+  if (id) loadWorkspace(id);
+});
+elements["new-workspace"].addEventListener("click", () => {
+  elements["new-workspace-error"].textContent = "";
+  elements["new-workspace-dialog"].showModal();
+  elements["new-workspace-label"].focus();
+});
+elements["cancel-new-workspace"].addEventListener("click", () => {
+  elements["new-workspace-dialog"].close();
+});
+elements["new-workspace-form"].addEventListener("submit", createWorkspace);
+elements["workspace-tab"].addEventListener("click", () => selectContentSource("workspace"));
+elements["library-tab"].addEventListener("click", () => selectContentSource("library"));
+elements["content-search"].addEventListener("input", renderContentBrowser);
 elements["project-list"].addEventListener("change", () => {
   const id = elements["project-list"].value;
   if (id) loadStoredProject(id);
@@ -97,10 +121,199 @@ async function start() {
     const response = await fetch("/api/health", { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     setStatus("Planner service ready", "good");
-    await refreshProjects(true);
+    await Promise.all([refreshWorkspaces(), refreshLibraries()]);
+    await refreshProjects(false);
   } catch (error) {
     setStatus(`Planner service unavailable: ${error.message}`, "bad");
   }
+}
+
+async function refreshWorkspaces(selectedId = null) {
+  const list = await projectApi("/api/workspaces");
+  state.workspaceList = list.workspaces ?? [];
+  elements["workspace-list"].replaceChildren(new Option("Workspaces", ""));
+  for (const workspace of state.workspaceList) {
+    const suffix = workspace.dependency_error ? " — needs libraries" : "";
+    elements["workspace-list"].append(new Option(`${workspace.label}${suffix}`, workspace.id));
+  }
+  const activeId = selectedId ?? state.workspace?.manifest?.id;
+  if (activeId && state.workspaceList.some((workspace) => workspace.id === activeId)) {
+    elements["workspace-list"].value = activeId;
+  }
+  renderContentBrowser();
+}
+
+async function refreshLibraries() {
+  const list = await projectApi("/api/libraries");
+  state.libraries = list.libraries ?? [];
+  renderContentBrowser();
+}
+
+async function createWorkspace(event) {
+  event.preventDefault();
+  const label = elements["new-workspace-label"].value.trim();
+  const id = elements["new-workspace-id"].value.trim();
+  elements["new-workspace-error"].textContent = "";
+  try {
+    const record = await projectApi("/api/workspaces", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ schema: WORKSPACE_CREATE_SCHEMA, id, label }),
+    });
+    elements["new-workspace-dialog"].close();
+    await openWorkspaceRecord(record);
+    await refreshWorkspaces(id);
+    setStatus("Workspace created", "good");
+  } catch (error) {
+    elements["new-workspace-error"].textContent = error.message;
+  }
+}
+
+async function loadWorkspace(id) {
+  if (state.dirty && !confirm("Discard unsaved planner changes?")) {
+    elements["workspace-list"].value = state.workspace?.manifest?.id ?? "";
+    return;
+  }
+  try {
+    const record = await projectApi(`/api/workspaces/${encodeURIComponent(id)}`);
+    await openWorkspaceRecord(record);
+    elements["workspace-list"].value = id;
+    setStatus(`${record.assets.length} workspace assets`, "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
+}
+
+async function openWorkspaceRecord(record) {
+  state.workspace = record;
+  state.project = null;
+  state.graph = null;
+  state.revision = null;
+  state.readOnly = false;
+  state.dirty = false;
+  state.selected = null;
+  state.positions = new Map();
+  state.contentSource = "workspace";
+  elements.nodes.replaceChildren();
+  elements.edges.replaceChildren();
+  elements["region-nav"].hidden = true;
+  elements["empty-state"].hidden = false;
+  elements["empty-state"].querySelector("strong").textContent = record.assets.length
+    ? "Open a route graph"
+    : "Create a grounded scenario";
+  elements["empty-state"].querySelector("span").textContent = record.assets.length
+    ? "Choose an asset in the Content Browser."
+    : "Mount an exact Library, then create a Scenario Root.";
+  elements["detail-title"].textContent = "Nothing selected";
+  elements["detail-subtitle"].textContent = "Choose an asset, node, or connection to inspect it.";
+  elements["detail-json"].textContent = "{}";
+  updateProjectControls();
+  selectContentSource("workspace");
+}
+
+function selectContentSource(source) {
+  state.contentSource = source;
+  for (const name of ["workspace", "library"]) {
+    const active = source === name;
+    elements[`${name}-tab`].classList.toggle("active", active);
+    elements[`${name}-tab`].setAttribute("aria-selected", String(active));
+  }
+  renderContentBrowser();
+}
+
+function renderContentBrowser() {
+  const list = elements["content-browser-list"];
+  const query = elements["content-search"].value.trim().toLowerCase();
+  list.replaceChildren();
+  if (state.contentSource === "library") {
+    const libraries = state.libraries.filter((library) =>
+      `${library.label} ${library.id}`.toLowerCase().includes(query));
+    if (!libraries.length) {
+      list.append(contentMessage(query ? "No matching Library content." : "No libraries are installed."));
+      return;
+    }
+    for (const library of libraries) {
+      list.append(contentItem("LIB", library.label, "Read-only verified example", true, () => {
+        loadStoredProject(library.id);
+      }));
+    }
+    return;
+  }
+  if (!state.workspace) {
+    list.append(contentMessage("Create or open a workspace."));
+    return;
+  }
+  const dependencyError = state.workspaceList.find(
+    (workspace) => workspace.id === state.workspace.manifest.id,
+  )?.dependency_error;
+  if (dependencyError) {
+    const error = document.createElement("p");
+    error.className = "content-error";
+    error.textContent = dependencyError;
+    list.append(error);
+    return;
+  }
+  const labels = {
+    scenario: "Scenarios",
+    route_graph: "Route graphs",
+    reusable_subgraph: "Subgraphs",
+    custom_node_definition: "Custom nodes",
+    state_seed: "State seeds",
+    query_goal: "Queries & goals",
+    route_book: "Route books",
+    layout: "Layouts",
+  };
+  for (const [kind, label] of Object.entries(labels)) {
+    const assets = state.workspace.assets.filter((asset) =>
+      asset.kind === kind && `${asset.label} ${asset.id}`.toLowerCase().includes(query));
+    if (query && !assets.length) continue;
+    const group = document.createElement("details");
+    group.className = "content-group";
+    group.open = assets.length > 0;
+    const summary = document.createElement("summary");
+    summary.textContent = `${label}  ${assets.length}`;
+    group.append(summary);
+    for (const asset of assets) {
+      group.append(contentItem(
+        kind === "layout" ? "LAY" : "AST",
+        asset.label,
+        asset.relative_path,
+        false,
+        () => inspectWorkspaceAsset(asset),
+      ));
+    }
+    list.append(group);
+  }
+  if (query && !list.childElementCount) list.append(contentMessage("No matching workspace assets."));
+}
+
+function contentItem(iconText, label, subtitle, readOnly, action) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `content-item${readOnly ? " read-only" : ""}`;
+  const icon = document.createElement("span");
+  icon.className = "asset-icon";
+  icon.textContent = iconText;
+  const strong = document.createElement("strong");
+  strong.textContent = label;
+  const small = document.createElement("small");
+  small.textContent = subtitle;
+  button.append(icon, strong, small);
+  button.addEventListener("click", action);
+  return button;
+}
+
+function contentMessage(message) {
+  const paragraph = document.createElement("p");
+  paragraph.className = "context-empty";
+  paragraph.textContent = message;
+  return paragraph;
+}
+
+function inspectWorkspaceAsset(asset) {
+  elements["detail-title"].textContent = asset.label;
+  elements["detail-subtitle"].textContent = `${asset.kind.replaceAll("_", " ")} · ${asset.relative_path}`;
+  elements["detail-json"].textContent = JSON.stringify(asset, null, 2);
 }
 
 async function refreshProjects(openFirst = false, selectedId = null) {
@@ -2528,7 +2741,7 @@ function updateProjectControls() {
   elements["export-project"].disabled = !loaded;
   elements["project-name"].textContent = loaded
     ? `${state.project.label}${state.readOnly ? " (read-only demo)" : ""}`
-    : "No project loaded";
+    : state.workspace?.manifest?.label ?? "No workspace open";
   elements["project-name"].className = `project-name${state.dirty ? " dirty" : ""}`;
 }
 

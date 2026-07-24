@@ -126,10 +126,10 @@ The initial mutable asset types are:
 
 ### 3.2 Separate Workspace and Library content
 
-- [ ] Add a **Workspace** browser tab containing only mutable user assets.
+- [x] Add a **Workspace** browser tab containing only mutable user assets.
 - [ ] Add a **Library** browser tab containing immutable mechanics, exact
       contexts, verified fixtures, templates, and source-backed examples.
-- [ ] Keep read-only and writable items out of the same undifferentiated tree.
+- [x] Keep read-only and writable items out of the same undifferentiated tree.
       Cross-source search results must carry an unmistakable source badge.
 - [ ] Make library operations contextual: Open, Inspect, Add Reference, Create
       Scenario From Template, and Fork to Workspace. Do not show disabled
@@ -158,16 +158,16 @@ The initial mutable asset types are:
 
 ## 4. Application shell and information hierarchy
 
-- [ ] Replace the current wall-of-panels layout with a graph-first workspace:
+- [x] Replace the current wall-of-panels layout with a graph-first workspace:
       Content Browser, central canvas, selection-driven Details panel, and a
       collapsed diagnostics drawer.
-- [ ] Keep the canvas as the dominant surface at ordinary desktop sizes.
-- [ ] Open diagnostics automatically only for errors, explicit trace requests, or
+- [x] Keep the canvas as the dominant surface at ordinary desktop sizes.
+- [x] Open diagnostics automatically only for errors, explicit trace requests, or
       completed solve results.
-- [ ] Show no raw payload or full state dump on initial load.
-- [ ] Put rare commands in contextual menus instead of a permanent toolbar of
+- [x] Show no raw payload or full state dump on initial load.
+- [x] Put rare commands in contextual menus instead of a permanent toolbar of
       unrelated buttons.
-- [ ] Limit the persistent toolbar to workspace navigation, Save, Undo/Redo,
+- [x] Limit the persistent toolbar to workspace navigation, Save, Undo/Redo,
       Validate, Solve/Play, and view controls.
 - [ ] Support multiple asset editor tabs with breadcrumbs and unsaved-state
       indicators.

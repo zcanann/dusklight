@@ -24,6 +24,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v1";
 pub const WORKSPACE_ASSET_SCHEMA: &str = "dusklight.route-planner.workspace-asset/v1";
+pub const WORKSPACE_LIST_SCHEMA: &str = "dusklight.route-planner.workspace-list/v1";
+pub const WORKSPACE_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-record/v1";
+pub const WORKSPACE_CREATE_SCHEMA: &str = "dusklight.route-planner.workspace-create/v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
 const LEGACY_WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v0";
@@ -230,13 +233,52 @@ pub struct LayoutViewport {
     pub zoom: f64,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceAssetListing {
     pub id: String,
     pub label: String,
     pub kind: WorkspaceAssetKind,
     pub relative_path: PathBuf,
     pub revision_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceCreateRequest {
+    pub schema: String,
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceSummary {
+    pub id: String,
+    pub label: String,
+    pub asset_count: usize,
+    pub dependency_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceList {
+    pub schema: String,
+    pub workspaces: Vec<WorkspaceSummary>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRecord {
+    pub schema: String,
+    pub manifest: WorkspaceManifest,
+    pub assets: Vec<WorkspaceAssetListing>,
+}
+
+#[derive(Debug)]
+pub struct WorkspaceRegistry {
+    root: PathBuf,
+    available_libraries: BTreeMap<(String, String), Digest>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -522,6 +564,118 @@ impl WorkspaceAsset {
         let digest = Sha256::digest(self.canonical_bytes()?);
         Ok(Digest(digest.into()))
     }
+}
+
+impl WorkspaceRegistry {
+    pub fn open(
+        root: impl Into<PathBuf>,
+        available_libraries: BTreeMap<(String, String), Digest>,
+    ) -> Result<Self, WorkspaceError> {
+        let root = root.into();
+        fs::create_dir_all(&root).map_err(WorkspaceError::io)?;
+        let root = root.canonicalize().map_err(WorkspaceError::io)?;
+        Ok(Self {
+            root,
+            available_libraries,
+        })
+    }
+
+    pub fn list(&self) -> Result<WorkspaceList, WorkspaceError> {
+        let mut workspaces = Vec::new();
+        for entry in fs::read_dir(&self.root).map_err(WorkspaceError::io)? {
+            let entry = entry.map_err(WorkspaceError::io)?;
+            if !entry.file_type().map_err(WorkspaceError::io)?.is_dir() {
+                continue;
+            }
+            let path = entry.path();
+            if !path.join(MANIFEST_FILE).is_file() {
+                continue;
+            }
+            let manifest = read_manifest_and_migrate(&path.join(MANIFEST_FILE))?;
+            let directory_id = path.file_name().and_then(|name| name.to_str());
+            if directory_id != Some(manifest.id.as_str()) {
+                return Err(WorkspaceError::new(format!(
+                    "workspace folder {} does not match stable identity {}",
+                    path.display(),
+                    manifest.id
+                )));
+            }
+            let issues = dependency_issues(&manifest, &self.available_libraries);
+            let dependency_error = (!issues.is_empty()).then(|| format_dependency_issues(&issues));
+            let asset_count = if dependency_error.is_none() {
+                WorkspaceStore::open(&path, &self.available_libraries)?
+                    .list_assets()?
+                    .len()
+            } else {
+                0
+            };
+            workspaces.push(WorkspaceSummary {
+                id: manifest.id,
+                label: manifest.label,
+                asset_count,
+                dependency_error,
+            });
+        }
+        workspaces.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(WorkspaceList {
+            schema: WORKSPACE_LIST_SCHEMA.into(),
+            workspaces,
+        })
+    }
+
+    pub fn create(
+        &self,
+        request: WorkspaceCreateRequest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_CREATE_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace create request schema is unsupported",
+            ));
+        }
+        let manifest = WorkspaceManifest::new(request.id, request.label)?;
+        let path = self.workspace_path(&manifest.id)?;
+        if path.exists() {
+            return Err(WorkspaceError::new(format!(
+                "workspace {} already exists",
+                manifest.id
+            )));
+        }
+        let store = WorkspaceStore::create(path, manifest)?;
+        workspace_record(&store)
+    }
+
+    pub fn load(&self, id: &str) -> Result<WorkspaceRecord, WorkspaceError> {
+        let path = self.workspace_path(id)?;
+        if !path.is_dir() {
+            return Err(WorkspaceError::new(format!(
+                "workspace {id} does not exist"
+            )));
+        }
+        let store = WorkspaceStore::open(path, &self.available_libraries)?;
+        workspace_record(&store)
+    }
+
+    fn workspace_path(&self, id: &str) -> Result<PathBuf, WorkspaceError> {
+        validate_stable_id("workspace id", id)?;
+        if id.contains('/') || id.contains(':') {
+            return Err(WorkspaceError::new(
+                "workspace id used as a folder cannot contain '/' or ':'",
+            ));
+        }
+        Ok(self.root.join(id))
+    }
+}
+
+fn workspace_record(store: &WorkspaceStore) -> Result<WorkspaceRecord, WorkspaceError> {
+    Ok(WorkspaceRecord {
+        schema: WORKSPACE_RECORD_SCHEMA.into(),
+        manifest: store.manifest().clone(),
+        assets: store.list_assets()?,
+    })
 }
 
 impl WorkspaceStore {

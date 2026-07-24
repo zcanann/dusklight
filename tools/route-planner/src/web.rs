@@ -2,6 +2,8 @@
 
 use crate::project::{ProjectSaveRequest, ProjectStore};
 use crate::service::{PlannerServiceEnvelope, error_response, handle_envelope};
+use crate::workspace::{WorkspaceCreateRequest, WorkspaceRegistry};
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -28,7 +30,11 @@ pub fn serve_web(config: PlannerWebConfig) -> Result<(), PlannerWebError> {
     }
     let state = WebState {
         projects: Arc::new(Mutex::new(
-            ProjectStore::open(config.project_root).map_err(PlannerWebError::project)?,
+            ProjectStore::open(&config.project_root).map_err(PlannerWebError::project)?,
+        )),
+        workspaces: Arc::new(Mutex::new(
+            WorkspaceRegistry::open(config.project_root.join("workspaces"), BTreeMap::new())
+                .map_err(PlannerWebError::workspace)?,
         )),
     };
     let listener = TcpListener::bind(config.listen).map_err(PlannerWebError::io)?;
@@ -50,6 +56,7 @@ pub fn serve_web(config: PlannerWebConfig) -> Result<(), PlannerWebError> {
 #[derive(Clone)]
 struct WebState {
     projects: Arc<Mutex<ProjectStore>>,
+    workspaces: Arc<Mutex<WorkspaceRegistry>>,
 }
 
 fn handle_connection(mut stream: TcpStream, state: &WebState) -> Result<(), PlannerWebError> {
@@ -174,6 +181,45 @@ fn dispatch(request: HttpRequest, state: &WebState) -> HttpResponse {
                 .map_err(|_| "project store lock is poisoned".to_owned())?;
             store.list().map_err(|error| error.to_string())
         }),
+        ("GET", "/api/libraries") => project_response(|| {
+            let store = state
+                .projects
+                .lock()
+                .map_err(|_| "project store lock is poisoned".to_owned())?;
+            let libraries = store
+                .list()
+                .map_err(|error| error.to_string())?
+                .projects
+                .into_iter()
+                .filter(|project| project.read_only)
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({
+                "schema": "dusklight.route-planner.library-list/v1",
+                "libraries": libraries,
+            }))
+        }),
+        ("GET", "/api/workspaces") => project_response(|| {
+            let registry = state
+                .workspaces
+                .lock()
+                .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+            registry.list().map_err(|error| error.to_string())
+        }),
+        ("POST", "/api/workspaces") => {
+            let create = match serde_json::from_slice::<WorkspaceCreateRequest>(&request.body) {
+                Ok(create) => create,
+                Err(error) => {
+                    return project_error_response(400, "Bad Request", &error.to_string());
+                }
+            };
+            project_response(|| {
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry.create(create).map_err(|error| error.to_string())
+            })
+        }
         ("GET", "/api/project-template") => project_response(|| {
             let store = state
                 .projects
@@ -196,7 +242,30 @@ fn dispatch(request: HttpRequest, state: &WebState) -> HttpResponse {
                 ),
             }
         }
+        _ if request.target.starts_with("/api/workspaces/") => {
+            dispatch_workspace_record(request, state)
+        }
         _ => dispatch_project_record(request, state),
+    }
+}
+
+fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResponse {
+    let id = request
+        .target
+        .strip_prefix("/api/workspaces/")
+        .expect("workspace dispatch checked its prefix");
+    if id.is_empty() || id.contains('/') {
+        return project_error_response(400, "Bad Request", "invalid workspace id");
+    }
+    match request.method.as_str() {
+        "GET" => project_response(|| {
+            let registry = state
+                .workspaces
+                .lock()
+                .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+            registry.load(id).map_err(|error| error.to_string())
+        }),
+        _ => project_error_response(405, "Method Not Allowed", "unsupported workspace method"),
     }
 }
 
@@ -302,6 +371,10 @@ impl PlannerWebError {
     fn project(error: crate::project::ProjectError) -> Self {
         Self(error.to_string())
     }
+
+    fn workspace(error: crate::workspace::WorkspaceError) -> Self {
+        Self(error.to_string())
+    }
 }
 
 impl fmt::Display for PlannerWebError {
@@ -340,6 +413,9 @@ mod tests {
         ));
         let state = WebState {
             projects: Arc::new(Mutex::new(ProjectStore::open(&root).unwrap())),
+            workspaces: Arc::new(Mutex::new(
+                WorkspaceRegistry::open(root.join("workspaces"), BTreeMap::new()).unwrap(),
+            )),
         };
         (state, root)
     }
@@ -496,6 +572,55 @@ mod tests {
                 .unwrap()
                 .contains("revision conflict")
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_http_creates_lists_and_loads_file_backed_workspaces() {
+        let (state, root) = state();
+        let create = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_CREATE_SCHEMA,
+            "id": "ordon-route",
+            "label": "Ordon route",
+        });
+        let created = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces".into(),
+                body: serde_json::to_vec(&create).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(created.status, 200);
+        let created: serde_json::Value = serde_json::from_slice(&created.body).unwrap();
+        assert_eq!(created["manifest"]["id"], "ordon-route");
+        assert!(created["manifest"].get("catalog").is_none());
+        assert_eq!(created["assets"].as_array().unwrap().len(), 0);
+
+        let list = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        let list: serde_json::Value = serde_json::from_slice(&list.body).unwrap();
+        assert_eq!(list["workspaces"].as_array().unwrap().len(), 1);
+        assert_eq!(list["workspaces"][0]["label"], "Ordon route");
+
+        let loaded = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces/ordon-route".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(loaded.status, 200);
+        let loaded: serde_json::Value = serde_json::from_slice(&loaded.body).unwrap();
+        assert_eq!(loaded["manifest"]["id"], "ordon-route");
+        assert!(root.join("workspaces/ordon-route/workspace.json").is_file());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

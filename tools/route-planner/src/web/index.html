@@ -9,27 +9,51 @@
   <body>
     <header class="toolbar">
       <div class="brand"><span class="mark">D</span><strong>Route Planner</strong></div>
-      <select id="project-list" aria-label="Planner project"><option value="">Projects</option></select>
-      <button id="new-project" type="button">New</button>
-      <button id="open-project" type="button">Import</button>
+      <select id="workspace-list" aria-label="Workspace"><option value="">Workspaces</option></select>
+      <button id="new-workspace" type="button">New workspace</button>
       <button id="save-project" type="button" disabled>Save</button>
-      <button id="save-as-project" type="button" disabled>Save as</button>
-      <button id="export-project" type="button" disabled>Export</button>
+      <button id="undo" type="button" disabled>Undo</button>
+      <button id="redo" type="button" disabled>Redo</button>
+      <details class="more-menu">
+        <summary aria-label="More commands">More</summary>
+        <div>
+          <label for="project-list">Examples</label>
+          <select id="project-list" aria-label="Planner examples"><option value="">Examples</option></select>
+          <button id="new-project" type="button">New legacy project</button>
+          <button id="open-project" type="button">Import legacy project</button>
+          <button id="save-as-project" type="button" disabled>Save legacy project as</button>
+          <button id="export-project" type="button" disabled>Export legacy project</button>
+        </div>
+      </details>
       <input id="project-file" type="file" accept="application/json,.json" hidden>
-      <span id="project-name" class="project-name">No project loaded</span>
-      <span id="status" class="status">Connecting…</span>
+      <span id="project-name" class="project-name">No workspace open</span>
+      <span id="status" class="status">Connecting&hellip;</span>
     </header>
     <main class="workspace">
-      <aside class="palette">
-        <details id="model-context" class="model-context" open>
+      <aside class="palette" aria-label="Content Browser">
+        <div class="browser-heading">
+          <strong>Content Browser</strong>
+          <div class="source-tabs" role="tablist" aria-label="Content source">
+            <button id="workspace-tab" class="active" type="button" role="tab" aria-selected="true">Workspace</button>
+            <button id="library-tab" type="button" role="tab" aria-selected="false">Library</button>
+          </div>
+        </div>
+        <input id="content-search" type="search" placeholder="Search assets&hellip;" autocomplete="off">
+        <div id="content-browser-list" class="content-browser-list">
+          <p class="context-empty">Create or open a workspace.</p>
+        </div>
+        <details id="model-context" class="model-context">
           <summary>Model context</summary>
           <div id="model-context-body" class="model-context-body">
-            <p class="context-empty">Open a project to inspect its exact model context.</p>
+            <p class="context-empty">Open a graph to inspect its exact model context.</p>
           </div>
         </details>
-        <label for="search">Transitions &amp; facts</label>
-        <input id="search" type="search" placeholder="Search destination, effect, requirement…" autocomplete="off">
-        <div id="palette-list" class="palette-list"></div>
+        <details class="node-catalogue">
+          <summary>Node catalogue</summary>
+          <label for="search">Transitions &amp; facts</label>
+          <input id="search" type="search" placeholder="Search node kinds&hellip;" autocomplete="off">
+          <div id="palette-list" class="palette-list"></div>
+        </details>
       </aside>
       <section id="canvas-shell" class="canvas-shell" aria-label="Route graph canvas">
         <svg id="canvas" xmlns="http://www.w3.org/2000/svg">
@@ -39,24 +63,24 @@
           </g>
         </svg>
         <div id="empty-state" class="empty-state">
-          <strong>Open a planner project</strong>
-          <span>Pan with drag, zoom with the wheel, and drag nodes to arrange the graph.</span>
+          <strong>Create or open a workspace</strong>
+          <span>Then create a grounded scenario or open a route graph from the Content Browser.</span>
         </div>
         <nav id="region-nav" class="region-nav" aria-label="Graph regions" hidden>
           <div id="region-breadcrumbs" class="region-breadcrumbs"></div>
           <div id="region-children" class="region-children"></div>
         </nav>
         <div class="zoom-controls">
-          <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+          <button id="zoom-out" type="button" aria-label="Zoom out">&minus;</button>
           <button id="fit" type="button">Fit</button>
           <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
         </div>
       </section>
-      <section class="details">
+      <section class="details" aria-label="Details">
         <div>
-          <span class="eyebrow">Selection</span>
+          <span class="eyebrow">Details</span>
           <h2 id="detail-title">Nothing selected</h2>
-          <p id="detail-subtitle">Choose a node or connection to inspect its planner-owned identity.</p>
+          <p id="detail-subtitle">Choose a node or connection to inspect it.</p>
           <button id="evaluate-transition" type="button" disabled>Evaluate from start state</button>
           <button id="solve-goal" type="button" disabled>Solve selected goal</button>
           <button id="insert-transition" type="button" disabled>Insert into route</button>
@@ -83,9 +107,27 @@
           <div id="contract-inspector" class="contract-inspector" hidden></div>
           <div id="state-inspector" class="state-inspector" hidden></div>
         </div>
-        <pre id="detail-json">{}</pre>
+        <details class="diagnostics-drawer">
+          <summary>Diagnostics</summary>
+          <pre id="detail-json">{}</pre>
+        </details>
       </section>
     </main>
+    <dialog id="new-workspace-dialog">
+      <form id="new-workspace-form">
+        <header>
+          <h2>New workspace</h2>
+          <p>A workspace is a folder of independently versioned route assets.</p>
+        </header>
+        <label>Workspace name <input id="new-workspace-label" name="label" required maxlength="160" value="New route"></label>
+        <label>Folder ID <input id="new-workspace-id" name="id" required maxlength="96" pattern="[a-z0-9._-]+" value="new-route"></label>
+        <p id="new-workspace-error" class="dialog-error" role="alert"></p>
+        <footer>
+          <button id="cancel-new-workspace" type="button">Cancel</button>
+          <button type="submit">Create workspace</button>
+        </footer>
+      </form>
+    </dialog>
     <script type="module" src="/app.js"></script>
   </body>
 </html>
