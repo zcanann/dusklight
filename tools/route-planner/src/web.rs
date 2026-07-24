@@ -3,8 +3,8 @@
 use crate::project::{ProjectSaveRequest, ProjectStore};
 use crate::service::{PlannerServiceEnvelope, error_response, handle_envelope};
 use crate::workspace::{
-    WorkspaceAssetCommandRequest, WorkspaceAssetSaveRequest, WorkspaceCreateRequest,
-    WorkspaceRegistry, WorkspaceTrashCommandRequest,
+    BUILTIN_LIBRARY_VERSION, WorkspaceAssetCommandRequest, WorkspaceAssetSaveRequest,
+    WorkspaceCreateRequest, WorkspaceRegistry, WorkspaceTrashCommandRequest,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -31,12 +31,13 @@ pub fn serve_web(config: PlannerWebConfig) -> Result<(), PlannerWebError> {
     if !config.listen.ip().is_loopback() {
         return Err(web_error("planner web server must bind to loopback"));
     }
+    let projects = ProjectStore::open(&config.project_root).map_err(PlannerWebError::project)?;
+    let available_libraries =
+        builtin_library_digests(&projects).map_err(|error| PlannerWebError(error.to_string()))?;
     let state = WebState {
-        projects: Arc::new(Mutex::new(
-            ProjectStore::open(&config.project_root).map_err(PlannerWebError::project)?,
-        )),
+        projects: Arc::new(Mutex::new(projects)),
         workspaces: Arc::new(Mutex::new(
-            WorkspaceRegistry::open(config.project_root.join("workspaces"), BTreeMap::new())
+            WorkspaceRegistry::open(config.project_root.join("workspaces"), available_libraries)
                 .map_err(PlannerWebError::workspace)?,
         )),
     };
@@ -54,6 +55,24 @@ pub fn serve_web(config: PlannerWebConfig) -> Result<(), PlannerWebError> {
             .map_err(PlannerWebError::io)?;
     }
     Ok(())
+}
+
+fn builtin_library_digests(
+    projects: &ProjectStore,
+) -> Result<BTreeMap<(String, String), dusklight_route_planner::artifact::Digest>, String> {
+    Ok(projects
+        .list()
+        .map_err(|error| error.to_string())?
+        .projects
+        .into_iter()
+        .filter(|project| project.read_only)
+        .map(|project| {
+            (
+                (project.id, BUILTIN_LIBRARY_VERSION.into()),
+                project.revision_sha256,
+            )
+        })
+        .collect())
 }
 
 #[derive(Clone)]
@@ -289,6 +308,35 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
         [_, "trash", asset_id] if !asset_id.is_empty() => {
             dispatch_workspace_trash(request, state, workspace_id, asset_id)
         }
+        [_, "library-scenarios", library_id]
+            if request.method == "POST" && !library_id.is_empty() =>
+        {
+            project_response(|| {
+                let project = {
+                    let projects = state
+                        .projects
+                        .lock()
+                        .map_err(|_| "project store lock is poisoned".to_owned())?;
+                    projects
+                        .load(library_id)
+                        .map_err(|error| error.to_string())?
+                };
+                if !project.read_only {
+                    return Err("only read-only Library content can seed a scenario".into());
+                }
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry
+                    .create_scenario_from_library(
+                        workspace_id,
+                        &project.project,
+                        project.revision_sha256,
+                    )
+                    .map_err(|error| error.to_string())
+            })
+        }
         _ => project_error_response(404, "Not Found", "workspace endpoint not found"),
     }
 }
@@ -514,10 +562,12 @@ mod tests {
             std::process::id(),
             NEXT_TEST_ROOT.fetch_add(1, Ordering::Relaxed),
         ));
+        let projects = ProjectStore::open(&root).unwrap();
+        let available_libraries = builtin_library_digests(&projects).unwrap();
         let state = WebState {
-            projects: Arc::new(Mutex::new(ProjectStore::open(&root).unwrap())),
+            projects: Arc::new(Mutex::new(projects)),
             workspaces: Arc::new(Mutex::new(
-                WorkspaceRegistry::open(root.join("workspaces"), BTreeMap::new()).unwrap(),
+                WorkspaceRegistry::open(root.join("workspaces"), available_libraries).unwrap(),
             )),
         };
         (state, root)
@@ -725,6 +775,44 @@ mod tests {
         assert_eq!(loaded["manifest"]["id"], "ordon-route");
         assert!(root.join("workspaces/ordon-route/workspace.json").is_file());
 
+        let imported = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/library-scenarios/demo-forest-keyed-door"
+                    .into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(imported.status, 200);
+        let imported: serde_json::Value = serde_json::from_slice(&imported.body).unwrap();
+        assert_eq!(
+            imported["manifest"]["mounted_libraries"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        for kind in ["scenario", "route_graph", "state_seed", "layout"] {
+            assert!(
+                imported["assets"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|asset| asset["kind"] == kind),
+                "missing imported {kind}"
+            );
+        }
+        assert!(
+            imported["assets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|asset| asset["id"] == "custom.roll"
+                    || asset["kind"] == "route_book"
+                    || asset.get("revision_sha256").is_some())
+        );
+
         let asset = crate::workspace::WorkspaceAsset {
             schema: crate::workspace::WORKSPACE_ASSET_SCHEMA.into(),
             header: crate::workspace::WorkspaceAssetHeader {
@@ -732,6 +820,7 @@ mod tests {
                 label: "Roll".into(),
                 kind: crate::workspace::WorkspaceAssetKind::CustomNodeDefinition,
                 version: 1,
+                origin: None,
             },
             references: Vec::new(),
             payload: crate::workspace::WorkspaceAssetPayload::CustomNodeDefinition(

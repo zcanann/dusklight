@@ -127,7 +127,7 @@ The initial mutable asset types are:
 ### 3.2 Separate Workspace and Library content
 
 - [x] Add a **Workspace** browser tab containing only mutable user assets.
-- [ ] Add a **Library** browser tab containing immutable mechanics, exact
+- [x] Add a **Library** browser tab containing immutable mechanics, exact
       contexts, verified fixtures, templates, and source-backed examples.
 - [x] Keep read-only and writable items out of the same undifferentiated tree.
       Cross-source search results must carry an unmistakable source badge.

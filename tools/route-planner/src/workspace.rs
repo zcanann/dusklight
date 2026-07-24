@@ -4,6 +4,7 @@
 //! presentation layouts live in independent, typed JSON documents so file
 //! organization never becomes semantic identity.
 
+use crate::project::PlannerWebProject;
 use dusklight_route_planner::PlannerContractError;
 use dusklight_route_planner::artifact::Digest;
 use dusklight_route_planner::execution::PlannerExecutionStateDocument;
@@ -33,6 +34,7 @@ pub const WORKSPACE_ASSET_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-asset-command/v1";
 pub const WORKSPACE_TRASH_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-trash-command/v1";
+pub const BUILTIN_LIBRARY_VERSION: &str = "builtin-v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
 const LEGACY_WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v0";
@@ -109,6 +111,17 @@ pub struct WorkspaceAssetHeader {
     pub label: String,
     pub kind: WorkspaceAssetKind,
     pub version: u32,
+    #[serde(default)]
+    pub origin: Option<WorkspaceAssetOrigin>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceAssetOrigin {
+    pub library_id: String,
+    pub library_version: String,
+    pub library_sha256: Digest,
+    pub source_asset_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -569,6 +582,16 @@ impl WorkspaceAsset {
         if self.header.version == 0 {
             return Err(WorkspaceError::new("asset version must be positive"));
         }
+        if let Some(origin) = &self.header.origin {
+            validate_stable_id("asset origin library id", &origin.library_id)?;
+            validate_label("asset origin library version", &origin.library_version)?;
+            validate_stable_id("asset origin source asset id", &origin.source_asset_id)?;
+            if origin.library_sha256 == Digest::ZERO {
+                return Err(WorkspaceError::new(
+                    "asset origin library digest must be nonzero",
+                ));
+            }
+        }
         if self.header.kind != self.payload.kind() {
             return Err(WorkspaceError::new(format!(
                 "asset {} header kind does not match its typed payload",
@@ -890,6 +913,17 @@ impl WorkspaceRegistry {
                 store.permanently_delete_from_trash(asset_id, request.expected_revision_sha256)?;
             }
         }
+        workspace_record(&store)
+    }
+
+    pub fn create_scenario_from_library(
+        &self,
+        workspace_id: &str,
+        project: &PlannerWebProject,
+        library_sha256: Digest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        let mut store = self.open_workspace(workspace_id)?;
+        store.import_project_template(project, library_sha256)?;
         workspace_record(&store)
     }
 
@@ -1321,6 +1355,243 @@ impl WorkspaceStore {
         fs::remove_file(path).map_err(WorkspaceError::io)
     }
 
+    fn import_project_template(
+        &mut self,
+        project: &PlannerWebProject,
+        library_sha256: Digest,
+    ) -> Result<(), WorkspaceError> {
+        project
+            .validate()
+            .map_err(|error| WorkspaceError::new(error.to_string()))?;
+        if library_sha256 == Digest::ZERO {
+            return Err(WorkspaceError::new("library digest must be nonzero"));
+        }
+        let state = project
+            .start_state
+            .clone()
+            .ok_or_else(|| WorkspaceError::new("Library template has no grounded state seed"))?;
+        let exact_context = state
+            .snapshot
+            .environment
+            .runtime_configuration
+            .exact_context()?;
+        let fragment = stable_fragment(&project.id);
+        let scenario_id = format!("scenario.{fragment}");
+        let graph_id = format!("route-graph.{fragment}");
+        let state_id = format!("state-seed.{fragment}");
+        let route_book_id = project
+            .route_book
+            .as_ref()
+            .map(|_| format!("route-book.{fragment}"));
+        let layout_id = format!("layout.{fragment}");
+        let origin = |source_asset_id: String| {
+            Some(WorkspaceAssetOrigin {
+                library_id: project.id.clone(),
+                library_version: BUILTIN_LIBRARY_VERSION.into(),
+                library_sha256,
+                source_asset_id,
+            })
+        };
+        let graph = match &project.route_book {
+            Some(route_book) => {
+                PlannerGraph::project_composed_with_route_book(&project.catalog, route_book)?
+            }
+            None => PlannerGraph::project_composed(&project.catalog)?,
+        };
+        let state_asset = WorkspaceAsset {
+            schema: WORKSPACE_ASSET_SCHEMA.into(),
+            header: WorkspaceAssetHeader {
+                id: state_id.clone(),
+                label: format!("{} start state", project.label),
+                kind: WorkspaceAssetKind::StateSeed,
+                version: 1,
+                origin: origin(format!("{}:start-state", project.id)),
+            },
+            references: Vec::new(),
+            payload: WorkspaceAssetPayload::StateSeed { state },
+        };
+        let mut graph_references = route_book_id
+            .iter()
+            .map(|id| WorkspaceAssetReference {
+                asset_id: id.clone(),
+                kind: WorkspaceAssetKind::RouteBook,
+            })
+            .collect::<Vec<_>>();
+        graph_references.sort();
+        let graph_asset = WorkspaceAsset {
+            schema: WORKSPACE_ASSET_SCHEMA.into(),
+            header: WorkspaceAssetHeader {
+                id: graph_id.clone(),
+                label: project.label.clone(),
+                kind: WorkspaceAssetKind::RouteGraph,
+                version: 1,
+                origin: origin(format!("{}:graph", project.id)),
+            },
+            references: graph_references,
+            payload: WorkspaceAssetPayload::RouteGraph { graph },
+        };
+        let layout_asset = WorkspaceAsset {
+            schema: WORKSPACE_ASSET_SCHEMA.into(),
+            header: WorkspaceAssetHeader {
+                id: layout_id.clone(),
+                label: format!("{} layout", project.label),
+                kind: WorkspaceAssetKind::Layout,
+                version: 1,
+                origin: origin(format!("{}:presentation", project.id)),
+            },
+            references: vec![WorkspaceAssetReference {
+                asset_id: graph_id.clone(),
+                kind: WorkspaceAssetKind::RouteGraph,
+            }],
+            payload: WorkspaceAssetPayload::Layout(LayoutAsset {
+                semantic_asset_id: graph_id.clone(),
+                positions: project
+                    .presentation
+                    .positions
+                    .iter()
+                    .map(|(id, position)| {
+                        (
+                            id.clone(),
+                            LayoutPoint {
+                                x: position.x,
+                                y: position.y,
+                            },
+                        )
+                    })
+                    .collect(),
+                viewport: None,
+            }),
+        };
+        let mut scenario_references = vec![
+            WorkspaceAssetReference {
+                asset_id: graph_id.clone(),
+                kind: WorkspaceAssetKind::RouteGraph,
+            },
+            WorkspaceAssetReference {
+                asset_id: state_id.clone(),
+                kind: WorkspaceAssetKind::StateSeed,
+            },
+        ];
+        if let Some(route_book_id) = &route_book_id {
+            scenario_references.push(WorkspaceAssetReference {
+                asset_id: route_book_id.clone(),
+                kind: WorkspaceAssetKind::RouteBook,
+            });
+        }
+        scenario_references.sort();
+        let scenario_asset = WorkspaceAsset {
+            schema: WORKSPACE_ASSET_SCHEMA.into(),
+            header: WorkspaceAssetHeader {
+                id: scenario_id,
+                label: project.label.clone(),
+                kind: WorkspaceAssetKind::Scenario,
+                version: 1,
+                origin: origin(format!("{}:scenario", project.id)),
+            },
+            references: scenario_references,
+            payload: WorkspaceAssetPayload::Scenario(ScenarioAsset {
+                exact_context: exact_context.clone(),
+                anchor: ScenarioAnchor::StateSeed {
+                    state_seed_id: state_id.clone(),
+                },
+                route_graph_id: graph_id,
+                state_seed_id: Some(state_id),
+                route_book_id: route_book_id.clone(),
+            }),
+        };
+        let mut mutations = vec![
+            WorkspaceMutation::Put {
+                relative_path: Path::new("scenarios").join(format!("{fragment}.json")),
+                expected_revision_sha256: None,
+                asset: scenario_asset,
+            },
+            WorkspaceMutation::Put {
+                relative_path: Path::new("route-graphs").join(format!("{fragment}.json")),
+                expected_revision_sha256: None,
+                asset: graph_asset,
+            },
+            WorkspaceMutation::Put {
+                relative_path: Path::new("state-seeds").join(format!("{fragment}.json")),
+                expected_revision_sha256: None,
+                asset: state_asset,
+            },
+            WorkspaceMutation::Put {
+                relative_path: Path::new("layouts").join(format!("{fragment}.json")),
+                expected_revision_sha256: None,
+                asset: layout_asset,
+            },
+        ];
+        if let (Some(route_book_id), Some(route_book)) = (route_book_id, project.route_book.clone())
+        {
+            mutations.push(WorkspaceMutation::Put {
+                relative_path: Path::new("route-books").join(format!("{fragment}.json")),
+                expected_revision_sha256: None,
+                asset: WorkspaceAsset {
+                    schema: WORKSPACE_ASSET_SCHEMA.into(),
+                    header: WorkspaceAssetHeader {
+                        id: route_book_id,
+                        label: route_book.manifest.label.clone(),
+                        kind: WorkspaceAssetKind::RouteBook,
+                        version: 1,
+                        origin: origin(format!("{}:route-book", project.id)),
+                    },
+                    references: Vec::new(),
+                    payload: WorkspaceAssetPayload::RouteBook { route_book },
+                },
+            });
+        }
+        self.transact(&mutations)?;
+        self.mount_library(
+            MountedLibrary {
+                id: project.id.clone(),
+                version: BUILTIN_LIBRARY_VERSION.into(),
+                sha256: library_sha256,
+                source: format!("builtin:{}", project.id),
+            },
+            exact_context,
+        )
+    }
+
+    fn mount_library(
+        &mut self,
+        library: MountedLibrary,
+        exact_context: ExactContext,
+    ) -> Result<(), WorkspaceError> {
+        match self
+            .manifest
+            .mounted_libraries
+            .iter()
+            .find(|mounted| mounted.id == library.id && mounted.version == library.version)
+        {
+            Some(mounted) if mounted.sha256 == library.sha256 => {}
+            Some(mounted) => {
+                return Err(WorkspaceError::new(format!(
+                    "mounted Library {} changed from {} to {}; explicit upgrade is required",
+                    library.id, mounted.sha256, library.sha256
+                )));
+            }
+            None => self.manifest.mounted_libraries.push(library),
+        }
+        self.manifest.mounted_libraries.sort_by(|left, right| {
+            left.id
+                .cmp(&right.id)
+                .then_with(|| left.version.cmp(&right.version))
+        });
+        if !self
+            .manifest
+            .exact_context_defaults
+            .contains(&exact_context)
+        {
+            self.manifest.exact_context_defaults.push(exact_context);
+            self.manifest.exact_context_defaults.sort();
+        }
+        self.manifest.validate()?;
+        write_atomically(
+            &self.root.join(MANIFEST_FILE),
+            &self.manifest.canonical_bytes()?,
+        )
+    }
+
     fn ensure_transaction_root(&self) -> Result<(), WorkspaceError> {
         fs::create_dir_all(self.root.join(TRANSACTION_ROOT)).map_err(WorkspaceError::io)?;
         fs::create_dir_all(self.root.join(TRASH_ROOT)).map_err(WorkspaceError::io)
@@ -1697,6 +1968,20 @@ fn validate_stable_id(field: &str, value: &str) -> Result<(), WorkspaceError> {
     Ok(())
 }
 
+fn stable_fragment(value: &str) -> String {
+    let fragment = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_lowercase() || character.is_ascii_digit() {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    fragment.trim_matches('-').to_owned()
+}
+
 fn validate_label(field: &str, value: &str) -> Result<(), WorkspaceError> {
     if value.trim().is_empty() || value.len() > 256 || value.chars().any(char::is_control) {
         return Err(WorkspaceError::new(format!(
@@ -1865,6 +2150,7 @@ mod tests {
                 label: label.into(),
                 kind: WorkspaceAssetKind::RouteGraph,
                 version: 1,
+                origin: None,
             },
             references: Vec::new(),
             payload: WorkspaceAssetPayload::RouteGraph {
@@ -1904,6 +2190,7 @@ mod tests {
                 label: "Ordon layout".into(),
                 kind: WorkspaceAssetKind::Layout,
                 version: 1,
+                origin: None,
             },
             references: vec![WorkspaceAssetReference {
                 asset_id: semantic.header.id.clone(),
@@ -2131,6 +2418,7 @@ mod tests {
                 label: "Ordon layout".into(),
                 kind: WorkspaceAssetKind::Layout,
                 version: 1,
+                origin: None,
             },
             references: vec![WorkspaceAssetReference {
                 asset_id: graph.header.id.clone(),

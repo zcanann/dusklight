@@ -371,9 +371,7 @@ function renderContentBrowser() {
       return;
     }
     for (const library of libraries) {
-      list.append(contentItem("LIB", library.label, "Read-only verified example", true, () => {
-        loadStoredProject(library.id);
-      }));
+      list.append(libraryContentItem(library));
     }
     return;
   }
@@ -426,6 +424,57 @@ function renderContentBrowser() {
     list.append(trashGroup);
   }
   if (query && !list.childElementCount) list.append(contentMessage("No matching workspace assets."));
+}
+
+function libraryContentItem(library) {
+  const row = document.createElement("div");
+  row.className = "content-asset-row";
+  row.append(contentItem("LIB", library.label, "Read-only verified example", true, () => {
+    loadStoredProject(library.id);
+  }));
+  const actions = document.createElement("details");
+  actions.className = "asset-actions";
+  const summary = document.createElement("summary");
+  summary.textContent = "⋯";
+  summary.setAttribute("aria-label", `Actions for ${library.label}`);
+  actions.append(summary);
+  const inspect = document.createElement("button");
+  inspect.type = "button";
+  inspect.textContent = "Open read-only";
+  inspect.addEventListener("click", () => loadStoredProject(library.id));
+  const create = document.createElement("button");
+  create.type = "button";
+  create.textContent = "Create Scenario";
+  create.disabled = !state.workspace;
+  create.addEventListener("click", () => createScenarioFromLibrary(library));
+  actions.append(inspect, create);
+  row.append(actions);
+  return row;
+}
+
+async function createScenarioFromLibrary(library) {
+  if (!state.workspace) {
+    setStatus("Create or open a workspace first", "bad");
+    return;
+  }
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    setStatus(`Creating grounded scenario from ${library.label}...`);
+    state.workspace = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/library-scenarios/${encodeURIComponent(library.id)}`,
+      { method: "POST" },
+    );
+    state.workspaceSignature = workspaceSignature(state.workspace);
+    await refreshTrash();
+    await refreshWorkspaces(workspaceId);
+    selectContentSource("workspace");
+    const graph = state.workspace.assets.find((asset) => asset.kind === "route_graph"
+      && asset.id.endsWith(slug(library.id)));
+    if (graph) await inspectWorkspaceAsset(graph);
+    setStatus("Grounded scenario created from exact Library content", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 function contentAssetItem(asset, iconText) {
@@ -646,9 +695,35 @@ async function inspectWorkspaceAsset(asset) {
     state.selectedWorkspaceAsset = record;
     elements["detail-json"].textContent = JSON.stringify(record.asset, null, 2);
     renderWorkspaceAssetEditor(record);
+    if (record.asset.header.kind === "route_graph") await openWorkspaceGraph(record);
   } catch (error) {
     setStatus(error.message, "bad");
   }
+}
+
+async function openWorkspaceGraph(record) {
+  state.project = null;
+  state.graph = record.asset.payload.graph;
+  state.selected = null;
+  state.positions = new Map();
+  for (const listing of state.workspace.assets.filter((asset) => asset.kind === "layout")) {
+    const layout = await projectApi(
+      `/api/workspaces/${encodeURIComponent(state.workspace.manifest.id)}/assets/${encodeURIComponent(listing.id)}`,
+    );
+    if (layout.asset.payload.semantic_asset_id === record.asset.header.id) {
+      state.positions = new Map(Object.entries(layout.asset.payload.positions ?? {}));
+      break;
+    }
+  }
+  state.transitionSearch = new Map();
+  state.activeRegionId = null;
+  state.collapsedRegionIds = new Set();
+  state.knownRegionIds = new Set();
+  ensurePositions();
+  elements["empty-state"].hidden = true;
+  render();
+  requestAnimationFrame(fitGraph);
+  elements["project-name"].textContent = `${state.workspace.manifest.label} · ${record.asset.header.label}`;
 }
 
 function renderWorkspaceAssetEditor(record) {
@@ -1688,7 +1763,7 @@ function renderAddNodeMenu() {
 
 function renderPalette(selectedFeasibility = state.selectedStateFeasibility) {
   elements["palette-list"].replaceChildren();
-  if (!state.graph) return;
+  if (!state.graph || !state.project) return;
   const query = elements.search.value.trim().toLowerCase();
   const assessedTransitions = selectedFeasibility?.transitions.map((record) => ({
     transition_id: record.transition_id,
