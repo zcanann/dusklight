@@ -1195,13 +1195,25 @@ mod tests {
     }
 
     #[test]
-    fn bundled_registry_is_canonical_and_names_only_the_audited_gz2e01_identity() {
+    fn bundled_registry_is_canonical_and_names_every_audited_exact_identity() {
         let registry = bundled_supported_build_registry().unwrap();
-        assert_eq!(registry.identities.len(), 1);
-        let identity = &registry.identities[0];
-        assert_eq!(identity.id, "gcn-us-1.0-gz2e01");
-        assert_eq!(identity.fingerprint.product_id, "GZ2E01");
-        assert_eq!(identity.fingerprint.revision, "1.0");
+        assert_eq!(registry.identities.len(), 3);
+        assert_eq!(
+            registry
+                .identities
+                .iter()
+                .map(|identity| (
+                    identity.id.as_str(),
+                    identity.fingerprint.product_id.as_str(),
+                    identity.fingerprint.revision.as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gcn-pal-1.0-gz2p01", "GZ2P01", "1.0"),
+                ("gcn-us-1.0-gz2e01", "GZ2E01", "1.0"),
+                ("wii-us-1.2-rzde01", "RZDE01", "1.2"),
+            ]
+        );
         assert_eq!(
             registry.canonical_bytes().unwrap(),
             BUNDLED_SUPPORTED_BUILD_REGISTRY

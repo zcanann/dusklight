@@ -151,9 +151,11 @@ The planner CLI currently owns forty-five operations:
   supply a replacement registry or an explicit exact identity for new-build
   research. Original bytes and host paths are not copied into either output.
 - `identify-orig` classifies a scanned tree through a canonical registry of
-  complete fingerprints. The binary bundles the audited GZ2E01 GameCube USA
-  identity; unknown bytes remain explicitly unsupported, while a requested
-  friendly ID whose fingerprint disagrees is rejected.
+  complete fingerprints. The binary bundles audited GZ2E01 GameCube USA,
+  GZ2P01 GameCube PAL, and RZDE01 Wii USA revision-1.2 identities; unknown
+  bytes remain explicitly unsupported, while a requested friendly ID whose
+  fingerprint disagrees is rejected. Registering an exact extraction identity
+  does not by itself authorize language-specific message semantics.
 - `cache-fact-pack` installs a verified payload/manifest pair in the planner's
   immutable manifest-digest store; identical installs are reused.
 - `materialize-fact-pack` retrieves and re-verifies that derived pack without

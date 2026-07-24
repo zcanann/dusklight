@@ -468,7 +468,16 @@ goal-only discovery.
       category, completed the full candidate budget, tied tick 125, and emitted
       no improvement point. CEM used 611,497 candidate ticks versus random's
       753,798 and produced 1.549 times as many successes per candidate tick.
-- [ ] Promote any sub-125 winner only after five identical cold replays.
+- [x] Promote any sub-125 winner only after five identical cold replays.
+      Neither completed q125 arm produced an eligible sub-125 candidate, so no
+      promotion was attempted. The Git-owned promotion path rejects a candidate
+      at or beyond the strict threshold, executes exactly five fresh ordinary
+      boots, requires identical terminal tick, tape frame, boundary index, and
+      exact boundary fingerprint in all five results, then validates the sealed
+      proof before installing the compact tape or editing the timeline. Focused
+      workbench tests cover exact-boundary acceptance, smuggled/unknown
+      authority rejection, tampered proof/stale timeline rollback, and the
+      successful atomic installation path.
 - [x] If no winner appears, preserve enough evidence to distinguish exhausted
       residual coverage from a broken generator, truncated budget, absent
       successes, or premature population collapse. Do not call 125 optimal.
@@ -864,9 +873,17 @@ revalidated crash-safe journal/state chain.
   - exploration/population collapse;
   - native/offline inference mismatch;
   - insufficient simulation throughput.
-- [ ] Add or change FQI, Double Q, DDQN, recurrent state, model-based rollouts,
+- [x] Add or change FQI, Double Q, DDQN, recurrent state, model-based rollouts,
       or network capacity only when a controlled comparison targets one of those
       diagnosed failures.
+      The authenticated checkpoint and negative-control reports do not diagnose
+      value-model capacity as the present failure: held-out critics remain
+      calibrated while native success is zero and each generation collapses to
+      one parent/trajectory. Accordingly no architecture is being changed on
+      that evidence. The targeted v7 experiment changes only paired rollout
+      exploration while holding critic architecture, action surface, terminal,
+      horizon, and native budget fixed; any later model change must enter as its
+      own predeclared controlled treatment.
 - [x] Track terminal success, time-to-go calibration, critic disagreement,
       effective state/action coverage, and performance by checkpoint. Never
       promote on training loss alone. `campaign

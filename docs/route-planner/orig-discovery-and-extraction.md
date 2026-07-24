@@ -97,8 +97,10 @@ roots, non-UTF-8 paths, and symbolic links all fail closed.
 
 The strict registry schema maps a friendly content ID to one complete
 `ContentIdentity`, is canonical and sorted, and rejects duplicate IDs or two
-labels for one fingerprint. The bundled registry currently contains one locally
-reproduced retail identity:
+labels for one fingerprint. The bundled registry currently contains three
+locally reproduced retail identities. GZ2E01 is backed by both an exact retail
+container and its extracted-tree scan; GZ2P01 and RZDE01 revision 1.2 are backed
+by exact canonical extracted-tree scans without fabricated container hashes:
 
 - `gcn-us-1.0-gz2e01`: GameCube USA, disc revision byte `0` (reported as
   revision `1.0`), product `GZ2E01`;
@@ -108,6 +110,19 @@ reproduced retail identity:
   `0bc3bb229279d4b8a8c7cbe962b0bffdfecd35ff21e2d6761ad42e90a070f772`;
 - resource manifest SHA-256
   `2ab36f6c1d9d551c1397e1cf59e13288d2684c973cb7bd0ad6878f5a3b3a2ab1`.
+
+- `gcn-pal-1.0-gz2p01`: GameCube PAL, revision byte `0`, product `GZ2P01`;
+  executable `c52754b7be32734754ac9aa2b16d3e73c3dbfc4151780ceaae6a71a2c591ed08`,
+  normalized game data
+  `327476f1f9c759e5d999e8fb1e6ce801b3335abea668ad2c4eeab5cb96fb49a6`,
+  and resource manifest
+  `84095d3c39d39a62d76934185b292a569b4173e117261d7bbe2d99af7c1ae83e`.
+- `wii-us-1.2-rzde01`: Wii USA, revision byte `2`, product `RZDE01`;
+  executable `5b31fd11b3a7ab96e7dce1e94635046569e6b5887a0bd29de9ff966e3fa4be07`,
+  normalized game data
+  `6e22de21d639a69fd2e571260f9d367874d95f0421571c6db2fb2badfa5da6b8`,
+  and resource manifest
+  `c67d316b2ed920238b9e49801e1d54fff08d630d3ebad9fd15d89debd266fdda`.
 
 The canonical registry source is
 `tools/route-planner/crates/engine/data/supported-builds.json` and is embedded in

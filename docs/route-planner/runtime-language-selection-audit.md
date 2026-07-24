@@ -1,10 +1,11 @@
 # Runtime language and message-resource selection audit
 
-Status: the selection and ownership contract is source-audited, and the only
-registered exact build (GZ2E01) has an exact binary witness for its fixed
-`Msgus` stage-message path. Exact PAL, Wii, and HD executable/resource identities
-remain unregistered, so their language tables are source-family evidence rather
-than exact-context planner facts.
+Status: the selection and ownership contract is source-audited. GZ2E01 has an
+exact binary witness for its fixed `Msgus` stage-message path. Exact extracted
+trees now register GZ2P01 PAL and RZDE01 Wii USA revision 1.2 and seal all of
+their present locale archives, but those rows remain
+`resource_identity_only`: source-family language tables do not authorize
+planner message semantics for either executable. Exact HD inputs remain absent.
 
 ## Three distinct pieces of state
 
@@ -84,6 +85,20 @@ This is why PAL English and PAL French are two runtime contexts over one exact
 disc identity, not two builds and not universally equivalent message graphs.
 The cannon-payment divergence must ultimately be imported from the exact
 `Msguk` and `Msgfr` resources selected by those contexts.
+
+The exact GZ2P01 scan has SHA-256
+`22c1cc7ee9c667392b20c3718385e0b1a9e00f2803f88a6316be31384d376540`.
+The supported-context catalog binds English, German, French, Spanish, and
+Italian to `Msguk`, `Msgde`, `Msgfr`, `Msgsp`, and `Msgit` respectively, with
+the base archive and groups 1 through 8 sealed for every bundle. These are
+resource identities only until exact-executable handler/backing evidence is
+published.
+
+The exact RZDE01 revision-1.2 scan has SHA-256
+`aeceea7b356febccd88f10d42e60821b825b326524da5f7e1b9db9142a560ba1`.
+Its present English, Spanish, and French resources are likewise bound to
+`Msgus`, `Msgsp`, and `Msgfr`, nine selected archives apiece, without semantic
+import authority.
 
 ## Persistence and change boundaries
 

@@ -1823,17 +1823,20 @@ evidenced overlays over the generated base rather than silent edits to it.
 - [x] Catalogue exact supported builds, revisions, disc/executable/resource
       digests, available language bundles, and stable content IDs.
       `supported-contexts.json` now catalogues every and only registry-supported
-      build. Its GZ2E01 row seals the canonical 1,459,978,240-byte ISO,
-      executable, normalized game-data, resource-manifest, stable content ID,
-      English runtime/profile, and all nine selected base/numbered `Msgus`
-      archives. Engine validation cross-checks the row one-to-one against the
-      build registry and exact bundled English import profile, rejects metadata
-      drift, and leaves PAL/Wii/HD explicitly unsupported. See
+      build. GZ2E01 seals the canonical 1,459,978,240-byte ISO and English
+      semantic import profile. Exact extracted-tree scans now also register
+      GZ2P01 PAL and RZDE01 Wii USA revision 1.2 and seal their eight runtime
+      language selections and 72 selected archives as resource identities.
+      Engine validation cross-checks every row one-to-one against the build
+      registry, binds only GZ2E01 English to an executable-audited semantic
+      import profile, and rejects metadata or support-status drift. HD remains
+      absent rather than guessed. See
       `docs/route-planner/supported-context-catalog.md`.
   - [x] Register the locally reproduced GZ2E01 GameCube USA revision-0 tree as
         `gcn-us-1.0-gz2e01` with complete executable, normalized game-data, and
-        resource-manifest digests. Other retail builds and language/configuration
-        coverage remain open.
+        resource-manifest digests. GZ2P01 and RZDE01 1.2 are now separately
+        registered exact extracted-tree identities; their semantic language
+        profiles and all HD identity work remain open.
 - [ ] Audit how language/configuration is selected, persisted, changed, and used
       to select message or other resource variants.
   - [x] Separate external console language, the serialized-but-nonauthoritative
@@ -1850,6 +1853,17 @@ evidenced overlays over the generated base rather than silent edits to it.
   - [ ] Reproduce exact PAL, Wii, and HD executable/resource identities and bind
         every supported runtime language to its actual base and numbered message
         archives; source-family branches alone must not enable planner facts.
+    - [x] Register exact canonical extracted-tree identities for GZ2P01 PAL and
+          RZDE01 Wii USA revision 1.2. Supported-context catalog v2 binds the
+          PAL `de/en/es/fr/it` rows to `Msgde/Msguk/Msgsp/Msgfr/Msgit` and the
+          Wii `en/es/fr` rows to `Msgus/Msgsp/Msgfr`, sealing the base plus
+          numbered groups 1 through 8 for all eight runtime selections. Both
+          builds remain `resource_identity_only`, so source-family evidence
+          cannot enable message facts. Their retail container hashes were not
+          invented from reconstructed images.
+    - [ ] Reproduce the exact HD executable, normalized resource tree, runtime
+          language bundles, and retail container identity; no HD bytes are
+          present in the current `orig/` inputs.
 - [x] Define the supported-input policy: pre-generated known fact packs for normal
       use, optional `orig/` extraction for verification/new inputs, and explicit
       unsupported behavior for unknown identities.
@@ -2099,11 +2113,11 @@ Deliverable: replayable state evidence that can validate transition rules.
 - [x] Auto-detect and verify supported inputs; reject label/digest disagreement
       and represent unknown inputs as unsupported rather than guessing.
   - The canonical supported-build registry accepts only complete exact
-    fingerprints. The planner bundles the audited GZ2E01 GameCube USA identity;
-    `identify-orig` and `extract-orig` automatically select an exact match, emit
-    or fail explicitly for unknown bytes, and treat `--content-id` only as a
-    checked selection hint. Populating the remaining audited retail entries is
-    the separate Phase 0 evidence-catalogue task.
+    fingerprints. The planner bundles audited GZ2E01 GameCube USA, GZ2P01
+    GameCube PAL, and RZDE01 Wii USA revision-1.2 identities; `identify-orig`
+    and `extract-orig` automatically select an exact match, emit or fail
+    explicitly for unknown bytes, and treat `--content-id` only as a checked
+    selection hint. Registration does not grant semantic language facts.
 - [x] Import world-context stages, room/layer bindings, player spawns, static
       placements, raw SCLS records, and collision/SCLS activation joins.
   - [x] Own the compatible world/native observation input contracts inside the
