@@ -319,7 +319,12 @@ fn run_seed(
             )
             .map_err(route_error)?;
             let [root, frontier] = campaign
-                .sample_root_and_frontier(seed, episode, &[], maximum_frontier_frames)
+                .sample_root_and_frontier(
+                    seed,
+                    frontier_sampling_round(episode),
+                    &[],
+                    maximum_frontier_frames,
+                )
                 .map_err(route_error)?;
             let prefer_root = episode % 4 == 0;
             campaign
@@ -369,7 +374,12 @@ fn run_seed(
             )
             .map_err(route_error)?;
             let [root, frontier] = campaign
-                .sample_root_and_frontier(seed, episode, &[], maximum_frontier_frames)
+                .sample_root_and_frontier(
+                    seed,
+                    frontier_sampling_round(episode),
+                    &[],
+                    maximum_frontier_frames,
+                )
                 .map_err(route_error)?;
             let prefer_root = episode % 4 == 0;
             campaign
@@ -506,6 +516,10 @@ fn run_seed(
         final_result,
         trace,
     })
+}
+
+fn frontier_sampling_round(episode: u64) -> u64 {
+    episode.saturating_sub(1 + episode / 4)
 }
 
 fn advance_rolling_checkpoint(
@@ -1092,6 +1106,15 @@ mod tests {
         assert!(selected_tactic_fits_horizon(152, 8, 160));
         assert!(!selected_tactic_fits_horizon(88, 80, 160));
         assert!(!selected_tactic_fits_horizon(u64::MAX, 1, 160));
+    }
+
+    #[test]
+    fn root_episode_slots_do_not_skip_frontier_rotation_rounds() {
+        let frontier_rounds = (1..=11)
+            .filter(|episode| episode % 4 != 0)
+            .map(frontier_sampling_round)
+            .collect::<Vec<_>>();
+        assert_eq!(frontier_rounds, (0..9).collect::<Vec<_>>());
     }
 
     #[test]

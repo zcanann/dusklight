@@ -30,8 +30,7 @@ use dusklight_learning::tactic_exploration::{
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
-    BehaviorArchive, TacticEndpointDescriptor, TacticFrontierEntry, TacticStateDescriptor,
-    tactic_state_descriptor,
+    BehaviorArchive, TacticEndpointDescriptor, TacticStateDescriptor, tactic_state_descriptor,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -374,8 +373,9 @@ impl TacticQCampaign {
     }
 
     /// Returns one root and one retained frontier branch on every call. The
-    /// retained choice is seeded; root connectivity is therefore sampled
-    /// explicitly instead of being left to archive luck.
+    /// retained choices rotate from a seeded offset across every eligible
+    /// archive cell; root connectivity is sampled explicitly instead of being
+    /// left to archive luck.
     pub fn sample_root_and_frontier(
         &self,
         seed: u64,
@@ -412,23 +412,8 @@ impl TacticQCampaign {
                 "frontier archive has no eligible restorable endpoint",
             ));
         }
-        let deepest_route = choices
-            .iter()
-            .map(|entry| entry.route_tape.frames.len())
-            .max()
-            .expect("nonempty frontier has a deepest route");
-        let deepest = choices
-            .iter()
-            .filter(|entry| entry.route_tape.frames.len() == deepest_route)
-            .collect::<Vec<_>>();
-        let mut hasher = Sha256::new();
-        hasher.update(b"dusklight-tactic-frontier-sample/v1");
-        hasher.update(seed.to_le_bytes());
-        hasher.update(round.to_le_bytes());
-        let digest = hasher.finalize();
-        let index =
-            (u64::from_le_bytes(digest[..8].try_into().unwrap()) % deepest.len() as u64) as usize;
-        let selected: &TacticFrontierEntry = deepest[index];
+        let index = seeded_frontier_index(seed, round, choices.len());
+        let selected = &choices[index];
         let frontier = TacticCampaignBranch {
             kind: TacticBranchKind::RetainedFrontier,
             state_sha256: selected.transition.after_state_sha256,
@@ -980,6 +965,17 @@ impl TacticQCampaign {
     }
 }
 
+fn seeded_frontier_index(seed: u64, round: u64, choice_count: usize) -> usize {
+    debug_assert!(choice_count > 0);
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-tactic-frontier-sample/v2");
+    hasher.update(seed.to_le_bytes());
+    let digest = hasher.finalize();
+    let count = choice_count as u64;
+    let offset = u64::from_le_bytes(digest[..8].try_into().unwrap()) % count;
+    ((offset + round % count) % count) as usize
+}
+
 fn action_digest(action: &OptionActionDescriptor) -> Result<Digest, TacticQCampaignError> {
     let bytes = serde_json::to_vec(action)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
@@ -1371,6 +1367,19 @@ mod tests {
     };
     use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
     use dusklight_learning::tactic_exploration::TacticSelectionReason;
+
+    #[test]
+    fn seeded_frontier_rotation_visits_every_eligible_cell_before_repeating() {
+        let choice_count = 35;
+        let visited = (0..choice_count as u64)
+            .map(|round| seeded_frontier_index(104_729, round, choice_count))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(visited, (0..choice_count).collect());
+        assert_eq!(
+            seeded_frontier_index(104_729, choice_count as u64, choice_count),
+            seeded_frontier_index(104_729, 0, choice_count)
+        );
+    }
 
     #[test]
     fn novelty_identity_ignores_bookkeeping_and_micro_motion_but_not_new_cells() {
