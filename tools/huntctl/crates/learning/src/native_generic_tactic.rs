@@ -261,6 +261,50 @@ impl NativeTacticObservation {
                 "observation is not pre-input",
             ));
         }
+        Self::from_native_boundary(
+            value,
+            value.boundary_index,
+            value.simulation_tick,
+            value.tape_frame,
+        )
+    }
+
+    /// Projects a completed native simulation step onto the immediately
+    /// following pre-input boundary. Native shards record the post-simulation
+    /// state with the next boundary identity, but the tick and tape coordinates
+    /// of the input that produced it.
+    pub fn from_post_simulation_boundary(
+        value: &NativeLearningObservation,
+    ) -> Result<Self, NativeTacticError> {
+        if value.phase != NativeObservationPhase::PostSimulation {
+            return Err(NativeTacticError::InvalidObservation(
+                "observation is not post-simulation",
+            ));
+        }
+        Self::from_native_boundary(
+            value,
+            value.boundary_index,
+            value
+                .simulation_tick
+                .checked_add(1)
+                .ok_or(NativeTacticError::InvalidObservation(
+                    "simulation tick overflows next boundary",
+                ))?,
+            value
+                .tape_frame
+                .checked_add(1)
+                .ok_or(NativeTacticError::InvalidObservation(
+                    "tape frame overflows next boundary",
+                ))?,
+        )
+    }
+
+    fn from_native_boundary(
+        value: &NativeLearningObservation,
+        boundary_index: u64,
+        simulation_tick: u64,
+        tape_frame: u64,
+    ) -> Result<Self, NativeTacticError> {
         let finite3 = |values: [f32; 3]| {
             values
                 .iter()
@@ -305,9 +349,9 @@ impl NativeTacticObservation {
             .map(|actor| actor_snapshot(&value.stage, actor, finite3))
             .collect::<Result<Vec<_>, _>>()?;
         let observation = Self {
-            boundary_index: value.boundary_index,
-            simulation_tick: value.simulation_tick,
-            tape_frame: value.tape_frame,
+            boundary_index,
+            simulation_tick,
+            tape_frame,
             state_identity: value.state_identity,
             stage: value.stage.clone(),
             room: value.room,
@@ -733,6 +777,85 @@ fn execute_selected(
     })
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeGenericTacticStep {
+    pub frame: InputFrame,
+    pub query: NativeTacticQueryRecord,
+    pub end_reason: Option<OptionEndReason>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NativeGenericTacticStepper {
+    plan: NativeGenericTacticPlan,
+    next_tick: u32,
+    previous_observation: Option<NativeTacticObservation>,
+    prior_lane_frame: Option<f32>,
+    stopped: bool,
+}
+
+impl NativeGenericTacticStepper {
+    pub fn new(plan: NativeGenericTacticPlan) -> Result<Self, NativeTacticError> {
+        plan.validate()?;
+        Ok(Self {
+            plan,
+            next_tick: 0,
+            previous_observation: None,
+            prior_lane_frame: None,
+            stopped: false,
+        })
+    }
+
+    pub fn plan(&self) -> &NativeGenericTacticPlan {
+        &self.plan
+    }
+
+    pub fn step(
+        &mut self,
+        observation: NativeTacticObservation,
+    ) -> Result<NativeGenericTacticStep, NativeTacticError> {
+        if self.stopped || self.next_tick >= self.plan.maximum_ticks {
+            return Err(NativeTacticError::InvalidObservation(
+                "native tactic stepper already stopped",
+            ));
+        }
+        observation.validate()?;
+        if let Some(previous) = &self.previous_observation
+            && (observation.simulation_tick != previous.simulation_tick + 1
+                || observation.tape_frame != previous.tape_frame + 1
+                || observation.boundary_index != previous.boundary_index + 1)
+        {
+            return Err(NativeTacticError::InvalidObservation(
+                "native tactic observations are not one contiguous boundary",
+            ));
+        }
+        let local_tick = self.next_tick;
+        let mut query = query_base(local_tick, &observation);
+        let (pad, reached) = pad_for(
+            &self.plan,
+            &observation,
+            local_tick,
+            &mut self.prior_lane_frame,
+            &mut query,
+        )?;
+        query.target_reached = reached;
+        self.next_tick += 1;
+        self.previous_observation = Some(observation);
+        let end_reason = if reached && self.next_tick >= self.plan.minimum_ticks {
+            Some(OptionEndReason::Terminated)
+        } else if self.next_tick == self.plan.maximum_ticks {
+            Some(OptionEndReason::MaximumDuration)
+        } else {
+            None
+        };
+        self.stopped = end_reason.is_some();
+        Ok(NativeGenericTacticStep {
+            frame: owned_frame(pad),
+            query,
+            end_reason,
+        })
+    }
+}
+
 fn realize(
     plan: &NativeGenericTacticPlan,
     observations: &[NativeTacticObservation],
@@ -744,56 +867,31 @@ fn realize(
     ),
     NativeTacticError,
 > {
-    plan.validate()?;
     if observations.is_empty() {
         return Err(NativeTacticError::MissingObservations);
     }
+    let mut stepper = NativeGenericTacticStepper::new(plan.clone())?;
     let limit = observations.len().min(plan.maximum_ticks as usize);
     let mut frames = Vec::with_capacity(limit);
     let mut queries = Vec::with_capacity(limit);
-    let mut prior_lane_frame = None;
-    let mut terminated = false;
-    for (index, observation) in observations.iter().take(limit).enumerate() {
-        observation.validate()?;
-        if index > 0 {
-            let prior = &observations[index - 1];
-            if observation.simulation_tick != prior.simulation_tick + 1
-                || observation.tape_frame != prior.tape_frame + 1
-                || observation.boundary_index != prior.boundary_index
-            {
-                return Err(NativeTacticError::InvalidObservation(
-                    "native tactic observations are not one contiguous boundary",
-                ));
-            }
-        }
-        let local_tick = index as u32;
-        let mut query = query_base(local_tick, observation);
-        let (pad, reached) = pad_for(
-            plan,
-            observation,
-            local_tick,
-            &mut prior_lane_frame,
-            &mut query,
-        )?;
-        query.target_reached = reached;
-        frames.push(owned_frame(pad));
-        queries.push(query);
-        if reached && local_tick + 1 >= plan.minimum_ticks {
-            terminated = true;
+    let mut end_reason = None;
+    for observation in observations.iter().take(limit) {
+        let step = stepper.step(observation.clone())?;
+        frames.push(step.frame);
+        queries.push(step.query);
+        if step.end_reason.is_some() {
+            end_reason = step.end_reason;
             break;
         }
     }
     if frames.len() < plan.minimum_ticks as usize {
         return Err(NativeTacticError::MissingObservations);
     }
-    let end_reason = if terminated {
-        OptionEndReason::Terminated
-    } else if frames.len() == plan.maximum_ticks as usize {
-        OptionEndReason::MaximumDuration
-    } else {
-        return Err(NativeTacticError::MissingObservations);
-    };
-    Ok((frames, queries, end_reason))
+    Ok((
+        frames,
+        queries,
+        end_reason.ok_or(NativeTacticError::MissingObservations)?,
+    ))
 }
 
 fn pad_for(
@@ -1187,10 +1285,11 @@ mod tests {
     use super::*;
     use crate::fqi::FqiConfig;
     use crate::option_values::{OptionValueConfig, OptionValueSample};
+    use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 
     fn observation(tick: u64, position: [f32; 3]) -> NativeTacticObservation {
         NativeTacticObservation {
-            boundary_index: 4,
+            boundary_index: 4 + tick,
             simulation_tick: 100 + tick,
             tape_frame: 20 + tick,
             state_identity: [tick as u8; 16],
@@ -1245,6 +1344,23 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn projects_a_post_simulation_row_onto_the_next_tactic_boundary() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let step = &shard.episodes[0].steps[0];
+        let before = NativeTacticObservation::from_native(&step.pre_input).unwrap();
+        let after =
+            NativeTacticObservation::from_post_simulation_boundary(&step.post_simulation).unwrap();
+
+        assert_eq!(after.boundary_index, before.boundary_index + 1);
+        assert_eq!(after.simulation_tick, before.simulation_tick + 1);
+        assert_eq!(after.tape_frame, before.tape_frame + 1);
+        assert_eq!(after.state_identity, step.post_simulation.state_identity);
     }
 
     #[test]
