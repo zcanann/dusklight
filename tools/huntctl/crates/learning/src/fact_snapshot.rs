@@ -251,6 +251,84 @@ pub struct ConditionFactSnapshot {
 }
 
 impl FactSnapshot {
+    /// Reconstitutes the bounded observation view used by native-generic
+    /// tactics. This keeps the selected tactic's first decision on the exact
+    /// learner-visible state instead of spending an unselected probe input.
+    pub fn to_native_tactic_observation(
+        &self,
+    ) -> Result<NativeTacticObservation, FactSnapshotError> {
+        self.validate()?;
+        let boundary_offset = u64::from(self.phase == FactPhase::PostSimulation);
+        let simulation_tick = self
+            .simulation_tick
+            .checked_add(boundary_offset)
+            .ok_or(FactSnapshotError::InvalidSnapshot)?;
+        let tape_frame = self
+            .tape_frame
+            .checked_add(boundary_offset)
+            .ok_or(FactSnapshotError::InvalidSnapshot)?;
+        let current_angle = self
+            .player
+            .current_angle
+            .ok_or(FactSnapshotError::IncompleteSource)?;
+        let player_procedure = self
+            .player
+            .procedure
+            .ok_or(FactSnapshotError::IncompleteSource)?;
+        let player_mode_flags = self
+            .player
+            .mode_flags
+            .ok_or(FactSnapshotError::IncompleteSource)?;
+        let player_contacts = self
+            .player
+            .contacts
+            .ok_or(FactSnapshotError::IncompleteSource)?;
+        let actors = self
+            .actors
+            .iter()
+            .map(|actor| {
+                Ok(crate::native_generic_tactic::NativeTacticActor {
+                    selector: actor
+                        .portable_selector
+                        .clone()
+                        .ok_or(FactSnapshotError::IncompleteSource)?,
+                    runtime_generation: actor.runtime_generation,
+                    current_room: actor.current_room,
+                    position_f32_bits: actor.position_f32_bits,
+                })
+            })
+            .collect::<Result<Vec<_>, FactSnapshotError>>()?;
+        let observation = NativeTacticObservation {
+            boundary_index: self.boundary_index,
+            simulation_tick,
+            tape_frame,
+            state_identity: self.state_identity,
+            stage: self.world.stage.clone(),
+            room: self.world.room,
+            player_position_f32_bits: self.player.position_f32_bits,
+            player_yaw: current_angle[1],
+            player_procedure,
+            player_mode_flags,
+            player_contacts,
+            camera_yaw_radians_f32_bits: self.player.camera_yaw_radians_f32_bits,
+            action_lanes: self
+                .player
+                .action_lanes
+                .iter()
+                .map(|lane| NativeTacticActionLane {
+                    resource_id: lane.resource_id,
+                    frame_f32_bits: lane.frame_f32_bits,
+                })
+                .collect(),
+            actor_set_complete: self.actors_complete,
+            actors,
+        };
+        observation
+            .validate()
+            .map_err(|error| FactSnapshotError::InvalidSource(error.to_string()))?;
+        Ok(observation)
+    }
+
     pub fn from_native_learning(
         observation: &NativeLearningObservation,
         prior: &[NativeLearningObservation],
@@ -813,6 +891,11 @@ mod tests {
             snapshot.canonical_bytes().unwrap(),
             snapshot.canonical_bytes().unwrap()
         );
+        let tactic = snapshot.to_native_tactic_observation().unwrap();
+        assert_eq!(tactic.boundary_index, snapshot.boundary_index);
+        assert_eq!(tactic.simulation_tick, snapshot.simulation_tick + 1);
+        assert_eq!(tactic.tape_frame, snapshot.tape_frame + 1);
+        assert_eq!(tactic.state_identity, snapshot.state_identity);
     }
 
     #[test]
