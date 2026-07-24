@@ -24,9 +24,12 @@ The canvas and inspector conventions are specified in
 [`VISUAL_GRAMMAR.md`](VISUAL_GRAMMAR.md); they are planner-owned presentation
 rules and do not add reachability semantics.
 
-The full Cargo suite includes a real headless-Brave acceptance test on macOS.
-Run it alone from this directory with `cargo test --test browser_acceptance`;
-the test uses an isolated temporary browser profile and project store.
+The full Cargo suite includes a real headless-Chromium acceptance test on
+Windows and macOS. Run it alone from this directory with
+`cargo test --test browser_acceptance`; the test discovers Chrome, Edge, or
+Brave and uses an isolated temporary browser profile and project store. The
+dedicated CI jobs set `ROUTE_PLANNER_REQUIRE_BROWSER=1`, so a missing configured
+browser fails instead of silently passing.
 
 Open `http://127.0.0.1:32170` in Brave. By default, editable projects are kept
 under `tools/route-planner/projects`; use `--projects DIR` to select another

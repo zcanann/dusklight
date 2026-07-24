@@ -5,14 +5,15 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 
 const plannerBinary = process.env.ROUTE_PLANNER_BINARY;
-const braveBinary = process.env.ROUTE_PLANNER_BRAVE;
-if (!plannerBinary || !braveBinary) throw new Error("browser test binaries were not supplied");
+const browserBinary = process.env.ROUTE_PLANNER_BROWSER;
+if (!plannerBinary || !browserBinary) throw new Error("browser test binaries were not supplied");
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "dusklight-route-browser-"));
 const projectsRoot = join(temporaryRoot, "projects");
-const braveRoot = join(temporaryRoot, "brave");
+const browserRoot = join(temporaryRoot, "browser");
 let planner;
-let brave;
+let browser;
+const browserProcessGroup = process.platform !== "win32";
 
 const delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 const stopChild = async (child, processGroup = false) => {
@@ -68,17 +69,18 @@ try {
   const plannerUrl = `http://127.0.0.1:${plannerPort}`;
   await until("planner health", async () => (await fetch(`${plannerUrl}/api/health`)).ok);
 
-  brave = spawn(braveBinary, [
+  browser = spawn(browserBinary, [
     "--headless=new",
     "--disable-gpu",
+    "--disable-dev-shm-usage",
     "--no-first-run",
     "--no-default-browser-check",
     "--remote-debugging-port=0",
-    `--user-data-dir=${braveRoot}`,
+    `--user-data-dir=${browserRoot}`,
     "about:blank",
-  ], { stdio: ["ignore", "pipe", "pipe"], detached: true });
-  const devtools = await until("Brave DevTools port", async () => {
-    const text = await readFile(join(braveRoot, "DevToolsActivePort"), "utf8");
+  ], { stdio: ["ignore", "pipe", "pipe"], detached: browserProcessGroup });
+  const devtools = await until("browser DevTools port", async () => {
+    const text = await readFile(join(browserRoot, "DevToolsActivePort"), "utf8");
     const [port] = text.trim().split(/\s+/);
     return Number(port) || null;
   });
@@ -469,6 +471,6 @@ try {
   );
   socket.close();
 } finally {
-  await Promise.all([stopChild(brave, true), stopChild(planner)]);
+  await Promise.all([stopChild(browser, browserProcessGroup), stopChild(planner)]);
   await rm(temporaryRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }

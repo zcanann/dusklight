@@ -30,6 +30,32 @@ jobs:
       - name: Verify observer and fidelity-model isolation
         run: python3 tests/automation_boundary_test.py
 
+  route-planner-browser:
+    name: Route planner browser (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    env:
+      RUSTC_WRAPPER: ""
+      ROUTE_PLANNER_BROWSER: ${{ matrix.browser }}
+      ROUTE_PLANNER_REQUIRE_BROWSER: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows Chrome
+            runner: windows-latest
+            browser: C:\Program Files\Google\Chrome\Application\chrome.exe
+          - name: macOS Chrome
+            runner: macos-latest
+            browser: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Run required browser acceptance
+        run: cargo test --manifest-path tools/route-planner/Cargo.toml --test browser_acceptance -- --nocapture
+
   build-linux:
     name: Build Linux (${{matrix.name}})
     runs-on: ${{matrix.runner}}

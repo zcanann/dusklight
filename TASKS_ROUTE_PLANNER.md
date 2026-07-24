@@ -360,9 +360,6 @@ closes a documented unknown.
 
 ## 12. Acceptance and regression strategy
 
-- [ ] Replace optional, silently skipped browser coverage with explicit platform
-      jobs for Windows and macOS. A missing configured browser must fail the
-      browser job, not count as a pass.
 - [ ] Add an end-to-end test that starts from New Workspace and authors the first
       meaningful vertical-slice route through visible UI operations.
 - [ ] Add CRUD tests for every mutable asset type, including rename/move reference
