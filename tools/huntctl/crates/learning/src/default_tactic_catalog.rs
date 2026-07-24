@@ -11,6 +11,7 @@ use std::f32::consts::TAU;
 
 pub const DEFAULT_ROUTE_TACTIC_COUNT: usize = 128;
 pub const MAX_GOAL_SEEK_TARGETS: usize = 64;
+const INTERMEDIATE_GOAL_SEEK_TOLERANCE: f32 = 96.0;
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -172,22 +173,33 @@ pub fn goal_conditioned_route_tactic_catalog(
                 "goal seek target is non-finite".into(),
             ));
         }
+        let mut plan = NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinate {
+                coordinate_f32_bits: coordinate.map(f32::to_bits),
+                // The first target is the exact terminal trigger and must keep
+                // seeking until native terminal evidence stops it. A derived
+                // corridor waypoint emits neutral PAD once it is reached, so
+                // the fixed native batch cannot orbit the waypoint.
+                tolerance_f32_bits: if index == 0 {
+                    0.0_f32
+                } else {
+                    INTERMEDIATE_GOAL_SEEK_TOLERANCE
+                }
+                .to_bits(),
+                magnitude: 127,
+            },
+            maximum_ticks,
+        );
+        if index > 0 {
+            // Native suffix requests have a fixed auditable duration. Delay
+            // semantic termination until that boundary while `SeekCoordinate`
+            // holds neutral inside the tolerance radius.
+            plan.minimum_ticks = maximum_ticks;
+        }
         push(
             &mut entries,
             format!("goal.seek.coordinate.{index:02}"),
-            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
-                GenericTactic::SeekCoordinate {
-                    coordinate_f32_bits: coordinate.map(f32::to_bits),
-                    // Goal-conditioned corridor actions retain a fixed native
-                    // batch duration. A zero radius makes reaching an
-                    // intermediate point emit neutral PAD without ending the
-                    // auditable batch early; the binary terminal may still
-                    // stop the batch at any tick.
-                    tolerance_f32_bits: 0.0_f32.to_bits(),
-                    magnitude: 127,
-                },
-                maximum_ticks,
-            )),
+            TacticAssetSource::NativeGenericTactic(plan),
         )?;
     }
     TacticAssetCatalog::new(entries)
@@ -257,20 +269,38 @@ mod tests {
 
     #[test]
     fn goal_conditioned_catalog_exposes_derived_seek_targets_as_ordinary_actions() {
-        let target = [-1842.0, 717.0, -4739.0];
-        let catalog = goal_conditioned_route_tactic_catalog(&[target], 160).unwrap();
-        assert_eq!(catalog.entries().len(), DEFAULT_ROUTE_TACTIC_COUNT + 1);
-        let entry = catalog.entry("goal.seek.coordinate.00").unwrap();
-        assert_eq!(entry.description().duration.maximum_ticks, 160);
+        let goal = [-1842.0, 717.0, -4739.0];
+        let waypoint = [-900.0, 750.0, -3600.0];
+        let catalog = goal_conditioned_route_tactic_catalog(&[goal, waypoint], 160).unwrap();
+        assert_eq!(catalog.entries().len(), DEFAULT_ROUTE_TACTIC_COUNT + 2);
+        let goal_entry = catalog.entry("goal.seek.coordinate.00").unwrap();
+        assert_eq!(goal_entry.description().duration.maximum_ticks, 160);
         assert!(matches!(
-            entry.source(),
+            goal_entry.source(),
             TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan {
                 tactic: GenericTactic::SeekCoordinate {
                     coordinate_f32_bits,
+                    tolerance_f32_bits,
                     ..
                 },
                 ..
-            }) if coordinate_f32_bits.map(f32::from_bits) == target
+            }) if coordinate_f32_bits.map(f32::from_bits) == goal
+                && f32::from_bits(*tolerance_f32_bits) == 0.0
+        ));
+        assert!(matches!(
+            catalog.entry("goal.seek.coordinate.01").unwrap().source(),
+            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan {
+                tactic: GenericTactic::SeekCoordinate {
+                    coordinate_f32_bits,
+                    tolerance_f32_bits,
+                    ..
+                },
+                minimum_ticks,
+                maximum_ticks,
+                ..
+            }) if coordinate_f32_bits.map(f32::from_bits) == waypoint
+                && f32::from_bits(*tolerance_f32_bits) == INTERMEDIATE_GOAL_SEEK_TOLERANCE
+                && minimum_ticks == maximum_ticks
         ));
     }
 
