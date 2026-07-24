@@ -195,8 +195,6 @@ Work in this order.
 
 ### 3. Wire the existing Q and tactic executors into a campaign
 
-- [ ] Add epsilon-greedy or uncertainty-aware exploration around the existing
-  greedy ranking without creating a second value implementation.
 - [ ] Execute the selected tactic or composite against a persistent native
   checkpoint worker and observe its real stopping condition and next state.
 - [ ] Refit the existing option-value model from accumulated replay and repeat:

@@ -81,6 +81,7 @@ pub mod tactic_asset;
 #[cfg(test)]
 mod tactic_adapter_conformance;
 pub mod tactic_blueprint;
+pub mod tactic_exploration;
 pub mod trainable_set_encoder;
 pub mod training_guard;
 pub mod transfer_learning;
