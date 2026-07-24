@@ -85,15 +85,19 @@ pub fn choose_tactic(
         0,
     );
     let exploration_draw = (draw % u64::from(EPSILON_SCALE)) as u32;
-    let (descriptor, reason) = if ranking.values.ranked.is_empty() {
+    let bootstrap_unsupported = ranking.values.ranked.is_empty()
+        || (ranking.values.ranked[0].mean_q <= 0.0
+            && !ranking.values.unsupported.is_empty()
+            && exploration_draw >= config.epsilon_per_million);
+    let (descriptor, reason) = if bootstrap_unsupported {
         let index = deterministic_index(
             config.seed,
             decision_index,
             ranking.learner_snapshot_sha256,
-            available.len(),
+            ranking.values.unsupported.len(),
         );
         (
-            available[index].clone(),
+            ranking.values.unsupported[index].clone(),
             TacticSelectionReason::UnsupportedBootstrap,
         )
     } else if exploration_draw < config.epsilon_per_million {
@@ -251,6 +255,37 @@ mod tests {
         };
         let selected = choose_tactic(&ranking, 0, TacticExplorationConfig::default()).unwrap();
         assert_eq!(selected.descriptor, wait);
+        assert_eq!(selected.reason, TacticSelectionReason::UnsupportedBootstrap);
+    }
+
+    #[test]
+    fn nonpositive_known_values_bootstrap_an_unsupported_tactic() {
+        let wait = descriptor("wait", OptionType::Neutral);
+        let move_forward = descriptor("move", OptionType::Move);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([1; 32]),
+            action_universe_sha256: Digest([2; 32]),
+            choices: vec![choice(move_forward.clone()), choice(wait.clone())],
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: wait,
+                    mean_q: -0.01,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: vec![move_forward.clone()],
+            },
+        };
+        let selected = choose_tactic(
+            &ranking,
+            0,
+            TacticExplorationConfig {
+                seed: 7,
+                epsilon_per_million: 0,
+            },
+        )
+        .unwrap();
+        assert_eq!(selected.descriptor, move_forward);
         assert_eq!(selected.reason, TacticSelectionReason::UnsupportedBootstrap);
     }
 }

@@ -36,6 +36,8 @@ use std::path::Path;
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V1: &str = "dusklight-native-tactic-route-report/v1";
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
+const ROUTE_TACTIC_TICK_COST: f32 = 0.001;
+const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
 
 #[derive(Clone, Debug)]
 pub struct NativeTacticRouteRunConfig<'a> {
@@ -270,14 +272,7 @@ fn run_seed(
         },
     )
     .map_err(route_error)?;
-    let reward_spec = TacticRewardSpec {
-        schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
-        terminal_reward: 100.0,
-        tick_cost: 0.01,
-        novelty_reward: 0.05,
-        per_tick_discount: 0.995,
-        potential: None,
-    };
+    let reward_spec = route_tactic_reward_spec();
     let mut trace = Vec::new();
     let mut selection_counts = BTreeMap::<String, u64>::new();
     let mut native_ticks = 0_u64;
@@ -448,6 +443,17 @@ fn initial_probe_batch(
     tactic_root_probe_batch(config.optimization, config.execution)
 }
 
+fn route_tactic_reward_spec() -> TacticRewardSpec {
+    TacticRewardSpec {
+        schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
+        terminal_reward: 100.0,
+        tick_cost: ROUTE_TACTIC_TICK_COST,
+        novelty_reward: ROUTE_TACTIC_NOVELTY_REWARD,
+        per_tick_discount: 0.995,
+        potential: None,
+    }
+}
+
 pub(crate) fn tactic_root_probe_batch(
     optimization: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
@@ -580,6 +586,25 @@ impl From<TacticQCampaignError> for NativeTacticRouteRunError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semantic_frontier_progress_outweighs_one_bounded_tactic() {
+        let catalog = default_route_tactic_catalog().unwrap();
+        let maximum_ticks = catalog
+            .entries()
+            .iter()
+            .map(|entry| entry.description().duration.maximum_ticks)
+            .max()
+            .unwrap();
+        let reward = route_tactic_reward_spec();
+
+        assert!(reward.tick_cost > 0.0);
+        assert!(
+            reward.novelty_reward > reward.tick_cost * maximum_ticks as f32,
+            "a new semantic frontier cell must beat the cost of the longest tactic"
+        );
+        assert!(reward.terminal_reward > reward.novelty_reward);
+    }
 
     #[test]
     fn root_probe_uses_the_full_declared_horizon() {
