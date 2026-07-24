@@ -52,6 +52,15 @@ pub fn choose_tactic(
     decision_index: u64,
     config: TacticExplorationConfig,
 ) -> Result<SelectedTactic, TacticExplorationError> {
+    choose_tactic_with_state_untried(ranking, decision_index, config, &[])
+}
+
+pub fn choose_tactic_with_state_untried(
+    ranking: &LiveTacticRanking,
+    decision_index: u64,
+    config: TacticExplorationConfig,
+    state_untried: &[OptionActionDescriptor],
+) -> Result<SelectedTactic, TacticExplorationError> {
     if config.epsilon_per_million > EPSILON_SCALE
         || ranking.learner_snapshot_sha256 == Digest::ZERO
         || ranking.choices.is_empty()
@@ -75,6 +84,9 @@ pub fn choose_tactic(
         || available
             .iter()
             .any(|descriptor| reported.iter().filter(|value| *value == descriptor).count() != 1)
+        || state_untried.iter().enumerate().any(|(index, descriptor)| {
+            !available.contains(&descriptor) || state_untried[..index].contains(descriptor)
+        })
     {
         return Err(TacticExplorationError::DetachedRanking);
     }
@@ -99,14 +111,17 @@ pub fn choose_tactic(
         )
     } else if exploration_draw < config.epsilon_per_million {
         // Finite tactic catalogs should spend exploratory decisions on choices
-        // for which the learner has no transition evidence before resampling a
-        // known action. Prefer typed spatial targets, long full-strength heading
-        // probes, and bounded curves while any remain untried. The first exploit
-        // the goal-relative corridor; the others make lateral detours around
-        // contact geometry discoverable without prioritizing every short
-        // control variant. This is still epsilon-greedy—the greedy branch is
-        // unchanged.
-        let exploratory = if ranking.values.unsupported.is_empty() {
+        // not yet tried in the current coarse state cell before resampling a
+        // locally known action. If the caller has no state-local history, fall
+        // back to globally unsupported choices and then the full live catalog.
+        // Prefer typed spatial targets, long full-strength heading probes, and
+        // bounded curves. The first exploit the goal-relative corridor; the
+        // others make lateral detours around contact geometry discoverable
+        // without prioritizing every short control variant. This is still
+        // epsilon-greedy—the greedy branch is unchanged.
+        let exploratory = if !state_untried.is_empty() {
+            prioritized_unsupported(state_untried)
+        } else if ranking.values.unsupported.is_empty() {
             available
         } else {
             prioritized_unsupported(&ranking.values.unsupported)
@@ -468,5 +483,48 @@ mod tests {
                 "spatial".into(),
             ])
         );
+    }
+
+    #[test]
+    fn epsilon_exploration_covers_actions_untried_in_the_current_state_cell() {
+        let globally_best = descriptor("globally-best", OptionType::Move);
+        let locally_untried = descriptor("locally-untried", OptionType::Bezier);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([7; 32]),
+            action_universe_sha256: Digest([8; 32]),
+            choices: vec![
+                choice(globally_best.clone()),
+                choice(locally_untried.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![
+                    RankedOption {
+                        action_id: 0,
+                        descriptor: globally_best,
+                        mean_q: 5.0,
+                        ensemble_variance: 0.0,
+                    },
+                    RankedOption {
+                        action_id: 1,
+                        descriptor: locally_untried.clone(),
+                        mean_q: 1.0,
+                        ensemble_variance: 0.0,
+                    },
+                ],
+                unsupported: Vec::new(),
+            },
+        };
+        let selected = choose_tactic_with_state_untried(
+            &ranking,
+            0,
+            TacticExplorationConfig {
+                seed: 11,
+                epsilon_per_million: EPSILON_SCALE,
+            },
+            std::slice::from_ref(&locally_untried),
+        )
+        .unwrap();
+        assert_eq!(selected.descriptor, locally_untried);
+        assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
     }
 }

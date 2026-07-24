@@ -26,7 +26,8 @@ use dusklight_learning::reward_shaping::{ShapingError, TacticRewardBreakdown, Ta
 use dusklight_learning::tactic_asset::{TacticAssetCatalog, TacticAssetDescription};
 use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
-    SelectedTactic, TacticExplorationConfig, TacticExplorationError, choose_tactic,
+    SelectedTactic, TacticExplorationConfig, TacticExplorationError,
+    choose_tactic_with_state_untried,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -726,7 +727,24 @@ impl TacticQCampaign {
                 },
             }
         };
-        let selected = choose_tactic(&ranking, self.decision_index, self.exploration)?;
+        let current_cell = tactic_state_descriptor(&self.current.snapshot, false);
+        let tried_here = self
+            .replay
+            .iter()
+            .filter(|transition| tactic_state_descriptor(&transition.before, false) == current_cell)
+            .map(|transition| transition.value_sample.action.option_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let state_untried = live
+            .descriptors()
+            .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        let selected = choose_tactic_with_state_untried(
+            &ranking,
+            self.decision_index,
+            self.exploration,
+            &state_untried,
+        )?;
         Ok(TacticQDecision { ranking, selected })
     }
 
