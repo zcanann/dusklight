@@ -63,7 +63,7 @@ Route speed does not matter for this first proof.
 | Common executable tactic catalog | Working: existing game tactics, native generic tactics, motion paths, and DUSKCTRL programs share one finite, unique runtime catalog with validated identity, typed descriptors, applicability, executor, stopping, duration, queried-observation, and exact static `OptionExecution`/tape contracts; catalog identity binds the ordered action schema and observation-driven entries retain their existing native/reactive executors without a new action encoding |
 | Replay corpora, critics, policies, and checkpoint archives | Working as separate components |
 | Exact realized tape and cold-replay proof | Working |
-| Blueprint composition asset model | Missing |
+| Blueprint composition asset model | Working: canonical bounded assets reference executable catalog entries through `Invoke`, `Sequence`, `Layer`, `Conditional`, `Until`, and `Fallback`; loop, depth, fan-out, node-count, condition, and catalog-reference validation fail closed |
 | Live online option-Q campaign | Missing; the existing tactic selectors are called by tests, not by a campaign |
 | Automatic checkpoint branching driven by learned tactic value | Missing |
 | Blueprint-like user-authored tactic assets | Missing |
@@ -191,8 +191,6 @@ Work in this order.
 
 ### 1. Unify the existing action systems
 
-- [ ] Define blueprint composition nodes for `Invoke`, `Sequence`, `Layer`,
-  `Conditional`, `Until`, and `Fallback`.
 - [ ] Compile `Sequence` through ordered option execution and `Layer` through the
   existing deterministic controller ownership/composition rules.
 - [ ] Reject ambiguous concurrent writers, unbounded control flow, unavailable
