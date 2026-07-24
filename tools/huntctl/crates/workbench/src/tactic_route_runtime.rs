@@ -2,7 +2,8 @@
 
 use super::*;
 use dusklight_orchestration::native_tactic_route_runner::{
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4, NativeTacticRouteRunConfig, run_native_tactic_route,
+    NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
+    NativeTacticRouteRunConfig, run_native_tactic_route,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use serde_json::Value;
@@ -15,6 +16,8 @@ const TACTIC_ROUTE_START_SCHEMA: &str = "dusklight.route-workbench.tactic-route-
 const TACTIC_ROUTE_LIFECYCLE_SCHEMA: &str = "dusklight.route-workbench.tactic-route-lifecycle.v1";
 const TACTIC_ROUTE_CANCEL_MARKER_SCHEMA: &str =
     "dusklight.route-workbench.tactic-route-cancelled.v1";
+const TACTIC_ROUTE_DECISION_DETAIL_SCHEMA: &str =
+    "dusklight.route-workbench.tactic-route-decision-detail.v1";
 const TACTIC_ROUTE_DECISIONS_PER_SEED: u64 = 256;
 const TACTIC_ROUTE_BRANCH_EVERY_DECISIONS: u64 = 8;
 const TACTIC_ROUTE_REFIT_EVERY_DECISIONS: u64 = 32;
@@ -42,6 +45,15 @@ pub(super) struct BrowserTacticRouteReplayRequest {
     pub speed_percent: u16,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct BrowserTacticRouteDecisionDetailRequest {
+    pub campaign: String,
+    pub request_sha256: String,
+    pub seed: u64,
+    pub decision_index: u64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(super) struct TacticRouteStartResponse {
     pub schema: &'static str,
@@ -57,6 +69,30 @@ pub(super) struct TacticRouteLifecycleResponse {
     pub campaign: String,
     pub optimization_request_sha256: String,
     pub status: &'static str,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct TacticRouteDecisionDetailResponse {
+    pub schema: &'static str,
+    pub campaign: String,
+    pub optimization_request_sha256: String,
+    pub seed: u64,
+    pub decision: GraphTacticDecisionTrace,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredTacticDecisionSummary {
+    schema: String,
+    decision_index: u64,
+    episode: u64,
+    selected_option_id: String,
+    selection_reason: String,
+    reward: f32,
+    duration_ticks: u32,
+    goal_distance_before: f32,
+    goal_distance_after: f32,
+    terminal: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -494,6 +530,79 @@ fn request_tactic_route_cancel(
     }
 }
 
+pub(super) fn tactic_route_decision_detail(
+    config: &WorkbenchConfig,
+    browser: &BrowserTacticRouteDecisionDetailRequest,
+) -> Result<TacticRouteDecisionDetailResponse, WorkbenchError> {
+    let (root, optimization) = checked_optimization_request(
+        config,
+        &BrowserOptimizationLifecycleRequest {
+            campaign: browser.campaign.clone(),
+            request_sha256: browser.request_sha256.clone(),
+        },
+    )?;
+    let request_sha256 = optimization.content_sha256.to_string();
+    let seed_index = optimization
+        .execution
+        .deterministic_seeds
+        .iter()
+        .position(|seed| *seed == browser.seed)
+        .ok_or_else(|| WorkbenchError::new("route-learning seed is not part of this campaign"))?;
+    if browser.decision_index >= TACTIC_ROUTE_DECISIONS_PER_SEED {
+        return Err(WorkbenchError::new(
+            "route-learning decision is outside the campaign budget",
+        ));
+    }
+    let output = tactic_route_output_root(&root, &optimization)?;
+    let decision = load_tactic_route_decision_trace(
+        &output,
+        seed_index,
+        browser.seed,
+        browser.decision_index,
+    )?;
+    Ok(TacticRouteDecisionDetailResponse {
+        schema: TACTIC_ROUTE_DECISION_DETAIL_SCHEMA,
+        campaign: optimization.id,
+        optimization_request_sha256: request_sha256,
+        seed: browser.seed,
+        decision,
+    })
+}
+
+fn load_tactic_route_decision_trace(
+    output: &Path,
+    seed_index: usize,
+    seed: u64,
+    decision_index: u64,
+) -> Result<GraphTacticDecisionTrace, WorkbenchError> {
+    let path = output
+        .join(format!("seed-{seed_index:03}-{seed}"))
+        .join("decision-trace")
+        .join(format!("decision-{decision_index:06}.json"));
+    let metadata = fs::symlink_metadata(&path).map_err(tactic_route_error)?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(WorkbenchError::new(
+            "route-learning decision trace is absent or not a physical file",
+        ));
+    }
+    let canonical_path = path.canonicalize().map_err(tactic_route_error)?;
+    let canonical_output = output.canonicalize().map_err(tactic_route_error)?;
+    if !canonical_path.starts_with(&canonical_output) {
+        return Err(WorkbenchError::new(
+            "route-learning decision trace escapes its campaign",
+        ));
+    }
+    let decision: GraphTacticDecisionTrace = bounded_json(&canonical_path).ok_or_else(|| {
+        WorkbenchError::new("route-learning decision trace is invalid or oversized")
+    })?;
+    if decision.decision_index != decision_index {
+        return Err(WorkbenchError::new(
+            "route-learning decision trace has a detached index",
+        ));
+    }
+    Ok(decision)
+}
+
 pub(super) fn replay_tactic_route_edge(
     config: &WorkbenchConfig,
     browser: &BrowserTacticRouteReplayRequest,
@@ -752,11 +861,11 @@ fn project_completed_seed_results(
     }
 }
 
-fn project_latest_decision(output: &Path, seeds: &[u64]) -> Option<GraphTacticDecisionTrace> {
+fn project_latest_decision(output: &Path, seeds: &[u64]) -> Option<GraphTacticDecisionSummary> {
     for (index, seed) in seeds.iter().enumerate().rev() {
         let directory = output
             .join(format!("seed-{index:03}-{seed}"))
-            .join("decision-trace");
+            .join("decision-summary");
         let Ok(entries) = fs::read_dir(directory) else {
             continue;
         };
@@ -772,8 +881,28 @@ fn project_latest_decision(output: &Path, seeds: &[u64]) -> Option<GraphTacticDe
         else {
             continue;
         };
-        if let Some(trace) = bounded_json(&latest) {
-            return Some(trace);
+        let expected_index = latest
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .and_then(|name| name.strip_prefix("decision-"))
+            .and_then(|index| index.parse::<u64>().ok());
+        if let Some(summary) = bounded_json::<StoredTacticDecisionSummary>(&latest)
+            && summary.schema == NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1
+            && Some(summary.decision_index) == expected_index
+        {
+            return Some(GraphTacticDecisionSummary {
+                seed_index: index,
+                seed: *seed,
+                decision_index: summary.decision_index,
+                episode: summary.episode,
+                selected_option_id: summary.selected_option_id,
+                selection_reason: summary.selection_reason,
+                reward: summary.reward,
+                duration_ticks: summary.duration_ticks,
+                goal_distance_before: summary.goal_distance_before,
+                goal_distance_after: summary.goal_distance_after,
+                terminal: summary.terminal,
+            });
         }
     }
     None
@@ -933,6 +1062,25 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+        let summary_root = output.join("seed-003-181081/decision-summary");
+        fs::create_dir_all(&summary_root).unwrap();
+        fs::write(
+            summary_root.join("decision-000069.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1,
+                "decision_index": 69,
+                "episode": 18,
+                "selected_option_id": "goal.seek.coordinate.17",
+                "selection_reason": "epsilon",
+                "reward": 96.0,
+                "duration_ticks": 32,
+                "goal_distance_before": 10.0,
+                "goal_distance_after": 0.0,
+                "terminal": true
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         let graph_root = output.join("seed-003-181081/knowledge-graph");
         fs::create_dir_all(&graph_root).unwrap();
         fs::write(
@@ -1045,6 +1193,10 @@ mod tests {
                 .len(),
             538
         );
+        let detail = load_tactic_route_decision_trace(&output, 3, 181081, 69).unwrap();
+        assert_eq!(detail.selected_option_id, "goal.seek.coordinate.17");
+        assert_eq!(detail.measurements.len(), 1);
+        assert_eq!(detail.applicable_tactics.len(), 1);
         let expected_report = format!("{relative}/tactic-route/report.json");
         assert_eq!(projection.report.as_deref(), Some(expected_report.as_str()));
         fs::remove_dir_all(root.join(relative)).unwrap();

@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v21";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v22";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -221,7 +221,7 @@ pub struct GraphTacticRouteLearning {
     pub total_decisions: u64,
     pub total_native_ticks: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub latest_decision: Option<GraphTacticDecisionTrace>,
+    pub latest_decision: Option<GraphTacticDecisionSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub learned_graph: Option<GraphTacticKnowledgeGraph>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -232,6 +232,21 @@ pub struct GraphTacticRouteLearning {
     pub blocker: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticDecisionSummary {
+    pub seed_index: usize,
+    pub seed: u64,
+    pub decision_index: u64,
+    pub episode: u64,
+    pub selected_option_id: String,
+    pub selection_reason: String,
+    pub reward: f32,
+    pub duration_ticks: u32,
+    pub goal_distance_before: f32,
+    pub goal_distance_after: f32,
+    pub terminal: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -250,6 +250,23 @@ pub(super) fn handle_http(
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
                 }
+                ("POST", "/api/tactic-route/decision-detail") => {
+                    let result = serde_json::from_slice::<BrowserTacticRouteDecisionDetailRequest>(
+                        &request.body,
+                    )
+                    .map_err(|error| {
+                        WorkbenchError::new(format!(
+                            "invalid tactic-route decision detail request: {error}"
+                        ))
+                    })
+                    .and_then(|detail| tactic_route_decision_detail(config, &detail));
+                    match result {
+                        Ok(response) => json_response(&response).unwrap_or_else(|error| {
+                            json_error(500, "Internal Server Error", &error.to_string())
+                        }),
+                        Err(error) => json_error(400, "Bad Request", &error.to_string()),
+                    }
+                }
                 ("POST", "/api/optimization/cancel") => {
                     let result = serde_json::from_slice::<BrowserOptimizationLifecycleRequest>(
                         &request.body,

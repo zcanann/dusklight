@@ -529,7 +529,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v21");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v22");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1323,6 +1323,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/tactic-route/pause",
         "/api/tactic-route/cancel",
         "/api/tactic-route/resume",
+        "/api/tactic-route/decision-detail",
         "/api/tactic-route/replay",
         "cancelOptimization(button)",
         "cleanupOptimization(button)",
@@ -1330,17 +1331,20 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "pauseTacticRoute(button)",
         "cancelTacticRoute(button)",
         "resumeTacticRoute(button)",
+        "inspectTacticDecision(button)",
         "replayTacticEdge(button)",
         "data-start-tactic-route",
         "data-pause-tactic-route",
         "data-cancel-tactic-route",
         "data-resume-tactic-route",
+        "data-inspect-tactic-decision",
         "data-replay-tactic-edge",
         "Learn route",
         "Route learning",
         "Tactic decisions",
         "Safe defaults",
         "Latest tactic decision",
+        "Inspect decision trace",
         "Facts and resulting state",
         "Changed measurements",
         "Reward components",
@@ -2448,6 +2452,15 @@ fn optimization_start_api_requires_explicit_world_context() {
     );
     assert_eq!(smuggled_resume.status, 400);
     assert!(String::from_utf8_lossy(&smuggled_resume.body).contains("unknown field"));
+
+    let smuggled_detail = call_http(
+        &config,
+        "POST",
+        "/api/tactic-route/decision-detail",
+        br#"{"campaign":"ordon-q125-residual-cem-v3","request_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","seed":104729,"decision_index":0,"game":"forged"}"#,
+    );
+    assert_eq!(smuggled_detail.status, 400);
+    assert!(String::from_utf8_lossy(&smuggled_detail.body).contains("unknown field"));
     fs::remove_dir_all(repository).unwrap();
 }
 

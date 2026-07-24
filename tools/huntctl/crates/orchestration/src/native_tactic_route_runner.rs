@@ -44,6 +44,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
+pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
+    "dusklight-native-tactic-decision-summary/v1";
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
@@ -166,6 +168,21 @@ pub struct NativeTacticValueTrace {
     pub mean_q: Option<f64>,
     pub ensemble_variance: Option<f64>,
     pub selected: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeTacticDecisionSummary<'a> {
+    schema: &'static str,
+    decision_index: u64,
+    episode: u64,
+    selected_option_id: &'a str,
+    selection_reason: TacticSelectionReason,
+    reward: f32,
+    duration_ticks: u32,
+    goal_distance_before: f32,
+    goal_distance_after: f32,
+    terminal: bool,
 }
 
 pub fn run_native_tactic_route(
@@ -622,6 +639,24 @@ fn run_seed(
         write_new(
             &decision_trace_root.join(format!("decision-{decision_index:06}.json")),
             &serde_json::to_vec_pretty(&decision_trace).map_err(route_error)?,
+        )?;
+        write_new(
+            &seed_root
+                .join("decision-summary")
+                .join(format!("decision-{decision_index:06}.json")),
+            &serde_json::to_vec_pretty(&NativeTacticDecisionSummary {
+                schema: NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1,
+                decision_index,
+                episode,
+                selected_option_id: &decision_trace.selected_option_id,
+                selection_reason: decision_trace.selection_reason,
+                reward: decision_trace.reward,
+                duration_ticks: decision_trace.reward_components.duration_ticks,
+                goal_distance_before: decision_trace.goal_distance_before,
+                goal_distance_after: decision_trace.goal_distance_after,
+                terminal: decision_trace.terminal,
+            })
+            .map_err(route_error)?,
         )?;
         write_new(
             &seed_root
