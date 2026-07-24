@@ -38,7 +38,7 @@ use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V2: &str = "dusklight-native-tactic-route-report/v2";
 const MAX_ROUTE_SEEDS: usize = 32;
@@ -302,6 +302,8 @@ fn run_seed(
         .max()
         .ok_or_else(|| route_message("tactic catalog is empty"))?;
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
+    let checkpoint_root = seed_root.join("checkpoints");
+    let mut rolling_checkpoint = None;
 
     while campaign.decision_index < config.decisions_per_seed
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -453,9 +455,10 @@ fn run_seed(
             frontier_cells: diagnostics.frontier_cells,
             visited_states: campaign.visited_state_count(),
         });
-        campaign
-            .write_checkpoint(&seed_root.join("checkpoints"))
+        let checkpoint = campaign
+            .write_checkpoint(&checkpoint_root)
             .map_err(route_error)?;
+        advance_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint, checkpoint)?;
         if step.step.transition.value_sample.terminal {
             break;
         }
@@ -465,6 +468,7 @@ fn run_seed(
     let final_checkpoint = campaign
         .write_checkpoint(&seed_root.join("final-checkpoint"))
         .map_err(route_error)?;
+    remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
     let graph_path = seed_root.join("graph.json");
     write_new(
         &graph_path,
@@ -502,6 +506,44 @@ fn run_seed(
         final_result,
         trace,
     })
+}
+
+fn advance_rolling_checkpoint(
+    directory: &Path,
+    current: &mut Option<PathBuf>,
+    next: PathBuf,
+) -> Result<(), NativeTacticRouteRunError> {
+    if next.parent() != Some(directory) || !next.is_file() {
+        return Err(route_message(
+            "rolling tactic checkpoint is outside its checkpoint directory",
+        ));
+    }
+    if let Some(previous) = current.replace(next.clone()) {
+        if previous != next {
+            if previous.parent() != Some(directory) {
+                return Err(route_message(
+                    "previous rolling tactic checkpoint is outside its checkpoint directory",
+                ));
+            }
+            fs::remove_file(previous).map_err(route_error)?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_rolling_checkpoint(
+    directory: &Path,
+    current: &mut Option<PathBuf>,
+) -> Result<(), NativeTacticRouteRunError> {
+    let Some(previous) = current.take() else {
+        return Ok(());
+    };
+    if previous.parent() != Some(directory) {
+        return Err(route_message(
+            "rolling tactic checkpoint is outside its checkpoint directory",
+        ));
+    }
+    fs::remove_file(previous).map_err(route_error)
 }
 
 fn initial_probe_batch(
@@ -1080,5 +1122,31 @@ mod tests {
             targets.len()
         );
         assert!(goal_corridor_targets(source, source).is_err());
+    }
+
+    #[test]
+    fn rolling_checkpoint_keeps_only_the_latest_complete_file() {
+        let directory = std::env::temp_dir().join(format!(
+            "dusklight-tactic-route-rolling-checkpoint-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        let first = directory.join("first.json");
+        let second = directory.join("second.json");
+        fs::write(&first, b"first").unwrap();
+        fs::write(&second, b"second").unwrap();
+        let mut current = None;
+
+        advance_rolling_checkpoint(&directory, &mut current, first.clone()).unwrap();
+        assert!(first.is_file());
+        advance_rolling_checkpoint(&directory, &mut current, second.clone()).unwrap();
+        assert!(!first.exists());
+        assert!(second.is_file());
+        remove_rolling_checkpoint(&directory, &mut current).unwrap();
+        assert!(!second.exists());
+        assert!(current.is_none());
+
+        fs::remove_dir_all(directory).unwrap();
     }
 }
