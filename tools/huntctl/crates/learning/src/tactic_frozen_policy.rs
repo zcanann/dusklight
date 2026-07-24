@@ -29,7 +29,14 @@ pub const TACTIC_FROZEN_POLICY_SCHEMA_V2: &str = "dusklight-tactic-frozen-policy
 pub struct ObservedGreedyTactic {
     pub state_sha256: Digest,
     pub action: OptionActionDescriptor,
-    pub q_value: f64,
+    /// IEEE-754 bits avoid JSON decimal round-trip drift in the policy seal.
+    pub q_value_f64_bits: u64,
+}
+
+impl ObservedGreedyTactic {
+    pub fn q_value(&self) -> f64 {
+        f64::from_bits(self.q_value_f64_bits)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -100,11 +107,42 @@ impl TacticFrozenPolicy {
             || self.training_batch.feature_schema != self.feature_schema_sha256
             || self.training_batch.objective_sha256 != self.objective_sha256
             || self.training_batch_sha256 != digest_json(&self.training_batch)?
-            || self.observed_greedy != derive_observed_greedy(&self.training_batch, &self.config)?
-            || self.content_sha256 != self.compute_identity()?
         {
             return Err(TacticFrozenPolicyError::Invalid(
                 "frozen tactic policy envelope or training identity is invalid",
+            ));
+        }
+        let derived_observed = derive_observed_greedy(&self.training_batch, &self.config)?;
+        if self.observed_greedy != derived_observed {
+            let detail = self
+                .observed_greedy
+                .iter()
+                .zip(&derived_observed)
+                .find(|(stored, derived)| stored != derived)
+                .map(|(stored, derived)| {
+                    format!(
+                        "first mismatch at state {}: stored action {} q {:016x}, derived action {} q {:016x}",
+                        stored.state_sha256,
+                        stored.action.option_id,
+                        stored.q_value_f64_bits,
+                        derived.action.option_id,
+                        derived.q_value_f64_bits,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "stored {} decisions but derived {}",
+                        self.observed_greedy.len(),
+                        derived_observed.len()
+                    )
+                });
+            return Err(TacticFrozenPolicyError::Detail(format!(
+                "frozen tactic policy observed tabular-Q decisions are invalid; {detail}"
+            )));
+        }
+        if self.content_sha256 != self.compute_identity()? {
+            return Err(TacticFrozenPolicyError::Invalid(
+                "frozen tactic policy content identity is invalid",
             ));
         }
         let model = OptionValueModel::fit_batch(&self.training_batch, &self.config)?;
@@ -190,7 +228,7 @@ fn derive_observed_greedy(
             |(state_sha256, (q_value, _, action))| ObservedGreedyTactic {
                 state_sha256,
                 action,
-                q_value,
+                q_value_f64_bits: q_value.to_bits(),
             },
         )
         .collect())
@@ -207,6 +245,7 @@ fn digest_bytes(bytes: &[u8]) -> Digest {
 #[derive(Debug)]
 pub enum TacticFrozenPolicyError {
     Invalid(&'static str),
+    Detail(String),
     Values(OptionValueError),
     Serialization(serde_json::Error),
 }
@@ -215,6 +254,7 @@ impl fmt::Display for TacticFrozenPolicyError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(message) => formatter.write_str(message),
+            Self::Detail(message) => formatter.write_str(message),
             Self::Values(error) => write!(formatter, "frozen tactic policy values failed: {error}"),
             Self::Serialization(error) => {
                 write!(
@@ -231,7 +271,7 @@ impl Error for TacticFrozenPolicyError {
         match self {
             Self::Values(error) => Some(error),
             Self::Serialization(error) => Some(error),
-            Self::Invalid(_) => None,
+            Self::Invalid(_) | Self::Detail(_) => None,
         }
     }
 }
@@ -311,7 +351,7 @@ mod tests {
         assert_eq!(model.actions()[0].option_id, "wait");
         let observed = decoded.observed_greedy_tactic(Digest([7; 32])).unwrap();
         assert_eq!(observed.action.option_id, "wait");
-        assert_eq!(observed.q_value, 1.0);
+        assert_eq!(observed.q_value(), 1.0);
     }
 
     #[test]
@@ -401,7 +441,7 @@ mod tests {
 
         let root = policy.observed_greedy_tactic(Digest([7; 32])).unwrap();
         assert_eq!(root.action.option_id, "advance");
-        assert!((root.q_value - 9.0).abs() < 1.0e-6);
+        assert!((root.q_value() - 9.0).abs() < 1.0e-6);
         assert_eq!(
             policy
                 .observed_greedy_tactic(Digest([8; 32]))

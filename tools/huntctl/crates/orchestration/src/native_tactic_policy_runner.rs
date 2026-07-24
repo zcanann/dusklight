@@ -250,7 +250,7 @@ pub fn run_native_tactic_policy(
                             reason: TacticSelectionReason::Greedy,
                             exploration_draw: EPSILON_SCALE,
                         },
-                        observed.q_value,
+                        observed.q_value(),
                         0.0,
                     )
                 } else {
