@@ -30,7 +30,8 @@ use dusklight_learning::tactic_exploration::{
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
-    BehaviorArchive, TacticEndpointDescriptor, TacticFrontierEntry,
+    BehaviorArchive, TacticEndpointDescriptor, TacticFrontierEntry, TacticStateDescriptor,
+    tactic_state_descriptor,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -192,7 +193,7 @@ pub struct TacticQCampaign {
     model_config: OptionValueConfig,
     exploration: TacticExplorationConfig,
     model: Option<OptionValueModel>,
-    visited_states: BTreeSet<Digest>,
+    visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
 }
 
@@ -221,7 +222,10 @@ impl TacticQCampaign {
                 "campaign identity or initial route is invalid",
             ));
         }
-        let visited_states = BTreeSet::from([semantic_state_digest(&current.snapshot)?]);
+        let visited_states = BTreeSet::from([tactic_state_descriptor(
+            &current.snapshot,
+            current.snapshot.terminal.reached == Some(true),
+        )]);
         let hindsight = HindsightOptionReplay::new(feature_schema_sha256)
             .map_err(TacticQCampaignError::Hindsight)?;
         Ok(Self {
@@ -593,11 +597,19 @@ impl TacticQCampaign {
             &checkpoint.episode_groups,
             &checkpoint.model_config,
         )?;
-        let mut visited_states =
-            BTreeSet::from([semantic_state_digest(&checkpoint.current.snapshot)?]);
+        let mut visited_states = BTreeSet::from([tactic_state_descriptor(
+            &checkpoint.current.snapshot,
+            checkpoint.current.snapshot.terminal.reached == Some(true),
+        )]);
         for transition in &checkpoint.replay {
-            visited_states.insert(semantic_state_digest(&transition.before)?);
-            visited_states.insert(semantic_state_digest(&transition.after)?);
+            visited_states.insert(tactic_state_descriptor(
+                &transition.before,
+                transition.before.terminal.reached == Some(true),
+            ));
+            visited_states.insert(tactic_state_descriptor(
+                &transition.after,
+                transition.value_sample.terminal,
+            ));
         }
         let hindsight = HindsightOptionReplay::new(checkpoint.feature_schema_sha256)
             .map_err(TacticQCampaignError::Hindsight)?;
@@ -822,14 +834,14 @@ impl TacticQCampaign {
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
         let next_state = encode(&outcome.next_facts)
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
-        let endpoint_sha256 = semantic_state_digest(&outcome.next_facts)?;
+        let endpoint = tactic_state_descriptor(&outcome.next_facts, outcome.terminal);
         let reward = reward_spec.evaluate(
             self.feature_schema_sha256,
             &state,
             &next_state,
             outcome.execution.duration.realized_ticks,
             outcome.terminal,
-            !self.visited_states.contains(&endpoint_sha256),
+            !self.visited_states.contains(&endpoint),
         )?;
         let training_reward = reward.training_reward;
         let step = self.retain_and_refit(
@@ -925,8 +937,10 @@ impl TacticQCampaign {
         )?;
         let model = OptionValueModel::fit_batch(&batch, &self.model_config)?;
 
-        self.visited_states
-            .insert(semantic_state_digest(&next.snapshot)?);
+        self.visited_states.insert(tactic_state_descriptor(
+            &next.snapshot,
+            transition.value_sample.terminal,
+        ));
         self.current = next;
         self.route_tape = outcome.route_tape;
         self.replay = replay;
@@ -1340,7 +1354,7 @@ mod tests {
     use dusklight_learning::tactic_exploration::TacticSelectionReason;
 
     #[test]
-    fn novelty_identity_ignores_replay_bookkeeping_but_not_gameplay_position() {
+    fn novelty_identity_ignores_bookkeeping_and_micro_motion_but_not_new_cells() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
         ))
@@ -1369,11 +1383,25 @@ mod tests {
 
         let mut moved = later_observation;
         let mut position = moved.player.position_f32_bits;
-        position[0] = (f32::from_bits(position[0]) + 1.0).to_bits();
+        let original_x = f32::from_bits(position[0]);
+        position[0] = ((original_x / 256.0).floor() * 256.0 + 128.0).to_bits();
         moved.player.position_f32_bits = position;
         assert_ne!(
             semantic_state_digest(&original).unwrap(),
             semantic_state_digest(&moved).unwrap()
+        );
+        assert_eq!(
+            tactic_state_descriptor(&original, false),
+            tactic_state_descriptor(&moved, false)
+        );
+
+        let mut new_cell = moved;
+        let mut position = new_cell.player.position_f32_bits;
+        position[0] = (f32::from_bits(position[0]) + 512.0).to_bits();
+        new_cell.player.position_f32_bits = position;
+        assert_ne!(
+            tactic_state_descriptor(&original, false),
+            tactic_state_descriptor(&new_cell, false)
         );
     }
 
@@ -1522,9 +1550,9 @@ mod tests {
 
         assert_eq!(retained.step.replay_rows, 1);
         assert_eq!(retained.reward.terminal_observed, terminal);
-        assert!(retained.reward.endpoint_novel);
+        assert!(!retained.reward.endpoint_novel);
         assert_eq!(retained.reward.tick_cost_component, -0.25);
-        assert_eq!(retained.reward.novelty_component, 1.0);
+        assert_eq!(retained.reward.novelty_component, 0.0);
         assert!(retained.reward.potential.is_some());
         assert!(retained.reward.terminal_objective_unchanged);
         assert!(!retained.reward.promotion_authority);
@@ -1536,7 +1564,7 @@ mod tests {
             campaign.route_tape.frames.len() as u64,
             campaign.current.snapshot.tape_frame
         );
-        assert_eq!(campaign.visited_state_count(), 2);
+        assert_eq!(campaign.visited_state_count(), 1);
 
         let checkpoint = campaign.checkpoint().unwrap();
         let restored = TacticQCampaign::resume(checkpoint.clone()).unwrap();

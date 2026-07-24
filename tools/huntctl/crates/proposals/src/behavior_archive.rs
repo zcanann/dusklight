@@ -138,6 +138,20 @@ pub struct BehaviorArchive {
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct TacticStateDescriptor {
+    pub stage: String,
+    pub room: i8,
+    pub layer: Option<i8>,
+    pub player_procedure: Option<u16>,
+    pub position_bin: [i32; 3],
+    pub event_running: Option<bool>,
+    pub event_id: Option<i16>,
+    pub actor_count_bin: u16,
+    pub terminal: bool,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TacticEndpointDescriptor {
     pub stage: String,
     pub room: i8,
@@ -749,13 +763,28 @@ fn novelty(
 fn tactic_endpoint_descriptor(
     transition: &OptionTransitionSample,
 ) -> Result<TacticEndpointDescriptor, BehaviorArchiveError> {
-    let after: &FactSnapshot = &transition.after;
-    let position = after.player.position_f32_bits.map(f32::from_bits);
-    let position_bin = position
-        .map(|value| (f64::from(value) / f64::from(POSITION_BIN_WORLD_UNITS)).floor() as i32);
+    let state = tactic_state_descriptor(&transition.after, transition.value_sample.terminal);
     let action_bytes = serde_json::to_vec(&transition.value_sample.action)
         .map_err(|error| BehaviorArchiveError::new(error.to_string()))?;
     Ok(TacticEndpointDescriptor {
+        stage: state.stage,
+        room: state.room,
+        layer: state.layer,
+        player_procedure: state.player_procedure,
+        position_bin: state.position_bin,
+        event_running: state.event_running,
+        event_id: state.event_id,
+        actor_count_bin: state.actor_count_bin,
+        terminal: state.terminal,
+        action_identity_sha256: Digest(Sha256::digest(action_bytes).into()),
+    })
+}
+
+pub fn tactic_state_descriptor(after: &FactSnapshot, terminal: bool) -> TacticStateDescriptor {
+    let position = after.player.position_f32_bits.map(f32::from_bits);
+    let position_bin = position
+        .map(|value| (f64::from(value) / f64::from(POSITION_BIN_WORLD_UNITS)).floor() as i32);
+    TacticStateDescriptor {
         stage: after.world.stage.clone(),
         room: after.world.room,
         layer: after.world.layer,
@@ -764,9 +793,8 @@ fn tactic_endpoint_descriptor(
         event_running: after.event.as_ref().map(|event| event.running),
         event_id: after.event.as_ref().map(|event| event.event_id),
         actor_count_bin: u16::try_from(after.actors.len().div_ceil(8)).unwrap_or(u16::MAX),
-        terminal: transition.value_sample.terminal,
-        action_identity_sha256: Digest(Sha256::digest(action_bytes).into()),
-    })
+        terminal,
+    }
 }
 
 fn tactic_route_checkpoint(
