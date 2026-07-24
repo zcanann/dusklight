@@ -2110,7 +2110,13 @@ function renderAddNodeMenu() {
   results.replaceChildren();
   if (!state.graph) return;
   const query = elements["add-node-search"].value.trim().toLowerCase();
-  const frontier = new Map((state.routeFrontier?.transitions ?? []).map((record) => [
+  const authoredMethod = state.project?.route_book?.methods.find((method) =>
+    method.id === "method.authored-route");
+  const insertingBeforeDownstream = state.addNodeAfterStepId != null
+    && authoredMethod?.step_ids.at(-1) !== state.addNodeAfterStepId;
+  const frontier = new Map((insertingBeforeDownstream
+    ? []
+    : state.routeFrontier?.transitions ?? []).map((record) => [
     record.transition_id,
     record.assessment.classification,
   ]));
@@ -2154,7 +2160,9 @@ function renderAddNodeMenu() {
     compatibility.className = `compatibility ${match.classification}`;
     compatibility.textContent = friendlyClassification(match.classification);
     const source = document.createElement("small");
-    source.textContent = `Model mechanic · ${friendlyEnum(match.contract?.transition_kind ?? "mechanic")}`;
+    source.textContent = insertingBeforeDownstream
+      ? "Model mechanic · downstream route will be replayed"
+      : `Model mechanic · ${friendlyEnum(match.contract?.transition_kind ?? "mechanic")}`;
     button.append(label, compatibility, source);
     button.addEventListener("click", async () => {
       const afterStepId = state.addNodeAfterStepId;
