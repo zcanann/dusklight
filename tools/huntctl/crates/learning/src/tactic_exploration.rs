@@ -100,11 +100,12 @@ pub fn choose_tactic(
     } else if exploration_draw < config.epsilon_per_million {
         // Finite tactic catalogs should spend exploratory decisions on choices
         // for which the learner has no transition evidence before resampling a
-        // known action. Prefer typed spatial targets and long full-strength
-        // heading probes while either remains untried. The former exploit the
-        // goal-relative corridor; the latter make lateral detours around contact
-        // geometry discoverable without prioritizing every short control
-        // variant. This is still epsilon-greedy—the greedy branch is unchanged.
+        // known action. Prefer typed spatial targets, long full-strength heading
+        // probes, and bounded curves while any remain untried. The first exploit
+        // the goal-relative corridor; the others make lateral detours around
+        // contact geometry discoverable without prioritizing every short
+        // control variant. This is still epsilon-greedy—the greedy branch is
+        // unchanged.
         let exploratory = if ranking.values.unsupported.is_empty() {
             available
         } else {
@@ -138,6 +139,7 @@ fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&Optio
         .iter()
         .filter(|descriptor| {
             descriptor.parameters.contains_key("coordinate")
+                || descriptor.parameters.contains_key("control")
                 || (descriptor.parameters.contains_key("heading_radians")
                     && matches!(
                         descriptor.parameters.get("magnitude"),
@@ -387,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_spatial_and_directional_probes_are_covered_before_short_controls() {
+    fn unsupported_navigation_probes_are_covered_before_short_controls() {
         let known = descriptor("known", OptionType::Neutral);
         let mut directional = descriptor("directional", OptionType::MaintainHeading);
         directional
@@ -409,6 +411,10 @@ mod tests {
         short
             .parameters
             .insert("maximum_ticks".into(), OptionParameter::Unsigned(4));
+        let mut curve = descriptor("curve", OptionType::Bezier);
+        curve
+            .parameters
+            .insert("control".into(), OptionParameter::Text("symmetric".into()));
         let mut spatial = descriptor("spatial", OptionType::Move);
         spatial.parameters.insert(
             "coordinate".into(),
@@ -420,6 +426,7 @@ mod tests {
             choices: vec![
                 choice(directional.clone()),
                 choice(known.clone()),
+                choice(curve.clone()),
                 choice(short.clone()),
                 choice(spatial.clone()),
             ],
@@ -430,7 +437,7 @@ mod tests {
                     mean_q: 5.0,
                     ensemble_variance: 0.0,
                 }],
-                unsupported: vec![directional.clone(), short, spatial.clone()],
+                unsupported: vec![curve.clone(), directional.clone(), short, spatial.clone()],
             },
         };
         let mut selected_ids = std::collections::BTreeSet::new();
@@ -445,7 +452,9 @@ mod tests {
             )
             .unwrap();
             assert!(
-                selected.descriptor == spatial || selected.descriptor == directional,
+                selected.descriptor == spatial
+                    || selected.descriptor == directional
+                    || selected.descriptor == curve,
                 "short control was incorrectly prioritized"
             );
             selected_ids.insert(selected.descriptor.option_id);
@@ -453,7 +462,11 @@ mod tests {
         }
         assert_eq!(
             selected_ids,
-            std::collections::BTreeSet::from(["directional".into(), "spatial".into()])
+            std::collections::BTreeSet::from([
+                "curve".into(),
+                "directional".into(),
+                "spatial".into(),
+            ])
         );
     }
 }

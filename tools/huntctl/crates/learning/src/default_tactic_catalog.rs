@@ -9,7 +9,7 @@ use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::roll_option::RollOptionPlan;
 use std::f32::consts::TAU;
 
-pub const DEFAULT_ROUTE_TACTIC_COUNT: usize = 128;
+pub const DEFAULT_ROUTE_TACTIC_COUNT: usize = 136;
 pub const MAX_GOAL_SEEK_TARGETS: usize = 64;
 const INTERMEDIATE_GOAL_SEEK_TOLERANCE: f32 = 96.0;
 
@@ -65,13 +65,24 @@ pub fn default_route_tactic_catalog() -> Result<TacticAssetCatalog, TacticAssetE
 
     for curve_index in 0..8 {
         let first = stick_heading(curve_index, 100);
-        let second = stick_heading((curve_index + 1) % 8, 100);
+        let clockwise = stick_heading((curve_index + 1) % 8, 100);
+        let counterclockwise = stick_heading((curve_index + 7) % 8, 100);
         push(
             &mut entries,
             format!("move.curve.clockwise.{curve_index:02}"),
             TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
                 GenericTactic::ShortCurve {
-                    control: [first, first, second, second],
+                    control: [first, first, clockwise, clockwise],
+                },
+                8,
+            )),
+        )?;
+        push(
+            &mut entries,
+            format!("move.curve.counterclockwise.{curve_index:02}"),
+            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+                GenericTactic::ShortCurve {
+                    control: [first, first, counterclockwise, counterclockwise],
                 },
                 8,
             )),
@@ -265,6 +276,8 @@ mod tests {
                 .unwrap(),
             PreparedTacticExecution::NativeGeneric(_)
         ));
+        assert!(catalog.entry("move.curve.clockwise.00").is_some());
+        assert!(catalog.entry("move.curve.counterclockwise.00").is_some());
     }
 
     #[test]
