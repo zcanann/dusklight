@@ -189,23 +189,14 @@ states instead of replaying the entire route for every decision.
 
 Work in this order.
 
-### 1. Unify the existing action systems
-
-### 2. Present one fact and measurement view
-
-### 3. Wire the existing Q and tactic executors into a campaign
-
-- [ ] Extend persistent execution from static and native-generic tactics to
-  reactive DUSKCTRL observation loops, preserving their real stopping
-  condition, exact queries, and next state.
-### 4. Branch from useful states
+### 1. Branch from useful states
 
 - [ ] Detect zero-diversity selection, repeated identical compositions,
   no-progress loops, and a frontier that loses root connectivity.
 - [ ] Project the resulting state/tactic/checkpoint graph for inspection and
   replay.
 
-### 5. Prove the integrated learner
+### 2. Prove the integrated learner
 
 - [ ] First prove the integrated adapters, composition executor, replay update,
   and existing Q model on a deterministic fixture requiring a nontrivial
