@@ -25,6 +25,7 @@ pub mod evaluation_isolation;
 pub mod factorized_actions;
 pub mod factorized_pad_action;
 pub mod factorized_policy_suffix_batch;
+pub mod fact_snapshot;
 pub mod fqi;
 pub mod frozen_inference;
 mod gated_recurrent;

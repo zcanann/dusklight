@@ -53,7 +53,7 @@ Route speed does not matter for this first proof.
 | Capability | State |
 |---|---|
 | Deterministic checkpoints and persistent native workers | Working |
-| Typed native observations and complete PAD authority | Working across native learning observations, tactic observations, observation expressions, and traces; not presented through one learner-facing view |
+| Typed native observations and complete PAD authority | Working through one versioned `FactSnapshot`: full native and tactic-loop observations share exact world/player/actor facts, explicit channel and flag-bank missingness, terminal state, evaluated conditions, recent option/PAD, and bounded past-only history |
 | Authored terminal predicates | Working |
 | Reactive world-space movement | Working: seek coordinate, actor, path point, opening, plane, heading, offset, and distance |
 | Static motion paths | Working: waypoint, rail, Catmull-Rom spline, and cubic Bézier |
@@ -193,9 +193,6 @@ Work in this order.
 
 ### 2. Present one fact and measurement view
 
-- [ ] Project existing native learning observations, tactic observations,
-  observation expressions, terminal facts, and short history through one
-  versioned `FactSnapshot` view.
 - [ ] Consolidate the existing typed query mechanisms behind a registry shared by
   goals, tactics, composition nodes, the learner, and the UI.
 - [ ] Expose generic relational measures: distance, angle, relative velocity,
