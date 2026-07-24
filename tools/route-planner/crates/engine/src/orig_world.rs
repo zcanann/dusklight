@@ -7,7 +7,8 @@
 use crate::artifact::Digest;
 use crate::orig_discovery::{ExtractedOrigBundle, ExtractedOrigStageArchive};
 use crate::orig_extraction::{
-    ExtractedActorPlacement, ExtractedFileList, ExtractedRoomTransform, ExtractedSceneTransition,
+    ExtractedActorPlacement, ExtractedFileList, ExtractedRoomRead, ExtractedRoomTransform,
+    ExtractedSceneTransition,
 };
 use crate::world_data::{
     PlacementKind, PlacementRecord, SourceKind, SourceScope, StageChunkSummary, StageExitRecord,
@@ -19,7 +20,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const EXTRACTED_ORIG_WORLD_INVENTORIES_SCHEMA: &str =
-    "dusklight.route-planner.extracted-orig-world-inventories/v2";
+    "dusklight.route-planner.extracted-orig-world-inventories/v3";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,12 +57,22 @@ pub struct NativeFileListRecord {
     pub file_list: ExtractedFileList,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRoomReadRecord {
+    pub stage: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub room_read: ExtractedRoomRead,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeStageMetadata {
     pub stage: String,
     pub room_transforms: Vec<NativeRoomTransformRecord>,
     pub file_lists: Vec<NativeFileListRecord>,
+    pub room_reads: Vec<NativeRoomReadRecord>,
 }
 
 impl NativeStageMetadata {
@@ -115,6 +126,34 @@ impl NativeStageMetadata {
             }
             validate_file_list_raw(&record.file_list)?;
             previous_file_list = Some(order);
+        }
+        let mut room_read_keys = BTreeSet::new();
+        let mut previous_room_read = None;
+        for record in &self.room_reads {
+            let order = (scope_order(record.scope), record.room_read.room_index);
+            if record.stage != self.stage
+                || record.source_sha256 == Digest::ZERO
+                || !matches!(
+                    record.scope,
+                    SourceScope {
+                        kind: SourceKind::Stage,
+                        room: None
+                    } | SourceScope {
+                        kind: SourceKind::Room,
+                        room: Some(0..=i8::MAX)
+                    }
+                )
+                || !room_read_keys
+                    .insert((record.source_sha256, record.room_read.room_index))
+                || previous_room_read.is_some_and(|previous| previous >= order)
+            {
+                return Err(PlannerContractError::new(
+                    "orig_world.room_reads",
+                    "must be ordered unique records with valid stage or room scope",
+                ));
+            }
+            validate_room_read_raw(&record.room_read)?;
+            previous_room_read = Some(order);
         }
         Ok(())
     }
@@ -189,7 +228,7 @@ impl ExtractedOrigWorldInventories {
         if self.coverage != expected_coverage() {
             return Err(PlannerContractError::new(
                 "orig_world.coverage",
-                "v2 requires complete chunk, placement, SCLS, and map/room metadata coverage and unavailable collision coverage",
+                "v3 requires complete chunk, placement, SCLS, and map/room metadata coverage and unavailable collision coverage",
             ));
         }
         if self.inventories.is_empty() || self.inventories.len() > 256 {
@@ -262,6 +301,7 @@ fn build_stage_metadata(
     });
     let mut room_transforms = Vec::new();
     let mut file_lists = Vec::new();
+    let mut room_reads = Vec::new();
     for archive in archives {
         let (archive_stage, scope) = archive_scope(&archive.relative_path, &archive.resource_name)?;
         if archive_stage != stage {
@@ -286,11 +326,25 @@ fn build_stage_metadata(
                 file_list,
             }
         }));
+        room_reads.extend(
+            archive
+                .stage
+                .room_read_table
+                .iter()
+                .cloned()
+                .map(|room_read| NativeRoomReadRecord {
+                    stage: stage.into(),
+                    source_sha256: archive.resource_sha256,
+                    scope,
+                    room_read,
+                }),
+        );
     }
     Ok(NativeStageMetadata {
         stage: stage.into(),
         room_transforms,
         file_lists,
+        room_reads,
     })
 }
 
@@ -907,6 +961,18 @@ fn validate_stage_metadata(
         }
     }
 
+    for record in &metadata.room_reads {
+        if record.stage != inventory.stage
+            || source_scopes.get(&record.source_sha256) != Some(&record.scope)
+            || record.room_read.room_index as usize >= chunk_count(record.source_sha256, "RTBL")
+        {
+            return Err(PlannerContractError::new(
+                "orig_world.room_reads",
+                "contains an RTBL record outside its exact source chunk",
+            ));
+        }
+    }
+
     let expected_transforms = inventory
         .chunks
         .iter()
@@ -919,12 +985,19 @@ fn validate_stage_metadata(
         .filter(|chunk| chunk.tag == "FILI")
         .map(|chunk| chunk.record_count)
         .sum::<usize>();
+    let expected_room_reads = inventory
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.tag == "RTBL")
+        .map(|chunk| chunk.record_count)
+        .sum::<usize>();
     if metadata.room_transforms.len() != expected_transforms
         || metadata.file_lists.len() != expected_file_lists
+        || metadata.room_reads.len() != expected_room_reads
     {
         return Err(PlannerContractError::new(
             "orig_world.stage_metadata",
-            "does not completely cover its recognized MULT and FILI chunks",
+            "does not completely cover its recognized MULT, FILI, and RTBL chunks",
         ));
     }
     Ok(())
@@ -980,6 +1053,48 @@ fn validate_file_list_raw(file_list: &ExtractedFileList) -> Result<(), PlannerCo
             "orig_world.file_lists",
             "decoded fields do not match the retained raw FILI record",
         ));
+    }
+    Ok(())
+}
+
+fn validate_room_read_raw(room_read: &ExtractedRoomRead) -> Result<(), PlannerContractError> {
+    let header = decode_hex_exact(
+        &room_read.raw_header_hex,
+        8,
+        "orig_world.rtbl.raw_header_hex",
+    )?;
+    let room_list = decode_hex_exact(
+        &room_read.raw_room_list_hex,
+        room_read.load_rooms.len(),
+        "orig_world.rtbl.raw_room_list_hex",
+    )?;
+    if room_read.record_offset == 0
+        || (room_read.room_list_offset == 0 && !room_list.is_empty())
+        || usize::from(header[0]) != room_read.load_rooms.len()
+        || header[1] != room_read.reverb_raw
+        || header[1] & 0x7f != room_read.reverb
+        || header[2] != room_read.flags_raw
+        || header[2] & 3 != room_read.time_pass
+        || (header[2] & 8 != 0) != room_read.vrbox_enabled
+        || header[3] != room_read.padding
+        || u32::from_be_bytes(header[4..8].try_into().unwrap()) != room_read.room_list_offset
+    {
+        return Err(PlannerContractError::new(
+            "orig_world.room_reads",
+            "decoded fields do not match the retained raw RTBL header",
+        ));
+    }
+    for (decoded, raw) in room_read.load_rooms.iter().zip(room_list) {
+        if decoded.raw != raw
+            || decoded.room != raw & 0x3f
+            || decoded.load_background != (raw & 0x80 != 0)
+            || decoded.unknown_bit_6 != (raw & 0x40 != 0)
+        {
+            return Err(PlannerContractError::new(
+                "orig_world.room_reads.load_rooms",
+                "decoded fields do not match the retained raw room-load byte",
+            ));
+        }
     }
     Ok(())
 }
@@ -1119,7 +1234,8 @@ mod tests {
         RUNTIME_CONFIGURATION_SCHEMA, RuntimeConfiguration,
     };
     use crate::orig_extraction::{
-        ExtractedStageChunk, ExtractedStageData, extract_unique_rarc_resource, parse_stage_data,
+        ExtractedLoadedRoom, ExtractedRoomRead, ExtractedStageChunk, ExtractedStageData,
+        extract_unique_rarc_resource, parse_stage_data,
     };
     use crate::world_import::ExtractedWorldFacts;
     use std::fs;
@@ -1188,15 +1304,42 @@ mod tests {
             "stage.dzs",
             digest(2),
             ExtractedStageData {
-                chunks: vec![ExtractedStageChunk {
-                    tag: "ACTR".into(),
-                    record_count: 1,
-                    data_offset: 64,
-                    recognized_record_size: Some(32),
-                }],
+                chunks: vec![
+                    ExtractedStageChunk {
+                        tag: "ACTR".into(),
+                        record_count: 1,
+                        data_offset: 64,
+                        recognized_record_size: Some(32),
+                    },
+                    ExtractedStageChunk {
+                        tag: "RTBL".into(),
+                        record_count: 1,
+                        data_offset: 96,
+                        recognized_record_size: None,
+                    },
+                ],
                 stage_information: None,
                 room_transforms: Vec::new(),
                 file_lists: Vec::new(),
+                room_read_table: vec![ExtractedRoomRead {
+                    room_index: 0,
+                    record_offset: 100,
+                    room_list_offset: 128,
+                    reverb: 5,
+                    reverb_raw: 5,
+                    time_pass: 3,
+                    vrbox_enabled: true,
+                    flags_raw: 0x0b,
+                    padding: 0,
+                    load_rooms: vec![ExtractedLoadedRoom {
+                        room: 2,
+                        load_background: true,
+                        unknown_bit_6: false,
+                        raw: 0x82,
+                    }],
+                    raw_header_hex: "01050b0000000080".into(),
+                    raw_room_list_hex: "82".into(),
+                }],
                 scene_transitions: Vec::new(),
                 map_events: Vec::new(),
                 demo_archive_banks: Vec::new(),
@@ -1233,6 +1376,7 @@ mod tests {
                 stage_information: None,
                 room_transforms: Vec::new(),
                 file_lists: Vec::new(),
+                room_read_table: Vec::new(),
                 scene_transitions: vec![ExtractedSceneTransition {
                     exit_id: 0,
                     destination_stage: "F_SP00".into(),
@@ -1272,11 +1416,7 @@ mod tests {
             source_bundle_sha256: digest(10),
             coverage: expected_coverage(),
             inventories: vec![inventory.clone()],
-            stage_metadata: vec![NativeStageMetadata {
-                stage: "F_SP00".into(),
-                room_transforms: Vec::new(),
-                file_lists: Vec::new(),
-            }],
+            stage_metadata: vec![build_stage_metadata("F_SP00", vec![&room, &stage]).unwrap()],
         };
         let bytes = set.canonical_bytes().unwrap();
         assert_eq!(
@@ -1314,6 +1454,7 @@ mod tests {
         );
         assert_eq!(facts.static_world_objects.len(), 3);
         assert_eq!(facts.native_stage_metadata, import_set.stage_metadata);
+        assert_eq!(facts.native_stage_metadata[0].room_reads.len(), 1);
         assert_eq!(facts.spawns.len(), 1);
         assert_eq!(facts.encoded_exits.len(), 1);
         assert!(
@@ -1364,6 +1505,7 @@ mod tests {
                 },
             }],
             file_lists: Vec::new(),
+            room_reads: Vec::new(),
         };
         metadata.validate_records().unwrap();
         metadata.room_transforms[0].transform.room = 4;
@@ -1408,6 +1550,73 @@ mod tests {
             inventory.sources[2].stage_data_sha256.to_string(),
             "10487ef6754fec1f454c93aa33f605ee9781b4db4b91eed8e864721d76304d40"
         );
+    }
+
+    #[test]
+    fn exact_native_room_read_metadata_validates_for_every_stage_when_available() {
+        let Some(root) = repository_root() else {
+            return;
+        };
+        let stage_root = root.join("orig/GZ2E01/files/res/Stage");
+        if !stage_root.is_dir() {
+            return;
+        }
+        let mut stage_dirs = fs::read_dir(&stage_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_dir())
+            .collect::<Vec<_>>();
+        stage_dirs.sort();
+        let mut room_reads = 0_usize;
+        for stage_dir in &stage_dirs {
+            let stage = stage_dir.file_name().unwrap().to_str().unwrap();
+            let mut archive_paths = fs::read_dir(stage_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| {
+                    path.extension().is_some_and(|extension| extension == "arc")
+                        && path.file_name().is_some_and(|name| {
+                            let name = name.to_string_lossy();
+                            name == "STG_00.arc"
+                                || name.starts_with('R') && name.ends_with("_00.arc")
+                        })
+                })
+                .collect::<Vec<_>>();
+            archive_paths.sort_by_key(|path| {
+                let name = path.file_name().unwrap().to_string_lossy();
+                if name == "STG_00.arc" {
+                    (0, name.into_owned())
+                } else {
+                    (1, name.into_owned())
+                }
+            });
+            let mut archives = Vec::new();
+            for path in archive_paths {
+                let name = path.file_name().unwrap().to_str().unwrap();
+                let resource = if name == "STG_00.arc" {
+                    "stage.dzs"
+                } else {
+                    "room.dzr"
+                };
+                let bytes = fs::read(&path).unwrap();
+                let resource_bytes = extract_unique_rarc_resource(&bytes, resource).unwrap();
+                archives.push(archive(
+                    &format!("files/res/Stage/{stage}/{name}"),
+                    resource,
+                    Digest(Sha256::digest(&resource_bytes).into()),
+                    parse_stage_data(&resource_bytes).unwrap(),
+                ));
+                archives.last_mut().unwrap().archive_sha256 =
+                    Digest(Sha256::digest(&bytes).into());
+            }
+            let refs = archives.iter().collect::<Vec<_>>();
+            let inventory = build_inventory(stage, refs.clone()).unwrap();
+            let metadata = build_stage_metadata(stage, refs).unwrap();
+            validate_stage_metadata(&inventory, &metadata).unwrap();
+            room_reads += metadata.room_reads.len();
+        }
+        assert_eq!(stage_dirs.len(), 79);
+        assert_eq!(room_reads, 1_652);
     }
 
     fn repository_root() -> Option<PathBuf> {

@@ -2078,7 +2078,7 @@ Deliverable: replayable state evidence that can validate transition rules.
         digests; orchestration, input discovery, and sealed derived-pack output
         remain open.
   - [x] Decode `PLYR`, `TRES`, and layered `TRE*` records in the planner-owned
-        stage extractor. Bundle v5 keeps actor, treasure, and player-spawn
+        stage extractor. Bundle v6 keeps actor, treasure, and player-spawn
         placements in distinct collections while separately retaining map/room
         metadata, exact raw records, source transforms, parameters, layers, and
         standalone extraction counts.
@@ -2115,24 +2115,29 @@ Deliverable: replayable state evidence that can validate transition rules.
         proves the three placement classes remain distinct.
   - [x] Convert the canonical planner-native orig bundle into sorted,
         content-addressed per-stage world inventories without Huntctl types or
-        artifacts. The v2 inventory-set contract revalidates raw placement,
+        artifacts. The v3 inventory-set contract revalidates raw placement,
         map/room metadata, and SCLS records, proves complete recognized-chunk
-        coverage, and marks
-        KCL/PLC collision coverage explicitly unavailable; the exact 79-stage
+        coverage, and marks KCL/PLC collision coverage explicitly unavailable;
+        the exact 79-stage
         acceptance run retains 384 sources, 6,128 chunks, 29,575 ordinary
         placements, 1,277 spawns, and 1,036 exits.
   - [x] Import the planner-native inventory set directly into base world facts
         without a compatible world context or fabricated spatial digest. World
-        facts v18 make the two provenance modes exclusive, use `null` for
+        facts v19 make the two provenance modes exclusive, use `null` for
         unavailable native spatial identities, retain every static object,
         spawn, and encoded exit, and still compile source-audited actor rules.
         The exact acceptance run emits 30,852 static objects, 1,277 spawns,
         1,036 exits, 119 actor/door transitions, and zero collision approaches.
   - [x] Decode stage-level `MULT` room transforms and normal stage/room `FILI`
-        metadata without conflating the field-map-only `FILI` layout. Bundle v5,
-        native inventory set v2, and world facts v18 retain and raw-revalidate
+        metadata without conflating the field-map-only `FILI` layout. Bundle v6,
+        native inventory set v3, and world facts v19 retain and raw-revalidate
         the exact source records; the 79-stage acceptance run imports 344 room
         transforms and 305 file lists while collision remains unavailable.
+  - [x] Decode pointer-backed `RTBL` room-read tables into indexed load sets,
+        background-load bits, reverb, time-passage, and skybox flags while
+        retaining unknown bits and exact offsets/raw bytes. The full GZ2E01
+        census validates 79 tables, 1,652 room-read records, and 1,089 load-room
+        bytes through native inventory set v3 and world facts v19.
   - [x] Import exact-GZ2E01 L1-family boss-door candidates by joining actor
         parameters to the unique same-room SCLS record. Reverse-side, ambiguous,
         non-audited-build, and unmodeled-switch-domain cases remain encoded facts
@@ -2528,7 +2533,7 @@ Deliverable: one generic system for known and proposed wrong-state transfers.
 ### Phase 5 — Physical feasibility and obstructions
 
 - [x] Derive approach geometry from collision and spawn data where possible.
-      World facts v18 attaches one typed approach-geometry record to every
+      World facts v19 attaches one typed approach-geometry record to every
       collision-derived encoded-map candidate. Reconstructed KCL prisms retain
       their exact triangle, plane, and computed bounds; same-room player spawns
       are linked as candidates, never asserted paths. Degenerate reconstruction

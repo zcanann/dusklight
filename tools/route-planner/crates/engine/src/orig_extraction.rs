@@ -13,7 +13,7 @@ const MAX_RARC_FILE_ENTRIES: usize = 100_000;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
 const MAX_EVENT_RECORDS: usize = 1_000_000;
-pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v5";
+pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v6";
 pub const EXTRACTED_EVENT_LIST_SCHEMA: &str = "dusklight.route-planner.extracted-event-list/v1";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -23,12 +23,39 @@ pub struct ExtractedStageData {
     pub stage_information: Option<ExtractedStageInformation>,
     pub room_transforms: Vec<ExtractedRoomTransform>,
     pub file_lists: Vec<ExtractedFileList>,
+    pub room_read_table: Vec<ExtractedRoomRead>,
     pub scene_transitions: Vec<ExtractedSceneTransition>,
     pub map_events: Vec<ExtractedMapEvent>,
     pub demo_archive_banks: Vec<ExtractedDemoArchiveBank>,
     pub actor_placements: Vec<ExtractedActorPlacement>,
     pub treasure_placements: Vec<ExtractedActorPlacement>,
     pub player_spawns: Vec<ExtractedActorPlacement>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedRoomRead {
+    pub room_index: u32,
+    pub record_offset: u32,
+    pub room_list_offset: u32,
+    pub reverb: u8,
+    pub reverb_raw: u8,
+    pub time_pass: u8,
+    pub vrbox_enabled: bool,
+    pub flags_raw: u8,
+    pub padding: u8,
+    pub load_rooms: Vec<ExtractedLoadedRoom>,
+    pub raw_header_hex: String,
+    pub raw_room_list_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedLoadedRoom {
+    pub room: u8,
+    pub load_background: bool,
+    pub unknown_bit_6: bool,
+    pub raw: u8,
 }
 
 /// One stage-level `MULT` record. Despite the original member name
@@ -446,6 +473,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     let mut stage_information = None;
     let mut room_transforms = Vec::new();
     let mut file_lists = Vec::new();
+    let mut room_read_table = Vec::new();
+    let mut saw_room_read_table = false;
     let mut scene_transitions = Vec::new();
     let mut map_events = Vec::new();
     let mut demo_archive_banks = Vec::new();
@@ -479,6 +508,31 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
             data_offset,
             recognized_record_size: record_size.map(|size| size as u8),
         });
+        if tag == "RTBL" {
+            total_records = total_records
+                .checked_add(record_count as usize)
+                .ok_or_else(|| PlannerContractError::new("orig.stage.records", "count overflow"))?;
+            if total_records > MAX_STAGE_RECORDS {
+                return Err(PlannerContractError::new(
+                    "orig.stage.records",
+                    format!("exceeds bounded limit {MAX_STAGE_RECORDS}"),
+                ));
+            }
+            if saw_room_read_table {
+                return Err(PlannerContractError::new(
+                    "orig.stage.rtbl",
+                    "must contain one unique chunk",
+                ));
+            }
+            saw_room_read_table = true;
+            room_read_table = parse_room_read_table(
+                input,
+                data_offset as usize,
+                record_count as usize,
+                records_floor,
+            )?;
+            continue;
+        }
         let Some(record_size) = record_size else {
             continue;
         };
@@ -764,6 +818,7 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
         stage_information,
         room_transforms,
         file_lists,
+        room_read_table,
         scene_transitions,
         map_events,
         demo_archive_banks,
@@ -1086,6 +1141,84 @@ fn slice_values<'a, T>(
     values
         .get(start..end)
         .ok_or_else(|| PlannerContractError::new(field, "range exceeds its backing table"))
+}
+
+fn parse_room_read_table(
+    input: &[u8],
+    table_offset: usize,
+    room_count: usize,
+    records_floor: usize,
+) -> Result<Vec<ExtractedRoomRead>, PlannerContractError> {
+    if room_count > 64 {
+        return Err(PlannerContractError::new(
+            "orig.stage.rtbl.room_count",
+            "exceeds the source-audited 64-room control table",
+        ));
+    }
+    if table_offset < records_floor {
+        return Err(PlannerContractError::new(
+            "orig.stage.rtbl.table_offset",
+            "overlaps the chunk header table",
+        ));
+    }
+    let table_bytes = room_count
+        .checked_mul(4)
+        .ok_or_else(|| PlannerContractError::new("orig.stage.rtbl", "table size overflow"))?;
+    require_range(input, table_offset, table_bytes, "orig.stage.rtbl.table")?;
+    let mut rooms = Vec::with_capacity(room_count);
+    for room_index in 0..room_count {
+        let pointer_offset = table_offset + room_index * 4;
+        let record_offset = read_u32(input, pointer_offset, "orig.stage.rtbl.record_offset")?;
+        let record_start = record_offset as usize;
+        if record_start < records_floor {
+            return Err(PlannerContractError::new(
+                "orig.stage.rtbl.record_offset",
+                "must follow the chunk header table",
+            ));
+        }
+        require_range(input, record_start, 8, "orig.stage.rtbl.record")?;
+        let raw_header = &input[record_start..record_start + 8];
+        let load_count = usize::from(raw_header[0]);
+        let room_list_offset = read_u32(raw_header, 4, "orig.stage.rtbl.room_list_offset")?;
+        let room_list_start = room_list_offset as usize;
+        if room_list_start < records_floor && load_count != 0 {
+            return Err(PlannerContractError::new(
+                "orig.stage.rtbl.room_list_offset",
+                "overlaps the chunk header table",
+            ));
+        }
+        require_range(
+            input,
+            room_list_start,
+            load_count,
+            "orig.stage.rtbl.room_list",
+        )?;
+        let raw_room_list = &input[room_list_start..room_list_start + load_count];
+        let load_rooms = raw_room_list
+            .iter()
+            .map(|raw| ExtractedLoadedRoom {
+                room: raw & 0x3f,
+                load_background: raw & 0x80 != 0,
+                unknown_bit_6: raw & 0x40 != 0,
+                raw: *raw,
+            })
+            .collect();
+        rooms.push(ExtractedRoomRead {
+            room_index: room_index as u32,
+            record_offset,
+            room_list_offset,
+            reverb: raw_header[1] & 0x7f,
+            reverb_raw: raw_header[1],
+            time_pass: raw_header[2] & 3,
+            vrbox_enabled: raw_header[2] & 8 != 0,
+            flags_raw: raw_header[2],
+            padding: raw_header[3],
+            load_rooms,
+            raw_header_hex: hex_bytes(raw_header),
+            raw_room_list_hex: hex_bytes(raw_room_list),
+        });
+    }
+    Ok(rooms)
 }
 
 fn recognized_stage_record_size(tag: &str) -> Option<usize> {
@@ -1982,6 +2115,42 @@ mod tests {
     }
 
     #[test]
+    fn real_stage_room_read_tables_cover_every_stage_when_present() {
+        use std::path::Path;
+
+        let repository_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(4)
+            .unwrap();
+        let stage_root = repository_root.join("orig/GZ2E01/files/res/Stage");
+        if !stage_root.is_dir() {
+            return;
+        }
+        let mut archives = std::fs::read_dir(stage_root)
+            .unwrap()
+            .map(|entry| entry.unwrap().path().join("STG_00.arc"))
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        archives.sort();
+        let mut room_reads = 0_usize;
+        for archive_path in &archives {
+            let archive = std::fs::read(archive_path).unwrap();
+            let resource = extract_unique_rarc_resource(&archive, "stage.dzs").unwrap();
+            let parsed = parse_stage_data(&resource).unwrap();
+            let declared = parsed
+                .chunks
+                .iter()
+                .find(|chunk| chunk.tag == "RTBL")
+                .unwrap()
+                .record_count as usize;
+            assert_eq!(parsed.room_read_table.len(), declared);
+            room_reads += declared;
+        }
+        assert_eq!(archives.len(), 79);
+        assert_eq!(room_reads, 1_652);
+    }
+
+    #[test]
     fn parses_stage_message_group_and_indexed_scene_transitions() {
         let mut stage = vec![0; 0xa9];
         stage[0..4].copy_from_slice(&2_u32.to_be_bytes());
@@ -2069,6 +2238,36 @@ mod tests {
         assert_eq!(fili.default_camera, 4);
         assert_eq!(fili.bit_switch, 0xff);
         assert_eq!(fili.message_id, 123);
+    }
+
+    #[test]
+    fn parses_pointer_backed_room_read_topology() {
+        let mut stage = vec![0; 0x2b];
+        stage[..4].copy_from_slice(&1_u32.to_be_bytes());
+        stage[4..8].copy_from_slice(b"RTBL");
+        stage[8..12].copy_from_slice(&2_u32.to_be_bytes());
+        stage[12..16].copy_from_slice(&0x10_u32.to_be_bytes());
+        stage[0x10..0x14].copy_from_slice(&0x18_u32.to_be_bytes());
+        stage[0x14..0x18].copy_from_slice(&0x20_u32.to_be_bytes());
+        stage[0x18..0x20].copy_from_slice(&[2, 0x85, 0x0b, 0xaa, 0, 0, 0, 0x28]);
+        stage[0x20..0x28].copy_from_slice(&[1, 2, 0, 0, 0, 0, 0, 0x2a]);
+        stage[0x28..0x2b].copy_from_slice(&[0x81, 0x42, 0x03]);
+
+        let parsed = parse_stage_data(&stage).unwrap();
+        assert_eq!(parsed.chunks[0].recognized_record_size, None);
+        assert_eq!(parsed.room_read_table.len(), 2);
+        let room0 = &parsed.room_read_table[0];
+        assert_eq!(room0.room_index, 0);
+        assert_eq!(room0.reverb, 5);
+        assert_eq!(room0.reverb_raw, 0x85);
+        assert_eq!(room0.time_pass, 3);
+        assert!(room0.vrbox_enabled);
+        assert_eq!(room0.padding, 0xaa);
+        assert_eq!(room0.load_rooms[0].room, 1);
+        assert!(room0.load_rooms[0].load_background);
+        assert_eq!(room0.load_rooms[1].room, 2);
+        assert!(room0.load_rooms[1].unknown_bit_6);
+        assert_eq!(parsed.room_read_table[1].load_rooms[0].room, 3);
     }
 
     #[test]

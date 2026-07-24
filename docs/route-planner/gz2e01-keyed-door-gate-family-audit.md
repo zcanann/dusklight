@@ -9,7 +9,7 @@ revision, platform, or language bundle.
 The earlier `DOOR20`, L1-family boss-door, and L5 boss-door audits remain the
 authoritative family-specific records for those actors. This document covers
 the remaining exact-build census and records which semantics are executable in
-`extracted-world-facts/v18` and which remain explicit boundaries.
+`extracted-world-facts/v19` and which remain explicit boundaries.
 
 ## Census method and source identities
 
@@ -57,7 +57,7 @@ hard guard checks only the boss key, yet its `UNLOCK` cut still queues a small-
 key decrement. Counts 1 through 100 lose one, zero clamps back to zero, and a
 raw count above 100 clamps to 99.
 
-The v18 candidate effect is the ordinary eventual committed-count equivalent,
+The v19 candidate effect is the ordinary eventual committed-count equivalent,
 not a claim that the transient queue and raw byte change simultaneously. Its
 actor-state obligation includes an uncontended pending delta. V9 splits zero,
 normal-range, and high-raw-count outcomes so the final committed byte remains
@@ -186,9 +186,9 @@ selected retail cuts:
 | `f68b5c754d2ccefc5f80f74e05fb659898e2f12c568260d4ad39237a02ce63a9` | `c8684156665423d1a133dc0b102098d8ec3be838dd6abe117dbafedf0144ab83` | `KOKI_GATE_OPEN00` contains `UNLOCK` before `OPEN` |
 | `a3700cf327a2469195fa93860b69dbada71cbff64bb846b0ee7cf0d932bb4e92` | `95582d74d858aeb5b01a9f1beb6c0c1bd6761b619b75f57d1d60d906f73ea856` | `RIDER_GATE_OPEN00` contains `UNLOCK` |
 
-## Executable v18 boundary
+## Executable v19 boundary
 
-For exact GZ2E01 content, `extracted-world-facts/v18` imports:
+For exact GZ2E01 content, `extracted-world-facts/v19` imports:
 
 - the six front-side option-2 mini-boss placements as distinct first-open and
   already-unlocked `Door` branches joined to their unique SCLS destinations;
@@ -219,7 +219,7 @@ exactly one encoded SCLS record, including actor-driven scene requests. In-room
 actor actions without a location effect must not be attached to a fabricated
 exit, and encoded-map/door transitions must still contain a location change.
 
-For L1 and L5 boss doors, v18 replaces the former prose-only interaction
+For L1 and L5 boss doors, v19 replaces the former prose-only interaction
 boundary with placement-derived typed observations: yaw-oriented actor-local
 `checkArea` rectangles and shortest-circular binary-angle facing obligations.
 L5 adds its positive-local-Z front plane. L1 uses form-selected compound

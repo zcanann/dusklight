@@ -488,6 +488,7 @@ mod tests {
             stage_information: None,
             room_transforms: Vec::new(),
             file_lists: Vec::new(),
+            room_read_table: Vec::new(),
             scene_transitions: vec![
                 ExtractedSceneTransition {
                     exit_id: 1,

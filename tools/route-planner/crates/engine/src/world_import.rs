@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v18";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v19";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 const DUNGEON_SESSION_SWITCH_LABEL_KIND: &str = "observed-dungeon-session-switch-labels";
@@ -528,7 +528,7 @@ impl ExtractedWorldFacts {
 
     /// Imports planner-native stage records without manufacturing a compatible
     /// world-context or spatial-index identity. Collision-backed transitions
-    /// remain absent because the v2 native inventory set marks that domain
+    /// remain absent because the v3 native inventory set marks that domain
     /// unavailable; placement/SCLS-backed actor rules still import normally.
     pub fn build_from_orig_world_inventories(
         content: &ContentIdentity,
@@ -871,7 +871,11 @@ impl ExtractedWorldFacts {
             + self
                 .native_stage_metadata
                 .iter()
-                .map(|metadata| metadata.room_transforms.len() + metadata.file_lists.len())
+                .map(|metadata| {
+                    metadata.room_transforms.len()
+                        + metadata.file_lists.len()
+                        + metadata.room_reads.len()
+                })
                 .sum::<usize>()
             + self.spatial_volumes.len()
             + self.spatial_planes.len()
