@@ -368,7 +368,7 @@ impl FactSnapshot {
             actors: observation
                 .actors
                 .iter()
-                .map(actor_from_native)
+                .map(|actor| actor_from_native(&observation.stage, actor))
                 .collect::<Result<Vec<_>, _>>()?,
             channels: channels(observation),
             flag_banks: FlagBankFactSnapshot {
@@ -553,10 +553,16 @@ fn validate_native_learning(
 }
 
 fn actor_from_native(
+    stage: &str,
     actor: &NativeActorObservation,
 ) -> Result<ActorFactSnapshot, FactSnapshotError> {
     Ok(ActorFactSnapshot {
-        portable_selector: None,
+        portable_selector: Some(PlacedActorSelector {
+            stage: stage.into(),
+            home_room: actor.home_room,
+            set_id: actor.set_id,
+            actor_name: actor.actor_name,
+        }),
         runtime_generation: actor.runtime_generation,
         actor_name: actor.actor_name,
         profile_name: Some(actor.profile_name),
