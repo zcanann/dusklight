@@ -38,6 +38,7 @@ pub mod inference_conformance;
 pub mod inference_placement;
 pub mod iql;
 pub mod latent_model_admission;
+pub mod learner_state;
 pub mod local_dynamics;
 pub mod low_data_baselines;
 pub mod model_ownership;
