@@ -227,54 +227,52 @@ pub fn run_native_tactic_policy(
             let live = LiveTacticCatalog::build(&state, &catalog, &[]).map_err(policy_error)?;
             let features = encoder.encode(&state.snapshot).map_err(policy_error)?;
             let ranking = live.rank(&model, &features).map_err(policy_error)?;
-            let (selected, selected_q, ensemble_variance) =
-                if let Some(observed) = config
-                    .policy
-                    .observed_greedy_tactic(state.snapshot_sha256)
+            let (selected, selected_q, ensemble_variance) = if let Some(observed) =
+                config.policy.observed_greedy_tactic(state.snapshot_sha256)
+            {
+                if !ranking
+                    .choices
+                    .iter()
+                    .any(|choice| choice.descriptor == observed.action)
                 {
-                    if !ranking
-                        .choices
-                        .iter()
-                        .any(|choice| choice.descriptor == observed.action)
-                    {
-                        return Err(policy_message(
-                            "frozen policy's observed greedy tactic is not applicable",
-                        ));
-                    }
-                    (
-                        SelectedTactic {
-                            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
-                            learner_snapshot_sha256: ranking.learner_snapshot_sha256,
-                            decision_index: decisions,
-                            descriptor: observed.action.clone(),
-                            reason: TacticSelectionReason::Greedy,
-                            exploration_draw: EPSILON_SCALE,
-                        },
-                        observed.q_value(),
-                        0.0,
-                    )
-                } else {
-                    let selected = choose_tactic(
-                        &ranking,
-                        decisions,
-                        TacticExplorationConfig {
-                            seed: 0,
-                            epsilon_per_million: 0,
-                        },
-                    )
-                    .map_err(policy_error)?;
-                    let ranked = ranking
-                        .values
-                        .ranked
-                        .iter()
-                        .find(|ranked| ranked.descriptor == selected.descriptor)
-                        .ok_or_else(|| {
-                            policy_message(
-                                "frozen policy has no trained value for an applicable greedy tactic",
-                            )
-                        })?;
-                    (selected, ranked.mean_q, ranked.ensemble_variance)
-                };
+                    return Err(policy_message(
+                        "frozen policy's observed greedy tactic is not applicable",
+                    ));
+                }
+                (
+                    SelectedTactic {
+                        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                        learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+                        decision_index: decisions,
+                        descriptor: observed.action.clone(),
+                        reason: TacticSelectionReason::Greedy,
+                        exploration_draw: EPSILON_SCALE,
+                    },
+                    observed.q_value(),
+                    0.0,
+                )
+            } else {
+                let selected = choose_tactic(
+                    &ranking,
+                    decisions,
+                    TacticExplorationConfig {
+                        seed: 0,
+                        epsilon_per_million: 0,
+                    },
+                )
+                .map_err(policy_error)?;
+                let ranked = ranking
+                    .values
+                    .ranked
+                    .iter()
+                    .find(|ranked| ranked.descriptor == selected.descriptor)
+                    .ok_or_else(|| {
+                        policy_message(
+                            "frozen policy has no trained value for an applicable greedy tactic",
+                        )
+                    })?;
+                (selected, ranked.mean_q, ranked.ensemble_variance)
+            };
             if selected.reason != TacticSelectionReason::Greedy {
                 return Err(policy_message(
                     "frozen policy attempted a non-greedy tactic selection",

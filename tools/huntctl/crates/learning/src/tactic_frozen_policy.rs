@@ -7,8 +7,7 @@
 
 use crate::artifact::Digest;
 use crate::option_values::{
-    OptionActionDescriptor, OptionValueBatch, OptionValueConfig, OptionValueError,
-    OptionValueModel,
+    OptionActionDescriptor, OptionValueBatch, OptionValueConfig, OptionValueError, OptionValueModel,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -200,8 +199,7 @@ fn derive_observed_greedy(
                 .copied()
                 .unwrap_or(0.0)
         };
-        let discount =
-            f64::from(config.fitted_q.discount).powi(sample.duration_ticks as i32);
+        let discount = f64::from(config.fitted_q.discount).powi(sample.duration_ticks as i32);
         let q_value = f64::from(sample.reward) + discount * continuation;
         if !q_value.is_finite() {
             return Err(TacticFrozenPolicyError::Invalid(
@@ -209,11 +207,12 @@ fn derive_observed_greedy(
             ));
         }
         let action_key = serde_json::to_vec(&sample.action)?;
-        let replace = choices
-            .get(&sample.before_state_sha256)
-            .is_none_or(|(prior_q, prior_key, _)| {
-                q_value > *prior_q || (q_value == *prior_q && action_key < *prior_key)
-            });
+        let replace =
+            choices
+                .get(&sample.before_state_sha256)
+                .is_none_or(|(prior_q, prior_key, _)| {
+                    q_value > *prior_q || (q_value == *prior_q && action_key < *prior_key)
+                });
         if replace {
             choices.insert(
                 sample.before_state_sha256,
