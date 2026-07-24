@@ -5,8 +5,15 @@
 //! the existing static, native-observation, and reactive-controller executors.
 
 use crate::artifact::Digest;
-use crate::tactic_asset::TacticAssetCatalog;
-use dusklight_control::option_execution::{OptionCondition, validate_condition};
+use crate::tactic_asset::{
+    TacticAssetCatalog, TacticAssetSource, TacticCatalogEntry, TacticExecutor,
+};
+use dusklight_control::controller_compilation::compile_static_controller;
+use dusklight_control::controller_program::ControllerProgram;
+use dusklight_control::option_execution::{
+    OptionCondition, OptionEndReason, OptionExecution, TapeRange, validate_condition,
+};
+use dusklight_control::tape::{InputFrame, InputTape};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
@@ -18,6 +25,8 @@ pub const MAX_BLUEPRINT_NODES: usize = 256;
 pub const MAX_BLUEPRINT_DEPTH: usize = 32;
 pub const MAX_BLUEPRINT_CHILDREN: usize = 64;
 pub const MAX_UNTIL_ITERATIONS: u32 = 256;
+pub const COMPILED_STATIC_BLUEPRINT_SCHEMA_V1: &str =
+    "dusklight-compiled-static-tactic-blueprint/v1";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -63,6 +72,18 @@ impl TacticBlueprint {
         Ok(())
     }
 
+    pub fn validate_for_execution<F>(
+        &self,
+        catalog: &TacticAssetCatalog,
+        mut condition_available: F,
+    ) -> Result<(), TacticBlueprintError>
+    where
+        F: FnMut(&OptionCondition) -> bool,
+    {
+        self.validate_against_catalog(catalog)?;
+        validate_available_conditions(&self.root, &mut condition_available)
+    }
+
     pub fn referenced_option_ids(&self) -> BTreeSet<&str> {
         let mut option_ids = BTreeSet::new();
         collect_option_ids(&self.root, &mut option_ids);
@@ -77,6 +98,149 @@ impl TacticBlueprint {
 
     pub fn content_sha256(&self) -> Result<Digest, TacticBlueprintError> {
         Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+
+    pub fn compile_static(
+        &self,
+        catalog: &TacticAssetCatalog,
+    ) -> Result<CompiledStaticBlueprint, TacticBlueprintError> {
+        self.validate_against_catalog(catalog)?;
+        let mut frames = Vec::new();
+        let mut pending = Vec::new();
+        compile_static_node(&self.root, "root", catalog, &mut frames, &mut pending)?;
+        let tape = InputTape {
+            frames,
+            ..InputTape::default()
+        };
+        tape.validate()
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?;
+        let segments = pending
+            .into_iter()
+            .map(|segment| segment.finish(&tape, catalog))
+            .collect::<Result<Vec<_>, _>>()?;
+        let compiled = CompiledStaticBlueprint {
+            schema: COMPILED_STATIC_BLUEPRINT_SCHEMA_V1.into(),
+            blueprint_sha256: self.content_sha256()?,
+            catalog_action_schema_sha256: catalog.action_schema_sha256(),
+            tape,
+            segments,
+        };
+        compiled.validate()?;
+        Ok(compiled)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CompiledStaticBlueprint {
+    pub schema: String,
+    pub blueprint_sha256: Digest,
+    pub catalog_action_schema_sha256: Digest,
+    pub tape: InputTape,
+    pub segments: Vec<CompiledStaticSegment>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CompiledStaticSegment {
+    Invoke {
+        node_path: String,
+        option_id: String,
+        execution: OptionExecution,
+    },
+    Layer {
+        node_path: String,
+        option_ids: Vec<String>,
+        controller_sha256: Digest,
+        tape_range: TapeRange,
+        emitted_raw_actions: Vec<InputFrame>,
+    },
+}
+
+impl CompiledStaticBlueprint {
+    pub fn validate(&self) -> Result<(), TacticBlueprintError> {
+        if self.schema != COMPILED_STATIC_BLUEPRINT_SCHEMA_V1
+            || self.blueprint_sha256 == Digest::ZERO
+            || self.catalog_action_schema_sha256 == Digest::ZERO
+            || self.segments.is_empty()
+        {
+            return Err(TacticBlueprintError::InvalidCompiled(
+                "compiled blueprint identity or segment set is invalid".into(),
+            ));
+        }
+        self.tape
+            .validate()
+            .map_err(|error| TacticBlueprintError::InvalidCompiled(error.to_string()))?;
+        let mut expected_start = 0_u64;
+        for segment in &self.segments {
+            let (node_path, range) = match segment {
+                CompiledStaticSegment::Invoke {
+                    node_path,
+                    option_id,
+                    execution,
+                } => {
+                    if !valid_node_path(node_path) || !valid_portable_id_value(option_id) {
+                        return Err(TacticBlueprintError::InvalidCompiled(
+                            "compiled invoke identity is invalid".into(),
+                        ));
+                    }
+                    execution
+                        .validate_against_tape(&self.tape)
+                        .map_err(|error| {
+                            TacticBlueprintError::InvalidCompiled(error.to_string())
+                        })?;
+                    (node_path, execution.realized_tape_range)
+                }
+                CompiledStaticSegment::Layer {
+                    node_path,
+                    option_ids,
+                    controller_sha256,
+                    tape_range,
+                    emitted_raw_actions,
+                } => {
+                    if !valid_node_path(node_path)
+                        || option_ids.len() < 2
+                        || option_ids.iter().any(|id| !valid_portable_id_value(id))
+                        || *controller_sha256 == Digest::ZERO
+                        || tape_range.end_frame_exclusive <= tape_range.start_frame
+                        || tape_range.end_frame_exclusive - tape_range.start_frame
+                            != emitted_raw_actions.len() as u64
+                    {
+                        return Err(TacticBlueprintError::InvalidCompiled(
+                            "compiled layer identity or range is invalid".into(),
+                        ));
+                    }
+                    let start = usize::try_from(tape_range.start_frame).map_err(|_| {
+                        TacticBlueprintError::InvalidCompiled(
+                            "compiled layer start is out of range".into(),
+                        )
+                    })?;
+                    let end = usize::try_from(tape_range.end_frame_exclusive).map_err(|_| {
+                        TacticBlueprintError::InvalidCompiled(
+                            "compiled layer end is out of range".into(),
+                        )
+                    })?;
+                    if self.tape.frames.get(start..end) != Some(emitted_raw_actions.as_slice()) {
+                        return Err(TacticBlueprintError::InvalidCompiled(
+                            "compiled layer frames differ from the exact tape".into(),
+                        ));
+                    }
+                    (node_path, *tape_range)
+                }
+            };
+            if node_path.is_empty() || range.start_frame != expected_start {
+                return Err(TacticBlueprintError::InvalidCompiled(
+                    "compiled blueprint segments are not contiguous and ordered".into(),
+                ));
+            }
+            expected_start = range.end_frame_exclusive;
+        }
+        if expected_start != self.tape.frames.len() as u64 {
+            return Err(TacticBlueprintError::InvalidCompiled(
+                "compiled blueprint segments do not cover the exact tape".into(),
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -103,6 +267,279 @@ pub enum TacticBlueprintNode {
     },
     /// Try children in order until one can start and completes successfully.
     Fallback { attempts: Vec<TacticBlueprintNode> },
+}
+
+enum PendingStaticSegment {
+    Invoke {
+        node_path: String,
+        option_id: String,
+        tape_range: TapeRange,
+    },
+    Layer {
+        node_path: String,
+        option_ids: Vec<String>,
+        controller_sha256: Digest,
+        tape_range: TapeRange,
+        emitted_raw_actions: Vec<InputFrame>,
+    },
+}
+
+impl PendingStaticSegment {
+    fn finish(
+        self,
+        tape: &InputTape,
+        catalog: &TacticAssetCatalog,
+    ) -> Result<CompiledStaticSegment, TacticBlueprintError> {
+        match self {
+            Self::Invoke {
+                node_path,
+                option_id,
+                tape_range,
+            } => {
+                let entry = catalog
+                    .entry(&option_id)
+                    .ok_or_else(|| TacticBlueprintError::UnknownOption(option_id.clone()))?;
+                let execution = capture_entry_execution(entry, tape, tape_range)?;
+                Ok(CompiledStaticSegment::Invoke {
+                    node_path,
+                    option_id,
+                    execution,
+                })
+            }
+            Self::Layer {
+                node_path,
+                option_ids,
+                controller_sha256,
+                tape_range,
+                emitted_raw_actions,
+            } => Ok(CompiledStaticSegment::Layer {
+                node_path,
+                option_ids,
+                controller_sha256,
+                tape_range,
+                emitted_raw_actions,
+            }),
+        }
+    }
+}
+
+fn compile_static_node(
+    node: &TacticBlueprintNode,
+    node_path: &str,
+    catalog: &TacticAssetCatalog,
+    frames: &mut Vec<InputFrame>,
+    segments: &mut Vec<PendingStaticSegment>,
+) -> Result<(), TacticBlueprintError> {
+    match node {
+        TacticBlueprintNode::Invoke { option_id } => {
+            let entry = catalog
+                .entry(option_id)
+                .ok_or_else(|| TacticBlueprintError::UnknownOption(option_id.clone()))?;
+            let start_frame = frames.len() as u64;
+            frames.extend(realize_entry_frames(entry, start_frame)?);
+            let end_frame_exclusive = frames.len() as u64;
+            segments.push(PendingStaticSegment::Invoke {
+                node_path: node_path.into(),
+                option_id: option_id.clone(),
+                tape_range: TapeRange {
+                    start_frame,
+                    end_frame_exclusive,
+                },
+            });
+            Ok(())
+        }
+        TacticBlueprintNode::Sequence { steps } => {
+            for (index, child) in steps.iter().enumerate() {
+                compile_static_node(
+                    child,
+                    &format!("{node_path}/sequence[{index}]"),
+                    catalog,
+                    frames,
+                    segments,
+                )?;
+            }
+            Ok(())
+        }
+        TacticBlueprintNode::Layer { .. } => {
+            let (controller, option_ids) = compile_controller_layer_with_ids(node, catalog)?;
+            let controller_sha256 =
+                Digest(
+                    Sha256::digest(controller.encode().map_err(|error| {
+                        TacticBlueprintError::StaticExecution(error.to_string())
+                    })?)
+                    .into(),
+                );
+            let layer_tape = compile_static_controller(&controller)
+                .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?;
+            let start_frame = frames.len() as u64;
+            let emitted_raw_actions = layer_tape.frames;
+            frames.extend(emitted_raw_actions.iter().cloned());
+            let end_frame_exclusive = frames.len() as u64;
+            segments.push(PendingStaticSegment::Layer {
+                node_path: node_path.into(),
+                option_ids,
+                controller_sha256,
+                tape_range: TapeRange {
+                    start_frame,
+                    end_frame_exclusive,
+                },
+                emitted_raw_actions,
+            });
+            Ok(())
+        }
+        TacticBlueprintNode::Conditional { .. } => {
+            Err(TacticBlueprintError::UnsupportedStaticNode("conditional"))
+        }
+        TacticBlueprintNode::Until { .. } => {
+            Err(TacticBlueprintError::UnsupportedStaticNode("until"))
+        }
+        TacticBlueprintNode::Fallback { .. } => {
+            Err(TacticBlueprintError::UnsupportedStaticNode("fallback"))
+        }
+    }
+}
+
+pub fn compile_controller_layer(
+    node: &TacticBlueprintNode,
+    catalog: &TacticAssetCatalog,
+) -> Result<ControllerProgram, TacticBlueprintError> {
+    compile_controller_layer_with_ids(node, catalog).map(|(program, _)| program)
+}
+
+fn compile_controller_layer_with_ids(
+    node: &TacticBlueprintNode,
+    catalog: &TacticAssetCatalog,
+) -> Result<(ControllerProgram, Vec<String>), TacticBlueprintError> {
+    let mut duration_frames = 0;
+    let mut layers = Vec::new();
+    let mut option_ids = Vec::new();
+    collect_controller_layers(
+        node,
+        catalog,
+        &mut duration_frames,
+        &mut layers,
+        &mut option_ids,
+    )?;
+    let program = ControllerProgram {
+        duration_frames,
+        layers,
+    };
+    program
+        .validate()
+        .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?;
+    Ok((program, option_ids))
+}
+
+fn collect_controller_layers(
+    node: &TacticBlueprintNode,
+    catalog: &TacticAssetCatalog,
+    duration_frames: &mut u32,
+    layers: &mut Vec<dusklight_control::controller_program::Layer>,
+    option_ids: &mut Vec<String>,
+) -> Result<(), TacticBlueprintError> {
+    match node {
+        TacticBlueprintNode::Invoke { option_id } => {
+            let entry = catalog
+                .entry(option_id)
+                .ok_or_else(|| TacticBlueprintError::UnknownOption(option_id.clone()))?;
+            let TacticAssetSource::ReactiveController(program) = entry.source() else {
+                return Err(TacticBlueprintError::StaticExecution(format!(
+                    "layer child {option_id:?} is not an existing controller program"
+                )));
+            };
+            *duration_frames = (*duration_frames).max(program.duration_frames);
+            layers.extend(program.layers.iter().cloned());
+            option_ids.push(option_id.clone());
+            Ok(())
+        }
+        TacticBlueprintNode::Layer {
+            layers: child_layers,
+        } => {
+            for child in child_layers {
+                collect_controller_layers(child, catalog, duration_frames, layers, option_ids)?;
+            }
+            Ok(())
+        }
+        _ => Err(TacticBlueprintError::StaticExecution(
+            "layer children must be controller invokes or nested layers".into(),
+        )),
+    }
+}
+
+fn realize_entry_frames(
+    entry: &TacticCatalogEntry,
+    start_frame: u64,
+) -> Result<Vec<InputFrame>, TacticBlueprintError> {
+    if entry.description().executor != TacticExecutor::StaticPlan {
+        return Err(TacticBlueprintError::StaticExecution(format!(
+            "option {:?} requires an observation-driven executor",
+            entry.option_id()
+        )));
+    }
+    match entry.source() {
+        TacticAssetSource::GameTactic(plan) => plan
+            .realize(None)
+            .map(|realization| realization.frames)
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string())),
+        TacticAssetSource::MotionPath(plan) => plan
+            .realize(None)
+            .map(|realization| realization.frames)
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string())),
+        TacticAssetSource::Roll(plan) => plan
+            .realize(start_frame, None)
+            .map(|realization| realization.frames)
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string())),
+        TacticAssetSource::ReactiveController(program) => compile_static_controller(program)
+            .map(|tape| tape.frames)
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string())),
+        TacticAssetSource::NativeGenericTactic(_) => Err(TacticBlueprintError::StaticExecution(
+            format!("option {:?} has no static realization", entry.option_id()),
+        )),
+    }
+}
+
+fn capture_entry_execution(
+    entry: &TacticCatalogEntry,
+    tape: &InputTape,
+    range: TapeRange,
+) -> Result<OptionExecution, TacticBlueprintError> {
+    let execution = match entry.source() {
+        TacticAssetSource::GameTactic(plan) => plan
+            .capture_execution(entry.option_id().into(), tape, range, None)
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?,
+        TacticAssetSource::MotionPath(plan) => plan
+            .capture_execution(entry.option_id().into(), tape, range, None)
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?,
+        TacticAssetSource::Roll(plan) => plan
+            .capture_execution(entry.option_id().into(), tape, range, None)
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?,
+        TacticAssetSource::ReactiveController(_) => {
+            let description = entry.description();
+            OptionExecution::capture(
+                entry.option_id().into(),
+                description.option.option_type.clone(),
+                description.option.parameters.clone(),
+                description.duration.minimum_ticks,
+                description.duration.maximum_ticks,
+                description.stopping.termination.clone(),
+                description.stopping.cancellation.clone(),
+                OptionEndReason::Completed,
+                tape,
+                range,
+            )
+            .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?
+        }
+        TacticAssetSource::NativeGenericTactic(_) => {
+            return Err(TacticBlueprintError::StaticExecution(format!(
+                "option {:?} has no static execution capture",
+                entry.option_id()
+            )));
+        }
+    };
+    execution
+        .validate_against_tape(tape)
+        .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?;
+    Ok(execution)
 }
 
 fn validate_node(
@@ -190,6 +627,55 @@ fn validate_guard(condition: &OptionCondition) -> Result<(), TacticBlueprintErro
     Ok(())
 }
 
+fn validate_available_conditions<F>(
+    node: &TacticBlueprintNode,
+    condition_available: &mut F,
+) -> Result<(), TacticBlueprintError>
+where
+    F: FnMut(&OptionCondition) -> bool,
+{
+    match node {
+        TacticBlueprintNode::Invoke { .. } => Ok(()),
+        TacticBlueprintNode::Sequence { steps } => {
+            for child in steps {
+                validate_available_conditions(child, condition_available)?;
+            }
+            Ok(())
+        }
+        TacticBlueprintNode::Layer { layers } => {
+            for child in layers {
+                validate_available_conditions(child, condition_available)?;
+            }
+            Ok(())
+        }
+        TacticBlueprintNode::Conditional {
+            condition,
+            when_true,
+            when_false,
+        } => {
+            if !condition_available(condition) {
+                return Err(TacticBlueprintError::UnavailableCondition);
+            }
+            validate_available_conditions(when_true, condition_available)?;
+            validate_available_conditions(when_false, condition_available)
+        }
+        TacticBlueprintNode::Until {
+            condition, body, ..
+        } => {
+            if !condition_available(condition) {
+                return Err(TacticBlueprintError::UnavailableCondition);
+            }
+            validate_available_conditions(body, condition_available)
+        }
+        TacticBlueprintNode::Fallback { attempts } => {
+            for child in attempts {
+                validate_available_conditions(child, condition_available)?;
+            }
+            Ok(())
+        }
+    }
+}
+
 fn validate_portable_id(value: &str) -> Result<(), ()> {
     if value.is_empty()
         || value.len() > 96
@@ -200,6 +686,18 @@ fn validate_portable_id(value: &str) -> Result<(), ()> {
         return Err(());
     }
     Ok(())
+}
+
+fn valid_portable_id_value(value: &str) -> bool {
+    validate_portable_id(value).is_ok()
+}
+
+fn valid_node_path(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 4096
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b'[' | b']')
+        })
 }
 
 fn collect_option_ids<'a>(node: &'a TacticBlueprintNode, output: &mut BTreeSet<&'a str>) {
@@ -245,6 +743,10 @@ pub enum TacticBlueprintError {
     InvalidChildCount(&'static str),
     InvalidIterationBound,
     InvalidCondition(String),
+    UnavailableCondition,
+    UnsupportedStaticNode(&'static str),
+    StaticExecution(String),
+    InvalidCompiled(String),
     Serialization(String),
 }
 
@@ -277,6 +779,24 @@ impl fmt::Display for TacticBlueprintError {
                     "tactic blueprint condition is invalid: {message}"
                 )
             }
+            Self::UnavailableCondition => formatter.write_str(
+                "tactic blueprint condition is unavailable in the current fact registry",
+            ),
+            Self::UnsupportedStaticNode(node_kind) => {
+                write!(
+                    formatter,
+                    "tactic blueprint {node_kind} requires runtime condition evaluation"
+                )
+            }
+            Self::StaticExecution(message) => {
+                write!(
+                    formatter,
+                    "static tactic blueprint execution failed: {message}"
+                )
+            }
+            Self::InvalidCompiled(message) => {
+                write!(formatter, "compiled tactic blueprint is invalid: {message}")
+            }
             Self::Serialization(message) => {
                 write!(
                     formatter,
@@ -293,7 +813,9 @@ impl Error for TacticBlueprintError {}
 mod tests {
     use super::*;
     use crate::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
+    use dusklight_control::controller_program::ControllerProgram;
     use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
+    use dusklight_control::roll_option::{RollOptionPlan, RollSpacing};
 
     fn condition() -> OptionCondition {
         OptionCondition::TargetReached {
@@ -399,6 +921,155 @@ mod tests {
             )
             .unwrap_err(),
             TacticBlueprintError::InvalidCondition(_)
+        ));
+    }
+
+    #[test]
+    fn sequence_and_layer_compile_to_one_exact_ordered_tape() {
+        let entry = |id, source| TacticCatalogEntry::new(id, source).unwrap();
+        let catalog = TacticAssetCatalog::new(vec![
+            entry(
+                "buttons",
+                TacticAssetSource::ReactiveController(
+                    ControllerProgram::parse(
+                        "duskcontrol 1\nframes 2\nbuttons from 0 for 2 B\n",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            entry(
+                "move",
+                TacticAssetSource::ReactiveController(
+                    ControllerProgram::parse(
+                        "duskcontrol 1\nframes 2\nbezier replace from 0 for 2 p0 0 80 p1 0 80 p2 0 80 p3 0 80\n",
+                    )
+                    .unwrap(),
+                ),
+            ),
+            entry(
+                "shield",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            ),
+        ])
+        .unwrap();
+        let blueprint = TacticBlueprint::new(
+            "static.sequence-layer",
+            TacticBlueprintNode::Sequence {
+                steps: vec![
+                    invoke("shield"),
+                    TacticBlueprintNode::Layer {
+                        layers: vec![invoke("move"), invoke("buttons")],
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        let compiled = blueprint.compile_static(&catalog).unwrap();
+        assert_eq!(compiled.tape.frames.len(), 3);
+        assert_eq!(compiled.tape.frames[0].pads[0].buttons, 0x0020);
+        for frame in &compiled.tape.frames[1..] {
+            assert_eq!(frame.pads[0].stick_y, 80);
+            assert_eq!(frame.pads[0].buttons, 0x0200);
+        }
+        assert_eq!(compiled.segments.len(), 2);
+        let CompiledStaticSegment::Invoke { execution, .. } = &compiled.segments[0] else {
+            panic!("sequence prefix must remain an option execution")
+        };
+        execution.validate_against_tape(&compiled.tape).unwrap();
+        assert_eq!(
+            execution.realized_tape_range,
+            TapeRange {
+                start_frame: 0,
+                end_frame_exclusive: 1,
+            }
+        );
+        let CompiledStaticSegment::Layer {
+            option_ids,
+            tape_range,
+            ..
+        } = &compiled.segments[1]
+        else {
+            panic!("concurrent children must remain a layer segment")
+        };
+        assert_eq!(option_ids, &["move", "buttons"]);
+        assert_eq!(
+            *tape_range,
+            TapeRange {
+                start_frame: 1,
+                end_frame_exclusive: 3,
+            }
+        );
+        compiled.validate().unwrap();
+    }
+
+    #[test]
+    fn layer_rejects_ambiguous_writers_and_non_controller_children() {
+        let program = |magnitude| {
+            ControllerProgram::parse(&format!(
+                "duskcontrol 1\nframes 1\nturn replace from 0 for 1 direction right magnitude {magnitude}\n"
+            ))
+            .unwrap()
+        };
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new("first", TacticAssetSource::ReactiveController(program(20)))
+                .unwrap(),
+            TacticCatalogEntry::new("second", TacticAssetSource::ReactiveController(program(70)))
+                .unwrap(),
+            TacticCatalogEntry::new(
+                "shield",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let layer = TacticBlueprintNode::Layer {
+            layers: vec![invoke("first"), invoke("second")],
+        };
+        assert!(matches!(
+            compile_controller_layer(&layer, &catalog),
+            Err(TacticBlueprintError::StaticExecution(message))
+                if message.contains("replace stick layers")
+        ));
+
+        let invalid = TacticBlueprintNode::Layer {
+            layers: vec![invoke("first"), invoke("shield")],
+        };
+        assert!(compile_controller_layer(&invalid, &catalog).is_err());
+    }
+
+    #[test]
+    fn sequence_does_not_insert_hidden_frames_to_rephase_a_roll() {
+        let mut roll = RollOptionPlan::new(0, 100, 0);
+        roll.spacing = RollSpacing {
+            period_ticks: 2,
+            phase_tick: 0,
+        };
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new("roll", TacticAssetSource::Roll(roll)).unwrap(),
+            TacticCatalogEntry::new(
+                "shield",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let blueprint = TacticBlueprint::new(
+            "roll.phase",
+            TacticBlueprintNode::Sequence {
+                steps: vec![invoke("shield"), invoke("roll")],
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            blueprint.compile_static(&catalog),
+            Err(TacticBlueprintError::StaticExecution(_))
         ));
     }
 }
