@@ -16,6 +16,47 @@ const LIBRARY_DRAG_TYPE = "application/x-dusklight-library";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
+const FRIENDLY_KINDS = {
+  scenario: "Scenario",
+  route_graph: "Route graph",
+  reusable_subgraph: "Reusable subgraph",
+  custom_node_definition: "Custom node",
+  state_seed: "State seed",
+  query_goal: "Goal query",
+  route_book: "Route book",
+  layout: "Layout",
+  alias: "Fact",
+  derived_fact: "Derived fact",
+  external_fact: "External fact",
+  predicate: "Condition",
+  goal: "Goal",
+  transition: "Mechanic",
+  obligation: "Requirement",
+  obstruction: "Obstruction",
+  resolver: "Resolution",
+  technique: "Technique",
+  writer: "State change",
+  gate: "Gate",
+  reader: "State check",
+  reconstruction: "Reconstruction",
+  microtrace: "Evidence trace",
+  plan_region: "Plan",
+  plan_method: "Method",
+  reference_step: "Route step",
+  execution_state: "Route state",
+  proof_plan: "Proof",
+  proof_step: "Proof step",
+  proof_state: "Proof state",
+  continuation_merge: "Merge",
+  external_action: "External action",
+};
+const FRIENDLY_CLASSIFICATIONS = {
+  executable: "Ready",
+  feasibility_unknown: "Needs validation",
+  rejected: "Blocked",
+  inapplicable: "Not applicable",
+  not_assessed: "Not checked",
+};
 
 const elements = Object.fromEntries([
   "workspace-list", "new-workspace", "workspace-tab", "library-tab", "content-search",
@@ -631,7 +672,7 @@ async function inspectLibrary(library) {
     for (const [name, value] of [
       ["Source", "Library"],
       ["Version", "1"],
-      ["Content", runtime?.content_sha256 ?? "No exact context"],
+      ["Context", runtime ? "Exact content pinned" : "No exact context"],
       ["Language", runtime?.language ?? "Unspecified"],
       ["Mechanics", mechanics.transitions?.length ?? 0],
       ["Goals", mechanics.goals?.length ?? 0],
@@ -785,7 +826,7 @@ function trashAssetItem(asset) {
   row.className = "content-asset-row";
   row.append(contentItem("BIN", asset.label, asset.original_relative_path, false, () => {
     elements["detail-title"].textContent = asset.label;
-    elements["detail-subtitle"].textContent = `Deleted ${asset.kind.replaceAll("_", " ")}`;
+    elements["detail-subtitle"].textContent = `Deleted ${friendlyKind(asset.kind)}`;
     elements["detail-json"].textContent = JSON.stringify(asset, null, 2);
   }));
   const actions = document.createElement("details");
@@ -953,7 +994,7 @@ function contentMessage(message) {
 
 async function inspectWorkspaceAsset(asset) {
   elements["detail-title"].textContent = asset.label;
-  elements["detail-subtitle"].textContent = `${asset.kind.replaceAll("_", " ")} · ${asset.relative_path}`;
+  elements["detail-subtitle"].textContent = `${friendlyKind(asset.kind)} · ${asset.relative_path}`;
   elements["detail-json"].textContent = JSON.stringify(asset, null, 2);
   try {
     const workspaceId = state.workspace.manifest.id;
@@ -1900,7 +1941,7 @@ function renderNodes() {
     });
     group.append(svg("rect", { width: NODE_WIDTH, height: NODE_HEIGHT }));
     const kind = svg("text", { class: "kind", x: 10, y: 15 });
-    kind.textContent = node.payload.kind.replaceAll("_", " ");
+    kind.textContent = friendlyKind(node.payload.kind);
     const label = svg("text", { x: 10, y: 35 });
     label.textContent = elide(node.label, 25);
     group.append(kind, label);
@@ -1975,7 +2016,7 @@ function renderAddNodeMenu() {
     });
   let category = null;
   for (const match of matches) {
-    const nextCategory = (match.contract?.transition_kind ?? "other").replaceAll("_", " ");
+    const nextCategory = friendlyEnum(match.contract?.transition_kind ?? "other");
     if (nextCategory !== category) {
       category = nextCategory;
       const heading = document.createElement("h3");
@@ -1990,10 +2031,8 @@ function renderAddNodeMenu() {
     label.textContent = match.node.label;
     const compatibility = document.createElement("span");
     compatibility.className = `compatibility ${match.classification}`;
-    compatibility.textContent = match.classification.replaceAll("_", " ");
-    const id = document.createElement("small");
-    id.textContent = match.node.payload.transition_id;
-    button.append(label, compatibility, id);
+    compatibility.textContent = friendlyClassification(match.classification);
+    button.append(label, compatibility);
     button.addEventListener("click", async () => {
       closeAddNodeMenu();
       selectNode(match.node);
@@ -2052,13 +2091,14 @@ function renderPalette(selectedFeasibility = state.selectedStateFeasibility) {
     const transition = node.payload.kind === "transition";
     button.className = `palette-item${transition ? "" : " fact"}`;
     button.draggable = transition;
+    if (transition) button.dataset.transitionId = node.payload.transition_id;
     const label = document.createElement("span");
     label.textContent = node.label;
     const id = document.createElement("small");
     const frontier = transition ? frontierTransitions.get(node.payload.transition_id) : null;
     id.textContent = transition
-      ? `${frontier?.assessment.classification?.replaceAll("_", " ") ?? "not assessed"} · ${node.payload.transition_id}`
-      : `${node.payload.kind.replaceAll("_", " ")} · ${node.payload.fact_id}`;
+      ? `${friendlyClassification(frontier?.assessment.classification)} · ${friendlyEnum(selectedContract(node)?.transition_kind ?? "mechanic")}`
+      : friendlyKind(node.payload.kind);
     button.append(label, id);
     button.addEventListener("click", () => {
       state.selected = { type: "node", value: node };
@@ -2789,7 +2829,7 @@ function transitionSearchText(transition) {
       value.forEach(visit);
     } else if (value && typeof value === "object") {
       for (const [key, child] of Object.entries(value)) {
-        tokens.push(key.replaceAll("_", " "));
+        tokens.push(friendlyEnum(key));
         visit(child);
       }
     }
@@ -3043,8 +3083,8 @@ function stateInspectionCard(label, inspection) {
 
 function taggedValue(value) {
   if (value == null) return "none";
-  if (typeof value === "string") return value.replaceAll("_", " ");
-  if (typeof value.kind === "string") return value.kind.replaceAll("_", " ");
+  if (typeof value === "string") return friendlyEnum(value);
+  if (typeof value.kind === "string") return friendlyEnum(value.kind);
   return "modeled";
 }
 
@@ -3401,7 +3441,7 @@ async function evaluateSelectedTransition() {
     const accepted = payload.assessment.classification === "executable";
     setStatus(
       accepted ? `${node.label} is executable from the exact route frontier`
-        : `${node.label}: ${payload.assessment.classification.replaceAll("_", " ")}`,
+        : `${node.label}: ${friendlyClassification(payload.assessment.classification)}`,
       accepted ? "good" : "bad",
     );
   } catch (error) {
@@ -3449,7 +3489,7 @@ async function solveSelectedGoal() {
     setStatus(
       payload.report.summary.status === "reached"
         ? `${node.label} reached; projected ${plans} solver plan${plans === 1 ? "" : "s"}`
-        : `${node.label}: ${payload.report.summary.status.replaceAll("_", " ")}`,
+        : `${node.label}: ${friendlyEnum(payload.report.summary.status)}`,
       payload.report.summary.status === "reached" ? "good" : "bad",
     );
   } catch (error) {
@@ -3523,7 +3563,7 @@ function joinRejectionSummary(label, payload, action = "inserted") {
   ];
   if (!assessment.scope_applies) reasons.push("exact context does not apply");
   if (!assessment.evidence_permitted) reasons.push("evidence policy rejects this transition");
-  const detail = reasons.length ? reasons.join(", ") : assessment.classification.replaceAll("_", " ");
+  const detail = reasons.length ? reasons.join(", ") : friendlyClassification(assessment.classification);
   return `${label} was not ${action}: ${detail}`;
 }
 
@@ -3753,6 +3793,22 @@ function elide(value, length) {
 
 function slug(value) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "route";
+}
+
+function friendlyKind(kind) {
+  return FRIENDLY_KINDS[kind] ?? friendlyEnum(kind);
+}
+
+function friendlyClassification(classification = "not_assessed") {
+  return FRIENDLY_CLASSIFICATIONS[classification] ?? friendlyEnum(classification);
+}
+
+function friendlyEnum(value) {
+  return String(value)
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 function workspaceAssetRoot(kind) {

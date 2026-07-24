@@ -141,6 +141,17 @@ try {
     `document.getElementById("project-name").textContent.includes("Forest Temple small-key door")`,
   );
   await browserUntil(
+    "friendly default terminology",
+    `(() => {
+      const kinds = [...document.querySelectorAll("#nodes .kind")]
+        .map((node) => node.textContent);
+      return kinds.includes("Mechanic")
+        && kinds.every((label) => !label.includes("_"))
+        && document.querySelector("#model-context > summary").textContent.includes("Advanced")
+        && document.querySelector(".diagnostics-drawer > summary").textContent.includes("Advanced");
+    })()`,
+  );
+  await browserUntil(
     "exact model context",
     `(() => {
       const panel = document.getElementById("model-context-body");
@@ -176,8 +187,9 @@ try {
     const search = document.getElementById("search");
     search.value = transition;
     search.dispatchEvent(new Event("input", { bubbles: true }));
-    const item = [...document.querySelectorAll("#palette-list .palette-item")]
-      .find((button) => button.querySelector("small")?.textContent.endsWith("· " + transition));
+    const item = document.querySelector(
+      '#palette-list .palette-item[data-transition-id="' + transition + '"]',
+    );
     if (!item) throw new Error("rejected transition is absent from the browser palette");
     item.click();
     document.getElementById("insert-transition").click();
@@ -373,7 +385,7 @@ try {
   })()`);
   await browserUntil(
     "evidence-policy edit",
-    `document.getElementById("status").textContent.includes("Evidence policy changed to research")`,
+    `document.getElementById("status").textContent.includes("Evidence policy changed to Research")`,
   );
   await evaluate(`(async () => {
     const record = await fetch("/api/projects/browser-keyed-door").then((response) => response.json());

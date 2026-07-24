@@ -118,9 +118,6 @@ or test fixture does not count as progress by itself.
       referenced subgraph.
 - [ ] Provide empty states that lead directly to meaningful actions: choose a
       context, choose an anchor, add a node, or open a template.
-- [ ] Remove internal schema names, digests, enum spellings, and serialized field
-      names from default labels. Keep them available in an Advanced inspector.
-
 ## 5. Blueprint-style graph authoring
 
 ### 5.1 Node catalogue and placement
