@@ -403,14 +403,23 @@ impl TacticQCampaign {
                 "frontier archive has no restorable endpoint",
             ));
         }
+        let deepest_route = choices
+            .iter()
+            .map(|entry| entry.route_tape.frames.len())
+            .max()
+            .expect("nonempty frontier has a deepest route");
+        let deepest = choices
+            .iter()
+            .filter(|entry| entry.route_tape.frames.len() == deepest_route)
+            .collect::<Vec<_>>();
         let mut hasher = Sha256::new();
         hasher.update(b"dusklight-tactic-frontier-sample/v1");
         hasher.update(seed.to_le_bytes());
         hasher.update(round.to_le_bytes());
         let digest = hasher.finalize();
         let index =
-            (u64::from_le_bytes(digest[..8].try_into().unwrap()) % choices.len() as u64) as usize;
-        let selected: &TacticFrontierEntry = &choices[index];
+            (u64::from_le_bytes(digest[..8].try_into().unwrap()) % deepest.len() as u64) as usize;
+        let selected: &TacticFrontierEntry = deepest[index];
         let frontier = TacticCampaignBranch {
             kind: TacticBranchKind::RetainedFrontier,
             state_sha256: selected.transition.after_state_sha256,

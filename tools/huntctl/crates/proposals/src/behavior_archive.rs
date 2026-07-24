@@ -22,6 +22,7 @@ use std::fmt;
 
 pub const MAX_BEHAVIOR_ARCHIVE_ENTRIES: usize = 256;
 const POSITION_BIN_WORLD_UNITS: f32 = 256.0;
+const TACTIC_FRONTIER_POSITION_BIN_WORLD_UNITS: f32 = 64.0;
 
 #[derive(Clone, Copy)]
 struct MovementFeatureLayout {
@@ -133,7 +134,7 @@ pub struct ArchivedEpisode {
 pub struct BehaviorArchive {
     entries: BTreeMap<BehaviorDescriptor, ArchivedEpisode>,
     refined_cells: BTreeMap<BehaviorDescriptor, u8>,
-    tactic_entries: BTreeMap<TacticEndpointDescriptor, TacticFrontierEntry>,
+    tactic_entries: BTreeMap<TacticStateDescriptor, TacticFrontierEntry>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -248,6 +249,8 @@ impl BehaviorArchive {
                 "tactic endpoint is detached from its restorable route",
             ));
         }
+        let state_descriptor =
+            tactic_frontier_state_descriptor(&transition.after, transition.value_sample.terminal);
         let descriptor = tactic_endpoint_descriptor(&transition)?;
         let entry = TacticFrontierEntry {
             descriptor: descriptor.clone(),
@@ -259,10 +262,10 @@ impl BehaviorArchive {
         };
         let replace = self
             .tactic_entries
-            .get(&descriptor)
+            .get(&state_descriptor)
             .is_none_or(|incumbent| tactic_quality_cmp(&entry, incumbent).is_gt());
         if replace {
-            self.tactic_entries.insert(descriptor, entry);
+            self.tactic_entries.insert(state_descriptor, entry);
         }
         while self.tactic_entries.len() > MAX_BEHAVIOR_ARCHIVE_ENTRIES {
             let remove = self
@@ -272,7 +275,7 @@ impl BehaviorArchive {
                     tactic_quality_cmp(left, right)
                         .then_with(|| right.first_seen_generation.cmp(&left.first_seen_generation))
                 })
-                .map(|(descriptor, _)| descriptor.clone())
+                .map(|(state, _)| state.clone())
                 .expect("nonempty tactic archive exceeds its bound");
             self.tactic_entries.remove(&remove);
         }
@@ -781,9 +784,21 @@ fn tactic_endpoint_descriptor(
 }
 
 pub fn tactic_state_descriptor(after: &FactSnapshot, terminal: bool) -> TacticStateDescriptor {
+    tactic_state_descriptor_with_bin(after, terminal, POSITION_BIN_WORLD_UNITS)
+}
+
+fn tactic_frontier_state_descriptor(after: &FactSnapshot, terminal: bool) -> TacticStateDescriptor {
+    tactic_state_descriptor_with_bin(after, terminal, TACTIC_FRONTIER_POSITION_BIN_WORLD_UNITS)
+}
+
+fn tactic_state_descriptor_with_bin(
+    after: &FactSnapshot,
+    terminal: bool,
+    position_bin_world_units: f32,
+) -> TacticStateDescriptor {
     let position = after.player.position_f32_bits.map(f32::from_bits);
     let position_bin = position
-        .map(|value| (f64::from(value) / f64::from(POSITION_BIN_WORLD_UNITS)).floor() as i32);
+        .map(|value| (f64::from(value) / f64::from(position_bin_world_units)).floor() as i32);
     TacticStateDescriptor {
         stage: after.world.stage.clone(),
         room: after.world.room,
@@ -985,6 +1000,39 @@ mod tests {
     use dusklight_learning::fact_snapshot::FactSnapshot;
     use dusklight_learning::option_transition::OptionTransitionSample;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn frontier_cells_are_finer_than_reward_novelty_cells() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let mut first = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let mut second = first.clone();
+        let mut first_position = first.player.position_f32_bits;
+        let coarse_base = (f32::from_bits(first_position[0]) / POSITION_BIN_WORLD_UNITS).floor()
+            * POSITION_BIN_WORLD_UNITS;
+        first_position[0] = (coarse_base + 32.0).to_bits();
+        first.player.position_f32_bits = first_position;
+        let mut second_position = second.player.position_f32_bits;
+        second_position[0] = (coarse_base + 112.0).to_bits();
+        second.player.position_f32_bits = second_position;
+
+        assert_eq!(
+            tactic_state_descriptor(&first, false),
+            tactic_state_descriptor(&second, false)
+        );
+        assert_ne!(
+            tactic_frontier_state_descriptor(&first, false),
+            tactic_frontier_state_descriptor(&second, false)
+        );
+    }
 
     #[test]
     fn tactic_endpoints_become_restorable_quality_diversity_elites() {
