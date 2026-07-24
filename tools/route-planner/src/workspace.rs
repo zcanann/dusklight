@@ -1256,6 +1256,13 @@ impl WorkspaceStore {
                 asset.header.id
             )));
         }
+        let mut available = self
+            .list_assets()?
+            .into_iter()
+            .map(|listing| (listing.id, listing.kind))
+            .collect::<BTreeMap<_, _>>();
+        available.insert(asset.header.id.clone(), asset.header.kind);
+        validate_asset_references(asset, &available)?;
         let path = self.root.join(relative_path);
         let current_revision = path
             .is_file()
@@ -1840,6 +1847,11 @@ impl WorkspaceStore {
                 WorkspaceMutation::Put { .. } | WorkspaceMutation::Archive { .. } => None,
             })
             .collect::<BTreeSet<_>>();
+        let mut available = listings
+            .iter()
+            .filter(|listing| !deleted_paths.contains(&listing.relative_path))
+            .map(|listing| (listing.id.clone(), listing.kind))
+            .collect::<BTreeMap<_, _>>();
         let mut put_ids = BTreeSet::new();
         for mutation in mutations {
             let (relative_path, expected_revision) = match mutation {
@@ -1856,6 +1868,7 @@ impl WorkspaceStore {
                             asset.header.id
                         )));
                     }
+                    available.insert(asset.header.id.clone(), asset.header.kind);
                     if let Some(existing) = listings
                         .iter()
                         .find(|listing| listing.id == asset.header.id)
@@ -1900,6 +1913,12 @@ impl WorkspaceStore {
                     display_digest(current_revision)
                 )));
             }
+        }
+        for asset in mutations.iter().filter_map(|mutation| match mutation {
+            WorkspaceMutation::Put { asset, .. } => Some(asset),
+            WorkspaceMutation::Delete { .. } | WorkspaceMutation::Archive { .. } => None,
+        }) {
+            validate_asset_references(asset, &available)?;
         }
         Ok(())
     }
@@ -2011,6 +2030,27 @@ impl WorkspaceStore {
             .ok_or_else(|| WorkspaceError::new(format!("missing {kind:?} asset root")))?;
         Ok(self.root.join(relative))
     }
+}
+
+fn validate_asset_references(
+    asset: &WorkspaceAsset,
+    available: &BTreeMap<String, WorkspaceAssetKind>,
+) -> Result<(), WorkspaceError> {
+    for reference in &asset.references {
+        let Some(actual_kind) = available.get(&reference.asset_id) else {
+            return Err(WorkspaceError::new(format!(
+                "{} references missing {:?} asset {}",
+                asset.header.id, reference.kind, reference.asset_id
+            )));
+        };
+        if *actual_kind != reference.kind {
+            return Err(WorkspaceError::new(format!(
+                "{} references {} as {:?}, but it is {:?}",
+                asset.header.id, reference.asset_id, reference.kind, actual_kind
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn dependency_issues(
@@ -2653,6 +2693,30 @@ mod tests {
                 viewport: None,
             }),
         };
+        let mut missing_reference = layout.clone();
+        missing_reference.header.id = "layout.missing-reference".into();
+        missing_reference.references[0].asset_id = "graph.absent".into();
+        let missing_path = Path::new("layouts/missing-reference.json");
+        assert!(
+            store
+                .save_asset(missing_path, None, &missing_reference)
+                .unwrap_err()
+                .to_string()
+                .contains("references missing RouteGraph asset graph.absent")
+        );
+        assert!(!root.join(missing_path).exists());
+        let mut wrong_kind = layout.clone();
+        wrong_kind.header.id = "layout.wrong-kind".into();
+        wrong_kind.references[0].kind = WorkspaceAssetKind::StateSeed;
+        let wrong_kind_path = Path::new("layouts/wrong-kind.json");
+        assert!(
+            store
+                .save_asset(wrong_kind_path, None, &wrong_kind)
+                .unwrap_err()
+                .to_string()
+                .contains("as StateSeed, but it is RouteGraph")
+        );
+        assert!(!root.join(wrong_kind_path).exists());
         store
             .save_asset(Path::new("layouts/ordon.json"), None, &layout)
             .unwrap();
