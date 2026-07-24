@@ -160,6 +160,47 @@ pub struct TacticCampaignGraphEdge {
     pub route_tape: InputTape,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticCampaignGraphProjection {
+    pub schema: String,
+    pub root_checkpoint_sha256: Digest,
+    pub root_state_sha256: Digest,
+    pub root_connected: bool,
+    pub frontier_cells: usize,
+    pub nodes: Vec<TacticCampaignGraphProjectionNode>,
+    pub edges: Vec<TacticCampaignGraphProjectionEdge>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticCampaignGraphProjectionNode {
+    pub checkpoint_sha256: Digest,
+    pub state_sha256: Digest,
+    pub stage: String,
+    pub room: i8,
+    pub player_position: [f32; 3],
+    pub terminal: bool,
+    pub retained_frontier: bool,
+    pub current: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticCampaignGraphProjectionEdge {
+    pub episode_group: u64,
+    pub before_state_sha256: Digest,
+    pub after_state_sha256: Digest,
+    pub source_checkpoint_sha256: Digest,
+    pub next_checkpoint_sha256: Digest,
+    pub option_id: String,
+    pub reward: f32,
+    pub duration_ticks: u32,
+    pub terminal: bool,
+    pub start_frame: u64,
+    pub end_frame_exclusive: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticCampaignDiagnostics {
@@ -348,9 +389,98 @@ impl TacticQCampaign {
         })
     }
 
+    pub fn graph_projection(&self) -> Result<TacticCampaignGraphProjection, TacticQCampaignError> {
+        let root = self
+            .replay
+            .first()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "campaign graph requires replay",
+            ))?;
+        let root_checkpoint_sha256 = root.source_checkpoint_sha256;
+        let root_state_sha256 = root.before_state_sha256;
+        let current_checkpoint_sha256 =
+            route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
+        let retained = self
+            .frontier_archive()?
+            .tactic_route_checkpoints()
+            .collect::<BTreeSet<_>>();
+        let mut nodes = BTreeMap::<(Digest, Digest), TacticCampaignGraphProjectionNode>::new();
+        let mut edges = Vec::with_capacity(self.replay.len());
+        for (transition, episode_group) in self.replay.iter().zip(&self.episode_groups) {
+            for (checkpoint_sha256, state_sha256, state) in [
+                (
+                    transition.source_checkpoint_sha256,
+                    transition.before_state_sha256,
+                    &transition.before,
+                ),
+                (
+                    transition.next_checkpoint_sha256,
+                    transition.after_state_sha256,
+                    &transition.after,
+                ),
+            ] {
+                let node = TacticCampaignGraphProjectionNode {
+                    checkpoint_sha256,
+                    state_sha256,
+                    stage: state.world.stage.clone(),
+                    room: state.world.room,
+                    player_position: state.player.position_f32_bits.map(f32::from_bits),
+                    terminal: state.terminal.reached == Some(true),
+                    retained_frontier: retained.contains(&checkpoint_sha256),
+                    current: checkpoint_sha256 == current_checkpoint_sha256
+                        && state_sha256 == self.current.snapshot_sha256,
+                };
+                let identity = (checkpoint_sha256, state_sha256);
+                if nodes
+                    .get(&identity)
+                    .is_some_and(|existing| existing != &node)
+                {
+                    return Err(TacticQCampaignError::InvalidState(
+                        "one checkpoint-state identity has conflicting projected graph nodes",
+                    ));
+                }
+                nodes.entry(identity).or_insert(node);
+            }
+            edges.push(TacticCampaignGraphProjectionEdge {
+                episode_group: *episode_group,
+                before_state_sha256: transition.before_state_sha256,
+                after_state_sha256: transition.after_state_sha256,
+                source_checkpoint_sha256: transition.source_checkpoint_sha256,
+                next_checkpoint_sha256: transition.next_checkpoint_sha256,
+                option_id: transition.value_sample.action.option_id.clone(),
+                reward: transition.value_sample.reward,
+                duration_ticks: transition.execution.duration.realized_ticks,
+                terminal: transition.value_sample.terminal,
+                start_frame: transition.execution.realized_tape_range.start_frame,
+                end_frame_exclusive: transition.execution.realized_tape_range.end_frame_exclusive,
+            });
+        }
+        let mut reachable = BTreeSet::from([(root_checkpoint_sha256, root_state_sha256)]);
+        loop {
+            let before = reachable.len();
+            for edge in &edges {
+                if reachable.contains(&(edge.source_checkpoint_sha256, edge.before_state_sha256)) {
+                    reachable.insert((edge.next_checkpoint_sha256, edge.after_state_sha256));
+                }
+            }
+            if reachable.len() == before {
+                break;
+            }
+        }
+        Ok(TacticCampaignGraphProjection {
+            schema: "dusklight-tactic-campaign-graph-projection/v1".into(),
+            root_checkpoint_sha256,
+            root_state_sha256,
+            root_connected: reachable.len() == nodes.len(),
+            frontier_cells: retained.len(),
+            nodes: nodes.into_values().collect(),
+            edges,
+        })
+    }
+
     pub fn diagnostics(&self) -> Result<TacticCampaignDiagnostics, TacticQCampaignError> {
         let archive = self.frontier_archive()?;
-        let graph = self.graph()?;
+        let graph = self.graph_projection()?;
         let mut compositions = BTreeMap::<u64, Vec<Digest>>::new();
         let mut selected_actions = BTreeSet::new();
         for (transition, episode_group) in self.replay.iter().zip(&self.episode_groups) {
@@ -1681,6 +1811,24 @@ mod tests {
                 node.checkpoint_sha256 == campaign.replay[0].next_checkpoint_sha256
             })
         );
+        let projection = restored.graph_projection().unwrap();
+        assert_eq!(projection.nodes.len(), 2);
+        assert_eq!(projection.edges.len(), 1);
+        assert_eq!(projection.frontier_cells, 1);
+        assert!(projection.root_connected);
+        assert!(
+            projection
+                .nodes
+                .iter()
+                .any(|node| node.current && node.retained_frontier)
+        );
+        let projection_json = serde_json::to_vec(&projection).unwrap();
+        assert!(
+            !projection_json
+                .windows(10)
+                .any(|bytes| bytes == b"route_tape")
+        );
+        assert!(projection_json.len() < 4_096);
         let mut equivalent_pad_projection = campaign.replay[0].clone();
         equivalent_pad_projection
             .after

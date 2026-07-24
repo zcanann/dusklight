@@ -573,6 +573,17 @@ fn run_seed(
             &serde_json::to_vec_pretty(&decision_trace).map_err(route_error)?,
         )?;
         trace.push(decision_trace);
+        if step.step.transition.value_sample.terminal
+            || campaign.decision_index % config.branch_every_decisions == 0
+        {
+            let graph_root = seed_root.join("knowledge-graph");
+            fs::create_dir_all(&graph_root).map_err(route_error)?;
+            write_new(
+                &graph_root.join(format!("graph-{:06}.json", campaign.decision_index)),
+                &serde_json::to_vec_pretty(&campaign.graph_projection().map_err(route_error)?)
+                    .map_err(route_error)?,
+            )?;
+        }
         let run_finished = step.step.transition.value_sample.terminal
             || campaign.decision_index >= config.decisions_per_seed
             || native_ticks >= config.optimization.budgets.simulated_tick_budget;
@@ -601,7 +612,8 @@ fn run_seed(
     let graph_path = seed_root.join("graph.json");
     write_new(
         &graph_path,
-        &serde_json::to_vec_pretty(&campaign.graph().map_err(route_error)?).map_err(route_error)?,
+        &serde_json::to_vec_pretty(&campaign.graph_projection().map_err(route_error)?)
+            .map_err(route_error)?,
     )?;
     let (successful_tape, final_result) = if success {
         let tape_path = seed_root.join("successful.tape");

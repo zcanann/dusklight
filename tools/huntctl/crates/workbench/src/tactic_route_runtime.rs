@@ -72,6 +72,7 @@ pub(super) fn tactic_route_learning_projection(
         total_decisions: 0,
         total_native_ticks: 0,
         latest_decision: None,
+        learned_graph: None,
         output: None,
         report: None,
         blocker: None,
@@ -103,6 +104,7 @@ pub(super) fn tactic_route_learning_projection(
     projection.output = output.strip_prefix(root).ok().map(repository_path_text);
     project_completed_seed_results(&output, &seeds, &mut projection);
     projection.latest_decision = project_latest_decision(&output, &seeds);
+    projection.learned_graph = project_latest_graph(&output, &seeds);
     let report_path = output.join("report.json");
     if report_path.exists() {
         match bounded_json::<Value>(&report_path) {
@@ -390,6 +392,45 @@ fn project_latest_decision(output: &Path, seeds: &[u64]) -> Option<GraphTacticDe
     None
 }
 
+fn project_latest_graph(output: &Path, seeds: &[u64]) -> Option<GraphTacticKnowledgeGraph> {
+    for (index, seed) in seeds.iter().enumerate().rev() {
+        let seed_root = output.join(format!("seed-{index:03}-{seed}"));
+        let final_graph = seed_root.join("graph.json");
+        let graph_path = if final_graph.is_file() {
+            final_graph
+        } else {
+            let Ok(entries) = fs::read_dir(seed_root.join("knowledge-graph")) else {
+                continue;
+            };
+            let Some(latest) = entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.file_name()
+                        .and_then(|name| name.to_str())
+                        .is_some_and(|name| name.starts_with("graph-") && name.ends_with(".json"))
+                })
+                .max()
+            else {
+                continue;
+            };
+            latest
+        };
+        let Some(value) = bounded_json::<Value>(&graph_path) else {
+            continue;
+        };
+        if value.get("schema").and_then(Value::as_str)
+            != Some("dusklight-tactic-campaign-graph-projection/v1")
+        {
+            continue;
+        }
+        if let Ok(graph) = serde_json::from_value(value) {
+            return Some(graph);
+        }
+    }
+    None
+}
+
 fn tactic_route_error(error: impl fmt::Display) -> WorkbenchError {
     WorkbenchError::new(error.to_string())
 }
@@ -503,6 +544,65 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
+        let graph_root = output.join("seed-003-181081/knowledge-graph");
+        fs::create_dir_all(&graph_root).unwrap();
+        fs::write(
+            graph_root.join("graph-000070.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "schema": "dusklight-tactic-campaign-graph-projection/v1",
+                "root_checkpoint_sha256":
+                    "1111111111111111111111111111111111111111111111111111111111111111",
+                "root_state_sha256":
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "root_connected": true,
+                "frontier_cells": 1,
+                "nodes": [
+                    {
+                        "checkpoint_sha256":
+                            "1111111111111111111111111111111111111111111111111111111111111111",
+                        "state_sha256":
+                            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "stage": "F_SP103",
+                        "room": 1,
+                        "player_position": [1.0, 2.0, 3.0],
+                        "terminal": false,
+                        "retained_frontier": false,
+                        "current": false
+                    },
+                    {
+                        "checkpoint_sha256":
+                            "2222222222222222222222222222222222222222222222222222222222222222",
+                        "state_sha256":
+                            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                        "stage": "F_SP103",
+                        "room": 1,
+                        "player_position": [9.0, 2.0, 3.0],
+                        "terminal": true,
+                        "retained_frontier": true,
+                        "current": true
+                    }
+                ],
+                "edges": [{
+                    "episode_group": 18,
+                    "before_state_sha256":
+                        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "after_state_sha256":
+                        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "source_checkpoint_sha256":
+                        "1111111111111111111111111111111111111111111111111111111111111111",
+                    "next_checkpoint_sha256":
+                        "2222222222222222222222222222222222222222222222222222222222222222",
+                    "option_id": "goal.seek.coordinate.17",
+                    "reward": 96.0,
+                    "duration_ticks": 32,
+                    "terminal": true,
+                    "start_frame": 506,
+                    "end_frame_exclusive": 538
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         fs::write(
             output.join("report.json"),
             serde_json::to_vec(&serde_json::json!({
@@ -530,6 +630,10 @@ mod tests {
                 .map(|decision| decision.selected_option_id.as_str()),
             Some("goal.seek.coordinate.17")
         );
+        let graph = projection.learned_graph.as_ref().unwrap();
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.edges.len(), 1);
+        assert_eq!(graph.frontier_cells, 1);
         let expected_report = format!("{relative}/tactic-route/report.json");
         assert_eq!(projection.report.as_deref(), Some(expected_report.as_str()));
         fs::remove_dir_all(root.join(relative)).unwrap();

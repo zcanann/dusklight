@@ -60,7 +60,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v19";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v20";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -223,6 +223,8 @@ pub struct GraphTacticRouteLearning {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_decision: Option<GraphTacticDecisionTrace>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub learned_graph: Option<GraphTacticKnowledgeGraph>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub output: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub report: Option<String>,
@@ -317,6 +319,41 @@ pub struct GraphTacticValueTrace {
     pub mean_q: Option<f64>,
     pub ensemble_variance: Option<f64>,
     pub selected: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticKnowledgeGraph {
+    pub root_connected: bool,
+    pub frontier_cells: usize,
+    pub nodes: Vec<GraphTacticKnowledgeNode>,
+    pub edges: Vec<GraphTacticKnowledgeEdge>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticKnowledgeNode {
+    pub checkpoint_sha256: String,
+    pub state_sha256: String,
+    pub stage: String,
+    pub room: i8,
+    pub player_position: [f32; 3],
+    pub terminal: bool,
+    pub retained_frontier: bool,
+    pub current: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticKnowledgeEdge {
+    pub episode_group: u64,
+    pub before_state_sha256: String,
+    pub after_state_sha256: String,
+    pub source_checkpoint_sha256: String,
+    pub next_checkpoint_sha256: String,
+    pub option_id: String,
+    pub reward: f32,
+    pub duration_ticks: u32,
+    pub terminal: bool,
+    pub start_frame: u64,
+    pub end_frame_exclusive: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]

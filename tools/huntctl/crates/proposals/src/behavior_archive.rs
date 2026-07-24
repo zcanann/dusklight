@@ -219,6 +219,12 @@ impl BehaviorArchive {
         self.tactic_entries.len()
     }
 
+    pub fn tactic_route_checkpoints(&self) -> impl Iterator<Item = Digest> + '_ {
+        self.tactic_entries
+            .values()
+            .map(|entry| entry.route_checkpoint_sha256)
+    }
+
     /// Feed one authenticated tactic endpoint into the same bounded
     /// quality-diversity archive used by route search. The retained route is a
     /// restorable checkpoint: replay it from `root_checkpoint_sha256` to reach
