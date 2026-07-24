@@ -11,9 +11,12 @@ use dusklight_control::option_execution::{
     OptionCondition, OptionEndReason, OptionExecution, TapeRange,
 };
 use dusklight_evidence::native_episode_shard::{
-    NativeEpisodeShard, NativeObservationPhase, NativeRawPad,
+    NativeEpisode, NativeEpisodeShard, NativeObservationPhase, NativeRawPad,
 };
 use dusklight_learning::fact_snapshot::FactSnapshot;
+use dusklight_learning::native_generic_tactic::{
+    NativeGenericTacticStepper, NativeTacticObservation, NativeTacticQueryRecord,
+};
 use dusklight_learning::tactic_asset::{
     PreparedTacticExecution, TacticAssetCatalog, TacticDurationBounds,
 };
@@ -34,8 +37,8 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub const NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V1: &str =
-    "dusklight-native-tactic-worker-outcome/v1";
+pub const NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2: &str =
+    "dusklight-native-tactic-worker-outcome/v2";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeTacticWorkerPaths {
@@ -52,6 +55,7 @@ pub struct NativeTacticWorkerOutcome {
     pub episode_shard_sha256: Digest,
     pub selected: SelectedTactic,
     pub execution: OptionExecution,
+    pub native_queries: Vec<NativeTacticQueryRecord>,
     pub route_tape: InputTape,
     pub next_facts: FactSnapshot,
     pub terminal: bool,
@@ -62,6 +66,16 @@ struct PreparedNativeTactic {
     option_tape: InputTape,
     execution: OptionExecution,
     duration: TacticDurationBounds,
+}
+
+#[derive(Clone, Debug)]
+enum PreparedNativeExecution {
+    Static(PreparedNativeTactic),
+    NativeGeneric {
+        stepper: NativeGenericTacticStepper,
+        duration: TacticDurationBounds,
+        termination: OptionCondition,
+    },
 }
 
 pub trait PersistentTacticBatchWorker {
@@ -114,13 +128,53 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
         return Err(NativeTacticWorkerError::DetachedSelection);
     }
 
-    let prepared = prepare_selected(selected, catalog, blueprints)?;
     let source_frame = usize::try_from(worker.identity().source_frame)
         .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
     if source_frame > route_prefix.frames.len() {
         return Err(NativeTacticWorkerError::DetachedSelection);
     }
     let candidate_prefix_ticks = route_prefix.frames.len() - source_frame;
+    match prepare_selected(selected, catalog, blueprints)? {
+        PreparedNativeExecution::Static(prepared) => execute_static_tactic(
+            worker,
+            selected,
+            before,
+            route_prefix,
+            paths,
+            source_frame,
+            candidate_prefix_ticks,
+            prepared,
+        ),
+        PreparedNativeExecution::NativeGeneric {
+            stepper,
+            duration,
+            termination,
+        } => execute_native_generic_tactic(
+            worker,
+            selected,
+            before,
+            route_prefix,
+            paths,
+            source_frame,
+            candidate_prefix_ticks,
+            stepper,
+            duration,
+            termination,
+        ),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_static_tactic<W: PersistentTacticBatchWorker>(
+    worker: &mut W,
+    selected: &SelectedTactic,
+    before: &FactSnapshot,
+    route_prefix: &InputTape,
+    paths: &NativeTacticWorkerPaths,
+    source_frame: usize,
+    candidate_prefix_ticks: usize,
+    prepared: PreparedNativeTactic,
+) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     let mut candidate_tape = InputTape {
         boot: route_prefix.boot.clone(),
         tick_rate_numerator: route_prefix.tick_rate_numerator,
@@ -142,30 +196,213 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
         candidate_prefix_ticks,
         request,
         validated,
+        Vec::new(),
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
+    worker: &mut W,
+    selected: &SelectedTactic,
+    before: &FactSnapshot,
+    route_prefix: &InputTape,
+    paths: &NativeTacticWorkerPaths,
+    source_frame: usize,
+    candidate_prefix_ticks: usize,
+    mut stepper: NativeGenericTacticStepper,
+    duration: TacticDurationBounds,
+    termination: OptionCondition,
+) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
+    let mut observation = before
+        .to_native_tactic_observation()
+        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+    let mut option_tape = InputTape {
+        boot: route_prefix.boot.clone(),
+        tick_rate_numerator: route_prefix.tick_rate_numerator,
+        tick_rate_denominator: route_prefix.tick_rate_denominator,
+        frames: Vec::new(),
+    };
+    let mut queries = Vec::new();
+
+    for local_tick in 0..duration.maximum_ticks {
+        let step = stepper
+            .step(observation)
+            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+        option_tape.frames.push(step.frame);
+        queries.push(step.query);
+
+        let mut candidate_tape = InputTape {
+            boot: route_prefix.boot.clone(),
+            tick_rate_numerator: route_prefix.tick_rate_numerator,
+            tick_rate_denominator: route_prefix.tick_rate_denominator,
+            frames: route_prefix.frames[source_frame..].to_vec(),
+        };
+        candidate_tape.frames.extend_from_slice(&option_tape.frames);
+        let request = tactic_batch(worker.identity(), selected, &candidate_tape)?;
+        let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
+        write_new_json(&iteration_paths.request, &request)?;
+        let validated =
+            worker.run_tactic_batch(&iteration_paths.request, &iteration_paths.result)?;
+        let episode = inspect_candidate_episode(&request, &validated, &candidate_tape)?;
+        if episode.steps.len() <= candidate_prefix_ticks {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "route prefix terminated before the selected tactic",
+            ));
+        }
+        let realized_ticks = episode.steps.len() - candidate_prefix_ticks;
+        if realized_ticks != option_tape.frames.len() {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "observation loop replay diverged",
+            ));
+        }
+
+        let end_reason = if episode.success && step.end_reason.is_none() {
+            Some(OptionEndReason::Cancelled { condition_index: 0 })
+        } else {
+            step.end_reason
+        };
+        if let Some(end_reason) = end_reason {
+            let cancellation_conditions = matches!(end_reason, OptionEndReason::Cancelled { .. })
+                .then(|| {
+                    vec![OptionCondition::TargetReached {
+                        target: "authored_goal".into(),
+                    }]
+                })
+                .unwrap_or_default();
+            let local_execution = OptionExecution::capture(
+                selected.descriptor.option_id.clone(),
+                selected.descriptor.option_type.clone(),
+                selected.descriptor.parameters.clone(),
+                duration.minimum_ticks,
+                duration.maximum_ticks,
+                termination.clone(),
+                cancellation_conditions,
+                end_reason,
+                &option_tape,
+                TapeRange {
+                    start_frame: 0,
+                    end_frame_exclusive: option_tape.frames.len() as u64,
+                },
+            )
+            .map_err(|error| NativeTacticWorkerError::Execution(error.to_string()))?;
+            return observe_outcome(
+                selected,
+                before,
+                route_prefix,
+                PreparedNativeTactic {
+                    option_tape,
+                    execution: local_execution,
+                    duration,
+                },
+                candidate_tape,
+                candidate_prefix_ticks,
+                request,
+                validated,
+                queries,
+            );
+        }
+
+        let last = episode
+            .steps
+            .last()
+            .ok_or(NativeTacticWorkerError::DetachedResult("empty episode"))?;
+        observation = NativeTacticObservation::from_post_simulation_boundary(&last.post_simulation)
+            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+    }
+    Err(NativeTacticWorkerError::InvalidDuration)
+}
+
+fn iteration_paths(
+    paths: &NativeTacticWorkerPaths,
+    decision_index: u64,
+    local_tick: u32,
+) -> NativeTacticWorkerPaths {
+    let suffix = format!(".decision-{decision_index}.step-{local_tick:05}");
+    let indexed = |path: &Path| {
+        let mut name = path
+            .file_name()
+            .unwrap_or_else(|| path.as_os_str())
+            .to_os_string();
+        name.push(&suffix);
+        path.with_file_name(name)
+    };
+    NativeTacticWorkerPaths {
+        request: indexed(&paths.request),
+        result: indexed(&paths.result),
+    }
+}
+
+fn inspect_candidate_episode(
+    request: &NativeSuffixBatch,
+    validated: &ValidatedNativeSuffixBatch,
+    candidate_tape: &InputTape,
+) -> Result<NativeEpisode, NativeTacticWorkerError> {
+    if validated.candidates.len() != 1
+        || validated.candidates[0].id != request.candidates[0].id
+        || validated.candidates[0].simulated_ticks == 0
+        || validated.candidates[0].simulated_ticks > request.maximum_ticks as u64
+    {
+        return Err(NativeTacticWorkerError::DetachedResult("candidate summary"));
+    }
+    let bytes = fs::read(&validated.episode_shard_path)
+        .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
+    let shard = NativeEpisodeShard::decode(&bytes)
+        .map_err(|error| NativeTacticWorkerError::Evidence(error.to_string()))?;
+    if shard.metadata.checkpoint_identity != validated.restore_identity {
+        return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
+    }
+    let mut episodes = shard
+        .episodes
+        .iter()
+        .filter(|episode| episode.id == validated.candidates[0].id);
+    let episode = episodes
+        .next()
+        .ok_or(NativeTacticWorkerError::DetachedResult("episode id"))?;
+    if episodes.next().is_some()
+        || episode.steps.len() as u64 != validated.candidates[0].simulated_ticks
+        || episode.steps.len() > candidate_tape.frames.len()
+    {
+        return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
+    }
+    for (step, expected) in episode.steps.iter().zip(&candidate_tape.frames) {
+        if !same_pad(step.chosen_pad, expected.pads[0])
+            || !same_pad(step.consumed_pad, expected.pads[0])
+        {
+            return Err(NativeTacticWorkerError::PadMismatch);
+        }
+    }
+    Ok(episode.clone())
 }
 
 fn prepare_selected(
     selected: &SelectedTactic,
     catalog: &TacticAssetCatalog,
     blueprints: &[TacticBlueprint],
-) -> Result<PreparedNativeTactic, NativeTacticWorkerError> {
+) -> Result<PreparedNativeExecution, NativeTacticWorkerError> {
     if let Some(entry) = catalog.entry(&selected.descriptor.option_id) {
         if entry.description().option != selected.descriptor {
             return Err(NativeTacticWorkerError::DetachedSelection);
         }
-        let PreparedTacticExecution::Static(realized) =
-            catalog.prepare_execution(&selected.descriptor.option_id)?
-        else {
-            return Err(NativeTacticWorkerError::ObservationDriven(
-                selected.descriptor.option_id.clone(),
-            ));
+        return match catalog.prepare_execution(&selected.descriptor.option_id)? {
+            PreparedTacticExecution::Static(realized) => {
+                Ok(PreparedNativeExecution::Static(PreparedNativeTactic {
+                    option_tape: realized.tape,
+                    execution: realized.execution,
+                    duration: entry.description().duration,
+                }))
+            }
+            PreparedTacticExecution::NativeGeneric(candidate) => {
+                Ok(PreparedNativeExecution::NativeGeneric {
+                    stepper: NativeGenericTacticStepper::new(candidate.plan().clone())
+                        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?,
+                    duration: entry.description().duration,
+                    termination: entry.description().stopping.termination.clone(),
+                })
+            }
+            PreparedTacticExecution::ReactiveController(_) => Err(
+                NativeTacticWorkerError::ObservationDriven(selected.descriptor.option_id.clone()),
+            ),
         };
-        return Ok(PreparedNativeTactic {
-            option_tape: realized.tape,
-            execution: realized.execution,
-            duration: entry.description().duration,
-        });
     }
 
     let asset_id = selected
@@ -205,11 +442,11 @@ fn prepare_selected(
         },
     )
     .map_err(|error| NativeTacticWorkerError::Execution(error.to_string()))?;
-    Ok(PreparedNativeTactic {
+    Ok(PreparedNativeExecution::Static(PreparedNativeTactic {
         option_tape: compiled.tape,
         execution,
         duration: choice.duration,
-    })
+    }))
 }
 
 fn tactic_batch(
@@ -280,6 +517,7 @@ fn observe_outcome(
     candidate_prefix_ticks: usize,
     request: NativeSuffixBatch,
     validated: ValidatedNativeSuffixBatch,
+    native_queries: Vec<NativeTacticQueryRecord>,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     if validated.candidates.len() != 1
         || validated.candidates[0].id != request.candidates[0].id
@@ -394,12 +632,13 @@ fn observe_outcome(
         return Err(NativeTacticWorkerError::DetachedResult("next boundary"));
     }
     Ok(NativeTacticWorkerOutcome {
-        schema: NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V1.into(),
+        schema: NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2.into(),
         source_checkpoint_sha256: sha256(validated.restore_identity.as_bytes()),
         checkpoint_identity: validated.restore_identity,
         episode_shard_sha256: shard.content_sha256,
         selected: selected.clone(),
         execution,
+        native_queries,
         route_tape,
         next_facts,
         terminal,
@@ -458,6 +697,7 @@ pub enum NativeTacticWorkerError {
     Facts(String),
     Tape(String),
     Execution(String),
+    Observation(String),
     Evidence(String),
     Serialization(String),
     Io(String),
@@ -493,6 +733,12 @@ impl fmt::Display for NativeTacticWorkerError {
             Self::Tape(message) => write!(formatter, "native tactic tape failed: {message}"),
             Self::Execution(message) => {
                 write!(formatter, "native tactic execution failed: {message}")
+            }
+            Self::Observation(message) => {
+                write!(
+                    formatter,
+                    "native tactic observation loop failed: {message}"
+                )
             }
             Self::Evidence(message) => {
                 write!(formatter, "native tactic evidence failed: {message}")
@@ -539,6 +785,12 @@ mod tests {
     use dusklight_control::option_execution::{OptionParameter, OptionType};
     use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
     use dusklight_learning::tactic_exploration::TacticSelectionReason;
+    use dusklight_learning::{
+        native_generic_tactic::{
+            GenericTactic, NATIVE_GENERIC_TACTIC_SCHEMA_V1, NativeGenericTacticPlan,
+        },
+        tactic_exploration::TACTIC_EXPLORATION_SCHEMA_V1,
+    };
     use std::collections::BTreeMap;
 
     #[test]
@@ -567,7 +819,11 @@ mod tests {
             reason: TacticSelectionReason::Greedy,
             exploration_draw: 900_000,
         };
-        let prepared = prepare_selected(&selected, &catalog, &[]).unwrap();
+        let PreparedNativeExecution::Static(prepared) =
+            prepare_selected(&selected, &catalog, &[]).unwrap()
+        else {
+            panic!("shield must remain static");
+        };
         let identity = NativeSuffixWorkerIdentity {
             executable_sha256: Digest([1; 32]),
             game_data_sha256: Digest([2; 32]),
@@ -601,6 +857,65 @@ mod tests {
             3
         );
         assert!(batch.verify_state_hashes);
+    }
+
+    #[test]
+    fn selected_native_generic_tactic_dispatches_to_the_live_stepper() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let before = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let plan = NativeGenericTacticPlan {
+            schema: NATIVE_GENERIC_TACTIC_SCHEMA_V1.into(),
+            tactic: GenericTactic::ShortCurve {
+                control: [[37, -21]; 4],
+            },
+            minimum_ticks: 1,
+            maximum_ticks: 1,
+        };
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new("native.curve", TacticAssetSource::NativeGenericTactic(plan))
+                .unwrap(),
+        ])
+        .unwrap();
+        let selected = SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: before.content_sha256().unwrap(),
+            decision_index: 2,
+            descriptor: catalog
+                .entry("native.curve")
+                .unwrap()
+                .description()
+                .option
+                .clone(),
+            reason: TacticSelectionReason::Greedy,
+            exploration_draw: 0,
+        };
+
+        let PreparedNativeExecution::NativeGeneric {
+            mut stepper,
+            duration,
+            ..
+        } = prepare_selected(&selected, &catalog, &[]).unwrap()
+        else {
+            panic!("native generic tactic must keep its observation loop");
+        };
+        let step = stepper
+            .step(before.to_native_tactic_observation().unwrap())
+            .unwrap();
+
+        assert_eq!(duration.maximum_ticks, 1);
+        assert_eq!(step.frame.pads[0].stick_x, 37);
+        assert_eq!(step.frame.pads[0].stick_y, -21);
+        assert_eq!(step.end_reason, Some(OptionEndReason::MaximumDuration));
+        assert_eq!(step.query.local_tick, 0);
     }
 
     #[test]
@@ -716,6 +1031,7 @@ mod tests {
             0,
             request,
             validated,
+            Vec::new(),
         )
         .unwrap();
         assert_eq!(outcome.execution.duration.realized_ticks, 1);

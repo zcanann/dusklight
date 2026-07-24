@@ -10,6 +10,9 @@ use dusklight_automation_contracts::tape::InputTape;
 use dusklight_control::option_execution::OptionExecution;
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
+use dusklight_learning::hindsight::{
+    HindsightError, HindsightOptionReplay, RelabeledHindsightOption,
+};
 use dusklight_learning::learner_state::{LearnerState, LearnerStateError};
 use dusklight_learning::live_tactic_catalog::{
     LiveTacticCatalog, LiveTacticCatalogError, LiveTacticRanking,
@@ -18,6 +21,7 @@ use dusklight_learning::option_transition::{OptionTransitionError, OptionTransit
 use dusklight_learning::option_values::{
     AvailableOptionRanking, OptionValueBatch, OptionValueConfig, OptionValueError, OptionValueModel,
 };
+use dusklight_learning::reward_shaping::{ShapingError, TacticRewardBreakdown, TacticRewardSpec};
 use dusklight_learning::tactic_asset::{TacticAssetCatalog, TacticAssetDescription};
 use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
@@ -25,6 +29,7 @@ use dusklight_learning::tactic_exploration::{
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
@@ -47,6 +52,13 @@ pub struct TacticQCampaignStep {
     pub transition: OptionTransitionSample,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RewardedTacticQCampaignStep {
+    pub step: TacticQCampaignStep,
+    pub reward: TacticRewardBreakdown,
+}
+
 /// Mutable state for one connected tactic episode.
 ///
 /// The model is deliberately transient: authenticated fact snapshots, exact
@@ -67,6 +79,8 @@ pub struct TacticQCampaign {
     model_config: OptionValueConfig,
     exploration: TacticExplorationConfig,
     model: Option<OptionValueModel>,
+    visited_states: BTreeSet<Digest>,
+    hindsight: HindsightOptionReplay,
 }
 
 impl TacticQCampaign {
@@ -94,6 +108,9 @@ impl TacticQCampaign {
                 "campaign identity or initial route is invalid",
             ));
         }
+        let visited_states = BTreeSet::from([current.snapshot_sha256]);
+        let hindsight = HindsightOptionReplay::new(feature_schema_sha256)
+            .map_err(TacticQCampaignError::Hindsight)?;
         Ok(Self {
             schema: TACTIC_Q_CAMPAIGN_SCHEMA_V1.into(),
             feature_schema_sha256,
@@ -108,11 +125,48 @@ impl TacticQCampaign {
             model_config,
             exploration,
             model: None,
+            visited_states,
+            hindsight,
         })
     }
 
     pub fn model(&self) -> Option<&OptionValueModel> {
         self.model.as_ref()
+    }
+
+    pub fn visited_state_count(&self) -> usize {
+        self.visited_states.len()
+    }
+
+    pub fn hindsight_replay(&self) -> &HindsightOptionReplay {
+        &self.hindsight
+    }
+
+    /// Admit a native-evaluated false-to-true hindsight row only when it
+    /// relabels an exact primary replay transition from this campaign. The row
+    /// is refit under its own compiled objective, never the primary critic.
+    pub fn admit_hindsight(
+        &mut self,
+        row: RelabeledHindsightOption,
+    ) -> Result<&OptionValueModel, TacticQCampaignError> {
+        let Some((index, _)) = self.replay.iter().enumerate().find(|(_, original)| {
+            if original.value_sample.reward.to_bits() != row.original_reward.to_bits()
+                || original.value_sample.terminal
+            {
+                return false;
+            }
+            let mut expected = original.value_sample.clone();
+            expected.reward = row.transition.reward;
+            expected.terminal = true;
+            expected == row.transition
+        }) else {
+            return Err(TacticQCampaignError::InvalidState(
+                "hindsight row does not relabel campaign replay",
+            ));
+        };
+        self.hindsight
+            .admit_and_refit(row, self.episode_groups[index], &self.model_config)
+            .map_err(TacticQCampaignError::Hindsight)
     }
 
     pub fn decide<E, F>(
@@ -193,6 +247,96 @@ impl TacticQCampaign {
         )
     }
 
+    /// Reward-policy variant of [`Self::execute_and_refit`]. It composes
+    /// terminal bonus, exact tick cost, first-visit novelty, and optional
+    /// potential shaping without granting any of them terminal authority.
+    #[allow(clippy::too_many_arguments)]
+    pub fn execute_and_refit_rewarded<W, E, F, A>(
+        &mut self,
+        worker: &mut W,
+        catalog: &TacticAssetCatalog,
+        blueprints: &[TacticBlueprint],
+        registry: &FactRegistry,
+        paths: &NativeTacticWorkerPaths,
+        encode: &F,
+        entry_applicable: A,
+        reward_spec: &TacticRewardSpec,
+    ) -> Result<RewardedTacticQCampaignStep, TacticQCampaignError>
+    where
+        W: PersistentTacticBatchWorker,
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&TacticAssetDescription) -> bool,
+    {
+        let decision = self.decide(catalog, blueprints, encode)?;
+        let outcome = execute_selected_tactic(
+            worker,
+            &decision.selected,
+            catalog,
+            blueprints,
+            &self.current.snapshot,
+            &self.route_tape,
+            paths,
+        )?;
+        self.retain_and_refit_rewarded(
+            decision,
+            outcome,
+            catalog,
+            blueprints,
+            registry,
+            encode,
+            entry_applicable,
+            reward_spec,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn retain_and_refit_rewarded<E, F, A>(
+        &mut self,
+        decision: TacticQDecision,
+        outcome: NativeTacticWorkerOutcome,
+        catalog: &TacticAssetCatalog,
+        blueprints: &[TacticBlueprint],
+        registry: &FactRegistry,
+        encode: &F,
+        entry_applicable: A,
+        reward_spec: &TacticRewardSpec,
+    ) -> Result<RewardedTacticQCampaignStep, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&TacticAssetDescription) -> bool,
+    {
+        let state = encode(&self.current.snapshot)
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        let next_state = encode(&outcome.next_facts)
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        let endpoint_sha256 = outcome
+            .next_facts
+            .content_sha256()
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        let reward = reward_spec.evaluate(
+            self.feature_schema_sha256,
+            &state,
+            &next_state,
+            outcome.execution.duration.realized_ticks,
+            outcome.terminal,
+            !self.visited_states.contains(&endpoint_sha256),
+        )?;
+        let training_reward = reward.training_reward;
+        let step = self.retain_and_refit(
+            decision,
+            outcome,
+            catalog,
+            blueprints,
+            registry,
+            encode,
+            entry_applicable,
+            move |_, _, _| training_reward,
+        )?;
+        Ok(RewardedTacticQCampaignStep { step, reward })
+    }
+
     /// Admit an already executed native outcome. This is public so alternate
     /// executors (including observation-loop workers) can share exactly the
     /// same replay and refit path.
@@ -271,6 +415,7 @@ impl TacticQCampaign {
         )?;
         let model = OptionValueModel::fit_batch(&batch, &self.model_config)?;
 
+        self.visited_states.insert(next.snapshot_sha256);
         self.current = next;
         self.route_tape = outcome.route_tape;
         self.replay = replay;
@@ -327,6 +472,8 @@ pub enum TacticQCampaignError {
     Exploration(TacticExplorationError),
     Transition(OptionTransitionError),
     Values(OptionValueError),
+    Shaping(ShapingError),
+    Hindsight(HindsightError),
     Native(NativeTacticWorkerError),
 }
 
@@ -346,6 +493,8 @@ impl fmt::Display for TacticQCampaignError {
             Self::Exploration(error) => write!(formatter, "tactic-Q selection failed: {error}"),
             Self::Transition(error) => write!(formatter, "tactic-Q transition failed: {error}"),
             Self::Values(error) => write!(formatter, "tactic-Q refit failed: {error}"),
+            Self::Shaping(error) => write!(formatter, "tactic-Q reward failed: {error}"),
+            Self::Hindsight(error) => write!(formatter, "tactic-Q hindsight failed: {error}"),
             Self::Native(error) => write!(formatter, "tactic-Q native execution failed: {error}"),
         }
     }
@@ -359,6 +508,8 @@ impl Error for TacticQCampaignError {
             Self::Exploration(error) => Some(error),
             Self::Transition(error) => Some(error),
             Self::Values(error) => Some(error),
+            Self::Shaping(error) => Some(error),
+            Self::Hindsight(error) => Some(error),
             Self::Native(error) => Some(error),
             _ => None,
         }
@@ -395,6 +546,12 @@ impl From<OptionValueError> for TacticQCampaignError {
     }
 }
 
+impl From<ShapingError> for TacticQCampaignError {
+    fn from(value: ShapingError) -> Self {
+        Self::Shaping(value)
+    }
+}
+
 impl From<NativeTacticWorkerError> for TacticQCampaignError {
     fn from(value: NativeTacticWorkerError) -> Self {
         Self::Native(value)
@@ -408,6 +565,10 @@ mod tests {
     use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
     use dusklight_control::option_execution::{OptionCondition, OptionEndReason, TapeRange};
     use dusklight_evidence::native_episode_shard::{NativeEpisodeShard, NativeObservationPhase};
+    use dusklight_learning::reward_shaping::{
+        POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm,
+        TACTIC_REWARD_SPEC_SCHEMA_V1,
+    };
     use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
     use dusklight_learning::tactic_exploration::TacticSelectionReason;
 
@@ -511,18 +672,38 @@ mod tests {
         .unwrap();
         let terminal = after.terminal.reached.unwrap();
         let outcome = NativeTacticWorkerOutcome {
-            schema: crate::native_tactic_worker::NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V1.into(),
+            schema: crate::native_tactic_worker::NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2.into(),
             source_checkpoint_sha256: root_checkpoint_sha256,
             checkpoint_identity: "fixture-checkpoint".into(),
             episode_shard_sha256: shard.content_sha256,
             selected: decision.selected.clone(),
             execution,
+            native_queries: Vec::new(),
             route_tape,
             next_facts: after,
             terminal,
         };
+        let reward_spec = TacticRewardSpec {
+            schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
+            terminal_reward: 5.0,
+            tick_cost: 0.25,
+            novelty_reward: 1.0,
+            per_tick_discount: 0.9,
+            potential: Some(PotentialShapingSpec {
+                schema: POTENTIAL_SHAPING_SCHEMA_V1.into(),
+                feature_schema: Digest([1; 32]),
+                terms: vec![PotentialTerm::CorridorProgress {
+                    name: "tape-progress".into(),
+                    feature: 0,
+                    start: before.tape_frame as f32,
+                    end: before.tape_frame as f32 + 1.0,
+                    weight: 2.0,
+                    unavailable_value: None,
+                }],
+            }),
+        };
         let retained = campaign
-            .retain_and_refit(
+            .retain_and_refit_rewarded(
                 decision,
                 outcome,
                 &catalog,
@@ -530,11 +711,18 @@ mod tests {
                 &registry,
                 &encode,
                 |_| true,
-                |_, _, _| 5.0,
+                &reward_spec,
             )
             .unwrap();
 
-        assert_eq!(retained.replay_rows, 1);
+        assert_eq!(retained.step.replay_rows, 1);
+        assert_eq!(retained.reward.terminal_observed, terminal);
+        assert!(retained.reward.endpoint_novel);
+        assert_eq!(retained.reward.tick_cost_component, -0.25);
+        assert_eq!(retained.reward.novelty_component, 1.0);
+        assert!(retained.reward.potential.is_some());
+        assert!(retained.reward.terminal_objective_unchanged);
+        assert!(!retained.reward.promotion_authority);
         assert_eq!(campaign.replay.len(), 1);
         assert_eq!(campaign.episode_groups, vec![11]);
         assert!(campaign.model().is_some());
@@ -543,6 +731,7 @@ mod tests {
             campaign.route_tape.frames.len() as u64,
             campaign.current.snapshot.tape_frame
         );
+        assert_eq!(campaign.visited_state_count(), 2);
 
         let next = campaign.decide(&catalog, &[], &encode).unwrap();
         assert_eq!(next.selected.reason, TacticSelectionReason::Greedy);
