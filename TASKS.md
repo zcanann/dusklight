@@ -53,12 +53,17 @@ Route speed does not matter for this first proof.
 | Capability | State |
 |---|---|
 | Deterministic checkpoints and persistent native workers | Working |
-| Typed native observations and complete PAD authority | Working, though not yet exposed through one minimal learner-facing fact API |
+| Typed native observations and complete PAD authority | Working across native learning observations, tactic observations, observation expressions, and traces; not presented through one learner-facing view |
 | Authored terminal predicates | Working |
-| Generic bounded tactic execution | Exists as infrastructure, not as the central learning action space |
+| Reactive world-space movement | Working: seek coordinate, actor, path point, opening, plane, heading, offset, and distance |
+| Static motion paths | Working: waypoint, rail, Catmull-Rom spline, and cubic Bézier |
+| Controller composition | Working separately for concurrent movement/camera/button/clamp layers and sequential static search actions |
+| Game-specific and generic bounded tactics | Working, including exact PAD/query capture and experience-mined initiation/termination predicates |
+| Semi-Markov option values | Working: duration-aware fitted Q iteration, typed option catalogs, ranking, and deterministic selected-option execution |
 | Replay corpora, critics, policies, and checkpoint archives | Working as separate components |
 | Exact realized tape and cold-replay proof | Working |
-| Online tactic-level Q learner | Missing |
+| Unified tactic/composition asset model | Missing |
+| Live online option-Q campaign | Missing; the existing tactic selectors are called by tests, not by a campaign |
 | Automatic checkpoint branching driven by learned tactic value | Missing |
 | Blueprint-like user-authored tactic assets | Missing |
 | A route learned from goal, facts, and tactics | Not demonstrated |
@@ -67,6 +72,20 @@ The previous q131 campaign was not this product. It trained a per-tick policy,
 ran only twelve native online rollouts, and collapsed to one trajectory per
 generation. The 40-cell comparison protocol measures that complicated learner;
 it is not the current critical path.
+
+The tactic-Q substrate was not deleted. It was split across several systems and
+then left unwired:
+
+- `DUSKCTRL` owns reactive world-space controllers and concurrent layer
+  composition;
+- `MotionPathPlan` owns exact waypoint, rail, spline, and Bézier stick paths;
+- `GameTacticPlan` and `NativeGenericTacticPlan` own bounded semantic tactics;
+- `SearchCandidate.actions` owns static sequential composition;
+- `OptionExecution` owns exact semi-Markov realization records; and
+- `OptionValueModel` owns duration-aware fitted-Q ranking.
+
+P0 joins these existing pieces. It must not replace them with another parallel
+action format or reimplement their evaluators.
 
 ## Architectural reset
 
@@ -100,10 +119,14 @@ resulting fact snapshot
 
 Built-in native tactics and user-authored tactics use the same contract. The
 learner sees only currently applicable, concretely parameterized choices.
+Existing `GameTacticPlan`, `NativeGenericTacticPlan`, `MotionPathPlan`, and
+reactive-controller programs adapt into this contract without losing their
+current typed serialization or exact execution behavior.
 
 ### Facts are typed; infodumps are projections
 
-The learner consumes a stable typed snapshot, not prose:
+The learner consumes one stable typed view over existing observation artifacts,
+not prose:
 
 - stage, room, layer, procedure, and loading state;
 - position, velocity, facing, animation/action phase, and grounded state;
@@ -165,73 +188,74 @@ states instead of replaying the entire route for every decision.
 
 Work in this order.
 
-### 1. Unify the tactic runtime
+### 1. Unify the existing action systems
 
-- [ ] Define one serialized, versioned `Tactic` contract for identity,
-  parameters, applicability, execution, stopping, duration, queried facts, and
-  emitted PAD.
-- [ ] Wrap the existing native generic tactics behind that contract.
-- [ ] Implement the minimum built-in Ordon-independent tactic set: wait, face,
-  directed movement, target-relative movement, roll, interact, and bounded
-  button hold/pulse.
-- [ ] Add a blueprint-like composite tactic whose nodes invoke tactics, branch on
-  typed fact queries, and expose typed parameters.
-- [ ] Enumerate a finite set of concrete applicable tactic choices from the
-  current state, including bounded parameter candidates.
-- [ ] Record every tactic execution as an exact PAD range plus before/after fact
-  snapshots and stop reason.
+- [ ] Define one `TacticAsset` adapter contract for identity, typed parameters,
+  applicability, execution, stopping, duration, queried facts, and exact
+  realization. Do not invent new encodings for existing plan types.
+- [ ] Adapt `GameTacticPlan`, `NativeGenericTacticPlan`, `MotionPathPlan`, and
+  reactive-controller programs into the same executable catalog.
+- [ ] Expose the already implemented world-seek, heading/offset, waypoint, rail,
+  spline, Bézier, camera-plus-movement, synchronized-button, roll, interaction,
+  traversal, combat, item, wait, and button primitives through that catalog.
+- [ ] Define blueprint composition nodes for `Invoke`, `Sequence`, `Layer`,
+  `Conditional`, `Until`, and `Fallback`.
+- [ ] Compile `Sequence` through ordered option execution and `Layer` through the
+  existing deterministic controller ownership/composition rules.
+- [ ] Reject ambiguous concurrent writers, unbounded control flow, unavailable
+  facts, invalid parameters, and compositions that cannot retain exact PAD.
+- [ ] Enumerate a finite set of currently applicable concrete tactic or composite
+  choices, including bounded parameter candidates.
 
-### 2. Expose one fact and measurement surface
+### 2. Present one fact and measurement view
 
-- [ ] Define a versioned `FactSnapshot` containing the generic player, world,
-  actor, surface, event, interaction, and short-history state needed above.
-- [ ] Define a typed fact-query and derived-measure registry shared by goals,
-  tactics, the learner, and the UI.
+- [ ] Project existing native learning observations, tactic observations,
+  observation expressions, terminal facts, and short history through one
+  versioned `FactSnapshot` view.
+- [ ] Consolidate the existing typed query mechanisms behind a registry shared by
+  goals, tactics, composition nodes, the learner, and the UI.
 - [ ] Expose generic relational measures: distance, angle, relative velocity,
   contact/surface relation, state change, event change, and elapsed ticks.
-- [ ] Expose the complete applicable-tactic mask and concrete tactic parameters
-  alongside every snapshot.
-- [ ] Generate a readable infodump from `FactSnapshot` without introducing
-  additional hidden state.
-- [ ] Prove native execution and Rust decoding produce identical snapshots,
-  queries, measures, tactic choices, and emitted PAD for one multi-tactic trace.
+- [ ] Expose the applicable tactic/composite mask and concrete parameters
+  alongside each learner state.
+- [ ] Generate a readable infodump from the same view without additional hidden
+  state.
+- [ ] Prove the adapters do not change existing native queries, controller
+  composition, option boundaries, or emitted PAD on a multi-tactic trace.
 
-### 3. Implement the small Q loop
+### 3. Wire the existing Q and tactic executors into a campaign
 
-- [ ] Define the tactic-transition replay row shown above, including duration,
-  terminal, checkpoint, and realized PAD identities.
-- [ ] Implement a small fitted `Q(state, tactic, parameters)` model over typed
-  facts and the finite applicable action set.
-- [ ] Implement duration-aware Q targets, replay sampling, target refresh, and
-  epsilon-greedy tactic selection.
-- [ ] Implement configurable potential-based shaping, tick cost, novelty, and
-  terminal reward while keeping terminal authority separate.
-- [ ] Add hindsight rows for useful states actually reached, without fabricating
-  gameplay or terminal outcomes.
-- [ ] Make one unattended loop perform:
-  `restore -> observe -> choose tactic -> execute -> retain transition -> update
-  Q -> choose frontier checkpoint`.
-- [ ] Persist only enough crash-safe state to resume the learner and authenticate
-  a final result. Do not content-seal every transient training object in the hot
-  path.
+- [ ] Convert each realized `OptionExecution` plus before/after facts, reward,
+  duration, terminal, checkpoint, and PAD range into an `OptionValueSample`.
+- [ ] Build the live executable catalog for each state and use the existing
+  duration-aware `OptionValueModel` to rank it.
+- [ ] Add epsilon-greedy or uncertainty-aware exploration around the existing
+  greedy ranking without creating a second value implementation.
+- [ ] Execute the selected tactic or composite against a persistent native
+  checkpoint worker and observe its real stopping condition and next state.
+- [ ] Refit the existing option-value model from accumulated replay and repeat:
+  `restore -> observe -> enumerate -> choose -> execute -> retain -> refit`.
+- [ ] Add configurable potential shaping, tick cost, novelty, terminal reward,
+  and hindsight rows while keeping terminal authority separate.
+- [ ] Persist only enough crash-safe state to resume the loop and authenticate a
+  final result; do not seal every transient refit.
 
 ### 4. Branch from useful states
 
-- [ ] Retain checkpoints for terminal successes, novel fact/relationship states,
-  meaningful event changes, and high-value frontiers.
-- [ ] Bound the archive while preserving diversity across position, contact,
-  surface, action phase, actor relationship, event state, and outcome.
-- [ ] Sample starts from both the root and retained frontiers so the agent learns
+- [ ] Feed the existing quality-diversity archive with tactic-transition
+  endpoints and retain restorable checkpoints for selected frontier states.
+- [ ] Sample both the root and retained frontiers so the agent learns connected
   complete routes rather than only terminal-local continuations.
-- [ ] Detect zero-diversity tactic selection, repeated identical trajectories,
+- [ ] Detect zero-diversity selection, repeated identical compositions,
   no-progress loops, and a frontier that loses root connectivity.
-- [ ] Show the learned state/tactic/checkpoint graph so a human can see what the
-  agent believes leads toward the goal.
+- [ ] Project the resulting state/tactic/checkpoint graph for inspection and
+  replay.
 
-### 5. Prove the simple learner
+### 5. Prove the integrated learner
 
-- [ ] First prove the Q implementation on a deterministic fixture requiring a
-  nontrivial multi-tactic sequence and delayed reward.
+- [ ] First prove the integrated adapters, composition executor, replay update,
+  and existing Q model on a deterministic fixture requiring a nontrivial
+  multi-tactic sequence and delayed reward.
 - [ ] Run the no-demonstration Ordon campaign from the authenticated Link-control
   checkpoint with a fresh model and multiple exploration seeds.
 - [ ] Show that Q values, tactic selection, frontier coverage, and terminal
