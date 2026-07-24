@@ -178,7 +178,12 @@ pub fn goal_conditioned_route_tactic_catalog(
             TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
                 GenericTactic::SeekCoordinate {
                     coordinate_f32_bits: coordinate.map(f32::to_bits),
-                    tolerance_f32_bits: 24.0_f32.to_bits(),
+                    // Goal-conditioned corridor actions retain a fixed native
+                    // batch duration. A zero radius makes reaching an
+                    // intermediate point emit neutral PAD without ending the
+                    // auditable batch early; the binary terminal may still
+                    // stop the batch at any tick.
+                    tolerance_f32_bits: 0.0_f32.to_bits(),
                     magnitude: 127,
                 },
                 maximum_ticks,

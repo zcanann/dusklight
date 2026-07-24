@@ -101,13 +101,22 @@ pub fn choose_tactic(
             TacticSelectionReason::UnsupportedBootstrap,
         )
     } else if exploration_draw < config.epsilon_per_million {
+        // Finite tactic catalogs should spend exploratory decisions on choices
+        // for which the learner has no transition evidence before resampling a
+        // known action. This is still epsilon-greedy—the greedy branch is
+        // unchanged—but makes basic coverage prompt and demonstrable.
+        let exploratory = if ranking.values.unsupported.is_empty() {
+            available
+        } else {
+            ranking.values.unsupported.iter().collect::<Vec<_>>()
+        };
         let index = deterministic_index(
             config.seed,
             decision_index,
             ranking.learner_snapshot_sha256,
-            available.len(),
+            exploratory.len(),
         );
-        (available[index].clone(), TacticSelectionReason::Epsilon)
+        (exploratory[index].clone(), TacticSelectionReason::Epsilon)
     } else {
         (
             ranking.values.ranked[0].descriptor.clone(),
@@ -287,5 +296,38 @@ mod tests {
         .unwrap();
         assert_eq!(selected.descriptor, move_forward);
         assert_eq!(selected.reason, TacticSelectionReason::UnsupportedBootstrap);
+    }
+
+    #[test]
+    fn epsilon_exploration_prioritizes_untried_tactics() {
+        let known = descriptor("known", OptionType::Neutral);
+        let fresh = descriptor("fresh", OptionType::Move);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([3; 32]),
+            action_universe_sha256: Digest([4; 32]),
+            choices: vec![choice(fresh.clone()), choice(known.clone())],
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 1,
+                    descriptor: known,
+                    mean_q: 5.0,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: vec![fresh.clone()],
+            },
+        };
+        for seed in 0..16 {
+            let selected = choose_tactic(
+                &ranking,
+                0,
+                TacticExplorationConfig {
+                    seed,
+                    epsilon_per_million: EPSILON_SCALE,
+                },
+            )
+            .unwrap();
+            assert_eq!(selected.descriptor, fresh);
+            assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
+        }
     }
 }

@@ -133,15 +133,7 @@ pub fn run_native_tactic_route(
     }
     fs::create_dir_all(config.output_root).map_err(route_error)?;
 
-    let goal_target = resolve_goal_transition_target(&root, config)?;
-    let goal_tactic_ticks =
-        goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
-    let catalog =
-        goal_conditioned_route_tactic_catalog(&[goal_target.coordinate], goal_tactic_ticks)
-            .map_err(route_error)?;
     let registry = FactRegistry::canonical();
-    let encoder =
-        GoalConditionedTacticFeatureEncoder::new(goal_target.coordinate).map_err(route_error)?;
     let process_tape = InputTape::decode(
         &fs::read(root.join(&config.execution.process_boot_tape.path)).map_err(route_error)?,
     )
@@ -197,13 +189,21 @@ pub fn run_native_tactic_route(
     let initial_facts = initial_facts(&initial)?;
     if initial_facts.tape_frame != config.optimization.route.source_boundary_index
         || initial_facts.terminal.reached != Some(false)
-        || initial_facts.world.stage != goal_target.source_stage
-        || initial_facts.world.room != goal_target.source_room
     {
         return Err(route_message(
-            "native source observation is not the requested nonterminal goal-source boundary",
+            "native source observation is not the requested nonterminal tactic boundary",
         ));
     }
+    let GoalConditionedTacticRuntime {
+        catalog,
+        encoder,
+        report: goal_target,
+    } = goal_conditioned_tactic_runtime(
+        &root,
+        config.optimization,
+        config.execution,
+        &initial_facts,
+    )?;
     let root_checkpoint_sha256 =
         tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;
     let reward_spec = route_tactic_reward_spec(&encoder, &initial_facts)?;
@@ -238,7 +238,7 @@ pub fn run_native_tactic_route(
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
         action_schema_sha256: catalog.action_schema_sha256(),
-        goal_target: goal_target.report(),
+        goal_target,
         reward_spec,
         demonstration_transitions: 0,
         exploration_seeds: config.exploration_seeds.to_vec(),
@@ -486,6 +486,12 @@ struct GoalTransitionTarget {
     source_inventory_sha256: Digest,
 }
 
+pub(crate) struct GoalConditionedTacticRuntime {
+    pub catalog: dusklight_learning::tactic_asset::TacticAssetCatalog,
+    pub encoder: GoalConditionedTacticFeatureEncoder,
+    pub report: NativeTacticGoalTargetReport,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticGoalTargetReport {
@@ -495,13 +501,19 @@ pub struct NativeTacticGoalTargetReport {
     pub destination_room: i8,
     pub destination_point: i16,
     pub coordinate: [f32; 3],
+    pub source_coordinate: [f32; 3],
+    pub tactic_targets: Vec<[f32; 3]>,
     pub supporting_load_triggers: usize,
     pub source_inventory_sha256: Digest,
     pub authored_route_coordinates_used: bool,
 }
 
 impl GoalTransitionTarget {
-    fn report(&self) -> NativeTacticGoalTargetReport {
+    fn report(
+        &self,
+        source_coordinate: [f32; 3],
+        tactic_targets: Vec<[f32; 3]>,
+    ) -> NativeTacticGoalTargetReport {
         NativeTacticGoalTargetReport {
             source_stage: self.source_stage.clone(),
             source_room: self.source_room,
@@ -509,6 +521,8 @@ impl GoalTransitionTarget {
             destination_room: self.destination_room,
             destination_point: self.destination_point,
             coordinate: self.coordinate,
+            source_coordinate,
+            tactic_targets,
             supporting_load_triggers: self.supporting_load_triggers,
             source_inventory_sha256: self.source_inventory_sha256,
             authored_route_coordinates_used: false,
@@ -516,19 +530,92 @@ impl GoalTransitionTarget {
     }
 }
 
+pub(crate) fn goal_conditioned_tactic_runtime(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    initial_facts: &FactSnapshot,
+) -> Result<GoalConditionedTacticRuntime, NativeTacticRouteRunError> {
+    let target = resolve_goal_transition_target(root, optimization, execution)?;
+    if initial_facts.world.stage != target.source_stage
+        || initial_facts.world.room != target.source_room
+    {
+        return Err(route_message(
+            "native source observation differs from the objective's source world",
+        ));
+    }
+    let source_coordinate = initial_facts.player.position_f32_bits.map(f32::from_bits);
+    let tactic_targets = goal_corridor_targets(source_coordinate, target.coordinate)?;
+    let maximum_ticks = goal_tactic_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
+    let catalog = goal_conditioned_route_tactic_catalog(&tactic_targets, maximum_ticks)
+        .map_err(route_error)?;
+    let encoder =
+        GoalConditionedTacticFeatureEncoder::new(target.coordinate).map_err(route_error)?;
+    Ok(GoalConditionedTacticRuntime {
+        catalog,
+        encoder,
+        report: target.report(source_coordinate, tactic_targets),
+    })
+}
+
+fn goal_corridor_targets(
+    source: [f32; 3],
+    goal: [f32; 3],
+) -> Result<Vec<[f32; 3]>, NativeTacticRouteRunError> {
+    if source
+        .iter()
+        .chain(goal.iter())
+        .any(|value| !value.is_finite())
+    {
+        return Err(route_message(
+            "goal corridor requires finite source and target coordinates",
+        ));
+    }
+    let dx = goal[0] - source[0];
+    let dz = goal[2] - source[2];
+    let distance = dx.hypot(dz);
+    if distance <= 0.0 || !distance.is_finite() {
+        return Err(route_message(
+            "goal corridor requires distinct source and target coordinates",
+        ));
+    }
+    let perpendicular = [-dz / distance, dx / distance];
+    let mut targets = vec![goal];
+    let mut identities = BTreeSet::from([goal.map(f32::to_bits)]);
+    for fraction in [0.25_f32, 0.5, 0.75, 1.0] {
+        let center = [
+            source[0] + dx * fraction,
+            source[1] + (goal[1] - source[1]) * fraction,
+            source[2] + dz * fraction,
+        ];
+        for offset in [-768.0_f32, -384.0, 0.0, 384.0, 768.0] {
+            let target = [
+                center[0] + perpendicular[0] * offset,
+                center[1],
+                center[2] + perpendicular[1] * offset,
+            ];
+            if identities.insert(target.map(f32::to_bits)) {
+                targets.push(target);
+            }
+        }
+    }
+    Ok(targets)
+}
+
 fn resolve_goal_transition_target(
     root: &Path,
-    config: &NativeTacticRouteRunConfig<'_>,
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
 ) -> Result<GoalTransitionTarget, NativeTacticRouteRunError> {
     let program_bytes =
-        fs::read(root.join(&config.execution.milestone_program.path)).map_err(route_error)?;
+        fs::read(root.join(&execution.milestone_program.path)).map_err(route_error)?;
     let decoded =
         dusklight_objectives::milestone_dsl::decode(&program_bytes).map_err(route_error)?;
     let definition = decoded
         .program
         .definitions
         .iter()
-        .find(|definition| definition.name == config.optimization.terminal_predicate.goal)
+        .find(|definition| definition.name == optimization.terminal_predicate.goal)
         .ok_or_else(|| route_message("goal definition is absent from milestone program"))?;
     let source_stage = exact_symbol_literal(&definition.when, Field::StageName)?;
     let source_room = exact_i8_literal(&definition.when, Field::StageRoom)?;
@@ -536,10 +623,10 @@ fn resolve_goal_transition_target(
     let destination_room = exact_i8_literal(&definition.when, Field::NextStageRoom)?;
     let destination_point = exact_i16_literal(&definition.when, Field::NextStageSpawn)?;
 
-    let context_path = root.join(&config.execution.world_context.path);
+    let context_path = root.join(&execution.world_context.path);
     let context_bytes = fs::read(&context_path).map_err(route_error)?;
     let context = WorldContext::decode_canonical(&context_bytes).map_err(route_error)?;
-    if context.digest().map_err(route_error)? != config.execution.world_context.sha256 {
+    if context.digest().map_err(route_error)? != execution.world_context.sha256 {
         return Err(route_message(
             "goal target world context differs from its execution binding",
         ));
@@ -893,5 +980,27 @@ mod tests {
     #[test]
     fn root_probe_uses_the_full_declared_horizon() {
         assert!(MAX_ROUTE_DECISIONS > 0);
+    }
+
+    #[test]
+    fn goal_corridor_is_a_symmetric_start_and_goal_derived_action_basis() {
+        let source = [0.0, 10.0, 0.0];
+        let goal = [1000.0, 20.0, 0.0];
+        let targets = goal_corridor_targets(source, goal).unwrap();
+
+        assert_eq!(targets.len(), 20);
+        assert_eq!(targets[0], goal);
+        assert!(targets.contains(&[250.0, 12.5, -768.0]));
+        assert!(targets.contains(&[250.0, 12.5, 768.0]));
+        assert!(targets.contains(&[500.0, 15.0, 0.0]));
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.map(f32::to_bits))
+                .collect::<BTreeSet<_>>()
+                .len(),
+            targets.len()
+        );
+        assert!(goal_corridor_targets(source, source).is_err());
     }
 }

@@ -4,7 +4,8 @@ use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::native_suffix_result::NativeTerminalBinding;
 use crate::native_suffix_worker::{NativeSuffixWorkerLaunch, NativeSuffixWorkerSession};
 use crate::native_tactic_route_runner::{
-    initial_facts, path_text, tactic_root_probe_batch, write_new,
+    NativeTacticGoalTargetReport, goal_conditioned_tactic_runtime, initial_facts, path_text,
+    tactic_root_probe_batch, write_new,
 };
 use crate::native_tactic_worker::{
     NativeTacticWorkerPaths, execute_selected_tactic, tactic_root_checkpoint_sha256,
@@ -12,14 +13,12 @@ use crate::native_tactic_worker::{
 use crate::optimization_request::OptimizationRequest;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
-use dusklight_learning::default_tactic_catalog::default_route_tactic_catalog;
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::live_tactic_catalog::LiveTacticCatalog;
 use dusklight_learning::tactic_exploration::{
     TacticExplorationConfig, TacticSelectionReason, choose_tactic,
 };
-use dusklight_learning::tactic_features::TacticFeatureEncoder;
 use dusklight_learning::tactic_frozen_policy::TacticFrozenPolicy;
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -28,7 +27,7 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
-pub const NATIVE_TACTIC_POLICY_REPORT_SCHEMA_V1: &str = "dusklight-native-tactic-policy-report/v1";
+pub const NATIVE_TACTIC_POLICY_REPORT_SCHEMA_V2: &str = "dusklight-native-tactic-policy-report/v2";
 const MAX_GREEDY_DECISIONS: u64 = 100_000;
 
 #[derive(Clone, Debug)]
@@ -55,6 +54,7 @@ pub struct NativeTacticPolicyReport {
     pub root_state_sha256: Digest,
     pub feature_schema_sha256: Digest,
     pub action_universe_sha256: Digest,
+    pub goal_target: NativeTacticGoalTargetReport,
     pub exploration_enabled: bool,
     pub success: bool,
     pub stop_reason: String,
@@ -103,15 +103,10 @@ pub fn run_native_tactic_policy(
     }
     fs::create_dir_all(config.output_root).map_err(policy_error)?;
 
-    let catalog = default_route_tactic_catalog().map_err(policy_error)?;
     let registry = FactRegistry::canonical();
-    let encoder = TacticFeatureEncoder::new();
-    if config.policy.objective_sha256 != config.optimization.terminal_predicate.definition_sha256
-        || config.policy.feature_schema_sha256 != encoder.schema_sha256
-        || config.policy.action_universe_sha256 != catalog.action_schema_sha256()
-    {
+    if config.policy.objective_sha256 != config.optimization.terminal_predicate.definition_sha256 {
         return Err(policy_message(
-            "frozen tactic policy differs from the requested objective, features, or catalog",
+            "frozen tactic policy differs from the requested objective",
         ));
     }
     let model = config.policy.reconstruct_model().map_err(policy_error)?;
@@ -168,6 +163,24 @@ pub fn run_native_tactic_policy(
     };
     let (mut worker, initial) = NativeSuffixWorkerSession::launch(&launch).map_err(policy_error)?;
     let initial_snapshot = initial_facts(&initial).map_err(policy_error)?;
+    let tactic_runtime = goal_conditioned_tactic_runtime(
+        &launch.working_directory,
+        config.optimization,
+        config.execution,
+        &initial_snapshot,
+    )
+    .map_err(policy_error)?;
+    if config.policy.feature_schema_sha256 != tactic_runtime.encoder.schema_sha256
+        || config.policy.action_universe_sha256 != tactic_runtime.catalog.action_schema_sha256()
+    {
+        let _ = worker.shutdown();
+        return Err(policy_message(
+            "frozen tactic policy differs from the goal-conditioned features or catalog",
+        ));
+    }
+    let catalog = tactic_runtime.catalog;
+    let encoder = tactic_runtime.encoder;
+    let goal_target = tactic_runtime.report;
     let initial_sha256 = initial_snapshot.content_sha256().map_err(policy_error)?;
     let root_checkpoint_sha256 =
         tactic_root_checkpoint_sha256(worker.identity()).map_err(policy_error)?;
@@ -297,7 +310,7 @@ pub fn run_native_tactic_policy(
     let tape_bytes = route_tape.encode().map_err(policy_error)?;
     write_new(&tape_path, &tape_bytes).map_err(policy_error)?;
     let mut report = NativeTacticPolicyReport {
-        schema: NATIVE_TACTIC_POLICY_REPORT_SCHEMA_V1.into(),
+        schema: NATIVE_TACTIC_POLICY_REPORT_SCHEMA_V2.into(),
         report_sha256: Digest::ZERO,
         policy_sha256: config.policy.content_sha256,
         source_campaign_sha256: config.policy.source_campaign_sha256,
@@ -308,6 +321,7 @@ pub fn run_native_tactic_policy(
         root_state_sha256: config.policy.root_state_sha256,
         feature_schema_sha256: config.policy.feature_schema_sha256,
         action_universe_sha256: config.policy.action_universe_sha256,
+        goal_target,
         exploration_enabled: false,
         success: state.snapshot.terminal.reached == Some(true),
         stop_reason: stop_reason.into(),
@@ -381,7 +395,7 @@ mod tests {
     #[test]
     fn report_identity_changes_with_tape_evidence() {
         let mut report = NativeTacticPolicyReport {
-            schema: NATIVE_TACTIC_POLICY_REPORT_SCHEMA_V1.into(),
+            schema: NATIVE_TACTIC_POLICY_REPORT_SCHEMA_V2.into(),
             report_sha256: Digest::ZERO,
             policy_sha256: Digest([1; 32]),
             source_campaign_sha256: Digest([2; 32]),
@@ -392,6 +406,19 @@ mod tests {
             root_state_sha256: Digest([7; 32]),
             feature_schema_sha256: Digest([8; 32]),
             action_universe_sha256: Digest([9; 32]),
+            goal_target: NativeTacticGoalTargetReport {
+                source_stage: "F_SP103".into(),
+                source_room: 1,
+                destination_stage: "F_SP104".into(),
+                destination_room: 1,
+                destination_point: 0,
+                coordinate: [1.0, 2.0, 3.0],
+                source_coordinate: [4.0, 5.0, 6.0],
+                tactic_targets: vec![[1.0, 2.0, 3.0]],
+                supporting_load_triggers: 1,
+                source_inventory_sha256: Digest([13; 32]),
+                authored_route_coordinates_used: false,
+            },
             exploration_enabled: false,
             success: false,
             stop_reason: "decision_limit".into(),
