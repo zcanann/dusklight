@@ -314,20 +314,64 @@ fn run_seed(
     while campaign.decision_index < config.decisions_per_seed
         && native_ticks < config.optimization.budgets.simulated_tick_budget
     {
-        let suffix_ticks = campaign
-            .route_tape
-            .frames
-            .len()
-            .saturating_sub(source_frame as usize) as u64;
         let periodic_branch = campaign.decision_index > 0
             && campaign.decision_index % config.branch_every_decisions == 0;
-        let horizon_branch = suffix_ticks.saturating_add(maximum_tactic_ticks) > horizon;
-        if !campaign.replay.is_empty() && (periodic_branch || horizon_branch) {
+        if !campaign.replay.is_empty() && periodic_branch {
             episode = episode
                 .checked_add(1)
                 .ok_or_else(|| route_message("episode counter overflowed"))?;
             let maximum_frontier_frames = usize::try_from(
                 source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
+            )
+            .map_err(route_error)?;
+            let [root, frontier] = campaign
+                .sample_root_and_frontier(seed, episode, &[], maximum_frontier_frames)
+                .map_err(route_error)?;
+            let prefer_root = episode % 4 == 0;
+            campaign
+                .restore_branch(
+                    if prefer_root { &root } else { &frontier },
+                    seed_group(seed_index, episode)?,
+                    registry,
+                    catalog,
+                    &[],
+                    |_| true,
+                )
+                .map_err(route_error)?;
+        }
+
+        // Reserve horizon for the tactic Q actually selected at this state,
+        // not for the longest unrelated entry in the catalog. This lets short
+        // tactics compose beyond `horizon - catalog_maximum` while still
+        // branching before any selected tactic could exceed the bound.
+        //
+        // Restoring a branch can change the selected tactic. Recheck until the
+        // preview fits; the periodic root sample guarantees convergence because
+        // every catalog entry is itself bounded by the exploration horizon.
+        loop {
+            let suffix_ticks = campaign
+                .route_tape
+                .frames
+                .len()
+                .saturating_sub(source_frame as usize) as u64;
+            let preview = campaign
+                .decide(catalog, &[], &encode)
+                .map_err(route_error)?;
+            let selected_maximum_ticks = catalog
+                .entry(&preview.selected.descriptor.option_id)
+                .ok_or_else(|| route_message("selected tactic is absent from its catalog"))?
+                .description()
+                .duration
+                .maximum_ticks;
+            if selected_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
+                break;
+            }
+            episode = episode
+                .checked_add(1)
+                .ok_or_else(|| route_message("episode counter overflowed"))?;
+            let maximum_frontier_frames = usize::try_from(
+                source_frame
+                    .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
             )
             .map_err(route_error)?;
             let [root, frontier] = campaign
@@ -905,6 +949,14 @@ fn seed_group(seed_index: usize, episode: u64) -> Result<u64, NativeTacticRouteR
         .ok_or_else(|| route_message("episode group overflowed"))
 }
 
+fn selected_tactic_fits_horizon(
+    suffix_ticks: u64,
+    selected_maximum_ticks: u32,
+    horizon: u64,
+) -> bool {
+    suffix_ticks.saturating_add(u64::from(selected_maximum_ticks)) <= horizon
+}
+
 pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(route_error)?;
@@ -980,6 +1032,14 @@ mod tests {
     #[test]
     fn root_probe_uses_the_full_declared_horizon() {
         assert!(MAX_ROUTE_DECISIONS > 0);
+    }
+
+    #[test]
+    fn horizon_fit_uses_the_selected_tactic_duration() {
+        assert!(selected_tactic_fits_horizon(88, 8, 160));
+        assert!(selected_tactic_fits_horizon(152, 8, 160));
+        assert!(!selected_tactic_fits_horizon(88, 80, 160));
+        assert!(!selected_tactic_fits_horizon(u64::MAX, 1, 160));
     }
 
     #[test]
