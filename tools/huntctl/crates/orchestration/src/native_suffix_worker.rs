@@ -12,7 +12,9 @@ use dusklight_learning::native_frozen_policy_reinference::{
     NativeFrozenPolicyReinferenceReport, verify_native_frozen_policy_reinference,
 };
 use dusklight_learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
-use dusklight_search::suffix_batch::{NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch};
+use dusklight_search::suffix_batch::{
+    NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA, NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
+};
 use dusklight_worker_protocol::client::{BatchComplete, HelloResponse, WorkerClient};
 use dusklight_worker_protocol::transport::ProcessTransport;
 use serde::{Deserialize, Serialize};
@@ -755,8 +757,10 @@ fn canonical_frozen_model(
 }
 
 fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWorkerError> {
-    if batch.schema != NATIVE_SUFFIX_BATCH_SCHEMA
-        || batch.candidates.is_empty()
+    if !matches!(
+        batch.schema.as_str(),
+        NATIVE_SUFFIX_BATCH_SCHEMA | NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
+    ) || batch.candidates.is_empty()
         || batch.source_boundary_fingerprint.len() != 32
         || !batch
             .source_boundary_fingerprint
@@ -766,6 +770,16 @@ fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWor
         || batch.maximum_ticks > MAXIMUM_PERSISTENT_BATCH_TICKS
         || batch.checkpoint_validation.kind != "recorded_replay_window"
         || batch.checkpoint_validation.ticks == 0
+        || (batch.schema == NATIVE_SUFFIX_BATCH_SCHEMA
+            && batch
+                .candidates
+                .iter()
+                .any(|candidate| candidate.controller_program_hex.is_some()))
+        || (batch.schema == NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
+            && batch
+                .candidates
+                .iter()
+                .any(|candidate| candidate.controller_program_hex.is_none()))
     {
         return Err(worker_message("native suffix batch shape is invalid"));
     }
@@ -994,6 +1008,7 @@ mod tests {
             candidates: vec![NativeSuffixCandidate {
                 id: "candidate-0".into(),
                 actions: vec![MacroAction::Neutral { frames: 2 }],
+                controller_program_hex: None,
             }],
         };
         fs::write(&initial_batch, serde_json::to_vec_pretty(&batch).unwrap()).unwrap();

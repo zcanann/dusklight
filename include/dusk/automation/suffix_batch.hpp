@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dusk/automation/factorized_pad_policy.hpp"
+#include "dusk/automation/input_controller.hpp"
 #include "dusk/automation/input_tape.hpp"
 
 #include <algorithm>
@@ -16,6 +17,7 @@ namespace dusk::automation {
 
 inline constexpr std::string_view LegacySuffixBatchSchema = "dusklight-suffix-batch/v2";
 inline constexpr std::string_view PreviousSuffixBatchSchema = "dusklight-suffix-batch/v3";
+inline constexpr std::string_view ReactiveSuffixBatchSchema = "dusklight-suffix-batch/v8";
 inline constexpr std::string_view FactorizedSuffixBatchSchema = "dusklight-suffix-batch/v4";
 inline constexpr std::string_view FrozenPolicySuffixBatchSchemaV6 = "dusklight-suffix-batch/v6";
 inline constexpr std::string_view SuffixBatchSchema = "dusklight-suffix-batch/v7";
@@ -50,6 +52,9 @@ struct SuffixBatchCandidate {
     bool tapePassthrough = false;
     bool factorizedPolicy = false;
     bool frozenPolicy = false;
+    bool controllerProgram = false;
+    std::size_t controllerStartTick = 0;
+    InputControllerProgram controller{};
     FactorizedPadPolicyHeadConfig policyHead{};
     std::vector<std::array<float, kFactorizedPadPolicyHeadWidth>> policyOutputs;
     // One bounded index per expanded tick; the native boundary decodes the

@@ -474,6 +474,7 @@ pub(crate) fn tactic_root_probe_batch(
                 pad: SearchPadState::from(RawPadState::default()),
                 frames: u32::try_from(maximum_ticks).map_err(route_error)?,
             }],
+            controller_program_hex: None,
         }],
     })
 }

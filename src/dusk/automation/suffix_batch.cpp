@@ -110,6 +110,47 @@ bool parse_pad(const json& value, RawPadState& output) {
     return true;
 }
 
+bool parse_controller_program_hex(
+    const json& value, InputControllerProgram& output, std::string& error) {
+    if (!value.is_string()) {
+        error = "controller_program_hex must be a string";
+        return false;
+    }
+    const auto& encoded = value.get_ref<const std::string&>();
+    const std::size_t maximumBytes =
+        kInputControllerHeaderSize +
+        kInputControllerMaximumLayers * kInputControllerRecordSize;
+    if (encoded.empty() || (encoded.size() & 1) != 0 ||
+        encoded.size() > maximumBytes * 2)
+    {
+        error = "controller_program_hex has an invalid encoded length";
+        return false;
+    }
+    const auto nibble = [](const unsigned char byte) -> std::optional<std::uint8_t> {
+        if (byte >= '0' && byte <= '9') return byte - '0';
+        if (byte >= 'a' && byte <= 'f') return byte - 'a' + 10;
+        return std::nullopt;
+    };
+    std::vector<std::uint8_t> bytes(encoded.size() / 2);
+    for (std::size_t index = 0; index < bytes.size(); ++index) {
+        const auto high = nibble(static_cast<unsigned char>(encoded[index * 2]));
+        const auto low = nibble(static_cast<unsigned char>(encoded[index * 2 + 1]));
+        if (!high.has_value() || !low.has_value()) {
+            error = "controller_program_hex must use canonical lowercase hexadecimal";
+            return false;
+        }
+        bytes[index] = static_cast<std::uint8_t>((*high << 4) | *low);
+    }
+    const InputControllerError controllerError =
+        decode_input_controller(bytes, output);
+    if (controllerError != InputControllerError::None) {
+        error = std::string{"controller_program_hex is invalid: "} +
+                input_controller_error_message(controllerError);
+        return false;
+    }
+    return true;
+}
+
 bool valid_boundary_fingerprint(const json& value) {
     if (!value.is_string()) return false;
     const auto& fingerprint = value.get_ref<const std::string&>();
@@ -229,6 +270,7 @@ bool parse_policy_output(const json& value,
 
 bool parse_candidate(const json& value, const std::size_t maximumTicks,
     const bool allowFactorizedPolicy, const bool allowFrozenPolicy,
+    const bool allowControllerProgram,
     SuffixBatchCandidate& output, std::string& error) {
     constexpr std::array ActionKeys{
         std::string_view{"id"}, std::string_view{"actions"}};
@@ -236,13 +278,20 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         std::string_view{"id"}, std::string_view{"source"}};
     constexpr std::array PolicyKeys{std::string_view{"id"},
         std::string_view{"policy_head"}, std::string_view{"policy_outputs"}};
+    constexpr std::array ControllerKeys{std::string_view{"id"},
+        std::string_view{"actions"}, std::string_view{"controller_program_hex"}};
     const bool actionCandidate = has_exact_keys(value, ActionKeys);
     const bool sourceCandidate = has_exact_keys(value, TapeKeys);
     const bool policyCandidate = has_exact_keys(value, PolicyKeys);
-    if ((!actionCandidate && !sourceCandidate && !policyCandidate) ||
+    const bool controllerCandidate = has_exact_keys(value, ControllerKeys);
+    if ((!actionCandidate && !sourceCandidate && !policyCandidate && !controllerCandidate) ||
         (policyCandidate && !allowFactorizedPolicy) || !value["id"].is_string())
     {
-        error = "candidate must contain id plus actions, source, or v4 factorized policy outputs";
+        error = "candidate must contain id plus actions, source, controller, or policy outputs";
+        return false;
+    }
+    if (controllerCandidate && !allowControllerProgram) {
+        error = "controller candidates require the reactive suffix-batch schema";
         return false;
     }
     const std::string id = value["id"].get<std::string>();
@@ -317,7 +366,7 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         error = "candidate actions must be an array";
         return false;
     }
-    if (actions.empty() || actions.size() > maximumTicks) {
+    if ((!controllerCandidate && actions.empty()) || actions.size() > maximumTicks) {
         error = "candidate action count is empty or exceeds maximum_ticks";
         return false;
     }
@@ -347,7 +396,17 @@ bool parse_candidate(const json& value, const std::size_t maximumTicks,
         }
         parsed.pads.insert(parsed.pads.end(), frames, pad);
     }
-    if (parsed.pads.size() != maximumTicks) {
+    if (controllerCandidate) {
+        if (!parse_controller_program_hex(
+                value["controller_program_hex"], parsed.controller, error))
+            return false;
+        parsed.controllerProgram = true;
+        parsed.controllerStartTick = parsed.pads.size();
+        if (parsed.controller.duration() != maximumTicks - parsed.controllerStartTick) {
+            error = "controller duration plus static prefix differs from maximum_ticks";
+            return false;
+        }
+    } else if (parsed.pads.size() != maximumTicks) {
         error = "candidate expands to " + std::to_string(parsed.pads.size()) +
                 " ticks instead of maximum_ticks";
         return false;
@@ -405,11 +464,12 @@ bool parse_suffix_batch(
     const auto& schema = root["schema"].get_ref<const std::string&>();
     const bool legacy = schema == LegacySuffixBatchSchema;
     const bool previous = schema == PreviousSuffixBatchSchema;
+    const bool reactive = schema == ReactiveSuffixBatchSchema;
     const bool factorized = schema == FactorizedSuffixBatchSchema;
     const bool legacyFrozen = schema == FrozenPolicySuffixBatchSchemaV6;
     const bool exploratoryFrozen = schema == SuffixBatchSchema;
     const bool frozen = legacyFrozen || exploratoryFrozen;
-    if ((!legacy && !previous && !factorized && !frozen) ||
+    if ((!legacy && !previous && !reactive && !factorized && !frozen) ||
         !(legacy ? has_exact_keys(root, LegacyRootKeys) :
                    frozen ? has_exact_keys(root, FrozenRootKeys) : has_exact_keys(root, RootKeys)) ||
         !valid_boundary_fingerprint(root["source_boundary_fingerprint"]) ||
@@ -479,7 +539,7 @@ bool parse_suffix_batch(
     for (std::size_t index = 0; index < candidates.size(); ++index) {
         SuffixBatchCandidate candidate;
         if (!parse_candidate(candidates[index], parsed.maximumTicks,
-                factorized || frozen, frozen, candidate, error)) {
+                factorized || frozen, frozen, reactive, candidate, error)) {
             error = "candidate " + std::to_string(index) + ": " + error;
             return false;
         }

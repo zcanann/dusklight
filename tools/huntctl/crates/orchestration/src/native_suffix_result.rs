@@ -8,7 +8,9 @@ use dusklight_learning::native_frozen_policy_suffix_batch::{
     NATIVE_FROZEN_POLICY_SUFFIX_BATCH_SCHEMA_V7, NativeFrozenPolicySuffixBatch,
     NativePolicyActionAuthority,
 };
-use dusklight_search::suffix_batch::{NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch};
+use dusklight_search::suffix_batch::{
+    NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA, NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -200,7 +202,10 @@ impl NativeSuffixBatchResult {
         request: &NativeSuffixBatch,
         terminal: &NativeTerminalBinding,
     ) -> Result<ValidatedNativeSuffixBatch, NativeSuffixResultError> {
-        if request.schema != NATIVE_SUFFIX_BATCH_SCHEMA {
+        if !matches!(
+            request.schema.as_str(),
+            NATIVE_SUFFIX_BATCH_SCHEMA | NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
+        ) {
             return Err(result_error(
                 "unsupported residual suffix-batch request schema",
             ));
@@ -699,6 +704,7 @@ mod tests {
             candidates: vec![NativeSuffixCandidate {
                 id: "candidate-0".into(),
                 actions: vec![MacroAction::Neutral { frames: 2 }],
+                controller_program_hex: None,
             }],
         }
     }

@@ -278,6 +278,7 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mEpisodePreInputCaptured = false;
     mPolicyFeatureRowReady = false;
     mCandidateChosenPadReady = false;
+    mCandidateControllerObservationReady = false;
     resetBatchProfile(true);
     mError.clear();
     mCompleted = false;
@@ -619,6 +620,7 @@ bool SuffixBatchRunner::captureEpisodePreInput(
     }
     mPolicyFeatureRowReady = false;
     mCandidateChosenPadReady = false;
+    mCandidateControllerObservationReady = false;
     if (mCandidateTick == 0) {
         AccumulateMicros encoding(mProfile.corpusEncodingMicros);
         begin_learning_episode(mCurrentEpisode);
@@ -647,6 +649,8 @@ bool SuffixBatchRunner::captureEpisodePreInput(
             return false;
         }
     }
+    mCandidateControllerObservation = controller;
+    mCandidateControllerObservationReady = true;
     GameplayCollisionPlanesObservation collisionPlanes;
     GameplayPlayerFormObservation playerForm;
     {
@@ -839,6 +843,22 @@ void SuffixBatchRunner::applyCandidateInput() {
             apply_policy_rollout_exploration(chosen,
                 *mDefinition.frozenPolicy->rolloutExploration, mCandidateTick);
         }
+    } else if (candidate.controllerProgram &&
+               mCandidateTick >= candidate.controllerStartTick) {
+        if (!mCandidateControllerObservationReady) {
+            fail("reactive controller lacks its phase-correct pre-input observation");
+            return;
+        }
+        const InputControllerEvaluation evaluation =
+            candidate.controller.evaluateDetailed(
+                static_cast<std::uint32_t>(
+                    mCandidateTick - candidate.controllerStartTick),
+                mCandidateControllerObservation);
+        if (evaluation.terminalReason != InputControllerTerminalReason::None) {
+            fail("reactive suffix controller lost an exact target");
+            return;
+        }
+        chosen = evaluation.input;
     } else {
         chosen = candidate.pads[mCandidateTick];
     }
@@ -1150,9 +1170,9 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     if (candidate.tapePassthrough) {
         expectedPad =
             input_tape_player().tape().frames[mDefinition.sourceFrame + mCandidateTick].pads[0];
-    } else if (candidate.frozenPolicy) {
+    } else if (candidate.frozenPolicy || candidate.controllerProgram) {
         if (!mCandidateChosenPadReady) {
-            error = "frozen policy did not produce a PAD for the current tick";
+            error = "online candidate did not produce a PAD for the current tick";
             fail(error);
             return true;
         }

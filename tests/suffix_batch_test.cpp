@@ -148,6 +148,41 @@ void test_factorized_policy_rows_expand_to_an_online_native_program() {
     REQUIRE(error.find("instead of maximum_ticks") != std::string::npos);
 }
 
+void test_reactive_controller_executes_as_one_native_candidate() {
+    const std::string source = R"({
+        "schema":"dusklight-suffix-batch/v8","source_frame":506,
+        "source_boundary_fingerprint":"e7ac8251329f22a5df682bbe5eb2a2ba",
+        "checkpoint_validation":{"kind":"recorded_replay_window","ticks":8},
+        "maximum_ticks":230,"verify_state_hashes":true,
+        "candidates":[{"id":"reactive-heading","actions":[],
+          "controller_program_hex":"4455534b4354524c0100040020004000e60000000100000040000000000000000200000000000000e60000005327864400004844b1f52bc500000000000000000000000000004842500000000000000000000000000000000000000000000000"}]
+    })";
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(source, batch, error));
+    REQUIRE(error.empty());
+    REQUIRE(batch.candidates.size() == 1);
+    const auto& candidate = batch.candidates[0];
+    REQUIRE(candidate.controllerProgram);
+    REQUIRE(candidate.controllerStartTick == 0);
+    REQUIRE(candidate.controller.duration() == 230);
+    REQUIRE(candidate.pads.empty());
+
+    std::string legacy = source;
+    const std::size_t schema = legacy.find("dusklight-suffix-batch/v8");
+    REQUIRE(schema != std::string::npos);
+    legacy.replace(schema, std::string("dusklight-suffix-batch/v8").size(),
+        "dusklight-suffix-batch/v3");
+    REQUIRE(!parse_suffix_batch(legacy, batch, error));
+
+    std::string detached = source;
+    const std::size_t duration = detached.find("\"maximum_ticks\":230");
+    REQUIRE(duration != std::string::npos);
+    detached.replace(duration, std::string("\"maximum_ticks\":230").size(),
+        "\"maximum_ticks\":229");
+    REQUIRE(!parse_suffix_batch(detached, batch, error));
+}
+
 std::string frozen_policy_batch() {
     return R"({
         "schema":"dusklight-suffix-batch/v7",
@@ -318,6 +353,7 @@ int main() {
     test_tape_passthrough_candidate();
     test_legacy_fixed_milestone_batch_remains_distinct();
     test_factorized_policy_rows_expand_to_an_online_native_program();
+    test_reactive_controller_executes_as_one_native_candidate();
     test_frozen_policy_is_content_bound_and_one_tick();
     test_invalid_batches_fail_closed();
     std::cout << "suffix batch tests passed\n";

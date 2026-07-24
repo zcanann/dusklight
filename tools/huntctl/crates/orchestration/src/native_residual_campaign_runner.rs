@@ -574,6 +574,7 @@ fn native_batch(
             Ok(NativeSuffixCandidate {
                 id: wire_candidate_id(&candidate.envelope.id, repetition),
                 actions: imported.actions,
+                controller_program_hex: None,
             })
         })
         .collect::<Result<Vec<_>, NativeResidualCampaignRunnerError>>()?;
@@ -611,6 +612,7 @@ fn exact_replay_batch(
             Ok(NativeSuffixCandidate {
                 id: wire_candidate_id(&candidate.id, repetition),
                 actions: imported.actions,
+                controller_program_hex: None,
             })
         })
         .collect::<Result<Vec<_>, NativeResidualCampaignRunnerError>>()?;
@@ -1607,6 +1609,7 @@ fn incumbent_demonstration_batch(
         candidates: vec![NativeSuffixCandidate {
             id: "incumbent-demonstration".into(),
             actions: imported.actions,
+            controller_program_hex: None,
         }],
     })
 }

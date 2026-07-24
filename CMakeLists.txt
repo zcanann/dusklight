@@ -605,6 +605,8 @@ set_target_properties(dusk_card_fixture_test PROPERTIES FOLDER "Tests")
 add_executable(dusk_suffix_batch_test EXCLUDE_FROM_ALL
     tests/suffix_batch_test.cpp
     src/dusk/automation/suffix_batch.cpp
+    src/dusk/automation/input_controller.cpp
+    src/dusk/automation/typed_facts.cpp
 )
 target_include_directories(dusk_suffix_batch_test PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(dusk_suffix_batch_test PRIVATE nlohmann_json::nlohmann_json)

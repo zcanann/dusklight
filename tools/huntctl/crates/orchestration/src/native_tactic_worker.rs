@@ -7,6 +7,9 @@ use crate::native_suffix_worker::{
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState, WaitCondition};
+use dusklight_control::controller_program::{
+    ControllerProgram, CoordinateFrame, Layer, Operation, StickBlend,
+};
 use dusklight_control::controller_runtime::{
     ControllerProgramStepper, ControllerRuntimeActor, ControllerRuntimeEnd,
     ControllerRuntimeObservation, ControllerRuntimeQueryRecord, MAX_CONTROLLER_RUNTIME_ACTORS,
@@ -20,7 +23,7 @@ use dusklight_evidence::native_episode_shard::{
 };
 use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot};
 use dusklight_learning::native_generic_tactic::{
-    NativeGenericTacticStepper, NativeTacticObservation, NativeTacticQueryRecord,
+    GenericTactic, NativeGenericTacticStepper, NativeTacticObservation, NativeTacticQueryRecord,
 };
 use dusklight_learning::tactic_asset::{
     PreparedTacticExecution, TacticAssetCatalog, TacticDurationBounds,
@@ -31,8 +34,8 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::SelectedTactic;
 use dusklight_search::search::{MacroAction, SearchPadState};
 use dusklight_search::suffix_batch::{
-    NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation, NativeSuffixBatch,
-    NativeSuffixCandidate,
+    NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA, NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation,
+    NativeSuffixBatch, NativeSuffixCandidate,
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -267,6 +270,22 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
     duration: TacticDurationBounds,
     termination: OptionCondition,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
+    if let Some(program) = native_generic_controller_program(stepper.plan(), duration)? {
+        return execute_native_generic_controller(
+            worker,
+            root_checkpoint_sha256,
+            selected,
+            before,
+            route_prefix,
+            paths,
+            source_frame,
+            candidate_prefix_ticks,
+            stepper,
+            duration,
+            termination,
+            program,
+        );
+    }
     let mut observation = before
         .to_native_tactic_observation()
         .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
@@ -368,6 +387,172 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
     }
     Err(NativeTacticWorkerError::InvalidDuration)
+}
+
+fn native_generic_controller_program(
+    plan: &dusklight_learning::native_generic_tactic::NativeGenericTacticPlan,
+    duration: TacticDurationBounds,
+) -> Result<Option<ControllerProgram>, NativeTacticWorkerError> {
+    if plan.maximum_ticks != duration.maximum_ticks
+        || plan.minimum_ticks != duration.minimum_ticks
+        || duration.maximum_ticks == 0
+    {
+        return Err(NativeTacticWorkerError::InvalidDuration);
+    }
+    let operation = match &plan.tactic {
+        GenericTactic::MaintainRelativeHeading {
+            heading_radians_f32_bits,
+            magnitude,
+        } => Operation::MaintainHeading {
+            blend: StickBlend::Replace,
+            // NativeGenericTactic treats the authored heading as camera-relative
+            // and emits the player-relative steering error. The controller's
+            // player-frame heading resolves to the same PAD vector when the
+            // authored offset is negated:
+            //
+            // -sin(player - offset - camera) == sin(camera + offset - player)
+            frame: CoordinateFrame::Player,
+            heading_radians: -f32::from_bits(*heading_radians_f32_bits),
+            magnitude: *magnitude,
+        },
+        GenericTactic::ShortCurve { control } => Operation::CubicBezier {
+            blend: StickBlend::Replace,
+            points: control.map(|point| point.map(i16::from)),
+        },
+        _ => return Ok(None),
+    };
+    let program = ControllerProgram {
+        duration_frames: duration.maximum_ticks,
+        layers: vec![Layer {
+            start_frame: 0,
+            duration_frames: duration.maximum_ticks,
+            operation,
+        }],
+    };
+    program
+        .encode()
+        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+    Ok(Some(program))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
+    worker: &mut W,
+    root_checkpoint_sha256: Digest,
+    selected: &SelectedTactic,
+    before: &FactSnapshot,
+    route_prefix: &InputTape,
+    paths: &NativeTacticWorkerPaths,
+    source_frame: usize,
+    candidate_prefix_ticks: usize,
+    mut stepper: NativeGenericTacticStepper,
+    duration: TacticDurationBounds,
+    termination: OptionCondition,
+    program: ControllerProgram,
+) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
+    let prefix_frames = route_prefix.frames[source_frame..].to_vec();
+    if prefix_frames.len() != candidate_prefix_ticks {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+    let request = tactic_controller_batch(worker.identity(), selected, &prefix_frames, &program)?;
+    write_new_json(&paths.request, &request)?;
+    let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
+    let episode = load_candidate_episode(&request, &validated)?;
+    if episode.steps.len() <= candidate_prefix_ticks
+        || episode.steps.len()
+            > candidate_prefix_ticks.saturating_add(duration.maximum_ticks as usize)
+    {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "reactive controller episode length",
+        ));
+    }
+    for (step, expected) in episode.steps.iter().zip(&prefix_frames) {
+        if !same_pad(step.chosen_pad, expected.pads[0])
+            || !same_pad(step.consumed_pad, expected.pads[0])
+        {
+            return Err(NativeTacticWorkerError::PadMismatch);
+        }
+    }
+
+    let mut option_tape = InputTape {
+        boot: route_prefix.boot.clone(),
+        tick_rate_numerator: route_prefix.tick_rate_numerator,
+        tick_rate_denominator: route_prefix.tick_rate_denominator,
+        frames: Vec::with_capacity(duration.maximum_ticks as usize),
+    };
+    let mut queries = Vec::with_capacity(duration.maximum_ticks as usize);
+    let option_steps = &episode.steps[candidate_prefix_ticks..];
+    let mut stepper_end = None;
+    for (index, native_step) in option_steps.iter().enumerate() {
+        let observation = NativeTacticObservation::from_native(&native_step.pre_input)
+            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+        let realized = stepper
+            .step(observation)
+            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+        if !same_pad(native_step.chosen_pad, realized.frame.pads[0])
+            || !same_pad(native_step.consumed_pad, realized.frame.pads[0])
+        {
+            return Err(NativeTacticWorkerError::PadMismatch);
+        }
+        if realized.end_reason.is_some() && index + 1 != option_steps.len() {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "native controller continued after the tactic stopped",
+            ));
+        }
+        stepper_end = realized.end_reason;
+        option_tape.frames.push(realized.frame);
+        queries.push(realized.query);
+    }
+
+    let (end_reason, cancellation_conditions) = if episode.success {
+        (
+            OptionEndReason::Cancelled { condition_index: 0 },
+            vec![OptionCondition::TargetReached {
+                target: "authored_goal".into(),
+            }],
+        )
+    } else {
+        (
+            stepper_end.ok_or(NativeTacticWorkerError::DetachedResult(
+                "native controller stopped before its bounded tactic",
+            ))?,
+            Vec::new(),
+        )
+    };
+    let execution = capture_local_execution(
+        selected,
+        duration,
+        termination,
+        cancellation_conditions,
+        end_reason,
+        &option_tape,
+    )?;
+    let mut candidate_tape = InputTape {
+        boot: route_prefix.boot.clone(),
+        tick_rate_numerator: route_prefix.tick_rate_numerator,
+        tick_rate_denominator: route_prefix.tick_rate_denominator,
+        frames: prefix_frames,
+    };
+    candidate_tape.frames.extend_from_slice(&option_tape.frames);
+    observe_outcome(
+        root_checkpoint_sha256,
+        selected,
+        before,
+        route_prefix,
+        PreparedNativeTactic {
+            option_tape,
+            execution,
+            duration,
+        },
+        candidate_tape,
+        candidate_prefix_ticks,
+        request,
+        validated,
+        queries
+            .into_iter()
+            .map(TacticRuntimeQuery::NativeGeneric)
+            .collect(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -717,6 +902,24 @@ fn inspect_candidate_episode(
     validated: &ValidatedNativeSuffixBatch,
     candidate_tape: &InputTape,
 ) -> Result<NativeEpisode, NativeTacticWorkerError> {
+    let episode = load_candidate_episode(request, validated)?;
+    if episode.steps.len() > candidate_tape.frames.len() {
+        return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
+    }
+    for (step, expected) in episode.steps.iter().zip(&candidate_tape.frames) {
+        if !same_pad(step.chosen_pad, expected.pads[0])
+            || !same_pad(step.consumed_pad, expected.pads[0])
+        {
+            return Err(NativeTacticWorkerError::PadMismatch);
+        }
+    }
+    Ok(episode)
+}
+
+fn load_candidate_episode(
+    request: &NativeSuffixBatch,
+    validated: &ValidatedNativeSuffixBatch,
+) -> Result<NativeEpisode, NativeTacticWorkerError> {
     if validated.candidates.len() != 1
         || validated.candidates[0].id != request.candidates[0].id
         || validated.candidates[0].simulated_ticks == 0
@@ -740,16 +943,8 @@ fn inspect_candidate_episode(
         .ok_or(NativeTacticWorkerError::DetachedResult("episode id"))?;
     if episodes.next().is_some()
         || episode.steps.len() as u64 != validated.candidates[0].simulated_ticks
-        || episode.steps.len() > candidate_tape.frames.len()
     {
         return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
-    }
-    for (step, expected) in episode.steps.iter().zip(&candidate_tape.frames) {
-        if !same_pad(step.chosen_pad, expected.pads[0])
-            || !same_pad(step.consumed_pad, expected.pads[0])
-        {
-            return Err(NativeTacticWorkerError::PadMismatch);
-        }
     }
     Ok(episode.clone())
 }
@@ -864,8 +1059,66 @@ fn tactic_batch(
         },
         maximum_ticks: tape.frames.len(),
         verify_state_hashes: true,
-        candidates: vec![NativeSuffixCandidate { id, actions }],
+        candidates: vec![NativeSuffixCandidate {
+            id,
+            actions,
+            controller_program_hex: None,
+        }],
     })
+}
+
+fn tactic_controller_batch(
+    identity: &NativeSuffixWorkerIdentity,
+    selected: &SelectedTactic,
+    prefix_frames: &[InputFrame],
+    program: &ControllerProgram,
+) -> Result<NativeSuffixBatch, NativeTacticWorkerError> {
+    let program_bytes = program
+        .encode()
+        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+    let maximum_ticks = prefix_frames
+        .len()
+        .checked_add(program.duration_frames as usize)
+        .ok_or(NativeTacticWorkerError::InvalidDuration)?;
+    if maximum_ticks == 0 || maximum_ticks > 4_096 {
+        return Err(NativeTacticWorkerError::InvalidDuration);
+    }
+    let id = hex_digest(
+        serde_json::to_vec(&(
+            selected.learner_snapshot_sha256,
+            selected.decision_index,
+            &selected.descriptor,
+        ))
+        .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?,
+    );
+    Ok(NativeSuffixBatch {
+        schema: NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA.into(),
+        source_frame: usize::try_from(identity.source_frame)
+            .map_err(|_| NativeTacticWorkerError::InvalidDuration)?,
+        source_boundary_fingerprint: identity.source_boundary_fingerprint.clone(),
+        checkpoint_validation: NativeCheckpointValidation {
+            kind: identity.checkpoint_validation_kind.clone(),
+            ticks: usize::try_from(identity.checkpoint_validation_ticks)
+                .map_err(|_| NativeTacticWorkerError::InvalidDuration)?,
+        },
+        maximum_ticks,
+        verify_state_hashes: true,
+        candidates: vec![NativeSuffixCandidate {
+            id,
+            actions: pad_runs(prefix_frames)?,
+            controller_program_hex: Some(lower_hex_bytes(&program_bytes)),
+        }],
+    })
+}
+
+fn lower_hex_bytes(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
 }
 
 fn pad_runs(frames: &[InputFrame]) -> Result<Vec<MacroAction>, NativeTacticWorkerError> {
@@ -1248,6 +1501,91 @@ mod tests {
     }
 
     #[test]
+    fn relative_heading_becomes_one_linear_native_controller_candidate() {
+        let authored_heading = 0.375_f32;
+        let plan = NativeGenericTacticPlan {
+            schema: NATIVE_GENERIC_TACTIC_SCHEMA_V1.into(),
+            tactic: GenericTactic::MaintainRelativeHeading {
+                heading_radians_f32_bits: authored_heading.to_bits(),
+                magnitude: 96,
+            },
+            minimum_ticks: 1,
+            maximum_ticks: 16,
+        };
+        let duration = TacticDurationBounds {
+            minimum_ticks: 1,
+            maximum_ticks: 16,
+        };
+        let program = native_generic_controller_program(&plan, duration)
+            .unwrap()
+            .expect("relative heading has a native controller equivalent");
+        let Operation::MaintainHeading {
+            frame,
+            heading_radians,
+            magnitude,
+            ..
+        } = program.layers[0].operation
+        else {
+            panic!("relative heading must compile to maintain-heading");
+        };
+        assert_eq!(frame, CoordinateFrame::Player);
+        assert_eq!(heading_radians.to_bits(), (-authored_heading).to_bits());
+        assert_eq!(magnitude, 96);
+
+        let descriptor = plan.descriptor("heading".into()).unwrap();
+        let selected = SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: Digest([1; 32]),
+            decision_index: 5,
+            descriptor,
+            reason: TacticSelectionReason::Epsilon,
+            exploration_draw: 1,
+        };
+        let identity = NativeSuffixWorkerIdentity {
+            executable_sha256: Digest([1; 32]),
+            game_data_sha256: Digest([2; 32]),
+            input_tape_sha256: Digest([3; 32]),
+            milestone_program_sha256: Digest([4; 32]),
+            card_fixture_sha256: Digest([5; 32]),
+            world_context_sha256: Digest([6; 32]),
+            source_frame: 440,
+            source_boundary_fingerprint: "7".repeat(32),
+            checkpoint_validation_kind: "recorded_replay_window".into(),
+            checkpoint_validation_ticks: 2,
+            maximum_ticks: 99,
+            terminal: crate::native_suffix_result::NativeTerminalBinding {
+                goal: "goal".into(),
+                program_sha256: Digest([8; 32]),
+                definition_sha256: Digest([9; 32]),
+            },
+        };
+        let prefix = vec![
+            InputFrame {
+                owned_ports: 1,
+                ..InputFrame::default()
+            };
+            3
+        ];
+        let batch = tactic_controller_batch(&identity, &selected, &prefix, &program).unwrap();
+
+        assert_eq!(batch.schema, NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA);
+        assert_eq!(batch.maximum_ticks, 19);
+        assert_eq!(batch.candidates.len(), 1);
+        assert_eq!(
+            batch.candidates[0]
+                .actions
+                .iter()
+                .map(|action| match action {
+                    MacroAction::PadRun { frames, .. } => *frames,
+                    _ => 0,
+                })
+                .sum::<u32>(),
+            3
+        );
+        assert!(batch.candidates[0].controller_program_hex.is_some());
+    }
+
+    #[test]
     fn selected_native_generic_tactic_dispatches_to_the_live_stepper() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
@@ -1450,6 +1788,7 @@ mod tests {
             candidates: vec![NativeSuffixCandidate {
                 id: episode.id.clone(),
                 actions: pad_runs(&option_tape.frames).unwrap(),
+                controller_program_hex: None,
             }],
         };
         let validated = ValidatedNativeSuffixBatch {

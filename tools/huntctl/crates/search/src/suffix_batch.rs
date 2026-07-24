@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub const NATIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v3";
+pub const NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v8";
 const MAXIMUM_CANDIDATES: usize = 16_384;
 const MAXIMUM_TICKS: usize = 4_096;
 const MAXIMUM_EXPANDED_TICKS: usize = 8 * 1_024 * 1_024;
@@ -69,6 +70,8 @@ pub struct NativeCheckpointValidation {
 pub struct NativeSuffixCandidate {
     pub id: String,
     pub actions: Vec<MacroAction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_program_hex: Option<String>,
 }
 
 pub fn propose_suffix_batch(
@@ -977,9 +980,11 @@ fn push_candidate(
     let actions = Candidate::from_absolute_tape(seed.segment, &tape)?.actions;
     let identity = serde_json::to_vec(&actions)?;
     if seen.insert(identity) {
-        output
-            .candidates
-            .push(NativeSuffixCandidate { id, actions });
+        output.candidates.push(NativeSuffixCandidate {
+            id,
+            actions,
+            controller_program_hex: None,
+        });
     }
     Ok(())
 }

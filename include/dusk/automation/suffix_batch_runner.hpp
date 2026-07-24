@@ -219,7 +219,9 @@ private:
     bool mEpisodePreInputCaptured = false;
     bool mPolicyFeatureRowReady = false;
     bool mCandidateChosenPadReady = false;
+    bool mCandidateControllerObservationReady = false;
     NativePolicyFeatureRow mPolicyFeatureRow{};
+    ControllerObservation mCandidateControllerObservation{};
     std::array<float, kFactorizedPadPolicyHeadWidth> mPolicyOutput{};
     RawPadState mCandidateChosenPad{};
     FrozenInferenceModel mFrozenPolicyModel;
