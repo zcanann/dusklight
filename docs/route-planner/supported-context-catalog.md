@@ -40,7 +40,7 @@ file record without depending on a host path.
 Only GZ2E01 English has semantic message-import support. Runtime language `en` selects
 locale bundle `us` through profile `gcn-us-1.0-gz2e01-en`, whose canonical
 whole-artifact SHA-256 is
-`aadb17708f0027818e2a4c3eafbce1d672cfe9e3a6d1890113d45772085ec247`
+`f969f0706818448f3ef93b9b447821f30dd9f4e576167c0eb8e7f3d5c3cc4889`
 (the profile's internal semantic content seal is
 `6fc8c6f4c4dcd1671c037646b2660aa4a0e5602d4bf66aa6e109aba5f20a4aaa`).
 The catalog independently seals the nine selected `Msgus` archives:

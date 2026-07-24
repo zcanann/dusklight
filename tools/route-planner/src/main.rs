@@ -901,6 +901,7 @@ fn compile_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
     let has_storage_bindings = profile.bindings.temporary_flags.is_some()
         || profile.bindings.persistent_flags.is_some()
         || profile.bindings.rupees.is_some()
+        || profile.bindings.life.is_some()
         || !profile.bindings.item_ownership.is_empty()
         || !profile.bindings.switch_stores.is_empty();
     let storage_binding_coverage = if has_storage_bindings {
@@ -915,7 +916,7 @@ fn compile_message_flows(args: &[String]) -> Result<(), Box<dyn Error>> {
             domain: CoverageDomain::StorageBindings,
             scope: "message-flow".into(),
             status: CoverageStatus::Unavailable,
-            detail: "The structural import profile supplies no temporary, persistent, rupee, item-ownership, or switch-store bindings; every state-backed handler remains an explicit unknown requirement.".into(),
+            detail: "The structural import profile supplies no temporary, persistent, rupee, life, item-ownership, or switch-store bindings; every state-backed handler remains an explicit unknown requirement.".into(),
         }
     };
     let hard_guard_detail = if has_storage_bindings {

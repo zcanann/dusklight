@@ -898,10 +898,14 @@ impl MessageFlowProgram {
         let mut unknowns = Vec::new();
         let mut continuation = MessageEventContinuation::EncodedSuccessor;
         let fully_decoded = match event_index {
-            3 => {
+            3 | 5 => {
                 if raw_parameter_u32 == 0 {
                     true
-                } else if let Some(target) = &self.bindings.rupees {
+                } else if let Some(target) = match event_index {
+                    3 => self.bindings.rupees.as_ref(),
+                    5 => self.bindings.life.as_ref(),
+                    _ => unreachable!(),
+                } {
                     operations.push((
                         0,
                         StateOperation::DebitUnsigned {
@@ -1133,9 +1137,10 @@ impl MessageFlowProgram {
         outcome: u8,
     ) -> Option<(PredicateExpression, ValueReference)> {
         // query004 returns 0 when the current rupee count is at least a
-        // nonzero parameter and 1 when it is below that threshold. Parameter
-        // zero compares against the runtime wallet maximum, which is not part
-        // of the current native snapshot and therefore remains unknown.
+        // nonzero parameter and 1 when it is below that threshold. Its
+        // parameter zero compares against the runtime wallet maximum, which is
+        // not represented. query032 uses the same outcome convention against
+        // current life for every parameter.
         let target = match query_handler_index {
             Some(4) if parameter != 0 => self.bindings.rupees.as_ref()?,
             Some(32) => self.bindings.life.as_ref()?,
@@ -2869,6 +2874,122 @@ mod tests {
     }
 
     #[test]
+    fn compiles_life_threshold_query_and_saturating_damage_event() {
+        let mut program = program();
+        let MessageFlowNode::Branch {
+            raw_query_index,
+            query_handler_index,
+            parameter,
+            ..
+        } = &mut program.extracted.nodes[1]
+        else {
+            panic!("fixture node 1 must be a branch");
+        };
+        *raw_query_index = 31;
+        *query_handler_index = Some(32);
+        *parameter = 12;
+        program
+            .extracted
+            .temporary_flag_accesses
+            .retain(|access| access.node_index != 1);
+        program.bindings.life = Some(ComponentFieldTarget {
+            component_id: "inventory-and-resources".into(),
+            field: "life".into(),
+        });
+
+        let MessageFlowNode::Event {
+            event_index,
+            parameter_0,
+            parameter_1,
+            raw_parameter_u32,
+            raw_parameters,
+            ..
+        } = &mut program.extracted.nodes[2]
+        else {
+            panic!("fixture node 2 must be an event");
+        };
+        *event_index = 5;
+        *parameter_0 = 0;
+        *parameter_1 = 4;
+        *raw_parameter_u32 = 4;
+        *raw_parameters = 4_u32.to_be_bytes();
+        program
+            .extracted
+            .persistent_flag_accesses
+            .retain(|access| access.node_index != 2);
+
+        let compiled = program.compile().unwrap();
+        for (outcome, operator) in [
+            (0, ComparisonOperator::GreaterThanOrEqual),
+            (1, ComparisonOperator::LessThan),
+        ] {
+            let transition = compiled
+                .mechanics
+                .transitions
+                .iter()
+                .find(|transition| {
+                    transition.label == format!("Take message branch {outcome} at node 1")
+                })
+                .unwrap();
+            let transition_id = &transition.id;
+            assert!(transition.activation.unknown_requirements.is_empty());
+            assert!(matches!(
+                &transition.activation.hard_guards,
+                PredicateExpression::All { terms }
+                    if matches!(
+                        &terms[1],
+                        PredicateExpression::Compare {
+                            left: ValueReference::ComponentField {
+                                component_id,
+                                field,
+                            },
+                            operator: actual_operator,
+                            right: ValueReference::Literal {
+                                value: StateValue::Unsigned(12),
+                            },
+                        } if component_id == "inventory-and-resources"
+                            && field == "life"
+                            && *actual_operator == operator
+                    )
+            ));
+            let reader = compiled
+                .mechanics
+                .readers
+                .iter()
+                .find(|reader| reader.consuming_transition_id == *transition_id)
+                .unwrap();
+            assert!(matches!(
+                &reader.source,
+                ValueReference::ComponentField {
+                    component_id,
+                    field,
+                } if component_id == "inventory-and-resources" && field == "life"
+            ));
+        }
+
+        let damage = compiled
+            .mechanics
+            .transitions
+            .iter()
+            .find(|transition| transition.label == "Execute message event 5 at node 2")
+            .unwrap();
+        assert!(damage.activation.unknown_requirements.is_empty());
+        assert!(matches!(
+            damage.activation.effects.as_slice(),
+            [
+                StateOperation::DebitUnsigned {
+                    target: ComponentFieldTarget {
+                        component_id,
+                        field,
+                    },
+                    amount: 4,
+                },
+                StateOperation::AdvanceFlow { .. },
+            ] if component_id == "inventory-and-resources" && field == "life"
+        ));
+    }
+
+    #[test]
     fn unsupported_handlers_stay_unknown_and_unknown_nodes_have_no_edge() {
         let mut program = program();
         program.event_contracts.clear();
@@ -3256,6 +3377,13 @@ mod tests {
                 field: "rupees".into(),
             })
         );
+        assert_eq!(
+            profile.bindings.life,
+            Some(ComponentFieldTarget {
+                component_id: "inventory-and-resources".into(),
+                field: "life".into(),
+            })
+        );
         assert_eq!(profile.bindings.item_ownership.len(), 1);
         assert_eq!(profile.bindings.item_ownership[0].item_id, 0xa3);
         assert_eq!(profile.bindings.item_ownership[0].byte_offset, 4);
@@ -3297,6 +3425,7 @@ mod tests {
         assert!(profile.bindings.temporary_flags.is_none());
         assert!(profile.bindings.persistent_flags.is_none());
         assert!(profile.bindings.rupees.is_none());
+        assert!(profile.bindings.life.is_none());
         assert!(profile.bindings.item_ownership.is_empty());
         assert!(profile.bindings.switch_stores.is_empty());
     }

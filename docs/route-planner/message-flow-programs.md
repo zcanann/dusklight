@@ -53,6 +53,13 @@ catalog v30 represents it as one unsigned saturating debit. It is not compiled
 for a structural profile without that field binding. Event 2 remains unresolved
 because its positive delta also depends on the current wallet maximum.
 
+Generic query 32 and event 5 use a separately audited structured life binding.
+The query emits complementary `life >= parameter` and `life < parameter`
+guards plus matching reader records. Event 5 emits the same zero-clamped
+unsigned debit operation against life. Event 4 remains unresolved: retail caps
+its positive update at four-fifths of maximum life, and that derived capacity
+is not represented by the raw `maximum_life` field alone.
+
 Unknown node types are retained in `unresolved_nodes` and receive no invented
 successor. Unknown query handlers expose both encoded outcomes only behind an
 explicit unknown requirement. Unsupported event handlers similarly retain an
@@ -184,8 +191,9 @@ register bytes. These are intentionally different component kinds. The friendly
 arrays answer “what did each known label read as?” but are not writable backing
 stores; `WriteBoundRaw` targets the unique 256-byte temporary event-register
 component or the exact 32-byte loaded-stage-memory component. Persistent
-event-register bytes are not yet exposed by the native observation contract, so
-a profile must omit that binding until the raw store is audited and captured.
+event-register bytes are exposed separately by the native observation contract,
+so an exact profile may bind them after their label coordinates and runtime-file
+ownership are audited.
 
 Bindings may also be projected from structured live state. A projected binding
 names one component plus typed fields that produce a stage, room, zone, dungeon,
@@ -209,10 +217,9 @@ is supplied to `compose` alongside the exact message-flow set; entry mechanics
 cannot silently attach to another build or language resource.
 
 The bundled GZ2E01 English profile intentionally maps only the backing stores
-that are source-audited and uniquely representable today. Persistent event
-registers, dungeon-session switches, zone switches, and one-zone switches
-remain unknown rather than being conflated with friendly observations,
-current-stage, or current-room state. See
+that are source-audited and uniquely representable today. Dungeon-session
+switches, zone switches, and one-zone switches remain unknown rather than being
+conflated with friendly observations, current-stage, or current-room state. See
 `gz2e01-message-import-profile.md` for the exact boundary and extraction audit.
 
 `MessageFlowResourceOverlaySet` supplies those later contracts without editing
