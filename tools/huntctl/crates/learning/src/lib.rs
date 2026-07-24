@@ -76,6 +76,8 @@ pub mod reward_shaping;
 pub mod rl_readiness;
 pub mod semantic_goal_input;
 pub mod tactic_asset;
+#[cfg(test)]
+mod tactic_adapter_conformance;
 pub mod tactic_blueprint;
 pub mod trainable_set_encoder;
 pub mod training_guard;

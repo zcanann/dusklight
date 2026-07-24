@@ -193,9 +193,6 @@ Work in this order.
 
 ### 2. Present one fact and measurement view
 
-- [ ] Prove the adapters do not change existing native queries, controller
-  composition, option boundaries, or emitted PAD on a multi-tactic trace.
-
 ### 3. Wire the existing Q and tactic executors into a campaign
 
 - [ ] Convert each realized `OptionExecution` plus before/after facts, reward,
