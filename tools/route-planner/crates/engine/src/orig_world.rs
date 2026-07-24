@@ -6,7 +6,9 @@
 
 use crate::artifact::Digest;
 use crate::orig_discovery::{ExtractedOrigBundle, ExtractedOrigStageArchive};
-use crate::orig_extraction::{ExtractedActorPlacement, ExtractedSceneTransition};
+use crate::orig_extraction::{
+    ExtractedActorPlacement, ExtractedFileList, ExtractedRoomTransform, ExtractedSceneTransition,
+};
 use crate::world_data::{
     PlacementKind, PlacementRecord, SourceKind, SourceScope, StageChunkSummary, StageExitRecord,
     Vec3, WORLD_INVENTORY_SCHEMA, WorldInventory,
@@ -17,7 +19,7 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const EXTRACTED_ORIG_WORLD_INVENTORIES_SCHEMA: &str =
-    "dusklight.route-planner.extracted-orig-world-inventories/v1";
+    "dusklight.route-planner.extracted-orig-world-inventories/v2";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -32,7 +34,90 @@ pub struct NativeWorldInventoryCoverage {
     pub chunk_directories: NativeWorldCoverageStatus,
     pub placements: NativeWorldCoverageStatus,
     pub scene_transitions: NativeWorldCoverageStatus,
+    pub map_room_metadata: NativeWorldCoverageStatus,
     pub collision: NativeWorldCoverageStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRoomTransformRecord {
+    pub stage: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub transform: ExtractedRoomTransform,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeFileListRecord {
+    pub stage: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub file_list: ExtractedFileList,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeStageMetadata {
+    pub stage: String,
+    pub room_transforms: Vec<NativeRoomTransformRecord>,
+    pub file_lists: Vec<NativeFileListRecord>,
+}
+
+impl NativeStageMetadata {
+    pub(crate) fn validate_records(&self) -> Result<(), PlannerContractError> {
+        validate_stage_name(&self.stage)?;
+        let mut transform_keys = BTreeSet::new();
+        let mut previous_transform = None;
+        for record in &self.room_transforms {
+            let order = (scope_order(record.scope), record.transform.record_index);
+            if record.stage != self.stage
+                || record.source_sha256 == Digest::ZERO
+                || record.scope
+                    != (SourceScope {
+                        kind: SourceKind::Stage,
+                        room: None,
+                    })
+                || !transform_keys.insert((record.source_sha256, record.transform.record_index))
+                || previous_transform.is_some_and(|previous| previous >= order)
+            {
+                return Err(PlannerContractError::new(
+                    "orig_world.room_transforms",
+                    "must be ordered unique stage-scope source records",
+                ));
+            }
+            validate_room_transform_raw(&record.transform)?;
+            previous_transform = Some(order);
+        }
+        let mut file_list_keys = BTreeSet::new();
+        let mut previous_file_list = None;
+        for record in &self.file_lists {
+            let order = (scope_order(record.scope), record.file_list.record_index);
+            if record.stage != self.stage
+                || record.source_sha256 == Digest::ZERO
+                || !matches!(
+                    record.scope,
+                    SourceScope {
+                        kind: SourceKind::Stage,
+                        room: None
+                    } | SourceScope {
+                        kind: SourceKind::Room,
+                        room: Some(0..=i8::MAX)
+                    }
+                )
+                || !file_list_keys.insert((record.source_sha256, record.file_list.record_index))
+                || previous_file_list.is_some_and(|previous| previous >= order)
+            {
+                return Err(PlannerContractError::new(
+                    "orig_world.file_lists",
+                    "must be ordered unique records with valid stage or room scope",
+                ));
+            }
+            validate_file_list_raw(&record.file_list)?;
+            previous_file_list = Some(order);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -44,6 +129,7 @@ pub struct ExtractedOrigWorldInventories {
     pub source_bundle_sha256: Digest,
     pub coverage: NativeWorldInventoryCoverage,
     pub inventories: Vec<WorldInventory>,
+    pub stage_metadata: Vec<NativeStageMetadata>,
 }
 
 impl ExtractedOrigWorldInventories {
@@ -61,10 +147,16 @@ impl ExtractedOrigWorldInventories {
             ));
         }
 
-        let inventories = by_stage
+        let built = by_stage
             .into_iter()
-            .map(|(stage, archives)| build_inventory(&stage, archives))
+            .map(|(stage, archives)| -> Result<_, PlannerContractError> {
+                Ok((
+                    build_inventory(&stage, archives.clone())?,
+                    build_stage_metadata(&stage, archives)?,
+                ))
+            })
             .collect::<Result<Vec<_>, _>>()?;
+        let (inventories, stage_metadata) = built.into_iter().unzip();
         let result = Self {
             schema: EXTRACTED_ORIG_WORLD_INVENTORIES_SCHEMA.into(),
             content_sha256: bundle.content.digest()?,
@@ -72,6 +164,7 @@ impl ExtractedOrigWorldInventories {
             source_bundle_sha256: bundle.digest()?,
             coverage: expected_coverage(),
             inventories,
+            stage_metadata,
         };
         result.validate()?;
         Ok(result)
@@ -96,7 +189,7 @@ impl ExtractedOrigWorldInventories {
         if self.coverage != expected_coverage() {
             return Err(PlannerContractError::new(
                 "orig_world.coverage",
-                "v1 requires complete chunk, placement, and SCLS coverage and unavailable collision coverage",
+                "v2 requires complete chunk, placement, SCLS, and map/room metadata coverage and unavailable collision coverage",
             ));
         }
         if self.inventories.is_empty() || self.inventories.len() > 256 {
@@ -105,8 +198,14 @@ impl ExtractedOrigWorldInventories {
                 "must contain between 1 and 256 stages",
             ));
         }
+        if self.stage_metadata.len() != self.inventories.len() {
+            return Err(PlannerContractError::new(
+                "orig_world.stage_metadata",
+                "must contain exactly one record per inventory stage",
+            ));
+        }
         let mut previous = None;
-        for inventory in &self.inventories {
+        for (inventory, metadata) in self.inventories.iter().zip(&self.stage_metadata) {
             if previous.is_some_and(|stage: &str| stage >= inventory.stage.as_str()) {
                 return Err(PlannerContractError::new(
                     "orig_world.inventories",
@@ -114,6 +213,7 @@ impl ExtractedOrigWorldInventories {
                 ));
             }
             validate_native_inventory(inventory)?;
+            validate_stage_metadata(inventory, metadata)?;
             previous = Some(inventory.stage.as_str());
         }
         Ok(())
@@ -146,8 +246,52 @@ fn expected_coverage() -> NativeWorldInventoryCoverage {
         chunk_directories: NativeWorldCoverageStatus::Complete,
         placements: NativeWorldCoverageStatus::Complete,
         scene_transitions: NativeWorldCoverageStatus::Complete,
+        map_room_metadata: NativeWorldCoverageStatus::Complete,
         collision: NativeWorldCoverageStatus::Unavailable,
     }
+}
+
+fn build_stage_metadata(
+    stage: &str,
+    mut archives: Vec<&ExtractedOrigStageArchive>,
+) -> Result<NativeStageMetadata, PlannerContractError> {
+    archives.sort_by_key(|archive| {
+        archive_scope(&archive.relative_path, &archive.resource_name)
+            .map(|(_, scope)| scope_order(scope))
+            .unwrap_or((2, i16::MAX))
+    });
+    let mut room_transforms = Vec::new();
+    let mut file_lists = Vec::new();
+    for archive in archives {
+        let (archive_stage, scope) = archive_scope(&archive.relative_path, &archive.resource_name)?;
+        if archive_stage != stage {
+            return Err(PlannerContractError::new(
+                "orig_world.metadata.stage",
+                "does not match its archive stage",
+            ));
+        }
+        room_transforms.extend(archive.stage.room_transforms.iter().cloned().map(|transform| {
+            NativeRoomTransformRecord {
+                stage: stage.into(),
+                source_sha256: archive.resource_sha256,
+                scope,
+                transform,
+            }
+        }));
+        file_lists.extend(archive.stage.file_lists.iter().cloned().map(|file_list| {
+            NativeFileListRecord {
+                stage: stage.into(),
+                source_sha256: archive.resource_sha256,
+                scope,
+                file_list,
+            }
+        }));
+    }
+    Ok(NativeStageMetadata {
+        stage: stage.into(),
+        room_transforms,
+        file_lists,
+    })
 }
 
 fn build_inventory(
@@ -712,6 +856,134 @@ fn validate_native_inventory(inventory: &WorldInventory) -> Result<(), PlannerCo
     Ok(())
 }
 
+fn validate_stage_metadata(
+    inventory: &WorldInventory,
+    metadata: &NativeStageMetadata,
+) -> Result<(), PlannerContractError> {
+    metadata.validate_records()?;
+    if metadata.stage != inventory.stage {
+        return Err(PlannerContractError::new(
+            "orig_world.stage_metadata.stage",
+            "does not match its inventory stage",
+        ));
+    }
+    let source_scopes = inventory
+        .sources
+        .iter()
+        .map(|source| (source.stage_data_sha256, source.scope))
+        .collect::<BTreeMap<_, _>>();
+    let chunk_count = |digest: Digest, tag: &str| {
+        inventory
+            .chunks
+            .iter()
+            .find(|chunk| chunk.source_sha256 == digest && chunk.tag == tag)
+            .map(|chunk| chunk.record_count)
+            .unwrap_or(0)
+    };
+
+    for record in &metadata.room_transforms {
+        let transform = &record.transform;
+        if record.stage != inventory.stage
+            || source_scopes.get(&record.source_sha256) != Some(&record.scope)
+            || transform.record_index as usize >= chunk_count(record.source_sha256, "MULT")
+        {
+            return Err(PlannerContractError::new(
+                "orig_world.room_transforms",
+                "contains a MULT record outside its exact source chunk",
+            ));
+        }
+    }
+
+    for record in &metadata.file_lists {
+        let file_list = &record.file_list;
+        if record.stage != inventory.stage
+            || source_scopes.get(&record.source_sha256) != Some(&record.scope)
+            || file_list.record_index as usize >= chunk_count(record.source_sha256, "FILI")
+        {
+            return Err(PlannerContractError::new(
+                "orig_world.file_lists",
+                "contains a FILI record outside its exact source chunk",
+            ));
+        }
+    }
+
+    let expected_transforms = inventory
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.tag == "MULT")
+        .map(|chunk| chunk.record_count)
+        .sum::<usize>();
+    let expected_file_lists = inventory
+        .chunks
+        .iter()
+        .filter(|chunk| chunk.tag == "FILI")
+        .map(|chunk| chunk.record_count)
+        .sum::<usize>();
+    if metadata.room_transforms.len() != expected_transforms
+        || metadata.file_lists.len() != expected_file_lists
+    {
+        return Err(PlannerContractError::new(
+            "orig_world.stage_metadata",
+            "does not completely cover its recognized MULT and FILI chunks",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_room_transform_raw(
+    transform: &ExtractedRoomTransform,
+) -> Result<(), PlannerContractError> {
+    let raw = decode_hex_exact(&transform.raw_hex, 12, "orig_world.mult.raw_hex")?;
+    let translation_x = f32::from_bits(u32::from_be_bytes(raw[0..4].try_into().unwrap()));
+    let translation_z = f32::from_bits(u32::from_be_bytes(raw[4..8].try_into().unwrap()));
+    if !translation_x.is_finite()
+        || !translation_z.is_finite()
+        || translation_x.to_bits() != transform.translation_xz[0].to_bits()
+        || translation_z.to_bits() != transform.translation_xz[1].to_bits()
+        || i16::from_be_bytes(raw[8..10].try_into().unwrap()) != transform.angle_y
+        || raw[10] != transform.room
+        || raw[11] != transform.trailing_byte
+    {
+        return Err(PlannerContractError::new(
+            "orig_world.room_transforms",
+            "decoded fields do not match the retained raw MULT record",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_file_list_raw(file_list: &ExtractedFileList) -> Result<(), PlannerContractError> {
+    let raw = decode_hex_exact(&file_list.raw_hex, 32, "orig_world.fili.raw_hex")?;
+    let parameters = u32::from_be_bytes(raw[0..4].try_into().unwrap());
+    let sea_level = f32::from_bits(u32::from_be_bytes(raw[4..8].try_into().unwrap()));
+    let unknown_08 = f32::from_bits(u32::from_be_bytes(raw[8..12].try_into().unwrap()));
+    let unknown_0c = f32::from_bits(u32::from_be_bytes(raw[12..16].try_into().unwrap()));
+    let message_id = u16::from_be_bytes(raw[0x1c..0x1e].try_into().unwrap());
+    if !sea_level.is_finite()
+        || !unknown_08.is_finite()
+        || !unknown_0c.is_finite()
+        || parameters != file_list.parameters
+        || sea_level.to_bits() != file_list.sea_level.to_bits()
+        || unknown_08.to_bits() != file_list.unknown_float_08.to_bits()
+        || unknown_0c.to_bits() != file_list.unknown_float_0c.to_bits()
+        || hex_bytes(&raw[0x10..0x1a]) != file_list.unknown_bytes_10_19_hex
+        || ((parameters >> 3) & 7) as u8 != file_list.minimap_style
+        || (parameters & 0x2000_0000 != 0) != file_list.enemy_appear_flag
+        || ((parameters >> 18) & 3) as u8 != file_list.global_wind_level
+        || ((parameters >> 15) & 7) as u8 != file_list.global_wind_direction
+        || ((parameters >> 7) & 0xff) as u8 != file_list.grass_light
+        || raw[0x1a] != file_list.default_camera
+        || raw[0x1b] != file_list.bit_switch
+        || message_id != file_list.message_id
+    {
+        return Err(PlannerContractError::new(
+            "orig_world.file_lists",
+            "decoded fields do not match the retained raw FILI record",
+        ));
+    }
+    Ok(())
+}
+
 fn source_record_id(scope: SourceScope, digest: Digest, tag: &str, record_index: usize) -> String {
     let prefix = match scope.kind {
         SourceKind::Stage => "dzs",
@@ -769,6 +1041,8 @@ fn recognized_record_size(tag: &str) -> Option<usize> {
         "SCLS" => Some(13),
         "REVT" => Some(28),
         "LBNK" => Some(3),
+        "MULT" => Some(12),
+        "FILI" => Some(32),
         _ => None,
     }
 }
@@ -816,6 +1090,10 @@ fn decode_hex_exact(
                 .map_err(|_| PlannerContractError::new(field, "contains invalid hex"))
         })
         .collect()
+}
+
+fn hex_bytes(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn validate_stage_name(stage: &str) -> Result<(), PlannerContractError> {
@@ -917,6 +1195,8 @@ mod tests {
                     recognized_record_size: Some(32),
                 }],
                 stage_information: None,
+                room_transforms: Vec::new(),
+                file_lists: Vec::new(),
                 scene_transitions: Vec::new(),
                 map_events: Vec::new(),
                 demo_archive_banks: Vec::new(),
@@ -951,6 +1231,8 @@ mod tests {
                     },
                 ],
                 stage_information: None,
+                room_transforms: Vec::new(),
+                file_lists: Vec::new(),
                 scene_transitions: vec![ExtractedSceneTransition {
                     exit_id: 0,
                     destination_stage: "F_SP00".into(),
@@ -990,6 +1272,11 @@ mod tests {
             source_bundle_sha256: digest(10),
             coverage: expected_coverage(),
             inventories: vec![inventory.clone()],
+            stage_metadata: vec![NativeStageMetadata {
+                stage: "F_SP00".into(),
+                room_transforms: Vec::new(),
+                file_lists: Vec::new(),
+            }],
         };
         let bytes = set.canonical_bytes().unwrap();
         assert_eq!(
@@ -1026,6 +1313,7 @@ mod tests {
             Some(import_set.digest().unwrap())
         );
         assert_eq!(facts.static_world_objects.len(), 3);
+        assert_eq!(facts.native_stage_metadata, import_set.stage_metadata);
         assert_eq!(facts.spawns.len(), 1);
         assert_eq!(facts.encoded_exits.len(), 1);
         assert!(
@@ -1047,6 +1335,42 @@ mod tests {
         let mut bad = placement("ACTR", 0, "actor", 1);
         bad.parameters = 2;
         assert!(validate_extracted_placement(&bad, PlacementKind::Actor).is_err());
+    }
+
+    #[test]
+    fn rejects_room_metadata_that_disagrees_with_its_raw_record() {
+        let mut raw = [0_u8; 12];
+        raw[0..4].copy_from_slice(&10.5_f32.to_bits().to_be_bytes());
+        raw[4..8].copy_from_slice(&(-2.0_f32).to_bits().to_be_bytes());
+        raw[8..10].copy_from_slice(&0x2000_i16.to_be_bytes());
+        raw[10] = 3;
+        raw[11] = 0xff;
+        let mut metadata = NativeStageMetadata {
+            stage: "F_SP00".into(),
+            room_transforms: vec![NativeRoomTransformRecord {
+                stage: "F_SP00".into(),
+                source_sha256: digest(1),
+                scope: SourceScope {
+                    kind: SourceKind::Stage,
+                    room: None,
+                },
+                transform: ExtractedRoomTransform {
+                    record_index: 0,
+                    room: 3,
+                    translation_xz: [10.5, -2.0],
+                    angle_y: 0x2000,
+                    trailing_byte: 0xff,
+                    raw_hex: hex_bytes(&raw),
+                },
+            }],
+            file_lists: Vec::new(),
+        };
+        metadata.validate_records().unwrap();
+        metadata.room_transforms[0].transform.room = 4;
+        assert_eq!(
+            metadata.validate_records().unwrap_err().field(),
+            "orig_world.room_transforms"
+        );
     }
 
     #[test]

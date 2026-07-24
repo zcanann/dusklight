@@ -123,7 +123,8 @@ The canonical bundle contains only:
 - the verified content identity;
 - normalized relative paths, sizes, and source digests;
 - decoded DZS/DZR chunk, actor/scaled/door placement, treasure, player-spawn,
-  STAG, and SCLS records;
+  STAG, SCLS, stage-level `MULT` room-background transform, and normal stage/room
+  `FILI` file-list records;
 - decoded BMG flow graphs with temporary, persistent, and switch accesses; and
 - explicit records for candidate archives containing no numbered message-flow
   resource, including their sorted resource-name inventory.
@@ -134,8 +135,13 @@ schema digests, source archive digests, and per-domain coverage. Physical
 feasibility remains unavailable rather than being inferred from an encoded
 destination.
 
-Stage-data schema v4 keeps `actor_placements`, `treasure_placements`, and
-`player_spawns` distinct. Its exact R_SP116 room-6 parity witness matches the
+Stage-data schema v5 keeps `actor_placements`, `treasure_placements`, and
+`player_spawns` distinct. It also retains the raw 12-byte `MULT` room transform
+whose second translation is applied to Z by the room background actor's model,
+and the raw 32-byte normal `FILI` record with source-audited minimap, wind,
+grass-light, camera, switch, sea-level, and message fields. The transform-shaped
+field-map `FILI` layout is a separate loader contract and is not conflated with
+normal stage/room archives. Its exact R_SP116 room-6 parity witness matches the
 compatible inventory at 95 actors and five spawns for resource SHA-256
 `10487ef6754fec1f454c93aa33f605ee9781b4db4b91eed8e864721d76304d40`;
 the conditional retail regression reruns that check when `orig/` is present.
@@ -143,18 +149,20 @@ the conditional retail regression reruns that check when `orig/` is present.
 `construct-world-inventories` groups the decoded archives by their exact
 `files/res/Stage/STAGE/{STG_00,RNN_00}.arc` coordinates, orders one stage source
 before its room sources, and emits
-`extracted-orig-world-inventories/v1`. The artifact binds the content,
+`extracted-orig-world-inventories/v2`. The artifact binds the content,
 game-data, and source-bundle digests and retains all decoded chunk, placement,
-spawn, and SCLS source identities. Validation independently reconstructs every
-represented field from the retained lowercase raw hex and proves complete
-coverage of every recognized placement and SCLS chunk. Collision coverage is
+spawn, SCLS, `MULT`, and `FILI` source identities. Validation independently
+reconstructs every represented field from the retained lowercase raw hex and
+proves complete coverage of every recognized placement, SCLS, transform, and
+file-list chunk. Collision coverage is
 explicitly `unavailable`: the command does not manufacture KCL/PLC paths,
 spatial digests, prisms, or load-trigger joins.
 
-`extract-native-world` produces `extracted-world-facts/v17` directly from that
+`extract-native-world` produces `extracted-world-facts/v18` directly from that
 set. It binds the exact content/runtime and inventory-set digests, leaves the
 world-context and every per-stage spatial-index digest `null`, imports every
-placement/spawn/SCLS record, and compiles only source-audited actor rules. Its
+placement/spawn/SCLS record plus all 344 room transforms and 305 file-list
+records, and compiles only source-audited actor rules. Its
 fact-pack manifest marks collision `unavailable` and physical feasibility
 `partial` because exact actor-local shapes remain represented. The exact GZ2E01
 acceptance output contains 30,852 static objects, 1,277 spawns, 1,036 encoded

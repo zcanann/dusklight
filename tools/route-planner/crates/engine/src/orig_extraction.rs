@@ -13,7 +13,7 @@ const MAX_RARC_FILE_ENTRIES: usize = 100_000;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
 const MAX_EVENT_RECORDS: usize = 1_000_000;
-pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v4";
+pub const EXTRACTED_STAGE_DATA_SCHEMA: &str = "dusklight.route-planner.extracted-stage-data/v5";
 pub const EXTRACTED_EVENT_LIST_SCHEMA: &str = "dusklight.route-planner.extracted-event-list/v1";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -21,12 +21,49 @@ pub const EXTRACTED_EVENT_LIST_SCHEMA: &str = "dusklight.route-planner.extracted
 pub struct ExtractedStageData {
     pub chunks: Vec<ExtractedStageChunk>,
     pub stage_information: Option<ExtractedStageInformation>,
+    pub room_transforms: Vec<ExtractedRoomTransform>,
+    pub file_lists: Vec<ExtractedFileList>,
     pub scene_transitions: Vec<ExtractedSceneTransition>,
     pub map_events: Vec<ExtractedMapEvent>,
     pub demo_archive_banks: Vec<ExtractedDemoArchiveBank>,
     pub actor_placements: Vec<ExtractedActorPlacement>,
     pub treasure_placements: Vec<ExtractedActorPlacement>,
     pub player_spawns: Vec<ExtractedActorPlacement>,
+}
+
+/// One stage-level `MULT` record. Despite the original member name
+/// `mTransY`, the room background actor applies the second translation to Z.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedRoomTransform {
+    pub record_index: u32,
+    pub room: u8,
+    pub translation_xz: [f32; 2],
+    pub angle_y: i16,
+    pub trailing_byte: u8,
+    pub raw_hex: String,
+}
+
+/// One normal stage/room `FILI` record. Field-map DZS resources reinterpret
+/// the same tag with a distinct layout and are outside normal archive discovery.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractedFileList {
+    pub record_index: u32,
+    pub parameters: u32,
+    pub sea_level: f32,
+    pub unknown_float_08: f32,
+    pub unknown_float_0c: f32,
+    pub unknown_bytes_10_19_hex: String,
+    pub minimap_style: u8,
+    pub enemy_appear_flag: bool,
+    pub global_wind_level: u8,
+    pub global_wind_direction: u8,
+    pub grass_light: u8,
+    pub default_camera: u8,
+    pub bit_switch: u8,
+    pub message_id: u16,
+    pub raw_hex: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -407,6 +444,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     let records_floor = 4 + header_bytes;
     let mut chunks = Vec::with_capacity(chunk_count);
     let mut stage_information = None;
+    let mut room_transforms = Vec::new();
+    let mut file_lists = Vec::new();
     let mut scene_transitions = Vec::new();
     let mut map_events = Vec::new();
     let mut demo_archive_banks = Vec::new();
@@ -510,6 +549,73 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
                     time_hour: (raw_time < 31).then_some(raw_time),
                     wipe: record[0x0c],
                     wipe_time: (record[0x0b] >> 5) & 7,
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
+        if tag == "MULT" {
+            for record_index in 0..record_count {
+                let offset = start + record_index as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let translation_xz = [
+                    read_f32(record, 0, "orig.stage.mult.translation_x")?,
+                    read_f32(record, 4, "orig.stage.mult.translation_z")?,
+                ];
+                if !translation_xz.iter().all(|coordinate| coordinate.is_finite()) {
+                    return Err(PlannerContractError::new(
+                        "orig.stage.mult.translation_xz",
+                        "must be finite",
+                    ));
+                }
+                room_transforms.push(ExtractedRoomTransform {
+                    record_index,
+                    room: record[0x0a],
+                    translation_xz,
+                    angle_y: read_i16(record, 8, "orig.stage.mult.angle_y")?,
+                    trailing_byte: record[0x0b],
+                    raw_hex: hex_bytes(record),
+                });
+            }
+            continue;
+        }
+
+        if tag == "FILI" {
+            for record_index in 0..record_count {
+                let offset = start + record_index as usize * record_size;
+                let record = &input[offset..offset + record_size];
+                let parameters = read_u32(record, 0, "orig.stage.fili.parameters")?;
+                let sea_level = read_f32(record, 4, "orig.stage.fili.sea_level")?;
+                let unknown_float_08 = read_f32(record, 8, "orig.stage.fili.unknown_float_08")?;
+                let unknown_float_0c = read_f32(record, 12, "orig.stage.fili.unknown_float_0c")?;
+                if ![sea_level, unknown_float_08, unknown_float_0c]
+                    .iter()
+                    .all(|value| value.is_finite())
+                {
+                    return Err(PlannerContractError::new(
+                        "orig.stage.fili.floats",
+                        "must be finite",
+                    ));
+                }
+                let default_camera = record[0x1a];
+                let bit_switch = record[0x1b];
+                let message_id = read_u16(record, 0x1c, "orig.stage.fili.message_id")?;
+                file_lists.push(ExtractedFileList {
+                    record_index,
+                    parameters,
+                    sea_level,
+                    unknown_float_08,
+                    unknown_float_0c,
+                    unknown_bytes_10_19_hex: hex_bytes(&record[0x10..0x1a]),
+                    minimap_style: ((parameters >> 3) & 7) as u8,
+                    enemy_appear_flag: parameters & 0x2000_0000 != 0,
+                    global_wind_level: ((parameters >> 18) & 3) as u8,
+                    global_wind_direction: ((parameters >> 15) & 7) as u8,
+                    grass_light: ((parameters >> 7) & 0xff) as u8,
+                    default_camera,
+                    bit_switch,
+                    message_id,
                     raw_hex: hex_bytes(record),
                 });
             }
@@ -656,6 +762,8 @@ pub fn parse_stage_data(input: &[u8]) -> Result<ExtractedStageData, PlannerContr
     Ok(ExtractedStageData {
         chunks,
         stage_information,
+        room_transforms,
+        file_lists,
         scene_transitions,
         map_events,
         demo_archive_banks,
@@ -986,6 +1094,8 @@ fn recognized_stage_record_size(tag: &str) -> Option<usize> {
         "SCLS" => Some(0x0d),
         "REVT" => Some(0x1c),
         "LBNK" => Some(0x03),
+        "MULT" => Some(0x0c),
+        "FILI" => Some(0x20),
         _ => None,
     }
 }
@@ -1911,6 +2021,54 @@ mod tests {
         assert_eq!(parsed.scene_transitions[1].scene_layer, Some(2));
         assert_eq!(parsed.scene_transitions[1].time_hour, Some(7));
         assert_eq!(parsed.scene_transitions[1].wipe_time, 2);
+    }
+
+    #[test]
+    fn parses_room_background_transforms_and_normal_file_lists() {
+        let mut stage = vec![0; 0x60];
+        stage[..4].copy_from_slice(&2_u32.to_be_bytes());
+        stage[4..8].copy_from_slice(b"MULT");
+        stage[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        stage[12..16].copy_from_slice(&0x20_u32.to_be_bytes());
+        stage[16..20].copy_from_slice(b"FILI");
+        stage[20..24].copy_from_slice(&1_u32.to_be_bytes());
+        stage[24..28].copy_from_slice(&0x40_u32.to_be_bytes());
+
+        let transform = &mut stage[0x20..0x2c];
+        transform[0..4].copy_from_slice(&125.5_f32.to_bits().to_be_bytes());
+        transform[4..8].copy_from_slice(&(-42.25_f32).to_bits().to_be_bytes());
+        transform[8..10].copy_from_slice(&0x4000_i16.to_be_bytes());
+        transform[10] = 7;
+        transform[11] = 0xaa;
+
+        let file_list = &mut stage[0x40..0x60];
+        let parameters = 0x2000_0000_u32 | (2 << 18) | (5 << 15) | (0x34 << 7) | (3 << 3);
+        file_list[0..4].copy_from_slice(&parameters.to_be_bytes());
+        file_list[4..8].copy_from_slice(&(-100.0_f32).to_bits().to_be_bytes());
+        file_list[8..12].copy_from_slice(&1.25_f32.to_bits().to_be_bytes());
+        file_list[12..16].copy_from_slice(&2.5_f32.to_bits().to_be_bytes());
+        file_list[16..26].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+        file_list[0x1a] = 4;
+        file_list[0x1b] = 0xff;
+        file_list[0x1c..0x1e].copy_from_slice(&123_u16.to_be_bytes());
+
+        let parsed = parse_stage_data(&stage).unwrap();
+        assert_eq!(parsed.chunks[0].recognized_record_size, Some(0x0c));
+        assert_eq!(parsed.chunks[1].recognized_record_size, Some(0x20));
+        assert_eq!(parsed.room_transforms[0].room, 7);
+        assert_eq!(parsed.room_transforms[0].translation_xz, [125.5, -42.25]);
+        assert_eq!(parsed.room_transforms[0].angle_y, 0x4000);
+        assert_eq!(parsed.room_transforms[0].trailing_byte, 0xaa);
+        let fili = &parsed.file_lists[0];
+        assert_eq!(fili.sea_level, -100.0);
+        assert_eq!(fili.minimap_style, 3);
+        assert!(fili.enemy_appear_flag);
+        assert_eq!(fili.global_wind_level, 2);
+        assert_eq!(fili.global_wind_direction, 5);
+        assert_eq!(fili.grass_light, 0x34);
+        assert_eq!(fili.default_camera, 4);
+        assert_eq!(fili.bit_switch, 0xff);
+        assert_eq!(fili.message_id, 123);
     }
 
     #[test]

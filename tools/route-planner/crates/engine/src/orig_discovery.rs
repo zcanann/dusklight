@@ -20,7 +20,7 @@ use std::io::{BufReader, Read};
 use std::path::{Component, Path, PathBuf};
 
 pub const ORIG_INPUT_SCAN_SCHEMA: &str = "dusklight.route-planner.orig-input-scan/v1";
-pub const EXTRACTED_ORIG_BUNDLE_SCHEMA: &str = "dusklight.route-planner.extracted-orig-bundle/v4";
+pub const EXTRACTED_ORIG_BUNDLE_SCHEMA: &str = "dusklight.route-planner.extracted-orig-bundle/v5";
 pub const SUPPORTED_BUILD_REGISTRY_SCHEMA: &str =
     "dusklight.route-planner.supported-build-registry/v1";
 pub const ORIG_IDENTIFICATION_SCHEMA: &str = "dusklight.route-planner.orig-identification/v1";

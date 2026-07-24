@@ -11,7 +11,7 @@ use crate::logic::{
     ComparisonOperator, ContextScope, EvidenceKind, EvidenceRecord, PredicateExpression,
     RuleEvidence, TruthStatus, ValueReference,
 };
-use crate::orig_world::ExtractedOrigWorldInventories;
+use crate::orig_world::{ExtractedOrigWorldInventories, NativeStageMetadata};
 use crate::state::{
     ComponentBinding, ComponentBindingReference, ComponentKind, SceneLocation, SpatialPlane,
     SpatialVolume, SpatialVolumeShape, StateValue, StaticWorldObject, validate_spatial_plane,
@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v17";
+pub const EXTRACTED_WORLD_FACTS_SCHEMA: &str = "dusklight.route-planner.extracted-world-facts/v18";
 pub const MAX_EXTRACTED_WORLD_RECORDS: usize = 2_000_000;
 
 const DUNGEON_SESSION_SWITCH_LABEL_KIND: &str = "observed-dungeon-session-switch-labels";
@@ -110,6 +110,7 @@ pub struct ExtractedWorldFacts {
     pub world_context_sha256: Option<Digest>,
     pub native_inventory_set_sha256: Option<Digest>,
     pub inventories: Vec<WorldInventoryFactSource>,
+    pub native_stage_metadata: Vec<NativeStageMetadata>,
     pub static_world_objects: Vec<StaticWorldObject>,
     pub spatial_volumes: Vec<SpatialVolume>,
     pub spatial_planes: Vec<SpatialPlane>,
@@ -210,6 +211,7 @@ impl ExtractedWorldFacts {
             ),
             None,
             stages,
+            Vec::new(),
         )
     }
 
@@ -219,6 +221,7 @@ impl ExtractedWorldFacts {
         world_context_sha256: Option<Digest>,
         native_inventory_set_sha256: Option<Digest>,
         stages: Vec<WorldImportStage<'_>>,
+        native_stage_metadata: Vec<NativeStageMetadata>,
     ) -> Result<Self, PlannerContractError> {
         let content_sha256 = content.digest()?;
         let exact_context = ExactContext {
@@ -497,6 +500,7 @@ impl ExtractedWorldFacts {
             world_context_sha256,
             native_inventory_set_sha256,
             inventories: sources,
+            native_stage_metadata,
             static_world_objects,
             spatial_volumes,
             spatial_planes,
@@ -524,7 +528,7 @@ impl ExtractedWorldFacts {
 
     /// Imports planner-native stage records without manufacturing a compatible
     /// world-context or spatial-index identity. Collision-backed transitions
-    /// remain absent because the v1 native inventory set marks that domain
+    /// remain absent because the v2 native inventory set marks that domain
     /// unavailable; placement/SCLS-backed actor rules still import normally.
     pub fn build_from_orig_world_inventories(
         content: &ContentIdentity,
@@ -567,6 +571,7 @@ impl ExtractedWorldFacts {
             None,
             Some(native_sha256),
             stages,
+            native.stage_metadata.clone(),
         )
     }
 
@@ -603,6 +608,24 @@ impl ExtractedWorldFacts {
                 "extracted_world_facts.provenance",
                 "must name exactly one nonzero world context or native inventory set",
             ));
+        }
+        if compatible_provenance && !self.native_stage_metadata.is_empty()
+            || native_provenance
+                && self.native_stage_metadata.len() != self.inventories.len()
+        {
+            return Err(PlannerContractError::new(
+                "native_stage_metadata",
+                "must be empty for compatible provenance and complete for planner-native provenance",
+            ));
+        }
+        for (source, metadata) in self.inventories.iter().zip(&self.native_stage_metadata) {
+            if source.stage != metadata.stage {
+                return Err(PlannerContractError::new(
+                    "native_stage_metadata.stage",
+                    "does not match its inventory fact source",
+                ));
+            }
+            metadata.validate_records()?;
         }
         for source in &self.inventories {
             validate_game_name("inventories.stage", &source.stage)?;
@@ -845,6 +868,11 @@ impl ExtractedWorldFacts {
             ));
         }
         let total = self.static_world_objects.len()
+            + self
+                .native_stage_metadata
+                .iter()
+                .map(|metadata| metadata.room_transforms.len() + metadata.file_lists.len())
+                .sum::<usize>()
             + self.spatial_volumes.len()
             + self.spatial_planes.len()
             + self.spawns.len()

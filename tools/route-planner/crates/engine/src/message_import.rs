@@ -2069,6 +2069,8 @@ mod tests {
                     stage: ExtractedStageData {
                         chunks: Vec::new(),
                         stage_information: None,
+                        room_transforms: Vec::new(),
+                        file_lists: Vec::new(),
                         scene_transitions: Vec::new(),
                         map_events: Vec::new(),
                         demo_archive_banks: Vec::new(),
@@ -2099,6 +2101,8 @@ mod tests {
                             message_group: 3,
                             raw_hex: "00000003".into(),
                         }),
+                        room_transforms: Vec::new(),
+                        file_lists: Vec::new(),
                         scene_transitions: Vec::new(),
                         map_events: Vec::new(),
                         demo_archive_banks: Vec::new(),
