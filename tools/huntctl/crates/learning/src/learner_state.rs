@@ -5,7 +5,9 @@ use crate::artifact::Digest;
 use crate::fact_registry::{FactQuery, FactRead, FactRegistry, FactValue};
 use crate::fact_snapshot::FactSnapshot;
 use crate::option_values::OptionActionDescriptor;
-use crate::tactic_asset::{TacticAssetCatalog, TacticAssetDescription, TacticDurationBounds};
+use crate::tactic_asset::{
+    TacticAssetCatalog, TacticAssetDescription, TacticDurationBounds, TacticObservationRequirement,
+};
 use crate::tactic_blueprint::{
     ApplicableTacticChoices, ConcreteTacticChoiceKind, TacticBlueprint, TacticBlueprintError,
 };
@@ -59,7 +61,10 @@ impl LearnerState {
         let applicable = ApplicableTacticChoices::enumerate(
             catalog,
             blueprints,
-            |description| entry_applicable(description),
+            |description| {
+                entry_applicable(description)
+                    && tactic_observations_available(description, &snapshot)
+            },
             |condition| condition_value(registry, &snapshot, condition),
         )
         .map_err(LearnerStateError::Blueprint)?;
@@ -264,6 +269,39 @@ impl LearnerState {
     }
 }
 
+/// Intrinsic applicability for observation-driven tactics. Callers may add
+/// gameplay-context predicates, but they cannot claim that an unavailable
+/// learner-visible observation exists.
+pub fn tactic_observations_available(
+    description: &TacticAssetDescription,
+    snapshot: &FactSnapshot,
+) -> bool {
+    description
+        .required_observations
+        .iter()
+        .all(|requirement| match requirement {
+            TacticObservationRequirement::SimulationTick => true,
+            TacticObservationRequirement::PlayerPosition => snapshot.player.present,
+            TacticObservationRequirement::PlayerYaw => snapshot.player.current_angle.is_some(),
+            TacticObservationRequirement::PlayerVelocity => {
+                snapshot.player.velocity_f32_bits.is_some()
+            }
+            TacticObservationRequirement::PlayerProcedure => snapshot.player.procedure.is_some(),
+            TacticObservationRequirement::PlayerActionLane => {
+                !snapshot.player.action_lanes.is_empty()
+            }
+            TacticObservationRequirement::CameraYaw => {
+                snapshot.player.camera_yaw_radians_f32_bits.is_some()
+            }
+            TacticObservationRequirement::StageName => !snapshot.world.stage.is_empty(),
+            TacticObservationRequirement::ActorIdentity
+            | TacticObservationRequirement::ActorPosition => {
+                snapshot.actors_complete && !snapshot.actors.is_empty()
+            }
+            TacticObservationRequirement::ActorSnapshotCompleteness => snapshot.actors_complete,
+        })
+}
+
 fn readable_optional(value: Option<bool>) -> &'static str {
     match value {
         Some(true) => "yes",
@@ -391,6 +429,7 @@ impl Error for LearnerStateError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::default_tactic_catalog::default_route_tactic_catalog;
     use crate::fact_snapshot::FactSnapshot;
     use crate::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
     use crate::tactic_blueprint::TacticBlueprintNode;
@@ -475,5 +514,45 @@ mod tests {
             tampered.validate(),
             Err(LearnerStateError::InvalidState)
         ));
+    }
+
+    #[test]
+    fn unavailable_observations_cannot_be_overridden_by_the_caller() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let mut snapshot = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        snapshot.player.camera_yaw_radians_f32_bits = None;
+        let state = LearnerState::build(
+            snapshot,
+            &FactRegistry::canonical(),
+            &default_route_tactic_catalog().unwrap(),
+            &[],
+            |_| true,
+        )
+        .unwrap();
+        assert!(
+            !state
+                .action_mask
+                .iter()
+                .find(|entry| entry.choice_id == "move.heading.00.magnitude.080.ticks.04")
+                .unwrap()
+                .applicable
+        );
+        assert!(
+            state
+                .action_mask
+                .iter()
+                .find(|entry| entry.choice_id == "wait.neutral.04")
+                .unwrap()
+                .applicable
+        );
     }
 }
