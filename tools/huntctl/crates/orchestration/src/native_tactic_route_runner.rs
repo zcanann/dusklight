@@ -302,16 +302,14 @@ fn run_seed(
             episode = episode
                 .checked_add(1)
                 .ok_or_else(|| route_message("episode counter overflowed"))?;
+            let maximum_frontier_frames = usize::try_from(
+                source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
+            )
+            .map_err(route_error)?;
             let [root, frontier] = campaign
-                .sample_root_and_frontier(seed, episode, &[])
+                .sample_root_and_frontier(seed, episode, &[], maximum_frontier_frames)
                 .map_err(route_error)?;
-            let frontier_ticks = frontier
-                .route_tape
-                .frames
-                .len()
-                .saturating_sub(source_frame as usize) as u64;
-            let prefer_root =
-                episode % 4 == 0 || frontier_ticks.saturating_add(maximum_tactic_ticks) > horizon;
+            let prefer_root = episode % 4 == 0;
             campaign
                 .restore_branch(
                     if prefer_root { &root } else { &frontier },

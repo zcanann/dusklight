@@ -377,6 +377,7 @@ impl TacticQCampaign {
         seed: u64,
         round: u64,
         reference: &[TacticEndpointDescriptor],
+        maximum_route_frames: usize,
     ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError> {
         let first = self
             .replay
@@ -397,10 +398,14 @@ impl TacticQCampaign {
             descriptor: None,
         };
         let archive = self.frontier_archive()?;
-        let choices = archive.select_tactic_frontier(reference, archive.tactic_len());
+        let choices = archive
+            .select_tactic_frontier(reference, archive.tactic_len())
+            .into_iter()
+            .filter(|entry| entry.route_tape.frames.len() <= maximum_route_frames)
+            .collect::<Vec<_>>();
         if choices.is_empty() {
             return Err(TacticQCampaignError::InvalidState(
-                "frontier archive has no restorable endpoint",
+                "frontier archive has no eligible restorable endpoint",
             ));
         }
         let deepest_route = choices
@@ -1625,12 +1630,19 @@ mod tests {
         let collapsed_diagnostics = collapsed.diagnostics().unwrap();
         assert!(collapsed_diagnostics.zero_diversity_selection);
         assert!(collapsed_diagnostics.repeated_identical_compositions);
-        let [root_branch, frontier_branch] = restored.sample_root_and_frontier(5, 0, &[]).unwrap();
+        let [root_branch, frontier_branch] = restored
+            .sample_root_and_frontier(5, 0, &[], usize::MAX)
+            .unwrap();
         assert_eq!(root_branch.kind, TacticBranchKind::Root);
         assert_eq!(frontier_branch.kind, TacticBranchKind::RetainedFrontier);
         assert_eq!(
             frontier_branch.state_sha256,
             campaign.current.snapshot_sha256
+        );
+        assert!(
+            restored
+                .sample_root_and_frontier(5, 0, &[], frontier_branch.route_tape.frames.len() - 1,)
+                .is_err()
         );
         let mut branched = TacticQCampaign::resume(checkpoint.clone()).unwrap();
         branched
