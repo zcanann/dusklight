@@ -18,6 +18,7 @@ pub mod batch;
 pub mod calibration;
 pub mod compiled_goal_graph;
 pub mod dataset;
+pub mod default_tactic_catalog;
 pub mod double_q;
 pub mod dyna_mixture;
 pub mod ensemble_q;
