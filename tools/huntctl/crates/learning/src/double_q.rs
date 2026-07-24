@@ -607,7 +607,9 @@ fn validate(
         return Err(DoubleQError::EmptyActions);
     }
     if actions.len() > crate::fqi::MAX_FQI_ACTIONS {
-        return Err(DoubleQError::InvalidConfig("action count exceeds 128"));
+        return Err(DoubleQError::InvalidConfig(
+            "action count exceeds fitted-Q action capacity",
+        ));
     }
     let mut sorted_actions = actions.to_vec();
     sorted_actions.sort_unstable();

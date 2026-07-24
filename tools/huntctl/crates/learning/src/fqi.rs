@@ -11,7 +11,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const MAX_FQI_TRANSITIONS: usize = 250_000;
-pub const MAX_FQI_ACTIONS: usize = 128;
+pub const MAX_FQI_ACTIONS: usize = 256;
 pub const MAX_FQI_ITERATIONS: usize = 128;
 pub const MAX_FQI_TREES_PER_ACTION: usize = 127;
 pub const MAX_FQI_TREE_DEPTH: usize = 24;

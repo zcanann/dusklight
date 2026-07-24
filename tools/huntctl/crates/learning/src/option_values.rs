@@ -15,7 +15,7 @@ use std::fmt;
 
 pub const OPTION_VALUE_BATCH_SCHEMA_V1: &str = "dusklight-option-value-batch/v1";
 pub const OPTION_VALUE_MODEL_SCHEMA_V1: &str = "dusklight-option-value-model/v1";
-pub const MAX_OPTION_ACTIONS: usize = 128;
+pub const MAX_OPTION_ACTIONS: usize = crate::fqi::MAX_FQI_ACTIONS;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -198,7 +198,7 @@ impl OptionValueModel {
         }
         if keyed.len() > MAX_OPTION_ACTIONS {
             return Err(OptionValueError::Invalid(
-                "option action catalog exceeds 128 descriptors",
+                "option action catalog exceeds fitted-Q action capacity",
             ));
         }
         let actions = keyed.into_values().collect::<Vec<_>>();
@@ -568,6 +568,35 @@ mod tests {
                 .rank_available_options(&[0.0], &[wait.clone(), wait])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn fits_the_complete_goal_conditioned_route_catalog_width() {
+        let action_count = 157;
+        let samples = (0..action_count)
+            .map(|index| {
+                sample(
+                    index as f32,
+                    action(&format!("route-tactic-{index:03}"), OptionType::Neutral),
+                    1,
+                    index as f32,
+                    true,
+                    (index + 1) as u8,
+                )
+            })
+            .collect::<Vec<_>>();
+        let episode_groups = (0..action_count as u64).collect::<Vec<_>>();
+        let config = OptionValueConfig {
+            fitted_q: FqiConfig {
+                iterations: 1,
+                trees_per_action: 1,
+                max_tree_depth: 1,
+                bootstrap: false,
+                ..FqiConfig::default()
+            },
+        };
+        let model = OptionValueModel::fit(1, &samples, &episode_groups, &config).unwrap();
+        assert_eq!(model.actions().len(), action_count);
     }
 
     #[test]
