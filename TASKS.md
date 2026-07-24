@@ -191,9 +191,6 @@ Work in this order.
 
 ### 1. Prove the integrated learner
 
-- [ ] First prove the integrated adapters, composition executor, replay update,
-  and existing Q model on a deterministic fixture requiring a nontrivial
-  multi-tactic sequence and delayed reward.
 - [ ] Run the no-demonstration Ordon campaign from the authenticated Link-control
   checkpoint with a fresh model and multiple exploration seeds.
 - [ ] Show that Q values, tactic selection, frontier coverage, and terminal
