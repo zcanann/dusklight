@@ -222,15 +222,37 @@ window.addEventListener("keydown", (event) => {
     || event.target instanceof HTMLTextAreaElement
     || event.target instanceof HTMLSelectElement
     || event.target?.isContentEditable;
-  if (editingText || !(event.ctrlKey || event.metaKey) || event.altKey) return;
+  if (editingText || event.altKey) return;
   const key = event.key.toLowerCase();
-  if (key === "z") {
+  if (event.ctrlKey || event.metaKey) {
+    if (key === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redoAuthoringCommand();
+      else undoAuthoringCommand();
+    } else if (key === "y" && !event.shiftKey) {
+      event.preventDefault();
+      redoAuthoringCommand();
+    } else if (key === "s" && !event.shiftKey && state.project && !state.readOnly) {
+      event.preventDefault();
+      saveProject();
+    }
+    return;
+  }
+  if (event.key === "Delete" && state.selected?.value?.payload?.kind === "reference_step") {
     event.preventDefault();
-    if (event.shiftKey) redoAuthoringCommand();
-    else undoAuthoringCommand();
-  } else if (key === "y" && !event.shiftKey) {
+    removeSelectedRouteStep();
+  } else if (key === "f" && state.graph) {
     event.preventDefault();
-    redoAuthoringCommand();
+    fitGraph();
+  } else if (key === "a" && state.graph && !state.readOnly) {
+    event.preventDefault();
+    const bounds = elements.canvas.getBoundingClientRect();
+    elements.canvas.dispatchEvent(new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: bounds.left + bounds.width / 2,
+      clientY: bounds.top + bounds.height / 2,
+    }));
   }
 });
 elements["add-node-search"].addEventListener("input", renderAddNodeMenu);
@@ -4142,6 +4164,8 @@ function updateProjectControls() {
   elements.redo.disabled = !loaded || state.readOnly || state.historyBusy || !state.redoStack.length;
   elements.undo.title = state.undoStack.length ? `Undo ${state.undoStack.at(-1).label} (Ctrl+Z)` : "Undo (Ctrl+Z)";
   elements.redo.title = state.redoStack.length ? `Redo ${state.redoStack.at(-1).label} (Ctrl+Y)` : "Redo (Ctrl+Y)";
+  elements["save-project"].title = "Save (Ctrl+S)";
+  elements.fit.title = "Fit graph (F)";
   elements["project-name"].textContent = loaded
     ? `${state.project.label}${state.readOnly ? " (read-only demo)" : ""}`
     : state.workspace?.manifest?.label ?? "No workspace open";

@@ -250,7 +250,11 @@ try {
       && document.getElementById("canvas").dataset.routeStepCount === "1"
       && !document.getElementById("save-project").disabled`,
   );
-  await evaluate(`document.getElementById("save-project").click()`);
+  await evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "s",
+    ctrlKey: true,
+    bubbles: true,
+  }))`);
   await browserUntil(
     "atomic workspace route save",
     `document.getElementById("status").textContent
