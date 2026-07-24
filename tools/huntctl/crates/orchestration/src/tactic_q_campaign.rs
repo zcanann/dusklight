@@ -221,7 +221,7 @@ impl TacticQCampaign {
                 "campaign identity or initial route is invalid",
             ));
         }
-        let visited_states = BTreeSet::from([current.snapshot_sha256]);
+        let visited_states = BTreeSet::from([semantic_state_digest(&current.snapshot)?]);
         let hindsight = HindsightOptionReplay::new(feature_schema_sha256)
             .map_err(TacticQCampaignError::Hindsight)?;
         Ok(Self {
@@ -593,10 +593,11 @@ impl TacticQCampaign {
             &checkpoint.episode_groups,
             &checkpoint.model_config,
         )?;
-        let mut visited_states = BTreeSet::from([checkpoint.current.snapshot_sha256]);
+        let mut visited_states =
+            BTreeSet::from([semantic_state_digest(&checkpoint.current.snapshot)?]);
         for transition in &checkpoint.replay {
-            visited_states.insert(transition.before_state_sha256);
-            visited_states.insert(transition.after_state_sha256);
+            visited_states.insert(semantic_state_digest(&transition.before)?);
+            visited_states.insert(semantic_state_digest(&transition.after)?);
         }
         let hindsight = HindsightOptionReplay::new(checkpoint.feature_schema_sha256)
             .map_err(TacticQCampaignError::Hindsight)?;
@@ -821,10 +822,7 @@ impl TacticQCampaign {
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
         let next_state = encode(&outcome.next_facts)
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
-        let endpoint_sha256 = outcome
-            .next_facts
-            .content_sha256()
-            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        let endpoint_sha256 = semantic_state_digest(&outcome.next_facts)?;
         let reward = reward_spec.evaluate(
             self.feature_schema_sha256,
             &state,
@@ -927,7 +925,8 @@ impl TacticQCampaign {
         )?;
         let model = OptionValueModel::fit_batch(&batch, &self.model_config)?;
 
-        self.visited_states.insert(next.snapshot_sha256);
+        self.visited_states
+            .insert(semantic_state_digest(&next.snapshot)?);
         self.current = next;
         self.route_tape = outcome.route_tape;
         self.replay = replay;
@@ -1339,6 +1338,44 @@ mod tests {
     };
     use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
     use dusklight_learning::tactic_exploration::TacticSelectionReason;
+
+    #[test]
+    fn novelty_identity_ignores_replay_bookkeeping_but_not_gameplay_position() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let original = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            vec![],
+        )
+        .unwrap();
+        let mut later_observation = original.clone();
+        later_observation.boundary_index += 9;
+        later_observation.simulation_tick += 9;
+        later_observation.tape_frame += 9;
+        later_observation.state_identity = [0x5a; 16];
+
+        assert_ne!(
+            original.content_sha256().unwrap(),
+            later_observation.content_sha256().unwrap()
+        );
+        assert_eq!(
+            semantic_state_digest(&original).unwrap(),
+            semantic_state_digest(&later_observation).unwrap()
+        );
+
+        let mut moved = later_observation;
+        let mut position = moved.player.position_f32_bits;
+        position[0] = (f32::from_bits(position[0]) + 1.0).to_bits();
+        moved.player.position_f32_bits = position;
+        assert_ne!(
+            semantic_state_digest(&original).unwrap(),
+            semantic_state_digest(&moved).unwrap()
+        );
+    }
 
     #[test]
     fn cold_start_retains_refits_and_ranks_the_next_boundary() {
