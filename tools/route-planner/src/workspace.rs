@@ -27,6 +27,8 @@ pub const WORKSPACE_ASSET_SCHEMA: &str = "dusklight.route-planner.workspace-asse
 pub const WORKSPACE_LIST_SCHEMA: &str = "dusklight.route-planner.workspace-list/v1";
 pub const WORKSPACE_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-record/v1";
 pub const WORKSPACE_CREATE_SCHEMA: &str = "dusklight.route-planner.workspace-create/v1";
+pub const WORKSPACE_ASSET_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-asset-record/v1";
+pub const WORKSPACE_ASSET_SAVE_SCHEMA: &str = "dusklight.route-planner.workspace-asset-save/v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
 const LEGACY_WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v0";
@@ -273,6 +275,24 @@ pub struct WorkspaceRecord {
     pub schema: String,
     pub manifest: WorkspaceManifest,
     pub assets: Vec<WorkspaceAssetListing>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceAssetSaveRequest {
+    pub schema: String,
+    pub relative_path: PathBuf,
+    pub expected_revision_sha256: Option<Digest>,
+    pub asset: WorkspaceAsset,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceAssetRecord {
+    pub schema: String,
+    pub relative_path: PathBuf,
+    pub revision_sha256: Digest,
+    pub asset: WorkspaceAsset,
 }
 
 #[derive(Debug)]
@@ -657,6 +677,62 @@ impl WorkspaceRegistry {
         }
         let store = WorkspaceStore::open(path, &self.available_libraries)?;
         workspace_record(&store)
+    }
+
+    pub fn load_asset(
+        &self,
+        workspace_id: &str,
+        asset_id: &str,
+    ) -> Result<WorkspaceAssetRecord, WorkspaceError> {
+        let store = self.open_workspace(workspace_id)?;
+        let (asset, relative_path) = store.load_asset(asset_id)?;
+        let revision_sha256 = asset.digest()?;
+        Ok(WorkspaceAssetRecord {
+            schema: WORKSPACE_ASSET_RECORD_SCHEMA.into(),
+            relative_path,
+            revision_sha256,
+            asset,
+        })
+    }
+
+    pub fn save_asset(
+        &self,
+        workspace_id: &str,
+        asset_id: &str,
+        request: WorkspaceAssetSaveRequest,
+    ) -> Result<WorkspaceAssetRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_ASSET_SAVE_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace asset save request schema is unsupported",
+            ));
+        }
+        if request.asset.header.id != asset_id {
+            return Err(WorkspaceError::new(
+                "URL asset id does not match the document",
+            ));
+        }
+        let store = self.open_workspace(workspace_id)?;
+        let revision_sha256 = store.save_asset(
+            &request.relative_path,
+            request.expected_revision_sha256,
+            &request.asset,
+        )?;
+        Ok(WorkspaceAssetRecord {
+            schema: WORKSPACE_ASSET_RECORD_SCHEMA.into(),
+            relative_path: request.relative_path,
+            revision_sha256,
+            asset: request.asset,
+        })
+    }
+
+    fn open_workspace(&self, id: &str) -> Result<WorkspaceStore, WorkspaceError> {
+        let path = self.workspace_path(id)?;
+        if !path.is_dir() {
+            return Err(WorkspaceError::new(format!(
+                "workspace {id} does not exist"
+            )));
+        }
+        WorkspaceStore::open(path, &self.available_libraries)
     }
 
     fn workspace_path(&self, id: &str) -> Result<PathBuf, WorkspaceError> {

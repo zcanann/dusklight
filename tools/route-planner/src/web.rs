@@ -2,7 +2,7 @@
 
 use crate::project::{ProjectSaveRequest, ProjectStore};
 use crate::service::{PlannerServiceEnvelope, error_response, handle_envelope};
-use crate::workspace::{WorkspaceCreateRequest, WorkspaceRegistry};
+use crate::workspace::{WorkspaceAssetSaveRequest, WorkspaceCreateRequest, WorkspaceRegistry};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -250,22 +250,68 @@ fn dispatch(request: HttpRequest, state: &WebState) -> HttpResponse {
 }
 
 fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResponse {
-    let id = request
-        .target
+    let target = request.target.clone();
+    let remainder = target
         .strip_prefix("/api/workspaces/")
         .expect("workspace dispatch checked its prefix");
-    if id.is_empty() || id.contains('/') {
+    let parts = remainder.split('/').collect::<Vec<_>>();
+    let Some(workspace_id) = parts.first().copied().filter(|id| !id.is_empty()) else {
         return project_error_response(400, "Bad Request", "invalid workspace id");
+    };
+    match parts.as_slice() {
+        [_] => match request.method.as_str() {
+            "GET" => project_response(|| {
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry
+                    .load(workspace_id)
+                    .map_err(|error| error.to_string())
+            }),
+            _ => project_error_response(405, "Method Not Allowed", "unsupported workspace method"),
+        },
+        [_, "assets", asset_id] if !asset_id.is_empty() => {
+            dispatch_workspace_asset(request, state, workspace_id, asset_id)
+        }
+        _ => project_error_response(404, "Not Found", "workspace endpoint not found"),
     }
+}
+
+fn dispatch_workspace_asset(
+    request: HttpRequest,
+    state: &WebState,
+    workspace_id: &str,
+    asset_id: &str,
+) -> HttpResponse {
     match request.method.as_str() {
         "GET" => project_response(|| {
             let registry = state
                 .workspaces
                 .lock()
                 .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
-            registry.load(id).map_err(|error| error.to_string())
+            registry
+                .load_asset(workspace_id, asset_id)
+                .map_err(|error| error.to_string())
         }),
-        _ => project_error_response(405, "Method Not Allowed", "unsupported workspace method"),
+        "PUT" => {
+            let save = match serde_json::from_slice::<WorkspaceAssetSaveRequest>(&request.body) {
+                Ok(save) => save,
+                Err(error) => {
+                    return project_error_response(400, "Bad Request", &error.to_string());
+                }
+            };
+            project_response(|| {
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry
+                    .save_asset(workspace_id, asset_id, save)
+                    .map_err(|error| error.to_string())
+            })
+        }
+        _ => project_error_response(405, "Method Not Allowed", "unsupported asset method"),
     }
 }
 
@@ -621,6 +667,61 @@ mod tests {
         let loaded: serde_json::Value = serde_json::from_slice(&loaded.body).unwrap();
         assert_eq!(loaded["manifest"]["id"], "ordon-route");
         assert!(root.join("workspaces/ordon-route/workspace.json").is_file());
+
+        let asset = crate::workspace::WorkspaceAsset {
+            schema: crate::workspace::WORKSPACE_ASSET_SCHEMA.into(),
+            header: crate::workspace::WorkspaceAssetHeader {
+                id: "custom.roll".into(),
+                label: "Roll".into(),
+                kind: crate::workspace::WorkspaceAssetKind::CustomNodeDefinition,
+                version: 1,
+            },
+            references: Vec::new(),
+            payload: crate::workspace::WorkspaceAssetPayload::CustomNodeDefinition(
+                crate::workspace::CustomNodeDefinitionAsset {
+                    inputs: Vec::new(),
+                    outputs: Vec::new(),
+                    guard: dusklight_route_planner::logic::PredicateExpression::True,
+                    effects: Vec::new(),
+                    evidence_status: crate::workspace::CustomNodeEvidenceStatus::Hypothetical,
+                },
+            ),
+        };
+        let save = crate::workspace::WorkspaceAssetSaveRequest {
+            schema: crate::workspace::WORKSPACE_ASSET_SAVE_SCHEMA.into(),
+            relative_path: "custom-nodes/roll.json".into(),
+            expected_revision_sha256: None,
+            asset,
+        };
+        let saved = dispatch(
+            HttpRequest {
+                method: "PUT".into(),
+                target: "/api/workspaces/ordon-route/assets/custom.roll".into(),
+                body: serde_json::to_vec(&save).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(saved.status, 200);
+        let saved: serde_json::Value = serde_json::from_slice(&saved.body).unwrap();
+        assert_eq!(saved["asset"]["header"]["id"], "custom.roll");
+        assert!(
+            root.join("workspaces/ordon-route/custom-nodes/roll.json")
+                .is_file()
+        );
+        let loaded_asset = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces/ordon-route/assets/custom.roll".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(loaded_asset.status, 200);
+        let loaded_asset: serde_json::Value = serde_json::from_slice(&loaded_asset.body).unwrap();
+        assert_eq!(
+            loaded_asset["asset"]["payload"]["evidence_status"],
+            "hypothetical"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
 }

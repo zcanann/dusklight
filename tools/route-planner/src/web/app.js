@@ -6,6 +6,8 @@ const LEGACY_PROJECT_SCHEMAS = new Set([
 ]);
 const PROJECT_SAVE_SCHEMA = "dusklight.route-planner.web-project-save/v1";
 const WORKSPACE_CREATE_SCHEMA = "dusklight.route-planner.workspace-create/v1";
+const WORKSPACE_ASSET_SCHEMA = "dusklight.route-planner.workspace-asset/v1";
+const WORKSPACE_ASSET_SAVE_SCHEMA = "dusklight.route-planner.workspace-asset-save/v1";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
 const NODE_WIDTH = 176;
 const NODE_HEIGHT = 52;
@@ -14,6 +16,8 @@ const elements = Object.fromEntries([
   "workspace-list", "new-workspace", "workspace-tab", "library-tab", "content-search",
   "content-browser-list", "new-workspace-dialog", "new-workspace-form",
   "new-workspace-label", "new-workspace-id", "new-workspace-error", "cancel-new-workspace",
+  "new-asset", "new-asset-dialog", "new-asset-form", "new-asset-label", "new-asset-id",
+  "new-asset-error", "cancel-new-asset",
   "add-node-menu", "add-node-search", "add-node-results",
   "project-list", "new-project", "open-project", "save-project", "save-as-project",
   "export-project", "project-file", "project-name", "status", "search", "palette-list",
@@ -68,6 +72,15 @@ elements["cancel-new-workspace"].addEventListener("click", () => {
   elements["new-workspace-dialog"].close();
 });
 elements["new-workspace-form"].addEventListener("submit", createWorkspace);
+elements["new-asset"].addEventListener("click", () => {
+  elements["new-asset-error"].textContent = "";
+  elements["new-asset-dialog"].showModal();
+  elements["new-asset-label"].focus();
+});
+elements["cancel-new-asset"].addEventListener("click", () => {
+  elements["new-asset-dialog"].close();
+});
+elements["new-asset-form"].addEventListener("submit", createCustomNodeAsset);
 elements["workspace-tab"].addEventListener("click", () => selectContentSource("workspace"));
 elements["library-tab"].addEventListener("click", () => selectContentSource("library"));
 elements["content-search"].addEventListener("input", renderContentBrowser);
@@ -180,6 +193,59 @@ async function createWorkspace(event) {
   }
 }
 
+async function createCustomNodeAsset(event) {
+  event.preventDefault();
+  if (!state.workspace) return;
+  const workspaceId = state.workspace.manifest.id;
+  const label = elements["new-asset-label"].value.trim();
+  const id = elements["new-asset-id"].value.trim();
+  const asset = {
+    schema: WORKSPACE_ASSET_SCHEMA,
+    header: {
+      id,
+      label,
+      kind: "custom_node_definition",
+      version: 1,
+    },
+    references: [],
+    payload: {
+      kind: "custom_node_definition",
+      inputs: [],
+      outputs: [],
+      guard: { kind: "true" },
+      effects: [],
+      evidence_status: "hypothetical",
+    },
+  };
+  elements["new-asset-error"].textContent = "";
+  try {
+    const record = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(id)}`,
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schema: WORKSPACE_ASSET_SAVE_SCHEMA,
+          relative_path: `custom-nodes/${slug(id)}.json`,
+          expected_revision_sha256: null,
+          asset,
+        }),
+      },
+    );
+    elements["new-asset-dialog"].close();
+    await loadWorkspace(workspaceId);
+    inspectWorkspaceAsset({
+      ...record.asset.header,
+      kind: record.asset.header.kind,
+      relative_path: record.relative_path,
+      revision_sha256: record.revision_sha256,
+    });
+    setStatus("Hypothetical custom node created", "good");
+  } catch (error) {
+    elements["new-asset-error"].textContent = error.message;
+  }
+}
+
 async function loadWorkspace(id) {
   if (state.dirty && !confirm("Discard unsaved planner changes?")) {
     elements["workspace-list"].value = state.workspace?.manifest?.id ?? "";
@@ -229,6 +295,7 @@ function selectContentSource(source) {
     elements[`${name}-tab`].classList.toggle("active", active);
     elements[`${name}-tab`].setAttribute("aria-selected", String(active));
   }
+  elements["new-asset"].disabled = source !== "workspace" || !state.workspace;
   renderContentBrowser();
 }
 

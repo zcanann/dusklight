@@ -32,7 +32,10 @@
     <main class="workspace">
       <aside class="palette" aria-label="Content Browser">
         <div class="browser-heading">
-          <strong>Content Browser</strong>
+          <div class="browser-title">
+            <strong>Content Browser</strong>
+            <button id="new-asset" type="button" disabled aria-label="Create workspace asset">+</button>
+          </div>
           <div class="source-tabs" role="tablist" aria-label="Content source">
             <button id="workspace-tab" class="active" type="button" role="tab" aria-selected="true">Workspace</button>
             <button id="library-tab" type="button" role="tab" aria-selected="false">Library</button>
@@ -130,6 +133,21 @@
         <footer>
           <button id="cancel-new-workspace" type="button">Cancel</button>
           <button type="submit">Create workspace</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog id="new-asset-dialog">
+      <form id="new-asset-form">
+        <header>
+          <h2>New custom node</h2>
+          <p>Custom mechanics begin as hypothetical and cannot claim verified reachability.</p>
+        </header>
+        <label>Node name <input id="new-asset-label" name="label" required maxlength="160" value="New mechanic"></label>
+        <label>Stable ID <input id="new-asset-id" name="id" required maxlength="96" pattern="[a-z0-9._-]+" value="custom.new-mechanic"></label>
+        <p id="new-asset-error" class="dialog-error" role="alert"></p>
+        <footer>
+          <button id="cancel-new-asset" type="button">Cancel</button>
+          <button type="submit">Create node</button>
         </footer>
       </form>
     </dialog>

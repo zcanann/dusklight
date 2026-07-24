@@ -281,7 +281,7 @@ scenario is.
       effects, costs, obligations, outputs, scope, and evidence status.
 - [ ] Compile custom transition nodes through the existing refinement/validation
       machinery instead of interpreting browser-owned behavior.
-- [ ] Default new custom mechanics to hypothetical/research status.
+- [x] Default new custom mechanics to hypothetical/research status.
 - [ ] Require explicit evidence and review before a custom node can become an
       established Library mechanic.
 - [ ] Support custom macro nodes backed by subgraphs without duplicating their
