@@ -1072,4 +1072,36 @@ mod tests {
             Err(TacticBlueprintError::StaticExecution(_))
         ));
     }
+
+    #[test]
+    fn execution_validation_rejects_conditions_absent_from_the_fact_registry() {
+        let catalog = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "wait",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let blueprint = TacticBlueprint::new(
+            "fact.availability",
+            TacticBlueprintNode::Conditional {
+                condition: condition(),
+                when_true: Box::new(invoke("wait")),
+                when_false: Box::new(invoke("wait")),
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            blueprint
+                .validate_for_execution(&catalog, |_| false)
+                .unwrap_err(),
+            TacticBlueprintError::UnavailableCondition
+        );
+        blueprint
+            .validate_for_execution(&catalog, |available| available == &condition())
+            .unwrap();
+    }
 }
