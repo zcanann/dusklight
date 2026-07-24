@@ -64,9 +64,9 @@ pub fn default_route_tactic_catalog() -> Result<TacticAssetCatalog, TacticAssetE
     }
 
     for curve_index in 0..8 {
-        let first = stick_heading(curve_index, 100);
-        let clockwise = stick_heading((curve_index + 1) % 8, 100);
-        let counterclockwise = stick_heading((curve_index + 7) % 8, 100);
+        let first = stick_heading(curve_index, 127);
+        let clockwise = stick_heading((curve_index + 1) % 8, 127);
+        let counterclockwise = stick_heading((curve_index + 7) % 8, 127);
         push(
             &mut entries,
             format!("move.curve.clockwise.{curve_index:02}"),
@@ -74,7 +74,7 @@ pub fn default_route_tactic_catalog() -> Result<TacticAssetCatalog, TacticAssetE
                 GenericTactic::ShortCurve {
                     control: [first, first, clockwise, clockwise],
                 },
-                8,
+                32,
             )),
         )?;
         push(
@@ -84,7 +84,7 @@ pub fn default_route_tactic_catalog() -> Result<TacticAssetCatalog, TacticAssetE
                 GenericTactic::ShortCurve {
                     control: [first, first, counterclockwise, counterclockwise],
                 },
-                8,
+                32,
             )),
         )?;
     }
@@ -278,6 +278,14 @@ mod tests {
         ));
         assert!(catalog.entry("move.curve.clockwise.00").is_some());
         assert!(catalog.entry("move.curve.counterclockwise.00").is_some());
+        assert!(matches!(
+            catalog.entry("move.curve.clockwise.00").unwrap().source(),
+            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan {
+                tactic: GenericTactic::ShortCurve { control },
+                maximum_ticks: 32,
+                ..
+            }) if control[0] == [0, 127] && control[3] == [90, 90]
+        ));
     }
 
     #[test]
