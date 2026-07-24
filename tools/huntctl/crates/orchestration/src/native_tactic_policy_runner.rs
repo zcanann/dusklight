@@ -17,7 +17,8 @@ use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::live_tactic_catalog::LiveTacticCatalog;
 use dusklight_learning::tactic_exploration::{
-    TacticExplorationConfig, TacticSelectionReason, choose_tactic,
+    EPSILON_SCALE, SelectedTactic, TACTIC_EXPLORATION_SCHEMA_V1, TacticExplorationConfig,
+    TacticSelectionReason, choose_tactic,
 };
 use dusklight_learning::tactic_frozen_policy::TacticFrozenPolicy;
 use serde::Serialize;
@@ -226,25 +227,54 @@ pub fn run_native_tactic_policy(
             let live = LiveTacticCatalog::build(&state, &catalog, &[]).map_err(policy_error)?;
             let features = encoder.encode(&state.snapshot).map_err(policy_error)?;
             let ranking = live.rank(&model, &features).map_err(policy_error)?;
-            let selected = choose_tactic(
-                &ranking,
-                decisions,
-                TacticExplorationConfig {
-                    seed: 0,
-                    epsilon_per_million: 0,
-                },
-            )
-            .map_err(policy_error)?;
-            let ranked = ranking
-                .values
-                .ranked
-                .iter()
-                .find(|ranked| ranked.descriptor == selected.descriptor)
-                .ok_or_else(|| {
-                    policy_message(
-                        "frozen policy has no trained value for an applicable greedy tactic",
+            let (selected, selected_q, ensemble_variance) =
+                if let Some(observed) = config
+                    .policy
+                    .observed_greedy_tactic(state.snapshot_sha256)
+                {
+                    if !ranking
+                        .choices
+                        .iter()
+                        .any(|choice| choice.descriptor == observed.action)
+                    {
+                        return Err(policy_message(
+                            "frozen policy's observed greedy tactic is not applicable",
+                        ));
+                    }
+                    (
+                        SelectedTactic {
+                            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                            learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+                            decision_index: decisions,
+                            descriptor: observed.action.clone(),
+                            reason: TacticSelectionReason::Greedy,
+                            exploration_draw: EPSILON_SCALE,
+                        },
+                        observed.q_value,
+                        0.0,
                     )
-                })?;
+                } else {
+                    let selected = choose_tactic(
+                        &ranking,
+                        decisions,
+                        TacticExplorationConfig {
+                            seed: 0,
+                            epsilon_per_million: 0,
+                        },
+                    )
+                    .map_err(policy_error)?;
+                    let ranked = ranking
+                        .values
+                        .ranked
+                        .iter()
+                        .find(|ranked| ranked.descriptor == selected.descriptor)
+                        .ok_or_else(|| {
+                            policy_message(
+                                "frozen policy has no trained value for an applicable greedy tactic",
+                            )
+                        })?;
+                    (selected, ranked.mean_q, ranked.ensemble_variance)
+                };
             if selected.reason != TacticSelectionReason::Greedy {
                 return Err(policy_message(
                     "frozen policy attempted a non-greedy tactic selection",
@@ -287,8 +317,8 @@ pub fn run_native_tactic_policy(
                 source_state_sha256,
                 selected_option_id: selected.descriptor.option_id.clone(),
                 selection_reason: selected.reason,
-                selected_q: ranked.mean_q,
-                ensemble_variance: ranked.ensemble_variance,
+                selected_q,
+                ensemble_variance,
                 applicable_tactics: ranking.choices.len(),
                 unsupported_tactics: ranking.values.unsupported.len(),
                 realized_ticks: outcome.execution.duration.realized_ticks,
