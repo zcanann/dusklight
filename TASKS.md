@@ -64,9 +64,9 @@ Route speed does not matter for this first proof.
 | Replay corpora, critics, policies, and checkpoint archives | Working as separate components |
 | Exact realized tape and cold-replay proof | Working |
 | Blueprint composition asset model | Working: canonical bounded assets reference executable catalog entries through `Invoke`, `Sequence`, `Layer`, `Conditional`, `Until`, and `Fallback`; static sequences compile into one exact tape with contiguous per-option execution records, layers compile through DUSKCTRL ownership rules, and ambiguous writers, unbounded control flow, unavailable conditions, invalid catalog plans, and any loss of exact PAD fail closed |
-| Live online option-Q campaign | Missing; the existing tactic selectors are called by tests, not by a campaign |
-| Automatic checkpoint branching driven by learned tactic value | Missing |
-| Blueprint-like user-authored tactic assets | Missing |
+| Live online option-Q campaign | Working: authenticated tactic boundaries feed duration-aware replay, refit, ranking, reward shaping, hindsight, checkpoint/resume, and final-result export |
+| Automatic checkpoint branching driven by learned tactic value | Working: campaigns retain replayable quality-diversity frontiers, sample root plus frontier branches, reject detached restores, detect collapse/cycles/connectivity loss, and project checkpoint-keyed state/tactic graphs |
+| Blueprint-like user-authored tactic assets | Working in the engine; content-browser authoring and CRUD remain missing |
 | A route learned from goal, facts, and tactics | Not demonstrated |
 
 The previous q131 campaign was not this product. It trained a per-tick policy,
@@ -189,14 +189,7 @@ states instead of replaying the entire route for every decision.
 
 Work in this order.
 
-### 1. Branch from useful states
-
-- [ ] Detect zero-diversity selection, repeated identical compositions,
-  no-progress loops, and a frontier that loses root connectivity.
-- [ ] Project the resulting state/tactic/checkpoint graph for inspection and
-  replay.
-
-### 2. Prove the integrated learner
+### 1. Prove the integrated learner
 
 - [ ] First prove the integrated adapters, composition executor, replay update,
   and existing Q model on a deterministic fixture requiring a nontrivial
