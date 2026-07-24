@@ -39,6 +39,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
 const MAX_ROUTE_SEEDS: usize = 32;
@@ -57,6 +58,7 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub branch_every_decisions: u64,
     pub refit_every_decisions: u64,
     pub epsilon_per_million: u32,
+    pub cancellation: Option<&'a AtomicBool>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -282,8 +284,11 @@ pub fn run_native_tactic_route(
         Ok::<_, NativeTacticRouteRunError>(seed_results)
     })();
     let shutdown = worker.shutdown().map_err(route_error);
-    let seed_results = run?;
-    shutdown?;
+    let seed_results = match (run, shutdown) {
+        (Ok(seed_results), Ok(())) => seed_results,
+        (Err(error), _) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+    };
 
     let report = NativeTacticRouteReport {
         schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4.into(),
@@ -363,6 +368,10 @@ fn run_seed(
     while campaign.decision_index < config.decisions_per_seed
         && native_ticks < config.optimization.budgets.simulated_tick_budget
     {
+        if cancellation_requested(config) {
+            pause_tactic_campaign(&seed_root, &campaign)?;
+            return Err(route_cancelled("native tactic route paused"));
+        }
         let periodic_branch = campaign.decision_index > 0
             && campaign.decision_index % config.branch_every_decisions == 0;
         if !campaign.replay.is_empty() && periodic_branch {
@@ -579,6 +588,10 @@ fn run_seed(
             &campaign.route_tape.encode().map_err(route_error)?,
         )?;
         trace.push(decision_trace);
+        if cancellation_requested(config) {
+            pause_tactic_campaign(&seed_root, &campaign)?;
+            return Err(route_cancelled("native tactic route paused"));
+        }
         if step.step.transition.value_sample.terminal
             || campaign.decision_index % config.branch_every_decisions == 0
         {
@@ -653,6 +666,25 @@ fn run_seed(
         final_result,
         trace,
     })
+}
+
+fn cancellation_requested(config: &NativeTacticRouteRunConfig<'_>) -> bool {
+    config
+        .cancellation
+        .is_some_and(|cancellation| cancellation.load(Ordering::Acquire))
+}
+
+fn pause_tactic_campaign(
+    seed_root: &Path,
+    campaign: &TacticQCampaign,
+) -> Result<PathBuf, NativeTacticRouteRunError> {
+    campaign
+        .write_checkpoint(
+            &seed_root
+                .join("pause-checkpoints")
+                .join(format!("decision-{:06}", campaign.decision_index)),
+        )
+        .map_err(route_error)
 }
 
 fn tactic_state_trace(
@@ -1229,18 +1261,37 @@ pub(crate) fn path_text(path: &Path) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct NativeTacticRouteRunError(String);
+pub struct NativeTacticRouteRunError {
+    message: String,
+    cancelled: bool,
+}
+
+impl NativeTacticRouteRunError {
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled
+    }
+}
 
 impl fmt::Display for NativeTacticRouteRunError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
 
 impl Error for NativeTacticRouteRunError {}
 
 fn route_message(message: impl Into<String>) -> NativeTacticRouteRunError {
-    NativeTacticRouteRunError(message.into())
+    NativeTacticRouteRunError {
+        message: message.into(),
+        cancelled: false,
+    }
+}
+
+fn route_cancelled(message: impl Into<String>) -> NativeTacticRouteRunError {
+    NativeTacticRouteRunError {
+        message: message.into(),
+        cancelled: true,
+    }
 }
 
 fn route_error(error: impl fmt::Display) -> NativeTacticRouteRunError {

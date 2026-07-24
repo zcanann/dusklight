@@ -803,6 +803,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(|value| value.parse())
                     .transpose()?
                     .unwrap_or(350_000),
+                cancellation: None,
             })?;
             println!(
                 "{}",

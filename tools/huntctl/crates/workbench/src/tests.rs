@@ -2412,6 +2412,15 @@ fn optimization_start_api_requires_explicit_world_context() {
     );
     assert_eq!(smuggled.status, 400);
     assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
+
+    let smuggled_pause = call_http(
+        &config,
+        "POST",
+        "/api/tactic-route/pause",
+        br#"{"campaign":"ordon-q125-residual-cem-v3","request_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","game":"forged"}"#,
+    );
+    assert_eq!(smuggled_pause.status, 400);
+    assert!(String::from_utf8_lossy(&smuggled_pause.body).contains("unknown field"));
     fs::remove_dir_all(repository).unwrap();
 }
 

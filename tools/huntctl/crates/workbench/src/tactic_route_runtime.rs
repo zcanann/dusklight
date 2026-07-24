@@ -6,8 +6,11 @@ use dusklight_orchestration::native_tactic_route_runner::{
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use serde_json::Value;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const TACTIC_ROUTE_START_SCHEMA: &str = "dusklight.route-workbench.tactic-route-start.v1";
+const TACTIC_ROUTE_LIFECYCLE_SCHEMA: &str = "dusklight.route-workbench.tactic-route-lifecycle.v1";
 const TACTIC_ROUTE_DECISIONS_PER_SEED: u64 = 256;
 const TACTIC_ROUTE_BRANCH_EVERY_DECISIONS: u64 = 8;
 const TACTIC_ROUTE_REFIT_EVERY_DECISIONS: u64 = 32;
@@ -44,21 +47,35 @@ pub(super) struct TacticRouteStartResponse {
     pub status: &'static str,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct TacticRouteLifecycleResponse {
+    pub schema: &'static str,
+    pub campaign: String,
+    pub optimization_request_sha256: String,
+    pub status: &'static str,
+}
+
 #[derive(Clone, Debug)]
 struct TacticRouteRuntimeStatus {
     status: &'static str,
     error: Option<String>,
 }
 
-fn tactic_route_runs() -> &'static Mutex<BTreeMap<String, TacticRouteRuntimeStatus>> {
-    static RUNS: OnceLock<Mutex<BTreeMap<String, TacticRouteRuntimeStatus>>> = OnceLock::new();
+#[derive(Clone, Debug)]
+struct TacticRouteRuntimeEntry {
+    status: TacticRouteRuntimeStatus,
+    cancellation: Arc<AtomicBool>,
+}
+
+fn tactic_route_runs() -> &'static Mutex<BTreeMap<String, TacticRouteRuntimeEntry>> {
+    static RUNS: OnceLock<Mutex<BTreeMap<String, TacticRouteRuntimeEntry>>> = OnceLock::new();
     RUNS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
 pub(super) fn tactic_route_campaign_active(optimization_request_sha256: &str) -> bool {
     tactic_route_runs().lock().ok().is_some_and(|runs| {
         runs.get(optimization_request_sha256)
-            .is_some_and(|run| matches!(run.status, "preparing" | "running"))
+            .is_some_and(|run| matches!(run.status.status, "preparing" | "running" | "pausing"))
     })
 }
 
@@ -178,9 +195,9 @@ pub(super) fn tactic_route_learning_projection(
     if let Ok(runs) = tactic_route_runs().lock()
         && let Some(runtime) = runs.get(&optimization.content_sha256.to_string())
     {
-        projection.status = runtime.status.into();
-        if runtime.error.is_some() {
-            projection.error = runtime.error.clone();
+        projection.status = runtime.status.status.into();
+        if runtime.status.error.is_some() {
+            projection.error = runtime.status.error.clone();
         }
     }
     projection
@@ -211,6 +228,7 @@ pub(super) fn start_tactic_route_learning(
             "residual optimization must stop before route learning starts",
         ));
     }
+    let cancellation = Arc::new(AtomicBool::new(false));
     if optimization_request_promotion_active(&request_sha256) {
         return Err(WorkbenchError::new(
             "candidate promotion must finish before route learning starts",
@@ -239,20 +257,24 @@ pub(super) fn start_tactic_route_learning(
             .map_err(|_| WorkbenchError::new("route-learning runtime registry is unavailable"))?;
         if runs
             .get(&request_sha256)
-            .is_some_and(|run| matches!(run.status, "preparing" | "running"))
+            .is_some_and(|run| matches!(run.status.status, "preparing" | "running" | "pausing"))
         {
             return Err(WorkbenchError::new("route learning is already running"));
         }
         runs.insert(
             request_sha256.clone(),
-            TacticRouteRuntimeStatus {
-                status: "running",
-                error: None,
+            TacticRouteRuntimeEntry {
+                status: TacticRouteRuntimeStatus {
+                    status: "running",
+                    error: None,
+                },
+                cancellation: Arc::clone(&cancellation),
             },
         );
     }
     let seeds = optimization.execution.deterministic_seeds.clone();
     let thread_request_sha256 = request_sha256.clone();
+    let thread_cancellation = Arc::clone(&cancellation);
     let spawn = thread::Builder::new()
         .name(format!("tactic-route-{}", optimization.id))
         .spawn(move || {
@@ -266,6 +288,7 @@ pub(super) fn start_tactic_route_learning(
                 branch_every_decisions: TACTIC_ROUTE_BRANCH_EVERY_DECISIONS,
                 refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,
                 epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
+                cancellation: Some(&thread_cancellation),
             });
             let status = match result {
                 Ok(report) if report.successful_seeds > 0 => TacticRouteRuntimeStatus {
@@ -276,13 +299,19 @@ pub(super) fn start_tactic_route_learning(
                     status: "completed",
                     error: None,
                 },
+                Err(error) if error.is_cancelled() => TacticRouteRuntimeStatus {
+                    status: "paused",
+                    error: None,
+                },
                 Err(error) => TacticRouteRuntimeStatus {
                     status: "failed",
                     error: Some(error.to_string()),
                 },
             };
             if let Ok(mut runs) = tactic_route_runs().lock() {
-                runs.insert(thread_request_sha256, status);
+                if let Some(entry) = runs.get_mut(&thread_request_sha256) {
+                    entry.status = status;
+                }
             }
         });
     if let Err(error) = spawn {
@@ -290,9 +319,12 @@ pub(super) fn start_tactic_route_learning(
         if let Ok(mut runs) = tactic_route_runs().lock() {
             runs.insert(
                 request_sha256.clone(),
-                TacticRouteRuntimeStatus {
-                    status: "failed",
-                    error: Some(message.clone()),
+                TacticRouteRuntimeEntry {
+                    status: TacticRouteRuntimeStatus {
+                        status: "failed",
+                        error: Some(message.clone()),
+                    },
+                    cancellation,
                 },
             );
         }
@@ -305,6 +337,48 @@ pub(super) fn start_tactic_route_learning(
         output: output_text,
         status: "running",
     })
+}
+
+pub(super) fn pause_tactic_route_learning(
+    config: &WorkbenchConfig,
+    browser: &BrowserOptimizationLifecycleRequest,
+) -> Result<TacticRouteLifecycleResponse, WorkbenchError> {
+    let _lifecycle = optimization_lifecycle_edits()
+        .lock()
+        .map_err(|_| WorkbenchError::new("optimization lifecycle lock is unavailable"))?;
+    let (_, optimization) = checked_optimization_request(config, browser)?;
+    let request_sha256 = optimization.content_sha256.to_string();
+    let status = request_tactic_route_pause(&request_sha256)?;
+    Ok(TacticRouteLifecycleResponse {
+        schema: TACTIC_ROUTE_LIFECYCLE_SCHEMA,
+        campaign: optimization.id,
+        optimization_request_sha256: request_sha256,
+        status,
+    })
+}
+
+fn request_tactic_route_pause(
+    optimization_request_sha256: &str,
+) -> Result<&'static str, WorkbenchError> {
+    let mut runs = tactic_route_runs()
+        .lock()
+        .map_err(|_| WorkbenchError::new("route-learning runtime registry is unavailable"))?;
+    let entry = runs
+        .get_mut(optimization_request_sha256)
+        .ok_or_else(|| WorkbenchError::new("route learning is not running"))?;
+    match entry.status.status {
+        "preparing" | "running" => {
+            entry.cancellation.store(true, Ordering::Release);
+            entry.status = TacticRouteRuntimeStatus {
+                status: "pausing",
+                error: None,
+            };
+            Ok("pausing")
+        }
+        "pausing" => Ok("pausing"),
+        "paused" => Ok("paused"),
+        _ => Err(WorkbenchError::new("route learning is not running")),
+    }
 }
 
 pub(super) fn replay_tactic_route_edge(
@@ -777,20 +851,49 @@ mod tests {
         let key = format!("tactic-route-active-test-{}", std::process::id());
         tactic_route_runs().lock().unwrap().insert(
             key.clone(),
-            TacticRouteRuntimeStatus {
-                status: "running",
-                error: None,
+            TacticRouteRuntimeEntry {
+                status: TacticRouteRuntimeStatus {
+                    status: "running",
+                    error: None,
+                },
+                cancellation: Arc::new(AtomicBool::new(false)),
             },
         );
         assert!(tactic_route_campaign_active(&key));
         tactic_route_runs().lock().unwrap().insert(
             key.clone(),
-            TacticRouteRuntimeStatus {
-                status: "completed",
-                error: None,
+            TacticRouteRuntimeEntry {
+                status: TacticRouteRuntimeStatus {
+                    status: "completed",
+                    error: None,
+                },
+                cancellation: Arc::new(AtomicBool::new(false)),
             },
         );
         assert!(!tactic_route_campaign_active(&key));
+        forget_tactic_route_campaign(&key);
+    }
+
+    #[test]
+    fn pause_request_signals_the_live_route_runner() {
+        let key = format!("tactic-route-pause-test-{}", std::process::id());
+        let cancellation = Arc::new(AtomicBool::new(false));
+        tactic_route_runs().lock().unwrap().insert(
+            key.clone(),
+            TacticRouteRuntimeEntry {
+                status: TacticRouteRuntimeStatus {
+                    status: "running",
+                    error: None,
+                },
+                cancellation: Arc::clone(&cancellation),
+            },
+        );
+
+        assert_eq!(request_tactic_route_pause(&key).unwrap(), "pausing");
+        assert!(cancellation.load(Ordering::Acquire));
+        assert_eq!(request_tactic_route_pause(&key).unwrap(), "pausing");
+        assert!(tactic_route_campaign_active(&key));
+
         forget_tactic_route_campaign(&key);
     }
 }
