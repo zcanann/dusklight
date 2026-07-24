@@ -284,7 +284,11 @@ impl TacticQCampaign {
                 "campaign graph requires replay",
             ))?;
         let root_checkpoint_sha256 = root.source_checkpoint_sha256;
-        let mut nodes = BTreeMap::<Digest, TacticCampaignGraphNode>::new();
+        // One realized PAD checkpoint can legitimately have multiple
+        // learner-facing snapshots when distinct tactic labels compile to the
+        // same input. `recent_option` records that provenance, so graph nodes
+        // are identified by both the restorable checkpoint and fact snapshot.
+        let mut nodes = BTreeMap::<(Digest, Digest), TacticCampaignGraphNode>::new();
         let mut edges = Vec::with_capacity(self.replay.len());
         for ((transition, route), episode_group) in self
             .replay
@@ -322,12 +326,12 @@ impl TacticQCampaign {
             });
         }
         let root_state_sha256 = root.before_state_sha256;
-        let mut reachable = BTreeSet::from([root_checkpoint_sha256]);
+        let mut reachable = BTreeSet::from([(root_checkpoint_sha256, root.before_state_sha256)]);
         loop {
             let before = reachable.len();
             for edge in &edges {
-                if reachable.contains(&edge.source_checkpoint_sha256) {
-                    reachable.insert(edge.next_checkpoint_sha256);
+                if reachable.contains(&(edge.source_checkpoint_sha256, edge.before_state_sha256)) {
+                    reachable.insert((edge.next_checkpoint_sha256, edge.after_state_sha256));
                 }
             }
             if reachable.len() == before {
@@ -983,17 +987,18 @@ fn action_digest(action: &OptionActionDescriptor) -> Result<Digest, TacticQCampa
 }
 
 fn insert_graph_node(
-    nodes: &mut BTreeMap<Digest, TacticCampaignGraphNode>,
+    nodes: &mut BTreeMap<(Digest, Digest), TacticCampaignGraphNode>,
     node: TacticCampaignGraphNode,
 ) -> Result<(), TacticQCampaignError> {
-    if let Some(existing) = nodes.get(&node.checkpoint_sha256) {
+    let identity = (node.checkpoint_sha256, node.state_sha256);
+    if let Some(existing) = nodes.get(&identity) {
         if existing != &node {
             return Err(TacticQCampaignError::InvalidState(
-                "one checkpoint identifies conflicting campaign graph nodes",
+                "one checkpoint-state identity has conflicting campaign graph nodes",
             ));
         }
     } else {
-        nodes.insert(node.checkpoint_sha256, node);
+        nodes.insert(identity, node);
     }
     Ok(())
 }
@@ -1607,6 +1612,36 @@ mod tests {
             graph.nodes.iter().any(|node| {
                 node.checkpoint_sha256 == campaign.replay[0].next_checkpoint_sha256
             })
+        );
+        let mut equivalent_pad_projection = campaign.replay[0].clone();
+        equivalent_pad_projection
+            .after
+            .recent_option
+            .as_mut()
+            .unwrap()
+            .option_id = "equivalent-pad-tactic".into();
+        equivalent_pad_projection.after_state_sha256 =
+            equivalent_pad_projection.after.content_sha256().unwrap();
+        equivalent_pad_projection.value_sample.after_state_sha256 =
+            equivalent_pad_projection.after_state_sha256;
+        let mut equivalent_graph = TacticQCampaign::resume(campaign.checkpoint().unwrap()).unwrap();
+        equivalent_graph.replay.push(equivalent_pad_projection);
+        equivalent_graph
+            .replay_routes
+            .push(campaign.replay_routes[0].clone());
+        equivalent_graph.episode_groups.push(77);
+        let graph = equivalent_graph.graph().unwrap();
+        assert_eq!(graph.nodes.len(), 3);
+        assert!(graph.root_connected);
+        assert_eq!(
+            graph
+                .nodes
+                .iter()
+                .filter(|node| {
+                    node.checkpoint_sha256 == campaign.replay[0].next_checkpoint_sha256
+                })
+                .count(),
+            2
         );
         let diagnostics = restored.diagnostics().unwrap();
         assert_eq!(diagnostics.unique_selected_actions, 1);
