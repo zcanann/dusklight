@@ -1,0 +1,205 @@
+{
+  "schema": "dusklight-tactic-q-reliability-report/v1",
+  "date": "2026-07-24",
+  "claim": "On the sealed current execution binding, one of four independent no-demonstration tactic-Q seeds reached the Ordon Springs terminal. The successful frozen greedy policy reproduced byte-identically in two executions and its realized process-boot tape reached the same terminal boundary in two cold replays. The measured 25% campaign success rate does not establish reliable competence.",
+  "bindings": {
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "execution_binding_sha256": "4d258b64720a9a752200ea55d7ee9b6815e1d3f50c604cd3c024ef463b6728a0",
+    "execution_file_sha256": "4eb081bb50982c09acefd339f5500e6adcc4e5b49181c519d72cc4deba092624",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+    "feature_schema_sha256": "be03e8360126d502306be142f800480e4c53cacd0970dc41bfca0d9f20ef0148",
+    "action_schema_sha256": "ef31114f330b6f643e92bfe47815fe7757b2d997d89649a6491d1158304b4c7b",
+    "game_sha256": "4cee9a085c0cad425deb1c71e83accd3d820e0f1a441fb0a8b5af736be899f0f",
+    "dvd_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "terminal_program_sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653"
+  },
+  "configuration": {
+    "demonstration_transitions": 0,
+    "decisions_per_seed": 256,
+    "branch_every_decisions": 8,
+    "refit_every_decisions": 4,
+    "epsilon_per_million": 350000,
+    "seeds": [
+      104729,
+      130363,
+      155921,
+      181081
+    ]
+  },
+  "aggregate": {
+    "completed_seeds": 4,
+    "successful_seeds": 1,
+    "success_rate_millionths": 250000,
+    "time_to_first_success_decisions": 86,
+    "total_decisions": 854,
+    "total_native_ticks": 26627,
+    "total_useful_decisions": 533,
+    "total_episodes": 107
+  },
+  "seeds": [
+    {
+      "seed": 104729,
+      "success": false,
+      "decisions": 256,
+      "episodes": 32,
+      "native_ticks": 8064,
+      "useful_decisions": 171,
+      "visited_states": 23,
+      "frontier_cells": 73,
+      "unique_selected_actions": 46,
+      "report_sha256": "73718c96544ae199c79354781a2ae48fbca736c18f93113db18ce9b91ab849de",
+      "minimum_goal_distance": 1942.4973,
+      "minimum_goal_distance_decision": 188,
+      "first_choke_state_decision": 28,
+      "choke_state_transitions": 11,
+      "positive_progress_transitions": 167
+    },
+    {
+      "seed": 130363,
+      "success": false,
+      "decisions": 256,
+      "episodes": 32,
+      "native_ticks": 7752,
+      "useful_decisions": 154,
+      "visited_states": 24,
+      "frontier_cells": 74,
+      "unique_selected_actions": 50,
+      "report_sha256": "fa2d8dff488dca53e7a8afffa2f688c94a57286db36997fbaf7383c4b27a375c",
+      "minimum_goal_distance": 1942.7227,
+      "minimum_goal_distance_decision": 26,
+      "first_choke_state_decision": 11,
+      "choke_state_transitions": 10,
+      "positive_progress_transitions": 149
+    },
+    {
+      "seed": 155921,
+      "success": false,
+      "decisions": 256,
+      "episodes": 32,
+      "native_ticks": 7912,
+      "useful_decisions": 152,
+      "visited_states": 22,
+      "frontier_cells": 73,
+      "unique_selected_actions": 59,
+      "report_sha256": "6769aac485072bf1b13cb5b49ab94f1c3f4ae50830fe4c7046de0a972be60db3",
+      "minimum_goal_distance": 1942.4988,
+      "minimum_goal_distance_decision": 167,
+      "first_choke_state_decision": 22,
+      "choke_state_transitions": 14,
+      "positive_progress_transitions": 148
+    },
+    {
+      "seed": 181081,
+      "success": true,
+      "decisions": 86,
+      "episodes": 11,
+      "native_ticks": 2899,
+      "useful_decisions": 56,
+      "visited_states": 36,
+      "frontier_cells": 58,
+      "unique_selected_actions": 26,
+      "report_sha256": "71c53674587ad039e2873ec3c1f4c82ca70ac2a1423e24d3b3c4d3ad0b2d2503",
+      "minimum_goal_distance": 535.163,
+      "minimum_goal_distance_decision": 85,
+      "first_choke_state_decision": 41,
+      "choke_state_transitions": 5,
+      "positive_progress_transitions": 48
+    }
+  ],
+  "failure_diagnosis": {
+    "failed_seeds": 3,
+    "shared_state": {
+      "stage": "F_SP103",
+      "room": 1,
+      "player_position_bounds": {
+        "x": [
+          -361.7983,
+          -361.555
+        ],
+        "y": [
+          801.4804,
+          801.641
+        ],
+        "z": [
+          -3481.7173,
+          -3481.0852
+        ]
+      },
+      "player_procedures": [
+        3,
+        4
+      ],
+      "player_contacts": 3,
+      "terminal": false
+    },
+    "interpretation": "All failed seeds made many positive-progress transitions and selected 46 to 59 distinct actions, so failure was not zero action diversity. Each independently reached the same narrow observed state at approximately 1942.5 goal distance but never produced a transition beyond it within 256 decisions. The actionable defect is transition coverage at that state, not a need for route-specific coordinates or a preferred-action script."
+  },
+  "frozen_policy": {
+    "schema": "dusklight-tactic-frozen-policy/v2",
+    "content_sha256": "ef6c6d8971f68f34f3162394d567d047ef79da6634a021d368c713a511eb3005",
+    "file_sha256": "4e66133a33900dcb4109d7a69718e2bd52881915214e18d06694425a059783d6",
+    "source_seed": 181081,
+    "training_rows": 86,
+    "exploration_enabled": false,
+    "executions": [
+      {
+        "report_sha256": "ec57e309ca4c2506887b8ee8bd5a845e60111552bf5fae7ccdafaa3db4612f1c",
+        "success": true,
+        "decisions": 18,
+        "native_ticks": 635,
+        "realized_tape_sha256": "dd492f5ad675d29f48356059c6e57669efee69d8701ee60bc5f0b431db733b83"
+      },
+      {
+        "report_sha256": "acd23b6bf85b79ef889f075376d0d6e84f73daf0c3396f0c6f847922934c7dcf",
+        "success": true,
+        "decisions": 18,
+        "native_ticks": 635,
+        "realized_tape_sha256": "dd492f5ad675d29f48356059c6e57669efee69d8701ee60bc5f0b431db733b83"
+      }
+    ],
+    "byte_identical_realized_tapes": true
+  },
+  "cold_replay": {
+    "proof_sha256": "d7734ab70669d164bb40431d90fc89c619c3609005c6599bb77f3b53c8afecbd",
+    "input_tape_sha256": "dd492f5ad675d29f48356059c6e57669efee69d8701ee60bc5f0b431db733b83",
+    "boot": "process",
+    "repetitions": 2,
+    "controller_in_loop": false,
+    "model_in_loop": false,
+    "goal": "ordon_spring_load_committed",
+    "sim_tick": 1140,
+    "tape_frame": 1140,
+    "terminal_boundary_fingerprint": "ab943ff8b61a75245dd01028e22a1476"
+  },
+  "timing": {
+    "summed_seed_wall_micros": 15834270838,
+    "nonoverlapping_phases": [
+      {
+        "phase": "tactic_selection",
+        "micros": 12611163,
+        "share_millionths": 796
+      },
+      {
+        "phase": "checkpoint_branching",
+        "micros": 1079080631,
+        "share_millionths": 68148
+      },
+      {
+        "phase": "tactic_execution",
+        "micros": 4234316897,
+        "share_millionths": 267415
+      },
+      {
+        "phase": "model_update",
+        "micros": 143458270,
+        "share_millionths": 9060
+      },
+      {
+        "phase": "evidence_projection_and_persistence",
+        "micros": 10363136427,
+        "share_millionths": 654475
+      }
+    ],
+    "interpretation": "Evidence projection and persistence consumed 65.4% of summed seed wall time, tactic execution 26.7%, checkpoint branching 6.8%, model update 0.9%, and selection 0.1%. Throughput work should target persistence and independent-seed scheduling before changing learner cadence."
+  }
+}

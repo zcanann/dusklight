@@ -48,28 +48,21 @@ tactics, tape frames, compositions, or semantic action graphs.
 | First from-scratch proof | Working: no-demonstration seed 181081 reached the Ordon terminal after 70 exploratory decisions; its frozen greedy policy reached it in 13 decisions and 426 native ticks |
 | Exact cold reproduction | Working: the learned 932-frame process-boot tape reproduced identical semantic gameplay state at all 932 boundaries across two cold runs |
 | Useful route quality | Not established: the retained human Ordon segment is 126 input frames; the best attributable learned local result is 129 ticks and the from-scratch tactic policy is substantially slower |
-| Reliability and generality | Not established: the published tactic-Q proof covers one seed, one start, and one terminal |
+| Reliability and generality | Measured, not established: one of four independent current-build seeds reached the terminal; all three failures exhausted 256 decisions at the same observed choke state |
 | Comparative learning value | Not established |
 
 The first tactic-Q proof is retained at
 `docs/glitch-hunting/benchmarks/ordon-tactic-q-first-proof-20260724.json`.
-It proves basic competence and exact reproduction, not route quality,
-repeatability, or generality.
+The independent-seed result and its current-build replay proof are retained at
+`docs/glitch-hunting/benchmarks/ordon-tactic-q-reliability-20260724.json`.
+Together they prove basic competence and exact reproduction, but the measured
+25% campaign success rate does not prove reliable competence or generality.
 
 ## P0 — Make learned behavior reliably competent
 
-- [ ] Repeat the tactic-Q campaign across independent seeds and report terminal
-      success rate, time to first success, native ticks, useful decisions,
-      visited states, and selected-action diversity.
-- [ ] Diagnose failures using observed state/tactic transitions rather than
-      adding route-specific coordinates, preferred-action sequences, or
-      gameplay-state writes.
-- [ ] Make the frozen exploration-free policy reproduce successful campaign
-      behavior reliably instead of depending on one favorable exploratory
-      trajectory.
 - [ ] Exercise at least one additional exact start and authored goal through the
-      same fact, tactic, checkpoint, and terminal interfaces.
-- [ ] Preserve exact cold replay as the authority for every claimed success.
+      same fact, tactic, checkpoint, and terminal interfaces, and cold-prove
+      every claimed success.
 
 ## P1 — Improve route quality
 
@@ -124,16 +117,15 @@ Do not create a second demonstration format or a privileged action path.
 
 ## P4 — Optimize throughput only when measured
 
-Phase-level tactic-Q timing, useful-decision counts, native ticks, and episode
-rates are already recorded.
+The four-seed reliability experiment found that evidence projection and
+persistence consumes 65.4% of summed seed wall time. Native tactic execution is
+the next largest phase; model fitting is not the bottleneck.
 
-- [ ] Profile the real reliability or route-quality experiment and identify the
-      phase that limits useful learning iterations.
-- [ ] Benchmark worker counts appropriate to the current host if simulation or
-      checkpoint restoration starves experience collection.
-- [ ] Increase batching, worker utilization, or persistence efficiency only
-      when the measured bottleneck prevents enough diverse state/tactic
-      transitions or refinement candidates.
+- [ ] Benchmark one, two, and four independent tactic-route workers on the
+      current host under one sealed configuration.
+- [ ] Make tactic-route honor the selected worker count and reduce evidence
+      persistence overhead, then prove higher useful-decision throughput without
+      changing campaign identities or outcomes.
 
 More transitions per second are useful only when they improve the rate of
 meaningful, independently evaluated behavior.
