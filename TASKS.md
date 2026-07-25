@@ -43,8 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P0 - Remove storage and orchestration from the hot path
 
-- [ ] Compact the journal at bounded intervals without rewriting unchanged
-      snapshots, replay rows, or tape data.
 - [ ] Prove exact resume equivalence across interruption: selected actions,
       model state, frontier state, route tapes, and final candidate identities
       must match an uninterrupted run.

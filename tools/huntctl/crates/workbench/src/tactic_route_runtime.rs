@@ -4,9 +4,9 @@ use super::*;
 use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6,
-    NativeTacticDecisionTrace, NativeTacticRouteRunConfig, materialize_tactic_decision_route,
-    project_tactic_decision_graph, read_tactic_decision_journal, run_native_tactic_route,
-    tactic_decision_journal_path,
+    NativeTacticDecisionTrace, NativeTacticRouteRunConfig, has_tactic_decision_journal,
+    materialize_tactic_decision_route, project_tactic_decision_graph, read_tactic_decision_journal,
+    run_native_tactic_route,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use dusklight_orchestration::tactic_q_campaign::TACTIC_Q_CHECKPOINT_EXTENSION;
@@ -593,7 +593,7 @@ fn load_tactic_route_decision_trace(
     decision_index: u64,
 ) -> Result<GraphTacticDecisionTrace, WorkbenchError> {
     let seed_root = output.join(format!("seed-{seed_index:03}-{seed}"));
-    if tactic_decision_journal_path(&seed_root).is_file() {
+    if has_tactic_decision_journal(&seed_root) {
         let decisions = read_tactic_decision_journal(&seed_root).map_err(tactic_route_error)?;
         let decision = decisions
             .get(usize::try_from(decision_index).map_err(tactic_route_error)?)
@@ -700,7 +700,7 @@ fn load_tactic_route_edge_tape(
     edge: &GraphTacticKnowledgeEdge,
 ) -> Result<InputTape, WorkbenchError> {
     let seed_root = output.join(format!("seed-{seed_index:03}-{seed}"));
-    if tactic_decision_journal_path(&seed_root).is_file() {
+    if has_tactic_decision_journal(&seed_root) {
         let tape = materialize_tactic_decision_route(&seed_root, edge.edge_index)
             .map_err(tactic_route_error)?;
         if tape.frames.len() as u64 != edge.end_frame_exclusive {
@@ -909,7 +909,7 @@ fn project_completed_seed_results(
 fn project_latest_decision(output: &Path, seeds: &[u64]) -> Option<GraphTacticDecisionSummary> {
     for (index, seed) in seeds.iter().enumerate().rev() {
         let seed_root = output.join(format!("seed-{index:03}-{seed}"));
-        if tactic_decision_journal_path(&seed_root).is_file() {
+        if has_tactic_decision_journal(&seed_root) {
             let decision = read_tactic_decision_journal(&seed_root)
                 .ok()?
                 .into_iter()
@@ -978,7 +978,7 @@ fn project_latest_decision(output: &Path, seeds: &[u64]) -> Option<GraphTacticDe
 fn project_latest_graph(output: &Path, seeds: &[u64]) -> Option<GraphTacticKnowledgeGraph> {
     for (index, seed) in seeds.iter().enumerate().rev() {
         let seed_root = output.join(format!("seed-{index:03}-{seed}"));
-        if tactic_decision_journal_path(&seed_root).is_file()
+        if has_tactic_decision_journal(&seed_root)
             && let Ok(Some(projected)) = project_tactic_decision_graph(&seed_root)
         {
             let mut graph: GraphTacticKnowledgeGraph =

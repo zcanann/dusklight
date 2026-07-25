@@ -49,7 +49,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -61,11 +61,20 @@ pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
 pub const NATIVE_TACTIC_CONTENT_STORE_DIRECTORY: &str = "objects";
+const NATIVE_TACTIC_DECISION_SEGMENTS_DIRECTORY: &str = "decision-journal";
+const NATIVE_TACTIC_DECISION_SEGMENT_MAGIC: &[u8; 8] = b"DSKTQJC1";
+const NATIVE_TACTIC_DECISION_SEGMENT_VERSION: u16 = 1;
+const NATIVE_TACTIC_DECISION_SEGMENT_HEADER_SIZE: usize = 8 + 2 + 2 + 8 + 8 + 8 + 32;
+const NATIVE_TACTIC_DECISION_SEGMENT_COMPRESSION_LEVEL: i32 = 3;
+const NATIVE_TACTIC_DECISION_COMPACTION_RECORDS: u64 = 256;
 const NATIVE_TACTIC_DECISION_JOURNAL_MAGIC: &[u8; 8] = b"DSKTQJ01";
 const NATIVE_TACTIC_DECISION_JOURNAL_VERSION: u16 = 2;
 const NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE: usize = 8 + 2 + 2;
 const NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE: usize = 4 + 32;
 const MAXIMUM_TACTIC_DECISION_RECORD_BYTES: usize = 16 * 1024 * 1024;
+const MAXIMUM_TACTIC_DECISION_SEGMENT_BYTES: usize = 256 * 1024 * 1024;
+const MAXIMUM_TACTIC_DECISION_SEGMENTS: usize =
+    (MAX_ROUTE_DECISIONS as usize).div_ceil(NATIVE_TACTIC_DECISION_COMPACTION_RECORDS as usize) + 1;
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
@@ -222,7 +231,7 @@ pub struct NativeTacticValueTrace {
     pub selected: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeTacticDecisionRecord {
     decision_index: u64,
@@ -931,6 +940,7 @@ fn run_seed(
     }
 
     let final_persistence_started = Instant::now();
+    compact_tactic_decision_journal(&seed_root)?;
     let success = campaign.current.snapshot.terminal.reached == Some(true);
     let final_checkpoint = campaign
         .write_checkpoint_with_store(
@@ -1271,6 +1281,11 @@ pub fn tactic_decision_journal_path(seed_root: &Path) -> PathBuf {
     seed_root.join(NATIVE_TACTIC_DECISION_JOURNAL_FILE)
 }
 
+pub fn has_tactic_decision_journal(seed_root: &Path) -> bool {
+    tactic_decision_journal_path(seed_root).is_file()
+        || tactic_decision_segments_root(seed_root).is_dir()
+}
+
 pub fn tactic_content_store_path(seed_root: &Path) -> PathBuf {
     seed_root.join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY)
 }
@@ -1278,7 +1293,7 @@ pub fn tactic_content_store_path(seed_root: &Path) -> PathBuf {
 pub fn read_tactic_decision_journal(
     seed_root: &Path,
 ) -> Result<Vec<NativeTacticDecisionTrace>, NativeTacticRouteRunError> {
-    if !tactic_decision_journal_path(seed_root).exists() {
+    if !has_tactic_decision_journal(seed_root) {
         return Ok(Vec::new());
     }
     let store =
@@ -1292,9 +1307,10 @@ pub fn read_tactic_decision_journal(
 fn read_tactic_decision_records(
     seed_root: &Path,
 ) -> Result<Vec<NativeTacticDecisionRecord>, NativeTacticRouteRunError> {
+    let mut records = read_compacted_tactic_decision_records(seed_root)?;
     let path = tactic_decision_journal_path(seed_root);
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok(records);
     }
     let metadata = fs::symlink_metadata(&path).map_err(route_error)?;
     if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
@@ -1304,13 +1320,29 @@ fn read_tactic_decision_records(
     }
     let bytes = fs::read(&path).map_err(route_error)?;
     let decoded = decode_tactic_decision_journal(&bytes)?;
-    Ok(decoded.records)
+    for record in decoded.records {
+        let index = usize::try_from(record.decision_index).map_err(route_error)?;
+        if index < records.len() {
+            if records[index] != record {
+                return Err(route_message(
+                    "active tactic journal conflicts with its compacted segment",
+                ));
+            }
+        } else if index == records.len() {
+            records.push(record);
+        } else {
+            return Err(route_message(
+                "active tactic journal is detached from its compacted segments",
+            ));
+        }
+    }
+    Ok(records)
 }
 
 pub fn project_tactic_decision_graph(
     seed_root: &Path,
 ) -> Result<Option<TacticCampaignGraphProjection>, NativeTacticRouteRunError> {
-    if !tactic_decision_journal_path(seed_root).exists() {
+    if !has_tactic_decision_journal(seed_root) {
         return Ok(None);
     }
     let replay = load_tactic_journal_replay(seed_root)?;
@@ -1415,7 +1447,7 @@ pub fn project_tactic_decision_graph(
 pub fn project_tactic_decision_diagnostics(
     seed_root: &Path,
 ) -> Result<Option<TacticCampaignDiagnostics>, NativeTacticRouteRunError> {
-    if !tactic_decision_journal_path(seed_root).exists() {
+    if !has_tactic_decision_journal(seed_root) {
         return Ok(None);
     }
     let replay = load_tactic_journal_replay(seed_root)?;
@@ -1677,9 +1709,15 @@ fn append_tactic_decision_record(
     fs::create_dir_all(seed_root).map_err(route_error)?;
     let path = tactic_decision_journal_path(seed_root);
     ensure_tactic_decision_journal(&path)?;
+    let compacted_count = compacted_tactic_decision_count(seed_root)?;
     let bytes = fs::read(&path).map_err(route_error)?;
     let decoded = decode_tactic_decision_journal(&bytes)?;
-    if decoded.records.len() as u64 != decision.decision_index {
+    let active_count = decoded
+        .records
+        .iter()
+        .filter(|record| record.decision_index >= compacted_count)
+        .count() as u64;
+    if compacted_count.saturating_add(active_count) != decision.decision_index {
         return Err(route_message(
             "tactic decision journal append index is detached",
         ));
@@ -1691,25 +1729,19 @@ fn append_tactic_decision_record(
             .and_then(|file| file.set_len(decoded.valid_bytes as u64))
             .map_err(route_error)?;
     }
-    let payload = serde_cbor::to_vec(decision).map_err(route_error)?;
-    if payload.len() > MAXIMUM_TACTIC_DECISION_RECORD_BYTES {
-        return Err(route_message(
-            "tactic decision journal record exceeds its size bound",
-        ));
-    }
-    let payload_len = u32::try_from(payload.len()).map_err(route_error)?;
-    let payload_sha256: [u8; 32] = Sha256::digest(&payload).into();
-    let mut record = Vec::with_capacity(NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE + payload.len());
-    record.extend_from_slice(&payload_len.to_le_bytes());
-    record.extend_from_slice(&payload_sha256);
-    record.extend_from_slice(&payload);
+    let record = encode_tactic_decision_record(decision)?;
     let mut file = OpenOptions::new()
         .append(true)
         .open(&path)
         .map_err(route_error)?;
     file.write_all(&record)
         .and_then(|_| file.sync_data())
-        .map_err(route_error)
+        .map_err(route_error)?;
+    drop(file);
+    if active_count.saturating_add(1) >= NATIVE_TACTIC_DECISION_COMPACTION_RECORDS {
+        compact_tactic_decision_journal(seed_root)?;
+    }
+    Ok(())
 }
 
 fn ensure_tactic_decision_journal(path: &Path) -> Result<(), NativeTacticRouteRunError> {
@@ -1751,6 +1783,291 @@ struct DecodedTacticDecisionJournal {
     valid_bytes: usize,
 }
 
+#[derive(Clone, Copy)]
+struct TacticDecisionSegmentHeader {
+    start_index: u64,
+    record_count: u64,
+    raw_len: usize,
+    raw_sha256: [u8; 32],
+}
+
+fn tactic_decision_segments_root(seed_root: &Path) -> PathBuf {
+    seed_root.join(NATIVE_TACTIC_DECISION_SEGMENTS_DIRECTORY)
+}
+
+fn tactic_decision_segment_paths(
+    seed_root: &Path,
+) -> Result<Vec<PathBuf>, NativeTacticRouteRunError> {
+    let root = tactic_decision_segments_root(seed_root);
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let metadata = fs::symlink_metadata(&root).map_err(route_error)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(route_message(
+            "tactic decision segment root is not a physical directory",
+        ));
+    }
+    let mut paths = fs::read_dir(&root)
+        .map_err(route_error)?
+        .map(|entry| entry.map(|entry| entry.path()).map_err(route_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    paths.retain(|path| path.extension().and_then(|value| value.to_str()) == Some("dtqz"));
+    if paths.len() > MAXIMUM_TACTIC_DECISION_SEGMENTS {
+        return Err(route_message(
+            "tactic decision journal exceeds its segment bound",
+        ));
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+fn read_tactic_decision_segment_header(
+    path: &Path,
+) -> Result<TacticDecisionSegmentHeader, NativeTacticRouteRunError> {
+    let metadata = fs::symlink_metadata(path).map_err(route_error)?;
+    if !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() < NATIVE_TACTIC_DECISION_SEGMENT_HEADER_SIZE as u64
+        || metadata.len()
+            > (NATIVE_TACTIC_DECISION_SEGMENT_HEADER_SIZE
+                + MAXIMUM_TACTIC_DECISION_SEGMENT_BYTES
+                + 1024 * 1024) as u64
+    {
+        return Err(route_message(
+            "tactic decision segment is not a physical file",
+        ));
+    }
+    let mut bytes = [0_u8; NATIVE_TACTIC_DECISION_SEGMENT_HEADER_SIZE];
+    OpenOptions::new()
+        .read(true)
+        .open(path)
+        .and_then(|mut file| file.read_exact(&mut bytes))
+        .map_err(route_error)?;
+    decode_tactic_decision_segment_header(&bytes)
+}
+
+fn decode_tactic_decision_segment_header(
+    bytes: &[u8],
+) -> Result<TacticDecisionSegmentHeader, NativeTacticRouteRunError> {
+    if bytes.len() < NATIVE_TACTIC_DECISION_SEGMENT_HEADER_SIZE
+        || &bytes[..8] != NATIVE_TACTIC_DECISION_SEGMENT_MAGIC
+        || u16::from_le_bytes(bytes[8..10].try_into().expect("fixed slice"))
+            != NATIVE_TACTIC_DECISION_SEGMENT_VERSION
+        || u16::from_le_bytes(bytes[10..12].try_into().expect("fixed slice")) != 0
+    {
+        return Err(route_message("tactic decision segment header is invalid"));
+    }
+    let start_index = u64::from_le_bytes(bytes[12..20].try_into().expect("fixed slice"));
+    let record_count = u64::from_le_bytes(bytes[20..28].try_into().expect("fixed slice"));
+    let raw_len_u64 = u64::from_le_bytes(bytes[28..36].try_into().expect("fixed slice"));
+    let raw_len = usize::try_from(raw_len_u64).map_err(route_error)?;
+    let raw_sha256 = bytes[36..68].try_into().expect("fixed slice");
+    if record_count == 0
+        || record_count > NATIVE_TACTIC_DECISION_COMPACTION_RECORDS
+        || raw_len < NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE
+        || raw_len > MAXIMUM_TACTIC_DECISION_SEGMENT_BYTES
+    {
+        return Err(route_message("tactic decision segment bounds are invalid"));
+    }
+    Ok(TacticDecisionSegmentHeader {
+        start_index,
+        record_count,
+        raw_len,
+        raw_sha256,
+    })
+}
+
+fn compacted_tactic_decision_count(seed_root: &Path) -> Result<u64, NativeTacticRouteRunError> {
+    let mut next = 0_u64;
+    for path in tactic_decision_segment_paths(seed_root)? {
+        let header = read_tactic_decision_segment_header(&path)?;
+        if header.start_index != next {
+            return Err(route_message(
+                "tactic decision segments are overlapping or detached",
+            ));
+        }
+        next = next
+            .checked_add(header.record_count)
+            .ok_or_else(|| route_message("tactic decision segment count overflowed"))?;
+    }
+    Ok(next)
+}
+
+fn read_compacted_tactic_decision_records(
+    seed_root: &Path,
+) -> Result<Vec<NativeTacticDecisionRecord>, NativeTacticRouteRunError> {
+    let mut records: Vec<NativeTacticDecisionRecord> = Vec::new();
+    for path in tactic_decision_segment_paths(seed_root)? {
+        let bytes = fs::read(&path).map_err(route_error)?;
+        let segment = decode_tactic_decision_segment(&bytes)?;
+        if segment
+            .first()
+            .is_none_or(|record| record.decision_index != records.len() as u64)
+        {
+            return Err(route_message(
+                "tactic decision segments are overlapping or detached",
+            ));
+        }
+        records.extend(segment);
+    }
+    Ok(records)
+}
+
+fn decode_tactic_decision_segment(
+    bytes: &[u8],
+) -> Result<Vec<NativeTacticDecisionRecord>, NativeTacticRouteRunError> {
+    let header = decode_tactic_decision_segment_header(bytes)?;
+    let raw = zstd::bulk::decompress(
+        &bytes[NATIVE_TACTIC_DECISION_SEGMENT_HEADER_SIZE..],
+        header.raw_len,
+    )
+    .map_err(route_error)?;
+    if raw.len() != header.raw_len
+        || <Sha256 as sha2::Digest>::digest(&raw)[..] != header.raw_sha256
+    {
+        return Err(route_message(
+            "tactic decision segment payload digest is invalid",
+        ));
+    }
+    let decoded = decode_tactic_decision_journal(&raw)?;
+    if decoded.valid_bytes != raw.len()
+        || decoded.records.len() as u64 != header.record_count
+        || decoded
+            .records
+            .first()
+            .is_none_or(|record| record.decision_index != header.start_index)
+    {
+        return Err(route_message("tactic decision segment payload is detached"));
+    }
+    Ok(decoded.records)
+}
+
+fn compact_tactic_decision_journal(seed_root: &Path) -> Result<(), NativeTacticRouteRunError> {
+    let path = tactic_decision_journal_path(seed_root);
+    ensure_tactic_decision_journal(&path)?;
+    let compacted_count = compacted_tactic_decision_count(seed_root)?;
+    let bytes = fs::read(&path).map_err(route_error)?;
+    let decoded = decode_tactic_decision_journal(&bytes)?;
+    if decoded.valid_bytes != bytes.len() {
+        return Err(route_message(
+            "cannot compact a tactic decision journal with a truncated tail",
+        ));
+    }
+    let records = decoded
+        .records
+        .into_iter()
+        .filter(|record| record.decision_index >= compacted_count)
+        .collect::<Vec<_>>();
+    if records.is_empty() {
+        rewrite_tactic_decision_journal(&path, &[])?;
+        return Ok(());
+    }
+    if records[0].decision_index != compacted_count {
+        return Err(route_message(
+            "tactic decision journal is detached from its compacted segments",
+        ));
+    }
+    let raw = encode_tactic_decision_journal(&records)?;
+    if raw.len() > MAXIMUM_TACTIC_DECISION_SEGMENT_BYTES {
+        return Err(route_message(
+            "tactic decision segment exceeds its size bound",
+        ));
+    }
+    let compressed = zstd::bulk::compress(&raw, NATIVE_TACTIC_DECISION_SEGMENT_COMPRESSION_LEVEL)
+        .map_err(route_error)?;
+    let start_index = records[0].decision_index;
+    let end_index = start_index
+        .checked_add(records.len() as u64)
+        .ok_or_else(|| route_message("tactic decision segment index overflowed"))?;
+    let mut segment =
+        Vec::with_capacity(NATIVE_TACTIC_DECISION_SEGMENT_HEADER_SIZE + compressed.len());
+    segment.extend_from_slice(NATIVE_TACTIC_DECISION_SEGMENT_MAGIC);
+    segment.extend_from_slice(&NATIVE_TACTIC_DECISION_SEGMENT_VERSION.to_le_bytes());
+    segment.extend_from_slice(&0_u16.to_le_bytes());
+    segment.extend_from_slice(&start_index.to_le_bytes());
+    segment.extend_from_slice(&(records.len() as u64).to_le_bytes());
+    segment.extend_from_slice(&(raw.len() as u64).to_le_bytes());
+    segment.extend_from_slice(&Sha256::digest(&raw));
+    segment.extend_from_slice(&compressed);
+
+    let root = tactic_decision_segments_root(seed_root);
+    fs::create_dir_all(&root).map_err(route_error)?;
+    let destination = root.join(format!("segment-{start_index:012}-{end_index:012}.dtqz"));
+    if destination.exists() {
+        if decode_tactic_decision_segment(&fs::read(&destination).map_err(route_error)?)? != records
+        {
+            return Err(route_message(
+                "existing tactic decision segment conflicts with compaction",
+            ));
+        }
+    } else {
+        let partial = root.join(format!(
+            ".segment-{start_index:012}-{end_index:012}.{}.partial",
+            std::process::id()
+        ));
+        if partial.exists() {
+            fs::remove_file(&partial).map_err(route_error)?;
+        }
+        write_new(&partial, &segment)?;
+        fs::rename(&partial, &destination).map_err(route_error)?;
+    }
+    rewrite_tactic_decision_journal(&path, &[])
+}
+
+fn rewrite_tactic_decision_journal(
+    path: &Path,
+    records: &[NativeTacticDecisionRecord],
+) -> Result<(), NativeTacticRouteRunError> {
+    let bytes = encode_tactic_decision_journal(records)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| route_message("tactic decision journal has no parent"))?;
+    let partial = parent.join(format!(
+        ".{NATIVE_TACTIC_DECISION_JOURNAL_FILE}.{}.rewrite",
+        std::process::id()
+    ));
+    if partial.exists() {
+        fs::remove_file(&partial).map_err(route_error)?;
+    }
+    write_new(&partial, &bytes)?;
+    if path.exists() {
+        fs::remove_file(path).map_err(route_error)?;
+    }
+    fs::rename(&partial, path).map_err(route_error)
+}
+
+fn encode_tactic_decision_journal(
+    records: &[NativeTacticDecisionRecord],
+) -> Result<Vec<u8>, NativeTacticRouteRunError> {
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(NATIVE_TACTIC_DECISION_JOURNAL_MAGIC);
+    bytes.extend_from_slice(&NATIVE_TACTIC_DECISION_JOURNAL_VERSION.to_le_bytes());
+    bytes.extend_from_slice(&0_u16.to_le_bytes());
+    for record in records {
+        bytes.extend_from_slice(&encode_tactic_decision_record(record)?);
+    }
+    Ok(bytes)
+}
+
+fn encode_tactic_decision_record(
+    decision: &NativeTacticDecisionRecord,
+) -> Result<Vec<u8>, NativeTacticRouteRunError> {
+    let payload = serde_cbor::to_vec(decision).map_err(route_error)?;
+    if payload.len() > MAXIMUM_TACTIC_DECISION_RECORD_BYTES {
+        return Err(route_message(
+            "tactic decision journal record exceeds its size bound",
+        ));
+    }
+    let payload_len = u32::try_from(payload.len()).map_err(route_error)?;
+    let payload_sha256: [u8; 32] = Sha256::digest(&payload).into();
+    let mut record = Vec::with_capacity(NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE + payload.len());
+    record.extend_from_slice(&payload_len.to_le_bytes());
+    record.extend_from_slice(&payload_sha256);
+    record.extend_from_slice(&payload);
+    Ok(record)
+}
+
 fn decode_tactic_decision_journal(
     bytes: &[u8],
 ) -> Result<DecodedTacticDecisionJournal, NativeTacticRouteRunError> {
@@ -1762,7 +2079,7 @@ fn decode_tactic_decision_journal(
     {
         return Err(route_message("tactic decision journal header is invalid"));
     }
-    let mut records = Vec::new();
+    let mut records: Vec<NativeTacticDecisionRecord> = Vec::new();
     let mut cursor = NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE;
     while cursor < bytes.len() {
         let remaining = bytes.len() - cursor;
@@ -1797,7 +2114,10 @@ fn decode_tactic_decision_journal(
         let decision =
             NativeTacticDecisionRecord::deserialize(&mut deserializer).map_err(route_error)?;
         deserializer.end().map_err(route_error)?;
-        if decision.decision_index != records.len() as u64 {
+        let expected_index = records.first().map_or(decision.decision_index, |first| {
+            first.decision_index + records.len() as u64
+        });
+        if decision.decision_index != expected_index {
             return Err(route_message(
                 "tactic decision journal record index is detached",
             ));
@@ -2833,6 +3153,60 @@ mod tests {
         bytes[last] ^= 1;
         fs::write(&path, bytes).unwrap();
         assert!(read_tactic_decision_records(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn tactic_decision_journal_compacts_reference_records_without_rewriting_segments() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-journal-compaction-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        for decision_index in 0..NATIVE_TACTIC_DECISION_COMPACTION_RECORDS {
+            append_tactic_decision_record(&root, &journal_record(decision_index)).unwrap();
+        }
+        assert_eq!(
+            fs::metadata(tactic_decision_journal_path(&root))
+                .unwrap()
+                .len() as usize,
+            NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE
+        );
+        let first_segment = tactic_decision_segment_paths(&root).unwrap();
+        assert_eq!(first_segment.len(), 1);
+        let first_segment_bytes = fs::read(&first_segment[0]).unwrap();
+        let stale_active = (0..NATIVE_TACTIC_DECISION_COMPACTION_RECORDS)
+            .map(journal_record)
+            .collect::<Vec<_>>();
+        fs::write(
+            tactic_decision_journal_path(&root),
+            encode_tactic_decision_journal(&stale_active).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            read_tactic_decision_records(&root).unwrap().len() as u64,
+            NATIVE_TACTIC_DECISION_COMPACTION_RECORDS
+        );
+        fs::remove_file(tactic_decision_journal_path(&root)).unwrap();
+        assert!(has_tactic_decision_journal(&root));
+        assert_eq!(
+            read_tactic_decision_records(&root).unwrap().len() as u64,
+            NATIVE_TACTIC_DECISION_COMPACTION_RECORDS
+        );
+
+        append_tactic_decision_record(
+            &root,
+            &journal_record(NATIVE_TACTIC_DECISION_COMPACTION_RECORDS),
+        )
+        .unwrap();
+        compact_tactic_decision_journal(&root).unwrap();
+        let segments = tactic_decision_segment_paths(&root).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(fs::read(&first_segment[0]).unwrap(), first_segment_bytes);
+        assert_eq!(
+            read_tactic_decision_records(&root).unwrap().len() as u64,
+            NATIVE_TACTIC_DECISION_COMPACTION_RECORDS + 1
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
