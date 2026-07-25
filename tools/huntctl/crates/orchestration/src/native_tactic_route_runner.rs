@@ -146,6 +146,11 @@ pub struct NativeTacticRouteTiming {
     pub tactic_preparation_and_fact_extraction_micros: u64,
     pub model_update_micros: u64,
     pub evidence_projection_and_persistence_micros: u64,
+    /// Candidate-only artifact generation after native terminal admission.
+    /// Exploration-only seeds keep this at zero; cold replay is a separate
+    /// explicit command and is never charged here.
+    #[serde(default)]
+    pub retained_candidate_artifact_micros: u64,
     pub useful_decisions_per_second_millionths: u64,
     pub native_ticks_per_second_millionths: u64,
     pub episodes_per_second_millionths: u64,
@@ -803,6 +808,9 @@ fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> NativeTacticRoute
         timing.evidence_projection_and_persistence_micros = timing
             .evidence_projection_and_persistence_micros
             .saturating_add(seed.timing.evidence_projection_and_persistence_micros);
+        timing.retained_candidate_artifact_micros = timing
+            .retained_candidate_artifact_micros
+            .saturating_add(seed.timing.retained_candidate_artifact_micros);
     }
     refresh_route_throughput(&mut timing, seeds);
     timing
@@ -1287,6 +1295,7 @@ fn run_seed(
         .map_err(route_error)?;
     remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
     let (successful_tape, final_result) = if success {
+        let retained_candidate_started = Instant::now();
         let tape_path = seed_root.join("successful.tape");
         write_new(
             &tape_path,
@@ -1298,6 +1307,9 @@ fn run_seed(
             &serde_json::to_vec_pretty(&campaign.final_result().map_err(route_error)?)
                 .map_err(route_error)?,
         )?;
+        timing.retained_candidate_artifact_micros = timing
+            .retained_candidate_artifact_micros
+            .saturating_add(elapsed_micros(retained_candidate_started.elapsed()));
         (Some(path_text(&tape_path)), Some(path_text(&result_path)))
     } else {
         (None, None)
@@ -1313,7 +1325,11 @@ fn run_seed(
         per_second_millionths(native_ticks, timing.wall_micros);
     timing.episodes_per_second_millionths =
         per_second_millionths(episode.saturating_add(1), timing.wall_micros);
-    trace = read_resumed_trace(&seed_root, campaign.decision_index)?;
+    if trace.len() as u64 != campaign.decision_index {
+        return Err(route_message(
+            "in-memory tactic trace is detached from the completed campaign",
+        ));
+    }
     persist_seed_performance(
         &seed_root,
         campaign.decision_index,
@@ -1537,7 +1553,7 @@ fn resume_seed(
             .entry(decision.selected_option_id.clone())
             .or_default() += 1;
         native_ticks = native_ticks
-            .checked_add(u64::from(decision.reward_components.duration_ticks))
+            .checked_add(decision_evaluated_ticks(decision))
             .ok_or_else(|| route_message("resumed native tick count overflowed"))?;
     }
     if native_ticks > config.optimization.budgets.simulated_tick_budget {
@@ -2514,6 +2530,9 @@ fn read_completed_seed_result(
     if result.seed != seed
         || result.decisions > decisions_per_seed
         || result.useful_decisions > result.decisions
+        || result.success != result.successful_tape.is_some()
+        || result.success != result.final_result.is_some()
+        || (!result.success && result.timing.retained_candidate_artifact_micros != 0)
         || result.trace.len() as u64 != result.decisions
         || result
             .trace
