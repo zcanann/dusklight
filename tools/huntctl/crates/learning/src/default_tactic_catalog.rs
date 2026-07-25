@@ -14,7 +14,7 @@ pub const MAX_GOAL_SEEK_TARGETS: usize = 64;
 const INTERMEDIATE_GOAL_SEEK_TOLERANCE: f32 = 96.0;
 const GOAL_ROUTE_STALL_GRACE_TICKS: u32 = 40;
 const GOAL_ROUTE_STATIONARY_WINDOW_TICKS: u32 = 16;
-const GOAL_ROUTE_STATIONARY_DISTANCE: f32 = 1.0;
+const GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE: f32 = 16.0;
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -210,7 +210,8 @@ pub fn goal_conditioned_route_tactic_catalog(
                     final_tolerance_f32_bits: 0.0_f32.to_bits(),
                     stall_grace_ticks: GOAL_ROUTE_STALL_GRACE_TICKS,
                     stationary_window_ticks: GOAL_ROUTE_STATIONARY_WINDOW_TICKS,
-                    stationary_distance_f32_bits: GOAL_ROUTE_STATIONARY_DISTANCE.to_bits(),
+                    stationary_window_distance_f32_bits: GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE
+                        .to_bits(),
                     magnitude: 127,
                 },
                 route_sequence_maximum_ticks,
@@ -346,7 +347,7 @@ mod tests {
                     coordinates_f32_bits,
                     stall_grace_ticks: GOAL_ROUTE_STALL_GRACE_TICKS,
                     stationary_window_ticks: GOAL_ROUTE_STATIONARY_WINDOW_TICKS,
-                    stationary_distance_f32_bits,
+                    stationary_window_distance_f32_bits,
                     ..
                 },
                 maximum_ticks: 640,
@@ -355,8 +356,8 @@ mod tests {
                 .iter()
                 .map(|coordinate| coordinate.map(f32::from_bits))
                 .collect::<Vec<_>>() == vec![waypoint, goal]
-                && f32::from_bits(*stationary_distance_f32_bits)
-                    == GOAL_ROUTE_STATIONARY_DISTANCE
+                && f32::from_bits(*stationary_window_distance_f32_bits)
+                    == GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE
         ));
         let goal_entry = catalog.entry("goal.seek.coordinate.00").unwrap();
         assert_eq!(goal_entry.description().duration.maximum_ticks, 160);
