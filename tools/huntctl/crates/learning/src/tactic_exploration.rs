@@ -34,6 +34,7 @@ pub enum TacticSelectionReason {
     Greedy,
     Epsilon,
     UnsupportedBootstrap,
+    BatchDiversity,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -152,6 +153,80 @@ pub fn choose_tactic_with_state_untried(
         reason,
         exploration_draw,
     })
+}
+
+/// Choose a reproducible primary tactic plus distinct alternatives to evaluate
+/// from the same learner boundary.
+///
+/// The first result is exactly the single-action epsilon-greedy choice. Extra
+/// proposals are selected independently of catalog insertion order: a seeded
+/// rotation first covers option types not represented in the batch and only
+/// then fills any remaining capacity. This gives the caller behavioral
+/// diversity without changing the seeded primary policy.
+pub fn choose_tactic_batch_with_state_untried(
+    ranking: &LiveTacticRanking,
+    decision_index: u64,
+    config: TacticExplorationConfig,
+    state_untried: &[OptionActionDescriptor],
+    maximum_proposals: usize,
+) -> Result<Vec<SelectedTactic>, TacticExplorationError> {
+    if maximum_proposals == 0 {
+        return Err(TacticExplorationError::InvalidInput);
+    }
+    let primary = choose_tactic_with_state_untried(ranking, decision_index, config, state_untried)?;
+    let mut result = vec![primary.clone()];
+    if maximum_proposals == 1 || ranking.choices.len() == 1 {
+        return Ok(result);
+    }
+
+    let mut candidates = ranking
+        .choices
+        .iter()
+        .map(|choice| choice.descriptor.clone())
+        .filter(|descriptor| descriptor != &primary.descriptor)
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| left.option_id.cmp(&right.option_id));
+    let rotation = deterministic_index(
+        config.seed,
+        decision_index,
+        ranking.learner_snapshot_sha256,
+        candidates.len(),
+    );
+    candidates.rotate_left(rotation);
+
+    let mut represented_types = vec![primary.descriptor.option_type.clone()];
+    for require_new_type in [true, false] {
+        for descriptor in &candidates {
+            if result.len() >= maximum_proposals {
+                return Ok(result);
+            }
+            if result
+                .iter()
+                .any(|selected| selected.descriptor == *descriptor)
+            {
+                continue;
+            }
+            let type_is_represented = represented_types.contains(&descriptor.option_type);
+            if require_new_type != !type_is_represented {
+                continue;
+            }
+            represented_types.push(descriptor.option_type.clone());
+            result.push(SelectedTactic {
+                schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+                decision_index,
+                descriptor: descriptor.clone(),
+                reason: TacticSelectionReason::BatchDiversity,
+                exploration_draw: (deterministic_draw(
+                    config.seed,
+                    decision_index,
+                    ranking.learner_snapshot_sha256,
+                    3,
+                ) % u64::from(EPSILON_SCALE)) as u32,
+            });
+        }
+    }
+    Ok(result)
 }
 
 fn prioritized_unsupported(
@@ -665,5 +740,82 @@ mod tests {
 
         assert_eq!(selected.descriptor, roll);
         assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
+    }
+
+    #[test]
+    fn proposal_batch_preserves_primary_and_prioritizes_distinct_types() {
+        let move_a = descriptor("move-a", OptionType::Move);
+        let move_b = descriptor("move-b", OptionType::Move);
+        let roll = descriptor("roll", OptionType::Roll);
+        let wait = descriptor("wait", OptionType::Neutral);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([11; 32]),
+            action_universe_sha256: Digest([12; 32]),
+            choices: vec![
+                choice(move_b.clone()),
+                choice(wait.clone()),
+                choice(move_a.clone()),
+                choice(roll.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: move_a.clone(),
+                    mean_q: 5.0,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: vec![move_b, roll, wait],
+            },
+        };
+        let config = TacticExplorationConfig {
+            seed: 42,
+            epsilon_per_million: 0,
+        };
+
+        let primary = choose_tactic(&ranking, 3, config).unwrap();
+        let first = choose_tactic_batch_with_state_untried(&ranking, 3, config, &[], 3).unwrap();
+        let second = choose_tactic_batch_with_state_untried(&ranking, 3, config, &[], 3).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first[0], primary);
+        assert_eq!(first.len(), 3);
+        assert_eq!(first[1].reason, TacticSelectionReason::BatchDiversity);
+        assert_eq!(first[2].reason, TacticSelectionReason::BatchDiversity);
+        assert!(first[1].descriptor.option_type != OptionType::Move);
+        assert!(first[2].descriptor.option_type != OptionType::Move);
+        assert!(first[1].descriptor.option_type != first[2].descriptor.option_type);
+    }
+
+    #[test]
+    fn proposal_batch_rejects_zero_capacity_and_never_duplicates_actions() {
+        let move_a = descriptor("move-a", OptionType::Move);
+        let move_b = descriptor("move-b", OptionType::Move);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([13; 32]),
+            action_universe_sha256: Digest([14; 32]),
+            choices: vec![choice(move_b.clone()), choice(move_a.clone())],
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: move_a,
+                    mean_q: 1.0,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: vec![move_b],
+            },
+        };
+        let config = TacticExplorationConfig {
+            seed: 7,
+            epsilon_per_million: 0,
+        };
+
+        assert_eq!(
+            choose_tactic_batch_with_state_untried(&ranking, 0, config, &[], 0),
+            Err(TacticExplorationError::InvalidInput)
+        );
+        let batch =
+            choose_tactic_batch_with_state_untried(&ranking, 0, config, &[], usize::MAX).unwrap();
+        assert_eq!(batch.len(), 2);
+        assert_ne!(batch[0].descriptor, batch[1].descriptor);
     }
 }

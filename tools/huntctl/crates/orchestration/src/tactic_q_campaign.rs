@@ -28,7 +28,7 @@ use dusklight_learning::tactic_asset::{TacticAssetCatalog, TacticAssetDescriptio
 use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError,
-    choose_tactic_with_state_untried,
+    choose_tactic_batch_with_state_untried,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -54,6 +54,21 @@ const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
 pub struct TacticQDecision {
     pub ranking: LiveTacticRanking,
     pub selected: SelectedTactic,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticQProposalBatch {
+    pub ranking: LiveTacticRanking,
+    pub proposals: Vec<SelectedTactic>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluatedRewardedTacticOutcome {
+    pub outcome: NativeTacticWorkerOutcome,
+    pub transition: OptionTransitionSample,
+    pub reward: TacticRewardBreakdown,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -870,6 +885,30 @@ impl TacticQCampaign {
         E: fmt::Display,
         F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
     {
+        let mut batch = self.decide_batch(catalog, blueprints, encode, 1)?;
+        let selected = batch
+            .proposals
+            .pop()
+            .ok_or(TacticQCampaignError::InvalidState(
+                "tactic proposal batch is empty",
+            ))?;
+        Ok(TacticQDecision {
+            ranking: batch.ranking,
+            selected,
+        })
+    }
+
+    pub fn decide_batch<E, F>(
+        &self,
+        catalog: &TacticAssetCatalog,
+        blueprints: &[TacticBlueprint],
+        encode: &F,
+        maximum_proposals: usize,
+    ) -> Result<TacticQProposalBatch, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+    {
         let live = LiveTacticCatalog::build(&self.current, catalog, blueprints)?;
         let features = encode(&self.current.snapshot)
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
@@ -903,13 +942,72 @@ impl TacticQCampaign {
             .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
             .cloned()
             .collect::<Vec<_>>();
-        let selected = choose_tactic_with_state_untried(
+        let proposals = choose_tactic_batch_with_state_untried(
             &ranking,
             self.decision_index,
             self.exploration,
             &state_untried,
+            maximum_proposals,
         )?;
-        Ok(TacticQDecision { ranking, selected })
+        Ok(TacticQProposalBatch { ranking, proposals })
+    }
+
+    /// Score and capture a native proposal without mutating the retained
+    /// campaign path. Callers can evaluate several outcomes from this exact
+    /// boundary, choose one deterministically, and admit only that winner.
+    pub fn evaluate_rewarded_outcome<E, F>(
+        &self,
+        outcome: NativeTacticWorkerOutcome,
+        encode: &F,
+        reward_spec: &TacticRewardSpec,
+    ) -> Result<EvaluatedRewardedTacticOutcome, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+    {
+        if outcome.selected.decision_index != self.decision_index
+            || outcome.selected.learner_snapshot_sha256 != self.current.snapshot_sha256
+            || outcome.source_checkpoint_sha256 != self.root_checkpoint_sha256
+            || !extends(&self.route_tape, &outcome.route_tape)
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "native proposal outcome is detached from the campaign boundary",
+            ));
+        }
+        let state = encode(&self.current.snapshot)
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        let next_state = encode(&outcome.next_facts)
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        let endpoint = tactic_state_descriptor(&outcome.next_facts, outcome.terminal);
+        let reward = reward_spec.evaluate(
+            self.feature_schema_sha256,
+            &state,
+            &next_state,
+            outcome.execution.duration.realized_ticks,
+            outcome.terminal,
+            !self.visited_states.contains(&endpoint),
+        )?;
+        let source_checkpoint_sha256 =
+            route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
+        let next_checkpoint_sha256 =
+            route_checkpoint(self.root_checkpoint_sha256, &outcome.route_tape)?;
+        let transition = OptionTransitionSample::capture(
+            self.feature_schema_sha256,
+            source_checkpoint_sha256,
+            next_checkpoint_sha256,
+            self.current.snapshot.clone(),
+            outcome.next_facts.clone(),
+            outcome.execution.clone(),
+            &outcome.route_tape,
+            reward.training_reward,
+            outcome.terminal,
+            encode,
+        )?;
+        Ok(EvaluatedRewardedTacticOutcome {
+            outcome,
+            transition,
+            reward,
+        })
     }
 
     /// Execute and retain one native tactic boundary, then rebuild the Q model
@@ -1768,6 +1866,11 @@ mod tests {
                 }],
             }),
         };
+        let evaluated = campaign
+            .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec)
+            .unwrap();
+        assert_eq!(campaign.decision_index, 0);
+        assert!(campaign.replay.is_empty());
         let retained = campaign
             .retain_and_refit_rewarded(
                 decision,
@@ -1782,6 +1885,8 @@ mod tests {
             )
             .unwrap();
 
+        assert_eq!(evaluated.transition, retained.step.transition);
+        assert_eq!(evaluated.reward, retained.reward);
         assert_eq!(retained.step.replay_rows, 1);
         assert_eq!(retained.reward.terminal_observed, terminal);
         assert!(!retained.reward.endpoint_novel);

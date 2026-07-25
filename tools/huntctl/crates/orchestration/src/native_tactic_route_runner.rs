@@ -11,9 +11,10 @@ use crate::native_tactic_worker::{
 };
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics, TacticCampaignGraphProjection,
-    TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode, TacticQCampaign,
-    TacticQCampaignError, has_no_progress_loop, route_checkpoint,
+    EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics,
+    TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
+    TacticCampaignGraphProjectionNode, TacticQCampaign, TacticQCampaignError, TacticQDecision,
+    has_no_progress_loop, route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
@@ -80,6 +81,7 @@ const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
+const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
 const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
 const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1: &str = "dusklight-native-tactic-route-performance/v1";
@@ -193,6 +195,8 @@ pub struct NativeTacticDecisionTrace {
     pub after: NativeTacticStateTrace,
     pub measurements: Vec<NativeTacticMeasurementTrace>,
     pub applicable_tactics: Vec<NativeTacticValueTrace>,
+    #[serde(default)]
+    pub proposal_batch: Vec<NativeTacticProposalTrace>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -236,6 +240,27 @@ pub struct NativeTacticValueTrace {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct NativeTacticProposalTrace {
+    pub option_id: String,
+    pub selection_reason: TacticSelectionReason,
+    pub reward: f32,
+    pub reward_components: TacticRewardBreakdown,
+    pub realized_ticks: u32,
+    pub terminal: bool,
+    pub goal_distance_after: f32,
+    pub after_snapshot_sha256: Digest,
+    pub retained: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeTacticProposalRecord {
+    trace: NativeTacticProposalTrace,
+    transition: StoredContentRef,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 struct NativeTacticDecisionRecord {
     decision_index: u64,
     episode: u64,
@@ -254,6 +279,8 @@ struct NativeTacticDecisionRecord {
     root_checkpoint_sha256: Digest,
     root_tape: StoredContentRef,
     transition: StoredContentRef,
+    #[serde(default)]
+    proposal_batch: Vec<NativeTacticProposalRecord>,
 }
 
 pub fn run_native_tactic_route(
@@ -822,26 +849,41 @@ fn run_seed(
         // Restoring a branch can change the selected tactic. Recheck until the
         // preview fits; the periodic root sample guarantees convergence because
         // every catalog entry is itself bounded by the exploration horizon.
-        let decision = loop {
+        let proposal_batch = loop {
             let suffix_ticks = campaign
                 .route_tape
                 .frames
                 .len()
                 .saturating_sub(source_frame as usize) as u64;
             let selection_started = Instant::now();
-            let preview = campaign
-                .decide(catalog, &[], &encode)
+            let mut preview = campaign
+                .decide_batch(catalog, &[], &encode, TACTIC_PROPOSALS_PER_DECISION)
                 .map_err(route_error)?;
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
                 .saturating_add(elapsed_micros(selection_started.elapsed()));
+            let primary = preview
+                .proposals
+                .first()
+                .ok_or_else(|| route_message("tactic proposal batch is empty"))?;
             let selected_maximum_ticks = catalog
-                .entry(&preview.selected.descriptor.option_id)
+                .entry(&primary.descriptor.option_id)
                 .ok_or_else(|| route_message("selected tactic is absent from its catalog"))?
                 .description()
                 .duration
                 .maximum_ticks;
             if selected_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
+                preview.proposals.retain(|proposal| {
+                    catalog
+                        .entry(&proposal.descriptor.option_id)
+                        .is_some_and(|entry| {
+                            selected_tactic_fits_horizon(
+                                suffix_ticks,
+                                entry.description().duration.maximum_ticks,
+                                horizon,
+                            )
+                        })
+                });
                 break preview;
             }
             let branch_started = Instant::now();
@@ -888,25 +930,36 @@ fn run_seed(
             .join("native")
             .join(format!("decision-{decision_index:06}"));
         fs::create_dir_all(&paths_root).map_err(route_error)?;
-        let paths = NativeTacticWorkerPaths {
-            request: paths_root.join("request.json"),
-            result: paths_root.join("result.json"),
-        };
         let execution_started = Instant::now();
-        let (outcome, native_elapsed) = {
-            let mut timed_worker = TimedTacticWorker::new(worker);
+        let source_snapshot = campaign.current.snapshot.clone();
+        let source_route_tape = campaign.route_tape.clone();
+        let mut evaluated = Vec::with_capacity(proposal_batch.proposals.len());
+        let mut native_elapsed = Duration::ZERO;
+        for (proposal_index, proposal) in proposal_batch.proposals.iter().enumerate() {
+            let proposal_root = paths_root.join(format!("proposal-{proposal_index:03}"));
+            fs::create_dir_all(&proposal_root).map_err(route_error)?;
+            let paths = NativeTacticWorkerPaths {
+                request: proposal_root.join("request.json"),
+                result: proposal_root.join("result.json"),
+            };
+            let mut timed_worker = TimedTacticWorker::new(&mut *worker);
             let outcome = execute_selected_tactic(
                 &mut timed_worker,
-                &decision.selected,
+                proposal,
                 catalog,
                 &[],
-                &campaign.current.snapshot,
-                &campaign.route_tape,
+                &source_snapshot,
+                &source_route_tape,
                 &paths,
             )
             .map_err(route_error)?;
-            (outcome, timed_worker.native_elapsed)
-        };
+            native_elapsed = native_elapsed.saturating_add(timed_worker.native_elapsed);
+            evaluated.push(
+                campaign
+                    .evaluate_rewarded_outcome(outcome, &encode, reward_spec)
+                    .map_err(route_error)?,
+            );
+        }
         let execution_elapsed = execution_started.elapsed();
         timing.tactic_execution_micros = timing
             .tactic_execution_micros
@@ -919,11 +972,29 @@ fn run_seed(
             .saturating_add(elapsed_micros(
                 execution_elapsed.saturating_sub(native_elapsed),
             ));
+        let winner_index = (1..evaluated.len()).fold(0, |winner, candidate| {
+            if proposal_outcome_is_better(&evaluated[candidate], &evaluated[winner]) {
+                candidate
+            } else {
+                winner
+            }
+        });
+        let winning_outcome = evaluated[winner_index].outcome.clone();
+        let expected_transition = evaluated[winner_index].transition.clone();
+        let decision = TacticQDecision {
+            ranking: proposal_batch.ranking,
+            selected: winning_outcome.selected.clone(),
+        };
+        let evaluated_native_ticks = evaluated.iter().fold(0_u64, |total, proposal| {
+            total.saturating_add(u64::from(
+                proposal.outcome.execution.duration.realized_ticks,
+            ))
+        });
         let model_started = Instant::now();
         let step = campaign
             .retain_and_refit_rewarded(
                 decision,
-                outcome,
+                winning_outcome,
                 catalog,
                 &[],
                 registry,
@@ -933,6 +1004,13 @@ fn run_seed(
                 refit_model,
             )
             .map_err(route_error)?;
+        if step.step.transition != expected_transition
+            || step.reward != evaluated[winner_index].reward
+        {
+            return Err(route_message(
+                "retained tactic proposal differs from its pre-admission evaluation",
+            ));
+        }
         timing.model_update_micros = timing
             .model_update_micros
             .saturating_add(elapsed_micros(model_started.elapsed()));
@@ -958,9 +1036,7 @@ fn run_seed(
             .ranked
             .first()
             .map(|ranked| ranked.mean_q);
-        native_ticks = native_ticks.saturating_add(u64::from(
-            step.step.transition.execution.duration.realized_ticks,
-        ));
+        native_ticks = native_ticks.saturating_add(evaluated_native_ticks);
         let frontier_cells = campaign
             .frontier_archive()
             .map_err(route_error)?
@@ -971,6 +1047,26 @@ fn run_seed(
         let after_features = encoder
             .encode(&step.step.transition.after)
             .map_err(route_error)?;
+        let proposal_traces = evaluated
+            .iter()
+            .enumerate()
+            .map(|(index, proposal)| {
+                let after_features = encoder
+                    .encode(&proposal.transition.after)
+                    .map_err(route_error)?;
+                Ok(NativeTacticProposalTrace {
+                    option_id: proposal.outcome.selected.descriptor.option_id.clone(),
+                    selection_reason: proposal.outcome.selected.reason,
+                    reward: proposal.reward.training_reward,
+                    reward_components: proposal.reward.clone(),
+                    realized_ticks: proposal.outcome.execution.duration.realized_ticks,
+                    terminal: proposal.outcome.terminal,
+                    goal_distance_after: after_features[encoder.goal_distance_feature()],
+                    after_snapshot_sha256: proposal.transition.after_state_sha256,
+                    retained: index == winner_index,
+                })
+            })
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
         let decision_trace = NativeTacticDecisionTrace {
             decision_index,
             episode,
@@ -994,13 +1090,24 @@ fn run_seed(
             after: tactic_state_trace(&step.step.transition.after)?,
             measurements: Vec::new(),
             applicable_tactics: Vec::new(),
+            proposal_batch: proposal_traces,
         };
         if decision_trace_is_useful(&decision_trace) {
             useful_decisions = useful_decisions.saturating_add(1);
         }
-        let transition = content_store
-            .store_option_transition(&step.step.transition, &campaign.route_tape)
-            .map_err(route_error)?;
+        let proposal_records = evaluated
+            .iter()
+            .zip(&decision_trace.proposal_batch)
+            .map(|(proposal, trace)| {
+                Ok(NativeTacticProposalRecord {
+                    trace: trace.clone(),
+                    transition: content_store
+                        .store_option_transition(&proposal.transition, &proposal.outcome.route_tape)
+                        .map_err(route_error)?,
+                })
+            })
+            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+        let transition = proposal_records[winner_index].transition;
         let root_tape = content_store
             .store_tape(route_prefix)
             .map_err(route_error)?;
@@ -1012,6 +1119,7 @@ fn run_seed(
                 campaign.root_checkpoint_sha256,
                 root_tape,
                 transition,
+                proposal_records,
             ),
         )?;
         trace.push(decision_trace);
@@ -1757,6 +1865,7 @@ fn decision_record(
     root_checkpoint_sha256: Digest,
     root_tape: StoredContentRef,
     transition: StoredContentRef,
+    proposal_batch: Vec<NativeTacticProposalRecord>,
 ) -> NativeTacticDecisionRecord {
     NativeTacticDecisionRecord {
         decision_index: trace.decision_index,
@@ -1776,6 +1885,7 @@ fn decision_record(
         root_checkpoint_sha256,
         root_tape,
         transition,
+        proposal_batch,
     }
 }
 
@@ -1793,6 +1903,40 @@ fn project_tactic_decision_record(
     {
         return Err(route_message(
             "tactic decision journal references are detached",
+        ));
+    }
+    let proposal_batch = record
+        .proposal_batch
+        .iter()
+        .map(|proposal| {
+            let candidate = store
+                .load_option_transition(proposal.transition)
+                .map_err(route_error)?;
+            if candidate.value_sample.action.option_id != proposal.trace.option_id
+                || candidate.execution.duration.realized_ticks != proposal.trace.realized_ticks
+                || candidate.value_sample.terminal != proposal.trace.terminal
+                || candidate.after_state_sha256 != proposal.trace.after_snapshot_sha256
+                || candidate.value_sample.reward.to_bits() != proposal.trace.reward.to_bits()
+            {
+                return Err(route_message(
+                    "tactic proposal journal reference is detached",
+                ));
+            }
+            Ok(proposal.trace.clone())
+        })
+        .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+    if !proposal_batch.is_empty()
+        && (proposal_batch
+            .iter()
+            .filter(|proposal| proposal.retained)
+            .count()
+            != 1
+            || !record.proposal_batch.iter().any(|proposal| {
+                proposal.trace.retained && proposal.transition == record.transition
+            }))
+    {
+        return Err(route_message(
+            "tactic proposal journal has no unique retained transition",
         ));
     }
     Ok(NativeTacticDecisionTrace {
@@ -1814,6 +1958,7 @@ fn project_tactic_decision_record(
         after: tactic_state_trace(&transition.after)?,
         measurements: Vec::new(),
         applicable_tactics: Vec::new(),
+        proposal_batch,
     })
 }
 
@@ -3074,6 +3219,31 @@ fn selected_tactic_fits_horizon(
     suffix_ticks.saturating_add(u64::from(selected_maximum_ticks)) <= horizon
 }
 
+fn proposal_outcome_is_better(
+    candidate: &EvaluatedRewardedTacticOutcome,
+    incumbent: &EvaluatedRewardedTacticOutcome,
+) -> bool {
+    candidate
+        .outcome
+        .terminal
+        .cmp(&incumbent.outcome.terminal)
+        .then_with(|| {
+            candidate
+                .reward
+                .training_reward
+                .total_cmp(&incumbent.reward.training_reward)
+        })
+        .then_with(|| {
+            incumbent
+                .outcome
+                .execution
+                .duration
+                .realized_ticks
+                .cmp(&candidate.outcome.execution.duration.realized_ticks)
+        })
+        .is_gt()
+}
+
 pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(route_error)?;
@@ -3237,6 +3407,7 @@ mod tests {
             Digest([3; 32]),
             root_tape,
             transition,
+            Vec::new(),
         )
     }
 
@@ -3418,12 +3589,36 @@ mod tests {
         let transition_ref = store.store_option_transition(&transition, &route).unwrap();
         let mut trace = journal_trace(0);
         trace.reward_components.duration_ticks = 1;
+        let proposal_trace = NativeTacticProposalTrace {
+            option_id: transition.value_sample.action.option_id.clone(),
+            selection_reason: trace.selection_reason,
+            reward: transition.value_sample.reward,
+            reward_components: trace.reward_components.clone(),
+            realized_ticks: transition.execution.duration.realized_ticks,
+            terminal: transition.value_sample.terminal,
+            goal_distance_after: trace.goal_distance_after,
+            after_snapshot_sha256: transition.after_state_sha256,
+            retained: true,
+        };
+        trace.proposal_batch = vec![proposal_trace.clone()];
         append_tactic_decision_record(
             &root,
-            &decision_record(&trace, 2, root_checkpoint_sha256, root_ref, transition_ref),
+            &decision_record(
+                &trace,
+                2,
+                root_checkpoint_sha256,
+                root_ref,
+                transition_ref,
+                vec![NativeTacticProposalRecord {
+                    trace: proposal_trace,
+                    transition: transition_ref,
+                }],
+            ),
         )
         .unwrap();
 
+        let projected_trace = read_tactic_decision_journal(&root).unwrap();
+        assert_eq!(projected_trace[0].proposal_batch, trace.proposal_batch);
         let graph = project_tactic_decision_graph(&root).unwrap().unwrap();
         assert!(graph.root_connected);
         assert_eq!(graph.nodes.len(), 2);
