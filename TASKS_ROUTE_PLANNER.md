@@ -32,8 +32,10 @@ The remaining usability gap is direct route authoring:
 
 - Library browsing is still coarse-grained around whole example projects rather
   than mechanics, contexts, fixtures, templates, and reusable graphs.
-- Scenario roots, anchors, goals, and exact contexts cannot yet be chosen through
-  a complete blank-scenario flow.
+- The blank-scenario flow chooses an exact immutable Library context, one of its
+  authenticated state seeds, and one of its authored goals, then opens an empty
+  Route Book. It does not yet cover fresh-boot/card-fixture, recorded-snapshot,
+  upstream-graph, or contingent anchors, nor independent runtime configuration.
 - The canvas can place compatible catalogue mechanics into an independently
   serialized Workspace Route Book and persist its derived graph and layout
   atomically. A visible route step can be right-clicked to insert a mechanic
@@ -49,14 +51,16 @@ The remaining usability gap is direct route authoring:
 - Presentation regions are not reusable semantic subgraphs.
 - The browser acceptance test creates a blank Workspace through the UI, creates,
   renames, duplicates, trashes, and restores a mutable folder, edits and saves a
-  custom-node tab, creates a grounded scenario from a direct Library action,
+  custom-node tab, creates a grounded scenario by selecting an exact Library
+  context, authenticated state seed, and goal, proves its Route Book starts
+  empty,
   preserves a dirty graph's selection and viewport while switching asset tabs,
   opens and executes the keyboard command palette, uses save, close-tab, and
   tab-switch shortcuts, adds, undoes, redoes, drags an exact-state execution pin
   into a compatible-node catalogue, inserts and undoes its result, and
   right-click-inserts after its first route step before persisting the route. It
-  continues through the preassembled keyed-door example. Root, anchor, goal, and
-  context selection are not yet independently authorable.
+  continues through the preassembled keyed-door example. Additional anchor kinds
+  and independent runtime configuration are not yet authorable.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 
@@ -113,8 +117,6 @@ or test fixture does not count as progress by itself.
 
 - [ ] Preserve selection and viewport when switching between a graph and its
       referenced subgraph.
-- [ ] Provide empty states that lead directly to meaningful actions: choose a
-      context, choose an anchor, add a node, or open a template.
 
 ## 5. Blueprint-style graph authoring
 
@@ -222,8 +224,9 @@ scenario is.
 
 - [ ] Add a new-workspace flow that selects a writable folder and mounts one or
       more exact immutable libraries.
-- [ ] Add a new-scenario flow that selects build, runtime configuration, anchor,
-      and goal before opening the graph.
+- [ ] Extend new-scenario creation beyond an exact Library state-seed anchor:
+      select independent runtime configuration and support fresh-boot/card,
+      recorded-snapshot, upstream-graph, and contingent anchors.
 - [ ] Populate the node catalogue from mounted mechanics and current context,
       rather than embedding a private catalogue in every scenario.
 - [ ] Let an author build, insert, remove, replace, branch, and reconnect route
@@ -385,8 +388,6 @@ closes a documented unknown.
 
 All of the following must be true:
 
-- [ ] A new user can create a workspace and a grounded scenario without editing
-      serialized data.
 - [ ] Workspace and Library content are visibly separate.
 - [ ] Workspace assets support complete CRUD with stable references.
 - [ ] Right-click Add Node and pin-drag placement work from a searchable typed
