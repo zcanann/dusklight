@@ -1,141 +1,209 @@
-# Active task: make the learning framework useful
+# Active task: build a route optimizer that beats the incumbent
 
-This is the sole dependency-ordered roadmap for the learning framework.
-Implementation history belongs in Git and benchmark reports. Keep current
-product truth and unfinished work here; delete tasks when they are complete.
+This file contains only unfinished learning-framework work. Completed work and
+implementation history belong in Git and benchmark reports.
 
-## Product
+## Objective
 
-Give an agent:
+Build a generic checkpointable search-and-learning system that:
 
-- an authenticated starting checkpoint;
-- an authored terminal goal;
-- typed observable facts and derived progress measurements;
-- a finite catalog of applicable actions and multi-tick tactics; and
-- enough native simulation budget to try alternatives from retained states.
+1. starts from an authenticated native checkpoint;
+2. observes typed game state and derived progress measurements;
+3. proposes controller tactics and bounded tactic compositions;
+4. evaluates many alternatives from retained states;
+5. learns which state/action transitions are valuable;
+6. discovers and promotes reusable tactics; and
+7. optimizes a terminal-reaching route for the fewest native input ticks.
 
-The agent chooses tactics, observes their effects, learns which choices lead to
-valuable future states, branches from useful checkpoints, and eventually
-reaches the terminal. The terminal remains binary, while ordinary observable
-measurements provide intermediate learning signal.
+Ordon is the current acceptance benchmark. Its authenticated incumbent first
+reaches the terminal at tick 125. A terminal reach, a reliable terminal reach,
+or a 125-tick tie is diagnostic evidence only. The framework has not succeeded
+on this benchmark until a machine-generated route first reaches the same
+terminal in fewer than 125 ticks and reproduces from cold boot.
 
-Tactics may be atomic or bounded programmatic compositions. Movement tactics
-include reactive target seeking and static waypoint, rail, spline, and Bézier
-paths. Every selected tactic emits ordinary controller input and records an
-authenticated state/tactic transition with its duration, reward, checkpoint,
-and exact tape range.
+The browser workbench records, inspects, and replays execution graphs. It is not
+a TAS authoring surface. Human recordings may supply optional experience but
+must not define privileged actions, observations, state, or terminals.
 
-A human recording may optionally contribute experience through the existing
-replay pipeline. It must not define a private action space, hidden observation,
-fabricated state, or privileged terminal.
+## Non-negotiable architecture
 
-The operator is an LLM or another programmatic client. The browser workbench
-records, inspects, and replays graphs produced by execution. It does not author
-tactics, tape frames, compositions, or semantic action graphs.
+- JSON is not an operational checkpoint, replay, transition, model, frontier,
+  or journal format.
+- Reuse the existing versioned binary envelopes, tape encoding, native episode
+  shards, transition corpus, content digests, and zstd support.
+- Keep serialization behind storage interfaces. In-memory learner types must
+  not depend on JSON or a particular file layout.
+- Small authored requests and exported human-readable reports may use JSON.
+- Hot exploration records only the data required to resume, learn, and verify
+  identities. Full evidence graphs and readable reports are projections
+  produced after a candidate is retained.
+- Every performance claim must include useful native simulation, restore,
+  orchestration, and persistence time. Do not hide overhead outside the
+  measured boundary.
 
-## Current truth
+## P0 - Remove storage and orchestration from the hot path
 
-| Capability | State |
-|---|---|
-| Deterministic execution and checkpoints | Working |
-| Typed learner state and measurements | Working: authenticated fact snapshots, derived measures, applicability masks, bounded infodumps, and exact schema identities |
-| Executable tactic catalog | Working: generic and game-specific tactics, reactive movement, static motion paths, and bounded sequential/concurrent composition share one runtime action contract |
-| Semi-Markov tactic learning | Working: duration-aware replay, fitted-Q refits, reward shaping, hindsight, deterministic ranking, and selected-tactic execution |
-| Checkpoint branching | Working: replayable quality-diversity frontiers, root/frontier sampling, detached-restore rejection, and collapse/connectivity diagnostics |
-| Persistence | Working: checkpoint/resume, frozen greedy policies, final-result export, exact tapes, and authenticated evidence |
-| Human experience | Working: native replay corpora accept demonstration episodes and existing learning modes consume them |
-| Recording/playback workbench | Working: launch, pause/resume/cancel, graph projection, on-demand authenticated detail, exact edge/path playback, cleanup, and successful-tape export |
-| First from-scratch proof | Working: no-demonstration seed 181081 reached the Ordon terminal after 70 exploratory decisions; its frozen greedy policy reached it in 13 decisions and 426 native ticks |
-| Exact cold reproduction | Working: learned process-boot tapes for both exact Ordon starts reproduced identical terminal evidence across two cold runs |
-| Useful route quality | Not established: the retained human Ordon segment is 126 input frames; the best attributable learned local result is 129 ticks and the from-scratch tactic policy is substantially slower |
-| Reliability and generality | Partly established: the common learner succeeds from both the Link-control and authored exit-approach starts, but the full route remains one success in four current-build seeds and the second pair has only one evaluated seed |
-| Comparative learning value | Not established |
+- [ ] Inventory every artifact written per tactic decision and classify it as
+      required for resume, required for learning, retained-candidate evidence,
+      or optional reporting.
+- [ ] Replace the monolithic JSON tactic-Q campaign checkpoint with a versioned
+      compact binary checkpoint.
+- [ ] Store fact snapshots, actor snapshots, tapes, and tactic definitions once
+      by content digest. Store transition and frontier references instead of
+      embedding repeated copies.
+- [ ] Replace per-decision JSON files and full graph projections with a compact
+      append-only transition journal that can recover cleanly from a truncated
+      final record.
+- [ ] Make diagnostics, knowledge graphs, edge tapes, and readable summaries
+      on-demand projections from the binary store.
+- [ ] Compact the journal at bounded intervals without rewriting unchanged
+      snapshots, replay rows, or tape data.
+- [ ] Prove exact resume equivalence across interruption: selected actions,
+      model state, frontier state, route tapes, and final candidate identities
+      must match an uninterrupted run.
+- [ ] Benchmark the same sealed campaign before and after the change. Report
+      bytes written, serialization time, useful decisions per second, native
+      ticks per second, and peak memory.
 
-The first tactic-Q proof is retained at
-`docs/glitch-hunting/benchmarks/ordon-tactic-q-first-proof-20260724.json`.
-The independent-seed result and its current-build replay proof are retained at
-`docs/glitch-hunting/benchmarks/ordon-tactic-q-reliability-20260724.json`.
-Together they prove basic competence and exact reproduction, but the measured
-25% campaign success rate does not prove reliable competence or generality.
+Acceptance:
 
-The second exact start/goal proof is retained at
-`docs/glitch-hunting/benchmarks/ordon-exit-approach-tactic-q-second-pair-20260725.json`.
-It proves the shared learner from the authenticated exit-approach boundary,
-while honestly retaining the 12-frame authored suffix as the faster incumbent.
+- No operational tactic-Q checkpoint or hot-path journal is JSON.
+- Evidence projection and persistence no longer dominate campaign wall time.
+- Resume and final cold-replay identities remain exact.
 
-## P1 — Improve route quality
+## P1 - Use the simulator's available throughput
 
-Competence and efficiency are different claims. A terminal-reaching route is
-not automatically a useful route.
+- [ ] Make tactic-route honor its configured worker count instead of launching
+      one persistent worker and evaluating seeds sequentially.
+- [ ] Benchmark 1, 2, 4, and 8 persistent workers on the current host under one
+      sealed workload. Report scaling efficiency, memory, restore time, native
+      ticks per second, and useful decisions per second.
+- [ ] Evaluate a diverse batch of applicable tactic proposals from the same
+      restored state before choosing the next frontier transition.
+- [ ] Schedule independent seeds, frontier expansions, and equal-source tactic
+      batches concurrently without allowing completion order to affect seeded
+      decisions or result identities.
+- [ ] Separate fast exploration from retained-candidate proof. Ordinary failed
+      trials must not pay for knowledge-graph projection or cold replay.
+- [ ] Profile remaining CPU simulation work only after persistence and worker
+      utilization are fixed. Preserve callbacks whose removal changes gameplay.
 
-- [ ] Optimize elapsed native ticks and input complexity only among candidates
-      that reach the authored terminal.
-- [ ] Hand successful learned tapes directly to the existing bounded
-      continuous/discrete refinement and exact-reduction machinery without
-      introducing another tape, state, action, or evidence format.
-- [ ] Use observable progress, tactic outcomes, uncertainty, and retained
-      checkpoints to propose meaningful alternatives instead of relying only on
-      blind frame mutation.
-- [ ] Beat the retained 126-frame human
-      `to_ordon_spring_q125.tape` segment from the same authenticated
-      Link-control boundary and cold-prove the complete winning tape.
-- [ ] Publish the winning lineage, simulation budget, exact input change,
-      segment time, terminal evidence, and independent replay identities.
-- [ ] Keep the retained human segment as the incumbent unless a strictly faster
-      machine-generated descendant passes the same proof contract.
+Acceptance:
 
-The Ordon result is an important concrete performance benchmark. It is not the
-definition of the entire learning framework.
+- A multi-worker tactic-route campaign demonstrably uses the requested workers.
+- End-to-end learning throughput improves by at least an order of magnitude on
+  the sealed Ordon workload without changing its semantic results.
+- Worker scaling is measured rather than inferred from raw simulator tests.
 
-## P2 — Validate optional human experience
+## P2 - Make retained states computationally real
 
-Demonstration recording, replay ingestion, and learning modes already exist.
-Do not create a second demonstration format or a privileged action path.
+- [ ] Distinguish a logical frontier record from a restorable native checkpoint
+      in types, reports, and diagnostics.
+- [ ] Add a bounded per-worker native checkpoint cache for valuable frontier
+      states, with explicit memory accounting and deterministic eviction.
+- [ ] Restore a cached frontier directly when available instead of restoring
+      the root checkpoint and replaying the complete accumulated route.
+- [ ] Batch competing proposals at a frontier so one restore and prefix replay
+      are amortized across many alternatives even when that frontier is not
+      cached.
+- [ ] Measure restore cost, replayed-prefix ticks, cache hit rate, memory, and
+      useful transitions produced per restore.
+- [ ] Reject detached, mismatched, or semantically invalid checkpoints without
+      silently falling back to fabricated state.
 
-- [ ] Compare otherwise identical cold-start and demonstration-seeded tactic
-      learning by time to first terminal, final route quality, and simulation
-      budget.
-- [ ] Prove that removing demonstration rows removes no action, observation,
-      measurement, checkpoint, terminal, or refinement capability.
-- [ ] Distinguish replay training, behavior-cloning warm start, and reverse
-      curriculum results instead of grouping all human-assisted runs together.
-- [ ] Preserve demonstration provenance in published comparisons.
+Acceptance:
 
-## P3 — Establish comparative learning value
+- Search depth does not force every candidate to replay its entire path from
+  the root.
+- Reports expose how much work came from direct restores versus prefix replay.
 
-- [ ] Define a compact sealed comparison using the actual tactic-Q learner.
-- [ ] Compare learning against random applicable-tactic selection and
-      non-learning structured search under equal useful native-simulation
-      budgets.
-- [ ] Repeat across enough seeds and at least one held-out start to report
-      uncertainty rather than a single winner.
-- [ ] Publish success rate, time to first success, best route, useful
-      state/tactic coverage, and candidate diversity even when learning loses.
-- [ ] Run a larger treatment matrix only if it answers a remaining product
-      question.
+## P3 - Replace the fixed action grid with tactic proposals
 
-## P4 — Optimize throughput only when measured
+- [ ] Treat the existing controller operations as executable tactic families,
+      not 136 permanently enumerated categorical choices.
+- [ ] Let proposals parameterize heading, stick magnitude, duration, curve,
+      roll timing, target, interaction timing, and bounded composition where
+      applicable.
+- [ ] Preserve applicability and safety constraints in the executor so a
+      proposer cannot emit invalid or unbounded programs.
+- [ ] Generate multiple diverse parameter proposals from each retained state
+      using progress, novelty, uncertainty, and previous outcomes.
+- [ ] Make the native route learner execute tactic blueprints; remove the empty
+      blueprint path from the real campaign.
+- [ ] Record the exact compiled controller tape and realized duration for every
+      proposal so learned tactics remain ordinary replayable input.
 
-The four-seed reliability experiment found that evidence projection and
-persistence consumes 65.4% of summed seed wall time. Native tactic execution is
-the next largest phase; model fitting is not the bottleneck.
+Acceptance:
 
-- [ ] Benchmark one, two, and four independent tactic-route workers on the
-      current host under one sealed configuration.
-- [ ] Make tactic-route honor the selected worker count and reduce evidence
-      persistence overhead, then prove higher useful-decision throughput without
-      changing campaign identities or outcomes.
+- The learner can evaluate parameters and compositions that were not present as
+  individual blessed catalog entries at campaign start.
+- The same generic tactic runtime works for Ordon and at least one held-out
+  start/goal pair without route-specific preferred-action scripts.
 
-More transitions per second are useful only when they improve the rate of
-meaningful, independently evaluated behavior.
+## P4 - Discover, validate, and promote tactics
 
-## Completion
+- [ ] Mine successful and high-value replay fragments for recurring bounded
+      action sequences and state-conditioned tactic parameters.
+- [ ] Propose reusable macro tactics from those fragments without modifying the
+      underlying controller-input contract.
+- [ ] Evaluate each candidate macro against its primitive components from
+      multiple authenticated frontier states and deterministic seeds.
+- [ ] Promote a tactic only when it improves terminal probability, progress per
+      simulated tick, or route cost under a sealed comparison.
+- [ ] Retain provenance from source transitions through composition, evaluation,
+      promotion, and every later execution.
+- [ ] Demote tactics that cease to add value while keeping historical replay
+      data readable.
 
-The framework is useful when it:
+Acceptance:
 
-1. reliably learns terminal-reaching behavior from more than one exact
-   start/goal pair through the common fact and tactic interfaces;
-2. produces exact policies and tapes that reproduce from cold boot;
-3. demonstrates measurable value over appropriate equal-budget baselines; and
-4. improves at least one meaningful route-quality benchmark, including a
-   cold-proven attempt to beat the retained 126-frame Ordon segment.
+- At least one tactic absent from the initial catalog is discovered, promoted
+  by measured results, reused in a later decision, and cold-replayed exactly.
+- Promotion is based on comparative execution evidence, not manual blessing.
+
+## P5 - Couple search and learning around useful trials
+
+- [ ] Use the value/Q model to rank batches of state-conditioned tactic
+      proposals and frontier states rather than blocking on one epsilon-greedy
+      categorical action at a time.
+- [ ] Preserve a diverse frontier across progress, novelty, uncertainty, route
+      cost, and terminal evidence so one choke state cannot absorb the campaign.
+- [ ] Prioritize transitions that reduce uncertainty or cross poorly covered
+      state boundaries, including the shared Ordon choke observed by failed
+      seeds.
+- [ ] Train from the deduplicated replay store and measure model-update cost
+      separately from simulation and persistence.
+- [ ] Compare the learned ranking against random valid proposals and
+      non-learning structured search under identical native-tick budgets.
+- [ ] Publish failures, coverage, candidate diversity, and time to improvement;
+      do not substitute terminal success rate for route optimization.
+
+Acceptance:
+
+- Learning improves sub-incumbent discovery rate or best route cost over both
+  equal-budget baselines across multiple seeds.
+- Added simulation volume produces distinct useful transitions rather than
+  repeated trajectories from one parent checkpoint.
+
+## P6 - Beat the authenticated Ordon incumbent
+
+- [ ] Run the integrated system from the exact `to_ordon_spring_q125` source
+      boundary with no route-specific preferred-action script.
+- [ ] Search until it produces a candidate whose first authenticated terminal
+      hit is strictly earlier than tick 125.
+- [ ] Minimize the complete successful controller tape without changing the
+      source checkpoint, terminal predicate, game build, or execution fidelity.
+- [ ] Cold-replay the complete winning tape at least twice from process boot
+      with the learner and controller out of the loop.
+- [ ] Require byte-identical input and identical authenticated terminal
+      evidence across the cold replays.
+- [ ] Publish total native simulation, wall time, worker count, peak memory,
+      winning lineage, first-hit tick, and proof identities.
+
+Acceptance:
+
+- A machine-generated route reaches the authenticated Ordon terminal in fewer
+  than 125 ticks.
+- The route reproduces exactly from cold boot.
+
+Anything short of both conditions is progress evidence, not success.
