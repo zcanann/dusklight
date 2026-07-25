@@ -62,6 +62,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5: &str = "dusklight-native-tactic-route-report/v5";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6: &str = "dusklight-native-tactic-route-report/v6";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7: &str = "dusklight-native-tactic-route-report/v7";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8: &str = "dusklight-native-tactic-route-report/v8";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -126,8 +127,17 @@ pub struct NativeTacticRouteReport {
     pub total_native_ticks: u64,
     pub total_decisions: u64,
     pub useful_decisions: u64,
+    pub frontier_availability: NativeTacticFrontierAvailability,
     pub timing: NativeTacticRouteTiming,
     pub seeds: Vec<NativeTacticSeedResult>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticFrontierAvailability {
+    pub logical_frontier_records: usize,
+    pub directly_restorable_native_frontiers: usize,
+    pub replay_only_frontiers: usize,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
@@ -204,6 +214,12 @@ pub struct NativeTacticDecisionTrace {
     pub goal_distance_after: f32,
     pub terminal: bool,
     pub frontier_cells: usize,
+    #[serde(default)]
+    pub logical_frontier_records: usize,
+    #[serde(default)]
+    pub directly_restorable_native_frontiers: usize,
+    #[serde(default)]
+    pub replay_only_frontiers: usize,
     pub visited_states: usize,
     pub before: NativeTacticStateTrace,
     pub after: NativeTacticStateTrace,
@@ -289,6 +305,12 @@ struct NativeTacticDecisionRecord {
     goal_distance_after: f32,
     terminal: bool,
     frontier_cells: usize,
+    #[serde(default)]
+    logical_frontier_records: usize,
+    #[serde(default)]
+    directly_restorable_native_frontiers: usize,
+    #[serde(default)]
+    replay_only_frontiers: usize,
     visited_states: usize,
     root_checkpoint_sha256: Digest,
     root_tape: StoredContentRef,
@@ -513,8 +535,26 @@ pub fn run_native_tactic_route(
     let mut timing = aggregate_route_timing(&seed_results);
     timing.wall_micros = elapsed_micros(campaign_started.elapsed());
     refresh_route_throughput(&mut timing, &seed_results);
+    let frontier_availability = seed_results
+        .iter()
+        .filter_map(|seed| seed.trace.last())
+        .fold(
+            NativeTacticFrontierAvailability::default(),
+            |mut total, trace| {
+                total.logical_frontier_records = total
+                    .logical_frontier_records
+                    .saturating_add(trace.logical_frontier_records);
+                total.directly_restorable_native_frontiers = total
+                    .directly_restorable_native_frontiers
+                    .saturating_add(trace.directly_restorable_native_frontiers);
+                total.replay_only_frontiers = total
+                    .replay_only_frontiers
+                    .saturating_add(trace.replay_only_frontiers);
+                total
+            },
+        );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -531,6 +571,7 @@ pub fn run_native_tactic_route(
         total_native_ticks: seed_results.iter().map(|seed| seed.native_ticks).sum(),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
         useful_decisions,
+        frontier_availability,
         timing,
         seeds: seed_results,
     };
@@ -1208,6 +1249,9 @@ fn run_seed(
             goal_distance_after: after_features[encoder.goal_distance_feature()],
             terminal: step.step.transition.value_sample.terminal,
             frontier_cells,
+            logical_frontier_records: frontier_cells.saturating_add(1),
+            directly_restorable_native_frontiers: 0,
+            replay_only_frontiers: frontier_cells,
             visited_states: campaign.visited_state_count(),
             before: tactic_state_trace(&step.step.transition.before)?,
             after: tactic_state_trace(&step.step.transition.after)?,
@@ -1826,9 +1870,27 @@ pub fn project_tactic_decision_diagnostics(
         .iter()
         .map(|record| record.episode_group)
         .collect::<Vec<_>>();
+    let (logical_frontier_records, directly_restorable_native_frontiers, replay_only_frontiers) =
+        replay
+            .records
+            .last()
+            .map_or((graph.nodes.len(), 0, graph.frontier_cells), |record| {
+                if record.logical_frontier_records == 0 {
+                    (graph.nodes.len(), 0, graph.frontier_cells)
+                } else {
+                    (
+                        record.logical_frontier_records,
+                        record.directly_restorable_native_frontiers,
+                        record.replay_only_frontiers,
+                    )
+                }
+            });
     Ok(Some(TacticCampaignDiagnostics {
         replay_rows: replay.transitions.len(),
         frontier_cells: graph.frontier_cells,
+        logical_frontier_records,
+        directly_restorable_native_frontiers,
+        replay_only_frontiers,
         unique_selected_actions: selected_actions.len(),
         zero_diversity_selection: replay.transitions.len() >= 2 && selected_actions.len() <= 1,
         repeated_identical_compositions: composition_counts.values().any(|count| *count > 1),
@@ -2011,6 +2073,9 @@ fn decision_record(
         goal_distance_after: trace.goal_distance_after,
         terminal: trace.terminal,
         frontier_cells: trace.frontier_cells,
+        logical_frontier_records: trace.logical_frontier_records,
+        directly_restorable_native_frontiers: trace.directly_restorable_native_frontiers,
+        replay_only_frontiers: trace.replay_only_frontiers,
         visited_states: trace.visited_states,
         root_checkpoint_sha256,
         root_tape,
@@ -2033,6 +2098,17 @@ fn project_tactic_decision_record(
     {
         return Err(route_message(
             "tactic decision journal references are detached",
+        ));
+    }
+    if record.logical_frontier_records != 0
+        && (record.logical_frontier_records != record.frontier_cells.saturating_add(1)
+            || record
+                .directly_restorable_native_frontiers
+                .saturating_add(record.replay_only_frontiers)
+                != record.frontier_cells)
+    {
+        return Err(route_message(
+            "tactic frontier availability accounting is detached",
         ));
     }
     let proposal_batch = record
@@ -2083,6 +2159,9 @@ fn project_tactic_decision_record(
         goal_distance_after: record.goal_distance_after,
         terminal: record.terminal,
         frontier_cells: record.frontier_cells,
+        logical_frontier_records: record.logical_frontier_records,
+        directly_restorable_native_frontiers: record.directly_restorable_native_frontiers,
+        replay_only_frontiers: record.replay_only_frontiers,
         visited_states: record.visited_states,
         before: tactic_state_trace(&transition.before)?,
         after: tactic_state_trace(&transition.after)?,
@@ -3760,6 +3839,9 @@ mod tests {
         let diagnostics = project_tactic_decision_diagnostics(&root).unwrap().unwrap();
         assert_eq!(diagnostics.replay_rows, 1);
         assert_eq!(diagnostics.frontier_cells, 1);
+        assert_eq!(diagnostics.logical_frontier_records, 2);
+        assert_eq!(diagnostics.directly_restorable_native_frontiers, 0);
+        assert_eq!(diagnostics.replay_only_frontiers, 1);
         assert_eq!(diagnostics.unique_selected_actions, 1);
         assert!(!diagnostics.frontier_lost_root_connectivity);
         let materialized = materialize_tactic_decision_route(&root, 0).unwrap();

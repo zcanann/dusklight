@@ -131,12 +131,38 @@ pub enum TacticBranchKind {
     RetainedFrontier,
 }
 
+/// Portable identity of a frontier that can always be reconstructed by
+/// restoring the authenticated native root and replaying `replayed_prefix_ticks`.
+/// This is not a native emulator checkpoint handle.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogicalTacticFrontierRecord {
+    pub identity_sha256: Digest,
+    pub state_sha256: Digest,
+    pub route_frames: u64,
+    pub replayed_prefix_ticks: u64,
+}
+
+/// Process-local native checkpoint authority. Unlike a logical frontier
+/// digest, this record names a concrete worker restore handle and accounts for
+/// the native memory it owns.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RestorableNativeTacticCheckpoint {
+    pub worker_slot: usize,
+    pub native_source_sha256: Digest,
+    pub logical_frontier_sha256: Digest,
+    pub state_sha256: Digest,
+    pub restore_identity: String,
+    pub checkpoint_bytes: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticCampaignBranch {
     pub kind: TacticBranchKind,
-    pub state_sha256: Digest,
-    pub route_checkpoint_sha256: Digest,
+    pub logical_frontier: LogicalTacticFrontierRecord,
+    pub restorable_native_checkpoint: Option<RestorableNativeTacticCheckpoint>,
     pub state: FactSnapshot,
     pub route_tape: InputTape,
     pub descriptor: Option<TacticEndpointDescriptor>,
@@ -224,6 +250,12 @@ pub struct TacticCampaignGraphProjectionEdge {
 pub struct TacticCampaignDiagnostics {
     pub replay_rows: usize,
     pub frontier_cells: usize,
+    #[serde(default)]
+    pub logical_frontier_records: usize,
+    #[serde(default)]
+    pub directly_restorable_native_frontiers: usize,
+    #[serde(default)]
+    pub replay_only_frontiers: usize,
     pub unique_selected_actions: usize,
     pub zero_diversity_selection: bool,
     pub repeated_identical_compositions: bool,
@@ -529,6 +561,9 @@ impl TacticQCampaign {
         Ok(TacticCampaignDiagnostics {
             replay_rows: self.replay.len(),
             frontier_cells: archive.tactic_len(),
+            logical_frontier_records: graph.nodes.len(),
+            directly_restorable_native_frontiers: 0,
+            replay_only_frontiers: archive.tactic_len(),
             unique_selected_actions: selected_actions.len(),
             zero_diversity_selection: self.replay.len() >= 2 && selected_actions.len() <= 1,
             repeated_identical_compositions: composition_counts.values().any(|count| *count > 1),
@@ -558,10 +593,16 @@ impl TacticQCampaign {
         let root_frames = usize::try_from(first.execution.realized_tape_range.start_frame)
             .map_err(|_| TacticQCampaignError::InvalidState("root tape range overflows"))?;
         let root_route = tape_prefix(first_route, root_frames);
+        let root_identity = route_checkpoint(self.root_checkpoint_sha256, &root_route)?;
         let root = TacticCampaignBranch {
             kind: TacticBranchKind::Root,
-            state_sha256: first.before_state_sha256,
-            route_checkpoint_sha256: route_checkpoint(self.root_checkpoint_sha256, &root_route)?,
+            logical_frontier: LogicalTacticFrontierRecord {
+                identity_sha256: root_identity,
+                state_sha256: first.before_state_sha256,
+                route_frames: root_route.frames.len() as u64,
+                replayed_prefix_ticks: 0,
+            },
+            restorable_native_checkpoint: None,
             state: first.before.clone(),
             route_tape: root_route,
             descriptor: None,
@@ -579,10 +620,23 @@ impl TacticQCampaign {
         }
         let index = seeded_frontier_index(seed, round, choices.len());
         let selected = &choices[index];
+        let replayed_prefix_ticks = selected
+            .route_tape
+            .frames
+            .len()
+            .checked_sub(root_frames)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "frontier route precedes its native root",
+            ))? as u64;
         let frontier = TacticCampaignBranch {
             kind: TacticBranchKind::RetainedFrontier,
-            state_sha256: selected.transition.after_state_sha256,
-            route_checkpoint_sha256: selected.route_checkpoint_sha256,
+            logical_frontier: LogicalTacticFrontierRecord {
+                identity_sha256: selected.route_checkpoint_sha256,
+                state_sha256: selected.transition.after_state_sha256,
+                route_frames: selected.route_tape.frames.len() as u64,
+                replayed_prefix_ticks,
+            },
+            restorable_native_checkpoint: None,
             state: selected.transition.after.clone(),
             route_tape: selected.route_tape.clone(),
             descriptor: Some(selected.descriptor.clone()),
@@ -612,28 +666,46 @@ impl TacticQCampaign {
             .validate()
             .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
         let frontier = self.frontier_archive()?;
+        let native_root_frames = self
+            .replay
+            .first()
+            .and_then(|first| usize::try_from(first.execution.realized_tape_range.start_frame).ok())
+            .ok_or(TacticQCampaignError::InvalidState(
+                "campaign has no native root boundary",
+            ))?;
+        let expected_replayed_prefix_ticks = branch
+            .route_tape
+            .frames
+            .len()
+            .checked_sub(native_root_frames)
+            .ok_or(TacticQCampaignError::InvalidState(
+                "frontier route precedes its native root",
+            ))? as u64;
         let admitted = match branch.kind {
             TacticBranchKind::Root => self.replay.first().is_some_and(|first| {
-                first.before_state_sha256 == branch.state_sha256
-                    && first.source_checkpoint_sha256 == branch.route_checkpoint_sha256
+                first.before_state_sha256 == branch.logical_frontier.state_sha256
+                    && first.source_checkpoint_sha256 == branch.logical_frontier.identity_sha256
             }),
             TacticBranchKind::RetainedFrontier => frontier
                 .select_tactic_frontier(&[], frontier.tactic_len())
                 .iter()
                 .any(|entry| {
-                    entry.transition.after_state_sha256 == branch.state_sha256
-                        && entry.route_checkpoint_sha256 == branch.route_checkpoint_sha256
+                    entry.transition.after_state_sha256 == branch.logical_frontier.state_sha256
+                        && entry.route_checkpoint_sha256 == branch.logical_frontier.identity_sha256
                 }),
         };
         if !admitted
             || self.episode_groups.contains(&episode_group)
-            || branch.state_sha256
+            || branch.restorable_native_checkpoint.is_some()
+            || branch.logical_frontier.state_sha256
                 != branch
                     .state
                     .content_sha256()
                     .map_err(|error| TacticQCampaignError::Features(error.to_string()))?
             || branch.state.tape_frame != branch.route_tape.frames.len() as u64
-            || branch.route_checkpoint_sha256
+            || branch.logical_frontier.route_frames != branch.route_tape.frames.len() as u64
+            || branch.logical_frontier.replayed_prefix_ticks != expected_replayed_prefix_ticks
+            || branch.logical_frontier.identity_sha256
                 != route_checkpoint(self.root_checkpoint_sha256, &branch.route_tape)?
         {
             return Err(TacticQCampaignError::InvalidState(
@@ -2009,14 +2081,46 @@ mod tests {
         let collapsed_diagnostics = collapsed.diagnostics().unwrap();
         assert!(collapsed_diagnostics.zero_diversity_selection);
         assert!(collapsed_diagnostics.repeated_identical_compositions);
+        let diagnostics = restored.diagnostics().unwrap();
+        assert_eq!(diagnostics.logical_frontier_records, 2);
+        assert_eq!(diagnostics.directly_restorable_native_frontiers, 0);
+        assert_eq!(diagnostics.replay_only_frontiers, 1);
         let [root_branch, frontier_branch] = restored
             .sample_root_and_frontier(5, 0, &[], usize::MAX)
             .unwrap();
         assert_eq!(root_branch.kind, TacticBranchKind::Root);
         assert_eq!(frontier_branch.kind, TacticBranchKind::RetainedFrontier);
         assert_eq!(
-            frontier_branch.state_sha256,
+            frontier_branch.logical_frontier.state_sha256,
             campaign.current.snapshot_sha256
+        );
+        assert!(root_branch.restorable_native_checkpoint.is_none());
+        assert!(frontier_branch.restorable_native_checkpoint.is_none());
+        assert_eq!(root_branch.logical_frontier.replayed_prefix_ticks, 0);
+        assert!(frontier_branch.logical_frontier.replayed_prefix_ticks > 0);
+        let mut forged_native_frontier = frontier_branch.clone();
+        forged_native_frontier.restorable_native_checkpoint =
+            Some(RestorableNativeTacticCheckpoint {
+                worker_slot: 0,
+                native_source_sha256: campaign.root_checkpoint_sha256,
+                logical_frontier_sha256: frontier_branch.logical_frontier.identity_sha256,
+                state_sha256: frontier_branch.logical_frontier.state_sha256,
+                restore_identity: "unadmitted-process-local-handle".into(),
+                checkpoint_bytes: 4096,
+            });
+        let mut rejects_forged_native =
+            TacticQCampaign::resume(campaign.checkpoint().unwrap()).unwrap();
+        assert!(
+            rejects_forged_native
+                .restore_branch(
+                    &forged_native_frontier,
+                    23,
+                    &registry,
+                    &catalog,
+                    &[],
+                    |_| true,
+                )
+                .is_err()
         );
         assert!(
             restored
@@ -2028,7 +2132,10 @@ mod tests {
             .restore_branch(&root_branch, 22, &registry, &catalog, &[], |_| true)
             .unwrap();
         assert_eq!(branched.episode_group, 22);
-        assert_eq!(branched.current.snapshot_sha256, root_branch.state_sha256);
+        assert_eq!(
+            branched.current.snapshot_sha256,
+            root_branch.logical_frontier.state_sha256
+        );
         assert!(branched.model().is_some());
         branched.checkpoint().unwrap();
         let mut tampered = checkpoint;
