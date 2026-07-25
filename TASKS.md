@@ -43,11 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P0 - Remove storage and orchestration from the hot path
 
-- [ ] Inventory every artifact written per tactic decision and classify it as
-      required for resume, required for learning, retained-candidate evidence,
-      or optional reporting.
-- [ ] Replace the monolithic JSON tactic-Q campaign checkpoint with a versioned
-      compact binary checkpoint.
 - [ ] Store fact snapshots, actor snapshots, tapes, and tactic definitions once
       by content digest. Store transition and frontier references instead of
       embedding repeated copies.

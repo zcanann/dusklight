@@ -7,6 +7,7 @@ use dusklight_orchestration::native_tactic_route_runner::{
     NativeTacticRouteRunConfig, run_native_tactic_route,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
+use dusklight_orchestration::tactic_q_campaign::TACTIC_Q_CHECKPOINT_EXTENSION;
 use serde_json::Value;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -790,7 +791,10 @@ fn tactic_route_pause_evidence_exists(output: &Path) -> bool {
                             file.file_type()
                                 .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
                                 && file.file_name().to_string_lossy().starts_with("tactic-q-")
-                                && file.path().extension().is_some_and(|value| value == "json")
+                                && file
+                                    .path()
+                                    .extension()
+                                    .is_some_and(|value| value == TACTIC_Q_CHECKPOINT_EXTENSION)
                         })
                 })
         })
@@ -1309,7 +1313,11 @@ mod tests {
             .join("pause-checkpoints")
             .join("decision-000003");
         fs::create_dir_all(&pause).unwrap();
-        fs::write(pause.join("tactic-q-proof.json"), b"checkpoint").unwrap();
+        fs::write(
+            pause.join(format!("tactic-q-proof.{TACTIC_Q_CHECKPOINT_EXTENSION}")),
+            b"checkpoint",
+        )
+        .unwrap();
         assert!(tactic_route_pause_evidence_exists(&root));
         assert_eq!(
             request_tactic_route_cancel("unregistered-pause", &root).unwrap(),

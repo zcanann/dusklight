@@ -36,7 +36,7 @@ dependencies = [
  "arrow-data",
  "arrow-schema",
  "chrono",
- "half",
+ "half 2.7.1",
  "hashbrown",
  "num",
 ]
@@ -48,7 +48,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a90f8bece6a9ee316a699fbbfde368a206676a1206ce89b50f07937648e76c3c"
 dependencies = [
  "bytes",
- "half",
+ "half 2.7.1",
  "num",
 ]
 
@@ -60,7 +60,7 @@ checksum = "78468c813909465dd0f858950c8a0614eb63608134acf95c602ec21381258b28"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
- "half",
+ "half 2.7.1",
  "num",
 ]
 
@@ -441,6 +441,7 @@ dependencies = [
  "dusklight-worker-protocol",
  "dusklight-world",
  "serde",
+ "serde_cbor",
  "serde_json",
  "sha2",
  "zstd",
@@ -659,6 +660,12 @@ dependencies = [
  "libc",
  "r-efi 6.0.0",
 ]
+
+[[package]]
+name = "half"
+version = "1.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b43ede17f21864e81be2fa654110bf1e793774238d86ef8555c37e6519c0403"
 
 [[package]]
 name = "half"
@@ -903,6 +910,16 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde_cbor"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bef2ebfde456fb76bbcf9f59315333decc4fda0b2b44b420243c11e0f5ec1f5"
+dependencies = [
+ "half 1.8.3",
+ "serde",
 ]
 
 [[package]]

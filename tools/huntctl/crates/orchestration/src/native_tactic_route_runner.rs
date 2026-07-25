@@ -11,7 +11,8 @@ use crate::native_tactic_worker::{
 };
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_q_campaign::{
-    TacticCampaignDiagnostics, TacticQCampaign, TacticQCampaignCheckpoint, TacticQCampaignError,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics, TacticQCampaign,
+    TacticQCampaignCheckpoint, TacticQCampaignError,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputTape, RawPadState};
@@ -1238,7 +1239,7 @@ fn latest_pause_checkpoint(seed_root: &Path) -> Result<(u64, PathBuf), NativeTac
                     && candidate
                         .path()
                         .extension()
-                        .is_some_and(|value| value == "json")
+                        .is_some_and(|value| value == TACTIC_Q_CHECKPOINT_EXTENSION)
             })
             .map(|candidate| candidate.path())
             .collect::<Vec<_>>();
@@ -2517,7 +2518,9 @@ mod tests {
                 .join(format!("decision-{decision:06}"));
             fs::create_dir_all(&checkpoint).unwrap();
             fs::write(
-                checkpoint.join(format!("tactic-q-{decision}.json")),
+                checkpoint.join(format!(
+                    "tactic-q-{decision}.{TACTIC_Q_CHECKPOINT_EXTENSION}"
+                )),
                 b"checkpoint",
             )
             .unwrap();
@@ -2525,7 +2528,10 @@ mod tests {
 
         let (decision, path) = latest_pause_checkpoint(&directory).unwrap();
         assert_eq!(decision, 7);
-        assert_eq!(path.file_name().unwrap(), "tactic-q-7.json");
+        assert_eq!(
+            path.file_name().unwrap(),
+            format!("tactic-q-7.{TACTIC_Q_CHECKPOINT_EXTENSION}").as_str()
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 }
