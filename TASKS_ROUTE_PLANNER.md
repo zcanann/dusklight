@@ -23,9 +23,10 @@ planner.
 
 The browser now has a graph-first shell and file-backed workspaces with
 independently serialized typed assets. A user can create a workspace, create a
-  grounded scenario from an exact read-only Library template, edit custom-node
-  contracts, perform recoverable asset and folder CRUD, and import or export
-  individual assets and complete workspaces without editing JSON.
+grounded scenario from an exact read-only Library template, edit custom-node
+contracts, perform recoverable asset and folder CRUD, keep multiple assets open
+with independent working state, and import or export individual assets and
+complete workspaces without editing JSON.
 
 The remaining usability gap is direct route authoring:
 
@@ -38,16 +39,18 @@ The remaining usability gap is direct route authoring:
   atomically. A visible route step can be right-clicked to insert a mechanic
   after it with authoritative downstream replay, but the canvas does not yet
   author typed pins, branches, subgraphs, or general semantic graph rewiring.
-- Multiple editors, asset-level undo/redo, and broader keyboard-first authoring
-  remain incomplete. Route Book edits, presentation regions, evidence changes,
-  and node moves have semantic undo/redo now.
+- Asset-level undo/redo and broader keyboard-first authoring remain incomplete.
+  Route Book edits, presentation regions, evidence changes, and node moves have
+  semantic undo/redo now.
 - Presentation regions are not reusable semantic subgraphs.
 - The browser acceptance test creates a blank Workspace through the UI, creates,
-  renames, duplicates, trashes, and restores a mutable folder, creates a grounded
-  scenario from a direct Library action, adds, undoes, redoes, and
-  right-click-inserts after its first route step, then undoes that insertion and
-  persists the route. It continues through the preassembled keyed-door example.
-  Root, anchor, goal, and context selection are not yet independently authorable.
+  renames, duplicates, trashes, and restores a mutable folder, edits and saves a
+  custom-node tab, creates a grounded scenario from a direct Library action,
+  preserves a dirty graph's selection and viewport while switching asset tabs,
+  adds, undoes, redoes, and right-click-inserts after its first route step, then
+  undoes that insertion and persists the route. It continues through the
+  preassembled keyed-door example. Root, anchor, goal, and context selection are
+  not yet independently authorable.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 
@@ -102,14 +105,13 @@ or test fixture does not count as progress by itself.
 
 ## 4. Application shell and information hierarchy
 
-- [ ] Support multiple asset editor tabs with breadcrumbs and unsaved-state
-      indicators.
 - [ ] Add command-palette access and consistent keyboard shortcuts for every
       primary operation.
 - [ ] Preserve selection and viewport when switching between a graph and its
       referenced subgraph.
 - [ ] Provide empty states that lead directly to meaningful actions: choose a
       context, choose an anchor, add a node, or open a template.
+
 ## 5. Blueprint-style graph authoring
 
 ### 5.1 Node catalogue and placement

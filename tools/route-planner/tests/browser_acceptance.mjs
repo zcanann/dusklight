@@ -239,7 +239,59 @@ try {
         .some((label) => label.textContent.startsWith("Research copy"))`,
   );
   await evaluate(`(() => {
-    document.getElementById("empty-primary").click();
+    document.getElementById("new-asset").click();
+    document.getElementById("new-asset-label").value = "Browser mechanic";
+    document.getElementById("new-asset-id").value = "custom.browser-mechanic";
+    document.getElementById("new-asset-form").requestSubmit();
+    return true;
+  })()`);
+  await browserUntil(
+    "custom-node editor tab",
+    `document.getElementById("status").textContent === "Hypothetical custom node created"
+      && document.querySelector(
+        '#editor-tabs .editor-tab.active[data-asset-id="custom.browser-mechanic"]'
+      ) != null
+      && !document.getElementById("workspace-asset-editor").hidden`,
+  );
+  await evaluate(`(() => {
+    const name = document.querySelector("#workspace-asset-editor input");
+    name.value = "Browser mechanic revised";
+    name.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  })()`);
+  await browserUntil(
+    "custom-node unsaved indicator",
+    `document.querySelector(
+      '#editor-tabs .editor-tab[data-asset-id="custom.browser-mechanic"] .editor-tab-dirty'
+    ) != null && !document.getElementById("save-project").disabled`,
+  );
+  await evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "s",
+    ctrlKey: true,
+    bubbles: true,
+  }))`);
+  await browserUntil(
+    "custom-node tab save",
+    `(async () => {
+      if (document.getElementById("status").textContent !== "Custom node saved") return false;
+      if (document.querySelector(
+        '#editor-tabs .editor-tab[data-asset-id="custom.browser-mechanic"] .editor-tab-dirty'
+      )) return false;
+      const record = await fetch(
+        "/api/workspaces/browser-workspace/assets/custom.browser-mechanic",
+      ).then((response) => response.json());
+      return record.asset.header.label === "Browser mechanic revised";
+    })()`,
+  );
+  await evaluate(`document.querySelector(
+    '#editor-tabs .editor-tab[data-asset-id="custom.browser-mechanic"] .editor-tab-close'
+  ).click()`);
+  await browserUntil(
+    "custom-node tab close",
+    `document.querySelectorAll("#editor-tabs .editor-tab").length === 0`,
+  );
+  await evaluate(`(() => {
+    document.getElementById("library-tab").click();
     const row = document.querySelector(
       '.library-content-row[data-library-id="demo-forest-keyed-door"]',
     );
@@ -284,6 +336,63 @@ try {
       && !document.getElementById("save-project").disabled
       && !document.getElementById("undo").disabled`,
   );
+  await evaluate(`(() => {
+    const step = document.querySelector("#nodes .node.reference_step");
+    if (!step) throw new Error("the authored route step is not visible");
+    step.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const canvas = document.getElementById("canvas");
+    const bounds = canvas.getBoundingClientRect();
+    canvas.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      deltaY: -120,
+      clientX: bounds.left + bounds.width / 2,
+      clientY: bounds.top + bounds.height / 2,
+    }));
+    window.__workspaceTabState = {
+      transform: document.getElementById("viewport").getAttribute("transform"),
+      selectedId: document.querySelector("#nodes .node.selected")?.dataset.nodeId,
+    };
+    const routeBooks = [...document.querySelectorAll(".content-group")].find((group) =>
+      group.querySelector(":scope > summary")?.textContent.trim().startsWith("Route books"));
+    const item = routeBooks?.querySelector(".content-item");
+    if (!item) throw new Error("the grounded scenario has no Route Book asset to inspect");
+    item.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "multiple workspace asset tabs",
+    `(() => {
+      const tabs = [...document.querySelectorAll("#editor-tabs .editor-tab")];
+      const active = tabs.find((tab) => tab.classList.contains("active"));
+      const graph = tabs.find((tab) => tab.dataset.assetId.startsWith("route-graph."));
+      return tabs.length === 2
+        && active?.dataset.assetId.startsWith("route-book.")
+        && graph?.querySelector(".editor-tab-dirty")
+        && document.getElementById("editor-breadcrumbs").textContent.includes("Route books");
+    })()`,
+  );
+  await evaluate(`(() => {
+    const graph = [...document.querySelectorAll("#editor-tabs .editor-tab")]
+      .find((tab) => tab.dataset.assetId.startsWith("route-graph."));
+    if (!graph) throw new Error("the route graph tab is absent");
+    graph.querySelector(".editor-tab-button").click();
+    return true;
+  })()`);
+  await browserUntil(
+    "graph tab restores working state",
+    `(() => {
+      const selected = document.querySelector("#nodes .node.selected");
+      const active = document.querySelector("#editor-tabs .editor-tab.active");
+      return active?.dataset.assetId.startsWith("route-graph.")
+        && active.querySelector(".editor-tab-dirty")
+        && document.getElementById("canvas").dataset.routeStepCount === "1"
+        && selected?.dataset.nodeId === window.__workspaceTabState.selectedId
+        && document.getElementById("viewport").getAttribute("transform")
+          === window.__workspaceTabState.transform
+        && document.getElementById("editor-breadcrumbs").textContent.includes("Route graphs");
+    })()`,
+  );
   await evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", {
     key: "z",
     ctrlKey: true,
@@ -295,6 +404,9 @@ try {
       && document.getElementById("undo").disabled
       && !document.getElementById("redo").disabled
       && document.getElementById("save-project").disabled
+      && document.querySelector(
+        "#editor-tabs .editor-tab.active .editor-tab-dirty"
+      ) == null
       && document.getElementById("canvas").dataset.routeStepCount === "0"`,
   );
   await evaluate(`document.getElementById("redo").click()`);
@@ -308,12 +420,16 @@ try {
     undoDisabled: document.getElementById("undo").disabled,
     redoDisabled: document.getElementById("redo").disabled,
     saveDisabled: document.getElementById("save-project").disabled,
+    tabDirty: document.querySelector(
+      "#editor-tabs .editor-tab.active .editor-tab-dirty"
+    ) != null,
     routeSteps: Number(document.getElementById("canvas").dataset.routeStepCount),
   })`);
   if (!redoState.status.includes("Redid: Insert")
     || redoState.undoDisabled
     || !redoState.redoDisabled
     || redoState.saveDisabled
+    || !redoState.tabDirty
     || redoState.routeSteps !== 1) {
     throw new Error(`semantic route redo did not restore the authored step: ${JSON.stringify(redoState)}`);
   }

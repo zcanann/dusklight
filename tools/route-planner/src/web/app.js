@@ -97,7 +97,7 @@ const elements = Object.fromEntries([
   "add-node-menu", "add-node-search", "add-node-results",
   "project-list", "open-project", "save-project", "save-as-project", "undo", "redo",
   "export-project", "project-file", "project-name", "status", "search", "node-kind-list", "palette-list",
-  "canvas-shell", "canvas", "viewport", "edges", "nodes", "empty-state",
+  "canvas-shell", "editor-tabs", "editor-breadcrumbs", "canvas", "viewport", "edges", "nodes", "empty-state",
   "empty-primary", "empty-secondary", "zoom-in",
   "zoom-out", "fit", "detail-title", "detail-subtitle", "detail-json", "state-inspector",
   "contract-inspector", "workspace-asset-editor",
@@ -147,6 +147,9 @@ const state = {
   historyBusy: false,
   addNodeAfterStepId: null,
   folderDialog: null,
+  editorTabs: [],
+  activeEditorTabId: null,
+  workspaceAssetDraft: null,
 };
 
 elements["workspace-list"].addEventListener("change", () => {
@@ -248,7 +251,8 @@ window.addEventListener("keydown", (event) => {
     } else if (key === "y" && !event.shiftKey) {
       event.preventDefault();
       redoAuthoringCommand();
-    } else if (key === "s" && !event.shiftKey && state.project && !state.readOnly) {
+    } else if (key === "s" && !event.shiftKey
+      && (state.project || state.workspaceAssetDraft) && !state.readOnly) {
       event.preventDefault();
       saveProject();
     }
@@ -273,7 +277,7 @@ window.addEventListener("keydown", (event) => {
 });
 elements["add-node-search"].addEventListener("input", renderAddNodeMenu);
 window.addEventListener("beforeunload", (event) => {
-  if (!state.dirty) return;
+  if (!hasUnsavedEditorState()) return;
   event.preventDefault();
   event.returnValue = "";
 });
@@ -325,6 +329,9 @@ async function refreshLibraries() {
 
 async function createWorkspace(event) {
   event.preventDefault();
+  if (hasUnsavedEditorState() && !confirm("Discard unsaved asset changes and create a workspace?")) {
+    return;
+  }
   const label = elements["new-workspace-label"].value.trim();
   const id = elements["new-workspace-id"].value.trim();
   elements["new-workspace-error"].textContent = "";
@@ -361,7 +368,8 @@ async function importWorkspace(event) {
   const [file] = event.target.files;
   event.target.value = "";
   if (!file) return;
-  if (state.dirty && !confirm("Discard unsaved planner changes and import this workspace?")) return;
+  if (hasUnsavedEditorState()
+    && !confirm("Discard unsaved asset changes and import this workspace?")) return;
   try {
     const bundle = JSON.parse(await file.text());
     if (![WORKSPACE_EXPORT_SCHEMA, LEGACY_WORKSPACE_EXPORT_SCHEMA].includes(bundle?.schema)
@@ -429,8 +437,12 @@ async function createCustomNodeAsset(event) {
       },
     );
     elements["new-asset-dialog"].close();
-    await loadWorkspace(workspaceId);
-    inspectWorkspaceAsset({
+    state.workspace = await projectApi(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
+    state.workspaceSignature = workspaceSignature(state.workspace);
+    await refreshTrash();
+    await refreshWorkspaces(workspaceId);
+    renderContentBrowser();
+    await inspectWorkspaceAsset({
       ...record.asset.header,
       kind: record.asset.header.kind,
       relative_path: record.relative_path,
@@ -475,7 +487,11 @@ async function importWorkspaceAsset(event) {
         }),
       },
     );
-    await loadWorkspace(workspaceId);
+    state.workspace = await projectApi(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
+    state.workspaceSignature = workspaceSignature(state.workspace);
+    await refreshTrash();
+    await refreshWorkspaces(workspaceId);
+    renderContentBrowser();
     await inspectWorkspaceAsset({
       ...record.asset.header,
       relative_path: record.relative_path,
@@ -488,7 +504,7 @@ async function importWorkspaceAsset(event) {
 }
 
 async function loadWorkspace(id) {
-  if (state.dirty && !confirm("Discard unsaved planner changes?")) {
+  if (hasUnsavedEditorState() && !confirm("Discard unsaved asset changes?")) {
     elements["workspace-list"].value = state.workspace?.manifest?.id ?? "";
     return;
   }
@@ -514,6 +530,9 @@ async function openWorkspaceRecord(record) {
   state.selected = null;
   state.selectedWorkspaceAsset = null;
   state.workspaceEdit = null;
+  state.workspaceAssetDraft = null;
+  state.editorTabs = [];
+  state.activeEditorTabId = null;
   state.positions = new Map();
   state.contentSource = "workspace";
   elements.nodes.replaceChildren();
@@ -544,6 +563,7 @@ async function openWorkspaceRecord(record) {
   elements["detail-json"].textContent = "{}";
   elements["workspace-asset-editor"].hidden = true;
   elements["workspace-asset-editor"].replaceChildren();
+  renderEditorTabs();
   updateProjectControls();
   selectContentSource("workspace");
 }
@@ -585,18 +605,31 @@ async function pollWorkspaceChanges() {
     const fresh = await projectApi(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
     const signature = workspaceSignature(fresh);
     if (signature === state.workspaceSignature) return;
-    const selectedId = state.selectedWorkspaceAsset?.asset?.header?.id;
+    captureActiveEditorTab();
+    const activeTab = state.editorTabs.find((tab) => tab.id === state.activeEditorTabId);
+    const selectedId = activeTab?.assetId ?? null;
+    const dirtyTabs = state.editorTabs.filter((tab) => tab.session?.dirty);
     state.workspace = fresh;
     state.workspaceSignature = signature;
     await refreshTrash();
     renderContentBrowser();
-    if (selectedId && fresh.assets.some((asset) => asset.id === selectedId)) {
-      await inspectWorkspaceAsset(fresh.assets.find((asset) => asset.id === selectedId));
-    } else if (selectedId) {
-      state.selectedWorkspaceAsset = null;
-      elements["workspace-asset-editor"].hidden = true;
-      setStatus("The selected asset changed or was removed on disk", "bad");
+    renderEditorTabs();
+    if (dirtyTabs.length) {
+      setStatus(
+        "Workspace changed on disk; unsaved tabs were preserved and will be conflict-checked on save",
+        "bad",
+      );
       return;
+    }
+    const listing = fresh.assets.find((asset) => asset.id === selectedId);
+    if (activeTab && !listing) {
+      closeEditorTab(activeTab.id);
+      setStatus("An open asset was removed on disk; its clean tab was closed", "bad");
+      return;
+    }
+    const loadedRevision = activeTab?.session?.selectedWorkspaceAsset?.revision_sha256;
+    if (listing && listing.revision_sha256 !== loadedRevision) {
+      await inspectWorkspaceAsset(listing, { reload: true });
     }
     setStatus("Workspace changes from disk were reloaded", "good");
   } catch (error) {
@@ -1034,6 +1067,7 @@ async function workspaceFolderCommand(folderId, command) {
   await refreshTrash();
   await refreshWorkspaces(workspaceId);
   renderContentBrowser();
+  renderEditorTabs();
 }
 
 function createWorkspaceFolder(kind, parentId) {
@@ -1354,6 +1388,7 @@ async function workspaceAssetCommand(asset, command) {
   await refreshTrash();
   await refreshWorkspaces(workspaceId);
   renderContentBrowser();
+  renderEditorTabs();
 }
 
 async function renameWorkspaceAsset(asset) {
@@ -1521,20 +1556,338 @@ function contentMessage(message) {
   return paragraph;
 }
 
-async function inspectWorkspaceAsset(asset) {
-  elements["detail-title"].textContent = asset.label;
-  elements["detail-subtitle"].textContent = `${friendlyKind(asset.kind)} · ${asset.relative_path}`;
-  elements["detail-json"].textContent = JSON.stringify(asset, null, 2);
+function editorTabId(assetId) {
+  return `${state.workspace?.manifest?.id ?? "workspace"}:${assetId}`;
+}
+
+function captureEditorSession() {
+  return {
+    selectedWorkspaceAsset: state.selectedWorkspaceAsset,
+    workspaceAssetDraft: state.workspaceAssetDraft,
+    project: state.project,
+    graph: state.graph,
+    positions: state.positions,
+    selected: state.selected,
+    transform: state.transform,
+    revision: state.revision,
+    readOnly: state.readOnly,
+    dirty: state.dirty,
+    transitionEvaluation: state.transitionEvaluation,
+    replacementStep: state.replacementStep,
+    transitionSearch: state.transitionSearch,
+    activeRegionId: state.activeRegionId,
+    collapsedRegionIds: state.collapsedRegionIds,
+    knownRegionIds: state.knownRegionIds,
+    routeStepInspections: state.routeStepInspections,
+    executionStateInspections: state.executionStateInspections,
+    routeFrontier: state.routeFrontier,
+    selectedStateFeasibility: state.selectedStateFeasibility,
+    solveReport: state.solveReport,
+    groupSelection: state.groupSelection,
+    emptyActions: state.emptyActions,
+    nodeKindFilter: state.nodeKindFilter,
+    workspaceEdit: state.workspaceEdit,
+    undoStack: state.undoStack,
+    redoStack: state.redoStack,
+    historyBusy: state.historyBusy,
+    addNodeAfterStepId: state.addNodeAfterStepId,
+  };
+}
+
+function captureActiveEditorTab() {
+  const tab = state.editorTabs.find((candidate) => candidate.id === state.activeEditorTabId);
+  if (tab) tab.session = captureEditorSession();
+}
+
+function hasUnsavedEditorState() {
+  if (state.dirty) return true;
+  return state.editorTabs.some((tab) => tab.session?.dirty);
+}
+
+function restoreEditorSession(session) {
+  Object.assign(state, session);
+  state.gesture = null;
+  closeAddNodeMenu();
+  const record = state.selectedWorkspaceAsset;
+  if (state.graph) {
+    elements["empty-state"].hidden = true;
+    renderWorkspaceAssetEditor(record, state.workspaceAssetDraft);
+    applyTransform();
+    render();
+  } else {
+    renderWorkspaceAssetView(record, state.workspaceAssetDraft);
+  }
+  updateProjectControls();
+}
+
+function workspaceAssetBreadcrumbs(asset) {
+  if (!state.workspace || !asset) return [];
+  const crumbs = [state.workspace.manifest.label, `${friendlyKind(asset.kind)}s`];
+  const relativePath = String(asset.relative_path ?? "").replaceAll("\\", "/");
+  const parentPath = relativePath.split("/").slice(0, -1).join("/");
+  const folders = state.workspace.folders ?? [];
+  let folder = folders.find((candidate) =>
+    String(candidate.relative_path).replaceAll("\\", "/") === parentPath);
+  const chain = [];
+  while (folder) {
+    chain.unshift(folder.label);
+    folder = folder.parent_id
+      ? folders.find((candidate) => candidate.id === folder.parent_id)
+      : null;
+  }
+  crumbs.push(...chain, asset.label);
+  return crumbs;
+}
+
+function renderEditorTabs() {
+  const container = elements["editor-tabs"];
+  container.replaceChildren();
+  for (const tab of state.editorTabs) {
+    const listing = state.workspace?.assets?.find((asset) => asset.id === tab.assetId);
+    if (listing) {
+      tab.label = listing.label;
+      tab.breadcrumbs = workspaceAssetBreadcrumbs(listing);
+    }
+    const active = tab.id === state.activeEditorTabId;
+    const dirty = active ? state.dirty : Boolean(tab.session?.dirty);
+    const item = document.createElement("div");
+    item.className = `editor-tab${active ? " active" : ""}`;
+    item.dataset.assetId = tab.assetId;
+    item.title = tab.breadcrumbs.join(" / ");
+    const activateButton = document.createElement("button");
+    activateButton.type = "button";
+    activateButton.className = "editor-tab-button";
+    activateButton.setAttribute("role", "tab");
+    activateButton.setAttribute("aria-selected", String(active));
+    activateButton.tabIndex = active ? 0 : -1;
+    const label = document.createElement("span");
+    label.className = "editor-tab-label";
+    label.textContent = tab.label;
+    if (dirty) {
+      const indicator = document.createElement("span");
+      indicator.className = "editor-tab-dirty";
+      indicator.setAttribute("aria-label", "Unsaved changes");
+      label.append(indicator);
+    }
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "editor-tab-close";
+    close.textContent = "×";
+    close.setAttribute("aria-label", `Close ${tab.label}`);
+    close.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeEditorTab(tab.id);
+    });
+    const activate = () => activateEditorTab(tab.id);
+    activateButton.addEventListener("click", activate);
+    activateButton.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        activate();
+      } else if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const index = state.editorTabs.findIndex((candidate) => candidate.id === tab.id);
+        const targetIndex = event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? state.editorTabs.length - 1
+            : (index + (event.key === "ArrowLeft" ? -1 : 1) + state.editorTabs.length)
+              % state.editorTabs.length;
+        const target = state.editorTabs[targetIndex];
+        activateEditorTab(target.id);
+        requestAnimationFrame(() => {
+          [...container.querySelectorAll(".editor-tab")].find((candidate) =>
+            candidate.dataset.assetId === target.assetId)
+            ?.querySelector(".editor-tab-button")
+            ?.focus();
+        });
+      } else if (event.key === "Delete") {
+        event.preventDefault();
+        closeEditorTab(tab.id);
+      }
+    });
+    activateButton.append(label);
+    item.append(activateButton, close);
+    container.append(item);
+    if (active) {
+      requestAnimationFrame(() => item.scrollIntoView({ block: "nearest", inline: "nearest" }));
+    }
+  }
+  const breadcrumbs = elements["editor-breadcrumbs"];
+  breadcrumbs.replaceChildren();
+  const active = state.editorTabs.find((tab) => tab.id === state.activeEditorTabId);
+  for (const [index, crumb] of (active?.breadcrumbs ?? []).entries()) {
+    if (index) {
+      const separator = document.createElement("span");
+      separator.className = "separator";
+      separator.textContent = "›";
+      breadcrumbs.append(separator);
+    }
+    const part = document.createElement("span");
+    part.textContent = crumb;
+    breadcrumbs.append(part);
+  }
+}
+
+function activateEditorTab(id) {
+  if (id === state.activeEditorTabId) return;
+  captureActiveEditorTab();
+  const tab = state.editorTabs.find((candidate) => candidate.id === id);
+  if (!tab) return;
+  state.activeEditorTabId = id;
+  restoreEditorSession(tab.session);
+  renderEditorTabs();
+}
+
+function closeEditorTab(id) {
+  captureActiveEditorTab();
+  const index = state.editorTabs.findIndex((candidate) => candidate.id === id);
+  if (index < 0) return;
+  const tab = state.editorTabs[index];
+  if (tab.session?.dirty && !confirm(`Discard unsaved changes to ${tab.label}?`)) return;
+  const wasActive = id === state.activeEditorTabId;
+  state.editorTabs.splice(index, 1);
+  if (wasActive) {
+    const replacement = state.editorTabs[Math.min(index, state.editorTabs.length - 1)] ?? null;
+    state.activeEditorTabId = replacement?.id ?? null;
+    if (replacement) restoreEditorSession(replacement.session);
+    else clearWorkspaceAssetView();
+  }
+  renderEditorTabs();
+}
+
+function clearWorkspaceAssetView() {
+  state.project = null;
+  state.graph = null;
+  state.revision = null;
+  state.readOnly = false;
+  state.dirty = false;
+  state.selected = null;
+  state.selectedWorkspaceAsset = null;
+  state.workspaceAssetDraft = null;
+  state.workspaceEdit = null;
+  state.positions = new Map();
+  state.undoStack = [];
+  state.redoStack = [];
+  state.groupSelection = new Set();
+  elements.nodes.replaceChildren();
+  elements.edges.replaceChildren();
+  elements["region-nav"].hidden = true;
+  elements["workspace-asset-editor"].hidden = true;
+  elements["workspace-asset-editor"].replaceChildren();
+  setEmptyState(
+    "Open an asset",
+    "Choose a route graph or another Workspace asset from the Content Browser.",
+    "Browse workspace assets",
+    () => focusContentBrowser("workspace"),
+    "Browse Library",
+    () => focusContentBrowser("library"),
+  );
+  elements["empty-state"].hidden = false;
+  elements["detail-title"].textContent = "Nothing selected";
+  elements["detail-subtitle"].textContent = "Choose a Workspace asset to inspect it.";
+  elements["detail-json"].textContent = "{}";
+  renderModelContext();
+  updateProjectControls();
+}
+
+function renderWorkspaceAssetView(record, draft = null) {
+  if (!record) {
+    clearWorkspaceAssetView();
+    return;
+  }
+  state.project = null;
+  state.graph = null;
+  state.revision = null;
+  state.readOnly = false;
+  state.selected = null;
+  state.selectedWorkspaceAsset = record;
+  state.workspaceAssetDraft = draft;
+  state.workspaceEdit = null;
+  state.positions = new Map();
+  state.transitionEvaluation = null;
+  state.replacementStep = null;
+  state.routeStepInspections = new Map();
+  state.executionStateInspections = new Map();
+  state.routeFrontier = null;
+  state.selectedStateFeasibility = null;
+  state.solveReport = null;
+  state.groupSelection = new Set();
+  state.activeRegionId = null;
+  state.collapsedRegionIds = new Set();
+  state.knownRegionIds = new Set();
+  state.transitionSearch = new Map();
+  state.undoStack = [];
+  state.redoStack = [];
+  elements.nodes.replaceChildren();
+  elements.edges.replaceChildren();
+  elements["region-nav"].hidden = true;
+  setEmptyState(
+    friendlyKind(record.asset.header.kind),
+    "This asset is open in Details. Route graphs use the graph canvas.",
+    "Browse workspace assets",
+    () => focusContentBrowser("workspace"),
+    "Close tab",
+    () => closeEditorTab(state.activeEditorTabId),
+  );
+  elements["empty-state"].hidden = false;
+  elements["detail-title"].textContent = record.asset.header.label;
+  elements["detail-subtitle"].textContent =
+    `${friendlyKind(record.asset.header.kind)} · ${record.relative_path}`;
+  elements["detail-json"].textContent = JSON.stringify(draft ?? record.asset, null, 2);
+  renderWorkspaceAssetEditor(record, draft);
+  renderModelContext();
+  updateProjectControls();
+}
+
+async function inspectWorkspaceAsset(asset, options = {}) {
+  const id = editorTabId(asset.id);
+  const existingIndex = state.editorTabs.findIndex((tab) => tab.id === id);
+  if (existingIndex >= 0 && !options.reload) {
+    activateEditorTab(id);
+    return;
+  }
+  const previousActiveId = state.activeEditorTabId;
+  captureActiveEditorTab();
+  const existing = existingIndex >= 0 ? state.editorTabs.splice(existingIndex, 1)[0] : null;
+  state.activeEditorTabId = null;
   try {
     const workspaceId = state.workspace.manifest.id;
     const record = await projectApi(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/assets/${encodeURIComponent(asset.id)}`,
     );
     state.selectedWorkspaceAsset = record;
-    elements["detail-json"].textContent = JSON.stringify(record.asset, null, 2);
-    renderWorkspaceAssetEditor(record);
-    if (record.asset.header.kind === "route_graph") await openWorkspaceGraph(record);
+    state.workspaceAssetDraft = record.asset.header.kind === "custom_node_definition"
+      ? structuredClone(record.asset)
+      : null;
+    state.dirty = false;
+    if (record.asset.header.kind === "route_graph") {
+      renderWorkspaceAssetEditor(record);
+      await openWorkspaceGraph(record);
+    } else {
+      renderWorkspaceAssetView(record, state.workspaceAssetDraft);
+    }
+    const tab = {
+      id,
+      assetId: record.asset.header.id,
+      label: record.asset.header.label,
+      kind: record.asset.header.kind,
+      breadcrumbs: workspaceAssetBreadcrumbs({
+        ...record.asset.header,
+        relative_path: record.relative_path,
+      }),
+      session: captureEditorSession(),
+    };
+    if (existingIndex >= 0) state.editorTabs.splice(existingIndex, 0, tab);
+    else state.editorTabs.push(tab);
+    state.activeEditorTabId = id;
+    renderEditorTabs();
   } catch (error) {
+    if (existing) state.editorTabs.splice(existingIndex, 0, existing);
+    const previous = state.editorTabs.find((tab) => tab.id === previousActiveId);
+    state.activeEditorTabId = previous?.id ?? null;
+    if (previous) restoreEditorSession(previous.session);
+    renderEditorTabs();
     setStatus(error.message, "bad");
   }
 }
@@ -1617,7 +1970,7 @@ async function openWorkspaceGraph(record) {
   elements["project-name"].textContent = `${state.workspace.manifest.label} · ${record.asset.header.label}`;
 }
 
-function renderWorkspaceAssetEditor(record) {
+function renderWorkspaceAssetEditor(record, draft = null) {
   const form = elements["workspace-asset-editor"];
   form.replaceChildren();
   if (record.asset.header.kind !== "custom_node_definition") {
@@ -1625,13 +1978,14 @@ function renderWorkspaceAssetEditor(record) {
     return;
   }
   form.hidden = false;
-  const node = record.asset.payload;
+  const editedAsset = draft ?? record.asset;
+  const node = editedAsset.payload;
   const status = document.createElement("span");
   status.className = `evidence-badge ${node.evidence_status}`;
   status.textContent = node.evidence_status;
   const label = document.createElement("input");
   label.required = true;
-  label.value = record.asset.header.label;
+  label.value = editedAsset.header.label;
   form.append(status, labeledEditorField("Name", label));
 
   const guard = document.createElement("select");
@@ -1702,8 +2056,7 @@ function renderWorkspaceAssetEditor(record) {
   save.type = "submit";
   save.textContent = "Save custom node";
   form.append(save);
-  form.onsubmit = async (event) => {
-    event.preventDefault();
+  const collectDraft = () => {
     const updated = structuredClone(record.asset);
     updated.header.label = label.value.trim();
     updated.payload.inputs = collectPins(inputs.rows);
@@ -1724,15 +2077,35 @@ function renderWorkspaceAssetEditor(record) {
     updated.payload.effects = effects;
     const source = evidenceSource.value.trim();
     const note = evidenceNote.value.trim();
-    if (Boolean(source) !== Boolean(note)) {
-      setStatus("Evidence source and note must be supplied together", "bad");
-      return;
-    }
-    updated.payload.evidence = source ? [{
+    updated.payload.evidence = source && note ? [{
       id: evidence?.id ?? `evidence.${slug(updated.header.id)}.1`,
       source,
       note,
     }, ...(updated.payload.evidence ?? []).slice(1)] : [];
+    return { asset: updated, source, note };
+  };
+  const updateDraft = () => {
+    const { asset } = collectDraft();
+    state.workspaceAssetDraft = asset;
+    state.dirty = JSON.stringify(asset) !== JSON.stringify(record.asset);
+    elements["detail-json"].textContent = JSON.stringify(asset, null, 2);
+    updateProjectControls();
+    renderEditorTabs();
+  };
+  form.addEventListener("input", updateDraft);
+  form.addEventListener("change", updateDraft);
+  form.addEventListener("click", (event) => {
+    if (event.target instanceof HTMLButtonElement && event.target.type !== "submit") {
+      queueMicrotask(updateDraft);
+    }
+  });
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const { asset: updated, source, note } = collectDraft();
+    if (Boolean(source) !== Boolean(note)) {
+      setStatus("Evidence source and note must be supplied together", "bad");
+      return;
+    }
     await saveCustomNodeAsset(record, updated);
   };
 }
@@ -1820,13 +2193,26 @@ async function saveCustomNodeAsset(record, asset) {
       },
     );
     state.selectedWorkspaceAsset = saved;
+    state.workspaceAssetDraft = structuredClone(saved.asset);
+    state.dirty = false;
     state.workspace = await projectApi(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
     state.workspaceSignature = workspaceSignature(state.workspace);
     await refreshWorkspaces(workspaceId);
     renderContentBrowser();
     elements["detail-title"].textContent = saved.asset.header.label;
     elements["detail-json"].textContent = JSON.stringify(saved.asset, null, 2);
-    renderWorkspaceAssetEditor(saved);
+    renderWorkspaceAssetEditor(saved, state.workspaceAssetDraft);
+    const tab = state.editorTabs.find((candidate) => candidate.id === state.activeEditorTabId);
+    if (tab) {
+      tab.label = saved.asset.header.label;
+      tab.breadcrumbs = workspaceAssetBreadcrumbs({
+        ...saved.asset.header,
+        relative_path: saved.relative_path,
+      });
+      tab.session = captureEditorSession();
+    }
+    updateProjectControls();
+    renderEditorTabs();
     setStatus("Custom node saved", "good");
   } catch (error) {
     if (error.message.includes("revision conflict")
@@ -1836,7 +2222,7 @@ async function saveCustomNodeAsset(record, asset) {
       state.workspace = fresh;
       state.workspaceSignature = workspaceSignature(fresh);
       const listing = fresh.assets.find((item) => item.id === asset.header.id);
-      if (listing) await inspectWorkspaceAsset(listing);
+      if (listing) await inspectWorkspaceAsset(listing, { reload: true });
       setStatus("Reloaded the current asset from disk; local edits were not applied", "good");
       return;
     }
@@ -1860,11 +2246,15 @@ async function refreshProjects(openFirst = false, selectedId = null) {
 }
 
 async function loadStoredProject(id, confirmDiscard = true) {
-  if (confirmDiscard && state.dirty && !confirm("Discard unsaved planner changes?")) {
+  if (confirmDiscard && !state.activeEditorTabId
+    && state.dirty && !confirm("Discard unsaved planner changes?")) {
     elements["project-list"].value = state.project?.id ?? "";
     return;
   }
   try {
+    captureActiveEditorTab();
+    state.activeEditorTabId = null;
+    renderEditorTabs();
     const record = await projectApi(`/api/projects/${encodeURIComponent(id)}`);
     await loadProject(record.project, {
       revision: record.revision_sha256,
@@ -1882,8 +2272,12 @@ async function importProject(event) {
   const file = event.target.files?.[0];
   event.target.value = "";
   if (!file) return;
-  if (state.dirty && !confirm("Discard unsaved planner changes?")) return;
+  if (!state.activeEditorTabId && state.dirty
+    && !confirm("Discard unsaved planner changes?")) return;
   try {
+    captureActiveEditorTab();
+    state.activeEditorTabId = null;
+    renderEditorTabs();
     const project = JSON.parse(await file.text());
     if (!project.id) project.id = slug(file.name.replace(/\.json$/i, ""));
     await loadProject(project, { revision: null, readOnly: false, dirty: true, fit: true });
@@ -1910,6 +2304,7 @@ async function loadProject(project, options) {
   state.readOnly = options.readOnly;
   state.dirty = options.dirty;
   state.workspaceEdit = options.workspaceEdit ?? null;
+  state.workspaceAssetDraft = null;
   clearAuthoringHistory();
   state.selected = null;
   state.transitionEvaluation = null;
@@ -2561,7 +2956,7 @@ function openAddNodeMenu(event) {
   state.addNodeAfterStepId = targetNode?.payload.kind === "reference_step"
     ? targetNode.payload.step_id
     : null;
-  const bounds = elements["canvas-shell"].getBoundingClientRect();
+  const bounds = elements.canvas.getBoundingClientRect();
   const menu = elements["add-node-menu"];
   menu.hidden = false;
   const width = 330;
@@ -4394,6 +4789,11 @@ async function persistProject(project, expectedRevision) {
 }
 
 async function saveProject() {
+  if (state.workspaceAssetDraft
+    && state.selectedWorkspaceAsset?.asset?.header?.kind === "custom_node_definition") {
+    elements["workspace-asset-editor"].requestSubmit();
+    return;
+  }
   if (!state.project || state.readOnly) return;
   try {
     if (state.workspaceEdit) {
@@ -4461,9 +4861,12 @@ async function saveWorkspaceRouteGraph() {
   state.graph = saved.graph.asset.payload.graph;
   state.dirty = false;
   clearAuthoringHistory();
+  const tab = state.editorTabs.find((candidate) => candidate.id === state.activeEditorTabId);
+  if (tab) tab.session = captureEditorSession();
   updateProjectControls();
   await refreshWorkspaces(workspaceId);
   renderContentBrowser();
+  renderEditorTabs();
   setStatus("Workspace Route Book, graph projection, and layout saved atomically", "good");
 }
 
@@ -4500,6 +4903,7 @@ function markDirty() {
   if (!state.project) return;
   state.dirty = true;
   updateProjectControls();
+  renderEditorTabs();
 }
 
 function captureAuthoringState() {
@@ -4566,6 +4970,7 @@ async function restoreAuthoringState(snapshot) {
   applyTransform();
   render();
   updateProjectControls();
+  renderEditorTabs();
 }
 
 async function undoAuthoringCommand() {
@@ -4606,9 +5011,11 @@ async function redoAuthoringCommand() {
 
 function updateProjectControls() {
   const loaded = Boolean(state.project);
+  const editableAsset = Boolean(state.workspaceAssetDraft);
+  const savable = loaded || editableAsset;
   elements.canvas.dataset.routeStepCount = String(state.project?.route_book?.steps?.length ?? 0);
   elements["export-workspace"].disabled = !state.workspace;
-  elements["save-project"].disabled = !loaded || state.readOnly || !state.dirty;
+  elements["save-project"].disabled = !savable || state.readOnly || !state.dirty;
   elements["save-as-project"].disabled = !loaded;
   elements["export-project"].disabled = !loaded;
   elements.undo.disabled = !loaded || state.readOnly || state.historyBusy || !state.undoStack.length;
@@ -4619,7 +5026,9 @@ function updateProjectControls() {
   elements.fit.title = "Fit graph (F)";
   elements["project-name"].textContent = loaded
     ? `${state.project.label}${state.readOnly ? " (read-only demo)" : ""}`
-    : state.workspace?.manifest?.label ?? "No workspace open";
+    : state.selectedWorkspaceAsset?.asset?.header?.label
+      ?? state.workspace?.manifest?.label
+      ?? "No workspace open";
   elements["project-name"].className = `project-name${state.dirty ? " dirty" : ""}`;
 }
 
