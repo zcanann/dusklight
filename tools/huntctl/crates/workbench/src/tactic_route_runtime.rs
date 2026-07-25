@@ -3,7 +3,7 @@
 use super::*;
 use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
-    NativeTacticRouteRunConfig, run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NativeTacticRouteRunConfig, run_native_tactic_route,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use serde_json::Value;
@@ -148,6 +148,8 @@ pub(super) fn tactic_route_learning_projection(
         successful_seeds: 0,
         total_decisions: 0,
         total_native_ticks: 0,
+        useful_decisions: 0,
+        throughput: None,
         latest_decision: None,
         learned_graph: None,
         output: None,
@@ -186,12 +188,15 @@ pub(super) fn tactic_route_learning_projection(
     if report_path.exists() {
         match bounded_json::<Value>(&report_path) {
             Some(report)
-                if report.get("schema").and_then(Value::as_str)
-                    == Some(NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4)
-                    && report
-                        .get("optimization_request_sha256")
-                        .and_then(Value::as_str)
-                        == Some(&optimization.content_sha256.to_string()) =>
+                if matches!(
+                    report.get("schema").and_then(Value::as_str),
+                    Some(schema)
+                        if schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5
+                ) && report
+                    .get("optimization_request_sha256")
+                    .and_then(Value::as_str)
+                    == Some(&optimization.content_sha256.to_string()) =>
             {
                 projection.report = report_path
                     .strip_prefix(root)
@@ -213,6 +218,13 @@ pub(super) fn tactic_route_learning_projection(
                     .get("total_native_ticks")
                     .and_then(Value::as_u64)
                     .unwrap_or(0);
+                projection.useful_decisions = report
+                    .get("useful_decisions")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0);
+                projection.throughput = report.get("timing").and_then(|timing| {
+                    serde_json::from_value::<GraphTacticRouteThroughput>(timing.clone()).ok()
+                });
                 projection.status = if projection.successful_seeds > 0 {
                     "succeeded"
                 } else {
@@ -1159,11 +1171,25 @@ mod tests {
         fs::write(
             output.join("report.json"),
             serde_json::to_vec(&serde_json::json!({
-                "schema": NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
+                "schema": NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5,
                 "optimization_request_sha256": optimization.content_sha256,
                 "successful_seeds": 1,
                 "total_decisions": 70,
                 "total_native_ticks": 2266,
+                "useful_decisions": 23,
+                "timing": {
+                    "wall_micros": 2_000_000,
+                    "tactic_selection_micros": 10,
+                    "checkpoint_branching_micros": 20,
+                    "tactic_execution_micros": 1_500_000,
+                    "native_simulation_micros": 1_400_000,
+                    "tactic_preparation_and_fact_extraction_micros": 100_000,
+                    "model_update_micros": 200_000,
+                    "evidence_projection_and_persistence_micros": 250_000,
+                    "useful_decisions_per_second_millionths": 11_500_000,
+                    "native_ticks_per_second_millionths": 1_133_000_000,
+                    "episodes_per_second_millionths": 9_000_000
+                },
                 "seeds": [{"seed": 181081}]
             }))
             .unwrap(),
@@ -1176,6 +1202,14 @@ mod tests {
         assert_eq!(projection.successful_seeds, 1);
         assert_eq!(projection.total_decisions, 70);
         assert_eq!(projection.total_native_ticks, 2266);
+        assert_eq!(projection.useful_decisions, 23);
+        assert_eq!(
+            projection
+                .throughput
+                .as_ref()
+                .map(|timing| timing.native_simulation_micros),
+            Some(1_400_000)
+        );
         assert_eq!(
             projection
                 .latest_decision

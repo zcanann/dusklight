@@ -5,7 +5,10 @@ use crate::native_suffix_result::{NativeTerminalBinding, ValidatedNativeSuffixBa
 use crate::native_suffix_worker::{
     NativeSuffixWorkerError, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
 };
-use crate::native_tactic_worker::{NativeTacticWorkerPaths, tactic_root_checkpoint_sha256};
+use crate::native_tactic_worker::{
+    NativeTacticWorkerError, NativeTacticWorkerPaths, PersistentTacticBatchWorker,
+    execute_selected_tactic, tactic_root_checkpoint_sha256,
+};
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_q_campaign::{
     TacticCampaignDiagnostics, TacticQCampaign, TacticQCampaignCheckpoint, TacticQCampaignError,
@@ -44,8 +47,10 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5: &str = "dusklight-native-tactic-route-report/v5";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 const MAX_ROUTE_SEEDS: usize = 32;
@@ -54,6 +59,7 @@ const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
 const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
+const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1: &str = "dusklight-native-tactic-route-performance/v1";
 
 #[derive(Clone, Debug)]
 pub struct NativeTacticRouteRunConfig<'a> {
@@ -89,7 +95,34 @@ pub struct NativeTacticRouteReport {
     pub successful_seeds: u64,
     pub total_native_ticks: u64,
     pub total_decisions: u64,
+    pub useful_decisions: u64,
+    pub timing: NativeTacticRouteTiming,
     pub seeds: Vec<NativeTacticSeedResult>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticRouteTiming {
+    pub wall_micros: u64,
+    pub tactic_selection_micros: u64,
+    pub checkpoint_branching_micros: u64,
+    pub tactic_execution_micros: u64,
+    pub native_simulation_micros: u64,
+    pub tactic_preparation_and_fact_extraction_micros: u64,
+    pub model_update_micros: u64,
+    pub evidence_projection_and_persistence_micros: u64,
+    pub useful_decisions_per_second_millionths: u64,
+    pub native_ticks_per_second_millionths: u64,
+    pub episodes_per_second_millionths: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct NativeTacticSeedPerformance {
+    schema: String,
+    decisions: u64,
+    useful_decisions: u64,
+    timing: NativeTacticRouteTiming,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -102,6 +135,10 @@ pub struct NativeTacticSeedResult {
     pub native_ticks: u64,
     pub replay_rows: usize,
     pub visited_states: usize,
+    #[serde(default)]
+    pub useful_decisions: u64,
+    #[serde(default)]
+    pub timing: NativeTacticRouteTiming,
     pub selection_counts: BTreeMap<String, u64>,
     pub diagnostics: Option<TacticCampaignDiagnostics>,
     pub final_checkpoint: Option<String>,
@@ -337,8 +374,10 @@ pub fn run_native_tactic_route(
         (Ok(_), Err(error)) => return Err(error),
     };
 
+    let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
+    let timing = aggregate_route_timing(&seed_results);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -353,6 +392,8 @@ pub fn run_native_tactic_route(
         successful_seeds: seed_results.iter().filter(|seed| seed.success).count() as u64,
         total_native_ticks: seed_results.iter().map(|seed| seed.native_ticks).sum(),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
+        useful_decisions,
+        timing,
         seeds: seed_results,
     };
     write_new(
@@ -387,6 +428,98 @@ fn route_action_schema_sha256(
     Ok(Digest(hasher.finalize().into()))
 }
 
+struct TimedTacticWorker<'a, W> {
+    inner: &'a mut W,
+    native_elapsed: Duration,
+}
+
+impl<'a, W> TimedTacticWorker<'a, W> {
+    fn new(inner: &'a mut W) -> Self {
+        Self {
+            inner,
+            native_elapsed: Duration::ZERO,
+        }
+    }
+}
+
+impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTacticWorker<'_, W> {
+    fn identity(&self) -> &crate::native_suffix_worker::NativeSuffixWorkerIdentity {
+        self.inner.identity()
+    }
+
+    fn run_tactic_batch(
+        &mut self,
+        request: &Path,
+        result: &Path,
+    ) -> Result<ValidatedNativeSuffixBatch, NativeTacticWorkerError> {
+        let started = Instant::now();
+        let response = self.inner.run_tactic_batch(request, result);
+        self.native_elapsed = self.native_elapsed.saturating_add(started.elapsed());
+        response
+    }
+}
+
+fn elapsed_micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+fn decision_trace_is_useful(decision: &NativeTacticDecisionTrace) -> bool {
+    decision.terminal
+        || decision.reward > 0.0
+        || decision.goal_distance_after < decision.goal_distance_before
+}
+
+fn per_second_millionths(count: u64, wall_micros: u64) -> u64 {
+    if count == 0 || wall_micros == 0 {
+        return 0;
+    }
+    let scaled = u128::from(count)
+        .saturating_mul(1_000_000)
+        .saturating_mul(1_000_000)
+        / u128::from(wall_micros);
+    u64::try_from(scaled).unwrap_or(u64::MAX)
+}
+
+fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> NativeTacticRouteTiming {
+    let mut timing = NativeTacticRouteTiming::default();
+    let mut useful_decisions = 0_u64;
+    let mut native_ticks = 0_u64;
+    let mut episodes = 0_u64;
+    for seed in seeds {
+        timing.wall_micros = timing.wall_micros.saturating_add(seed.timing.wall_micros);
+        timing.tactic_selection_micros = timing
+            .tactic_selection_micros
+            .saturating_add(seed.timing.tactic_selection_micros);
+        timing.checkpoint_branching_micros = timing
+            .checkpoint_branching_micros
+            .saturating_add(seed.timing.checkpoint_branching_micros);
+        timing.tactic_execution_micros = timing
+            .tactic_execution_micros
+            .saturating_add(seed.timing.tactic_execution_micros);
+        timing.native_simulation_micros = timing
+            .native_simulation_micros
+            .saturating_add(seed.timing.native_simulation_micros);
+        timing.tactic_preparation_and_fact_extraction_micros = timing
+            .tactic_preparation_and_fact_extraction_micros
+            .saturating_add(seed.timing.tactic_preparation_and_fact_extraction_micros);
+        timing.model_update_micros = timing
+            .model_update_micros
+            .saturating_add(seed.timing.model_update_micros);
+        timing.evidence_projection_and_persistence_micros = timing
+            .evidence_projection_and_persistence_micros
+            .saturating_add(seed.timing.evidence_projection_and_persistence_micros);
+        useful_decisions = useful_decisions.saturating_add(seed.useful_decisions);
+        native_ticks = native_ticks.saturating_add(seed.native_ticks);
+        episodes = episodes.saturating_add(seed.episodes);
+    }
+    timing.useful_decisions_per_second_millionths =
+        per_second_millionths(useful_decisions, timing.wall_micros);
+    timing.native_ticks_per_second_millionths =
+        per_second_millionths(native_ticks, timing.wall_micros);
+    timing.episodes_per_second_millionths = per_second_millionths(episodes, timing.wall_micros);
+    timing
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_seed(
     config: &NativeTacticRouteRunConfig<'_>,
@@ -404,8 +537,9 @@ fn run_seed(
     let seed_root = config
         .output_root
         .join(format!("seed-{seed_index:03}-{seed}"));
+    let resuming_seed = seed_root.exists();
     let (mut campaign, mut trace, mut selection_counts, mut native_ticks, mut episode) =
-        if seed_root.exists() {
+        if resuming_seed {
             if !config.resume {
                 return Err(route_message(
                     "unexpected pre-existing tactic seed evidence",
@@ -445,6 +579,29 @@ fn run_seed(
             .map_err(route_error)?;
             (campaign, Vec::new(), BTreeMap::new(), 0, 0)
         };
+    let has_performance =
+        resuming_seed && seed_performance_exists(&seed_root, campaign.decision_index)?;
+    let performance = if resuming_seed {
+        load_seed_performance(&seed_root, campaign.decision_index)?
+    } else {
+        NativeTacticSeedPerformance {
+            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1.into(),
+            decisions: 0,
+            useful_decisions: 0,
+            timing: NativeTacticRouteTiming::default(),
+        }
+    };
+    let mut timing = performance.timing;
+    let prior_wall_micros = timing.wall_micros;
+    let invocation_started = Instant::now();
+    let mut useful_decisions = if has_performance {
+        performance.useful_decisions
+    } else {
+        trace
+            .iter()
+            .filter(|decision| decision_trace_is_useful(decision))
+            .count() as u64
+    };
     let source_frame = config.optimization.route.source_boundary_index;
     let horizon = config.optimization.budgets.exploration_horizon_ticks;
     let maximum_catalog_tactic_ticks = catalog
@@ -476,12 +633,21 @@ fn run_seed(
         && campaign.current.snapshot.terminal.reached != Some(true)
     {
         if cancellation_requested(config) {
+            timing.wall_micros =
+                prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
+            persist_seed_performance(
+                &seed_root,
+                campaign.decision_index,
+                &timing,
+                useful_decisions,
+            )?;
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
         }
         let periodic_branch = campaign.decision_index > 0
             && campaign.decision_index % config.branch_every_decisions == 0;
         if !campaign.replay.is_empty() && periodic_branch {
+            let branch_started = Instant::now();
             episode = episode
                 .checked_add(1)
                 .ok_or_else(|| route_message("episode counter overflowed"))?;
@@ -508,6 +674,9 @@ fn run_seed(
                     |_| true,
                 )
                 .map_err(route_error)?;
+            timing.checkpoint_branching_micros = timing
+                .checkpoint_branching_micros
+                .saturating_add(elapsed_micros(branch_started.elapsed()));
         }
 
         // Reserve horizon for the tactic Q actually selected at this state,
@@ -518,15 +687,19 @@ fn run_seed(
         // Restoring a branch can change the selected tactic. Recheck until the
         // preview fits; the periodic root sample guarantees convergence because
         // every catalog entry is itself bounded by the exploration horizon.
-        loop {
+        let decision = loop {
             let suffix_ticks = campaign
                 .route_tape
                 .frames
                 .len()
                 .saturating_sub(source_frame as usize) as u64;
+            let selection_started = Instant::now();
             let preview = campaign
                 .decide(catalog, config.blueprints, &encode)
                 .map_err(route_error)?;
+            timing.tactic_selection_micros = timing
+                .tactic_selection_micros
+                .saturating_add(elapsed_micros(selection_started.elapsed()));
             let selected_maximum_ticks = preview
                 .ranking
                 .choices
@@ -536,8 +709,9 @@ fn run_seed(
                 .duration
                 .maximum_ticks;
             if selected_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
-                break;
+                break preview;
             }
+            let branch_started = Instant::now();
             episode = episode
                 .checked_add(1)
                 .ok_or_else(|| route_message("episode counter overflowed"))?;
@@ -565,7 +739,10 @@ fn run_seed(
                     |_| true,
                 )
                 .map_err(route_error)?;
-        }
+            timing.checkpoint_branching_micros = timing
+                .checkpoint_branching_micros
+                .saturating_add(elapsed_micros(branch_started.elapsed()));
+        };
 
         let decision_index = campaign.decision_index;
         let refit_model = tactic_model_refit_due(
@@ -578,22 +755,55 @@ fn run_seed(
             .join("native")
             .join(format!("decision-{decision_index:06}"));
         fs::create_dir_all(&paths_root).map_err(route_error)?;
+        let paths = NativeTacticWorkerPaths {
+            request: paths_root.join("request.json"),
+            result: paths_root.join("result.json"),
+        };
+        let execution_started = Instant::now();
+        let (outcome, native_elapsed) = {
+            let mut timed_worker = TimedTacticWorker::new(worker);
+            let outcome = execute_selected_tactic(
+                &mut timed_worker,
+                &decision.selected,
+                catalog,
+                config.blueprints,
+                &campaign.current.snapshot,
+                &campaign.route_tape,
+                &paths,
+            )
+            .map_err(route_error)?;
+            (outcome, timed_worker.native_elapsed)
+        };
+        let execution_elapsed = execution_started.elapsed();
+        timing.tactic_execution_micros = timing
+            .tactic_execution_micros
+            .saturating_add(elapsed_micros(execution_elapsed));
+        timing.native_simulation_micros = timing
+            .native_simulation_micros
+            .saturating_add(elapsed_micros(native_elapsed));
+        timing.tactic_preparation_and_fact_extraction_micros = timing
+            .tactic_preparation_and_fact_extraction_micros
+            .saturating_add(elapsed_micros(
+                execution_elapsed.saturating_sub(native_elapsed),
+            ));
+        let model_started = Instant::now();
         let step = campaign
-            .execute_and_refit_rewarded(
-                worker,
+            .retain_and_refit_rewarded(
+                decision,
+                outcome,
                 catalog,
                 config.blueprints,
                 registry,
-                &NativeTacticWorkerPaths {
-                    request: paths_root.join("request.json"),
-                    result: paths_root.join("result.json"),
-                },
                 &encode,
                 |_| true,
                 reward_spec,
                 refit_model,
             )
             .map_err(route_error)?;
+        timing.model_update_micros = timing
+            .model_update_micros
+            .saturating_add(elapsed_micros(model_started.elapsed()));
+        let evidence_started = Instant::now();
         let selected = &step.step.decision.selected;
         *selection_counts
             .entry(selected.descriptor.option_id.clone())
@@ -684,6 +894,9 @@ fn run_seed(
             measurements,
             applicable_tactics,
         };
+        if decision_trace_is_useful(&decision_trace) {
+            useful_decisions = useful_decisions.saturating_add(1);
+        }
         let decision_trace_root = seed_root.join("decision-trace");
         fs::create_dir_all(&decision_trace_root).map_err(route_error)?;
         write_new(
@@ -716,6 +929,17 @@ fn run_seed(
         )?;
         trace.push(decision_trace);
         if cancellation_requested(config) {
+            timing.evidence_projection_and_persistence_micros = timing
+                .evidence_projection_and_persistence_micros
+                .saturating_add(elapsed_micros(evidence_started.elapsed()));
+            timing.wall_micros =
+                prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
+            persist_seed_performance(
+                &seed_root,
+                campaign.decision_index,
+                &timing,
+                useful_decisions,
+            )?;
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
         }
@@ -745,11 +969,15 @@ fn run_seed(
                 .map_err(route_error)?;
             advance_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint, checkpoint)?;
         }
+        timing.evidence_projection_and_persistence_micros = timing
+            .evidence_projection_and_persistence_micros
+            .saturating_add(elapsed_micros(evidence_started.elapsed()));
         if step.step.transition.value_sample.terminal {
             break;
         }
     }
 
+    let final_persistence_started = Instant::now();
     let success = campaign.current.snapshot.terminal.reached == Some(true);
     let final_checkpoint = campaign
         .write_checkpoint(&seed_root.join("final-checkpoint"))
@@ -777,6 +1005,23 @@ fn run_seed(
     } else {
         (None, None)
     };
+    timing.evidence_projection_and_persistence_micros = timing
+        .evidence_projection_and_persistence_micros
+        .saturating_add(elapsed_micros(final_persistence_started.elapsed()));
+    timing.wall_micros =
+        prior_wall_micros.saturating_add(elapsed_micros(invocation_started.elapsed()));
+    timing.useful_decisions_per_second_millionths =
+        per_second_millionths(useful_decisions, timing.wall_micros);
+    timing.native_ticks_per_second_millionths =
+        per_second_millionths(native_ticks, timing.wall_micros);
+    timing.episodes_per_second_millionths =
+        per_second_millionths(episode.saturating_add(1), timing.wall_micros);
+    persist_seed_performance(
+        &seed_root,
+        campaign.decision_index,
+        &timing,
+        useful_decisions,
+    )?;
     Ok(NativeTacticSeedResult {
         seed,
         success,
@@ -785,6 +1030,8 @@ fn run_seed(
         native_ticks,
         replay_rows: campaign.replay.len(),
         visited_states: campaign.visited_state_count(),
+        useful_decisions,
+        timing,
         selection_counts,
         diagnostics: Some(campaign.diagnostics().map_err(route_error)?),
         final_checkpoint: Some(path_text(&final_checkpoint)),
@@ -812,6 +1059,124 @@ fn pause_tactic_campaign(
                 .join(format!("decision-{:06}", campaign.decision_index)),
         )
         .map_err(route_error)
+}
+
+fn seed_performance_root(seed_root: &Path) -> PathBuf {
+    seed_root.join("performance")
+}
+
+fn seed_performance_prefix(decisions: u64) -> String {
+    format!("decision-{decisions:06}-attempt-")
+}
+
+fn seed_performance_exists(
+    seed_root: &Path,
+    decisions: u64,
+) -> Result<bool, NativeTacticRouteRunError> {
+    let root = seed_performance_root(seed_root);
+    if !root.exists() {
+        return Ok(false);
+    }
+    let prefix = seed_performance_prefix(decisions);
+    Ok(fs::read_dir(root).map_err(route_error)?.any(|entry| {
+        entry.is_ok_and(|entry| {
+            entry
+                .file_type()
+                .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
+                && entry.file_name().to_string_lossy().starts_with(&prefix)
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+        })
+    }))
+}
+
+fn persist_seed_performance(
+    seed_root: &Path,
+    decisions: u64,
+    timing: &NativeTacticRouteTiming,
+    useful_decisions: u64,
+) -> Result<(), NativeTacticRouteRunError> {
+    let performance = NativeTacticSeedPerformance {
+        schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1.into(),
+        decisions,
+        useful_decisions,
+        timing: timing.clone(),
+    };
+    let root = seed_performance_root(seed_root);
+    fs::create_dir_all(&root).map_err(route_error)?;
+    for attempt in 0..MAX_ROUTE_ATTEMPTS {
+        let path = root.join(format!(
+            "{}{attempt:04}.json",
+            seed_performance_prefix(decisions)
+        ));
+        if path.exists() {
+            let existing: NativeTacticSeedPerformance = read_bounded_json(&path)?;
+            if existing == performance {
+                return Ok(());
+            }
+            continue;
+        }
+        return write_new(
+            &path,
+            &serde_json::to_vec_pretty(&performance).map_err(route_error)?,
+        );
+    }
+    Err(route_message(
+        "immutable tactic performance checkpoint capacity is exhausted",
+    ))
+}
+
+fn load_seed_performance(
+    seed_root: &Path,
+    decisions: u64,
+) -> Result<NativeTacticSeedPerformance, NativeTacticRouteRunError> {
+    let root = seed_performance_root(seed_root);
+    if !root.exists() {
+        return Ok(NativeTacticSeedPerformance {
+            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1.into(),
+            decisions,
+            useful_decisions: 0,
+            timing: NativeTacticRouteTiming::default(),
+        });
+    }
+    let prefix = seed_performance_prefix(decisions);
+    let mut paths = fs::read_dir(root)
+        .map_err(route_error)?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_type()
+                .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
+                && entry.file_name().to_string_lossy().starts_with(&prefix)
+                && entry
+                    .path()
+                    .extension()
+                    .is_some_and(|extension| extension == "json")
+        })
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    paths.sort();
+    let Some(path) = paths.last() else {
+        return Ok(NativeTacticSeedPerformance {
+            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1.into(),
+            decisions,
+            useful_decisions: 0,
+            timing: NativeTacticRouteTiming::default(),
+        });
+    };
+    let performance: NativeTacticSeedPerformance = read_bounded_json(path)?;
+    if performance.schema != TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1
+        || performance.decisions != decisions
+        || performance.useful_decisions > decisions
+        || performance.timing.native_simulation_micros > performance.timing.tactic_execution_micros
+    {
+        return Err(route_message(
+            "paused tactic performance checkpoint is invalid",
+        ));
+    }
+    Ok(performance)
 }
 
 type ResumedSeedState = (
@@ -985,6 +1350,8 @@ fn read_completed_seed_result(
     let result: NativeTacticSeedResult = read_bounded_json(path)?;
     if result.seed != seed
         || result.decisions > decisions_per_seed
+        || result.useful_decisions > result.decisions
+        || result.timing.native_simulation_micros > result.timing.tactic_execution_micros
         || result.trace.len() as u64 != result.decisions
         || result
             .trace
@@ -1688,6 +2055,81 @@ mod tests {
         assert!(selected_tactic_fits_horizon(152, 8, 160));
         assert!(!selected_tactic_fits_horizon(88, 80, 160));
         assert!(!selected_tactic_fits_horizon(u64::MAX, 1, 160));
+    }
+
+    #[test]
+    fn throughput_rates_use_measured_wall_time_and_sum_seed_phases() {
+        let seed = NativeTacticSeedResult {
+            seed: 7,
+            success: false,
+            decisions: 4,
+            episodes: 2,
+            native_ticks: 30,
+            replay_rows: 4,
+            visited_states: 3,
+            useful_decisions: 2,
+            timing: NativeTacticRouteTiming {
+                wall_micros: 2_000_000,
+                tactic_selection_micros: 10,
+                checkpoint_branching_micros: 20,
+                tactic_execution_micros: 1_000_000,
+                native_simulation_micros: 900_000,
+                tactic_preparation_and_fact_extraction_micros: 100_000,
+                model_update_micros: 200_000,
+                evidence_projection_and_persistence_micros: 300_000,
+                ..NativeTacticRouteTiming::default()
+            },
+            selection_counts: BTreeMap::new(),
+            diagnostics: None,
+            final_checkpoint: None,
+            graph: None,
+            successful_tape: None,
+            final_result: None,
+            trace: Vec::new(),
+        };
+        let timing = aggregate_route_timing(&[seed]);
+
+        assert_eq!(timing.useful_decisions_per_second_millionths, 1_000_000);
+        assert_eq!(timing.native_ticks_per_second_millionths, 15_000_000);
+        assert_eq!(timing.episodes_per_second_millionths, 1_000_000);
+        assert_eq!(timing.native_simulation_micros, 900_000);
+    }
+
+    #[test]
+    fn pause_performance_is_immutable_and_resume_bound() {
+        let directory = std::env::temp_dir().join(format!(
+            "dusklight-tactic-route-performance-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&directory);
+        let timing = NativeTacticRouteTiming {
+            wall_micros: 100,
+            tactic_execution_micros: 80,
+            native_simulation_micros: 70,
+            ..NativeTacticRouteTiming::default()
+        };
+
+        persist_seed_performance(&directory, 3, &timing, 2).unwrap();
+        let loaded = load_seed_performance(&directory, 3).unwrap();
+        assert_eq!(loaded.decisions, 3);
+        assert_eq!(loaded.useful_decisions, 2);
+        assert_eq!(loaded.timing, timing);
+        persist_seed_performance(&directory, 3, &timing, 2).unwrap();
+        persist_seed_performance(&directory, 3, &timing, 1).unwrap();
+        assert_eq!(
+            load_seed_performance(&directory, 3)
+                .unwrap()
+                .useful_decisions,
+            1
+        );
+        assert_eq!(
+            load_seed_performance(&directory, 2)
+                .unwrap()
+                .timing
+                .wall_micros,
+            0
+        );
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

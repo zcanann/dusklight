@@ -529,7 +529,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v23");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v24");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1227,6 +1227,9 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "/api/tactics/duplicate",
         "/api/tactics/delete",
         "typed file and becomes a live route-learning choice",
+        "Measured learning throughput and phase timing",
+        "useful_decisions_per_second_millionths",
+        "tactic_preparation_and_fact_extraction_micros",
         "id=\"tree\"",
         "id=\"detail\"",
         "graph-canvas",

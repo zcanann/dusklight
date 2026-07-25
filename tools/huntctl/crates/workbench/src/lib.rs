@@ -62,7 +62,7 @@ use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v23";
+const GRAPH_SCHEMA: &str = "dusklight.route-workbench.graph.v24";
 const PROJECT_CATALOG_SCHEMA: &str = "dusklight.route-workbench.workspace.v2";
 const PROJECT_WORKSPACE_PATH: &str = "routes";
 const DRAFT_SCHEMA: &str = "dusklight.route-workbench.draft.v2";
@@ -223,6 +223,9 @@ pub struct GraphTacticRouteLearning {
     pub successful_seeds: u64,
     pub total_decisions: u64,
     pub total_native_ticks: u64,
+    pub useful_decisions: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throughput: Option<GraphTacticRouteThroughput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub latest_decision: Option<GraphTacticDecisionSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -235,6 +238,21 @@ pub struct GraphTacticRouteLearning {
     pub blocker: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct GraphTacticRouteThroughput {
+    pub wall_micros: u64,
+    pub useful_decisions_per_second_millionths: u64,
+    pub native_ticks_per_second_millionths: u64,
+    pub episodes_per_second_millionths: u64,
+    pub tactic_selection_micros: u64,
+    pub checkpoint_branching_micros: u64,
+    pub tactic_execution_micros: u64,
+    pub native_simulation_micros: u64,
+    pub tactic_preparation_and_fact_extraction_micros: u64,
+    pub model_update_micros: u64,
+    pub evidence_projection_and_persistence_micros: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
