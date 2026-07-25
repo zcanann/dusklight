@@ -1095,11 +1095,13 @@ fn pad_for(
             query.player_position_f32_bits = Some(observation.player_position_f32_bits);
             query.camera_yaw_radians_f32_bits = observation.camera_yaw_radians_f32_bits;
             let intermediate_tolerance = f32::from_bits(*intermediate_tolerance_f32_bits);
+            if local_tick == 0 {
+                *coordinate_index =
+                    forward_coordinate_index(player, coordinates_f32_bits.as_slice());
+            }
             while *coordinate_index + 1 < coordinates_f32_bits.len()
-                && (planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index]))
+                && planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index]))
                     <= intermediate_tolerance
-                    || planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index + 1]))
-                        < planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index])))
             {
                 *coordinate_index += 1;
             }
@@ -1249,6 +1251,36 @@ fn seek_pad(
 
 fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
     (right[0] - left[0]).hypot(right[2] - left[2])
+}
+
+fn forward_coordinate_index(player: [f32; 3], coordinates: &[[u32; 3]]) -> usize {
+    if coordinates.len() < 2 {
+        return 0;
+    }
+    let mut nearest = (f32::INFINITY, 0_usize);
+    for (segment_index, pair) in coordinates.windows(2).enumerate() {
+        let start = bits3(pair[0]);
+        let end = bits3(pair[1]);
+        let segment_x = end[0] - start[0];
+        let segment_z = end[2] - start[2];
+        let length_squared = segment_x * segment_x + segment_z * segment_z;
+        let progress = if length_squared > 0.0 {
+            (((player[0] - start[0]) * segment_x + (player[2] - start[2]) * segment_z)
+                / length_squared)
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let projection_x = start[0] + segment_x * progress;
+        let projection_z = start[2] + segment_z * progress;
+        let distance_squared =
+            (player[0] - projection_x).powi(2) + (player[2] - projection_z).powi(2);
+        let target_index = segment_index + usize::from(progress > 0.0);
+        if distance_squared < nearest.0 {
+            nearest = (distance_squared, target_index);
+        }
+    }
+    nearest.1
 }
 
 fn target_actor<'a>(
@@ -1652,6 +1684,49 @@ mod tests {
         assert_eq!(frames[0].pads[0].stick_x, -100);
         assert!(!queries[0].target_reached);
         assert!(queries[2].target_reached);
+    }
+
+    #[test]
+    fn coordinate_sequence_does_not_backtrack_after_passing_a_distant_waypoint() {
+        let plan = NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits: vec![
+                    [
+                        350.0_f32.to_bits(),
+                        0.0_f32.to_bits(),
+                        (-10_150.0_f32).to_bits(),
+                    ],
+                    [
+                        350.0_f32.to_bits(),
+                        0.0_f32.to_bits(),
+                        (-17_050.0_f32).to_bits(),
+                    ],
+                    [
+                        (-441.0_f32).to_bits(),
+                        0.0_f32.to_bits(),
+                        (-19_270.0_f32).to_bits(),
+                    ],
+                ],
+                intermediate_tolerance_f32_bits: 256.0_f32.to_bits(),
+                final_tolerance_f32_bits: 256.0_f32.to_bits(),
+                stall_grace_ticks: 4,
+                stationary_window_ticks: 2,
+                stationary_window_distance_f32_bits: 2.0_f32.to_bits(),
+                magnitude: 100,
+            },
+            8,
+        );
+        let (frames, _, _) = realize(
+            &plan,
+            &[
+                observation(0, [506.9, 0.0, -11_545.5]),
+                observation(1, [350.0, 0.0, -17_050.0]),
+                observation(2, [-441.0, 0.0, -19_270.0]),
+            ],
+        )
+        .unwrap();
+
+        assert!(frames[0].pads[0].stick_y < 0);
     }
 
     #[test]
