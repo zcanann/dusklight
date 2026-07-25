@@ -6,8 +6,8 @@ use crate::native_suffix_worker::{
     NativeSuffixWorkerError, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
 };
 use crate::native_tactic_worker::{
-    NativeTacticWorkerError, NativeTacticWorkerPaths, PersistentTacticBatchWorker,
-    execute_selected_tactic, tactic_root_checkpoint_sha256,
+    NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
+    PersistentTacticBatchWorker, execute_selected_tactic, tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_q_campaign::{
@@ -32,7 +32,9 @@ use dusklight_learning::reward_shaping::{
     POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V1,
     TacticRewardBreakdown, TacticRewardSpec,
 };
-use dusklight_learning::tactic_exploration::{TacticExplorationConfig, TacticSelectionReason};
+use dusklight_learning::tactic_exploration::{
+    SelectedTactic, TacticExplorationConfig, TacticSelectionReason,
+};
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_proposals::behavior_archive::BehaviorArchive;
@@ -53,6 +55,7 @@ use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
@@ -78,6 +81,7 @@ const MAXIMUM_TACTIC_DECISION_SEGMENT_BYTES: usize = 256 * 1024 * 1024;
 const MAXIMUM_TACTIC_DECISION_SEGMENTS: usize =
     (MAX_ROUTE_DECISIONS as usize).div_ceil(NATIVE_TACTIC_DECISION_COMPACTION_RECORDS as usize) + 1;
 const MAX_ROUTE_SEEDS: usize = 32;
+const MAX_ROUTE_WORKERS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
@@ -132,8 +136,13 @@ pub struct NativeTacticRouteTiming {
     pub wall_micros: u64,
     pub tactic_selection_micros: u64,
     pub checkpoint_branching_micros: u64,
+    /// Coordinator wall time waiting for proposal batches. Concurrent seed
+    /// coordinators are summed in seed-level aggregates.
     pub tactic_execution_micros: u64,
+    /// Total native worker occupancy. This is work, not wall time, and may
+    /// exceed `tactic_execution_micros` when proposals overlap.
     pub native_simulation_micros: u64,
+    /// Total non-native preparation/fact-extraction occupancy across workers.
     pub tactic_preparation_and_fact_extraction_micros: u64,
     pub model_update_micros: u64,
     pub evidence_projection_and_persistence_micros: u64,
@@ -340,7 +349,7 @@ pub fn run_native_tactic_route(
         .execution
         .card_fixture_root(&root, config.optimization)
         .map_err(route_error)?;
-    let worker_count = config.workers.min(config.exploration_seeds.len());
+    let worker_count = config.workers;
     let attempt_roots = (0..worker_count)
         .map(|_| reserve_attempt_root(config.output_root))
         .collect::<Result<Vec<_>, _>>()?;
@@ -415,38 +424,69 @@ pub fn run_native_tactic_route(
     let reward_spec = route_tactic_reward_spec(&encoder, &initial_facts)?;
 
     let mut indexed_results = std::thread::scope(|scope| {
-        let mut handles = Vec::with_capacity(worker_count);
-        for (worker_index, worker) in workers.into_iter().enumerate() {
-            let catalog = &catalog;
-            let registry = &registry;
-            let encoder = &encoder;
-            let reward_spec = &reward_spec;
-            let initial_facts = &initial_facts;
-            let route_prefix = &route_prefix;
-            handles.push(scope.spawn(move || {
-                run_seed_partition(
-                    config,
-                    worker,
-                    catalog,
-                    registry,
-                    encoder,
-                    reward_spec,
-                    initial_facts,
-                    route_prefix,
-                    root_checkpoint_sha256,
-                    worker_index,
-                    worker_count,
-                )
-            }));
+        let (sender, receiver) = mpsc::channel();
+        let receiver = Arc::new(Mutex::new(receiver));
+        let worker_handles = workers
+            .into_iter()
+            .map(|worker| {
+                let receiver = Arc::clone(&receiver);
+                let catalog = &catalog;
+                scope.spawn(move || run_tactic_proposal_worker(worker, catalog, &receiver))
+            })
+            .collect::<Vec<_>>();
+        let pool = NativeTacticProposalPool { sender };
+        let coordinator_handles = config
+            .exploration_seeds
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(seed_index, seed)| {
+                let pool = pool.clone();
+                let catalog = &catalog;
+                let registry = &registry;
+                let encoder = &encoder;
+                let reward_spec = &reward_spec;
+                let initial_facts = &initial_facts;
+                let route_prefix = &route_prefix;
+                scope.spawn(move || {
+                    run_seed_coordinator(
+                        config,
+                        &pool,
+                        catalog,
+                        registry,
+                        encoder,
+                        reward_spec,
+                        initial_facts,
+                        route_prefix,
+                        root_checkpoint_sha256,
+                        seed_index,
+                        seed,
+                    )
+                    .map(|result| (seed_index, result))
+                })
+            })
+            .collect::<Vec<_>>();
+        let coordinator_results = coordinator_handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| route_message("native tactic route coordinator panicked"))?
+            })
+            .collect::<Result<Vec<_>, _>>();
+        drop(pool);
+        let worker_results = worker_handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| route_message("native tactic route worker thread panicked"))?
+            })
+            .collect::<Result<Vec<_>, _>>();
+        match (coordinator_results, worker_results) {
+            (Ok(results), Ok(_)) => Ok(results),
+            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
         }
-        let mut results = Vec::with_capacity(config.exploration_seeds.len());
-        for handle in handles {
-            let partition = handle
-                .join()
-                .map_err(|_| route_message("native tactic route worker thread panicked"))??;
-            results.extend(partition);
-        }
-        Ok::<_, NativeTacticRouteRunError>(results)
     })?;
     indexed_results.sort_by_key(|(seed_index, _)| *seed_index);
     if indexed_results.len() != config.exploration_seeds.len()
@@ -534,9 +574,9 @@ fn launch_tactic_route_worker(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn run_seed_partition(
+fn run_seed_coordinator(
     config: &NativeTacticRouteRunConfig<'_>,
-    mut worker: NativeSuffixWorkerSession,
+    pool: &NativeTacticProposalPool,
     catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
     registry: &FactRegistry,
     encoder: &GoalConditionedTacticFeatureEncoder,
@@ -544,62 +584,38 @@ fn run_seed_partition(
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
     root_checkpoint_sha256: Digest,
-    worker_index: usize,
-    worker_count: usize,
-) -> Result<Vec<(usize, NativeTacticSeedResult)>, NativeTacticRouteRunError> {
-    let run = (|| {
-        let mut results = Vec::new();
-        for seed_index in
-            worker_seed_indices(worker_index, worker_count, config.exploration_seeds.len())
-        {
-            let seed = config.exploration_seeds[seed_index];
-            let seed_root = config
-                .output_root
-                .join(format!("seed-{seed_index:03}-{seed}"));
-            let seed_result_path = seed_root.join("seed-result.json");
-            let result = if seed_result_path.exists() {
-                if !config.resume {
-                    return Err(route_message("unexpected pre-existing tactic seed result"));
-                }
-                read_completed_seed_result(&seed_result_path, seed, config.decisions_per_seed)?
-            } else {
-                let result = run_seed(
-                    config,
-                    &mut worker,
-                    catalog,
-                    registry,
-                    encoder,
-                    reward_spec,
-                    initial_facts,
-                    route_prefix,
-                    root_checkpoint_sha256,
-                    seed_index,
-                    seed,
-                )?;
-                write_new(
-                    &seed_result_path,
-                    &serde_json::to_vec_pretty(&result).map_err(route_error)?,
-                )?;
-                result
-            };
-            results.push((seed_index, result));
+    seed_index: usize,
+    seed: u64,
+) -> Result<NativeTacticSeedResult, NativeTacticRouteRunError> {
+    let seed_root = config
+        .output_root
+        .join(format!("seed-{seed_index:03}-{seed}"));
+    let seed_result_path = seed_root.join("seed-result.json");
+    if seed_result_path.exists() {
+        if !config.resume {
+            return Err(route_message("unexpected pre-existing tactic seed result"));
         }
-        Ok::<_, NativeTacticRouteRunError>(results)
-    })();
-    let shutdown = worker.shutdown().map_err(route_error);
-    match (run, shutdown) {
-        (Ok(results), Ok(())) => Ok(results),
-        (Err(error), _) => Err(error),
-        (Ok(_), Err(error)) => Err(error),
+        read_completed_seed_result(&seed_result_path, seed, config.decisions_per_seed)
+    } else {
+        let result = run_seed(
+            config,
+            pool,
+            catalog,
+            registry,
+            encoder,
+            reward_spec,
+            initial_facts,
+            route_prefix,
+            root_checkpoint_sha256,
+            seed_index,
+            seed,
+        )?;
+        write_new(
+            &seed_result_path,
+            &serde_json::to_vec_pretty(&result).map_err(route_error)?,
+        )?;
+        Ok(result)
     }
-}
-
-fn worker_seed_indices(
-    worker_index: usize,
-    worker_count: usize,
-    seed_count: usize,
-) -> impl Iterator<Item = usize> {
-    (worker_index..seed_count).step_by(worker_count)
 }
 
 struct TimedTacticWorker<'a, W> {
@@ -633,6 +649,102 @@ impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTactic
     }
 }
 
+struct NativeTacticProposalJob {
+    selected: SelectedTactic,
+    source_snapshot: FactSnapshot,
+    source_route_tape: InputTape,
+    paths: NativeTacticWorkerPaths,
+    response: mpsc::SyncSender<Result<NativeTacticProposalWork, NativeTacticRouteRunError>>,
+}
+
+struct NativeTacticProposalWork {
+    outcome: NativeTacticWorkerOutcome,
+    native_elapsed: Duration,
+    preparation_elapsed: Duration,
+}
+
+#[derive(Clone)]
+struct NativeTacticProposalPool {
+    sender: mpsc::Sender<NativeTacticProposalJob>,
+}
+
+impl NativeTacticProposalPool {
+    fn execute_batch(
+        &self,
+        proposals: &[SelectedTactic],
+        source_snapshot: &FactSnapshot,
+        source_route_tape: &InputTape,
+        paths_root: &Path,
+    ) -> Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError> {
+        let mut responses = Vec::with_capacity(proposals.len());
+        for (proposal_index, selected) in proposals.iter().enumerate() {
+            let proposal_root = paths_root.join(format!("proposal-{proposal_index:03}"));
+            fs::create_dir_all(&proposal_root).map_err(route_error)?;
+            let (response, receiver) = mpsc::sync_channel(1);
+            self.sender
+                .send(NativeTacticProposalJob {
+                    selected: selected.clone(),
+                    source_snapshot: source_snapshot.clone(),
+                    source_route_tape: source_route_tape.clone(),
+                    paths: NativeTacticWorkerPaths {
+                        request: proposal_root.join("request.json"),
+                        result: proposal_root.join("result.json"),
+                    },
+                    response,
+                })
+                .map_err(|_| route_message("native tactic proposal pool stopped"))?;
+            responses.push(receiver);
+        }
+        responses
+            .into_iter()
+            .map(|receiver| {
+                receiver
+                    .recv()
+                    .map_err(|_| route_message("native tactic proposal worker stopped"))?
+            })
+            .collect()
+    }
+}
+
+fn run_tactic_proposal_worker(
+    mut worker: NativeSuffixWorkerSession,
+    catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
+    receiver: &Mutex<mpsc::Receiver<NativeTacticProposalJob>>,
+) -> Result<(), NativeTacticRouteRunError> {
+    loop {
+        let job = receiver
+            .lock()
+            .map_err(|_| route_message("native tactic proposal queue is poisoned"))?
+            .recv();
+        let Ok(job) = job else {
+            break;
+        };
+        let execution_started = Instant::now();
+        let mut timed_worker = TimedTacticWorker::new(&mut worker);
+        let outcome = execute_selected_tactic(
+            &mut timed_worker,
+            &job.selected,
+            catalog,
+            &[],
+            &job.source_snapshot,
+            &job.source_route_tape,
+            &job.paths,
+        )
+        .map_err(route_error);
+        let native_elapsed = timed_worker.native_elapsed;
+        let work = outcome.map(|outcome| {
+            let elapsed = execution_started.elapsed();
+            NativeTacticProposalWork {
+                outcome,
+                native_elapsed,
+                preparation_elapsed: elapsed.saturating_sub(native_elapsed),
+            }
+        });
+        let _ = job.response.send(work);
+    }
+    worker.shutdown().map_err(route_error)
+}
+
 fn elapsed_micros(duration: Duration) -> u64 {
     u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
@@ -641,6 +753,18 @@ fn decision_trace_is_useful(decision: &NativeTacticDecisionTrace) -> bool {
     decision.terminal
         || decision.reward > 0.0
         || decision.goal_distance_after < decision.goal_distance_before
+}
+
+fn decision_evaluated_ticks(decision: &NativeTacticDecisionTrace) -> u64 {
+    if decision.proposal_batch.is_empty() {
+        u64::from(decision.reward_components.duration_ticks)
+    } else {
+        decision
+            .proposal_batch
+            .iter()
+            .map(|proposal| u64::from(proposal.realized_ticks))
+            .sum()
+    }
 }
 
 fn per_second_millionths(count: u64, wall_micros: u64) -> u64 {
@@ -701,7 +825,7 @@ fn refresh_route_throughput(
 #[allow(clippy::too_many_arguments)]
 fn run_seed(
     config: &NativeTacticRouteRunConfig<'_>,
-    worker: &mut NativeSuffixWorkerSession,
+    pool: &NativeTacticProposalPool,
     catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
     registry: &FactRegistry,
     encoder: &GoalConditionedTacticFeatureEncoder,
@@ -933,33 +1057,26 @@ fn run_seed(
         let execution_started = Instant::now();
         let source_snapshot = campaign.current.snapshot.clone();
         let source_route_tape = campaign.route_tape.clone();
-        let mut evaluated = Vec::with_capacity(proposal_batch.proposals.len());
-        let mut native_elapsed = Duration::ZERO;
-        for (proposal_index, proposal) in proposal_batch.proposals.iter().enumerate() {
-            let proposal_root = paths_root.join(format!("proposal-{proposal_index:03}"));
-            fs::create_dir_all(&proposal_root).map_err(route_error)?;
-            let paths = NativeTacticWorkerPaths {
-                request: proposal_root.join("request.json"),
-                result: proposal_root.join("result.json"),
-            };
-            let mut timed_worker = TimedTacticWorker::new(&mut *worker);
-            let outcome = execute_selected_tactic(
-                &mut timed_worker,
-                proposal,
-                catalog,
-                &[],
-                &source_snapshot,
-                &source_route_tape,
-                &paths,
-            )
-            .map_err(route_error)?;
-            native_elapsed = native_elapsed.saturating_add(timed_worker.native_elapsed);
-            evaluated.push(
+        let proposal_work = pool.execute_batch(
+            &proposal_batch.proposals,
+            &source_snapshot,
+            &source_route_tape,
+            &paths_root,
+        )?;
+        let native_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
+            total.saturating_add(work.native_elapsed)
+        });
+        let preparation_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
+            total.saturating_add(work.preparation_elapsed)
+        });
+        let evaluated = proposal_work
+            .into_iter()
+            .map(|work| {
                 campaign
-                    .evaluate_rewarded_outcome(outcome, &encode, reward_spec)
-                    .map_err(route_error)?,
-            );
-        }
+                    .evaluate_rewarded_outcome(work.outcome, &encode, reward_spec)
+                    .map_err(route_error)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let execution_elapsed = execution_started.elapsed();
         timing.tactic_execution_micros = timing
             .tactic_execution_micros
@@ -969,9 +1086,7 @@ fn run_seed(
             .saturating_add(elapsed_micros(native_elapsed));
         timing.tactic_preparation_and_fact_extraction_micros = timing
             .tactic_preparation_and_fact_extraction_micros
-            .saturating_add(elapsed_micros(
-                execution_elapsed.saturating_sub(native_elapsed),
-            ));
+            .saturating_add(elapsed_micros(preparation_elapsed));
         let winner_index = (1..evaluated.len()).fold(0, |winner, candidate| {
             if proposal_outcome_is_better(&evaluated[candidate], &evaluated[winner]) {
                 candidate
@@ -1354,7 +1469,6 @@ fn load_seed_performance(
     if performance.schema != TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1
         || performance.decisions != decisions
         || performance.useful_decisions > decisions
-        || performance.timing.native_simulation_micros > performance.timing.tactic_execution_micros
     {
         return Err(route_message(
             "paused tactic performance checkpoint is invalid",
@@ -2400,7 +2514,6 @@ fn read_completed_seed_result(
     if result.seed != seed
         || result.decisions > decisions_per_seed
         || result.useful_decisions > result.decisions
-        || result.timing.native_simulation_micros > result.timing.tactic_execution_micros
         || result.trace.len() as u64 != result.decisions
         || result
             .trace
@@ -2411,7 +2524,7 @@ fn read_completed_seed_result(
             != result
                 .trace
                 .iter()
-                .map(|decision| u64::from(decision.reward_components.duration_ticks))
+                .map(decision_evaluated_ticks)
                 .sum::<u64>()
     {
         return Err(route_message(
@@ -3184,6 +3297,7 @@ fn validate_config(
     if config.exploration_seeds.is_empty()
         || config.exploration_seeds.len() > MAX_ROUTE_SEEDS
         || config.workers == 0
+        || config.workers > MAX_ROUTE_WORKERS
         || config.decisions_per_seed == 0
         || config.decisions_per_seed > MAX_ROUTE_DECISIONS
         || config.branch_every_decisions == 0
@@ -3700,21 +3814,33 @@ mod tests {
     }
 
     #[test]
-    fn worker_partitions_cover_each_seed_once_and_preserve_report_order() {
-        let worker_count = 4;
+    fn coordinator_results_are_projected_in_seed_order() {
         let seed_count = 11;
-        let partitions = (0..worker_count)
-            .map(|worker_index| {
-                worker_seed_indices(worker_index, worker_count, seed_count).collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(partitions[0], vec![0, 4, 8]);
-        assert_eq!(partitions[1], vec![1, 5, 9]);
-        assert_eq!(partitions[2], vec![2, 6, 10]);
-        assert_eq!(partitions[3], vec![3, 7]);
-        let mut report_order = partitions.into_iter().flatten().collect::<Vec<_>>();
+        let mut report_order = vec![8, 0, 10, 3, 5, 1, 9, 2, 7, 6, 4];
         report_order.sort_unstable();
         assert_eq!(report_order, (0..seed_count).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn evaluated_tick_accounting_includes_every_proposal() {
+        let mut trace = journal_trace(0);
+        assert_eq!(decision_evaluated_ticks(&trace), 4);
+        trace.proposal_batch = [6, 14, 40]
+            .into_iter()
+            .enumerate()
+            .map(|(index, realized_ticks)| NativeTacticProposalTrace {
+                option_id: format!("proposal-{index}"),
+                selection_reason: TacticSelectionReason::BatchDiversity,
+                reward: index as f32,
+                reward_components: trace.reward_components.clone(),
+                realized_ticks,
+                terminal: index == 1,
+                goal_distance_after: 7.0,
+                after_snapshot_sha256: Digest([index as u8 + 1; 32]),
+                retained: index == 1,
+            })
+            .collect();
+        assert_eq!(decision_evaluated_ticks(&trace), 60);
     }
 
     #[test]
