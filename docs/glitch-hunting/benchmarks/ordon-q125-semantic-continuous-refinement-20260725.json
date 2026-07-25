@@ -1,0 +1,179 @@
+{
+  "schema": "dusklight-benchmark/ordon-q125-semantic-continuous-refinement/v1",
+  "date": "2026-07-25",
+  "claim": {
+    "strict_speed_improvement": false,
+    "terminal_input_complexity_improvement": true,
+    "human_speed_incumbent_retained": true,
+    "summary": "Authenticated semantic continuous refinement reproduced the Ordon terminal and reduced native input complexity from 202 to 198, but no candidate reached the terminal before tick 125."
+  },
+  "objective": {
+    "identity": "65ba9e0b2618c91a26b15612bb9023b4289dd192c675af5167e2118a62a64ac3",
+    "segment": "fsp103_to_fsp104",
+    "prefix_sha256": "0112429d59308abb77b6aa14776d1408a52c8ec549fcb17bbac926c2b867f320",
+    "prefix_frames": 506,
+    "program_sha256": "8d68139e6030ff90a3d12cca6e3b9d1cba34d8d1d6a15d12221c690355a8d10c",
+    "source": {
+      "milestone": "link_control",
+      "definition_sha256": "788486289aa601355d3a436b5825d2f2bdf3e2ea2d77048acf5b19c01d9d5615",
+      "boundary_fingerprint": "4786d70e77b31416d02864783434c7dc"
+    },
+    "progress": {
+      "milestone": "ordon_spring_exit_approach",
+      "definition_sha256": "7a06d01c143c5c756d56d6928a357eea85bdb513edd58b1113809cacb23ca9b0"
+    },
+    "goal": {
+      "milestone": "ordon_spring_load_committed",
+      "definition_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57"
+    },
+    "game_sha256": "4cee9a085c0cad425deb1c71e83accd3d820e0f1a441fb0a8b5af736be899f0f",
+    "dvd_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814"
+  },
+  "semantic_representation": {
+    "source_tape": {
+      "path": "routes/Glitch Exhibition/intro/segments/to_ordon_spring_q125.tape",
+      "sha256": "cf0b5cc3a9987b0c5944a30e6d636daaba52f7bc28dfd50fdc90babecf280152",
+      "frames": 126,
+      "input_complexity": 202
+    },
+    "lossless_candidate": {
+      "path": "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-semantic-paths.candidate.json",
+      "candidate_id": "ffe088d50cb60ed57a61401fbff6056d8f2c16578e7b8839d5299b320176c2c2",
+      "actions": 14,
+      "composition": {
+        "exact_button_pad_runs": 7,
+        "typed_port_one_waypoint_paths": 7
+      },
+      "compiled_tape_byte_identical_to_source": true
+    },
+    "axes": [
+      "six whole-path duration controls",
+      "five selected whole-route waypoint x/y controls",
+      "eight terminal-path waypoint x/y controls"
+    ]
+  },
+  "budget": {
+    "all_successfully_completed_native_candidates": 414,
+    "all_successfully_completed_native_episodes": 828,
+    "lossless_promotable_family_candidates": 392,
+    "lossless_promotable_family_episodes": 784,
+    "repetitions_per_candidate": 2,
+    "workers": 4,
+    "developmental_projection_probes": {
+      "candidates": 22,
+      "episodes": 44,
+      "note": "Coarse five- and ten-tick projections were rejected after native evidence showed they left the terminal basin."
+    },
+    "infrastructure_setup_faults_and_interrupted_outputs_included": false
+  },
+  "campaigns": [
+    {
+      "id": "lossless-semantic-probe",
+      "rng_seed": 181081,
+      "candidates": 8,
+      "episodes": 16,
+      "terminal_candidates": 2,
+      "best_terminal_tick": 125,
+      "summary_sha256": "0cf5eef274db3877be3bdc09db62f62fb988f87c32672d2fcbe2ff2ab88494d9"
+    },
+    {
+      "id": "whole-route-cma",
+      "rng_seed": 181081,
+      "candidates": 96,
+      "episodes": 192,
+      "generations": 6,
+      "population": 16,
+      "terminal_counts_by_generation": [9, 11, 11, 10, 10, 2],
+      "approach_only_counts_by_generation": [2, 4, 0, 2, 4, 1],
+      "best_terminal_tick": 125,
+      "best_terminal_input_complexity": 198,
+      "summary_sha256": "54715804a62e168b8ee7876d6394ea0dd13bff618e279098d4ba942aff1b12ec"
+    },
+    {
+      "id": "retained-near-miss-terminal-cma",
+      "rng_seed": 181081,
+      "candidates": 144,
+      "episodes": 288,
+      "generations": 6,
+      "population": 24,
+      "terminal_candidates": 0,
+      "best_progress_tick": 113,
+      "best_progress_depth": 2,
+      "summary_sha256": "959c59cb5a333e9af05b3451ae6418b282da646b15e4bb0d4d2d796621f2c877"
+    },
+    {
+      "id": "proved-terminal-basin-cma",
+      "rng_seed": 130363,
+      "candidates": 144,
+      "episodes": 288,
+      "generations": 6,
+      "population": 24,
+      "best_terminal_tick": 125,
+      "best_terminal_input_complexity": 198,
+      "summary_sha256": "49c8ac5f67a0493c1d6805a53b04200a70f27f5e6ebb1e2669c5379f5977eb6f"
+    }
+  ],
+  "best_terminal_descendant": {
+    "candidate": {
+      "path": "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-semantic-terminal-seed.candidate.json",
+      "candidate_id": "33c24569734aab380cf3bcf74e992e9763e0ab1d937a14814204e4d1c344d1f7",
+      "parent_id": "ffe088d50cb60ed57a61401fbff6056d8f2c16578e7b8839d5299b320176c2c2"
+    },
+    "suffix_tape": {
+      "path": "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-semantic-terminal-seed.tape",
+      "sha256": "03c5e5f66a05c07e539f8eaf764585d4b32fe3503e5a575f62bf4cda54a05ff6",
+      "frames": 126,
+      "first_terminal_tick": 125,
+      "input_complexity": 198
+    },
+    "full_tape": {
+      "path": "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-semantic-terminal-seed.full.tape",
+      "sha256": "dacd2451268f7375d21b6904a1761c9d8e88877f66d55c3d6238913f44a72b26",
+      "frames": 632
+    },
+    "exact_input_change": {
+      "changed_frames": [10, 35, 50, 75, 90],
+      "pad_changes": [
+        { "frame": 10, "human_stick": [97, 82], "machine_stick": [93, 77] },
+        { "frame": 35, "human_stick": [48, 118], "machine_stick": [43, 123] },
+        { "frame": 50, "human_stick": [44, 119], "machine_stick": [42, 119] },
+        { "frame": 75, "human_stick": [95, 84], "machine_stick": [91, 86] },
+        { "frame": 90, "human_stick": [42, 120], "machine_stick": [38, 118] }
+      ],
+      "button_schedule_changed": false,
+      "tape_length_changed": false
+    },
+    "independent_native_reproduction": {
+      "campaign_roots": 2,
+      "attempts": 4,
+      "goal_reached": 4,
+      "first_hit_ticks": [125, 125, 125, 125],
+      "milestone_result_sha256": "c7a6d04884800db4e26b033e71593f96d6cdca0fdceb72fa6253f034d1ae0627",
+      "evaluation_sha256": [
+        "962c5edd1c275518bd133897b2aa7f11533e3be70dd0ac7e50a45352b77053b7",
+        "0a57b79a039bc9c7644022d5e6cc6e8b956078d6c71c67fddd92f32218b36693"
+      ]
+    }
+  },
+  "retained_125_frame_near_miss": {
+    "candidate": {
+      "path": "routes/Glitch Exhibition/intro/benchmarks/ordon-q125-semantic-terminal-near-miss.candidate.json",
+      "candidate_id": "fe2d1e7d006e4a6f2448db353acf16e920cafd306449b9890a703c5f56555669",
+      "frames": 125
+    },
+    "independent_native_reproduction": {
+      "campaign_roots": 2,
+      "attempts": 4,
+      "progress_depth": 2,
+      "progress_first_hit_ticks": [113, 113, 113, 113],
+      "terminal_reached": 0,
+      "milestone_result_sha256": "1311bae06fddb982dbe42c3a7571cde3b49ca25b6e581a4ae580ed0931552a42"
+    }
+  },
+  "promotion_decision": {
+    "required_first_hit_tick_exclusive": 125,
+    "observed_best_first_hit_tick": 125,
+    "promoted": false,
+    "reason": "The machine descendant simplified five analog samples but did not advance the terminal. The retained human segment remains the speed incumbent."
+  }
+}

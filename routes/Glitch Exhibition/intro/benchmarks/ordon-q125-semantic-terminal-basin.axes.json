@@ -1,0 +1,117 @@
+{
+  "schema": "dusklight-continuous-axes/v1",
+  "axes": [
+    {
+      "name": "terminal_path_00_x",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 0 },
+      "minimum": 28,
+      "maximum": 52
+    },
+    {
+      "name": "terminal_path_00_y",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 0 },
+      "minimum": 109,
+      "maximum": 127
+    },
+    {
+      "name": "terminal_path_06_x",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 6 },
+      "minimum": 30,
+      "maximum": 54
+    },
+    {
+      "name": "terminal_path_06_y",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 6 },
+      "minimum": 108,
+      "maximum": 127
+    },
+    {
+      "name": "terminal_path_12_x",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 12 },
+      "minimum": 23,
+      "maximum": 47
+    },
+    {
+      "name": "terminal_path_12_y",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 12 },
+      "minimum": 110,
+      "maximum": 127
+    },
+    {
+      "name": "terminal_path_18_x",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 18 },
+      "minimum": 18,
+      "maximum": 42
+    },
+    {
+      "name": "terminal_path_18_y",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 18 },
+      "minimum": 111,
+      "maximum": 127
+    },
+    {
+      "name": "final_path_00_x",
+      "action_index": 13,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 0 },
+      "minimum": 17,
+      "maximum": 41
+    },
+    {
+      "name": "final_path_00_y",
+      "action_index": 13,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 0 },
+      "minimum": 112,
+      "maximum": 127
+    },
+    {
+      "name": "final_path_01_x",
+      "action_index": 13,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 1 },
+      "minimum": 16,
+      "maximum": 40
+    },
+    {
+      "name": "final_path_01_y",
+      "action_index": 13,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 1 },
+      "minimum": 112,
+      "maximum": 127
+    },
+    {
+      "name": "final_path_02_x",
+      "action_index": 13,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 2 },
+      "minimum": 16,
+      "maximum": 40
+    },
+    {
+      "name": "final_path_02_y",
+      "action_index": 13,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 2 },
+      "minimum": 112,
+      "maximum": 127
+    },
+    {
+      "name": "final_path_04_x",
+      "action_index": 13,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 4 },
+      "minimum": 16,
+      "maximum": 40
+    },
+    {
+      "name": "final_path_04_y",
+      "action_index": 13,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 4 },
+      "minimum": 112,
+      "maximum": 127
+    }
+  ]
+}
