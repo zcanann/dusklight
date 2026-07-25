@@ -22,6 +22,12 @@ boot before promotion.
 A human route may optionally seed experience. It must not define the learner's
 action space, state coordinates, or only path to success.
 
+The operator for this framework is an LLM or another programmatic client. The
+browser workbench records the graph produced by execution and plays recorded
+edges or paths back. It is not a TAS editor, tactic editor, or manually authored
+blueprint surface. Interactive graph authorship belongs to the separate route
+planner described in `TASKS_ROUTE_PLANNER.md`.
+
 ## First proof
 
 The first proof starts from the authenticated Ordon Springs Link-control
@@ -63,11 +69,10 @@ Route speed does not matter for this first proof.
 | Common executable tactic catalog | Working: existing game tactics, native generic tactics, motion paths, and DUSKCTRL programs share one finite runtime catalog; deterministic applicability enumeration returns concrete parameterized entries and bounded blueprints whose current start path is applicable, permits an explicit empty dead-end set, and binds the exact learner-visible choice schema by digest |
 | Replay corpora, critics, policies, and checkpoint archives | Working as separate components |
 | Exact realized tape and cold-replay proof | Working: the first learned route's 932-frame process-boot tape reproduced the same terminal and identical semantic gameplay state at all 932 recorded boundaries across two cold runs |
-| Blueprint composition asset model | Working: canonical bounded assets reference executable catalog entries through `Invoke`, `Sequence`, `Layer`, `Conditional`, `Until`, and `Fallback`; static sequences compile into one exact tape with contiguous per-option execution records, layers compile through DUSKCTRL ownership rules, and ambiguous writers, unbounded control flow, unavailable conditions, invalid catalog plans, and any loss of exact PAD fail closed |
+| Programmatic tactic composition | Working internally: bounded runtime/LLM-supplied compositions reference executable catalog entries through `Invoke`, `Sequence`, `Layer`, `Conditional`, `Until`, and `Fallback`; static sequences compile into one exact tape with contiguous per-option execution records, layers compile through DUSKCTRL ownership rules, and ambiguous writers, unbounded control flow, unavailable conditions, invalid catalog plans, and any loss of exact PAD fail closed |
 | Live online option-Q campaign | Working: authenticated tactic boundaries feed duration-aware replay, refit, ranking, reward shaping, hindsight, checkpoint/resume, final-result export, and an exact observed-state greedy table that prevents sparse fitted-Q extrapolation from overriding known successful decisions |
 | Automatic checkpoint branching driven by learned tactic value | Working: campaigns retain replayable quality-diversity frontiers, sample root plus frontier branches, reject detached restores, detect collapse/cycles/connectivity loss, and project checkpoint-keyed state/tactic graphs |
-| Learning workbench | Working: `Learn route` launches the tactic-Q campaign directly from the selected authenticated start and authored goal with bounded defaults and no generated request or demonstration editing; the primary projection carries only a compact latest-decision summary, while authenticated on-demand inspection loads its before/after facts, named measurements, applicable tactic/Q values, reward components, and resulting state change; a compact spatial graph shows checkpoint states, tactic edges, retained frontier cells, the current state, and terminals without loading duplicated route tapes; every projected edge is inspectable and its exact candidate path replays on demand through an ordinary process-boot launch; pause seals a content-addressed campaign checkpoint, resume cold-launches a fresh append-only native-worker attempt and reuses sealed seeds, cancel preserves authenticated evidence behind a durable marker, and cleanup remains unavailable until worker shutdown |
-| Blueprint-like user-authored tactic assets | Working end to end: the content browser separates 136 immutable Library tactics from independently serialized Workspace assets; sequence blueprints support stale-safe create, edit, rename, duplicate, and recoverable delete; advanced typed blueprints remain visible without lossy editing; and the exact authored set is loaded into live learning and authenticated by the route action-schema digest |
+| Recording and playback workbench | Working: `Learn route` launches the tactic-Q campaign directly from the selected authenticated start and goal; the workbench records the resulting checkpoint/state/tactic graph, projects compact decision summaries, loads authenticated detail on demand, and replays an exact recorded edge or candidate path through ordinary process boot. Pause, resume, cancel, and cleanup preserve the recorded evidence lifecycle. The workbench has no tactic, tape-frame, or semantic graph authoring workflow |
 | A route learned from goal, facts, and tactics | Working: seed 181081 reached the terminal after 70 no-demonstration decisions; the frozen policy then reached it in 13 greedy decisions and cold-proved tape `872f7f...`. See `docs/glitch-hunting/benchmarks/ordon-tactic-q-first-proof-20260724.json` |
 
 ## Architectural reset
@@ -85,7 +90,8 @@ The learned action space consists of bounded options such as:
 - interact;
 - hold or pulse a button;
 - continue until a fact query changes; and
-- execute a user-authored blueprint-like composition of other tactics.
+- execute a bounded composition supplied through the programmatic learning
+  contract.
 
 Every tactic implements one contract:
 
@@ -100,11 +106,32 @@ emitted PAD frames
 resulting fact snapshot
 ```
 
-Built-in native tactics and user-authored tactics use the same contract. The
-learner sees only currently applicable, concretely parameterized choices.
+Built-in native tactics and programmatically supplied composites use the same
+runtime contract. The learner sees only currently applicable, concretely
+parameterized choices.
 Existing `GameTacticPlan`, `NativeGenericTacticPlan`, `MotionPathPlan`, and
 reactive-controller programs adapt into this contract without losing their
 current typed serialization or exact execution behavior.
+
+### The workbench records and plays graphs; it does not author them
+
+The LLM-facing service chooses the authenticated start, goal, campaign
+parameters, and any programmatic tactic composition. Actual execution records
+checkpoint states, tactic edges, outcomes, evidence, and exact PAD ranges into
+the learned graph.
+
+The browser may:
+
+- show the recorded graph and current campaign state;
+- inspect recorded state, measurements, rewards, and evidence on demand;
+- replay one recorded edge or a selected recorded path exactly;
+- pause, resume, cancel, and clean up a campaign; and
+- export the resulting exact tape and proof.
+
+The browser must not expose manual tactic CRUD, PAD-frame editing, blueprint
+composition, or general semantic graph rewiring. Those are not learning-product
+workflows. The route planner is the interactive and exploratory authoring
+product.
 
 ### Facts are typed; infodumps are projections
 
@@ -199,8 +226,7 @@ trajectories is not useful throughput.
 ## P4 — Validate the claim after competence exists
 
 The existing Gate 4 comparison protocol and completed baseline cells are
-retained. The tactic-level learner and its authoring workflow now work, so
-validation can proceed:
+retained. The tactic-level learner now works, so validation can proceed:
 
 - [ ] Define a smaller sealed comparison that uses the actual tactic-Q learner,
   not the abandoned per-tick policy as a proxy.
@@ -221,16 +247,19 @@ building one.
 - Further architecture or negative-control sweeps before P0.
 - Completing the old 40-cell matrix before a tactic learner succeeds.
 - Treating residual optimization as route discovery.
+- Manual TAS, tactic, or blueprint authoring in the learning workbench.
+- Reusing the route planner's exploratory authoring UI in the learning tool.
 - Making every transient rollout, model, and replay update a sealed publication.
 - Broad world/actor survey work not selected by the active learner.
 - Claiming that the 125-tick human route is optimal.
 
 ## Overall completion
 
-The framework is a route learner when a user can select a start and goal, provide
-or create tactics, press `Learn route`, watch the agent build understandable
-state/tactic knowledge, and receive a successful exact tape that reproduces from
-cold boot.
+The framework is a route learner when an LLM can select a start and goal, launch
+learning through the programmatic contract, and receive a successful exact tape
+that reproduces from cold boot. The workbench must record the resulting graph
+and let an operator inspect and replay its recorded edges and paths without
+becoming an authoring tool.
 
 Until then, the accurate description is:
 

@@ -83,10 +83,6 @@ pub(super) fn handle_http(
                             &config.repository_root,
                             &config.timeline_path,
                         )?;
-                        graph.tactics = tactic_catalog_projection(
-                            &config.repository_root,
-                            &config.timeline_path,
-                        )?;
                         append_generated_search_segments(
                             &mut graph,
                             &timeline,
@@ -270,41 +266,6 @@ pub(super) fn handle_http(
                         }),
                         Err(error) => json_error(400, "Bad Request", &error.to_string()),
                     }
-                }
-                ("POST", "/api/tactics/create") => {
-                    tactic_mutation_response::<BrowserTacticCreateRequest, _>(
-                        &request.body,
-                        "create",
-                        |mutation| create_authored_tactic(config, mutation),
-                    )
-                }
-                ("POST", "/api/tactics/update") => {
-                    tactic_mutation_response::<BrowserTacticUpdateRequest, _>(
-                        &request.body,
-                        "update",
-                        |mutation| update_authored_tactic(config, mutation),
-                    )
-                }
-                ("POST", "/api/tactics/rename") => {
-                    tactic_mutation_response::<BrowserTacticRenameRequest, _>(
-                        &request.body,
-                        "rename",
-                        |mutation| rename_authored_tactic(config, mutation),
-                    )
-                }
-                ("POST", "/api/tactics/duplicate") => {
-                    tactic_mutation_response::<BrowserTacticDuplicateRequest, _>(
-                        &request.body,
-                        "duplicate",
-                        |mutation| duplicate_authored_tactic(config, mutation),
-                    )
-                }
-                ("POST", "/api/tactics/delete") => {
-                    tactic_mutation_response::<BrowserTacticDeleteRequest, _>(
-                        &request.body,
-                        "delete",
-                        |mutation| delete_authored_tactic(config, mutation),
-                    )
                 }
                 ("POST", "/api/optimization/cancel") => {
                     let result = serde_json::from_slice::<BrowserOptimizationLifecycleRequest>(
@@ -825,21 +786,6 @@ pub(super) fn handle_http(
                 _ => json_error(404, "Not Found", "unknown route workbench endpoint"),
             }
         }
-        Err(error) => json_error(400, "Bad Request", &error.to_string()),
-    }
-}
-
-fn tactic_mutation_response<T, F>(body: &[u8], action: &str, mutation: F) -> HttpResponse
-where
-    T: for<'de> Deserialize<'de>,
-    F: FnOnce(&T) -> Result<TacticMutationResponse, WorkbenchError>,
-{
-    let result = serde_json::from_slice::<T>(body)
-        .map_err(|error| WorkbenchError::new(format!("invalid tactic {action} request: {error}")))
-        .and_then(|request| mutation(&request));
-    match result {
-        Ok(response) => json_response(&response)
-            .unwrap_or_else(|error| json_error(500, "Internal Server Error", &error.to_string())),
         Err(error) => json_error(400, "Bad Request", &error.to_string()),
     }
 }

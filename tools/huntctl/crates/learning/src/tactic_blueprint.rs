@@ -104,14 +104,6 @@ impl TacticBlueprint {
         Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
     }
 
-    pub fn duration_against_catalog(
-        &self,
-        catalog: &TacticAssetCatalog,
-    ) -> Result<TacticDurationBounds, TacticBlueprintError> {
-        self.validate_against_catalog(catalog)?;
-        blueprint_duration(&self.root, catalog)
-    }
-
     pub fn compile_static(
         &self,
         catalog: &TacticAssetCatalog,

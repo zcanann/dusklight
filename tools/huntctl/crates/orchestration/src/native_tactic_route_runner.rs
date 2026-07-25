@@ -26,7 +26,6 @@ use dusklight_learning::reward_shaping::{
     POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V1,
     TacticRewardBreakdown, TacticRewardSpec,
 };
-use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{TacticExplorationConfig, TacticSelectionReason};
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
@@ -39,7 +38,6 @@ use dusklight_world::world_context::WorldContext;
 use dusklight_world::world_geometry::KclReconstruction;
 use dusklight_world::world_inventory::WorldInventory;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -74,7 +72,6 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub epsilon_per_million: u32,
     pub cancellation: Option<&'a AtomicBool>,
     pub resume: bool,
-    pub blueprints: &'a [TacticBlueprint],
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -326,7 +323,6 @@ pub fn run_native_tactic_route(
     let root_checkpoint_sha256 =
         tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;
     let reward_spec = route_tactic_reward_spec(&encoder, &initial_facts)?;
-    let action_schema_sha256 = route_action_schema_sha256(&catalog, config.blueprints)?;
 
     let run = (|| {
         let mut seed_results = Vec::with_capacity(config.exploration_seeds.len());
@@ -382,7 +378,7 @@ pub fn run_native_tactic_route(
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
-        action_schema_sha256,
+        action_schema_sha256: catalog.action_schema_sha256(),
         goal_target,
         reward_spec,
         demonstration_transitions: 0,
@@ -401,31 +397,6 @@ pub fn run_native_tactic_route(
         &serde_json::to_vec_pretty(&report).map_err(route_error)?,
     )?;
     Ok(report)
-}
-
-fn route_action_schema_sha256(
-    catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
-    blueprints: &[TacticBlueprint],
-) -> Result<Digest, NativeTacticRouteRunError> {
-    if blueprints.is_empty() {
-        return Ok(catalog.action_schema_sha256());
-    }
-    let mut authored = blueprints
-        .iter()
-        .map(|blueprint| {
-            Ok((
-                blueprint.asset_id.clone(),
-                blueprint.content_sha256().map_err(route_error)?,
-            ))
-        })
-        .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
-    authored.sort();
-    let bytes =
-        serde_json::to_vec(&(catalog.action_schema_sha256(), authored)).map_err(route_error)?;
-    let mut hasher = Sha256::new();
-    hasher.update(b"dusklight.route-tactic-action-schema/v1\0");
-    hasher.update(bytes);
-    Ok(Digest(hasher.finalize().into()))
 }
 
 struct TimedTacticWorker<'a, W> {
@@ -555,14 +526,9 @@ fn run_seed(
             )?
         } else {
             fs::create_dir_all(&seed_root).map_err(route_error)?;
-            let current = LearnerState::build(
-                initial_facts.clone(),
-                registry,
-                catalog,
-                config.blueprints,
-                |_| true,
-            )
-            .map_err(route_error)?;
+            let current =
+                LearnerState::build(initial_facts.clone(), registry, catalog, &[], |_| true)
+                    .map_err(route_error)?;
             let campaign = TacticQCampaign::new(
                 encoder.schema_sha256,
                 config.optimization.terminal_predicate.definition_sha256,
@@ -604,26 +570,12 @@ fn run_seed(
     };
     let source_frame = config.optimization.route.source_boundary_index;
     let horizon = config.optimization.budgets.exploration_horizon_ticks;
-    let maximum_catalog_tactic_ticks = catalog
+    let maximum_tactic_ticks = catalog
         .entries()
         .iter()
         .map(|entry| u64::from(entry.description().duration.maximum_ticks))
         .max()
         .ok_or_else(|| route_message("tactic catalog is empty"))?;
-    let maximum_blueprint_ticks = config
-        .blueprints
-        .iter()
-        .map(|blueprint| {
-            blueprint
-                .duration_against_catalog(catalog)
-                .map(|duration| u64::from(duration.maximum_ticks))
-        })
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(route_error)?
-        .into_iter()
-        .max()
-        .unwrap_or(0);
-    let maximum_tactic_ticks = maximum_catalog_tactic_ticks.max(maximum_blueprint_ticks);
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
     let checkpoint_root = seed_root.join("checkpoints");
     let mut rolling_checkpoint = None;
@@ -670,7 +622,7 @@ fn run_seed(
                     seed_group(seed_index, episode)?,
                     registry,
                     catalog,
-                    config.blueprints,
+                    &[],
                     |_| true,
                 )
                 .map_err(route_error)?;
@@ -695,17 +647,15 @@ fn run_seed(
                 .saturating_sub(source_frame as usize) as u64;
             let selection_started = Instant::now();
             let preview = campaign
-                .decide(catalog, config.blueprints, &encode)
+                .decide(catalog, &[], &encode)
                 .map_err(route_error)?;
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
                 .saturating_add(elapsed_micros(selection_started.elapsed()));
-            let selected_maximum_ticks = preview
-                .ranking
-                .choices
-                .iter()
-                .find(|choice| choice.descriptor == preview.selected.descriptor)
-                .ok_or_else(|| route_message("selected tactic is absent from its live choices"))?
+            let selected_maximum_ticks = catalog
+                .entry(&preview.selected.descriptor.option_id)
+                .ok_or_else(|| route_message("selected tactic is absent from its catalog"))?
+                .description()
                 .duration
                 .maximum_ticks;
             if selected_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
@@ -735,7 +685,7 @@ fn run_seed(
                     seed_group(seed_index, episode)?,
                     registry,
                     catalog,
-                    config.blueprints,
+                    &[],
                     |_| true,
                 )
                 .map_err(route_error)?;
@@ -766,7 +716,7 @@ fn run_seed(
                 &mut timed_worker,
                 &decision.selected,
                 catalog,
-                config.blueprints,
+                &[],
                 &campaign.current.snapshot,
                 &campaign.route_tape,
                 &paths,
@@ -792,7 +742,7 @@ fn run_seed(
                 decision,
                 outcome,
                 catalog,
-                config.blueprints,
+                &[],
                 registry,
                 &encode,
                 |_| true,
@@ -2028,7 +1978,6 @@ impl From<TacticQCampaignError> for NativeTacticRouteRunError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dusklight_learning::tactic_blueprint::TacticBlueprintNode;
 
     #[test]
     fn first_route_proof_does_not_optimize_speed() {
@@ -2130,41 +2079,6 @@ mod tests {
             0
         );
         fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn route_action_schema_authenticates_authored_blueprints() {
-        let catalog = goal_conditioned_route_tactic_catalog(&[[1.0, 0.0, 1.0]], 120).unwrap();
-        let first = TacticBlueprint::new(
-            "patient_wait",
-            TacticBlueprintNode::Invoke {
-                option_id: "wait.neutral.04".into(),
-            },
-        )
-        .unwrap();
-        let second = TacticBlueprint::new(
-            "patient_wait",
-            TacticBlueprintNode::Sequence {
-                steps: vec![
-                    TacticBlueprintNode::Invoke {
-                        option_id: "wait.neutral.04".into(),
-                    },
-                    TacticBlueprintNode::Invoke {
-                        option_id: "wait.neutral.04".into(),
-                    },
-                ],
-            },
-        )
-        .unwrap();
-
-        assert_eq!(
-            route_action_schema_sha256(&catalog, &[]).unwrap(),
-            catalog.action_schema_sha256()
-        );
-        assert_ne!(
-            route_action_schema_sha256(&catalog, &[first]).unwrap(),
-            route_action_schema_sha256(&catalog, &[second]).unwrap()
-        );
     }
 
     #[test]

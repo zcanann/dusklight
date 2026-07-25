@@ -24,9 +24,6 @@
     .workarea { min-width:0; min-height:0; display:grid; grid-template-columns:230px minmax(0,1fr); }
     .projects { min-width:0; min-height:0; overflow:auto; border-right:1px solid var(--line); background:#0f141c; }
     .projects .pane-title { position:sticky; top:0; z-index:5; }
-    .pane-tabs { gap:3px; padding:0 6px; }
-    .pane-tabs button { flex:1; height:27px; border:0; border-radius:4px; background:transparent; color:#738095; cursor:pointer; font-size:10px; font-weight:750; text-transform:uppercase; letter-spacing:.06em; }
-    .pane-tabs button.active { background:#192331; color:var(--text); }
     .workspace-commandbar { position:sticky; top:34px; z-index:5; display:flex; gap:6px; padding:6px; border-bottom:1px solid var(--line); background:#0f141c; }
     .workspace-menu-wrap { position:relative; flex:1; min-width:0; }
     .workspace-command { width:100%; height:27px; padding:0 9px; border:1px solid var(--line); border-radius:5px; background:#151b24; color:#aab5c5; cursor:pointer; font-size:10px; font-weight:650; text-align:left; }
@@ -40,22 +37,6 @@
     .workspace-menu button:disabled { color:#596577; cursor:not-allowed; }
     .workspace-menu button:disabled:hover { background:transparent; }
     .project-tree { padding:7px 6px 18px; font-size:11px; }
-    .tactic-browser[hidden] { display:none; }
-    .tactic-toolbar { position:sticky; top:34px; z-index:5; display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:6px; border-bottom:1px solid var(--line); background:#0f141c; }
-    .tactic-toolbar button { min-width:0; height:27px; padding:0 8px; border:1px solid var(--line); border-radius:5px; background:#151b24; color:#aab5c5; font-size:10px; }
-    .tactic-toolbar button { cursor:pointer; }
-    .tactic-toolbar button.active { border-color:#52647d; color:var(--text); background:#1c2837; }
-    .tactic-search { width:calc(100% - 12px); height:27px; margin:6px 6px 0; padding:0 8px; border:1px solid var(--line); border-radius:5px; background:#151b24; color:#aab5c5; font-size:10px; }
-    .tactic-new { width:calc(100% - 12px); height:27px; margin:6px 6px 0; border:1px solid rgba(109,216,203,.4); border-radius:5px; background:#152321; color:var(--cyan); cursor:pointer; font-size:10px; }
-    .tactic-list { display:grid; gap:5px; padding:7px 6px 18px; }
-    .tactic-card { min-width:0; padding:7px 8px; border:1px solid #263142; border-radius:5px; background:#121923; }
-    .tactic-card.invalid { border-color:rgba(241,120,140,.45); }
-    .tactic-card-head { display:flex; align-items:center; gap:5px; }
-    .tactic-card strong { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:10px ui-monospace,SFMono-Regular,Consolas,monospace; }
-    .tactic-card small { color:var(--muted); font-size:8px; }
-    .tactic-card .mini-actions { display:flex; gap:4px; margin-top:6px; }
-    .tactic-card .mini-actions button { flex:1; padding:4px; border:1px solid var(--line); border-radius:4px; background:#171f2a; color:#aeb9c9; cursor:pointer; font-size:8px; }
-    .tactic-card .mini-actions button.danger { color:var(--red); }
     .project-row { width:100%; min-height:27px; display:flex; align-items:center; gap:5px; padding:4px 7px; border:0; border-radius:4px; background:transparent; color:#bcc6d5; text-align:left; cursor:pointer; }
     .project-row:hover { background:#171e29; color:var(--text); }
     .project-row.selected { background:#1c2b40; color:#fff; }
@@ -192,11 +173,6 @@
     .editor-actions { display:flex; justify-content:flex-end; gap:7px; }
     .editor-actions button { padding:7px 11px; border:1px solid var(--line); border-radius:5px; background:#151c27; color:var(--text); cursor:pointer; }
     .editor-actions .save { border-color:rgba(109,216,203,.55); color:var(--cyan); }
-    .tactic-step-list { display:grid; gap:6px; max-height:380px; overflow:auto; }
-    .tactic-step { display:grid; grid-template-columns:26px minmax(0,1fr) 28px 28px 28px; gap:5px; align-items:center; }
-    .tactic-step span { color:var(--muted); font-size:9px; text-align:right; }
-    .tactic-step select { min-width:0; width:100%; padding:7px; border:1px solid var(--line); border-radius:5px; background:#090d13; color:var(--text); font-size:10px; }
-    .tactic-step button,#tacticAddStep { height:29px; border:1px solid var(--line); border-radius:5px; background:#151c27; color:#b8c2d1; cursor:pointer; font-size:10px; }
     .boot-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
     .boot-field { display:grid; gap:5px; color:var(--muted); font-size:10px; }
     .boot-field.wide { grid-column:1/-1; }
@@ -291,21 +267,13 @@
   </header>
   <main>
     <section class="workarea">
-      <aside class="projects" aria-label="Content browser">
-        <div class="pane-title pane-tabs" role="tablist"><button id="workspaceBrowserTab" class="active" type="button" role="tab" aria-selected="true">Workspace</button><button id="tacticBrowserTab" type="button" role="tab" aria-selected="false">Tactics</button></div>
-        <div id="workspaceBrowser">
-          <div id="workspaceCommandbar" class="workspace-commandbar">
-            <div class="workspace-menu-wrap"><button id="workspaceNew" class="workspace-command" type="button" aria-expanded="false">＋ New</button><div id="workspaceNewMenu" class="workspace-menu" hidden><button id="workspaceNewTape" type="button">New tape</button><button id="workspaceNewFolder" type="button">New folder</button></div></div>
-            <div class="workspace-menu-wrap"><button id="workspaceActions" class="workspace-command" type="button" aria-expanded="false">••• Actions</button><div id="workspaceActionsMenu" class="workspace-menu right" hidden><button id="workspaceReveal" type="button">View folder</button><button id="workspaceClone" type="button">Clone tape</button><button id="workspaceMove" type="button">Move…</button><button id="workspaceDelete" type="button">Delete…</button></div></div>
-          </div>
-          <div id="projects" class="project-tree" role="tree"><div class="empty">Loading workspace...</div></div>
+      <aside class="projects" aria-label="Workspace">
+        <div class="pane-title"><span>Workspace</span></div>
+        <div id="workspaceCommandbar" class="workspace-commandbar">
+          <div class="workspace-menu-wrap"><button id="workspaceNew" class="workspace-command" type="button" aria-expanded="false">＋ New</button><div id="workspaceNewMenu" class="workspace-menu" hidden><button id="workspaceNewTape" type="button">New tape</button><button id="workspaceNewFolder" type="button">New folder</button></div></div>
+          <div class="workspace-menu-wrap"><button id="workspaceActions" class="workspace-command" type="button" aria-expanded="false">••• Actions</button><div id="workspaceActionsMenu" class="workspace-menu right" hidden><button id="workspaceReveal" type="button">View folder</button><button id="workspaceClone" type="button">Clone tape</button><button id="workspaceMove" type="button">Move…</button><button id="workspaceDelete" type="button">Delete…</button></div></div>
         </div>
-        <div id="tacticBrowser" class="tactic-browser" hidden>
-          <div class="tactic-toolbar"><button id="tacticLibraryTab" class="active" type="button">Library</button><button id="tacticWorkspaceTab" type="button">Authored</button></div>
-          <input id="tacticSearch" class="tactic-search" type="search" placeholder="Filter tactics…" aria-label="Filter tactics">
-          <button id="tacticNew" class="tactic-new" type="button" hidden>＋ New blueprint</button>
-          <div id="tacticList" class="tactic-list"><div class="empty">Loading tactics...</div></div>
-        </div>
+        <div id="projects" class="project-tree" role="tree"><div class="empty">Loading workspace...</div></div>
       </aside>
       <section class="browser" aria-label="Route graph">
         <div class="pane-title"><span id="graphBreadcrumbs" class="graph-breadcrumbs"></span><span class="pane-hint">Double-click a subgraph to open</span><span class="graph-toolbar"><button id="groupSelection" type="button" disabled>Group selection…</button><button id="renameSubgraph" type="button" disabled>Rename…</button><button id="ungroupSubgraph" type="button" disabled>Ungroup…</button></span><span class="graph-controls" aria-label="Graph zoom controls"><button id="zoomOut" type="button" title="Zoom out">−</button><button id="zoomReset" class="zoom-value" type="button" title="Reset to 100%">100%</button><button id="zoomIn" type="button" title="Zoom in">+</button><button id="zoomFit" type="button" title="Fit graph in view">Fit</button></span></div>
@@ -369,17 +337,6 @@
       <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="confirmWorkspaceMove" class="save" value="default" type="button">Move</button></div>
     </form>
   </dialog>
-  <dialog id="tacticEditor">
-    <form id="tacticForm" class="editor" method="dialog">
-      <h2 id="tacticEditorTitle">New blueprint tactic</h2>
-      <p>Compose a reusable tactic from read-only Library actions. Each blueprint is saved as its own typed file and becomes a live route-learning choice.</p>
-      <label class="boot-field"><span>Asset ID</span><input id="tacticAssetId" spellcheck="false" maxlength="80" placeholder="cross_room_safely"></label>
-      <div id="tacticSteps" class="tactic-step-list"></div>
-      <button id="tacticAddStep" type="button">＋ Add Library action</button>
-      <div id="tacticError" class="editor-error" role="alert"></div>
-      <div class="editor-actions"><button value="cancel" type="submit">Cancel</button><button id="saveTactic" class="save" value="default" type="button">Save blueprint</button></div>
-    </form>
-  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script>
   (() => {
@@ -402,10 +359,6 @@
     let workspaceNodeSelection = {kind:'folder',id:WORKSPACE_ROOT};
     let projectCollapsed = new Set();
     let occurrenceIndex = new Map();
-    let contentBrowser = 'workspace';
-    let tacticBrowserSource = 'library';
-    let tacticEditorAsset = null;
-    let tacticEditorSteps = [];
     const optimizationCandidateDetails = new Map();
     const tacticDecisionDetails = new Map();
     const RECORD_COUNTDOWN_STORAGE_KEY='dusklight.route-workbench.child-handoff-countdown-seconds';
@@ -456,8 +409,7 @@
       const goals=Array.isArray(raw.goals)?raw.goals:Object.entries(raw.goals||{}).map(([id,item])=>({...item,id:item.id||id}));
       const subgraphs=(Array.isArray(raw.subgraphs)?raw.subgraphs:[]).map(item=>({...item,parent:item.parent??null}));
       const projects=raw.projects||{groups:[],entries:[]};
-      const tactics=raw.tactics||{built_ins:[],authored:[]};
-      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,subgraphs,drafts:raw.drafts||[],campaigns:raw.campaigns||[],tactics:{built_ins:tactics.built_ins||[],authored:tactics.authored||[]},projects:{groups:projects.groups||[],entries:projects.entries||[],stages:projects.stages||[],inventory_items:projects.inventory_items||[],inventory_slots:projects.inventory_slots||[]}};
+      return {...raw,timeline:typeof raw.timeline==='string'?raw.timeline:(raw.timeline?.name||'route'),goals,segments,subgraphs,drafts:raw.drafts||[],campaigns:raw.campaigns||[],projects:{groups:projects.groups||[],entries:projects.entries||[],stages:projects.stages||[],inventory_items:projects.inventory_items||[],inventory_slots:projects.inventory_slots||[]}};
     }
     const selected = occurrence => selection.occurrence===occurrence;
     const predicateFor = goal => goal.predicate_program?.definitions?.find(item=>item.name===goal.predicate);
@@ -514,98 +466,6 @@
         const result=await response.json(); if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
         toast(success); await load(); return result;
       } catch(error) { $('status').textContent='Workspace update failed'; $('status').className='status error'; toast(error.message,true); return null; }
-    }
-    function showContentBrowser(kind) {
-      contentBrowser=kind==='tactics'?'tactics':'workspace';
-      $('workspaceBrowser').hidden=contentBrowser!=='workspace';
-      $('tacticBrowser').hidden=contentBrowser!=='tactics';
-      $('workspaceBrowserTab').classList.toggle('active',contentBrowser==='workspace');
-      $('tacticBrowserTab').classList.toggle('active',contentBrowser==='tactics');
-      $('workspaceBrowserTab').setAttribute('aria-selected',String(contentBrowser==='workspace'));
-      $('tacticBrowserTab').setAttribute('aria-selected',String(contentBrowser==='tactics'));
-      if(contentBrowser==='tactics')renderTactics();
-    }
-    function selectTacticSource(source) {
-      tacticBrowserSource=source==='workspace'?'workspace':'library';
-      $('tacticLibraryTab').classList.toggle('active',tacticBrowserSource==='library');
-      $('tacticWorkspaceTab').classList.toggle('active',tacticBrowserSource==='workspace');
-      $('tacticNew').hidden=tacticBrowserSource!=='workspace';
-      renderTactics();
-    }
-    function tacticDuration(asset) {
-      if(asset.minimum_ticks==null&&asset.maximum_ticks==null)return '';
-      if(asset.minimum_ticks===asset.maximum_ticks)return `${asset.minimum_ticks} ticks`;
-      return `${asset.minimum_ticks??'?'}–${asset.maximum_ticks??'?'} ticks`;
-    }
-    function renderTactics() {
-      if(!graph)return;
-      const authored=tacticBrowserSource==='workspace';
-      const query=$('tacticSearch').value.trim().toLowerCase();
-      const assets=(authored?graph.tactics.authored:graph.tactics.built_ins).filter(asset=>!query||`${asset.asset_id} ${asset.kind}`.toLowerCase().includes(query));
-      $('tacticNew').hidden=!authored;
-      $('tacticList').innerHTML=assets.map(asset=>{
-        const invalid=Boolean(asset.error);
-        const metadata=invalid?asset.error:`${asset.kind}${tacticDuration(asset)?` · ${tacticDuration(asset)}`:''}`;
-        const actions=authored&&!invalid?`<div class="mini-actions"><button type="button" data-edit-tactic="${escapeHtml(asset.asset_id)}" ${asset.kind==='sequence'?'':'disabled'}>${asset.kind==='sequence'?'Edit':'Advanced'}</button><button type="button" data-rename-tactic="${escapeHtml(asset.asset_id)}">Rename</button><button type="button" data-duplicate-tactic="${escapeHtml(asset.asset_id)}">Duplicate</button><button class="danger" type="button" data-delete-tactic="${escapeHtml(asset.asset_id)}">Delete</button></div>`:'';
-        return `<article class="tactic-card${invalid?' invalid':''}" title="${escapeHtml(metadata)}"><div class="tactic-card-head"><strong>${escapeHtml(asset.asset_id)}</strong><small>${authored?'editable':'🔒 library'}</small></div><small>${escapeHtml(metadata)}</small>${actions}</article>`;
-      }).join('')||`<div class="empty">${query?'No matching tactics.':authored?'No authored blueprints yet. Create one from Library actions.':'No Library tactics available.'}</div>`;
-    }
-    function authoredTactic(assetId) {
-      return graph?.tactics?.authored?.find(asset=>asset.asset_id===assetId)||null;
-    }
-    function renderTacticSteps() {
-      const library=graph?.tactics?.built_ins||[];
-      $('tacticSteps').innerHTML=tacticEditorSteps.map((step,index)=>{
-        const options=library.map(asset=>`<option value="${escapeHtml(asset.asset_id)}"${asset.asset_id===step?' selected':''}>${escapeHtml(asset.asset_id)} · ${escapeHtml(asset.kind)}</option>`).join('');
-        return `<div class="tactic-step"><span>${index+1}</span><select data-tactic-step="${index}" aria-label="Step ${index+1} Library action">${options}</select><button type="button" data-tactic-up="${index}" title="Move up" ${index===0?'disabled':''}>↑</button><button type="button" data-tactic-down="${index}" title="Move down" ${index===tacticEditorSteps.length-1?'disabled':''}>↓</button><button type="button" data-tactic-remove="${index}" title="Remove" ${tacticEditorSteps.length===1?'disabled':''}>×</button></div>`;
-      }).join('');
-    }
-    function openTacticEditor(asset=null) {
-      const library=graph?.tactics?.built_ins||[];
-      if(!library.length){toast('The tactic Library is empty.',true);return;}
-      if(asset&&(asset.error||asset.kind!=='sequence')){toast(asset.error||'Advanced blueprints are visible but require the typed-file editor.',true);return;}
-      tacticEditorAsset=asset;
-      tacticEditorSteps=asset?[...asset.steps]:[library[0].asset_id];
-      $('tacticEditorTitle').textContent=asset?`Edit ${asset.asset_id}`:'New blueprint tactic';
-      $('tacticAssetId').value=asset?.asset_id||'';
-      $('tacticAssetId').disabled=Boolean(asset);
-      $('tacticError').textContent='';
-      renderTacticSteps();
-      $('tacticEditor').showModal();
-      if(!asset)$('tacticAssetId').focus();
-    }
-    async function mutateTactic(endpoint,body,success) {
-      $('status').textContent='Updating tactic…';$('status').className='status';
-      try {
-        const response=await fetch(endpoint,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
-        const result=await response.json().catch(()=>({}));if(!response.ok)throw new Error(result.error||`HTTP ${response.status}`);
-        toast(success);await load();showContentBrowser('tactics');selectTacticSource('workspace');return result;
-      } catch(error) {
-        $('status').textContent='Tactic update failed';$('status').className='status error';toast(error.message,true);return null;
-      }
-    }
-    async function saveTactic() {
-      const assetId=$('tacticAssetId').value.trim();
-      if(!assetId){$('tacticError').textContent='Enter an asset ID.';return;}
-      if(!tacticEditorSteps.length){$('tacticError').textContent='Add at least one Library action.';return;}
-      $('saveTactic').disabled=true;$('tacticError').textContent='';
-      const existing=tacticEditorAsset;
-      const result=await mutateTactic(existing?'/api/tactics/update':'/api/tactics/create',existing?{asset_id:existing.asset_id,revision:existing.revision,steps:tacticEditorSteps}:{asset_id:assetId,steps:tacticEditorSteps},existing?`Updated ${existing.asset_id}.`:`Created ${assetId}.`);
-      $('saveTactic').disabled=false;
-      if(result)$('tacticEditor').close();
-      else $('tacticError').textContent='The blueprint was not saved. See the status message.';
-    }
-    async function renameTactic(asset) {
-      const assetId=window.prompt('New tactic asset ID',asset.asset_id);if(assetId===null||assetId.trim()===asset.asset_id)return;
-      await mutateTactic('/api/tactics/rename',{asset_id:asset.asset_id,revision:asset.revision,new_asset_id:assetId.trim()},`Renamed ${asset.asset_id}.`);
-    }
-    async function duplicateTactic(asset) {
-      const assetId=window.prompt('Duplicate tactic asset ID',`${asset.asset_id}_copy`);if(assetId===null)return;
-      await mutateTactic('/api/tactics/duplicate',{asset_id:asset.asset_id,revision:asset.revision,new_asset_id:assetId.trim()},`Duplicated ${asset.asset_id}.`);
-    }
-    async function deleteTactic(asset) {
-      if(!window.confirm(`Delete authored tactic ${asset.asset_id}?\n\nThe typed file will move to the workspace trash.`))return;
-      await mutateTactic('/api/tactics/delete',{asset_id:asset.asset_id,revision:asset.revision},`Moved ${asset.asset_id} to trash.`);
     }
     function selectedWorkspaceParent() {
       if(workspaceNodeSelection.kind==='folder')return workspaceNodeSelection.id;
@@ -1202,7 +1062,7 @@
       root.querySelectorAll('[data-create-predicate]').forEach(button=>button.addEventListener('click',()=>createPredicate(button.dataset.createPredicate)));
       root.querySelectorAll('[data-edit-boot]').forEach(button=>button.addEventListener('click',()=>editBoot(button.dataset.editBoot)));
     }
-    function render() { const entry=workspaceEntry();$('timelineName').textContent=entry?`${entry.label} · ${entry.kind==='timeline'?'tape tree':'single tape'}`:`${graph.timeline} · tape tree`;renderProjects();renderTactics();showContentBrowser(contentBrowser);renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
+    function render() { const entry=workspaceEntry();$('timelineName').textContent=entry?`${entry.label} · ${entry.kind==='timeline'?'tape tree':'single tape'}`:`${graph.timeline} · tape tree`;renderProjects();renderTree();if(!occurrenceIndex.has(selection.occurrence)){selection={kind:'origin',id:'boot',occurrence:'origin:boot',chain:[]};renderTree();}renderDetail(); }
     function setBootStageFieldsEnabled() {
       const enabled=$('bootKind').value==='stage';
       ['bootStageChoice','bootStage','bootRoomChoice','bootRoom','bootPointChoice','bootPoint','bootLayerChoice','bootLayer','bootSaveSlot','bootFixture'].forEach(id=>$(id).disabled=!enabled);
@@ -1799,32 +1659,6 @@
       }
     }
     $('reload').addEventListener('click',load);
-    $('workspaceBrowserTab').addEventListener('click',()=>showContentBrowser('workspace'));
-    $('tacticBrowserTab').addEventListener('click',()=>showContentBrowser('tactics'));
-    $('tacticLibraryTab').addEventListener('click',()=>selectTacticSource('library'));
-    $('tacticWorkspaceTab').addEventListener('click',()=>selectTacticSource('workspace'));
-    $('tacticSearch').addEventListener('input',renderTactics);
-    $('tacticNew').addEventListener('click',()=>openTacticEditor());
-    $('tacticAddStep').addEventListener('click',()=>{const library=graph?.tactics?.built_ins||[];if(tacticEditorSteps.length>=64){$('tacticError').textContent='A blueprint can contain at most 64 steps.';return;}tacticEditorSteps.push(library[0].asset_id);renderTacticSteps();});
-    $('saveTactic').addEventListener('click',saveTactic);
-    $('tacticSteps').addEventListener('change',event=>{const index=Number(event.target.dataset.tacticStep);if(Number.isInteger(index))tacticEditorSteps[index]=event.target.value;});
-    $('tacticSteps').addEventListener('click',event=>{
-      const button=event.target.closest('button');if(!button)return;
-      const remove=button.dataset.tacticRemove,up=button.dataset.tacticUp,down=button.dataset.tacticDown;
-      if(remove!==undefined&&tacticEditorSteps.length>1)tacticEditorSteps.splice(Number(remove),1);
-      else if(up!==undefined&&Number(up)>0)[tacticEditorSteps[Number(up)-1],tacticEditorSteps[Number(up)]]=[tacticEditorSteps[Number(up)],tacticEditorSteps[Number(up)-1]];
-      else if(down!==undefined&&Number(down)<tacticEditorSteps.length-1)[tacticEditorSteps[Number(down)+1],tacticEditorSteps[Number(down)]]=[tacticEditorSteps[Number(down)],tacticEditorSteps[Number(down)+1]];
-      renderTacticSteps();
-    });
-    $('tacticList').addEventListener('click',event=>{
-      const button=event.target.closest('button');if(!button)return;
-      const assetId=button.dataset.editTactic??button.dataset.renameTactic??button.dataset.duplicateTactic??button.dataset.deleteTactic;
-      const asset=authoredTactic(assetId);if(!asset)return;
-      if(button.dataset.editTactic!==undefined)openTacticEditor(asset);
-      else if(button.dataset.renameTactic!==undefined)void renameTactic(asset);
-      else if(button.dataset.duplicateTactic!==undefined)void duplicateTactic(asset);
-      else if(button.dataset.deleteTactic!==undefined)void deleteTactic(asset);
-    });
     $('workspaceCommandbar').addEventListener('click',event=>event.stopPropagation());
     $('workspaceNew').addEventListener('click',()=>toggleWorkspaceMenu('workspaceNew','workspaceNewMenu'));
     $('workspaceActions').addEventListener('click',()=>toggleWorkspaceMenu('workspaceActions','workspaceActionsMenu'));
@@ -1866,7 +1700,6 @@
     $('bootLayer').addEventListener('change',()=>{fillBootChoice('bootLayerChoice',(bootStageMetadata?.rooms||[]).find(room=>String(room.id)===$('bootRoom').value)?.layers||[],$('bootLayer').value,value=>Number(value)===-1?'Automatic layer (-1)':`Layer ${value}`);updateBootCoordinateStatus();});
     $('bootEditor').addEventListener('close',()=>{bootEditProject=null;bootEditTapeBoot=null;bootStageMetadata=null;bootFixtureDraft=null;bootActiveTab='location';bootStageRequest+=1;});
     $('predicateEditor').addEventListener('close',()=>{predicateEditRevision=null;predicateEditOwner=null;});
-    $('tacticEditor').addEventListener('close',()=>{tacticEditorAsset=null;tacticEditorSteps=[];$('tacticAssetId').disabled=false;$('tacticError').textContent='';});
     load();
   })();
   </script>

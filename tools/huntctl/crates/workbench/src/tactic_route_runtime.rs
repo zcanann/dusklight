@@ -338,8 +338,6 @@ fn launch_tactic_route_learning(
         &config.dvd,
         world_context,
     )?;
-    let blueprints =
-        load_authored_tactic_blueprints(&config.repository_root, &config.timeline_path)?;
     let output_text = output
         .strip_prefix(&root)
         .map(repository_path_text)
@@ -385,7 +383,6 @@ fn launch_tactic_route_learning(
                 epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
                 cancellation: Some(&thread_cancellation),
                 resume,
-                blueprints: &blueprints,
             });
             let status = match result {
                 Ok(report) if report.successful_seeds > 0 => TacticRouteRuntimeStatus {

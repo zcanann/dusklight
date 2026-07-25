@@ -529,7 +529,7 @@ fn graph_exposes_timeline_shape_and_scrub_ranges() {
     write_tape(&root, "first.tape", &[1, 2, 3, 4]);
     write_tape(&root, "second.tape", &[5, 6, 7]);
     let graph = graph_from_timeline(&timeline(), &root).unwrap();
-    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v24");
+    assert_eq!(graph.schema, "dusklight.route-workbench.graph.v25");
     assert!(graph.origin.is_none());
     assert_eq!(graph.segments.len(), 2);
     assert!(graph.segments.iter().all(|segment| segment.playable));
@@ -1210,23 +1210,8 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     let html = include_str!("../../../assets/route_workbench.html");
     for required in [
         "aria-label=\"Route graph\"",
-        "aria-label=\"Content browser\"",
+        "aria-label=\"Workspace\"",
         "id=\"projects\"",
-        "id=\"workspaceBrowserTab\"",
-        "id=\"tacticBrowserTab\"",
-        "id=\"tacticLibraryTab\"",
-        "id=\"tacticWorkspaceTab\"",
-        "id=\"tacticSearch\"",
-        "id=\"tacticNew\"",
-        "id=\"tacticEditor\"",
-        "id=\"tacticSteps\"",
-        "id=\"tacticAddStep\"",
-        "/api/tactics/create",
-        "/api/tactics/update",
-        "/api/tactics/rename",
-        "/api/tactics/duplicate",
-        "/api/tactics/delete",
-        "typed file and becomes a live route-learning choice",
         "Measured learning throughput and phase timing",
         "useful_decisions_per_second_millionths",
         "tactic_preparation_and_fact_extraction_micros",
@@ -2479,131 +2464,6 @@ fn optimization_start_api_requires_explicit_world_context() {
     );
     assert_eq!(smuggled_detail.status, 400);
     assert!(String::from_utf8_lossy(&smuggled_detail.body).contains("unknown field"));
-    fs::remove_dir_all(repository).unwrap();
-}
-
-#[test]
-fn tactic_asset_http_crud_is_typed_stale_bound_and_visible_in_the_graph() {
-    let repository = pristine_intro_repository("tactic-assets");
-    let config = WorkbenchConfig {
-        timeline_path: checked_intro_timeline(&repository),
-        repository_root: repository.clone(),
-        working_directory: repository.clone(),
-        game: repository.join("build/unused-game"),
-        dvd: repository.join("build/unused-dvd"),
-        world_context: None,
-        state_root: repository.join("build/automation-state/route-workbench-test"),
-    };
-
-    let smuggled = call_http(
-        &config,
-        "POST",
-        "/api/tactics/create",
-        br#"{"asset_id":"safe_wait","steps":["wait.neutral.04"],"path":"forged"}"#,
-    );
-    assert_eq!(smuggled.status, 400);
-    assert!(String::from_utf8_lossy(&smuggled.body).contains("unknown field"));
-
-    let created = call_http(
-        &config,
-        "POST",
-        "/api/tactics/create",
-        br#"{"asset_id":"safe_wait","steps":["wait.neutral.04"]}"#,
-    );
-    assert_eq!(created.status, 200);
-    let created: serde_json::Value = serde_json::from_slice(&created.body).unwrap();
-    let created_revision = created["revision"].as_str().unwrap();
-
-    let graph = call_http(&config, "GET", "/api/graph", &[]);
-    assert_eq!(graph.status, 200);
-    let graph: serde_json::Value = serde_json::from_slice(&graph.body).unwrap();
-    assert_eq!(graph["tactics"]["built_ins"].as_array().unwrap().len(), 136);
-    assert_eq!(graph["tactics"]["authored"][0]["asset_id"], "safe_wait");
-    assert_eq!(graph["tactics"]["authored"][0]["kind"], "sequence");
-    assert_eq!(
-        graph["tactics"]["authored"][0]["steps"],
-        serde_json::json!(["wait.neutral.04"])
-    );
-
-    let stale = call_http(
-        &config,
-        "POST",
-        "/api/tactics/update",
-        br#"{"asset_id":"safe_wait","revision":"0000000000000000000000000000000000000000000000000000000000000000","steps":["wait.neutral.04"]}"#,
-    );
-    assert_eq!(stale.status, 400);
-    assert!(String::from_utf8_lossy(&stale.body).contains("refresh"));
-
-    let updated_body = serde_json::json!({
-        "asset_id": "safe_wait",
-        "revision": created_revision,
-        "steps": ["wait.neutral.04", "wait.neutral.04"],
-    });
-    let updated = call_http(
-        &config,
-        "POST",
-        "/api/tactics/update",
-        &serde_json::to_vec(&updated_body).unwrap(),
-    );
-    assert_eq!(updated.status, 200);
-    let updated: serde_json::Value = serde_json::from_slice(&updated.body).unwrap();
-
-    let rename_body = serde_json::json!({
-        "asset_id": "safe_wait",
-        "revision": updated["revision"],
-        "new_asset_id": "patient_wait",
-    });
-    let renamed = call_http(
-        &config,
-        "POST",
-        "/api/tactics/rename",
-        &serde_json::to_vec(&rename_body).unwrap(),
-    );
-    assert_eq!(renamed.status, 200);
-    let renamed: serde_json::Value = serde_json::from_slice(&renamed.body).unwrap();
-
-    let duplicate_body = serde_json::json!({
-        "asset_id": "patient_wait",
-        "revision": renamed["revision"],
-        "new_asset_id": "patient_wait_copy",
-    });
-    let duplicated = call_http(
-        &config,
-        "POST",
-        "/api/tactics/duplicate",
-        &serde_json::to_vec(&duplicate_body).unwrap(),
-    );
-    assert_eq!(duplicated.status, 200);
-    let duplicated: serde_json::Value = serde_json::from_slice(&duplicated.body).unwrap();
-
-    for (asset_id, revision) in [
-        ("patient_wait", renamed["revision"].as_str().unwrap()),
-        (
-            "patient_wait_copy",
-            duplicated["revision"].as_str().unwrap(),
-        ),
-    ] {
-        let deleted = call_http(
-            &config,
-            "POST",
-            "/api/tactics/delete",
-            &serde_json::to_vec(&serde_json::json!({
-                "asset_id": asset_id,
-                "revision": revision,
-            }))
-            .unwrap(),
-        );
-        assert_eq!(deleted.status, 200);
-    }
-    let graph = call_http(&config, "GET", "/api/graph", &[]);
-    let graph: serde_json::Value = serde_json::from_slice(&graph.body).unwrap();
-    assert!(graph["tactics"]["authored"].as_array().unwrap().is_empty());
-    assert!(
-        checked_intro_timeline(&repository)
-            .with_extension("")
-            .join("tactics/.trash")
-            .is_dir()
-    );
     fs::remove_dir_all(repository).unwrap();
 }
 
