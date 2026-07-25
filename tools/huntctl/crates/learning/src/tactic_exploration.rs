@@ -175,6 +175,14 @@ fn prioritized_unsupported(
         })
         .collect::<Vec<_>>();
     if escape_before_routes && !escape_actions.is_empty() {
+        let semantic_escape_actions = escape_actions
+            .iter()
+            .copied()
+            .filter(|descriptor| descriptor.option_type != OptionType::Roll)
+            .collect::<Vec<_>>();
+        if !semantic_escape_actions.is_empty() {
+            return semantic_escape_actions;
+        }
         return escape_actions;
     }
     if !route_sequences.is_empty() {
@@ -598,6 +606,19 @@ mod tests {
         let prioritized = prioritized_unsupported(&unsupported, false);
 
         assert_eq!(prioritized, vec![&interact, &roll]);
+    }
+
+    #[test]
+    fn supported_routes_try_semantic_escapes_before_roll_variants() {
+        let attack = descriptor("attack", OptionType::Attack);
+        let interact = descriptor("interact", OptionType::Interact);
+        let roll_short = descriptor("roll-short", OptionType::Roll);
+        let roll_long = descriptor("roll-long", OptionType::Roll);
+        let unsupported = [roll_short, attack.clone(), roll_long, interact.clone()];
+
+        let prioritized = prioritized_unsupported(&unsupported, true);
+
+        assert_eq!(prioritized, vec![&attack, &interact]);
     }
 
     #[test]
