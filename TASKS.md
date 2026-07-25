@@ -46,9 +46,9 @@ tactics, tape frames, compositions, or semantic action graphs.
 | Human experience | Working: native replay corpora accept demonstration episodes and existing learning modes consume them |
 | Recording/playback workbench | Working: launch, pause/resume/cancel, graph projection, on-demand authenticated detail, exact edge/path playback, cleanup, and successful-tape export |
 | First from-scratch proof | Working: no-demonstration seed 181081 reached the Ordon terminal after 70 exploratory decisions; its frozen greedy policy reached it in 13 decisions and 426 native ticks |
-| Exact cold reproduction | Working: the learned 932-frame process-boot tape reproduced identical semantic gameplay state at all 932 boundaries across two cold runs |
+| Exact cold reproduction | Working: learned process-boot tapes for both exact Ordon starts reproduced identical terminal evidence across two cold runs |
 | Useful route quality | Not established: the retained human Ordon segment is 126 input frames; the best attributable learned local result is 129 ticks and the from-scratch tactic policy is substantially slower |
-| Reliability and generality | Measured, not established: one of four independent current-build seeds reached the terminal; all three failures exhausted 256 decisions at the same observed choke state |
+| Reliability and generality | Partly established: the common learner succeeds from both the Link-control and authored exit-approach starts, but the full route remains one success in four current-build seeds and the second pair has only one evaluated seed |
 | Comparative learning value | Not established |
 
 The first tactic-Q proof is retained at
@@ -58,11 +58,10 @@ The independent-seed result and its current-build replay proof are retained at
 Together they prove basic competence and exact reproduction, but the measured
 25% campaign success rate does not prove reliable competence or generality.
 
-## P0 — Make learned behavior reliably competent
-
-- [ ] Exercise at least one additional exact start and authored goal through the
-      same fact, tactic, checkpoint, and terminal interfaces, and cold-prove
-      every claimed success.
+The second exact start/goal proof is retained at
+`docs/glitch-hunting/benchmarks/ordon-exit-approach-tactic-q-second-pair-20260725.json`.
+It proves the shared learner from the authenticated exit-approach boundary,
+while honestly retaining the 12-frame authored suffix as the faster incumbent.
 
 ## P1 — Improve route quality
 

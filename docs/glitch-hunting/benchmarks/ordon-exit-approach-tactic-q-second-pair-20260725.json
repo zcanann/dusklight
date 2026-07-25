@@ -1,0 +1,93 @@
+{
+  "schema": "dusklight-tactic-q-second-exact-pair-proof/v1",
+  "date": "2026-07-25",
+  "claim": "The no-demonstration tactic-Q learner reached the authored Ordon Spring terminal from the authenticated exit-approach boundary through the same fact, tactic, checkpoint, and terminal interfaces; its frozen greedy policy succeeded and its exact tape reproduced identical terminal evidence across two cold process boots.",
+  "scope": {
+    "establishes": [
+      "a second exact start/goal pair through the common learner interfaces",
+      "an exploration-free frozen-policy success",
+      "exact cold terminal reproduction"
+    ],
+    "does_not_establish": [
+      "multi-seed reliability for this start",
+      "generality across a different terminal",
+      "route-quality improvement"
+    ]
+  },
+  "bindings": {
+    "optimization_request_sha256": "296778d879e533f1b50f5eb7e5fbf886e2d0c23f230716c9c91b213973ef45cc",
+    "execution_binding_sha256": "47067b4d7a29dfbf9821fa9f2663891023ecc05e30e40cca552fa02f3f77ef9b",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+    "feature_schema_sha256": "be03e8360126d502306be142f800480e4c53cacd0970dc41bfca0d9f20ef0148",
+    "action_schema_sha256": "dd18f423b1f691dd408fece6c158008eac910f89d5f695958d75a8c7ba9c4a46",
+    "game_sha256": "4cee9a085c0cad425deb1c71e83accd3d820e0f1a441fb0a8b5af736be899f0f",
+    "dvd_sha256": "490ef919f413e00daedb4711777c3be05ef9afc12c7acca7675c721c9393c814",
+    "terminal_program_sha256": "b5ef3a1440ca5a50b563b7afb7b0d9230f815d359998b3a2c403a68b5c76f653"
+  },
+  "exact_pair": {
+    "timeline": "routes/Glitch Exhibition/ordon-exit-approach-learning.timeline",
+    "lineage": "main",
+    "segment": "learn_ordon_spring_load",
+    "goal": "ordon_spring_load_committed",
+    "source_boundary_index": 620,
+    "source_boundary_fingerprint": "87192dd0886f8e089a158f86ac8979eb",
+    "source_position": [
+      -1707.6249,
+      773.6523,
+      -3809.484
+    ],
+    "derived_goal_coordinate": [
+      -1842.2203,
+      717.3469,
+      -4739.0684
+    ],
+    "authored_incumbent_suffix_ticks": 12
+  },
+  "discovery": {
+    "demonstration_transitions": 0,
+    "exploration_seed": 181081,
+    "decision_budget": 32,
+    "decisions_to_terminal": 6,
+    "episodes": 2,
+    "native_ticks": 135,
+    "useful_decisions": 4,
+    "terminal_option_id": "attack.combo",
+    "terminal_route_suffix_ticks": 49,
+    "successful": true
+  },
+  "frozen_policy": {
+    "schema": "dusklight-tactic-frozen-policy/v2",
+    "content_sha256": "a22cd3926a2bf48e0cc9958fe162f1290c7cb814b3c8598a30dc7c3fa564e165",
+    "source_campaign_sha256": "0a606bf57178658cd2486e2eddbf0b06b967201e4786cbc586464ba5af2a2269",
+    "training_rows": 6,
+    "exploration_enabled": false,
+    "decisions": 3,
+    "native_ticks": 49,
+    "terminal_state_sha256": "3faafea76bbfbfdb80660ade660f053ca3c42a7537d6b04d090e9e08161a1b34",
+    "successful": true
+  },
+  "realized_tape": {
+    "sha256": "c82f488bdc6cf2dcf9b3f9da31559f8c0c393ba7ebe8b955ff177a54614bda10",
+    "boot": "process",
+    "frames": 669,
+    "learned_suffix_ticks": 49
+  },
+  "cold_replay": {
+    "repetitions": 2,
+    "controller_in_loop": false,
+    "model_in_loop": false,
+    "goal": "ordon_spring_load_committed",
+    "goal_reached_in_each_run": true,
+    "sim_tick": 668,
+    "tape_frame": 668,
+    "terminal_boundary_fingerprint": "0b1d17165a84d3c90e42f31f433172b8",
+    "exact_terminal_evidence_identical": true
+  },
+  "route_quality": {
+    "authored_suffix_ticks": 12,
+    "learned_suffix_ticks": 49,
+    "learned_minus_authored_ticks": 37,
+    "incumbent": "authored",
+    "improvement_claimed": false
+  }
+}
