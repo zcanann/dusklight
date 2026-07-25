@@ -29,7 +29,7 @@ pub const MAX_NATIVE_TACTIC_TICKS: u32 = 10_000;
 pub const MAX_NATIVE_TACTIC_ACTORS: usize = 4_096;
 pub const MAX_SEEK_COORDINATES: usize = 64;
 const SEEK_SEQUENCE_STATIONARY_TICKS: u32 = 16;
-const SEEK_SEQUENCE_STATIONARY_DISTANCE: f32 = 0.01;
+const SEEK_SEQUENCE_STATIONARY_DISTANCE: f32 = 1.0;
 const SEEK_SEQUENCE_STALL_GRACE_TICKS: u32 = 40;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1607,7 +1607,7 @@ mod tests {
     }
 
     #[test]
-    fn coordinate_sequence_stops_after_a_bounded_stationary_window() {
+    fn coordinate_sequence_stops_after_bounded_collision_jitter() {
         let plan = NativeGenericTacticPlan::new(
             GenericTactic::SeekCoordinateSequence {
                 coordinates_f32_bits: vec![[
@@ -1622,7 +1622,7 @@ mod tests {
             64,
         );
         let observations = (0..64)
-            .map(|tick| observation(tick, [0.0, 0.0, 0.0]))
+            .map(|tick| observation(tick, [tick as f32 * 0.5, 0.0, 0.0]))
             .collect::<Vec<_>>();
         let (frames, queries, reason) = realize(&plan, &observations).unwrap();
 
