@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-optimization-request/v2",
-  "content_sha256": "7034017f14dbde8d3b8196b5ab79fa078db355f9d72287e3f7ee3c8ff761aed0",
+  "content_sha256": "296778d879e533f1b50f5eb7e5fbf886e2d0c23f230716c9c91b213973ef45cc",
   "id": "ordon-exit-approach-tactic-q-discovery-v1",
   "campaign_class": "local_tas_refinement",
   "route": {
@@ -24,10 +24,10 @@
     "definition_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57"
   },
   "budgets": {
-    "exploration_horizon_ticks": 128,
-    "promotion_before_tick": 127,
+    "exploration_horizon_ticks": 160,
+    "promotion_before_tick": 159,
     "candidate_budget": 256,
-    "simulated_tick_budget": 32768
+    "simulated_tick_budget": 40960
   },
   "execution": {
     "workers": 1,
