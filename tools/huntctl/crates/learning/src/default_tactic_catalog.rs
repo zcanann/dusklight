@@ -15,6 +15,8 @@ const INTERMEDIATE_GOAL_SEEK_TOLERANCE: f32 = 96.0;
 const GOAL_ROUTE_STALL_GRACE_TICKS: u32 = 40;
 const GOAL_ROUTE_STATIONARY_WINDOW_TICKS: u32 = 16;
 const GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE: f32 = 16.0;
+const GOAL_ROUTE_STALL_RECOVERY_BUTTON_MASK: u16 = 0x0100;
+const GOAL_ROUTE_MAXIMUM_STALL_RECOVERIES: u32 = 3;
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -212,6 +214,8 @@ pub fn goal_conditioned_route_tactic_catalog(
                     stationary_window_ticks: GOAL_ROUTE_STATIONARY_WINDOW_TICKS,
                     stationary_window_distance_f32_bits: GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE
                         .to_bits(),
+                    stall_recovery_button_mask: GOAL_ROUTE_STALL_RECOVERY_BUTTON_MASK,
+                    maximum_stall_recoveries: GOAL_ROUTE_MAXIMUM_STALL_RECOVERIES,
                     magnitude: 127,
                 },
                 route_sequence_maximum_ticks,
@@ -348,6 +352,8 @@ mod tests {
                     stall_grace_ticks: GOAL_ROUTE_STALL_GRACE_TICKS,
                     stationary_window_ticks: GOAL_ROUTE_STATIONARY_WINDOW_TICKS,
                     stationary_window_distance_f32_bits,
+                    stall_recovery_button_mask: GOAL_ROUTE_STALL_RECOVERY_BUTTON_MASK,
+                    maximum_stall_recoveries: GOAL_ROUTE_MAXIMUM_STALL_RECOVERIES,
                     ..
                 },
                 maximum_ticks: 640,

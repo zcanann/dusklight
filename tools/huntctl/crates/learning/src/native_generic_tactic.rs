@@ -55,6 +55,10 @@ pub enum GenericTactic {
         stall_grace_ticks: u32,
         stationary_window_ticks: u32,
         stationary_window_distance_f32_bits: u32,
+        #[serde(default)]
+        stall_recovery_button_mask: u16,
+        #[serde(default)]
+        maximum_stall_recoveries: u32,
         magnitude: u8,
     },
     SeekActor {
@@ -497,6 +501,8 @@ impl NativeGenericTacticPlan {
                 stall_grace_ticks,
                 stationary_window_ticks,
                 stationary_window_distance_f32_bits,
+                stall_recovery_button_mask,
+                maximum_stall_recoveries,
                 magnitude: value,
             } => {
                 !coordinates_f32_bits.is_empty()
@@ -511,6 +517,8 @@ impl NativeGenericTacticPlan {
                     && *stall_grace_ticks <= self.maximum_ticks
                     && f32::from_bits(*stationary_window_distance_f32_bits).is_finite()
                     && f32::from_bits(*stationary_window_distance_f32_bits) > 0.0
+                    && (*stall_recovery_button_mask == 0) == (*maximum_stall_recoveries == 0)
+                    && *maximum_stall_recoveries <= 16
                     && magnitude(*value)
             }
             GenericTactic::SeekActor {
@@ -627,6 +635,8 @@ impl NativeGenericTacticPlan {
                 stall_grace_ticks,
                 stationary_window_ticks,
                 stationary_window_distance_f32_bits,
+                stall_recovery_button_mask,
+                maximum_stall_recoveries,
                 magnitude,
             } => {
                 parameters.insert(
@@ -656,6 +666,16 @@ impl NativeGenericTacticPlan {
                     "stationary_window_distance".into(),
                     OptionParameter::F32Bits(*stationary_window_distance_f32_bits),
                 );
+                if *maximum_stall_recoveries > 0 {
+                    parameters.insert(
+                        "stall_recovery_button_mask".into(),
+                        OptionParameter::Unsigned(u64::from(*stall_recovery_button_mask)),
+                    );
+                    parameters.insert(
+                        "maximum_stall_recoveries".into(),
+                        OptionParameter::Unsigned(u64::from(*maximum_stall_recoveries)),
+                    );
+                }
                 parameters.insert(
                     "magnitude".into(),
                     OptionParameter::Unsigned(u64::from(*magnitude)),
@@ -868,6 +888,7 @@ pub struct NativeGenericTacticStepper {
     prior_lane_frame: Option<f32>,
     coordinate_index: usize,
     coordinate_positions: VecDeque<[f32; 3]>,
+    stall_recoveries: u32,
     stopped: bool,
 }
 
@@ -881,6 +902,7 @@ impl NativeGenericTacticStepper {
             prior_lane_frame: None,
             coordinate_index: 0,
             coordinate_positions: VecDeque::new(),
+            stall_recoveries: 0,
             stopped: false,
         })
     }
@@ -914,15 +936,19 @@ impl NativeGenericTacticStepper {
                 stall_grace_ticks,
                 stationary_window_ticks,
                 stationary_window_distance_f32_bits,
+                stall_recovery_button_mask,
+                maximum_stall_recoveries,
                 ..
             } => Some((
                 *stall_grace_ticks,
                 *stationary_window_ticks,
                 f32::from_bits(*stationary_window_distance_f32_bits),
+                *stall_recovery_button_mask,
+                *maximum_stall_recoveries,
             )),
             _ => None,
         };
-        if let Some((_, stationary_window_ticks, _)) = stall_config {
+        if let Some((_, stationary_window_ticks, _, _, _)) = stall_config {
             self.coordinate_positions
                 .push_back(bits3(observation.player_position_f32_bits));
             while self.coordinate_positions.len() > stationary_window_ticks as usize + 1 {
@@ -930,7 +956,7 @@ impl NativeGenericTacticStepper {
             }
         }
         let mut query = query_base(local_tick, &observation);
-        let (pad, reached) = pad_for(
+        let (mut pad, reached) = pad_for(
             &self.plan,
             &observation,
             local_tick,
@@ -942,7 +968,7 @@ impl NativeGenericTacticStepper {
         self.next_tick += 1;
         self.previous_observation = Some(observation);
         let stalled = stall_config.is_some_and(
-            |(stall_grace_ticks, stationary_window_ticks, stationary_window_distance)| {
+            |(stall_grace_ticks, stationary_window_ticks, stationary_window_distance, _, _)| {
                 self.next_tick >= stall_grace_ticks
                     && self.coordinate_positions.len() == stationary_window_ticks as usize + 1
                     && planar_distance(
@@ -957,9 +983,20 @@ impl NativeGenericTacticStepper {
                     ) <= stationary_window_distance
             },
         );
+        let recovered = stalled
+            && stall_config.is_some_and(|(_, _, _, button_mask, maximum_recoveries)| {
+                if button_mask != 0 && self.stall_recoveries < maximum_recoveries {
+                    pad.buttons |= button_mask;
+                    self.stall_recoveries += 1;
+                    self.coordinate_positions.clear();
+                    true
+                } else {
+                    false
+                }
+            });
         let end_reason = if reached && self.next_tick >= self.plan.minimum_ticks {
             Some(OptionEndReason::Terminated)
-        } else if stalled && self.next_tick >= self.plan.minimum_ticks {
+        } else if stalled && !recovered && self.next_tick >= self.plan.minimum_ticks {
             Some(OptionEndReason::Completed)
         } else if self.next_tick == self.plan.maximum_ticks {
             Some(OptionEndReason::MaximumDuration)
@@ -1630,6 +1667,8 @@ mod tests {
                 stall_grace_ticks: 4,
                 stationary_window_ticks: 2,
                 stationary_window_distance_f32_bits: 2.0_f32.to_bits(),
+                stall_recovery_button_mask: 0,
+                maximum_stall_recoveries: 0,
                 magnitude: 100,
             },
             8,
@@ -1665,6 +1704,8 @@ mod tests {
                 stall_grace_ticks: 4,
                 stationary_window_ticks: 2,
                 stationary_window_distance_f32_bits: 2.0_f32.to_bits(),
+                stall_recovery_button_mask: 0,
+                maximum_stall_recoveries: 0,
                 magnitude: 100,
             },
             8,
@@ -1712,6 +1753,8 @@ mod tests {
                 stall_grace_ticks: 4,
                 stationary_window_ticks: 2,
                 stationary_window_distance_f32_bits: 2.0_f32.to_bits(),
+                stall_recovery_button_mask: 0,
+                maximum_stall_recoveries: 0,
                 magnitude: 100,
             },
             8,
@@ -1743,6 +1786,8 @@ mod tests {
                 stall_grace_ticks: 40,
                 stationary_window_ticks: 16,
                 stationary_window_distance_f32_bits: 16.0_f32.to_bits(),
+                stall_recovery_button_mask: 0,
+                maximum_stall_recoveries: 0,
                 magnitude: 100,
             },
             64,
@@ -1754,6 +1799,45 @@ mod tests {
 
         assert_eq!(reason, OptionEndReason::Completed);
         assert_eq!(frames.len(), 40);
+        assert!(queries.iter().all(|query| !query.target_reached));
+    }
+
+    #[test]
+    fn coordinate_sequence_emits_bounded_stall_recoveries_before_stopping() {
+        let plan = NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits: vec![[
+                    100.0_f32.to_bits(),
+                    0.0_f32.to_bits(),
+                    0.0_f32.to_bits(),
+                ]],
+                intermediate_tolerance_f32_bits: 0.25_f32.to_bits(),
+                final_tolerance_f32_bits: 0.25_f32.to_bits(),
+                stall_grace_ticks: 4,
+                stationary_window_ticks: 2,
+                stationary_window_distance_f32_bits: 2.0_f32.to_bits(),
+                stall_recovery_button_mask: 0x0100,
+                maximum_stall_recoveries: 2,
+                magnitude: 100,
+            },
+            16,
+        );
+        let observations = (0..16)
+            .map(|tick| observation(tick, [0.0, 0.0, 0.0]))
+            .collect::<Vec<_>>();
+        let (frames, queries, reason) = realize(&plan, &observations).unwrap();
+
+        assert_eq!(reason, OptionEndReason::Completed);
+        assert_eq!(frames.len(), 10);
+        assert_eq!(frames[3].pads[0].buttons, 0x0100);
+        assert_eq!(frames[6].pads[0].buttons, 0x0100);
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame.pads[0].buttons == 0x0100)
+                .count(),
+            2
+        );
         assert!(queries.iter().all(|query| !query.target_reached));
     }
 
