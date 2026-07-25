@@ -1,267 +1,54 @@
-# Active task: make an agent learn a route
+# Learning workbench: recording and playback
 
-This is the sole dependency-ordered roadmap for the learning framework.
-Implementation history belongs in Git and benchmark reports. This file contains
-only the current product target and unfinished work.
+This milestone is complete. There are no unfinished learning-product tasks in
+this file.
 
-## The product in one paragraph
+## Product contract
 
-Give an agent:
+An LLM or another programmatic client:
 
-- an exact starting checkpoint;
-- an authored binary goal;
-- a typed catalog of observable facts and derived measurements; and
-- a library of applicable actions or multi-tick tactics.
+1. selects an authenticated starting checkpoint and authored goal;
+2. launches learning with the runtime's finite catalog of applicable actions;
+3. receives the recorded checkpoint/state/action graph produced by execution;
+4. inspects recorded decisions and evidence; and
+5. replays a recorded edge or root-to-edge path as exact controller input.
 
-The agent chooses tactics, observes what changed, learns which choices lead to
-valuable future states, branches again from retained checkpoints, and eventually
-reaches the goal. A tactic emits ordinary controller input underneath. A
-successful tactic chain becomes an exact PAD tape and must reproduce from cold
-boot before promotion.
+The browser workbench is a recorder, inspector, and playback surface. It does
+not author tactics, controller input, action graphs, or blueprint nodes.
+Tactics and compositions are runtime actions supplied through code or the
+programmatic contract. Interactive exploratory graph authorship belongs to the
+route planner in `TASKS_ROUTE_PLANNER.md`.
 
-A human route may optionally seed experience. It must not define the learner's
-action space, state coordinates, or only path to success.
+## Acceptance status
 
-The operator for this framework is an LLM or another programmatic client. The
-browser workbench records the graph produced by execution and plays recorded
-edges or paths back. It is not a TAS editor, tactic editor, or manually authored
-blueprint surface. Interactive graph authorship belongs to the separate route
-planner described in `TASKS_ROUTE_PLANNER.md`.
-
-## First proof
-
-The first proof starts from the authenticated Ordon Springs Link-control
-checkpoint and uses the existing `ordon_spring_load_committed` terminal.
-
-The agent receives:
-
-- generic world, player, actor, surface, event, and history facts;
-- generic goal-relative and change-relative measurements;
-- the complete applicable tactic catalog; and
-- enough native simulation budget to learn from repeated branching.
-
-It does **not** receive:
-
-- the q125 tape or another human demonstration;
-- incumbent-relative residuals;
-- authored route coordinates or route-progress indices;
-- a hidden sequence of preferred tactics; or
-- gameplay-state writes.
-
-The proof passes when the learned greedy tactic policy reaches the terminal,
-exports the exact realized PAD sequence, and that tape reproduces the same
-per-tick gameplay and terminal result from ordinary cold boot.
-
-Route speed does not matter for this first proof.
-
-## Current truth
-
-| Capability | State |
+| Requirement | Status |
 |---|---|
-| Deterministic checkpoints and persistent native workers | Working |
-| Learner-facing state | Working: each authenticated `FactSnapshot` uses the shared typed query/measurement registry and carries the full action universe, applicability mask, parameters, duration, schema digests, and a compact bounded infodump derived from that same state |
-| Authored terminal predicates | Working |
-| Reactive world-space movement | Working: seek coordinate, actor, path point, opening, plane, heading, offset, and distance |
-| Static motion paths | Working: waypoint, rail, Catmull-Rom spline, and cubic Bézier |
-| Controller composition | Working separately for concurrent movement/camera/button/clamp layers and sequential static search actions |
-| Game-specific and generic bounded tactics | Working, including exact PAD/query capture and experience-mined initiation/termination predicates |
-| Semi-Markov option values | Working: duration-aware fitted Q iteration, typed option catalogs, ranking, and deterministic selected-option execution |
-| Common executable tactic catalog | Working: existing game tactics, native generic tactics, motion paths, and DUSKCTRL programs share one finite runtime catalog; deterministic applicability enumeration returns concrete parameterized entries and bounded blueprints whose current start path is applicable, permits an explicit empty dead-end set, and binds the exact learner-visible choice schema by digest |
-| Replay corpora, critics, policies, and checkpoint archives | Working as separate components |
-| Exact realized tape and cold-replay proof | Working: the first learned route's 932-frame process-boot tape reproduced the same terminal and identical semantic gameplay state at all 932 recorded boundaries across two cold runs |
-| Programmatic tactic composition | Working internally: bounded runtime/LLM-supplied compositions reference executable catalog entries through `Invoke`, `Sequence`, `Layer`, `Conditional`, `Until`, and `Fallback`; static sequences compile into one exact tape with contiguous per-option execution records, layers compile through DUSKCTRL ownership rules, and ambiguous writers, unbounded control flow, unavailable conditions, invalid catalog plans, and any loss of exact PAD fail closed |
-| Live online option-Q campaign | Working: authenticated tactic boundaries feed duration-aware replay, refit, ranking, reward shaping, hindsight, checkpoint/resume, final-result export, and an exact observed-state greedy table that prevents sparse fitted-Q extrapolation from overriding known successful decisions |
-| Automatic checkpoint branching driven by learned tactic value | Working: campaigns retain replayable quality-diversity frontiers, sample root plus frontier branches, reject detached restores, detect collapse/cycles/connectivity loss, and project checkpoint-keyed state/tactic graphs |
-| Recording and playback workbench | Working: `Learn route` launches the tactic-Q campaign directly from the selected authenticated start and goal; the workbench records the resulting checkpoint/state/tactic graph, projects compact decision summaries, loads authenticated detail on demand, and replays an exact recorded edge or candidate path through ordinary process boot. Pause, resume, cancel, and cleanup preserve the recorded evidence lifecycle. The workbench has no tactic, tape-frame, or semantic graph authoring workflow |
-| A route learned from goal, facts, and tactics | Working: seed 181081 reached the terminal after 70 no-demonstration decisions; the frozen policy then reached it in 13 greedy decisions and cold-proved tape `872f7f...`. See `docs/glitch-hunting/benchmarks/ordon-tactic-q-first-proof-20260724.json` |
+| Launch learning from the selected authenticated start and goal | Complete |
+| Learn by choosing applicable runtime actions and branching from retained checkpoints | Complete |
+| Record checkpoint states, action edges, outcomes, rewards, and exact input ranges | Complete |
+| Project the recorded graph without loading full evidence eagerly | Complete |
+| Load authenticated decision details on demand | Complete |
+| Replay an exact recorded edge or root-to-edge candidate path from ordinary process boot | Complete |
+| Pause, resume, cancel, and clean up a campaign without losing retained evidence | Complete |
+| Export a successful exact tape and prove it from cold boot | Complete |
+| Keep manual TAS, tactic, and graph authorship out of the workbench | Complete |
 
-## Architectural reset
+The first no-demonstration proof reached the terminal, froze a greedy policy,
+exported its exact tape, and reproduced the same semantic gameplay state across
+two cold runs:
 
-### Tactics are the learning actions
+`docs/glitch-hunting/benchmarks/ordon-tactic-q-first-proof-20260724.json`
 
-Do not begin by asking a learner to rediscover controller mechanics every frame.
-The learned action space consists of bounded options such as:
+The workbench implementation and contract tests live in:
 
-- wait;
-- face a target or direction;
-- move toward or away from a target;
-- move along a heading;
-- roll;
-- interact;
-- hold or pulse a button;
-- continue until a fact query changes; and
-- execute a bounded composition supplied through the programmatic learning
-  contract.
+- `tools/huntctl/crates/workbench/src/tactic_route_runtime.rs`
+- `tools/huntctl/crates/workbench/src/server.rs`
+- `tools/huntctl/assets/route_workbench.html`
+- `tools/huntctl/crates/workbench/src/tests.rs`
 
-Every tactic implements one contract:
+## Not tracked as product requirements
 
-```text
-identity + version
-typed parameter schema
-applicability query
-bounded execution policy
-success/stop query
-maximum duration
-emitted PAD frames
-resulting fact snapshot
-```
-
-Built-in native tactics and programmatically supplied composites use the same
-runtime contract. The learner sees only currently applicable, concretely
-parameterized choices.
-Existing `GameTacticPlan`, `NativeGenericTacticPlan`, `MotionPathPlan`, and
-reactive-controller programs adapt into this contract without losing their
-current typed serialization or exact execution behavior.
-
-### The workbench records and plays graphs; it does not author them
-
-The LLM-facing service chooses the authenticated start, goal, campaign
-parameters, and any programmatic tactic composition. Actual execution records
-checkpoint states, tactic edges, outcomes, evidence, and exact PAD ranges into
-the learned graph.
-
-The browser may:
-
-- show the recorded graph and current campaign state;
-- inspect recorded state, measurements, rewards, and evidence on demand;
-- replay one recorded edge or a selected recorded path exactly;
-- pause, resume, cancel, and clean up a campaign; and
-- export the resulting exact tape and proof.
-
-The browser must not expose manual tactic CRUD, PAD-frame editing, blueprint
-composition, or general semantic graph rewiring. Those are not learning-product
-workflows. The route planner is the interactive and exploratory authoring
-product.
-
-### Facts are typed; infodumps are projections
-
-The learner consumes one stable typed view over existing observation artifacts,
-not prose:
-
-- stage, room, layer, procedure, and loading state;
-- position, velocity, facing, animation/action phase, and grounded state;
-- collision, contact, surface, ledge, and correction state;
-- nearby actor identity, family, state, and relative transform;
-- event, flag, inventory, resource, and interaction state;
-- recent tactic, recent PAD, recent state changes, and elapsed ticks; and
-- terminal-related entities and measurements exposed by the goal context.
-
-A human-readable infodump is generated from that same snapshot for inspection.
-Tactics, goals, UI panels, and the learner query the same fact/measurement
-registry instead of maintaining private representations.
-
-### Binary goal, measurable progress
-
-The terminal predicate remains the only authority for success. Learning may use:
-
-- terminal reward;
-- elapsed-tick cost;
-- changes in goal-relative distance, angle, state, or event measurements;
-- new events, interactions, contacts, surfaces, rooms, and actor relationships;
-- novelty and frontier coverage; and
-- hindsight goals derived from states actually reached.
-
-Prefer potential-based shaping:
-
-```text
-reward = terminal_reward + gamma * potential(next) - potential(current)
-         - tick_cost + novelty
-```
-
-Progress measurements guide exploration; they never declare the route complete.
-
-### Q-learning operates over tactic transitions
-
-One experience row is:
-
-```text
-state facts
-chosen tactic + parameters
-accumulated reward
-duration in ticks
-next-state facts
-terminal verdict
-checkpoint and exact PAD range
-```
-
-This is a semi-Markov decision process because tactics last multiple ticks.
-Update the long-term value of a tactic using the duration-discounted value of
-the next applicable tactic. A small fitted Q model is sufficient for the first
-proof; do not add ensembles, recurrence, or a novel learning algorithm without a
-measured need.
-
-Exploration begins with epsilon-greedy or uncertainty-aware tactic choice.
-Retained checkpoints allow the agent to branch repeatedly from useful or novel
-states instead of replaying the entire route for every decision.
-
-## P2 — Add demonstrations and refinement without corrupting the model
-
-- [ ] Import an optional human tape as replay transitions or tactic examples
-  through the same state/tactic interface used by autonomous experience.
-- [ ] Prove that removing the demonstration does not remove any action,
-  observation, measurement, checkpoint, or terminal capability.
-- [ ] Compare cold-start and demonstration-seeded learning by time to first
-  terminal success.
-- [ ] Hand a learned successful tape to a separately budgeted short-horizon
-  continuous/discrete refinement stage.
-- [ ] Promote only the final exact tape after ordinary cold replay.
-
-## P3 — Optimize throughput only when measured
-
-- [ ] Measure useful tactic decisions, native ticks, and complete learning
-  episodes per second on the actual tactic-Q loop.
-- [ ] Break wall time into simulation, checkpoint restore, fact extraction,
-  tactic execution, model update, compression, persistence, and UI projection.
-- [ ] Benchmark worker counts appropriate to the current 24-thread host before
-  changing emulator or evidence code.
-- [ ] Increase batching and worker utilization when the learner is starved for
-  diverse transitions.
-- [ ] Optimize implementation code only when profiling identifies a phase that
-  materially limits a meaningful learning experiment.
-
-Throughput is successful when an experiment can collect enough diverse tactic
-transitions to improve behavior promptly. A larger number of identical failed
-trajectories is not useful throughput.
-
-## P4 — Validate the claim after competence exists
-
-The existing Gate 4 comparison protocol and completed baseline cells are
-retained. The tactic-level learner now works, so validation can proceed:
-
-- [ ] Define a smaller sealed comparison that uses the actual tactic-Q learner,
-  not the abandoned per-tick policy as a proxy.
-- [ ] Compare it against random tactic selection and a non-learning tactic
-  search under equal native-tick budgets.
-- [ ] Repeat across multiple seeds and at least one held-out start state.
-- [ ] Publish success rate, time to first success, best route, and useful state/
-  tactic coverage even if learning loses.
-- [ ] Run the larger 40-cell protocol only if its additional treatments answer a
-  remaining product question.
-
-Scientific validation confirms a working learner. It is not a prerequisite for
-building one.
-
-## Explicitly removed from the critical path
-
-- Per-frame analog policy learning as the first agent abstraction.
-- Further architecture or negative-control sweeps before P0.
-- Completing the old 40-cell matrix before a tactic learner succeeds.
-- Treating residual optimization as route discovery.
-- Manual TAS, tactic, or blueprint authoring in the learning workbench.
-- Reusing the route planner's exploratory authoring UI in the learning tool.
-- Making every transient rollout, model, and replay update a sealed publication.
-- Broad world/actor survey work not selected by the active learner.
-- Claiming that the 125-tick human route is optimal.
-
-## Overall completion
-
-The framework is a route learner when an LLM can select a start and goal, launch
-learning through the programmatic contract, and receive a successful exact tape
-that reproduces from cold boot. The workbench must record the resulting graph
-and let an operator inspect and replay its recorded edges and paths without
-becoming an authoring tool.
-
-Until then, the accurate description is:
-
-> We have deterministic execution, optimization, and proof infrastructure. The
-> simple tactic-level learning product is not built yet.
+Demonstration-seeded comparisons, throughput tuning, multi-seed research
+studies, and route-time refinement are optional experiments. They should become
+tasks only when a concrete product question or measured bottleneck requires
+them.
