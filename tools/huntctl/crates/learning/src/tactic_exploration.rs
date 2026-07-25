@@ -93,12 +93,17 @@ pub fn choose_tactic_with_state_untried(
 
     let exploration_draw =
         stratified_exploration_draw(config.seed, decision_index, config.epsilon_per_million);
+    let supported_route = ranking
+        .values
+        .ranked
+        .iter()
+        .any(|value| is_route_sequence(&value.descriptor));
     let bootstrap_unsupported = ranking.values.ranked.is_empty()
         || (ranking.values.ranked[0].mean_q <= 0.0
             && !ranking.values.unsupported.is_empty()
             && exploration_draw >= config.epsilon_per_million);
     let (descriptor, reason) = if bootstrap_unsupported {
-        let unsupported = prioritized_unsupported(&ranking.values.unsupported);
+        let unsupported = prioritized_unsupported(&ranking.values.unsupported, supported_route);
         let index = deterministic_index(
             config.seed,
             decision_index,
@@ -120,11 +125,11 @@ pub fn choose_tactic_with_state_untried(
         // without prioritizing every short control variant. This is still
         // epsilon-greedy—the greedy branch is unchanged.
         let exploratory = if !state_untried.is_empty() {
-            prioritized_unsupported(state_untried)
+            prioritized_unsupported(state_untried, supported_route)
         } else if ranking.values.unsupported.is_empty() {
             available
         } else {
-            prioritized_unsupported(&ranking.values.unsupported)
+            prioritized_unsupported(&ranking.values.unsupported, supported_route)
         };
         let index = deterministic_index(
             config.seed,
@@ -149,14 +154,14 @@ pub fn choose_tactic_with_state_untried(
     })
 }
 
-fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&OptionActionDescriptor> {
+fn prioritized_unsupported(
+    unsupported: &[OptionActionDescriptor],
+    escape_before_routes: bool,
+) -> Vec<&OptionActionDescriptor> {
     let route_sequences = unsupported
         .iter()
-        .filter(|descriptor| descriptor.parameters.contains_key("coordinates"))
+        .filter(|descriptor| is_route_sequence(descriptor))
         .collect::<Vec<_>>();
-    if !route_sequences.is_empty() {
-        return route_sequences;
-    }
     let escape_actions = unsupported
         .iter()
         .filter(|descriptor| {
@@ -169,6 +174,12 @@ fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&Optio
             )
         })
         .collect::<Vec<_>>();
+    if escape_before_routes && !escape_actions.is_empty() {
+        return escape_actions;
+    }
+    if !route_sequences.is_empty() {
+        return route_sequences;
+    }
     if !escape_actions.is_empty() {
         return escape_actions;
     }
@@ -193,6 +204,10 @@ fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&Optio
     } else {
         navigation
     }
+}
+
+fn is_route_sequence(descriptor: &OptionActionDescriptor) -> bool {
+    descriptor.parameters.contains_key("coordinates")
 }
 
 fn deterministic_index(seed: u64, decision_index: u64, state: Digest, len: usize) -> usize {
@@ -565,7 +580,7 @@ mod tests {
             OptionParameter::Vec3F32Bits([0.0_f32.to_bits(); 3]),
         );
         let unsupported = [coordinate, route.clone()];
-        let prioritized = prioritized_unsupported(&unsupported);
+        let prioritized = prioritized_unsupported(&unsupported, false);
         assert_eq!(prioritized, vec![&route]);
     }
 
@@ -580,8 +595,54 @@ mod tests {
         );
         let unsupported = [coordinate, interact.clone(), roll.clone()];
 
-        let prioritized = prioritized_unsupported(&unsupported);
+        let prioritized = prioritized_unsupported(&unsupported, false);
 
         assert_eq!(prioritized, vec![&interact, &roll]);
+    }
+
+    #[test]
+    fn supported_composite_navigation_makes_new_cells_try_escape_actions_first() {
+        let mut supported_route = descriptor(
+            "supported-route",
+            OptionType::Custom("seek_coordinate_sequence".into()),
+        );
+        supported_route
+            .parameters
+            .insert("coordinates".into(), OptionParameter::Text("[]".into()));
+        let mut fresh_route = supported_route.clone();
+        fresh_route.option_id = "fresh-route".into();
+        let roll = descriptor("roll", OptionType::Roll);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([9; 32]),
+            action_universe_sha256: Digest([10; 32]),
+            choices: vec![
+                choice(supported_route.clone()),
+                choice(fresh_route.clone()),
+                choice(roll.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: supported_route,
+                    mean_q: 1.0,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: vec![fresh_route.clone(), roll.clone()],
+            },
+        };
+
+        let selected = choose_tactic_with_state_untried(
+            &ranking,
+            0,
+            TacticExplorationConfig {
+                seed: 1,
+                epsilon_per_million: EPSILON_SCALE,
+            },
+            &[fresh_route, roll.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(selected.descriptor, roll);
+        assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
     }
 }
