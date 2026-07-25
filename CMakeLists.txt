@@ -582,6 +582,14 @@ target_include_directories(dusk_state_checkpoint_test PRIVATE
 target_link_libraries(dusk_state_checkpoint_test PRIVATE xxHash::xxhash)
 set_target_properties(dusk_state_checkpoint_test PROPERTIES FOLDER "Tests")
 
+add_executable(dusk_native_checkpoint_cache_test EXCLUDE_FROM_ALL
+    tests/native_checkpoint_cache_test.cpp
+)
+target_include_directories(dusk_native_checkpoint_cache_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+)
+set_target_properties(dusk_native_checkpoint_cache_test PROPERTIES FOLDER "Tests")
+
 add_executable(dusk_jsu_list_checkpoint_test EXCLUDE_FROM_ALL
     tests/jsu_list_checkpoint_test.cpp
 )
