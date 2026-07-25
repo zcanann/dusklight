@@ -52,8 +52,6 @@ Acceptance:
 
 ## P2 - Make retained states computationally real
 
-- [ ] Distinguish a logical frontier record from a restorable native checkpoint
-      in types, reports, and diagnostics.
 - [ ] Add a bounded per-worker native checkpoint cache for valuable frontier
       states, with explicit memory accounting and deterministic eviction.
 - [ ] Restore a cached frontier directly when available instead of restoring

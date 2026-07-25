@@ -1,0 +1,74 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-frontier-type-separation/v1",
+  "date": "2026-07-25",
+  "claim": "Route-derived logical frontier identities and process-local native checkpoint authority are distinct Rust types. Campaign branches, decision traces, diagnostics, and the v8 route report explicitly state whether a frontier is directly restorable or requires replay from the authenticated native root.",
+  "implementation": {
+    "commit": "16bd3e015343a55d07baba7597af37160112725e",
+    "binary": "tools/huntctl/target/debug/huntctl.exe",
+    "binary_sha256": "a282a1c732fd15a508a4bc5a4fce14b63fef10a1f247d3aae4370aad52c44e16",
+    "logical_type": "LogicalTacticFrontierRecord",
+    "native_type": "RestorableNativeTacticCheckpoint",
+    "logical_fields": [
+      "identity_sha256",
+      "state_sha256",
+      "route_frames",
+      "replayed_prefix_ticks"
+    ],
+    "native_authority_fields": [
+      "worker_slot",
+      "native_source_sha256",
+      "logical_frontier_sha256",
+      "state_sha256",
+      "restore_identity",
+      "checkpoint_bytes"
+    ],
+    "portable_campaign_fabricates_process_local_handles": false,
+    "unadmitted_native_handle_rejected": true,
+    "report_schema": "dusklight-native-tactic-route-report/v8"
+  },
+  "validation": {
+    "cargo_test_orchestration_tactic_q_campaign": {
+      "passed": 3,
+      "failed": 0,
+      "includes": [
+        "root logical frontier has zero replay ticks",
+        "retained logical frontier has positive replay ticks",
+        "neither portable branch claims a native handle",
+        "forged native handle is rejected"
+      ]
+    },
+    "cargo_test_orchestration_native_tactic_route_runner": {
+      "passed": 20,
+      "failed": 0,
+      "includes": [
+        "binary journal preserves frontier availability",
+        "legacy journals project explicit replay-only diagnostics",
+        "availability counts must reconcile with frontier count"
+      ]
+    },
+    "cargo_test_workbench_tactic_route_runtime": {
+      "passed": 4,
+      "failed": 0
+    },
+    "cargo_check_dusklight_huntctl": true
+  },
+  "native_smoke": {
+    "output": "build/campaigns/tactic-route-frontier-type-smoke-20260725",
+    "report_sha256": "ff05ef023ddd95ecf528139cc476f032ab63a55fea3d62c300109632e4d2ec7d",
+    "seed": 130363,
+    "workers": 2,
+    "decisions": 1,
+    "evaluated_realized_ticks": 56,
+    "success": false,
+    "wall_micros": 64999235,
+    "frontier_availability": {
+      "logical_frontier_records": 2,
+      "directly_restorable_native_frontiers": 0,
+      "replay_only_frontiers": 1
+    },
+    "decision_trace_matches_report_summary": true,
+    "binary_content_objects": 80,
+    "compacted_decision_segment_sha256": "b8c8c38775623862e99ab976b6a4b1961f74e9ac840c09c681e109cc630ae4d4"
+  },
+  "scope": "This milestone deliberately reports zero cached native frontiers. It prevents the next cache implementation from claiming a logical route digest as a direct restore and establishes fail-closed accounting before any cache hit can exist."
+}
