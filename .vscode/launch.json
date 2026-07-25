@@ -29,6 +29,7 @@
                 "timeline", "workbench",
                 "--timeline", "${workspaceFolder}/routes/Glitch Exhibition/intro.timeline",
                 "--game", "${workspaceFolder}/build/windows-clang-debug/dusklight.exe",
+                "--dvd", "${workspaceFolder}/orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso",
                 "--world-context", "${workspaceFolder}/build/world/ordon.context.json",
                 "--state-root", "${workspaceFolder}/build/automation-state/route-workbench"
             ],
@@ -41,7 +42,7 @@
             "type": "cppvsdbg",
             "request": "launch",
             "program": "${command:cmake.launchTargetPath}",
-            "args": ["-l", "1", "--dvd", "${workspaceRoot}/orig/GZ2E01/GZ2E01.iso", "--console"],
+            "args": ["-l", "1", "--dvd", "${workspaceRoot}/orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso", "--console"],
             "MIMode": "gdb",
             "miDebuggerPath": "gdb",
             "symbolSearchPath": "${command:cmake.launchTargetPath}",
@@ -57,7 +58,7 @@
                 "timeline", "workbench",
                 "--timeline", "${workspaceFolder}/routes/Glitch Exhibition/intro.timeline",
                 "--game", "${workspaceFolder}/build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight",
-                "--dvd", "${workspaceFolder}/orig/GZ2E01/GZ2E01.iso",
+                "--dvd", "${workspaceFolder}/orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso",
                 "--world-context", "${workspaceFolder}/build/world/ordon.context.json",
                 "--state-root", "${workspaceFolder}/build/automation-state/route-workbench"
             ],
@@ -70,7 +71,7 @@
             "type": "lldb",
             "request": "launch",
             "program": "${workspaceFolder}/build/macos-default-debug/Dusklight.app/Contents/MacOS/Dusklight",
-            "args": ["-l", "1", "--dvd", "${workspaceFolder}/orig/GZ2E01/GZ2E01.iso", "--console"],
+            "args": ["-l", "1", "--dvd", "${workspaceFolder}/orig/GZ2E01/Legend of Zelda, The - Twilight Princess (USA).iso", "--console"],
             "cwd": "${workspaceFolder}",
             "terminal": "integrated",
             "preLaunchTask": "Glitch Hunt: Build Dusklight (macOS)"
