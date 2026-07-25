@@ -1,0 +1,116 @@
+{
+  "schema": "dusklight-optimization-request/v2",
+  "content_sha256": "7034017f14dbde8d3b8196b5ab79fa078db355f9d72287e3f7ee3c8ff761aed0",
+  "id": "ordon-exit-approach-tactic-q-discovery-v1",
+  "campaign_class": "local_tas_refinement",
+  "route": {
+    "timeline": {
+      "path": "routes/Glitch Exhibition/ordon-exit-approach-learning.timeline",
+      "sha256": "9849345863ad1091af74d3827201591a2c301db3f5949805849ed0a3a1f99dc4"
+    },
+    "lineage": "main",
+    "segment": "learn_ordon_spring_load",
+    "source_boundary_index": 620,
+    "source_boundary_fingerprint": "87192dd0886f8e089a158f86ac8979eb",
+    "native_source_boundary_fingerprint": "87192dd0886f8e089a158f86ac8979eb"
+  },
+  "terminal_predicate": {
+    "goal": "ordon_spring_load_committed",
+    "source": {
+      "path": "routes/Glitch Exhibition/intro/predicates/ordon_spring_load_committed.milestones",
+      "sha256": "65e395951ce6c46f6728e3daa91ece77410f85806f9a7a83942ffcd5737770ba"
+    },
+    "program_sha256": "b8cbfafaa025b883cecd2db4e4bef30696c801a591ce736d1281defd8af0c169",
+    "definition_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57"
+  },
+  "budgets": {
+    "exploration_horizon_ticks": 128,
+    "promotion_before_tick": 127,
+    "candidate_budget": 256,
+    "simulated_tick_budget": 32768
+  },
+  "execution": {
+    "workers": 1,
+    "deterministic_seeds": [
+      181081
+    ],
+    "repetitions": 1,
+    "fidelity": "headless"
+  },
+  "proposal": {
+    "action_schema": {
+      "id": "dusklight-raw-pad-action/v2",
+      "sha256": "483953b663e327c6d839d88b72ce652cfcc5d0aeb420570e0c076a4c62e3ab7c"
+    },
+    "proposal_schema": {
+      "id": "dusklight-residual-action/v1",
+      "sha256": "8b11beebb1528ebb225f0366c997cd32171b10d596c0f1c4b6ffa740879e2313"
+    },
+    "search_space": {
+      "schema": "dusklight-residual-search-space/v1",
+      "start_frame": 0,
+      "end_frame_exclusive": 64,
+      "candidate_slots": 4,
+      "ports": [
+        0
+      ],
+      "analog_channels": [
+        "main_x",
+        "main_y",
+        "camera_x",
+        "camera_y"
+      ],
+      "analog_delta_values": [
+        -64,
+        -32,
+        -16,
+        -8,
+        -4,
+        4,
+        8,
+        16,
+        32,
+        64
+      ],
+      "button_masks": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        256,
+        512,
+        1024,
+        2048,
+        4096
+      ],
+      "duration_values": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32
+      ]
+    },
+    "optimizer": {
+      "kind": "random",
+      "samples": 1
+    }
+  },
+  "resume": {
+    "state_path": "build/campaigns/ordon-exit-approach-tactic-q-discovery-v1/state.json",
+    "journal_path": "build/campaigns/ordon-exit-approach-tactic-q-discovery-v1/journal.jsonl",
+    "checkpoint_every_candidates": 64
+  },
+  "retention": {
+    "retain_all_successes": true,
+    "failed_episodes": "diversity_reservoir",
+    "failed_episode_limit": 256,
+    "retain_realized_tapes": true,
+    "retain_native_episode_shards": true,
+    "retain_gameplay_traces": false
+  }
+}
