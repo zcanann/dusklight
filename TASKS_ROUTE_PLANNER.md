@@ -39,18 +39,20 @@ The remaining usability gap is direct route authoring:
   atomically. A visible route step can be right-clicked to insert a mechanic
   after it with authoritative downstream replay, but the canvas does not yet
   author typed pins, branches, subgraphs, or general semantic graph rewiring.
-- Asset-level undo/redo and broader keyboard-first authoring remain incomplete.
-  Route Book edits, presentation regions, evidence changes, and node moves have
-  semantic undo/redo now.
+- Asset-level undo/redo remains incomplete. Primary current operations share one
+  searchable command palette and shortcut registry. Route Book edits,
+  presentation regions, evidence changes, and node moves have semantic undo/redo
+  now.
 - Presentation regions are not reusable semantic subgraphs.
 - The browser acceptance test creates a blank Workspace through the UI, creates,
   renames, duplicates, trashes, and restores a mutable folder, edits and saves a
   custom-node tab, creates a grounded scenario from a direct Library action,
   preserves a dirty graph's selection and viewport while switching asset tabs,
-  adds, undoes, redoes, and right-click-inserts after its first route step, then
-  undoes that insertion and persists the route. It continues through the
-  preassembled keyed-door example. Root, anchor, goal, and context selection are
-  not yet independently authorable.
+  opens and executes the keyboard command palette, uses save, close-tab, and
+  tab-switch shortcuts, adds, undoes, redoes, and right-click-inserts after its
+  first route step, then undoes that insertion and persists the route. It
+  continues through the preassembled keyed-door example. Root, anchor, goal, and
+  context selection are not yet independently authorable.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 
@@ -105,8 +107,6 @@ or test fixture does not count as progress by itself.
 
 ## 4. Application shell and information hierarchy
 
-- [ ] Add command-palette access and consistent keyboard shortcuts for every
-      primary operation.
 - [ ] Preserve selection and viewport when switching between a graph and its
       referenced subgraph.
 - [ ] Provide empty states that lead directly to meaningful actions: choose a

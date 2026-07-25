@@ -14,6 +14,8 @@
       <button id="save-project" type="button" disabled>Save</button>
       <button id="undo" type="button" disabled>Undo</button>
       <button id="redo" type="button" disabled>Redo</button>
+      <button id="open-command-palette" type="button" title="Commands (Ctrl+Shift+P)"
+        aria-keyshortcuts="Control+Shift+P">Commands</button>
       <details class="more-menu">
         <summary aria-label="More commands">More</summary>
         <div>
@@ -142,6 +144,16 @@
         </details>
       </section>
     </main>
+    <dialog id="command-palette" class="command-palette">
+      <header>
+        <strong>Commands</strong>
+        <button id="close-command-palette" type="button" aria-label="Close command palette">&times;</button>
+      </header>
+      <input id="command-search" type="search" placeholder="Type a command&hellip;" autocomplete="off"
+        aria-label="Search commands" aria-controls="command-results">
+      <div id="command-results" class="command-results" role="listbox" aria-label="Available commands"></div>
+      <footer><kbd>&uarr;&darr;</kbd> navigate <kbd>Enter</kbd> run <kbd>Esc</kbd> close</footer>
+    </dialog>
     <dialog id="new-workspace-dialog">
       <form id="new-workspace-form">
         <header>

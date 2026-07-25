@@ -93,6 +93,7 @@ const elements = Object.fromEntries([
   "folder-label-field", "folder-label", "folder-id-field", "folder-id",
   "folder-directory-field", "folder-directory", "folder-parent-field", "folder-parent",
   "folder-error", "cancel-folder", "save-folder",
+  "open-command-palette", "command-palette", "close-command-palette", "command-search", "command-results",
   "import-workspace", "export-workspace", "workspace-file",
   "add-node-menu", "add-node-search", "add-node-results",
   "project-list", "open-project", "save-project", "save-as-project", "undo", "redo",
@@ -150,7 +151,96 @@ const state = {
   editorTabs: [],
   activeEditorTabId: null,
   workspaceAssetDraft: null,
+  commandPaletteIndex: 0,
 };
+
+const COMMANDS = [
+  command("workspace.new", "New workspace", "Workspace", "Alt+N",
+    () => true, () => elements["new-workspace"].click()),
+  command("workspace.import", "Import workspace", "Workspace", "Alt+O",
+    () => true, () => elements["import-workspace"].click()),
+  command("workspace.export", "Export workspace", "Workspace", "",
+    () => buttonEnabled("export-workspace"), () => elements["export-workspace"].click()),
+  command("content.workspace", "Browse Workspace assets", "Content Browser", "Alt+1",
+    () => Boolean(state.workspace), () => focusContentBrowser("workspace")),
+  command("content.library", "Browse Library content", "Content Browser", "Alt+2",
+    () => true, () => focusContentBrowser("library")),
+  command("asset.new-custom-node", "New custom node", "Content Browser", "",
+    () => Boolean(state.workspace), () => {
+      selectContentSource("workspace");
+      elements["new-asset"].click();
+    }),
+  command("asset.import", "Import Workspace asset", "Content Browser", "",
+    () => Boolean(state.workspace), () => elements["import-asset"].click()),
+  command("editor.save", "Save active editor", "Editor", "Ctrl+S",
+    () => buttonEnabled("save-project"), saveProject),
+  command("editor.close", "Close active asset tab", "Editor", "Alt+W",
+    () => Boolean(state.activeEditorTabId), () => closeEditorTab(state.activeEditorTabId)),
+  command("editor.next", "Next asset tab", "Editor", "Alt+]",
+    () => state.editorTabs.length > 1, () => cycleEditorTab(1)),
+  command("editor.previous", "Previous asset tab", "Editor", "Alt+[",
+    () => state.editorTabs.length > 1, () => cycleEditorTab(-1)),
+  command("edit.undo", "Undo", "Edit", "Ctrl+Z",
+    () => buttonEnabled("undo"), undoAuthoringCommand),
+  command("edit.redo", "Redo", "Edit", "Ctrl+Y",
+    () => buttonEnabled("redo"), redoAuthoringCommand),
+  command("graph.add-node", "Add node", "Graph", "A",
+    () => Boolean(state.graph && state.project && !state.readOnly), openAddNodeAtCanvasCenter),
+  command("graph.fit", "Fit graph", "Graph", "F",
+    () => Boolean(state.graph), fitGraph),
+  buttonCommand("graph.evaluate", "Evaluate selected mechanic", "Graph", "E", "evaluate-transition"),
+  buttonCommand("graph.solve", "Solve selected goal", "Graph", "S", "solve-goal"),
+  buttonCommand("graph.insert", "Insert selected mechanic into route", "Graph", "I", "insert-transition"),
+  buttonCommand("graph.producer-chain", "Find producer chain", "Graph", "P", "suggest-transition-chain"),
+  buttonCommand("graph.replace-step", "Replace selected route step", "Graph", "", "replace-step"),
+  buttonCommand("graph.remove-step", "Remove selected route step", "Graph", "Delete", "remove-step"),
+  buttonCommand("graph.group", "Group selected nodes", "Graph", "G", "group-selection"),
+  buttonCommand("region.copy", "Copy selected region", "Regions", "", "copy-region"),
+  buttonCommand("region.fork", "Fork selected region", "Regions", "", "fork-region"),
+  buttonCommand("region.reference", "Reference selected region", "Regions", "", "reference-region"),
+  buttonCommand("region.version", "Create selected region version", "Regions", "", "version-region"),
+  buttonCommand("region.replace", "Replace selected region", "Regions", "", "replace-region"),
+  buttonCommand("region.usage", "Inspect selected region usage", "Regions", "", "region-usage"),
+  buttonCommand("preference.pin", "Pin selection", "Route preferences", "", "pin-selection"),
+  buttonCommand("preference.ban", "Ban selection", "Route preferences", "", "ban-selection"),
+  buttonCommand("preference.prefer", "Prefer selection", "Route preferences", "", "prefer-selection"),
+  buttonCommand("preference.method", "Select method", "Route preferences", "M", "select-method"),
+  command("legacy.examples", "Focus Library examples", "Legacy migration", "",
+    () => true, () => elements["project-list"].focus()),
+  command("legacy.import", "Import legacy project", "Legacy migration", "",
+    () => true, () => elements["open-project"].click()),
+  command("legacy.save-as", "Save legacy project as", "Legacy migration", "",
+    () => buttonEnabled("save-as-project"), () => elements["save-as-project"].click()),
+  command("legacy.export", "Export legacy project", "Legacy migration", "",
+    () => buttonEnabled("export-project"), () => elements["export-project"].click()),
+];
+
+function command(id, label, category, shortcut, enabled, run) {
+  return { id, label, category, shortcut, enabled, run };
+}
+
+function buttonCommand(id, label, category, shortcut, elementId) {
+  if (shortcut) {
+    elements[elementId].setAttribute(
+      "aria-keyshortcuts",
+      shortcut.replace("Ctrl", "Control"),
+    );
+    elements[elementId].title ||= `${label} (${shortcut})`;
+  }
+  return command(
+    id,
+    label,
+    category,
+    shortcut,
+    () => buttonEnabled(elementId),
+    () => elements[elementId].click(),
+  );
+}
+
+function buttonEnabled(id) {
+  const element = elements[id];
+  return Boolean(element && !element.disabled && !element.hidden);
+}
 
 elements["workspace-list"].addEventListener("change", () => {
   const id = elements["workspace-list"].value;
@@ -187,6 +277,17 @@ elements["folder-label"].addEventListener("input", suggestFolderIdentity);
 elements["folder-dialog"].addEventListener("close", () => {
   state.folderDialog = null;
   elements["folder-error"].textContent = "";
+});
+elements["open-command-palette"].addEventListener("click", openCommandPalette);
+elements["close-command-palette"].addEventListener("click", closeCommandPalette);
+elements["command-search"].addEventListener("input", renderCommandPalette);
+elements["command-search"].addEventListener("keydown", navigateCommandPalette);
+elements["command-palette"].addEventListener("click", (event) => {
+  if (event.target === elements["command-palette"]) closeCommandPalette();
+});
+elements["command-palette"].addEventListener("close", () => {
+  elements["command-search"].value = "";
+  state.commandPaletteIndex = 0;
 });
 elements["workspace-tab"].addEventListener("click", () => selectContentSource("workspace"));
 elements["library-tab"].addEventListener("click", () => selectContentSource("library"));
@@ -236,43 +337,63 @@ window.addEventListener("pointerdown", (event) => {
   }
 });
 window.addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  const primaryModifier = event.ctrlKey || event.metaKey;
+  if (primaryModifier && event.shiftKey && key === "p") {
+    event.preventDefault();
+    openCommandPalette();
+    return;
+  }
+  if (elements["command-palette"].open) return;
   if (event.key === "Escape") closeAddNodeMenu();
   const editingText = event.target instanceof HTMLInputElement
     || event.target instanceof HTMLTextAreaElement
     || event.target instanceof HTMLSelectElement
     || event.target?.isContentEditable;
-  if (editingText || event.altKey) return;
-  const key = event.key.toLowerCase();
-  if (event.ctrlKey || event.metaKey) {
-    if (key === "z") {
+  if (event.altKey && !primaryModifier) {
+    const commandId = {
+      n: "workspace.new",
+      o: "workspace.import",
+      w: "editor.close",
+      "1": "content.workspace",
+      "2": "content.library",
+      "[": "editor.previous",
+      "]": "editor.next",
+    }[key];
+    if (commandId) {
       event.preventDefault();
-      if (event.shiftKey) redoAuthoringCommand();
-      else undoAuthoringCommand();
-    } else if (key === "y" && !event.shiftKey) {
-      event.preventDefault();
-      redoAuthoringCommand();
-    } else if (key === "s" && !event.shiftKey
-      && (state.project || state.workspaceAssetDraft) && !state.readOnly) {
-      event.preventDefault();
-      saveProject();
+      executeCommand(commandId);
     }
     return;
   }
-  if (event.key === "Delete" && state.selected?.value?.payload?.kind === "reference_step") {
+  if (primaryModifier) {
+    const commandId = {
+      z: editingText ? null : event.shiftKey ? "edit.redo" : "edit.undo",
+      y: editingText || event.shiftKey ? null : "edit.redo",
+      s: !event.shiftKey ? "editor.save" : null,
+    }[key];
+    if (commandId) {
+      event.preventDefault();
+      executeCommand(commandId);
+    }
+    return;
+  }
+  if (editingText) return;
+  const commandId = event.key === "Delete"
+    ? "graph.remove-step"
+    : {
+      a: "graph.add-node",
+      e: "graph.evaluate",
+      f: "graph.fit",
+      g: "graph.group",
+      i: "graph.insert",
+      m: "preference.method",
+      p: "graph.producer-chain",
+      s: "graph.solve",
+    }[key];
+  if (commandId) {
     event.preventDefault();
-    removeSelectedRouteStep();
-  } else if (key === "f" && state.graph) {
-    event.preventDefault();
-    fitGraph();
-  } else if (key === "a" && state.graph && !state.readOnly) {
-    event.preventDefault();
-    const bounds = elements.canvas.getBoundingClientRect();
-    elements.canvas.dispatchEvent(new MouseEvent("contextmenu", {
-      bubbles: true,
-      cancelable: true,
-      clientX: bounds.left + bounds.width / 2,
-      clientY: bounds.top + bounds.height / 2,
-    }));
+    executeCommand(commandId);
   }
 });
 elements["add-node-search"].addEventListener("input", renderAddNodeMenu);
@@ -667,6 +788,142 @@ function setEmptyState(title, detail, primaryLabel, primaryAction, secondaryLabe
     primary: primaryAction,
     secondary: secondaryAction ?? null,
   };
+}
+
+function openCommandPalette() {
+  const palette = elements["command-palette"];
+  if (palette.open) {
+    elements["command-search"].focus();
+    return;
+  }
+  if (document.querySelector("dialog[open]")) {
+    setStatus("Finish the open dialog before choosing another command", "bad");
+    return;
+  }
+  elements["command-search"].value = "";
+  renderCommandPalette();
+  palette.showModal();
+  elements["command-search"].focus();
+}
+
+function closeCommandPalette() {
+  if (elements["command-palette"].open) elements["command-palette"].close();
+}
+
+function renderCommandPalette() {
+  const query = elements["command-search"].value.trim().toLowerCase();
+  const words = query.split(/\s+/).filter(Boolean);
+  const matching = COMMANDS
+    .filter((item) => words.every((word) =>
+      `${item.category} ${item.label} ${item.shortcut}`.toLowerCase().includes(word)))
+    .sort((left, right) =>
+      Number(right.enabled()) - Number(left.enabled())
+      || left.category.localeCompare(right.category)
+      || left.label.localeCompare(right.label));
+  const results = elements["command-results"];
+  results.replaceChildren();
+  for (const item of matching) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.id = `command-${item.id.replaceAll(".", "-")}`;
+    button.className = "command-result";
+    button.dataset.commandId = item.id;
+    button.setAttribute("role", "option");
+    button.setAttribute("aria-selected", "false");
+    button.disabled = !item.enabled();
+    const label = document.createElement("strong");
+    label.textContent = item.label;
+    const category = document.createElement("small");
+    category.textContent = item.category;
+    button.append(label, category);
+    if (item.shortcut) {
+      const shortcut = document.createElement("kbd");
+      shortcut.textContent = item.shortcut;
+      button.append(shortcut);
+    }
+    button.addEventListener("mousemove", () => selectCommandResult(button));
+    button.addEventListener("click", () => executeCommand(item.id));
+    results.append(button);
+  }
+  if (!matching.length) results.append(contentMessage("No matching commands."));
+  state.commandPaletteIndex = 0;
+  selectCommandResult(commandResultButtons()[0] ?? null);
+}
+
+function commandResultButtons() {
+  return [...elements["command-results"].querySelectorAll(".command-result:not(:disabled)")];
+}
+
+function selectCommandResult(button) {
+  const buttons = commandResultButtons();
+  for (const candidate of buttons) {
+    const selected = candidate === button;
+    candidate.classList.toggle("selected", selected);
+    candidate.setAttribute("aria-selected", String(selected));
+  }
+  state.commandPaletteIndex = Math.max(0, buttons.indexOf(button));
+  elements["command-search"].setAttribute("aria-activedescendant", button?.id ?? "");
+  button?.scrollIntoView({ block: "nearest" });
+}
+
+function navigateCommandPalette(event) {
+  const buttons = commandResultButtons();
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeCommandPalette();
+    return;
+  }
+  if (!buttons.length) return;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    const delta = event.key === "ArrowDown" ? 1 : -1;
+    const index = (state.commandPaletteIndex + delta + buttons.length) % buttons.length;
+    selectCommandResult(buttons[index]);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    buttons[state.commandPaletteIndex]?.click();
+  }
+}
+
+function executeCommand(id) {
+  const item = COMMANDS.find((candidate) => candidate.id === id);
+  if (!item?.enabled()) return false;
+  closeCommandPalette();
+  try {
+    const result = item.run();
+    if (result instanceof Promise) {
+      result.catch((error) => setStatus(`Command failed: ${error.message}`, "bad"));
+    }
+  } catch (error) {
+    setStatus(`Command failed: ${error.message}`, "bad");
+  }
+  return true;
+}
+
+function cycleEditorTab(delta) {
+  if (state.editorTabs.length < 2) return;
+  const current = state.editorTabs.findIndex((tab) => tab.id === state.activeEditorTabId);
+  const index = (Math.max(0, current) + delta + state.editorTabs.length)
+    % state.editorTabs.length;
+  const target = state.editorTabs[index];
+  activateEditorTab(target.id);
+  requestAnimationFrame(() => {
+    [...elements["editor-tabs"].querySelectorAll(".editor-tab")].find((candidate) =>
+      candidate.dataset.assetId === target.assetId)
+      ?.querySelector(".editor-tab-button")
+      ?.focus();
+  });
+}
+
+function openAddNodeAtCanvasCenter() {
+  if (!state.graph || !state.project || state.readOnly) return;
+  const bounds = elements.canvas.getBoundingClientRect();
+  elements.canvas.dispatchEvent(new MouseEvent("contextmenu", {
+    bubbles: true,
+    cancelable: true,
+    clientX: bounds.left + bounds.width / 2,
+    clientY: bounds.top + bounds.height / 2,
+  }));
 }
 
 function renderContentBrowser() {

@@ -130,8 +130,31 @@ try {
     "planner application load",
     `document.readyState === "complete" && document.querySelectorAll("#project-list option").length >= 7`,
   );
+  await evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "P",
+    ctrlKey: true,
+    shiftKey: true,
+    bubbles: true,
+  }))`);
+  await browserUntil(
+    "keyboard command palette",
+    `document.getElementById("command-palette").open
+      && document.querySelectorAll("#command-results .command-result").length >= 30
+      && document.getElementById("command-results").textContent.includes("New workspace")
+      && document.getElementById("command-results").textContent.includes("Find producer chain")`,
+  );
   await evaluate(`(() => {
-    document.getElementById("new-workspace").click();
+    const search = document.getElementById("command-search");
+    search.value = "new workspace";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    search.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    }));
+    if (!document.getElementById("new-workspace-dialog").open) {
+      throw new Error("command palette did not run New workspace");
+    }
     document.getElementById("new-workspace-label").value = "Browser workspace";
     document.getElementById("new-workspace-id").value = "browser-workspace";
     document.getElementById("new-workspace-form").requestSubmit();
@@ -265,11 +288,14 @@ try {
       '#editor-tabs .editor-tab[data-asset-id="custom.browser-mechanic"] .editor-tab-dirty'
     ) != null && !document.getElementById("save-project").disabled`,
   );
-  await evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", {
-    key: "s",
-    ctrlKey: true,
-    bubbles: true,
-  }))`);
+  await evaluate(`document.querySelector("#workspace-asset-editor input").dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "s",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  )`);
   await browserUntil(
     "custom-node tab save",
     `(async () => {
@@ -283,9 +309,11 @@ try {
       return record.asset.header.label === "Browser mechanic revised";
     })()`,
   );
-  await evaluate(`document.querySelector(
-    '#editor-tabs .editor-tab[data-asset-id="custom.browser-mechanic"] .editor-tab-close'
-  ).click()`);
+  await evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "w",
+    altKey: true,
+    bubbles: true,
+  }))`);
   await browserUntil(
     "custom-node tab close",
     `document.querySelectorAll("#editor-tabs .editor-tab").length === 0`,
@@ -372,13 +400,11 @@ try {
         && document.getElementById("editor-breadcrumbs").textContent.includes("Route books");
     })()`,
   );
-  await evaluate(`(() => {
-    const graph = [...document.querySelectorAll("#editor-tabs .editor-tab")]
-      .find((tab) => tab.dataset.assetId.startsWith("route-graph."));
-    if (!graph) throw new Error("the route graph tab is absent");
-    graph.querySelector(".editor-tab-button").click();
-    return true;
-  })()`);
+  await evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", {
+    key: "]",
+    altKey: true,
+    bubbles: true,
+  }))`);
   await browserUntil(
     "graph tab restores working state",
     `(() => {
