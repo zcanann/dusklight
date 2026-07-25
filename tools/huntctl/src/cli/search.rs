@@ -1057,6 +1057,30 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .parse()?;
             let population_size = usize_option(search_args, "--population", 32)?;
             let execution = search_execution_config(search_args)?;
+            let objective = option(search_args, "--anchored-prefix")
+                .map(|prefix| -> Result<AnchoredObjectiveConfig, Box<dyn Error>> {
+                    Ok(AnchoredObjectiveConfig {
+                        segment: seed_candidate.segment,
+                        prefix_tape: PathBuf::from(prefix),
+                        milestone_program: required_path(search_args, "--milestones")?,
+                        game: execution.game.clone(),
+                        dvd: execution.dvd.clone(),
+                        source_milestone: option(search_args, "--source-milestone")
+                            .ok_or(
+                                "anchored continuous search requires --source-milestone NAME",
+                            )?,
+                        source_boundary_fingerprint: option(
+                            search_args,
+                            "--source-boundary-fingerprint",
+                        )
+                        .ok_or(
+                            "anchored continuous search requires --source-boundary-fingerprint VALUE",
+                        )?,
+                        goal_milestone: option(search_args, "--goal-milestone")
+                            .ok_or("anchored continuous search requires --goal-milestone NAME")?,
+                    })
+                })
+                .transpose()?;
             let summary = run_continuous_search(&ContinuousSearchRunConfig {
                 method,
                 seed_candidate,
@@ -1079,6 +1103,7 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 repetitions: u32_option(search_args, "--repetitions", 3)?,
                 timeout: execution.timeout,
                 harness: execution.harness,
+                objective,
             })?;
             println!("{}", serde_json::to_string_pretty(&summary)?);
             Ok(())

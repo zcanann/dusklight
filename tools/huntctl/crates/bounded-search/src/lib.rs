@@ -1,8 +1,11 @@
 //! Bounded optimizer loops whose ranking authority is authenticated native evaluation.
 
 use dusklight_automation_contracts::artifact::Digest as ArtifactDigest;
+use dusklight_evaluation::harness_authority::validate_anchored_harness_request;
 use dusklight_evaluation::{
-    EvaluateConfig, EvaluateError, HarnessEvaluateConfig, evaluate_population,
+    AnchoredEvaluateConfig, AnchoredObjectiveConfig, AnchoredObjectiveIdentity, EvaluateConfig,
+    EvaluateError, HarnessEvaluateConfig, evaluate_population,
+    evaluate_prepared_anchored_population, prepare_anchored_evaluator,
 };
 use dusklight_learning::planning_priors::{QBeamPriorTable, option_catalog_sha256};
 use dusklight_search::bayesian_search::{
@@ -125,6 +128,9 @@ pub struct ContinuousSearchRunConfig {
     pub repetitions: u32,
     pub timeout: Duration,
     pub harness: Option<HarnessEvaluateConfig>,
+    /// When present, evaluate every semantic candidate as a suffix after this
+    /// immutable prefix and rank it against the authenticated route goal.
+    pub objective: Option<AnchoredObjectiveConfig>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -142,11 +148,13 @@ pub struct ContinuousSearchRunSummary {
     pub duplicate_proposals: usize,
     pub invalid_proposals: usize,
     pub rng_seed: u64,
+    pub objective: Option<AnchoredObjectiveIdentity>,
     pub final_optimizer: ContinuousOptimizerSnapshot,
     pub champion_id: String,
     pub champion_score: LexicographicScore,
     pub champion_values: Vec<f64>,
     pub champion_candidate: PathBuf,
+    pub champion_suffix_tape: Option<PathBuf>,
     pub champion_tape: PathBuf,
     pub output_root: PathBuf,
 }
@@ -537,6 +545,23 @@ pub fn run_continuous_search(
         ));
     }
     let template = ContinuousTemplate::new(config.seed_candidate.clone(), config.axes.clone())?;
+    let prepared = config
+        .objective
+        .as_ref()
+        .map(prepare_anchored_evaluator)
+        .transpose()?;
+    if let (Some(objective), Some(prepared)) = (&config.objective, &prepared) {
+        if objective.segment != config.seed_candidate.segment {
+            return Err(EvaluateError::InvalidConfig(
+                "continuous search seed segment does not match its anchored objective".into(),
+            ));
+        }
+        validate_anchored_harness_request(
+            config.harness.as_ref(),
+            prepared.identity(),
+            "anchored continuous search",
+        )?;
+    }
     let mut optimizer = ContinuousOptimizer::new(
         template.clone(),
         ContinuousOptimizerConfig {
@@ -609,7 +634,7 @@ pub fn run_continuous_search(
             candidates,
         )?;
         let results_path = generation_root.join("results.json");
-        evaluate_population(&EvaluateConfig {
+        let evaluation = EvaluateConfig {
             population_path: generation_root.join("manifest.json"),
             game: config.game.clone(),
             dvd: config.dvd.clone(),
@@ -622,8 +647,22 @@ pub fn run_continuous_search(
             repetitions: config.repetitions,
             timeout: config.timeout,
             harness: config.harness.clone(),
-        })?;
-        let results: SearchResults = serde_json::from_slice(&fs::read(results_path)?)?;
+        };
+        let results = if let (Some(objective), Some(prepared)) = (&config.objective, &prepared) {
+            evaluate_prepared_anchored_population(
+                &AnchoredEvaluateConfig {
+                    evaluation,
+                    objective: objective.clone(),
+                    suffix_horizon_ticks: None,
+                },
+                prepared,
+            )?
+            .1
+            .results
+        } else {
+            evaluate_population(&evaluation)?;
+            serde_json::from_slice::<SearchResults>(&fs::read(results_path)?)?
+        };
         let leaderboard = rank_population(&manifest, &results)?;
         write_json(&generation_root.join("leaderboard.json"), &leaderboard)?;
         let ranked_samples = leaderboard
@@ -677,9 +716,18 @@ pub fn run_continuous_search(
     let champion_candidate = config.output_root.join("champion.candidate.json");
     let champion_tape = config.output_root.join("champion.tape");
     fs::write(&champion_candidate, serde_json::to_vec_pretty(&champion)?)?;
-    fs::write(&champion_tape, champion.compile()?.encode()?)?;
+    let suffix = champion.compile()?;
+    let champion_suffix_tape = if let Some(prepared) = &prepared {
+        let path = config.output_root.join("champion.suffix.tape");
+        fs::write(&path, suffix.encode()?)?;
+        fs::write(&champion_tape, prepared.realize_suffix(suffix)?.encode()?)?;
+        Some(path)
+    } else {
+        fs::write(&champion_tape, suffix.encode()?)?;
+        None
+    };
     let summary = ContinuousSearchRunSummary {
-        schema: "dusklight-continuous-search/v1",
+        schema: "dusklight-continuous-search/v2",
         method: config.method,
         segment: config.seed_candidate.segment,
         generations_requested: config.generations,
@@ -692,11 +740,15 @@ pub fn run_continuous_search(
         duplicate_proposals,
         invalid_proposals,
         rng_seed: config.rng_seed,
+        objective: prepared
+            .as_ref()
+            .map(|prepared| prepared.identity().clone()),
         final_optimizer: optimizer.snapshot(),
         champion_id,
         champion_score,
         champion_values,
         champion_candidate,
+        champion_suffix_tape,
         champion_tape,
         output_root: config.output_root.clone(),
     };
