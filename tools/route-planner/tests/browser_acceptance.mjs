@@ -143,6 +143,102 @@ try {
       && document.getElementById("workspace-list").value === "browser-workspace"`,
   );
   await evaluate(`(() => {
+    const group = [...document.querySelectorAll(".content-group")].find((candidate) =>
+      candidate.querySelector(":scope > summary > span")?.textContent.startsWith("Custom nodes"));
+    const create = group?.querySelector(":scope > summary .folder-add");
+    if (!create) throw new Error("Custom nodes root has no folder creation action");
+    create.click();
+    if (!document.getElementById("folder-dialog").open) {
+      throw new Error("folder creation dialog did not open");
+    }
+    document.getElementById("folder-label").value = "Research";
+    document.getElementById("folder-id").value = "folder.browser-research";
+    document.getElementById("folder-directory").value = "research";
+    document.getElementById("folder-form").requestSubmit();
+    return true;
+  })()`);
+  await browserUntil(
+    "folder creation",
+    `document.getElementById("status").textContent === "Folder created with a stable identity"
+      && [...document.querySelectorAll(".content-folder > summary > span")]
+        .some((label) => label.textContent.startsWith("Research"))`,
+  );
+  await evaluate(`(() => {
+    const branch = [...document.querySelectorAll(".content-folder")].find((candidate) =>
+      candidate.querySelector(":scope > summary > span")?.textContent.startsWith("Research"));
+    const rename = [...branch.querySelectorAll(":scope > summary .folder-actions > button")]
+      .find((button) => button.textContent === "Rename");
+    if (!rename) throw new Error("folder has no Rename action");
+    rename.click();
+    document.getElementById("folder-label").value = "Research notes";
+    document.getElementById("folder-directory").value = "research-notes";
+    document.getElementById("folder-form").requestSubmit();
+    return true;
+  })()`);
+  await browserUntil(
+    "folder rename",
+    `(async () => {
+      if (document.getElementById("status").textContent
+        !== "Folder renamed; paths and references preserved") return false;
+      const workspace = await fetch("/api/workspaces/browser-workspace").then((response) => response.json());
+      const folder = workspace.folders.find((candidate) => candidate.id === "folder.browser-research");
+      return folder?.label === "Research notes"
+        && String(folder.relative_path).replaceAll("\\\\", "/") === "custom-nodes/research-notes";
+    })()`,
+  );
+  await evaluate(`(() => {
+    const branch = [...document.querySelectorAll(".content-folder")].find((candidate) =>
+      candidate.querySelector(":scope > summary > span")?.textContent.startsWith("Research notes"));
+    const duplicate = [...branch.querySelectorAll(":scope > summary .folder-actions > button")]
+      .find((button) => button.textContent === "Duplicate");
+    if (!duplicate) throw new Error("folder has no Duplicate action");
+    duplicate.click();
+    document.getElementById("folder-label").value = "Research copy";
+    document.getElementById("folder-id").value = "folder.browser-research-copy";
+    document.getElementById("folder-directory").value = "research-copy";
+    document.getElementById("folder-form").requestSubmit();
+    return true;
+  })()`);
+  await browserUntil(
+    "folder duplication",
+    `document.getElementById("status").textContent
+      === "Folder duplicated; cloned asset references were remapped"
+      && [...document.querySelectorAll(".content-folder > summary > span")]
+        .some((label) => label.textContent.startsWith("Research copy"))`,
+  );
+  await evaluate(`(() => {
+    window.confirm = () => true;
+    const branch = [...document.querySelectorAll(".content-folder")].find((candidate) =>
+      candidate.querySelector(":scope > summary > span")?.textContent.startsWith("Research copy"));
+    const remove = [...branch.querySelectorAll(":scope > summary .folder-actions > button")]
+      .find((button) => button.textContent === "Delete to Trash");
+    if (!remove) throw new Error("folder has no delete-to-Trash action");
+    remove.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "grouped folder Trash",
+    `document.getElementById("status").textContent
+      === "Folder subtree moved to Trash as one recoverable group"
+      && [...document.querySelectorAll(".content-asset-row strong")]
+        .some((label) => label.textContent === "Research copy")`,
+  );
+  await evaluate(`(() => {
+    const row = [...document.querySelectorAll(".content-asset-row")].find((candidate) =>
+      candidate.querySelector("strong")?.textContent === "Research copy");
+    const restore = [...row.querySelectorAll(".asset-actions > button")]
+      .find((button) => button.textContent === "Restore group");
+    if (!restore) throw new Error("grouped folder Trash has no restore action");
+    restore.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "grouped folder restore",
+    `document.getElementById("status").textContent === "Folder subtree restored"
+      && [...document.querySelectorAll(".content-folder > summary > span")]
+        .some((label) => label.textContent.startsWith("Research copy"))`,
+  );
+  await evaluate(`(() => {
     document.getElementById("empty-primary").click();
     const row = document.querySelector(
       '.library-content-row[data-library-id="demo-forest-keyed-door"]',

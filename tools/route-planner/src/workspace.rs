@@ -26,8 +26,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub const WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v1";
 pub const WORKSPACE_ASSET_SCHEMA: &str = "dusklight.route-planner.workspace-asset/v1";
+pub const WORKSPACE_FOLDER_SCHEMA: &str = "dusklight.route-planner.workspace-folder/v1";
 pub const WORKSPACE_LIST_SCHEMA: &str = "dusklight.route-planner.workspace-list/v1";
-pub const WORKSPACE_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-record/v1";
+pub const WORKSPACE_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-record/v2";
 pub const WORKSPACE_CREATE_SCHEMA: &str = "dusklight.route-planner.workspace-create/v1";
 pub const WORKSPACE_ASSET_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-asset-record/v1";
 pub const WORKSPACE_ASSET_SAVE_SCHEMA: &str = "dusklight.route-planner.workspace-asset-save/v1";
@@ -39,14 +40,25 @@ pub const WORKSPACE_ROUTE_GRAPH_EDIT_RECORD_SCHEMA: &str =
     "dusklight.route-planner.workspace-route-graph-edit-record/v1";
 pub const WORKSPACE_TRASH_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-trash-command/v1";
+pub const WORKSPACE_FOLDER_COMMAND_SCHEMA: &str =
+    "dusklight.route-planner.workspace-folder-command/v1";
+pub const WORKSPACE_FOLDER_TRASH_COMMAND_SCHEMA: &str =
+    "dusklight.route-planner.workspace-folder-trash-command/v1";
 pub const WORKSPACE_LIBRARY_FORK_SCHEMA: &str = "dusklight.route-planner.workspace-library-fork/v1";
-pub const WORKSPACE_EXPORT_SCHEMA: &str = "dusklight.route-planner.workspace-export/v1";
+pub const WORKSPACE_EXPORT_SCHEMA: &str = "dusklight.route-planner.workspace-export/v2";
 pub const BUILTIN_LIBRARY_VERSION: &str = "builtin-v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
 const MANIFEST_FILE: &str = "workspace.json";
 const LEGACY_WORKSPACE_MANIFEST_SCHEMA: &str = "dusklight.route-planner.workspace/v0";
+const LEGACY_WORKSPACE_EXPORT_SCHEMA: &str = "dusklight.route-planner.workspace-export/v1";
 const TRANSACTION_ROOT: &str = ".dusklight/transactions";
 const TRASH_ROOT: &str = ".dusklight/trash";
+const FOLDER_TRASH_ROOT: &str = ".dusklight/folder-trash";
+const FOLDER_STAGING_ROOT: &str = ".dusklight/folder-staging";
+const FOLDER_MARKER_FILE: &str = ".dusklight-folder.json";
+const FOLDER_TRASH_RECORD_FILE: &str = "trash.json";
+const FOLDER_TRASH_PAYLOAD: &str = "payload";
+const FOLDER_TRASH_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-folder-trash/v1";
 const TRANSACTION_SCHEMA: &str = "dusklight.route-planner.workspace-transaction/v1";
 static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -280,6 +292,29 @@ pub struct WorkspaceAssetListing {
     pub revision_sha256: Digest,
 }
 
+/// A mutable content-browser folder. Its stable identity is independent of its
+/// on-disk directory and of every asset stored below it.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceFolder {
+    pub schema: String,
+    pub id: String,
+    pub label: String,
+    pub kind: WorkspaceAssetKind,
+    pub parent_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceFolderListing {
+    pub id: String,
+    pub label: String,
+    pub kind: WorkspaceAssetKind,
+    pub parent_id: Option<String>,
+    pub relative_path: PathBuf,
+    pub revision_sha256: Digest,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceCreateRequest {
@@ -309,6 +344,7 @@ pub struct WorkspaceList {
 pub struct WorkspaceRecord {
     pub schema: String,
     pub manifest: WorkspaceManifest,
+    pub folders: Vec<WorkspaceFolderListing>,
     pub assets: Vec<WorkspaceAssetListing>,
 }
 
@@ -317,7 +353,16 @@ pub struct WorkspaceRecord {
 pub struct WorkspaceExport {
     pub schema: String,
     pub manifest: WorkspaceManifest,
+    #[serde(default)]
+    pub folders: Vec<WorkspaceExportFolder>,
     pub assets: Vec<WorkspaceExportAsset>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceExportFolder {
+    pub relative_path: PathBuf,
+    pub folder: WorkspaceFolder,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -385,6 +430,18 @@ pub struct WorkspaceTrashListing {
     pub revision_sha256: Digest,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceFolderTrashListing {
+    pub id: String,
+    pub label: String,
+    pub kind: WorkspaceAssetKind,
+    pub original_relative_path: PathBuf,
+    pub revision_sha256: Digest,
+    pub folder_count: usize,
+    pub asset_count: usize,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkspaceAssetCommandRequest {
@@ -434,6 +491,63 @@ pub struct WorkspaceLibraryForkRequest {
 pub enum WorkspaceTrashCommand {
     Restore,
     PermanentlyDelete,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceFolderCommandRequest {
+    pub schema: String,
+    pub command: WorkspaceFolderCommand,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum WorkspaceFolderCommand {
+    Create {
+        id: String,
+        label: String,
+        asset_kind: WorkspaceAssetKind,
+        parent_id: Option<String>,
+        directory_name: String,
+    },
+    Rename {
+        expected_revision_sha256: Digest,
+        label: String,
+        directory_name: String,
+    },
+    Move {
+        expected_revision_sha256: Digest,
+        parent_id: Option<String>,
+    },
+    Duplicate {
+        new_id: String,
+        new_label: String,
+        parent_id: Option<String>,
+        directory_name: String,
+    },
+    DeleteToTrash {
+        expected_revision_sha256: Digest,
+        allow_broken_references: bool,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceFolderTrashCommandRequest {
+    pub schema: String,
+    pub expected_revision_sha256: Digest,
+    pub command: WorkspaceTrashCommand,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceFolderTrashRecord {
+    schema: String,
+    folder: WorkspaceFolder,
+    original_relative_path: PathBuf,
+    revision_sha256: Digest,
+    folder_count: usize,
+    asset_count: usize,
 }
 
 #[derive(Debug)]
@@ -766,6 +880,35 @@ impl WorkspaceAsset {
     }
 }
 
+impl WorkspaceFolder {
+    pub fn validate(&self) -> Result<(), WorkspaceError> {
+        if self.schema != WORKSPACE_FOLDER_SCHEMA {
+            return Err(WorkspaceError::new(format!(
+                "folder {} uses unsupported schema {}",
+                self.id, self.schema
+            )));
+        }
+        validate_stable_id("folder id", &self.id)?;
+        validate_label("folder label", &self.label)?;
+        if self.parent_id.as_ref() == Some(&self.id) {
+            return Err(WorkspaceError::new("folder cannot be its own parent"));
+        }
+        if let Some(parent_id) = &self.parent_id {
+            validate_stable_id("folder parent id", parent_id)?;
+        }
+        Ok(())
+    }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, WorkspaceError> {
+        self.validate()?;
+        canonical_json(self)
+    }
+
+    pub fn digest(&self) -> Result<Digest, WorkspaceError> {
+        Ok(Digest(Sha256::digest(self.canonical_bytes()?).into()))
+    }
+}
+
 impl WorkspaceRegistry {
     pub fn open(
         root: impl Into<PathBuf>,
@@ -861,6 +1004,16 @@ impl WorkspaceRegistry {
 
     pub fn export(&self, id: &str) -> Result<WorkspaceExport, WorkspaceError> {
         let store = self.open_workspace(id)?;
+        let folders = store
+            .list_folders()?
+            .into_iter()
+            .map(|listing| {
+                Ok(WorkspaceExportFolder {
+                    relative_path: listing.relative_path.clone(),
+                    folder: store.load_folder(&listing.id)?.0,
+                })
+            })
+            .collect::<Result<Vec<_>, WorkspaceError>>()?;
         let assets = store
             .list_assets()?
             .into_iter()
@@ -875,12 +1028,15 @@ impl WorkspaceRegistry {
         Ok(WorkspaceExport {
             schema: WORKSPACE_EXPORT_SCHEMA.into(),
             manifest: store.manifest().clone(),
+            folders,
             assets,
         })
     }
 
     pub fn import(&self, bundle: WorkspaceExport) -> Result<WorkspaceRecord, WorkspaceError> {
-        if bundle.schema != WORKSPACE_EXPORT_SCHEMA {
+        if bundle.schema != WORKSPACE_EXPORT_SCHEMA
+            && bundle.schema != LEGACY_WORKSPACE_EXPORT_SCHEMA
+        {
             return Err(WorkspaceError::new(
                 "workspace export schema is unsupported",
             ));
@@ -897,6 +1053,29 @@ impl WorkspaceRegistry {
                 bundle.manifest.id
             )));
         }
+        let mut folder_ids = BTreeSet::new();
+        let mut folder_paths = BTreeSet::new();
+        for record in &bundle.folders {
+            record.folder.validate()?;
+            validate_folder_relative_path(
+                &bundle.manifest,
+                record.folder.kind,
+                &record.relative_path,
+            )?;
+            if !folder_ids.insert(record.folder.id.clone()) {
+                return Err(WorkspaceError::new(format!(
+                    "workspace import duplicates folder identity {}",
+                    record.folder.id
+                )));
+            }
+            if !folder_paths.insert(record.relative_path.clone()) {
+                return Err(WorkspaceError::new(format!(
+                    "workspace import duplicates folder path {}",
+                    record.relative_path.display()
+                )));
+            }
+        }
+        validate_export_folder_hierarchy(&bundle.manifest, &bundle.folders)?;
         let mut ids = BTreeSet::new();
         let mut paths = BTreeSet::new();
         for record in &bundle.assets {
@@ -933,6 +1112,15 @@ impl WorkspaceRegistry {
             }
         }
         let store = WorkspaceStore::create(&root, bundle.manifest)?;
+        if let Err(error) = store.import_folders(&bundle.folders) {
+            let cleanup = fs::remove_dir_all(&root);
+            return match cleanup {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(WorkspaceError::new(format!(
+                    "{error}; failed to remove incomplete imported workspace: {cleanup}"
+                ))),
+            };
+        }
         let mutations = bundle
             .assets
             .into_iter()
@@ -950,6 +1138,113 @@ impl WorkspaceRegistry {
                     "{error}; failed to remove incomplete imported workspace: {cleanup}"
                 ))),
             };
+        }
+        workspace_record(&store)
+    }
+
+    pub fn command_folder(
+        &self,
+        workspace_id: &str,
+        folder_id: &str,
+        request: WorkspaceFolderCommandRequest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_FOLDER_COMMAND_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace folder command schema is unsupported",
+            ));
+        }
+        let store = self.open_workspace(workspace_id)?;
+        match request.command {
+            WorkspaceFolderCommand::Create {
+                id,
+                label,
+                asset_kind,
+                parent_id,
+                directory_name,
+            } => {
+                if id != folder_id {
+                    return Err(WorkspaceError::new(
+                        "URL folder id does not match create command",
+                    ));
+                }
+                store.create_folder(
+                    id,
+                    label,
+                    asset_kind,
+                    parent_id.as_deref(),
+                    &directory_name,
+                )?;
+            }
+            WorkspaceFolderCommand::Rename {
+                expected_revision_sha256,
+                label,
+                directory_name,
+            } => {
+                store.rename_folder(folder_id, label, &directory_name, expected_revision_sha256)?;
+            }
+            WorkspaceFolderCommand::Move {
+                expected_revision_sha256,
+                parent_id,
+            } => {
+                store.move_folder(folder_id, parent_id.as_deref(), expected_revision_sha256)?;
+            }
+            WorkspaceFolderCommand::Duplicate {
+                new_id,
+                new_label,
+                parent_id,
+                directory_name,
+            } => {
+                store.duplicate_folder(
+                    folder_id,
+                    new_id,
+                    new_label,
+                    parent_id.as_deref(),
+                    &directory_name,
+                )?;
+            }
+            WorkspaceFolderCommand::DeleteToTrash {
+                expected_revision_sha256,
+                allow_broken_references,
+            } => {
+                store.delete_folder_to_trash(
+                    folder_id,
+                    expected_revision_sha256,
+                    allow_broken_references,
+                )?;
+            }
+        }
+        workspace_record(&store)
+    }
+
+    pub fn list_folder_trash(
+        &self,
+        workspace_id: &str,
+    ) -> Result<Vec<WorkspaceFolderTrashListing>, WorkspaceError> {
+        self.open_workspace(workspace_id)?.list_folder_trash()
+    }
+
+    pub fn command_folder_trash(
+        &self,
+        workspace_id: &str,
+        folder_id: &str,
+        request: WorkspaceFolderTrashCommandRequest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_FOLDER_TRASH_COMMAND_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace folder trash command schema is unsupported",
+            ));
+        }
+        let store = self.open_workspace(workspace_id)?;
+        match request.command {
+            WorkspaceTrashCommand::Restore => {
+                store.restore_folder_from_trash(folder_id, request.expected_revision_sha256)?;
+            }
+            WorkspaceTrashCommand::PermanentlyDelete => {
+                store.permanently_delete_folder_from_trash(
+                    folder_id,
+                    request.expected_revision_sha256,
+                )?;
+            }
         }
         workspace_record(&store)
     }
@@ -1278,6 +1573,7 @@ fn workspace_record(store: &WorkspaceStore) -> Result<WorkspaceRecord, Workspace
     Ok(WorkspaceRecord {
         schema: WORKSPACE_RECORD_SCHEMA.into(),
         manifest: store.manifest().clone(),
+        folders: store.list_folders()?,
         assets: store.list_assets()?,
     })
 }
@@ -1324,6 +1620,7 @@ impl WorkspaceStore {
         let store = Self { root, manifest };
         store.ensure_transaction_root()?;
         store.recover_transactions()?;
+        store.recover_folder_operations()?;
         Ok(store)
     }
 
@@ -1376,6 +1673,638 @@ impl WorkspaceStore {
                 .then_with(|| left.id.cmp(&right.id))
         });
         Ok(listings)
+    }
+
+    pub fn list_folders(&self) -> Result<Vec<WorkspaceFolderListing>, WorkspaceError> {
+        let mut folders = Vec::new();
+        let mut identities = BTreeMap::new();
+        let mut paths = BTreeMap::new();
+        for kind in WorkspaceAssetKind::ALL {
+            let root = self.asset_root(kind)?;
+            collect_folder_markers(&root, &mut |directory, marker| {
+                let folder = read_folder(marker)?;
+                if folder.kind != kind {
+                    return Err(WorkspaceError::new(format!(
+                        "{} declares {:?} below the {:?} root",
+                        marker.display(),
+                        folder.kind,
+                        kind
+                    )));
+                }
+                let relative_path = directory
+                    .strip_prefix(&self.root)
+                    .map_err(|_| WorkspaceError::new("folder escaped workspace root"))?
+                    .to_path_buf();
+                if let Some(first) = identities.insert(folder.id.clone(), relative_path.clone()) {
+                    return Err(WorkspaceError::new(format!(
+                        "folder identity {} is duplicated at {} and {}",
+                        folder.id,
+                        first.display(),
+                        relative_path.display()
+                    )));
+                }
+                paths.insert(relative_path.clone(), folder.id.clone());
+                let revision_sha256 = folder.digest()?;
+                folders.push(WorkspaceFolderListing {
+                    id: folder.id,
+                    label: folder.label,
+                    kind,
+                    parent_id: folder.parent_id,
+                    relative_path,
+                    revision_sha256,
+                });
+                Ok(())
+            })?;
+        }
+        for folder in &folders {
+            let expected_parent_path = folder
+                .relative_path
+                .parent()
+                .ok_or_else(|| WorkspaceError::new("folder has no parent directory"))?;
+            let asset_root = Path::new(
+                self.manifest
+                    .asset_roots
+                    .get(&folder.kind)
+                    .expect("validated manifest has every root"),
+            );
+            match &folder.parent_id {
+                Some(parent_id) => {
+                    let actual_parent_id = paths.get(expected_parent_path).ok_or_else(|| {
+                        WorkspaceError::new(format!(
+                            "folder {} names parent {parent_id}, but {} has no folder marker",
+                            folder.id,
+                            expected_parent_path.display()
+                        ))
+                    })?;
+                    if actual_parent_id != parent_id {
+                        return Err(WorkspaceError::new(format!(
+                            "folder {} names parent {parent_id}, but its containing folder is {actual_parent_id}",
+                            folder.id
+                        )));
+                    }
+                }
+                None if expected_parent_path != asset_root => {
+                    return Err(WorkspaceError::new(format!(
+                        "folder {} has no parent identity but is not directly below its fixed root",
+                        folder.id
+                    )));
+                }
+                None => {}
+            }
+        }
+        folders.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.relative_path.cmp(&right.relative_path))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(folders)
+    }
+
+    pub fn load_folder(&self, id: &str) -> Result<(WorkspaceFolder, PathBuf), WorkspaceError> {
+        validate_stable_id("folder id", id)?;
+        let listing = self
+            .list_folders()?
+            .into_iter()
+            .find(|listing| listing.id == id)
+            .ok_or_else(|| WorkspaceError::new(format!("folder {id} does not exist")))?;
+        Ok((
+            read_folder(
+                &self
+                    .root
+                    .join(&listing.relative_path)
+                    .join(FOLDER_MARKER_FILE),
+            )?,
+            listing.relative_path,
+        ))
+    }
+
+    pub fn create_folder(
+        &self,
+        id: impl Into<String>,
+        label: impl Into<String>,
+        kind: WorkspaceAssetKind,
+        parent_id: Option<&str>,
+        directory_name: &str,
+    ) -> Result<Digest, WorkspaceError> {
+        let folder = WorkspaceFolder {
+            schema: WORKSPACE_FOLDER_SCHEMA.into(),
+            id: id.into(),
+            label: label.into(),
+            kind,
+            parent_id: parent_id.map(str::to_owned),
+        };
+        folder.validate()?;
+        if self
+            .list_folders()?
+            .iter()
+            .any(|existing| existing.id == folder.id)
+        {
+            return Err(WorkspaceError::new(format!(
+                "folder identity {} already exists",
+                folder.id
+            )));
+        }
+        validate_directory_name(directory_name)?;
+        let parent = self.folder_parent_path(kind, parent_id)?;
+        let destination = parent.join(directory_name);
+        if destination.exists() {
+            return Err(WorkspaceError::new(format!(
+                "folder path {} already exists",
+                destination.display()
+            )));
+        }
+        let staging = self.root.join(FOLDER_STAGING_ROOT).join(format!(
+            "folder-{}-{}",
+            std::process::id(),
+            NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir(&staging).map_err(WorkspaceError::io)?;
+        let result = (|| {
+            write_new_synced(
+                &staging.join(FOLDER_MARKER_FILE),
+                &folder.canonical_bytes()?,
+            )?;
+            fs::rename(&staging, &destination).map_err(WorkspaceError::io)
+        })();
+        if let Err(error) = result {
+            if staging.is_dir() {
+                let _ = fs::remove_dir_all(&staging);
+            }
+            return Err(error);
+        }
+        folder.digest()
+    }
+
+    pub fn rename_folder(
+        &self,
+        id: &str,
+        label: impl Into<String>,
+        directory_name: &str,
+        expected_revision_sha256: Digest,
+    ) -> Result<Digest, WorkspaceError> {
+        let (mut folder, path) = self.load_folder(id)?;
+        if folder.digest()? != expected_revision_sha256 {
+            return Err(WorkspaceError::new(
+                "folder revision conflict before rename",
+            ));
+        }
+        folder.label = label.into();
+        validate_directory_name(directory_name)?;
+        let bytes = folder.canonical_bytes()?;
+        let source = self.root.join(path);
+        let destination = source
+            .parent()
+            .ok_or_else(|| WorkspaceError::new("folder path has no parent"))?
+            .join(directory_name);
+        if source == destination {
+            write_atomically(&source.join(FOLDER_MARKER_FILE), &bytes)?;
+        } else {
+            if destination.exists() {
+                return Err(WorkspaceError::new(format!(
+                    "folder path {} already exists",
+                    destination.display()
+                )));
+            }
+            fs::rename(&source, &destination).map_err(WorkspaceError::io)?;
+            if let Err(error) = write_atomically(&destination.join(FOLDER_MARKER_FILE), &bytes) {
+                let _ = fs::rename(&destination, &source);
+                return Err(error);
+            }
+        }
+        folder.digest()
+    }
+
+    pub fn move_folder(
+        &self,
+        id: &str,
+        parent_id: Option<&str>,
+        expected_revision_sha256: Digest,
+    ) -> Result<Digest, WorkspaceError> {
+        let (mut folder, source_relative) = self.load_folder(id)?;
+        if folder.digest()? != expected_revision_sha256 {
+            return Err(WorkspaceError::new("folder revision conflict before move"));
+        }
+        if parent_id == Some(id) {
+            return Err(WorkspaceError::new("folder cannot be moved into itself"));
+        }
+        let destination_parent = self.folder_parent_path(folder.kind, parent_id)?;
+        let source = self.root.join(&source_relative);
+        if destination_parent.starts_with(&source) {
+            return Err(WorkspaceError::new(
+                "folder cannot be moved into its own descendant",
+            ));
+        }
+        let name = source
+            .file_name()
+            .ok_or_else(|| WorkspaceError::new("folder path has no directory name"))?;
+        let destination = destination_parent.join(name);
+        if destination == source {
+            return folder.digest();
+        }
+        if destination.exists() {
+            return Err(WorkspaceError::new(format!(
+                "folder path {} already exists",
+                destination.display()
+            )));
+        }
+        fs::rename(&source, &destination).map_err(WorkspaceError::io)?;
+        folder.parent_id = parent_id.map(str::to_owned);
+        if let Err(error) = write_atomically(
+            &destination.join(FOLDER_MARKER_FILE),
+            &folder.canonical_bytes()?,
+        ) {
+            let _ = fs::rename(&destination, &source);
+            return Err(error);
+        }
+        folder.digest()
+    }
+
+    pub fn duplicate_folder(
+        &self,
+        id: &str,
+        new_id: impl Into<String>,
+        new_label: impl Into<String>,
+        parent_id: Option<&str>,
+        directory_name: &str,
+    ) -> Result<Digest, WorkspaceError> {
+        let (source_folder, source_relative) = self.load_folder(id)?;
+        let new_id = new_id.into();
+        let new_label = new_label.into();
+        validate_stable_id("duplicated folder id", &new_id)?;
+        validate_label("duplicated folder label", &new_label)?;
+        validate_directory_name(directory_name)?;
+        if self
+            .list_folders()?
+            .iter()
+            .any(|folder| folder.id == new_id)
+        {
+            return Err(WorkspaceError::new(format!(
+                "folder identity {new_id} already exists"
+            )));
+        }
+        let destination_parent = self.folder_parent_path(source_folder.kind, parent_id)?;
+        let destination = destination_parent.join(directory_name);
+        if destination.exists() {
+            return Err(WorkspaceError::new(format!(
+                "folder path {} already exists",
+                destination.display()
+            )));
+        }
+        validate_folder_subtree_files(&self.root.join(&source_relative))?;
+
+        let source_folders = self
+            .list_folders()?
+            .into_iter()
+            .filter(|folder| folder.relative_path.starts_with(&source_relative))
+            .collect::<Vec<_>>();
+        let source_assets = self
+            .list_assets()?
+            .into_iter()
+            .filter(|asset| asset.relative_path.starts_with(&source_relative))
+            .collect::<Vec<_>>();
+        let existing_folder_ids = self
+            .list_folders()?
+            .into_iter()
+            .map(|folder| folder.id)
+            .collect::<BTreeSet<_>>();
+        let existing_asset_ids = self
+            .list_assets()?
+            .into_iter()
+            .map(|asset| asset.id)
+            .collect::<BTreeSet<_>>();
+        let folder_id_map = clone_identity_map(
+            &source_folders
+                .iter()
+                .map(|folder| &folder.id)
+                .collect::<Vec<_>>(),
+            &new_id,
+            "folder",
+            &existing_folder_ids,
+            Some(id),
+        )?;
+        let asset_id_map = clone_identity_map(
+            &source_assets
+                .iter()
+                .map(|asset| &asset.id)
+                .collect::<Vec<_>>(),
+            &new_id,
+            "asset",
+            &existing_asset_ids,
+            None,
+        )?;
+        let staging_root = self.root.join(FOLDER_STAGING_ROOT);
+        fs::create_dir_all(&staging_root).map_err(WorkspaceError::io)?;
+        let staging = staging_root.join(format!(
+            "folder-{}-{}",
+            std::process::id(),
+            NEXT_TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let mut cloned_assets = Vec::new();
+        for listing in &source_assets {
+            let (mut asset, _) = self.load_asset(&listing.id)?;
+            remap_cloned_asset(&mut asset, &asset_id_map);
+            cloned_assets.push((listing, asset));
+        }
+        let mut available = self
+            .list_assets()?
+            .into_iter()
+            .map(|asset| (asset.id, asset.kind))
+            .collect::<BTreeMap<_, _>>();
+        available.extend(
+            cloned_assets
+                .iter()
+                .map(|(_, asset)| (asset.header.id.clone(), asset.header.kind)),
+        );
+        for (_, asset) in &cloned_assets {
+            validate_asset_references(asset, &available)?;
+        }
+        fs::create_dir(&staging).map_err(WorkspaceError::io)?;
+
+        let build = (|| {
+            for listing in &source_folders {
+                let (mut folder, _) = self.load_folder(&listing.id)?;
+                folder.id = folder_id_map
+                    .get(&folder.id)
+                    .expect("every cloned folder has an identity")
+                    .clone();
+                folder.label = if listing.id == id {
+                    new_label.clone()
+                } else {
+                    folder.label
+                };
+                folder.parent_id = if listing.id == id {
+                    parent_id.map(str::to_owned)
+                } else {
+                    folder
+                        .parent_id
+                        .as_ref()
+                        .and_then(|parent| folder_id_map.get(parent))
+                        .cloned()
+                };
+                let relative = listing
+                    .relative_path
+                    .strip_prefix(&source_relative)
+                    .map_err(|_| WorkspaceError::new("cloned folder escaped source"))?;
+                let target = staging.join(relative);
+                fs::create_dir_all(&target).map_err(WorkspaceError::io)?;
+                write_new_synced(&target.join(FOLDER_MARKER_FILE), &folder.canonical_bytes()?)?;
+            }
+            for (listing, asset) in &cloned_assets {
+                let relative = listing
+                    .relative_path
+                    .strip_prefix(&source_relative)
+                    .map_err(|_| WorkspaceError::new("cloned asset escaped source"))?;
+                let target = staging.join(relative);
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).map_err(WorkspaceError::io)?;
+                }
+                write_new_synced(&target, &asset.canonical_bytes()?)?;
+            }
+            fs::rename(&staging, &destination).map_err(WorkspaceError::io)
+        })();
+        if let Err(error) = build {
+            if staging.is_dir() {
+                let _ = fs::remove_dir_all(&staging);
+            }
+            return Err(error);
+        }
+        let (folder, _) = self.load_folder(&new_id)?;
+        folder.digest()
+    }
+
+    pub fn delete_folder_to_trash(
+        &self,
+        id: &str,
+        expected_revision_sha256: Digest,
+        allow_broken_references: bool,
+    ) -> Result<(), WorkspaceError> {
+        let (folder, source_relative) = self.load_folder(id)?;
+        if folder.digest()? != expected_revision_sha256 {
+            return Err(WorkspaceError::new(
+                "folder revision conflict before delete",
+            ));
+        }
+        let subtree_assets = self
+            .list_assets()?
+            .into_iter()
+            .filter(|asset| asset.relative_path.starts_with(&source_relative))
+            .collect::<Vec<_>>();
+        let subtree_ids = subtree_assets
+            .iter()
+            .map(|asset| asset.id.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut external_inbound = BTreeSet::new();
+        for listing in self.list_assets()? {
+            if subtree_ids.contains(listing.id.as_str()) {
+                continue;
+            }
+            let asset = read_asset(&self.root.join(&listing.relative_path))?;
+            if asset
+                .references
+                .iter()
+                .any(|reference| subtree_ids.contains(reference.asset_id.as_str()))
+            {
+                external_inbound.insert(listing.id);
+            }
+        }
+        if !allow_broken_references && !external_inbound.is_empty() {
+            return Err(WorkspaceError::new(format!(
+                "folder {id} contains assets referenced by {}; confirm deletion to preserve these as broken stable-ID references",
+                external_inbound.into_iter().collect::<Vec<_>>().join(", ")
+            )));
+        }
+        let folder_count = self
+            .list_folders()?
+            .into_iter()
+            .filter(|child| child.relative_path.starts_with(&source_relative))
+            .count();
+        let group = self.folder_trash_group(id)?;
+        if group.exists() {
+            return Err(WorkspaceError::new(format!(
+                "folder {id} already has a grouped Trash entry"
+            )));
+        }
+        fs::create_dir(&group).map_err(WorkspaceError::io)?;
+        let record = WorkspaceFolderTrashRecord {
+            schema: FOLDER_TRASH_RECORD_SCHEMA.into(),
+            folder,
+            original_relative_path: source_relative.clone(),
+            revision_sha256: expected_revision_sha256,
+            folder_count,
+            asset_count: subtree_assets.len(),
+        };
+        if let Err(error) = write_new_synced(
+            &group.join(FOLDER_TRASH_RECORD_FILE),
+            &canonical_json(&record)?,
+        ) {
+            let _ = fs::remove_dir(&group);
+            return Err(error);
+        }
+        if let Err(error) = fs::rename(
+            self.root.join(&source_relative),
+            group.join(FOLDER_TRASH_PAYLOAD),
+        ) {
+            let _ = fs::remove_file(group.join(FOLDER_TRASH_RECORD_FILE));
+            let _ = fs::remove_dir(&group);
+            return Err(WorkspaceError::io(error));
+        }
+        Ok(())
+    }
+
+    pub fn list_folder_trash(&self) -> Result<Vec<WorkspaceFolderTrashListing>, WorkspaceError> {
+        let root = self.root.join(FOLDER_TRASH_ROOT);
+        let mut trash = Vec::new();
+        for entry in fs::read_dir(&root).map_err(WorkspaceError::io)? {
+            let entry = entry.map_err(WorkspaceError::io)?;
+            if !entry.file_type().map_err(WorkspaceError::io)?.is_dir() {
+                return Err(WorkspaceError::new(format!(
+                    "unexpected file in grouped folder Trash: {}",
+                    entry.path().display()
+                )));
+            }
+            let record = self.read_folder_trash_record(&entry.path())?;
+            if entry.file_name().to_string_lossy() != folder_trash_directory_name(&record.folder.id)
+                || !entry.path().join(FOLDER_TRASH_PAYLOAD).is_dir()
+            {
+                return Err(WorkspaceError::new(format!(
+                    "grouped folder Trash entry {} is invalid",
+                    entry.path().display()
+                )));
+            }
+            trash.push(WorkspaceFolderTrashListing {
+                id: record.folder.id,
+                label: record.folder.label,
+                kind: record.folder.kind,
+                original_relative_path: record.original_relative_path,
+                revision_sha256: record.revision_sha256,
+                folder_count: record.folder_count,
+                asset_count: record.asset_count,
+            });
+        }
+        trash.sort_by(|left, right| {
+            left.kind
+                .cmp(&right.kind)
+                .then_with(|| left.label.cmp(&right.label))
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        Ok(trash)
+    }
+
+    pub fn restore_folder_from_trash(
+        &self,
+        id: &str,
+        expected_revision_sha256: Digest,
+    ) -> Result<(), WorkspaceError> {
+        let group = self.folder_trash_group(id)?;
+        let record = self.read_folder_trash_record(&group)?;
+        if record.folder.id != id || record.revision_sha256 != expected_revision_sha256 {
+            return Err(WorkspaceError::new(
+                "folder Trash revision conflict before restore",
+            ));
+        }
+        let destination = self.folder_restore_destination(&record)?;
+        if destination.exists() {
+            return Err(WorkspaceError::new(format!(
+                "cannot restore folder {id}; {} already exists",
+                destination
+                    .strip_prefix(&self.root)
+                    .unwrap_or(&destination)
+                    .display()
+            )));
+        }
+        fs::rename(group.join(FOLDER_TRASH_PAYLOAD), &destination).map_err(WorkspaceError::io)?;
+        fs::remove_file(group.join(FOLDER_TRASH_RECORD_FILE)).map_err(WorkspaceError::io)?;
+        fs::remove_dir(group).map_err(WorkspaceError::io)
+    }
+
+    pub fn permanently_delete_folder_from_trash(
+        &self,
+        id: &str,
+        expected_revision_sha256: Digest,
+    ) -> Result<(), WorkspaceError> {
+        let group = self.folder_trash_group(id)?;
+        let record = self.read_folder_trash_record(&group)?;
+        if record.folder.id != id || record.revision_sha256 != expected_revision_sha256 {
+            return Err(WorkspaceError::new(
+                "folder Trash revision conflict before permanent delete",
+            ));
+        }
+        let trash_root = self.root.join(FOLDER_TRASH_ROOT);
+        if group.parent() != Some(trash_root.as_path()) || !group.is_dir() {
+            return Err(WorkspaceError::new(
+                "refusing to remove an invalid grouped folder Trash path",
+            ));
+        }
+        fs::remove_dir_all(group).map_err(WorkspaceError::io)
+    }
+
+    fn folder_parent_path(
+        &self,
+        kind: WorkspaceAssetKind,
+        parent_id: Option<&str>,
+    ) -> Result<PathBuf, WorkspaceError> {
+        match parent_id {
+            Some(id) => {
+                let (parent, path) = self.load_folder(id)?;
+                if parent.kind != kind {
+                    return Err(WorkspaceError::new(format!(
+                        "{kind:?} folder cannot be placed below {:?} folder {id}",
+                        parent.kind
+                    )));
+                }
+                Ok(self.root.join(path))
+            }
+            None => self.asset_root(kind),
+        }
+    }
+
+    fn folder_trash_group(&self, id: &str) -> Result<PathBuf, WorkspaceError> {
+        validate_stable_id("folder id", id)?;
+        Ok(self
+            .root
+            .join(FOLDER_TRASH_ROOT)
+            .join(folder_trash_directory_name(id)))
+    }
+
+    fn read_folder_trash_record(
+        &self,
+        group: &Path,
+    ) -> Result<WorkspaceFolderTrashRecord, WorkspaceError> {
+        let record = read_folder_trash_record(group)?;
+        validate_folder_relative_path(
+            &self.manifest,
+            record.folder.kind,
+            &record.original_relative_path,
+        )?;
+        Ok(record)
+    }
+
+    fn folder_restore_destination(
+        &self,
+        record: &WorkspaceFolderTrashRecord,
+    ) -> Result<PathBuf, WorkspaceError> {
+        let directory_name = record
+            .original_relative_path
+            .file_name()
+            .ok_or_else(|| WorkspaceError::new("trashed folder path has no directory name"))?;
+        Ok(self
+            .folder_parent_path(record.folder.kind, record.folder.parent_id.as_deref())?
+            .join(directory_name))
+    }
+
+    fn import_folders(&self, folders: &[WorkspaceExportFolder]) -> Result<(), WorkspaceError> {
+        let mut sorted = folders.to_vec();
+        sorted.sort_by_key(|folder| folder.relative_path.components().count());
+        for record in sorted {
+            let path = self.root.join(&record.relative_path);
+            fs::create_dir_all(&path).map_err(WorkspaceError::io)?;
+            write_new_synced(
+                &path.join(FOLDER_MARKER_FILE),
+                &record.folder.canonical_bytes()?,
+            )?;
+        }
+        self.list_folders().map(|_| ())
     }
 
     pub fn load_asset(&self, id: &str) -> Result<(WorkspaceAsset, PathBuf), WorkspaceError> {
@@ -1977,7 +2906,9 @@ impl WorkspaceStore {
 
     fn ensure_transaction_root(&self) -> Result<(), WorkspaceError> {
         fs::create_dir_all(self.root.join(TRANSACTION_ROOT)).map_err(WorkspaceError::io)?;
-        fs::create_dir_all(self.root.join(TRASH_ROOT)).map_err(WorkspaceError::io)
+        fs::create_dir_all(self.root.join(TRASH_ROOT)).map_err(WorkspaceError::io)?;
+        fs::create_dir_all(self.root.join(FOLDER_TRASH_ROOT)).map_err(WorkspaceError::io)?;
+        fs::create_dir_all(self.root.join(FOLDER_STAGING_ROOT)).map_err(WorkspaceError::io)
     }
 
     fn recover_transactions(&self) -> Result<(), WorkspaceError> {
@@ -2009,6 +2940,69 @@ impl WorkspaceStore {
             }
             self.apply_transaction(&transaction_root, &journal)?;
             remove_transaction_directory(&self.root, &transaction_root)?;
+        }
+        Ok(())
+    }
+
+    fn recover_folder_operations(&self) -> Result<(), WorkspaceError> {
+        let trash_root = self.root.join(FOLDER_TRASH_ROOT);
+        for entry in fs::read_dir(&trash_root).map_err(WorkspaceError::io)? {
+            let entry = entry.map_err(WorkspaceError::io)?;
+            if !entry.file_type().map_err(WorkspaceError::io)?.is_dir()
+                || !entry.file_name().to_string_lossy().starts_with("folder-")
+            {
+                return Err(WorkspaceError::new(format!(
+                    "unexpected entry in grouped folder Trash: {}",
+                    entry.path().display()
+                )));
+            }
+            let group = entry.path();
+            let record = self.read_folder_trash_record(&group)?;
+            let payload = group.join(FOLDER_TRASH_PAYLOAD);
+            let live_exists = self
+                .list_folders()?
+                .iter()
+                .any(|folder| folder.id == record.folder.id);
+            match (payload.is_dir(), live_exists) {
+                (true, false) => {}
+                (false, true) => {
+                    fs::remove_file(group.join(FOLDER_TRASH_RECORD_FILE))
+                        .map_err(WorkspaceError::io)?;
+                    fs::remove_dir(&group).map_err(WorkspaceError::io)?;
+                }
+                (true, true) => {
+                    return Err(WorkspaceError::new(format!(
+                        "grouped folder Trash recovery found both live and trashed copies of {}",
+                        record.folder.id
+                    )));
+                }
+                (false, false) => {
+                    return Err(WorkspaceError::new(format!(
+                        "grouped folder Trash recovery lost both copies of {}",
+                        record.folder.id
+                    )));
+                }
+            }
+        }
+
+        let staging_root = self.root.join(FOLDER_STAGING_ROOT);
+        for entry in fs::read_dir(&staging_root).map_err(WorkspaceError::io)? {
+            let entry = entry.map_err(WorkspaceError::io)?;
+            if !entry.file_type().map_err(WorkspaceError::io)?.is_dir()
+                || !entry.file_name().to_string_lossy().starts_with("folder-")
+            {
+                return Err(WorkspaceError::new(format!(
+                    "unexpected entry in folder staging: {}",
+                    entry.path().display()
+                )));
+            }
+            let staging = entry.path();
+            if staging.parent() != Some(staging_root.as_path()) {
+                return Err(WorkspaceError::new(
+                    "refusing to remove invalid folder staging path",
+                ));
+            }
+            fs::remove_dir_all(staging).map_err(WorkspaceError::io)?;
         }
         Ok(())
     }
@@ -2330,6 +3324,236 @@ fn read_asset(path: &Path) -> Result<WorkspaceAsset, WorkspaceError> {
     Ok(asset)
 }
 
+fn read_folder(path: &Path) -> Result<WorkspaceFolder, WorkspaceError> {
+    let bytes = fs::read(path).map_err(WorkspaceError::io)?;
+    let folder: WorkspaceFolder = serde_json::from_slice(&bytes).map_err(WorkspaceError::json)?;
+    folder.validate()?;
+    Ok(folder)
+}
+
+fn read_folder_trash_record(group: &Path) -> Result<WorkspaceFolderTrashRecord, WorkspaceError> {
+    let bytes = fs::read(group.join(FOLDER_TRASH_RECORD_FILE)).map_err(WorkspaceError::io)?;
+    let record: WorkspaceFolderTrashRecord =
+        serde_json::from_slice(&bytes).map_err(WorkspaceError::json)?;
+    if record.schema != FOLDER_TRASH_RECORD_SCHEMA
+        || record.folder.digest()? != record.revision_sha256
+        || record.folder_count == 0
+    {
+        return Err(WorkspaceError::new(format!(
+            "grouped folder Trash record {} is invalid",
+            group.display()
+        )));
+    }
+    validate_relative_path(
+        "grouped folder Trash original path",
+        &record.original_relative_path,
+    )?;
+    Ok(record)
+}
+
+fn collect_folder_markers(
+    root: &Path,
+    visit: &mut impl FnMut(&Path, &Path) -> Result<(), WorkspaceError>,
+) -> Result<(), WorkspaceError> {
+    if !root.is_dir() {
+        return Err(WorkspaceError::new(format!(
+            "asset root {} does not exist",
+            root.display()
+        )));
+    }
+    let marker = root.join(FOLDER_MARKER_FILE);
+    if marker.is_file() {
+        visit(root, &marker)?;
+    }
+    for entry in fs::read_dir(root).map_err(WorkspaceError::io)? {
+        let entry = entry.map_err(WorkspaceError::io)?;
+        if entry.file_type().map_err(WorkspaceError::io)?.is_dir() {
+            collect_folder_markers(&entry.path(), visit)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_folder_subtree_files(root: &Path) -> Result<(), WorkspaceError> {
+    for entry in fs::read_dir(root).map_err(WorkspaceError::io)? {
+        let entry = entry.map_err(WorkspaceError::io)?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(WorkspaceError::io)?;
+        if file_type.is_dir() {
+            validate_folder_subtree_files(&path)?;
+        } else if !file_type.is_file()
+            || (path.file_name().and_then(|name| name.to_str()) != Some(FOLDER_MARKER_FILE)
+                && path.extension().and_then(|extension| extension.to_str()) != Some("json"))
+        {
+            return Err(WorkspaceError::new(format!(
+                "folder subtree contains unsupported file {}; only typed workspace JSON files can be duplicated",
+                path.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_folder_relative_path(
+    manifest: &WorkspaceManifest,
+    kind: WorkspaceAssetKind,
+    relative_path: &Path,
+) -> Result<(), WorkspaceError> {
+    validate_relative_path("workspace folder path", relative_path)?;
+    let root = manifest
+        .asset_roots
+        .get(&kind)
+        .expect("validated manifest has every asset root");
+    if relative_path == Path::new(root) || !relative_path.starts_with(root) {
+        return Err(WorkspaceError::new(format!(
+            "{kind:?} folder must be below the fixed {root} root"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_export_folder_hierarchy(
+    manifest: &WorkspaceManifest,
+    folders: &[WorkspaceExportFolder],
+) -> Result<(), WorkspaceError> {
+    let by_id = folders
+        .iter()
+        .map(|folder| (folder.folder.id.as_str(), folder))
+        .collect::<BTreeMap<_, _>>();
+    for record in folders {
+        let expected_parent = record
+            .relative_path
+            .parent()
+            .ok_or_else(|| WorkspaceError::new("import folder has no parent path"))?;
+        match &record.folder.parent_id {
+            Some(parent_id) => {
+                let parent = by_id.get(parent_id.as_str()).ok_or_else(|| {
+                    WorkspaceError::new(format!(
+                        "import folder {} references missing parent {parent_id}",
+                        record.folder.id
+                    ))
+                })?;
+                if parent.folder.kind != record.folder.kind
+                    || parent.relative_path != expected_parent
+                {
+                    return Err(WorkspaceError::new(format!(
+                        "import folder {} parent identity does not match its path",
+                        record.folder.id
+                    )));
+                }
+            }
+            None => {
+                let root = manifest
+                    .asset_roots
+                    .get(&record.folder.kind)
+                    .expect("validated manifest has every asset root");
+                if expected_parent != Path::new(root) {
+                    return Err(WorkspaceError::new(format!(
+                        "import folder {} without a parent must be directly below {root}",
+                        record.folder.id
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_directory_name(value: &str) -> Result<(), WorkspaceError> {
+    let path = Path::new(value);
+    if value.is_empty()
+        || value.len() > 128
+        || path.components().count() != 1
+        || !matches!(path.components().next(), Some(Component::Normal(_)))
+        || value.chars().any(char::is_control)
+        || matches!(value, "." | "..")
+    {
+        return Err(WorkspaceError::new(
+            "folder directory name must be one safe printable path segment",
+        ));
+    }
+    Ok(())
+}
+
+fn clone_identity_map(
+    source_ids: &[&String],
+    namespace: &str,
+    category: &str,
+    existing: &BTreeSet<String>,
+    root_id: Option<&str>,
+) -> Result<BTreeMap<String, String>, WorkspaceError> {
+    let mut mapping = BTreeMap::new();
+    let mut allocated = existing.clone();
+    let mut index = 0_usize;
+    for source in source_ids {
+        let candidate = if root_id == Some(source.as_str()) {
+            namespace.to_owned()
+        } else {
+            loop {
+                let candidate = format!("{namespace}.{category}-{index:03}");
+                index += 1;
+                if !allocated.contains(&candidate) {
+                    break candidate;
+                }
+            }
+        };
+        validate_stable_id("duplicated stable identity", &candidate)?;
+        if !allocated.insert(candidate.clone()) {
+            return Err(WorkspaceError::new(format!(
+                "duplicated stable identity {candidate} collides"
+            )));
+        }
+        mapping.insert((*source).clone(), candidate);
+    }
+    Ok(mapping)
+}
+
+fn remap_cloned_asset(asset: &mut WorkspaceAsset, mapping: &BTreeMap<String, String>) {
+    asset.header.id = mapping
+        .get(&asset.header.id)
+        .expect("every cloned asset has a new identity")
+        .clone();
+    asset.header.version = 1;
+    for reference in &mut asset.references {
+        if let Some(remapped) = mapping.get(&reference.asset_id) {
+            reference.asset_id = remapped.clone();
+        }
+    }
+    match &mut asset.payload {
+        WorkspaceAssetPayload::Scenario(scenario) => {
+            if let Some(remapped) = mapping.get(&scenario.route_graph_id) {
+                scenario.route_graph_id = remapped.clone();
+            }
+            if let Some(id) = &mut scenario.state_seed_id
+                && let Some(remapped) = mapping.get(id)
+            {
+                *id = remapped.clone();
+            }
+            if let Some(id) = &mut scenario.route_book_id
+                && let Some(remapped) = mapping.get(id)
+            {
+                *id = remapped.clone();
+            }
+            if let ScenarioAnchor::StateSeed { state_seed_id } = &mut scenario.anchor
+                && let Some(remapped) = mapping.get(state_seed_id)
+            {
+                *state_seed_id = remapped.clone();
+            }
+        }
+        WorkspaceAssetPayload::Layout(layout) => {
+            if let Some(remapped) = mapping.get(&layout.semantic_asset_id) {
+                layout.semantic_asset_id = remapped.clone();
+            }
+        }
+        WorkspaceAssetPayload::RouteGraph { .. }
+        | WorkspaceAssetPayload::ReusableSubgraph { .. }
+        | WorkspaceAssetPayload::CustomNodeDefinition(_)
+        | WorkspaceAssetPayload::StateSeed { .. }
+        | WorkspaceAssetPayload::QueryGoal(_)
+        | WorkspaceAssetPayload::RouteBook { .. } => {}
+    }
+}
+
 fn collect_asset_files(
     root: &Path,
     visit: &mut impl FnMut(&Path) -> Result<(), WorkspaceError>,
@@ -2345,7 +3569,9 @@ fn collect_asset_files(
         let path = entry.path();
         if entry.file_type().map_err(WorkspaceError::io)?.is_dir() {
             collect_asset_files(&path, visit)?;
-        } else if path.extension().and_then(|value| value.to_str()) == Some("json") {
+        } else if path.file_name().and_then(|value| value.to_str()) != Some(FOLDER_MARKER_FILE)
+            && path.extension().and_then(|value| value.to_str()) == Some("json")
+        {
             visit(&path)?;
         }
     }
@@ -2396,6 +3622,10 @@ fn stable_fragment(value: &str) -> String {
         })
         .collect::<String>();
     fragment.trim_matches('-').to_owned()
+}
+
+fn folder_trash_directory_name(id: &str) -> String {
+    format!("folder-{}", Digest(Sha256::digest(id.as_bytes()).into()))
 }
 
 fn validate_label(field: &str, value: &str) -> Result<(), WorkspaceError> {
@@ -2969,6 +4199,284 @@ mod tests {
     }
 
     #[test]
+    fn folder_crud_preserves_identity_remaps_clones_and_trashes_the_subtree() {
+        let root = temporary_directory("folder-crud");
+        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        let store = WorkspaceStore::create(&root, manifest).unwrap();
+        let parent_revision = store
+            .create_folder(
+                "folder.routes",
+                "Routes",
+                WorkspaceAssetKind::RouteGraph,
+                None,
+                "routes",
+            )
+            .unwrap();
+        store
+            .create_folder(
+                "folder.routes.ordon",
+                "Ordon",
+                WorkspaceAssetKind::RouteGraph,
+                Some("folder.routes"),
+                "ordon",
+            )
+            .unwrap();
+
+        let child = graph_asset("graph.child", "Child graph");
+        store
+            .save_asset(
+                Path::new("route-graphs/routes/ordon/child.json"),
+                None,
+                &child,
+            )
+            .unwrap();
+        let mut parent = graph_asset("graph.parent", "Parent graph");
+        parent.references.push(WorkspaceAssetReference {
+            asset_id: child.header.id.clone(),
+            kind: WorkspaceAssetKind::RouteGraph,
+        });
+        store
+            .save_asset(Path::new("route-graphs/routes/parent.json"), None, &parent)
+            .unwrap();
+        let layout = WorkspaceAsset {
+            schema: WORKSPACE_ASSET_SCHEMA.into(),
+            header: WorkspaceAssetHeader {
+                id: "layout.external".into(),
+                label: "External layout".into(),
+                kind: WorkspaceAssetKind::Layout,
+                version: 1,
+                origin: None,
+            },
+            references: vec![WorkspaceAssetReference {
+                asset_id: parent.header.id.clone(),
+                kind: WorkspaceAssetKind::RouteGraph,
+            }],
+            payload: WorkspaceAssetPayload::Layout(LayoutAsset {
+                semantic_asset_id: parent.header.id.clone(),
+                positions: BTreeMap::new(),
+                viewport: None,
+            }),
+        };
+        store
+            .save_asset(Path::new("layouts/external.json"), None, &layout)
+            .unwrap();
+
+        let renamed_revision = store
+            .rename_folder(
+                "folder.routes",
+                "Main routes",
+                "main-routes",
+                parent_revision,
+            )
+            .unwrap();
+        assert_ne!(renamed_revision, parent_revision);
+        assert_eq!(
+            store.load_folder("folder.routes").unwrap().1,
+            Path::new("route-graphs/main-routes")
+        );
+
+        store
+            .duplicate_folder(
+                "folder.routes",
+                "folder.routes-copy",
+                "Routes copy",
+                None,
+                "routes-copy",
+            )
+            .unwrap();
+        let cloned_assets = store
+            .list_assets()
+            .unwrap()
+            .into_iter()
+            .filter(|asset| asset.relative_path.starts_with("route-graphs/routes-copy"))
+            .collect::<Vec<_>>();
+        assert_eq!(cloned_assets.len(), 2);
+        let cloned_parent = cloned_assets
+            .iter()
+            .find(|asset| asset.label == "Parent graph")
+            .unwrap();
+        let cloned_child = cloned_assets
+            .iter()
+            .find(|asset| asset.label == "Child graph")
+            .unwrap();
+        let cloned_parent_asset = store.load_asset(&cloned_parent.id).unwrap().0;
+        assert_eq!(cloned_parent_asset.references[0].asset_id, cloned_child.id);
+        assert_ne!(cloned_parent.id, parent.header.id);
+
+        let error = store
+            .delete_folder_to_trash("folder.routes", renamed_revision, false)
+            .unwrap_err();
+        assert!(error.to_string().contains("layout.external"));
+        store
+            .delete_folder_to_trash("folder.routes", renamed_revision, true)
+            .unwrap();
+        assert!(store.load_folder("folder.routes").is_err());
+        assert!(store.load_asset("graph.parent").is_err());
+        let trash = store.list_folder_trash().unwrap();
+        assert_eq!(trash.len(), 1);
+        assert_eq!(trash[0].folder_count, 2);
+        assert_eq!(trash[0].asset_count, 2);
+        store
+            .restore_folder_from_trash("folder.routes", trash[0].revision_sha256)
+            .unwrap();
+        assert_eq!(
+            store.load_asset("graph.child").unwrap().1,
+            Path::new("route-graphs/main-routes/ordon/child.json")
+        );
+
+        let restored_revision = store
+            .load_folder("folder.routes")
+            .unwrap()
+            .0
+            .digest()
+            .unwrap();
+        store
+            .delete_folder_to_trash("folder.routes", restored_revision, true)
+            .unwrap();
+        let trash = store.list_folder_trash().unwrap();
+        store
+            .permanently_delete_folder_from_trash("folder.routes", trash[0].revision_sha256)
+            .unwrap();
+        assert!(store.list_folder_trash().unwrap().is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn folder_move_rejects_cross_type_and_descendant_parents() {
+        let root = temporary_directory("folder-move-validation");
+        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        let store = WorkspaceStore::create(&root, manifest).unwrap();
+        let parent_revision = store
+            .create_folder(
+                "folder.parent",
+                "Parent",
+                WorkspaceAssetKind::RouteGraph,
+                None,
+                "parent",
+            )
+            .unwrap();
+        store
+            .create_folder(
+                "folder.child",
+                "Child",
+                WorkspaceAssetKind::RouteGraph,
+                Some("folder.parent"),
+                "child",
+            )
+            .unwrap();
+        store
+            .create_folder(
+                "folder.layouts",
+                "Layouts",
+                WorkspaceAssetKind::Layout,
+                None,
+                "layouts",
+            )
+            .unwrap();
+
+        assert!(
+            store
+                .move_folder("folder.parent", Some("folder.child"), parent_revision)
+                .unwrap_err()
+                .to_string()
+                .contains("descendant")
+        );
+        assert!(
+            store
+                .move_folder("folder.parent", Some("folder.layouts"), parent_revision)
+                .unwrap_err()
+                .to_string()
+                .contains("cannot be placed")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn trashed_child_restores_below_its_stable_parent_after_parent_move() {
+        let root = temporary_directory("folder-restore-parent-move");
+        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        let store = WorkspaceStore::create(&root, manifest).unwrap();
+        let parent_revision = store
+            .create_folder(
+                "folder.parent",
+                "Parent",
+                WorkspaceAssetKind::RouteGraph,
+                None,
+                "parent",
+            )
+            .unwrap();
+        let child_revision = store
+            .create_folder(
+                "folder.child",
+                "Child",
+                WorkspaceAssetKind::RouteGraph,
+                Some("folder.parent"),
+                "child",
+            )
+            .unwrap();
+        store
+            .create_folder(
+                "folder.archive",
+                "Archive",
+                WorkspaceAssetKind::RouteGraph,
+                None,
+                "archive",
+            )
+            .unwrap();
+        store
+            .delete_folder_to_trash("folder.child", child_revision, false)
+            .unwrap();
+        store
+            .move_folder("folder.parent", Some("folder.archive"), parent_revision)
+            .unwrap();
+        let trash = store.list_folder_trash().unwrap();
+        store
+            .restore_folder_from_trash("folder.child", trash[0].revision_sha256)
+            .unwrap();
+
+        assert_eq!(
+            store.load_folder("folder.child").unwrap().1,
+            Path::new("route-graphs/archive/parent/child")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn open_recovers_completed_folder_restore_and_abandoned_clone_staging() {
+        let root = temporary_directory("folder-operation-recovery");
+        let manifest = WorkspaceManifest::new("workspace.test", "Test workspace").unwrap();
+        let store = WorkspaceStore::create(&root, manifest).unwrap();
+        let revision = store
+            .create_folder(
+                "folder.routes",
+                "Routes",
+                WorkspaceAssetKind::RouteGraph,
+                None,
+                "routes",
+            )
+            .unwrap();
+        store
+            .delete_folder_to_trash("folder.routes", revision, false)
+            .unwrap();
+        let group = store.folder_trash_group("folder.routes").unwrap();
+        fs::rename(
+            group.join(FOLDER_TRASH_PAYLOAD),
+            root.join("route-graphs/routes"),
+        )
+        .unwrap();
+        let abandoned = root.join(FOLDER_STAGING_ROOT).join("folder-abandoned");
+        fs::create_dir(&abandoned).unwrap();
+        fs::write(abandoned.join(FOLDER_MARKER_FILE), b"incomplete").unwrap();
+        drop(store);
+
+        let recovered = WorkspaceStore::open(&root, &BTreeMap::new()).unwrap();
+        assert!(recovered.load_folder("folder.routes").is_ok());
+        assert!(recovered.list_folder_trash().unwrap().is_empty());
+        assert!(!abandoned.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn registry_export_import_round_trips_independent_assets() {
         let root = temporary_directory("workspace-export-import");
         let registry = WorkspaceRegistry::open(root.join("workspaces"), BTreeMap::new()).unwrap();
@@ -2978,6 +4486,22 @@ mod tests {
                 id: "source".into(),
                 label: "Source workspace".into(),
             })
+            .unwrap();
+        registry
+            .command_folder(
+                "source",
+                "folder.routes",
+                WorkspaceFolderCommandRequest {
+                    schema: WORKSPACE_FOLDER_COMMAND_SCHEMA.into(),
+                    command: WorkspaceFolderCommand::Create {
+                        id: "folder.routes".into(),
+                        label: "Routes".into(),
+                        asset_kind: WorkspaceAssetKind::RouteGraph,
+                        parent_id: None,
+                        directory_name: "routes".into(),
+                    },
+                },
+            )
             .unwrap();
         let asset = graph_asset("graph.ordon", "Ordon route");
         registry
@@ -2995,6 +4519,8 @@ mod tests {
 
         let mut bundle = registry.export("source").unwrap();
         assert_eq!(bundle.schema, WORKSPACE_EXPORT_SCHEMA);
+        assert_eq!(bundle.folders.len(), 1);
+        assert_eq!(bundle.folders[0].folder.id, "folder.routes");
         assert_eq!(bundle.assets.len(), 1);
         assert_eq!(
             bundle.assets[0].relative_path,
@@ -3006,6 +4532,8 @@ mod tests {
         bundle.manifest.label = "Imported workspace".into();
         let imported = registry.import(bundle.clone()).unwrap();
         assert_eq!(imported.manifest.id, "imported");
+        assert_eq!(imported.folders.len(), 1);
+        assert_eq!(imported.folders[0].id, "folder.routes");
         assert_eq!(imported.assets.len(), 1);
         assert_eq!(imported.assets[0].id, "graph.ordon");
         assert_eq!(
@@ -3037,6 +4565,7 @@ mod tests {
         let bundle = WorkspaceExport {
             schema: WORKSPACE_EXPORT_SCHEMA.into(),
             manifest,
+            folders: Vec::new(),
             assets: vec![
                 WorkspaceExportAsset {
                     relative_path: "route-graphs/same.json".into(),

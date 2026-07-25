@@ -23,9 +23,9 @@ planner.
 
 The browser now has a graph-first shell and file-backed workspaces with
 independently serialized typed assets. A user can create a workspace, create a
-grounded scenario from an exact read-only Library template, edit custom-node
-contracts, perform recoverable asset CRUD, and import or export individual
-assets and complete workspaces without editing JSON.
+  grounded scenario from an exact read-only Library template, edit custom-node
+  contracts, perform recoverable asset and folder CRUD, and import or export
+  individual assets and complete workspaces without editing JSON.
 
 The remaining usability gap is direct route authoring:
 
@@ -38,16 +38,16 @@ The remaining usability gap is direct route authoring:
   atomically. A visible route step can be right-clicked to insert a mechanic
   after it with authoritative downstream replay, but the canvas does not yet
   author typed pins, branches, subgraphs, or general semantic graph rewiring.
-- Folder CRUD, multiple editors, asset-level undo/redo, and broader
-  keyboard-first authoring remain incomplete. Route Book edits, presentation
-  regions, evidence changes, and node moves have semantic undo/redo now.
+- Multiple editors, asset-level undo/redo, and broader keyboard-first authoring
+  remain incomplete. Route Book edits, presentation regions, evidence changes,
+  and node moves have semantic undo/redo now.
 - Presentation regions are not reusable semantic subgraphs.
-- The browser acceptance test creates a blank Workspace through the UI, creates
-  a grounded scenario from a direct Library action, adds, undoes, redoes, and
+- The browser acceptance test creates a blank Workspace through the UI, creates,
+  renames, duplicates, trashes, and restores a mutable folder, creates a grounded
+  scenario from a direct Library action, adds, undoes, redoes, and
   right-click-inserts after its first route step, then undoes that insertion and
   persists the route. It continues through the preassembled keyed-door example.
-  Root, anchor, goal, and context selection are not yet independently
-  authorable.
+  Root, anchor, goal, and context selection are not yet independently authorable.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
   currently replays end to end through the planner.
 
@@ -100,14 +100,6 @@ when it directly unblocks the selected vertical-slice route or fixes a
 correctness defect in existing authority. A new report, serializer, extractor,
 or test fixture does not count as progress by itself.
 
-## 3. Workspace and asset architecture
-
-### 3.3 Implement real CRUD
-
-- [ ] Define stable folder identity, reference remapping, and grouped-trash
-      semantics for mutable Workspace folders.
-- [ ] Add create, rename, move, duplicate, delete-to-trash, restore, and permanent
-      delete for folders with collision, reference, and permission validation.
 ## 4. Application shell and information hierarchy
 
 - [ ] Support multiple asset editor tabs with breadcrumbs and unsaved-state

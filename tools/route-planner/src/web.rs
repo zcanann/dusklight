@@ -4,7 +4,8 @@ use crate::project::{ProjectSaveRequest, ProjectStore};
 use crate::service::{PlannerServiceEnvelope, error_response, handle_envelope};
 use crate::workspace::{
     BUILTIN_LIBRARY_VERSION, WorkspaceAssetCommandRequest, WorkspaceAssetSaveRequest,
-    WorkspaceCreateRequest, WorkspaceExport, WorkspaceLibraryForkRequest, WorkspaceRegistry,
+    WorkspaceCreateRequest, WorkspaceExport, WorkspaceFolderCommandRequest,
+    WorkspaceFolderTrashCommandRequest, WorkspaceLibraryForkRequest, WorkspaceRegistry,
     WorkspaceRouteGraphSaveRequest, WorkspaceTrashCommandRequest,
 };
 use std::collections::BTreeMap;
@@ -321,6 +322,9 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
         [_, "assets", asset_id] if !asset_id.is_empty() => {
             dispatch_workspace_asset(request, state, workspace_id, asset_id)
         }
+        [_, "folders", folder_id] if !folder_id.is_empty() => {
+            dispatch_workspace_folder(request, state, workspace_id, folder_id)
+        }
         [_, "route-graphs", graph_id] if request.method == "POST" && !graph_id.is_empty() => {
             let save = match serde_json::from_slice::<WorkspaceRouteGraphSaveRequest>(&request.body)
             {
@@ -379,6 +383,18 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
         }),
         [_, "trash", asset_id] if !asset_id.is_empty() => {
             dispatch_workspace_trash(request, state, workspace_id, asset_id)
+        }
+        [_, "folder-trash"] if request.method == "GET" => project_response(|| {
+            let registry = state
+                .workspaces
+                .lock()
+                .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+            registry
+                .list_folder_trash(workspace_id)
+                .map_err(|error| error.to_string())
+        }),
+        [_, "folder-trash", folder_id] if !folder_id.is_empty() => {
+            dispatch_workspace_folder_trash(request, state, workspace_id, folder_id)
         }
         [_, "library-references", library_id]
             if request.method == "POST" && !library_id.is_empty() =>
@@ -472,6 +488,30 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
     }
 }
 
+fn dispatch_workspace_folder(
+    request: HttpRequest,
+    state: &WebState,
+    workspace_id: &str,
+    folder_id: &str,
+) -> HttpResponse {
+    if request.method != "POST" {
+        return project_error_response(405, "Method Not Allowed", "unsupported folder method");
+    }
+    let command = match serde_json::from_slice::<WorkspaceFolderCommandRequest>(&request.body) {
+        Ok(command) => command,
+        Err(error) => return project_error_response(400, "Bad Request", &error.to_string()),
+    };
+    project_response(|| {
+        let registry = state
+            .workspaces
+            .lock()
+            .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+        registry
+            .command_folder(workspace_id, folder_id, command)
+            .map_err(|error| error.to_string())
+    })
+}
+
 fn dispatch_workspace_asset(
     request: HttpRequest,
     state: &WebState,
@@ -547,6 +587,35 @@ fn dispatch_workspace_trash(
             .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
         registry
             .command_trash(workspace_id, asset_id, command)
+            .map_err(|error| error.to_string())
+    })
+}
+
+fn dispatch_workspace_folder_trash(
+    request: HttpRequest,
+    state: &WebState,
+    workspace_id: &str,
+    folder_id: &str,
+) -> HttpResponse {
+    if request.method != "POST" {
+        return project_error_response(
+            405,
+            "Method Not Allowed",
+            "unsupported folder Trash method",
+        );
+    }
+    let command = match serde_json::from_slice::<WorkspaceFolderTrashCommandRequest>(&request.body)
+    {
+        Ok(command) => command,
+        Err(error) => return project_error_response(400, "Bad Request", &error.to_string()),
+    };
+    project_response(|| {
+        let registry = state
+            .workspaces
+            .lock()
+            .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+        registry
+            .command_folder_trash(workspace_id, folder_id, command)
             .map_err(|error| error.to_string())
     })
 }
@@ -725,6 +794,8 @@ mod tests {
         );
         let index_text = String::from_utf8(index.body).unwrap();
         assert!(index_text.contains("id=\"empty-primary\""));
+        assert!(index_text.contains("id=\"folder-dialog\""));
+        assert!(index_text.contains("References use this identity, not the directory path."));
         assert!(index_text.contains("Legacy file migration"));
         assert!(!index_text.contains("New legacy project"));
         let app = dispatch(
@@ -739,6 +810,20 @@ mod tests {
         let app_text = String::from_utf8(app.body).unwrap();
         assert!(app_text.contains("evaluate_transition"));
         assert!(app_text.contains("Browse Library templates"));
+        for required in [
+            "workspace-folder-command/v1",
+            "workspace-folder-trash-command/v1",
+            "workspaceFolderItem",
+            "Folder subtree moved to Trash as one recoverable group",
+            "populateFolderParentChoices",
+            "Clone the subtree with new stable identities",
+            "/folder-trash/",
+        ] {
+            assert!(
+                app_text.contains(required),
+                "missing browser contract {required}"
+            );
+        }
 
         let health = dispatch(
             HttpRequest {
@@ -1214,6 +1299,107 @@ mod tests {
             &state,
         );
         assert_eq!(restored.status, 200);
+        let restored: serde_json::Value = serde_json::from_slice(&restored.body).unwrap();
+        let restored_asset = restored["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|asset| asset["id"] == "custom.roll")
+            .unwrap();
+
+        let create_folder = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_FOLDER_COMMAND_SCHEMA,
+            "command": {
+                "kind": "create",
+                "id": "folder.custom-research",
+                "label": "Research",
+                "asset_kind": "custom_node_definition",
+                "parent_id": null,
+                "directory_name": "research",
+            },
+        });
+        let folder_created = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/folders/folder.custom-research".into(),
+                body: serde_json::to_vec(&create_folder).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(folder_created.status, 200);
+        let folder_created: serde_json::Value =
+            serde_json::from_slice(&folder_created.body).unwrap();
+        let folder = folder_created["folders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|folder| folder["id"] == "folder.custom-research")
+            .unwrap();
+        let folder_revision = folder["revision_sha256"].clone();
+
+        let move_asset = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_ASSET_COMMAND_SCHEMA,
+            "command": {
+                "kind": "move",
+                "expected_revision_sha256": restored_asset["revision_sha256"],
+                "relative_path": "custom-nodes/research/roll.json",
+            },
+        });
+        let moved = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/assets/custom.roll".into(),
+                body: serde_json::to_vec(&move_asset).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(moved.status, 200);
+
+        let delete_folder = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_FOLDER_COMMAND_SCHEMA,
+            "command": {
+                "kind": "delete_to_trash",
+                "expected_revision_sha256": folder_revision,
+                "allow_broken_references": false,
+            },
+        });
+        let folder_deleted = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/folders/folder.custom-research".into(),
+                body: serde_json::to_vec(&delete_folder).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(folder_deleted.status, 200);
+        let folder_trash = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces/ordon-route/folder-trash".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        let folder_trash: serde_json::Value = serde_json::from_slice(&folder_trash.body).unwrap();
+        assert_eq!(folder_trash[0]["asset_count"], 1);
+        let restore_folder = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_FOLDER_TRASH_COMMAND_SCHEMA,
+            "expected_revision_sha256": folder_trash[0]["revision_sha256"],
+            "command": "restore",
+        });
+        let folder_restored = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/folder-trash/folder.custom-research".into(),
+                body: serde_json::to_vec(&restore_folder).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(folder_restored.status, 200);
+        assert!(
+            root.join("workspaces/ordon-route/custom-nodes/research/roll.json")
+                .is_file()
+        );
 
         let exported = dispatch(
             HttpRequest {
@@ -1227,9 +1413,13 @@ mod tests {
         let mut bundle =
             serde_json::from_slice::<crate::workspace::WorkspaceExport>(&exported.body).unwrap();
         assert_eq!(bundle.schema, crate::workspace::WORKSPACE_EXPORT_SCHEMA);
+        assert!(bundle.folders.iter().any(|record| {
+            record.folder.id == "folder.custom-research"
+                && record.relative_path == std::path::Path::new("custom-nodes/research")
+        }));
         assert!(bundle.assets.iter().any(|record| {
             record.asset.header.id == "custom.roll"
-                && record.relative_path == std::path::Path::new("custom-nodes/roll.json")
+                && record.relative_path == std::path::Path::new("custom-nodes/research/roll.json")
         }));
         bundle.manifest.id = "ordon-route-copy".into();
         bundle.manifest.label = "Ordon route copy".into();
@@ -1250,7 +1440,7 @@ mod tests {
             bundle.assets.len()
         );
         assert!(
-            root.join("workspaces/ordon-route-copy/custom-nodes/roll.json")
+            root.join("workspaces/ordon-route-copy/custom-nodes/research/roll.json")
                 .is_file()
         );
         std::fs::remove_dir_all(root).unwrap();

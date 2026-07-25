@@ -171,7 +171,14 @@ button:disabled { opacity: .42; cursor: default; }
 .source-tabs button.active { color: #ecf5fb; background: #28323c; box-shadow: inset 0 -2px var(--accent); }
 .content-browser-list { min-height: 100px; overflow: auto; display: flex; flex: 1 1 auto; flex-direction: column; gap: 3px; }
 .content-group { margin: 0; border-bottom: 1px solid #29313a; }
-.content-group > summary { cursor: pointer; padding: 7px 5px; color: #cbd4dc; font-size: 11px; }
+.content-group > summary { cursor: pointer; padding: 7px 5px; color: #cbd4dc; font-size: 11px; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.folder-add { padding: 3px 5px; border: 0; background: transparent; color: var(--muted); font-size: 9px; }
+.folder-add:hover { color: var(--text); background: #27313a; }
+.content-folder { margin-left: 8px; border-left: 1px solid #303a43; }
+.content-folder > summary { min-height: 28px; padding: 4px 2px 4px 8px; display: flex; align-items: center; justify-content: space-between; gap: 4px; color: #b9c5cf; cursor: pointer; font-size: 10px; }
+.content-folder > summary::marker { color: #75838e; }
+.content-folder > .content-asset-row { margin-left: 8px; }
+.folder-actions { margin-left: auto; }
 .content-item { width: 100%; display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 7px; align-items: center; padding: 7px 6px; border: 0; background: transparent; text-align: left; }
 .content-item:hover { background: #222a32; }
 .content-item .asset-icon { color: var(--accent); font-size: 10px; }
@@ -240,7 +247,8 @@ dialog form { display: grid; gap: 14px; }
 dialog header h2 { margin: 0 0 4px; }
 dialog header p { margin: 0; color: var(--muted); font-size: 12px; }
 dialog label { display: grid; gap: 5px; color: #cbd4dc; font-size: 11px; }
-dialog input { padding: 9px; color: inherit; border: 1px solid #45515e; border-radius: 5px; background: #11151a; }
+dialog input, dialog select { padding: 9px; color: inherit; border: 1px solid #45515e; border-radius: 5px; background: #11151a; }
+dialog label small { color: var(--muted); font-size: 10px; font-weight: 400; }
 dialog footer { display: flex; justify-content: flex-end; gap: 7px; }
 .dialog-error { min-height: 1.2em; margin: 0; color: #ff9292; font-size: 11px; }
 

@@ -166,6 +166,32 @@
         </footer>
       </form>
     </dialog>
+    <dialog id="folder-dialog">
+      <form id="folder-form">
+        <header>
+          <h2 id="folder-dialog-title">New folder</h2>
+          <p id="folder-dialog-help">Folders organize Workspace files without changing semantic asset identities.</p>
+        </header>
+        <label id="folder-label-field">Folder name
+          <input id="folder-label" name="label" required maxlength="160" autocomplete="off">
+        </label>
+        <label id="folder-id-field">Stable folder ID
+          <input id="folder-id" name="id" required maxlength="128" pattern="[a-z0-9._:-]+" autocomplete="off">
+          <small>References use this identity, not the directory path.</small>
+        </label>
+        <label id="folder-directory-field">Directory name
+          <input id="folder-directory" name="directory" required maxlength="128" pattern="[^/\\]+" autocomplete="off">
+        </label>
+        <label id="folder-parent-field">Parent
+          <select id="folder-parent" name="parent"></select>
+        </label>
+        <p id="folder-error" class="dialog-error" role="alert"></p>
+        <footer>
+          <button id="cancel-folder" type="button">Cancel</button>
+          <button id="save-folder" type="submit">Create folder</button>
+        </footer>
+      </form>
+    </dialog>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

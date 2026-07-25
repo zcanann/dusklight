@@ -10,8 +10,11 @@ const WORKSPACE_ASSET_SCHEMA = "dusklight.route-planner.workspace-asset/v1";
 const WORKSPACE_ASSET_SAVE_SCHEMA = "dusklight.route-planner.workspace-asset-save/v1";
 const WORKSPACE_ASSET_COMMAND_SCHEMA = "dusklight.route-planner.workspace-asset-command/v1";
 const WORKSPACE_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-trash-command/v1";
+const WORKSPACE_FOLDER_COMMAND_SCHEMA = "dusklight.route-planner.workspace-folder-command/v1";
+const WORKSPACE_FOLDER_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-folder-trash-command/v1";
 const WORKSPACE_LIBRARY_FORK_SCHEMA = "dusklight.route-planner.workspace-library-fork/v1";
-const WORKSPACE_EXPORT_SCHEMA = "dusklight.route-planner.workspace-export/v1";
+const WORKSPACE_EXPORT_SCHEMA = "dusklight.route-planner.workspace-export/v2";
+const LEGACY_WORKSPACE_EXPORT_SCHEMA = "dusklight.route-planner.workspace-export/v1";
 const WORKSPACE_ROUTE_GRAPH_SAVE_SCHEMA = "dusklight.route-planner.workspace-route-graph-save/v1";
 const LIBRARY_DRAG_TYPE = "application/x-dusklight-library";
 const ROUTE_BOOK_EDIT_BATCH_SCHEMA = "dusklight.route-planner.route-book-edit-batch/v7";
@@ -86,6 +89,10 @@ const elements = Object.fromEntries([
   "new-workspace-label", "new-workspace-id", "new-workspace-error", "cancel-new-workspace",
   "new-asset", "new-asset-dialog", "new-asset-form", "new-asset-label", "new-asset-id",
   "new-asset-error", "cancel-new-asset", "import-asset", "workspace-asset-file",
+  "folder-dialog", "folder-form", "folder-dialog-title", "folder-dialog-help",
+  "folder-label-field", "folder-label", "folder-id-field", "folder-id",
+  "folder-directory-field", "folder-directory", "folder-parent-field", "folder-parent",
+  "folder-error", "cancel-folder", "save-folder",
   "import-workspace", "export-workspace", "workspace-file",
   "add-node-menu", "add-node-search", "add-node-results",
   "project-list", "open-project", "save-project", "save-as-project", "undo", "redo",
@@ -107,6 +114,7 @@ const state = {
   workspacePollActive: false,
   workspaceList: [],
   trash: [],
+  folderTrash: [],
   libraries: [],
   contentSource: "workspace",
   selectedWorkspaceAsset: null,
@@ -138,6 +146,7 @@ const state = {
   redoStack: [],
   historyBusy: false,
   addNodeAfterStepId: null,
+  folderDialog: null,
 };
 
 elements["workspace-list"].addEventListener("change", () => {
@@ -169,6 +178,13 @@ elements["cancel-new-asset"].addEventListener("click", () => {
 elements["new-asset-form"].addEventListener("submit", createCustomNodeAsset);
 elements["import-asset"].addEventListener("click", () => elements["workspace-asset-file"].click());
 elements["workspace-asset-file"].addEventListener("change", importWorkspaceAsset);
+elements["cancel-folder"].addEventListener("click", () => elements["folder-dialog"].close());
+elements["folder-form"].addEventListener("submit", submitWorkspaceFolderDialog);
+elements["folder-label"].addEventListener("input", suggestFolderIdentity);
+elements["folder-dialog"].addEventListener("close", () => {
+  state.folderDialog = null;
+  elements["folder-error"].textContent = "";
+});
 elements["workspace-tab"].addEventListener("click", () => selectContentSource("workspace"));
 elements["library-tab"].addEventListener("click", () => selectContentSource("library"));
 elements["content-search"].addEventListener("input", renderContentBrowser);
@@ -348,7 +364,8 @@ async function importWorkspace(event) {
   if (state.dirty && !confirm("Discard unsaved planner changes and import this workspace?")) return;
   try {
     const bundle = JSON.parse(await file.text());
-    if (bundle?.schema !== WORKSPACE_EXPORT_SCHEMA || !bundle.manifest || !Array.isArray(bundle.assets)) {
+    if (![WORKSPACE_EXPORT_SCHEMA, LEGACY_WORKSPACE_EXPORT_SCHEMA].includes(bundle?.schema)
+      || !bundle.manifest || !Array.isArray(bundle.assets)) {
       throw new Error("Choose a Dusklight workspace export");
     }
     const id = prompt("Imported workspace folder ID", `${bundle.manifest.id}-imported`);
@@ -534,19 +551,30 @@ async function openWorkspaceRecord(record) {
 async function refreshTrash() {
   if (!state.workspace) {
     state.trash = [];
+    state.folderTrash = [];
     return;
   }
-  state.trash = await projectApi(
-    `/api/workspaces/${encodeURIComponent(state.workspace.manifest.id)}/trash`,
-  );
+  const workspaceId = encodeURIComponent(state.workspace.manifest.id);
+  [state.trash, state.folderTrash] = await Promise.all([
+    projectApi(`/api/workspaces/${workspaceId}/trash`),
+    projectApi(`/api/workspaces/${workspaceId}/folder-trash`),
+  ]);
 }
 
 function workspaceSignature(record) {
-  return JSON.stringify((record?.assets ?? []).map((asset) => [
-    asset.id,
-    asset.relative_path,
-    asset.revision_sha256,
-  ]).sort(([left], [right]) => left.localeCompare(right)));
+  return JSON.stringify({
+    folders: (record?.folders ?? []).map((folder) => [
+      folder.id,
+      folder.parent_id,
+      folder.relative_path,
+      folder.revision_sha256,
+    ]).sort(([left], [right]) => left.localeCompare(right)),
+    assets: (record?.assets ?? []).map((asset) => [
+      asset.id,
+      asset.relative_path,
+      asset.revision_sha256,
+    ]).sort(([left], [right]) => left.localeCompare(right)),
+  });
 }
 
 async function pollWorkspaceChanges() {
@@ -651,28 +679,133 @@ function renderContentBrowser() {
   for (const [kind, label] of Object.entries(labels)) {
     const assets = state.workspace.assets.filter((asset) =>
       asset.kind === kind && `${asset.label} ${asset.id}`.toLowerCase().includes(query));
-    if (query && !assets.length) continue;
-    const group = document.createElement("details");
-    group.className = "content-group";
-    group.open = assets.length > 0;
-    const summary = document.createElement("summary");
-    summary.textContent = `${label}  ${assets.length}`;
-    group.append(summary);
-    for (const asset of assets) {
-      group.append(contentAssetItem(asset, kind === "layout" ? "LAY" : "AST"));
+    const allFolders = (state.workspace.folders ?? []).filter((folder) => folder.kind === kind);
+    const visibleFolderIds = new Set(allFolders.filter((folder) => !query
+      || `${folder.label} ${folder.id}`.toLowerCase().includes(query)
+      || assets.some((asset) => pathIsInside(asset.relative_path, folder.relative_path)))
+      .map((folder) => folder.id));
+    const foldersById = new Map(allFolders.map((folder) => [folder.id, folder]));
+    for (const folderId of [...visibleFolderIds]) {
+      let parentId = foldersById.get(folderId)?.parent_id;
+      while (parentId) {
+        visibleFolderIds.add(parentId);
+        parentId = foldersById.get(parentId)?.parent_id;
+      }
     }
-    list.append(group);
+    const folders = allFolders.filter((folder) => visibleFolderIds.has(folder.id));
+    if (query && !assets.length && !folders.length) continue;
+    list.append(workspaceKindGroup(kind, label, assets, folders));
   }
   if (!query || "trash".includes(query)) {
     const trashGroup = document.createElement("details");
     trashGroup.className = "content-group";
     const summary = document.createElement("summary");
-    summary.textContent = `Trash  ${state.trash.length}`;
+    summary.textContent = `Trash  ${state.trash.length + state.folderTrash.length}`;
     trashGroup.append(summary);
+    for (const folder of state.folderTrash) trashGroup.append(trashFolderItem(folder));
     for (const asset of state.trash) trashGroup.append(trashAssetItem(asset));
     list.append(trashGroup);
   }
   if (query && !list.childElementCount) list.append(contentMessage("No matching workspace assets."));
+}
+
+function pathIsInside(path, folderPath) {
+  const normalizedPath = String(path).replaceAll("\\", "/");
+  const normalizedFolder = String(folderPath).replaceAll("\\", "/").replace(/\/+$/, "");
+  return normalizedPath === normalizedFolder || normalizedPath.startsWith(`${normalizedFolder}/`);
+}
+
+function workspaceKindGroup(kind, label, assets, folders) {
+  const group = document.createElement("details");
+  group.className = "content-group";
+  group.open = assets.length > 0 || folders.length > 0;
+  const summary = document.createElement("summary");
+  const title = document.createElement("span");
+  title.textContent = `${label}  ${assets.length}`;
+  const create = document.createElement("button");
+  create.type = "button";
+  create.className = "folder-add";
+  create.textContent = "+ folder";
+  create.setAttribute("aria-label", `Create ${label} folder`);
+  create.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    createWorkspaceFolder(kind, null);
+  });
+  summary.append(title, create);
+  group.append(summary);
+
+  const byParent = new Map();
+  for (const folder of folders) {
+    const key = folder.parent_id ?? "";
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(folder);
+  }
+  const nestedAssets = new Set();
+  for (const folder of folders) {
+    for (const asset of assets) {
+      if (pathIsInside(asset.relative_path, folder.relative_path)) nestedAssets.add(asset.id);
+    }
+  }
+  for (const asset of assets.filter((asset) => !nestedAssets.has(asset.id))) {
+    group.append(contentAssetItem(asset, kind === "layout" ? "LAY" : "AST"));
+  }
+  for (const folder of byParent.get("") ?? []) {
+    group.append(workspaceFolderItem(folder, byParent, assets, kind));
+  }
+  return group;
+}
+
+function workspaceFolderItem(folder, byParent, assets, kind) {
+  const branch = document.createElement("details");
+  branch.className = "content-folder";
+  branch.open = true;
+  const summary = document.createElement("summary");
+  const label = document.createElement("span");
+  const directAssets = assets.filter((asset) => {
+    const normalized = String(asset.relative_path).replaceAll("\\", "/");
+    const parent = normalized.split("/").slice(0, -1).join("/");
+    return parent === String(folder.relative_path).replaceAll("\\", "/");
+  });
+  label.textContent = `${folder.label}  ${directAssets.length}`;
+  const actions = folderActions(folder, kind);
+  summary.append(label, actions);
+  branch.append(summary);
+  for (const child of byParent.get(folder.id) ?? []) {
+    branch.append(workspaceFolderItem(child, byParent, assets, kind));
+  }
+  for (const asset of directAssets) {
+    branch.append(contentAssetItem(asset, kind === "layout" ? "LAY" : "AST"));
+  }
+  return branch;
+}
+
+function folderActions(folder, kind) {
+  const actions = document.createElement("details");
+  actions.className = "asset-actions folder-actions";
+  const summary = document.createElement("summary");
+  summary.textContent = "⋯";
+  summary.setAttribute("aria-label", `Actions for folder ${folder.label}`);
+  summary.addEventListener("click", (event) => event.stopPropagation());
+  actions.append(summary);
+  for (const [label, command] of [
+    ["New subfolder", () => createWorkspaceFolder(kind, folder.id)],
+    ["Rename", () => renameWorkspaceFolder(folder)],
+    ["Move", () => moveWorkspaceFolder(folder)],
+    ["Duplicate", () => duplicateWorkspaceFolder(folder)],
+    ["Delete to Trash", () => trashWorkspaceFolder(folder)],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      actions.open = false;
+      command();
+    });
+    actions.append(button);
+  }
+  return actions;
 }
 
 function libraryContentItem(library) {
@@ -886,6 +1019,224 @@ function contentAssetItem(asset, iconText) {
   return row;
 }
 
+async function workspaceFolderCommand(folderId, command) {
+  const workspaceId = state.workspace.manifest.id;
+  const record = await projectApi(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/folders/${encodeURIComponent(folderId)}`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ schema: WORKSPACE_FOLDER_COMMAND_SCHEMA, command }),
+    },
+  );
+  state.workspace = record;
+  state.workspaceSignature = workspaceSignature(record);
+  await refreshTrash();
+  await refreshWorkspaces(workspaceId);
+  renderContentBrowser();
+}
+
+function createWorkspaceFolder(kind, parentId) {
+  openWorkspaceFolderDialog({ mode: "create", kind, parentId });
+}
+
+function renameWorkspaceFolder(folder) {
+  openWorkspaceFolderDialog({ mode: "rename", kind: folder.kind, folder });
+}
+
+function moveWorkspaceFolder(folder) {
+  openWorkspaceFolderDialog({ mode: "move", kind: folder.kind, folder });
+}
+
+function duplicateWorkspaceFolder(folder) {
+  openWorkspaceFolderDialog({ mode: "duplicate", kind: folder.kind, folder });
+}
+
+function folderDescendantIds(folder) {
+  const descendants = new Set([folder.id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const candidate of state.workspace.folders ?? []) {
+      if (candidate.parent_id && descendants.has(candidate.parent_id)
+        && !descendants.has(candidate.id)) {
+        descendants.add(candidate.id);
+        changed = true;
+      }
+    }
+  }
+  return descendants;
+}
+
+function populateFolderParentChoices(kind, selectedId, excludedIds = new Set()) {
+  const select = elements["folder-parent"];
+  select.replaceChildren();
+  const root = document.createElement("option");
+  root.value = "";
+  root.textContent = `${friendlyKind(kind)} root (read-only)`;
+  select.append(root);
+  for (const candidate of (state.workspace.folders ?? [])
+    .filter((folder) => folder.kind === kind && !excludedIds.has(folder.id))
+    .sort((left, right) => left.relative_path.localeCompare(right.relative_path))) {
+    const option = document.createElement("option");
+    option.value = candidate.id;
+    const depth = Math.max(0, String(candidate.relative_path).split(/[\\/]/).length - 2);
+    option.textContent = `${"  ".repeat(depth)}${candidate.label}`;
+    select.append(option);
+  }
+  select.value = selectedId ?? "";
+}
+
+function openWorkspaceFolderDialog({ mode, kind, parentId = null, folder = null }) {
+  state.folderDialog = { mode, kind, folder };
+  const isCreate = mode === "create";
+  const isRename = mode === "rename";
+  const isMove = mode === "move";
+  const isDuplicate = mode === "duplicate";
+  elements["folder-dialog-title"].textContent = {
+    create: "New folder",
+    rename: `Rename ${folder?.label ?? "folder"}`,
+    move: `Move ${folder?.label ?? "folder"}`,
+    duplicate: `Duplicate ${folder?.label ?? "folder"}`,
+  }[mode];
+  elements["folder-dialog-help"].textContent = isMove
+    ? "Move the complete folder subtree. Stable folder and asset identities do not change."
+    : isDuplicate
+      ? "Clone the subtree with new stable identities and remap references between its cloned assets."
+      : "Folders organize Workspace files without changing semantic asset identities.";
+  elements["folder-label-field"].hidden = isMove;
+  elements["folder-id-field"].hidden = isRename || isMove;
+  elements["folder-directory-field"].hidden = isMove;
+  elements["folder-parent-field"].hidden = isRename;
+  elements["folder-label"].required = !isMove;
+  elements["folder-id"].required = isCreate || isDuplicate;
+  elements["folder-directory"].required = !isMove;
+  elements["folder-label"].value = isDuplicate ? `${folder.label} copy` : folder?.label ?? "New folder";
+  elements["folder-id"].value = isDuplicate
+    ? `${folder.id}-copy`
+    : `folder.${slug(elements["folder-label"].value)}`;
+  elements["folder-directory"].value = isDuplicate
+    ? `${String(folder.relative_path).split(/[\\/]/).at(-1)}-copy`
+    : isRename
+      ? String(folder.relative_path).split(/[\\/]/).at(-1)
+      : slug(elements["folder-label"].value);
+  populateFolderParentChoices(
+    kind,
+    isCreate ? parentId : folder?.parent_id,
+    folder ? folderDescendantIds(folder) : new Set(),
+  );
+  elements["save-folder"].textContent = {
+    create: "Create folder",
+    rename: "Rename folder",
+    move: "Move folder",
+    duplicate: "Duplicate folder",
+  }[mode];
+  elements["folder-error"].textContent = "";
+  elements["folder-dialog"].showModal();
+  (isMove ? elements["folder-parent"] : elements["folder-label"]).focus();
+}
+
+function suggestFolderIdentity() {
+  if (state.folderDialog?.mode !== "create") return;
+  const fragment = slug(elements["folder-label"].value);
+  elements["folder-id"].value = `folder.${fragment}`;
+  elements["folder-directory"].value = fragment;
+}
+
+async function submitWorkspaceFolderDialog(event) {
+  event.preventDefault();
+  const dialog = state.folderDialog;
+  if (!dialog) return;
+  const label = elements["folder-label"].value.trim();
+  const id = elements["folder-id"].value.trim();
+  const directoryName = elements["folder-directory"].value.trim();
+  const parentId = elements["folder-parent"].value || null;
+  const folder = dialog.folder;
+  let endpointId;
+  let command;
+  if (dialog.mode === "create") {
+    endpointId = id;
+    command = {
+      kind: "create",
+      id,
+      label,
+      asset_kind: dialog.kind,
+      parent_id: parentId,
+      directory_name: directoryName,
+    };
+  } else if (dialog.mode === "rename") {
+    endpointId = folder.id;
+    command = {
+      kind: "rename",
+      expected_revision_sha256: folder.revision_sha256,
+      label,
+      directory_name: directoryName,
+    };
+  } else if (dialog.mode === "move") {
+    if (parentId === folder.parent_id) {
+      elements["folder-dialog"].close();
+      return;
+    }
+    endpointId = folder.id;
+    command = {
+      kind: "move",
+      expected_revision_sha256: folder.revision_sha256,
+      parent_id: parentId,
+    };
+  } else {
+    endpointId = folder.id;
+    command = {
+      kind: "duplicate",
+      new_id: id,
+      new_label: label,
+      parent_id: parentId,
+      directory_name: directoryName,
+    };
+  }
+  elements["save-folder"].disabled = true;
+  elements["folder-error"].textContent = "";
+  try {
+    await workspaceFolderCommand(endpointId, command);
+    elements["folder-dialog"].close();
+    setStatus({
+      create: "Folder created with a stable identity",
+      rename: "Folder renamed; paths and references preserved",
+      move: "Folder moved atomically; stable asset references preserved",
+      duplicate: "Folder duplicated; cloned asset references were remapped",
+    }[dialog.mode], "good");
+  } catch (error) {
+    elements["folder-error"].textContent = error.message;
+    setStatus(error.message, "bad");
+  } finally {
+    elements["save-folder"].disabled = false;
+  }
+}
+
+async function trashWorkspaceFolder(folder) {
+  if (!confirm(`Move “${folder.label}” and everything inside it to Trash?`)) return;
+  const command = {
+    kind: "delete_to_trash",
+    expected_revision_sha256: folder.revision_sha256,
+    allow_broken_references: false,
+  };
+  try {
+    await workspaceFolderCommand(folder.id, command);
+    setStatus("Folder subtree moved to Trash as one recoverable group", "good");
+  } catch (error) {
+    if (!error.message.includes("contains assets referenced by")
+      || !confirm(`${error.message}\n\nDelete anyway and keep external references visibly broken?`)) {
+      setStatus(error.message, "bad");
+      return;
+    }
+    try {
+      await workspaceFolderCommand(folder.id, { ...command, allow_broken_references: true });
+      setStatus("Folder moved to Trash; external stable-ID references remain visible", "good");
+    } catch (confirmedError) {
+      setStatus(confirmedError.message, "bad");
+    }
+  }
+}
+
 async function exportWorkspaceAsset(asset) {
   try {
     const workspaceId = state.workspace.manifest.id;
@@ -897,6 +1248,40 @@ async function exportWorkspaceAsset(asset) {
   } catch (error) {
     setStatus(error.message, "bad");
   }
+}
+
+function trashFolderItem(folder) {
+  const row = document.createElement("div");
+  row.className = "content-asset-row";
+  row.append(contentItem(
+    "DIR",
+    folder.label,
+    `${folder.folder_count} folders · ${folder.asset_count} assets`,
+    false,
+    () => {
+      elements["detail-title"].textContent = folder.label;
+      elements["detail-subtitle"].textContent = `Deleted ${friendlyKind(folder.kind)} folder`;
+      elements["detail-json"].textContent = JSON.stringify(folder, null, 2);
+    },
+  ));
+  const actions = document.createElement("details");
+  actions.className = "asset-actions";
+  const summary = document.createElement("summary");
+  summary.textContent = "⋯";
+  summary.setAttribute("aria-label", `Trash actions for folder ${folder.label}`);
+  actions.append(summary);
+  for (const [label, command] of [
+    ["Restore group", "restore"],
+    ["Delete group permanently", "permanently_delete"],
+  ]) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    button.addEventListener("click", () => runFolderTrashCommand(folder, command));
+    actions.append(button);
+  }
+  row.append(actions);
+  return row;
 }
 
 function trashAssetItem(asset) {
@@ -925,6 +1310,33 @@ function trashAssetItem(asset) {
   }
   row.append(actions);
   return row;
+}
+
+async function runFolderTrashCommand(folder, command) {
+  if (command === "permanently_delete"
+    && !confirm(`Permanently delete “${folder.label}” and its ${folder.asset_count} assets? This cannot be undone.`)) return;
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    state.workspace = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/folder-trash/${encodeURIComponent(folder.id)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schema: WORKSPACE_FOLDER_TRASH_COMMAND_SCHEMA,
+          expected_revision_sha256: folder.revision_sha256,
+          command,
+        }),
+      },
+    );
+    state.workspaceSignature = workspaceSignature(state.workspace);
+    await refreshTrash();
+    await refreshWorkspaces(workspaceId);
+    renderContentBrowser();
+    setStatus(command === "restore" ? "Folder subtree restored" : "Folder group permanently deleted", "good");
+  } catch (error) {
+    setStatus(error.message, "bad");
+  }
 }
 
 async function workspaceAssetCommand(asset, command) {
@@ -960,8 +1372,29 @@ async function renameWorkspaceAsset(asset) {
 }
 
 async function moveWorkspaceAsset(asset) {
-  const relativePath = prompt("Workspace-relative path", asset.relative_path);
-  if (relativePath == null || relativePath === asset.relative_path) return;
+  const normalizedPath = String(asset.relative_path).replaceAll("\\", "/");
+  const filename = normalizedPath.split("/").at(-1);
+  const currentParentPath = normalizedPath.split("/").slice(0, -1).join("/");
+  const currentFolder = (state.workspace.folders ?? []).find(
+    (folder) => String(folder.relative_path).replaceAll("\\", "/") === currentParentPath,
+  );
+  const choices = (state.workspace.folders ?? [])
+    .filter((folder) => folder.kind === asset.kind)
+    .map((folder) => `${folder.id} — ${folder.label}`)
+    .join("\n");
+  const folderId = prompt(
+    `Destination folder stable ID. Leave blank for the fixed ${friendlyKind(asset.kind)} root.\n\n${choices}`,
+    currentFolder?.id ?? "",
+  );
+  if (folderId == null || folderId.trim() === (currentFolder?.id ?? "")) return;
+  const destinationFolder = folderId.trim()
+    ? state.workspace.folders.find((folder) => folder.id === folderId.trim() && folder.kind === asset.kind)
+    : null;
+  if (folderId.trim() && !destinationFolder) {
+    setStatus("Choose a compatible folder stable ID from the list", "bad");
+    return;
+  }
+  const relativePath = `${destinationFolder?.relative_path ?? workspaceAssetRoot(asset.kind)}/${filename}`;
   try {
     await workspaceAssetCommand(asset, {
       kind: "move",
@@ -979,9 +1412,27 @@ async function duplicateWorkspaceAsset(asset) {
   if (newId == null) return;
   const newLabel = prompt("Copy name", `${asset.label} copy`);
   if (newLabel == null) return;
-  const folder = String(asset.relative_path).split(/[\\/]/).slice(0, -1).join("/");
-  const relativePath = prompt("Workspace-relative path", `${folder}/${slug(newId)}.json`);
-  if (relativePath == null) return;
+  const sourceFolderPath = String(asset.relative_path).split(/[\\/]/).slice(0, -1).join("/");
+  const sourceFolder = (state.workspace.folders ?? []).find(
+    (folder) => String(folder.relative_path).replaceAll("\\", "/") === sourceFolderPath.replaceAll("\\", "/"),
+  );
+  const choices = (state.workspace.folders ?? [])
+    .filter((folder) => folder.kind === asset.kind)
+    .map((folder) => `${folder.id} — ${folder.label}`)
+    .join("\n");
+  const folderId = prompt(
+    `Copy destination folder stable ID. Leave blank for the fixed ${friendlyKind(asset.kind)} root.\n\n${choices}`,
+    sourceFolder?.id ?? "",
+  );
+  if (folderId == null) return;
+  const destinationFolder = folderId.trim()
+    ? state.workspace.folders.find((folder) => folder.id === folderId.trim() && folder.kind === asset.kind)
+    : null;
+  if (folderId.trim() && !destinationFolder) {
+    setStatus("Choose a compatible folder stable ID from the list", "bad");
+    return;
+  }
+  const relativePath = `${destinationFolder?.relative_path ?? workspaceAssetRoot(asset.kind)}/${slug(newId)}.json`;
   try {
     await workspaceAssetCommand(asset, {
       kind: "duplicate",
