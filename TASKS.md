@@ -43,8 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P1 - Use the simulator's available throughput
 
-- [ ] Make tactic-route honor its configured worker count instead of launching
-      one persistent worker and evaluating seeds sequentially.
 - [ ] Benchmark 1, 2, 4, and 8 persistent workers on the current host under one
       sealed workload. Report scaling efficiency, memory, restore time, native
       ticks per second, and useful decisions per second.

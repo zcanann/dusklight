@@ -1,0 +1,81 @@
+{
+  "schema": "dusklight-tactic-route-worker-pool-smoke/v1",
+  "date": "2026-07-25",
+  "source_commit": "988c5afa2a",
+  "claim": "The tactic-route runner honored an explicit four-worker configuration, launched four persistent native workers concurrently, evaluated one deterministic seed on each worker concurrently, and restored report order independently of completion order.",
+  "bindings": {
+    "optimization_request": "routes/Glitch Exhibition/ordon-exit-approach-learning/benchmarks/ordon-exit-approach-tactic-q-discovery-v1.request.json",
+    "optimization_request_sha256": "296778d879e533f1b50f5eb7e5fbf886e2d0c23f230716c9c91b213973ef45cc",
+    "execution_binding": "build/campaigns/ordon-exit-approach-second-pair-20260725/execution-v4/execution.json",
+    "execution_binding_sha256": "47067b4d7a29dfbf9821fa9f2663891023ecc05e30e40cca552fa02f3f77ef9b",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57"
+  },
+  "configuration": {
+    "workers": 4,
+    "seeds": [
+      104729,
+      130363,
+      155921,
+      181081
+    ],
+    "decisions_per_seed": 1,
+    "branch_every_decisions": 1,
+    "refit_every_decisions": 1,
+    "epsilon_per_million": 350000
+  },
+  "output": {
+    "path": "build/campaigns/tactic-route-worker-pool-smoke-20260725",
+    "report": "build/campaigns/tactic-route-worker-pool-smoke-20260725/report.json",
+    "report_sha256": "40157520109bedcd293692b21706f8c5d2498f993f80cf93befb0d9dab71e677",
+    "report_schema": "dusklight-native-tactic-route-report/v7"
+  },
+  "result": {
+    "reported_workers": 4,
+    "persistent_worker_attempts": 4,
+    "worker_attempt_creation_spread_micros": 1001,
+    "initial_result_completion_spread_micros": 171671,
+    "seed_result_completion_spread_micros": 270139,
+    "total_decisions": 4,
+    "useful_decisions": 4,
+    "total_native_ticks": 160,
+    "successful_seeds": 0,
+    "campaign_wall_micros": 66913935,
+    "summed_seed_wall_micros": 63944197,
+    "maximum_seed_wall_micros": 16147491,
+    "useful_decisions_per_second_millionths": 59778,
+    "native_ticks_per_second_millionths": 2391131,
+    "seeds": [
+      {
+        "seed": 104729,
+        "decisions": 1,
+        "native_ticks": 40,
+        "wall_micros": 16058789
+      },
+      {
+        "seed": 130363,
+        "decisions": 1,
+        "native_ticks": 40,
+        "wall_micros": 16147491
+      },
+      {
+        "seed": 155921,
+        "decisions": 1,
+        "native_ticks": 40,
+        "wall_micros": 15859455
+      },
+      {
+        "seed": 181081,
+        "decisions": 1,
+        "native_ticks": 40,
+        "wall_micros": 15878462
+      }
+    ]
+  },
+  "determinism": {
+    "partition": "Seed index i is assigned to worker i modulo worker count.",
+    "aggregation": "Worker results are indexed and sorted by original seed index before report construction.",
+    "source_validation": "Every worker must produce the identical initial FactSnapshot and root checkpoint digest before evaluation begins."
+  },
+  "timing_scope": "Campaign wall time begins before configuration and execution-binding validation and includes repository artifact hashing, worker launch, initial native probes, seed evaluation, per-seed persistence, and worker shutdown through report aggregation. Final report encoding and write occur after the recorded boundary.",
+  "interpretation": "The four attempt roots were created within 1.001 milliseconds; their initial probes completed within 171.671 milliseconds of one another; and all seed result writes completed within 270.139 milliseconds. This establishes real concurrent worker use. It is not the 1/2/4/8 scaling benchmark and makes no scaling-efficiency claim."
+}
