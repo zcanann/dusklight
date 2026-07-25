@@ -1514,10 +1514,18 @@ pub(crate) fn goal_conditioned_tactic_runtime(
         ));
     }
     let source_coordinate = initial_facts.player.position_f32_bits.map(f32::from_bits);
-    let tactic_targets = goal_corridor_targets(source_coordinate, target.coordinate)?;
+    let (tactic_targets, route_sequences) =
+        goal_corridor_targets(source_coordinate, target.coordinate)?;
     let maximum_ticks = goal_tactic_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
-    let catalog = goal_conditioned_route_tactic_catalog(&tactic_targets, maximum_ticks)
-        .map_err(route_error)?;
+    let route_sequence_maximum_ticks =
+        goal_route_sequence_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
+    let catalog = goal_conditioned_route_tactic_catalog(
+        &tactic_targets,
+        &route_sequences,
+        maximum_ticks,
+        route_sequence_maximum_ticks,
+    )
+    .map_err(route_error)?;
     let encoder =
         GoalConditionedTacticFeatureEncoder::new(target.coordinate).map_err(route_error)?;
     Ok(GoalConditionedTacticRuntime {
@@ -1530,7 +1538,7 @@ pub(crate) fn goal_conditioned_tactic_runtime(
 fn goal_corridor_targets(
     source: [f32; 3],
     goal: [f32; 3],
-) -> Result<Vec<[f32; 3]>, NativeTacticRouteRunError> {
+) -> Result<(Vec<[f32; 3]>, Vec<Vec<[f32; 3]>>), NativeTacticRouteRunError> {
     if source
         .iter()
         .chain(goal.iter())
@@ -1551,13 +1559,15 @@ fn goal_corridor_targets(
     let perpendicular = [-dz / distance, dx / distance];
     let mut targets = vec![goal];
     let mut identities = BTreeSet::from([goal.map(f32::to_bits)]);
+    let offsets = [-768.0_f32, -384.0, 0.0, 384.0, 768.0];
+    let mut route_sequences = vec![Vec::new(); offsets.len()];
     for fraction in [0.25_f32, 0.5, 0.75, 1.0] {
         let center = [
             source[0] + dx * fraction,
             source[1] + (goal[1] - source[1]) * fraction,
             source[2] + dz * fraction,
         ];
-        for offset in [-768.0_f32, -384.0, 0.0, 384.0, 768.0] {
+        for (lane, offset) in offsets.iter().copied().enumerate() {
             let target = [
                 center[0] + perpendicular[0] * offset,
                 center[1],
@@ -1566,9 +1576,15 @@ fn goal_corridor_targets(
             if identities.insert(target.map(f32::to_bits)) {
                 targets.push(target);
             }
+            if fraction < 1.0 {
+                route_sequences[lane].push(target);
+            }
         }
     }
-    Ok(targets)
+    for route in &mut route_sequences {
+        route.push(goal);
+    }
+    Ok((targets, route_sequences))
 }
 
 fn resolve_goal_transition_target(
@@ -1757,6 +1773,16 @@ fn goal_tactic_maximum_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunEr
     // redirect around contact geometry instead of spending half its horizon on
     // one stalled target.
     Ok((horizon / 4).clamp(1, 40))
+}
+
+fn goal_route_sequence_maximum_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunError> {
+    let horizon = u32::try_from(horizon).map_err(route_error)?;
+    if horizon == 0 {
+        return Err(route_message(
+            "goal route sequence requires a nonzero horizon",
+        ));
+    }
+    Ok((horizon / 4).clamp(1, 160))
 }
 
 fn route_tactic_reward_spec(
@@ -2113,13 +2139,16 @@ mod tests {
         assert_eq!(goal_tactic_maximum_ticks(3).unwrap(), 1);
         assert_eq!(goal_tactic_maximum_ticks(1_000).unwrap(), 40);
         assert!(goal_tactic_maximum_ticks(0).is_err());
+        assert_eq!(goal_route_sequence_maximum_ticks(160).unwrap(), 40);
+        assert_eq!(goal_route_sequence_maximum_ticks(1_000).unwrap(), 160);
+        assert!(goal_route_sequence_maximum_ticks(0).is_err());
     }
 
     #[test]
     fn goal_corridor_is_a_symmetric_start_and_goal_derived_action_basis() {
         let source = [0.0, 10.0, 0.0];
         let goal = [1000.0, 20.0, 0.0];
-        let targets = goal_corridor_targets(source, goal).unwrap();
+        let (targets, route_sequences) = goal_corridor_targets(source, goal).unwrap();
 
         assert_eq!(targets.len(), 20);
         assert_eq!(targets[0], goal);
@@ -2133,6 +2162,15 @@ mod tests {
                 .collect::<BTreeSet<_>>()
                 .len(),
             targets.len()
+        );
+        assert_eq!(route_sequences.len(), 5);
+        assert!(route_sequences.iter().all(|route| route.len() == 4));
+        assert_eq!(route_sequences[0][0], [250.0, 12.5, -768.0]);
+        assert_eq!(route_sequences[2][1], [500.0, 15.0, 0.0]);
+        assert!(
+            route_sequences
+                .iter()
+                .all(|route| route.last() == Some(&goal))
         );
         assert!(goal_corridor_targets(source, source).is_err());
     }

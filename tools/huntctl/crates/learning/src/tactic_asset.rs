@@ -888,7 +888,7 @@ fn native_requirements(tactic: &GenericTactic) -> BTreeSet<TacticObservationRequ
         ]
         .into_iter()
         .collect(),
-        GenericTactic::SeekCoordinate { .. } => {
+        GenericTactic::SeekCoordinate { .. } | GenericTactic::SeekCoordinateSequence { .. } => {
             [Requirement::PlayerPosition, Requirement::CameraYaw]
                 .into_iter()
                 .collect()

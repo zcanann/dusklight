@@ -27,6 +27,7 @@ pub const NATIVE_TACTIC_EXECUTION_SCHEMA_V1: &str = "dusklight-native-generic-ta
 pub const MINED_TACTIC_CONDITIONS_SCHEMA_V1: &str = "dusklight-mined-tactic-conditions/v1";
 pub const MAX_NATIVE_TACTIC_TICKS: u32 = 10_000;
 pub const MAX_NATIVE_TACTIC_ACTORS: usize = 4_096;
+pub const MAX_SEEK_COORDINATES: usize = 64;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -45,6 +46,12 @@ pub enum GenericTactic {
     SeekCoordinate {
         coordinate_f32_bits: [u32; 3],
         tolerance_f32_bits: u32,
+        magnitude: u8,
+    },
+    SeekCoordinateSequence {
+        coordinates_f32_bits: Vec<[u32; 3]>,
+        intermediate_tolerance_f32_bits: u32,
+        final_tolerance_f32_bits: u32,
         magnitude: u8,
     },
     SeekActor {
@@ -480,6 +487,21 @@ impl NativeGenericTacticPlan {
                     && positive(*tolerance_f32_bits)
                     && magnitude(*value)
             }
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits,
+                intermediate_tolerance_f32_bits,
+                final_tolerance_f32_bits,
+                magnitude: value,
+            } => {
+                !coordinates_f32_bits.is_empty()
+                    && coordinates_f32_bits.len() <= MAX_SEEK_COORDINATES
+                    && coordinates_f32_bits
+                        .iter()
+                        .all(|coordinate| finite_bits3(*coordinate))
+                    && positive(*intermediate_tolerance_f32_bits)
+                    && positive(*final_tolerance_f32_bits)
+                    && magnitude(*value)
+            }
             GenericTactic::SeekActor {
                 target,
                 tolerance_f32_bits,
@@ -586,6 +608,33 @@ impl NativeGenericTacticPlan {
                     OptionParameter::Unsigned(u64::from(*magnitude)),
                 );
                 OptionType::Move
+            }
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits,
+                intermediate_tolerance_f32_bits,
+                final_tolerance_f32_bits,
+                magnitude,
+            } => {
+                parameters.insert(
+                    "coordinates".into(),
+                    OptionParameter::Text(
+                        serde_json::to_string(coordinates_f32_bits)
+                            .map_err(|error| NativeTacticError::Serialization(error.to_string()))?,
+                    ),
+                );
+                parameters.insert(
+                    "intermediate_tolerance".into(),
+                    OptionParameter::F32Bits(*intermediate_tolerance_f32_bits),
+                );
+                parameters.insert(
+                    "final_tolerance".into(),
+                    OptionParameter::F32Bits(*final_tolerance_f32_bits),
+                );
+                parameters.insert(
+                    "magnitude".into(),
+                    OptionParameter::Unsigned(u64::from(*magnitude)),
+                );
+                OptionType::Custom("seek_coordinate_sequence".into())
             }
             GenericTactic::SeekActor {
                 target,
@@ -791,6 +840,7 @@ pub struct NativeGenericTacticStepper {
     next_tick: u32,
     previous_observation: Option<NativeTacticObservation>,
     prior_lane_frame: Option<f32>,
+    coordinate_index: usize,
     stopped: bool,
 }
 
@@ -802,6 +852,7 @@ impl NativeGenericTacticStepper {
             next_tick: 0,
             previous_observation: None,
             prior_lane_frame: None,
+            coordinate_index: 0,
             stopped: false,
         })
     }
@@ -836,6 +887,7 @@ impl NativeGenericTacticStepper {
             &observation,
             local_tick,
             &mut self.prior_lane_frame,
+            &mut self.coordinate_index,
             &mut query,
         )?;
         query.target_reached = reached;
@@ -900,6 +952,7 @@ fn pad_for(
     observation: &NativeTacticObservation,
     local_tick: u32,
     prior_lane_frame: &mut Option<f32>,
+    coordinate_index: &mut usize,
     query: &mut NativeTacticQueryRecord,
 ) -> Result<(RawPadState, bool), NativeTacticError> {
     let player = bits3(observation.player_position_f32_bits);
@@ -958,6 +1011,38 @@ fn pad_for(
                 player,
                 bits3(*coordinate_f32_bits),
                 f32::from_bits(*tolerance_f32_bits),
+                *magnitude,
+                observation,
+                query,
+            )
+        }
+        GenericTactic::SeekCoordinateSequence {
+            coordinates_f32_bits,
+            intermediate_tolerance_f32_bits,
+            final_tolerance_f32_bits,
+            magnitude,
+        } => {
+            query
+                .queried_fields
+                .extend(["player_position".into(), "camera_yaw".into()]);
+            query.player_position_f32_bits = Some(observation.player_position_f32_bits);
+            query.camera_yaw_radians_f32_bits = observation.camera_yaw_radians_f32_bits;
+            let intermediate_tolerance = f32::from_bits(*intermediate_tolerance_f32_bits);
+            while *coordinate_index + 1 < coordinates_f32_bits.len()
+                && planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index]))
+                    <= intermediate_tolerance
+            {
+                *coordinate_index += 1;
+            }
+            let final_coordinate = *coordinate_index + 1 == coordinates_f32_bits.len();
+            seek_pad(
+                player,
+                bits3(coordinates_f32_bits[*coordinate_index]),
+                if final_coordinate {
+                    f32::from_bits(*final_tolerance_f32_bits)
+                } else {
+                    intermediate_tolerance
+                },
                 *magnitude,
                 observation,
                 query,
@@ -1091,6 +1176,10 @@ fn seek_pad(
         },
         false,
     ))
+}
+
+fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
+    (right[0] - left[0]).hypot(right[2] - left[2])
 }
 
 fn target_actor<'a>(
@@ -1425,6 +1514,37 @@ mod tests {
             .execution
             .validate_against_tape(&result.tape)
             .unwrap();
+    }
+
+    #[test]
+    fn coordinate_sequence_advances_without_exposing_private_state() {
+        let plan = NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits: vec![
+                    [1.0_f32.to_bits(), 0.0_f32.to_bits(), 0.0_f32.to_bits()],
+                    [3.0_f32.to_bits(), 0.0_f32.to_bits(), 0.0_f32.to_bits()],
+                ],
+                intermediate_tolerance_f32_bits: 0.25_f32.to_bits(),
+                final_tolerance_f32_bits: 0.25_f32.to_bits(),
+                magnitude: 100,
+            },
+            8,
+        );
+        let observations = [
+            observation(0, [0.0, 0.0, 0.0]),
+            observation(1, [1.0, 0.0, 0.0]),
+            observation(2, [2.0, 0.0, 0.0]),
+            observation(3, [3.0, 0.0, 0.0]),
+        ];
+        let (frames, queries, reason) = realize(&plan, &observations).unwrap();
+        assert_eq!(reason, OptionEndReason::Terminated);
+        assert_eq!(frames.len(), 4);
+        assert_eq!(frames[0].pads[0].stick_x, -100);
+        assert_eq!(frames[1].pads[0].stick_x, -100);
+        assert_eq!(frames[3].pads[0].stick_x, 0);
+        assert!(!queries[0].target_reached);
+        assert!(!queries[1].target_reached);
+        assert!(queries[3].target_reached);
     }
 
     #[test]

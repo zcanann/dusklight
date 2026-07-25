@@ -150,6 +150,13 @@ pub fn choose_tactic_with_state_untried(
 }
 
 fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&OptionActionDescriptor> {
+    let route_sequences = unsupported
+        .iter()
+        .filter(|descriptor| descriptor.parameters.contains_key("coordinates"))
+        .collect::<Vec<_>>();
+    if !route_sequences.is_empty() {
+        return route_sequences;
+    }
     let navigation = unsupported
         .iter()
         .filter(|descriptor| {
@@ -526,5 +533,24 @@ mod tests {
         .unwrap();
         assert_eq!(selected.descriptor, locally_untried);
         assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
+    }
+
+    #[test]
+    fn bounded_coordinate_sequences_are_tried_before_atomic_navigation_probes() {
+        let mut route = descriptor(
+            "route",
+            OptionType::Custom("seek_coordinate_sequence".into()),
+        );
+        route
+            .parameters
+            .insert("coordinates".into(), OptionParameter::Text("[]".into()));
+        let mut coordinate = descriptor("coordinate", OptionType::Move);
+        coordinate.parameters.insert(
+            "coordinate".into(),
+            OptionParameter::Vec3F32Bits([0.0_f32.to_bits(); 3]),
+        );
+        let unsupported = [coordinate, route.clone()];
+        let prioritized = prioritized_unsupported(&unsupported);
+        assert_eq!(prioritized, vec![&route]);
     }
 }

@@ -170,14 +170,47 @@ pub fn default_route_tactic_catalog() -> Result<TacticAssetCatalog, TacticAssetE
 /// typed action schema seen by the learner.
 pub fn goal_conditioned_route_tactic_catalog(
     targets: &[[f32; 3]],
+    route_sequences: &[Vec<[f32; 3]>],
     maximum_ticks: u32,
+    route_sequence_maximum_ticks: u32,
 ) -> Result<TacticAssetCatalog, TacticAssetError> {
-    if targets.is_empty() || targets.len() > MAX_GOAL_SEEK_TARGETS || maximum_ticks == 0 {
+    if targets.is_empty()
+        || targets.len() > MAX_GOAL_SEEK_TARGETS
+        || route_sequences.len() > MAX_GOAL_SEEK_TARGETS
+        || maximum_ticks == 0
+        || route_sequence_maximum_ticks < maximum_ticks
+    {
         return Err(TacticAssetError::InvalidAsset(
             "goal seek targets or duration are invalid".into(),
         ));
     }
     let mut entries = default_route_tactic_catalog()?.entries().to_vec();
+    for (index, coordinates) in route_sequences.iter().enumerate() {
+        if coordinates.is_empty()
+            || coordinates.len() > MAX_GOAL_SEEK_TARGETS
+            || coordinates.iter().flatten().any(|value| !value.is_finite())
+        {
+            return Err(TacticAssetError::InvalidAsset(
+                "goal seek route sequence is invalid".into(),
+            ));
+        }
+        push(
+            &mut entries,
+            format!("goal.seek.route.{index:02}"),
+            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+                GenericTactic::SeekCoordinateSequence {
+                    coordinates_f32_bits: coordinates
+                        .iter()
+                        .map(|coordinate| coordinate.map(f32::to_bits))
+                        .collect(),
+                    intermediate_tolerance_f32_bits: INTERMEDIATE_GOAL_SEEK_TOLERANCE.to_bits(),
+                    final_tolerance_f32_bits: 0.0_f32.to_bits(),
+                    magnitude: 127,
+                },
+                route_sequence_maximum_ticks,
+            )),
+        )?;
+    }
     for (index, coordinate) in targets.iter().copied().enumerate() {
         if coordinate.iter().any(|value| !value.is_finite()) {
             return Err(TacticAssetError::InvalidAsset(
@@ -292,8 +325,28 @@ mod tests {
     fn goal_conditioned_catalog_exposes_derived_seek_targets_as_ordinary_actions() {
         let goal = [-1842.0, 717.0, -4739.0];
         let waypoint = [-900.0, 750.0, -3600.0];
-        let catalog = goal_conditioned_route_tactic_catalog(&[goal, waypoint], 160).unwrap();
-        assert_eq!(catalog.entries().len(), DEFAULT_ROUTE_TACTIC_COUNT + 2);
+        let catalog = goal_conditioned_route_tactic_catalog(
+            &[goal, waypoint],
+            &[vec![waypoint, goal]],
+            160,
+            640,
+        )
+        .unwrap();
+        assert_eq!(catalog.entries().len(), DEFAULT_ROUTE_TACTIC_COUNT + 3);
+        assert!(matches!(
+            catalog.entry("goal.seek.route.00").unwrap().source(),
+            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan {
+                tactic: GenericTactic::SeekCoordinateSequence {
+                    coordinates_f32_bits,
+                    ..
+                },
+                maximum_ticks: 640,
+                ..
+            }) if coordinates_f32_bits
+                .iter()
+                .map(|coordinate| coordinate.map(f32::from_bits))
+                .collect::<Vec<_>>() == vec![waypoint, goal]
+        ));
         let goal_entry = catalog.entry("goal.seek.coordinate.00").unwrap();
         assert_eq!(goal_entry.description().duration.maximum_ticks, 160);
         assert!(matches!(
@@ -327,7 +380,27 @@ mod tests {
 
     #[test]
     fn goal_conditioned_catalog_rejects_missing_or_non_finite_targets() {
-        assert!(goal_conditioned_route_tactic_catalog(&[], 160).is_err());
-        assert!(goal_conditioned_route_tactic_catalog(&[[f32::NAN, 0.0, 0.0]], 160).is_err());
+        assert!(goal_conditioned_route_tactic_catalog(&[], &[], 160, 640).is_err());
+        assert!(
+            goal_conditioned_route_tactic_catalog(&[[f32::NAN, 0.0, 0.0]], &[], 160, 640).is_err()
+        );
+        assert!(
+            goal_conditioned_route_tactic_catalog(
+                &[[0.0, 0.0, 1.0]],
+                &[vec![[f32::NAN, 0.0, 0.0]]],
+                160,
+                640,
+            )
+            .is_err()
+        );
+        assert!(
+            goal_conditioned_route_tactic_catalog(
+                &[[0.0, 0.0, 1.0]],
+                &[vec![[0.0, 0.0, 1.0]]],
+                160,
+                40,
+            )
+            .is_err()
+        );
     }
 }
