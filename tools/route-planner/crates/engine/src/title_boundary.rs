@@ -17,8 +17,8 @@ use crate::state::{
     SceneLocation, SemanticLifetime, SerializationOwner, StateComponent, StateValue,
 };
 use crate::transition::{
-    ActivationContract, CandidateTransition, ComponentFieldTarget, MECHANICS_CATALOG_SCHEMA,
-    Goal, MechanicsCatalog, SaveProjectionOperation, StateOperation, TransitionKind,
+    ActivationContract, CandidateTransition, ComponentFieldTarget, Goal, MECHANICS_CATALOG_SCHEMA,
+    MechanicsCatalog, SaveProjectionOperation, StateOperation, TransitionKind,
 };
 use std::collections::BTreeMap;
 
@@ -44,8 +44,7 @@ const RETURN_PLACE_COMPONENT: &str = "return-place";
 const ACTIVE_VIBRATION_COMPONENT: &str = "session.active-vibration";
 const SAVE_STAGE_DISPLAY_COMPONENT: &str = "session.save-stage-display";
 const FILE_SELECT_BUFFER_OWNER_PREFIX: &str = "file-select-buffer.slot";
-pub const GZ2E01_UNSAVED_FILE_ZERO_GOAL_ID: &str =
-    "goal.gz2e01.unsaved-file-zero-world-active";
+pub const GZ2E01_UNSAVED_FILE_ZERO_GOAL_ID: &str = "goal.gz2e01.unsaved-file-zero-world-active";
 
 const ITEM_NONE: u8 = 0xff;
 const ITEM_HOOKSHOT: u8 = 0x44;
@@ -186,26 +185,27 @@ pub fn gz2e01_reset_to_opening_mechanics(
             note: "GZ2E01 process audit separates a submitted scene request from the scheduler-observed opening/name process create phase; these transitions record those independently observed activations.".into(),
         }],
     };
-    let process_component = |id: &str,
-                             component_kind: ComponentKind,
-                             fields: BTreeMap<String, StateValue>| StateComponent {
-        id: id.into(),
-        component_kind,
-        payload: ComponentPayload::Structured { fields },
-        binding: ComponentBinding::Session {
-            session_id: "process".into(),
-        },
-        lifetime: SemanticLifetime::Session,
-        serialization_owner: SerializationOwner::None,
-        provenance: vec![ComponentProvenance {
-            source_kind: ProvenanceSourceKind::TraceObservation,
-            source_id: "observation.gz2e01-process-activation".into(),
-            source_sha256: Some(parse_digest(
-                "f095894aabc198c068ee0ac9872f6c277c0e035b36c4d29d1f896e7c2eb0fe4b",
-            )),
-            transition_id: None,
-        }],
-    };
+    let process_component =
+        |id: &str, component_kind: ComponentKind, fields: BTreeMap<String, StateValue>| {
+            StateComponent {
+                id: id.into(),
+                component_kind,
+                payload: ComponentPayload::Structured { fields },
+                binding: ComponentBinding::Session {
+                    session_id: "process".into(),
+                },
+                lifetime: SemanticLifetime::Session,
+                serialization_owner: SerializationOwner::None,
+                provenance: vec![ComponentProvenance {
+                    source_kind: ProvenanceSourceKind::TraceObservation,
+                    source_id: "observation.gz2e01-process-activation".into(),
+                    source_sha256: Some(parse_digest(
+                        "f095894aabc198c068ee0ac9872f6c277c0e035b36c4d29d1f896e7c2eb0fe4b",
+                    )),
+                    transition_id: None,
+                }],
+            }
+        };
     let opening_process_activation_transition = CandidateTransition {
         id: "transition.gz2e01.observe-opening-phase-4".into(),
         label: "Observe opening process activation at phase 4".into(),
@@ -241,10 +241,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
                     component: process_component(
                         OPENING_PROCESS_CONTROL_COMPONENT,
                         ComponentKind::Session,
-                        BTreeMap::from([(
-                            "phase".into(),
-                            StateValue::Text("phase_4".into()),
-                        )]),
+                        BTreeMap::from([("phase".into(), StateValue::Text("phase_4".into()))]),
                     ),
                 },
                 StateOperation::Initialize {
@@ -743,10 +740,7 @@ pub fn gz2e01_reset_to_opening_mechanics(
                 effects: vec![StateOperation::WriteFields {
                     component_id: NAME_SCENE_CONTROL_COMPONENT.into(),
                     fields: BTreeMap::from([
-                        (
-                            "selected_entry_kind".into(),
-                            StateValue::Text("new".into()),
-                        ),
+                        ("selected_entry_kind".into(), StateValue::Text("new".into())),
                         ("selected_index_raw".into(), StateValue::Unsigned(index)),
                     ]),
                 }],
