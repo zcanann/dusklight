@@ -1236,7 +1236,6 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "</span>${projectBootIcon(project)}<span class=\"project-label\">",
         "workspaceRoot=groups.some(group=>group.id===WORKSPACE_ROOT)?WORKSPACE_ROOT:null",
         "This predicate source belongs only to this goal",
-        "No predicate is authored for this segment yet.",
         "data-create-predicate",
         "id=\"predicateIdentity\"",
         "id=\"predicateGoal\"",
@@ -1310,8 +1309,9 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "selection:{kind,id}",
         "const stop=segment?{kind:'segment',segment:id}",
         "goalDetail(segment.id",
-        "optimizationDetail(segment.id)",
-        "generatedDetail(segment)",
+        "Completion predicates",
+        "Observed after input frame",
+        "input frames",
         "Generated candidate",
         "Ephemeral campaign evidence",
         "View campaign request",
@@ -1392,7 +1392,6 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
         "Blocked:",
         "segment.goal_proofs",
         "segment.option_visualization",
-        "optionVisualization(segment)",
         "gameplayThumbnail(segment)",
         "Option execution overlay",
         "aria-label=\"Option intervals\"",
@@ -1438,8 +1437,11 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     assert!(!html.contains("Move to folder (for example routes/"));
     assert!(html.contains("workspaceNodeSelection.kind==='folder'&&graph.projects.groups.some"));
     assert!(
-        html.contains("${segmentActions(segment)}</div>${generatedDetail(segment)}${goalDetail")
+        html.contains("${segmentActions(segment)}</div>${goalDetail(segment.id")
     );
+    assert!(!html.contains("${generatedDetail(segment)}"));
+    assert!(!html.contains("${optimizationDetail(segment.id)}"));
+    assert!(!html.contains("${optionVisualization(segment)}"));
     assert!(!html.contains("${segmentActions(segment)}</section>"));
 }
 

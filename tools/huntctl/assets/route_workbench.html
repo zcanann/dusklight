@@ -106,6 +106,11 @@
     .advanced { margin-top:10px; color:var(--muted); font-size:11px; }
     .advanced summary { cursor:pointer; }
     .advanced .predicate { margin-top:8px; }
+    .completion-list { display:grid; gap:7px; }
+    .completion-row { display:flex; align-items:center; gap:10px; min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:6px; background:#0e131b; }
+    .completion-copy { min-width:0; flex:1; }
+    .completion-copy strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11px; }
+    .completion-copy span { display:block; margin-top:2px; color:var(--muted); font-size:9px; }
     .knowledge-graph { display:block; width:100%; min-height:220px; border:1px solid var(--line); border-radius:6px; background:#090d13; }
     .knowledge-edge { stroke:#344154; stroke-width:1.2; opacity:.78; }
     .knowledge-node { fill:#64748b; stroke:#0b0e13; stroke-width:2; }
@@ -417,7 +422,12 @@
     const compareDrafts = (a,b) => (a.created_unix_ms??0)-(b.created_unix_ms??0)||a.id.localeCompare(b.id);
     const draftsUnder = (kind,id) => graph.drafts.filter(draft=>draft.parent?.kind===kind&&draft.parent?.id===id).sort(compareDrafts);
     const childSegments = id => graph.segments.filter(segment=>segment.parent===id).sort((a,b)=>a.id.localeCompare(b.id));
-    const segmentName = id => { const segment=graph.segments.find(item=>item.id===id); return segment?.name||label(id); };
+    const segmentName = id => {
+      const segment=graph.segments.find(item=>item.id===id);
+      const name=segment?.name||label(id);
+      const frameSuffix=name.match(/^(.*?)\s+(\d+)f$/i);
+      return frameSuffix&&segment?.frame_count!=null&&Number(frameSuffix[2])!==Number(segment.frame_count)?frameSuffix[1].replace(/([a-z])([A-Z])/g,'$1 $2'):name;
+    };
     const workspaceEntry = () => graph?.projects?.entries?.find(item=>item.id===workspaceSelection)||null;
     const standaloneWorkspaceEntry = () => { const entry=workspaceEntry(); return entry&&entry.kind!=='timeline'?entry:null; };
     const projectBootIcon=project=>{
@@ -633,11 +643,9 @@
       occurrenceIndex.set(occurrence,{kind:'segment',id:segment.id,chain:nextChain});
       const outgoing=childSegments(segment.id);
       const drafts=draftsUnder('segment',segment.id);
-      const score=segment.first_hit_tick??segment.ticks;
       const state=(segment.error||segment.option_diagnostic_error)?'bad':segment.playable?'ok':'warn';
       const children=[...outgoing.map(child=>renderPlayableSegmentNode(child,next,nextChain)),...drafts.map(draft=>renderDraftNode(draft,next,nextChain))].filter(Boolean);
-      const optionCount=(segment.option_visualization||[]).length;
-      return {kind:'segment',id:segment.id,occurrence,key:occurrence,name:segmentName(segment.id),thumbnail:segment.thumbnail,tail:`${score!=null?`<span>${escapeHtml(score)}t</span>`:''}${optionCount?`<span>${optionCount} opt</span>`:''}<span class="dot ${state}"></span>`,hasChildren:outgoing.length>0||drafts.length>0,children};
+      return {kind:'segment',id:segment.id,occurrence,key:occurrence,name:segmentName(segment.id),thumbnail:segment.thumbnail,tail:`${segment.frame_count!=null?`<span>${escapeHtml(segment.frame_count)}f</span>`:''}<span class="dot ${state}"></span>`,hasChildren:outgoing.length>0||drafts.length>0,children};
     }
     function structuralChildren(kind,id) {
       return kind==='segment'?[...childSegments(id).map(item=>['segment',item.id]),...draftsUnder('segment',id).map(item=>['draft',item.id])]:draftsUnder('draft',id).map(item=>['draft',item.id]);
@@ -848,8 +856,14 @@
     function goalDetail(segmentId,proofs=[]) {
       const goals=[...goalsFor(segmentId)];
       proofs.forEach(proof=>{const goal=graph.goals.find(item=>item.id===proof.goal);if(goal&&!goals.some(item=>item.id===goal.id))goals.push(goal);});
-      if(!goals.length)return `<div class="detail-section"><h3>Goal</h3><div class="fields">${field('Predicate','None')}</div><div class="empty">No predicate is authored for this segment yet.</div><div class="actions"><button class="edit-predicate" type="button" data-create-predicate="${escapeHtml(segmentId)}">Add predicate…</button></div></div>`;
-      return goals.map(goal=>{const predicate=predicateFor(goal);const proof=proofs.find(item=>item.goal===goal.id);return `<div class="detail-section"><h3>Goal · ${escapeHtml(label(goal.id))}</h3><div class="fields">${field('Reference segment',segmentName(goal.segment))}${field('Predicate',goal.predicate)}${proof?field('Proof',proof.status):''}${proof?.first_hit_tick!=null?field('First hit',`${proof.first_hit_tick} ticks`):''}${predicate?field('Evaluation',`${label(predicate.phase)} · stable ${predicate.stable_ticks}`):''}${predicate?field('Definition',predicate.definition_sha256,true):''}</div>${predicate?`<details class="advanced"><summary>Predicate structure</summary><div class="predicate">${escapeHtml(JSON.stringify(predicate.expression,null,2))}</div></details>`:''}<div class="actions"><button class="edit-predicate" type="button" data-edit-predicate="${escapeHtml(goal.id)}">Edit predicate…</button></div></div>`;}).join('');
+      if(!goals.length)return '';
+      const rows=goals.map(goal=>{
+        const proof=proofs.find(item=>item.goal===goal.id);
+        const status=proof?.status||'unproved';
+        const observation=proof?.first_hit_tick==null?'Not observed in this recording':`Observed after input frame ${proof.first_hit_tick}`;
+        return `<article class="completion-row"><div class="completion-copy"><strong>${escapeHtml(label(goal.id))}</strong><span>Completion predicate · ${escapeHtml(observation)}</span></div><span class="badge proof-${escapeHtml(status)}">${escapeHtml(label(status))}</span></article>`;
+      }).join('');
+      return `<div class="detail-section"><h3>Completion predicates</h3><div class="completion-list">${rows}</div></div>`;
     }
     function tacticStateSummary(state) {
       if(!state)return 'Unavailable';
@@ -1018,7 +1032,7 @@
         }
       } else if(selection.kind==='segment') {
         const segment=graph.segments.find(item=>item.id===selection.id);
-        if(segment){const artifact=segment.artifact||{};const score=segment.first_hit_tick??segment.ticks;html=`<section class="property-summary"><div class="detail-kicker">Segment</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${gameplayThumbnail(segment)}<div class="badges">${score!=null?`<span class="badge score">${escapeHtml(score)} tick score</span>`:''}${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Frames',segment.frame_count)}${field('Profile',segment.profile)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${generatedDetail(segment)}${goalDetail(segment.id,segment.goal_proofs||[])}${optimizationDetail(segment.id)}${optionVisualization(segment)}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
+        if(segment){const artifact=segment.artifact||{};html=`<section class="property-summary"><div class="detail-kicker">Recording</div><div class="detail-title">${escapeHtml(segmentName(segment.id))}</div><div class="detail-subtitle">Continues from ${escapeHtml(segment.parent?segmentName(segment.parent):'Boot')}.</div>${gameplayThumbnail(segment)}<div class="badges"><span class="badge">${escapeHtml(segment.frame_count??'—')} input frames</span>${(segment.goal_proofs||[]).map(proof=>`<span class="badge proof-${escapeHtml(proof.status)}">${escapeHtml(label(proof.goal))} · ${escapeHtml(label(proof.status))}</span>`).join('')}</div></section><div class="property-content"><div class="detail-section"><h3>Boundary</h3><div class="fields">${field('Input',segment.start_fingerprint,true)}${field('Output',segment.boundary_fingerprint,true)}${field('Input frames',segment.frame_count)}${field('Artifact',`${artifact.kind||'artifact'} · ${artifact.value||'—'}`)}</div>${segmentActions(segment)}</div>${goalDetail(segment.id,segment.goal_proofs||[])}${segment.error?`<div class="detail-section error-note">${escapeHtml(segment.error)}</div>`:''}</div>`;}
       } else if(selection.kind==='draft') {
         const draft=graph.drafts.find(item=>item.id===selection.id);
         if(draft){const parent=draft.parent||{};html=`<section class="property-summary"><div class="detail-kicker">Draft continuation</div><div class="detail-title">${escapeHtml(draft.label||draft.id)}</div>${draft.thumbnail?`<img class="detail-thumbnail" src="${escapeHtml(draft.thumbnail)}" alt="Terminal frame">`:''}<div class="badges"><span class="badge ${draft.playable?'ok':'bad'}">${escapeHtml(label(draft.status))}</span><span class="badge">${escapeHtml(draft.verification)}</span></div><div class="actions"><button class="play" type="button" data-play-kind="draft" data-play-mode="playback" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Playback</button><button class="play" type="button" data-play-kind="draft" data-play-mode="resume_accelerated" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Resume (accelerated)</button><button class="record" type="button" data-record-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>Record child</button><button class="capture" type="button" data-capture-kind="draft" data-id="${escapeHtml(draft.id)}" ${draft.playable?'':'disabled'}>${draft.thumbnail?'Recapture thumbnail':'Capture thumbnail'}</button><button class="reveal" type="button" data-reveal-kind="draft" data-id="${escapeHtml(draft.id)}">View folder</button><button class="rename" type="button" data-rename-draft="${escapeHtml(draft.id)}">Rename…</button><button class="delete" type="button" data-delete-draft="${escapeHtml(draft.id)}">Delete…</button></div></section><div class="property-content"><div class="detail-section"><h3>Draft</h3><div class="fields">${field('Frames',draft.frame_count)}${field('Parent',`${parent.kind||'unknown'} · ${parent.id||'—'}`)}${field('Endpoint',draft.endpoint_kind)}${field('Tape SHA-256',draft.tape_sha256,true)}${field('ID',draft.id,true)}</div></div>${draft.error?`<div class="detail-section error-note">${escapeHtml(draft.error)}</div>`:''}</div>`;}
