@@ -41,14 +41,6 @@ must not define privileged actions, observations, state, or terminals.
   orchestration, and persistence time. Do not hide overhead outside the
   measured boundary.
 
-## P0 - Remove storage and orchestration from the hot path
-
-Acceptance:
-
-- No operational tactic-Q checkpoint or hot-path journal is JSON.
-- Evidence projection and persistence no longer dominate campaign wall time.
-- Resume and final cold-replay identities remain exact.
-
 ## P1 - Use the simulator's available throughput
 
 - [ ] Make tactic-route honor its configured worker count instead of launching
