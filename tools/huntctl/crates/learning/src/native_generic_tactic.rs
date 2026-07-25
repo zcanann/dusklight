@@ -30,6 +30,7 @@ pub const MAX_NATIVE_TACTIC_ACTORS: usize = 4_096;
 pub const MAX_SEEK_COORDINATES: usize = 64;
 const SEEK_SEQUENCE_STATIONARY_TICKS: u32 = 16;
 const SEEK_SEQUENCE_STATIONARY_DISTANCE: f32 = 0.01;
+const SEEK_SEQUENCE_STALL_GRACE_TICKS: u32 = 40;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -913,7 +914,8 @@ impl NativeGenericTacticStepper {
         query.target_reached = reached;
         self.next_tick += 1;
         self.previous_observation = Some(observation);
-        let stalled = self.stationary_ticks >= SEEK_SEQUENCE_STATIONARY_TICKS;
+        let stalled = self.next_tick >= SEEK_SEQUENCE_STALL_GRACE_TICKS
+            && self.stationary_ticks >= SEEK_SEQUENCE_STATIONARY_TICKS;
         let end_reason = if reached && self.next_tick >= self.plan.minimum_ticks {
             Some(OptionEndReason::Terminated)
         } else if stalled && self.next_tick >= self.plan.minimum_ticks {
@@ -1625,7 +1627,7 @@ mod tests {
         let (frames, queries, reason) = realize(&plan, &observations).unwrap();
 
         assert_eq!(reason, OptionEndReason::Completed);
-        assert_eq!(frames.len(), SEEK_SEQUENCE_STATIONARY_TICKS as usize + 1);
+        assert_eq!(frames.len(), SEEK_SEQUENCE_STALL_GRACE_TICKS as usize);
         assert!(queries.iter().all(|query| !query.target_reached));
     }
 
