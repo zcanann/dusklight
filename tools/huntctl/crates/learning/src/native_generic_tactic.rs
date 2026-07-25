@@ -28,6 +28,8 @@ pub const MINED_TACTIC_CONDITIONS_SCHEMA_V1: &str = "dusklight-mined-tactic-cond
 pub const MAX_NATIVE_TACTIC_TICKS: u32 = 10_000;
 pub const MAX_NATIVE_TACTIC_ACTORS: usize = 4_096;
 pub const MAX_SEEK_COORDINATES: usize = 64;
+const SEEK_SEQUENCE_STATIONARY_TICKS: u32 = 16;
+const SEEK_SEQUENCE_STATIONARY_DISTANCE: f32 = 0.01;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -841,6 +843,7 @@ pub struct NativeGenericTacticStepper {
     previous_observation: Option<NativeTacticObservation>,
     prior_lane_frame: Option<f32>,
     coordinate_index: usize,
+    stationary_ticks: u32,
     stopped: bool,
 }
 
@@ -853,6 +856,7 @@ impl NativeGenericTacticStepper {
             previous_observation: None,
             prior_lane_frame: None,
             coordinate_index: 0,
+            stationary_ticks: 0,
             stopped: false,
         })
     }
@@ -881,6 +885,22 @@ impl NativeGenericTacticStepper {
             ));
         }
         let local_tick = self.next_tick;
+        if matches!(
+            self.plan.tactic,
+            GenericTactic::SeekCoordinateSequence { .. }
+        ) {
+            self.stationary_ticks = match &self.previous_observation {
+                Some(previous)
+                    if planar_distance(
+                        bits3(previous.player_position_f32_bits),
+                        bits3(observation.player_position_f32_bits),
+                    ) <= SEEK_SEQUENCE_STATIONARY_DISTANCE =>
+                {
+                    self.stationary_ticks.saturating_add(1)
+                }
+                _ => 0,
+            };
+        }
         let mut query = query_base(local_tick, &observation);
         let (pad, reached) = pad_for(
             &self.plan,
@@ -893,8 +913,11 @@ impl NativeGenericTacticStepper {
         query.target_reached = reached;
         self.next_tick += 1;
         self.previous_observation = Some(observation);
+        let stalled = self.stationary_ticks >= SEEK_SEQUENCE_STATIONARY_TICKS;
         let end_reason = if reached && self.next_tick >= self.plan.minimum_ticks {
             Some(OptionEndReason::Terminated)
+        } else if stalled && self.next_tick >= self.plan.minimum_ticks {
+            Some(OptionEndReason::Completed)
         } else if self.next_tick == self.plan.maximum_ticks {
             Some(OptionEndReason::MaximumDuration)
         } else {
@@ -1579,6 +1602,31 @@ mod tests {
         assert_eq!(frames[0].pads[0].stick_x, -100);
         assert!(!queries[0].target_reached);
         assert!(queries[2].target_reached);
+    }
+
+    #[test]
+    fn coordinate_sequence_stops_after_a_bounded_stationary_window() {
+        let plan = NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits: vec![[
+                    100.0_f32.to_bits(),
+                    0.0_f32.to_bits(),
+                    0.0_f32.to_bits(),
+                ]],
+                intermediate_tolerance_f32_bits: 0.25_f32.to_bits(),
+                final_tolerance_f32_bits: 0.25_f32.to_bits(),
+                magnitude: 100,
+            },
+            64,
+        );
+        let observations = (0..64)
+            .map(|tick| observation(tick, [0.0, 0.0, 0.0]))
+            .collect::<Vec<_>>();
+        let (frames, queries, reason) = realize(&plan, &observations).unwrap();
+
+        assert_eq!(reason, OptionEndReason::Completed);
+        assert_eq!(frames.len(), SEEK_SEQUENCE_STATIONARY_TICKS as usize + 1);
+        assert!(queries.iter().all(|query| !query.target_reached));
     }
 
     #[test]

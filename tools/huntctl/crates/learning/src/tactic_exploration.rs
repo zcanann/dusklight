@@ -3,7 +3,7 @@
 use crate::artifact::Digest;
 use crate::live_tactic_catalog::LiveTacticRanking;
 use crate::option_values::OptionActionDescriptor;
-use dusklight_control::option_execution::OptionParameter;
+use dusklight_control::option_execution::{OptionParameter, OptionType};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::error::Error;
@@ -156,6 +156,21 @@ fn prioritized_unsupported(unsupported: &[OptionActionDescriptor]) -> Vec<&Optio
         .collect::<Vec<_>>();
     if !route_sequences.is_empty() {
         return route_sequences;
+    }
+    let escape_actions = unsupported
+        .iter()
+        .filter(|descriptor| {
+            matches!(
+                descriptor.option_type,
+                OptionType::Roll
+                    | OptionType::Interact
+                    | OptionType::Attack
+                    | OptionType::JumpAttack
+            )
+        })
+        .collect::<Vec<_>>();
+    if !escape_actions.is_empty() {
+        return escape_actions;
     }
     let navigation = unsupported
         .iter()
@@ -552,5 +567,21 @@ mod tests {
         let unsupported = [coordinate, route.clone()];
         let prioritized = prioritized_unsupported(&unsupported);
         assert_eq!(prioritized, vec![&route]);
+    }
+
+    #[test]
+    fn escape_actions_are_tried_before_redundant_navigation_probes() {
+        let roll = descriptor("roll", OptionType::Roll);
+        let interact = descriptor("interact", OptionType::Interact);
+        let mut coordinate = descriptor("coordinate", OptionType::Move);
+        coordinate.parameters.insert(
+            "coordinate".into(),
+            OptionParameter::Vec3F32Bits([0.0_f32.to_bits(); 3]),
+        );
+        let unsupported = [coordinate, interact.clone(), roll.clone()];
+
+        let prioritized = prioritized_unsupported(&unsupported);
+
+        assert_eq!(prioritized, vec![&interact, &roll]);
     }
 }
