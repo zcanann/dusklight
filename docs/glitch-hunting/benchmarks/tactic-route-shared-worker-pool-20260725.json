@@ -1,0 +1,128 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-shared-worker-pool/v1",
+  "date": "2026-07-25",
+  "claim": "A fixed pool of authenticated native sessions now schedules independent seed coordinators and equal-source proposal jobs concurrently. Proposal completion order does not change seeded decisions, retained tapes, or compacted journal identities.",
+  "implementation": {
+    "commit": "9a1b1b3ad5a2e92cb148266a86c76b74841080e5",
+    "binary": "tools/huntctl/target/debug/huntctl.exe",
+    "binary_sha256": "e940f38008b5ecc65a620cb619174caa05afee8b0f239fcd615445cddfe338ee",
+    "maximum_workers": 32,
+    "requested_workers_are_not_capped_by_seed_count": true,
+    "one_coordinator_per_seed": true,
+    "native_sessions_are_owned_by_pool_workers": true,
+    "proposal_results_are_collected_in_proposal_index_order": true,
+    "seed_results_are_projected_in_seed_index_order": true,
+    "native_worker_assignment_affects_result_identity": false,
+    "native_simulation_micros_semantics": "summed native worker occupancy; may exceed coordinator wall time when work overlaps"
+  },
+  "validation": {
+    "cargo_test_orchestration_native_tactic_route_runner": {
+      "passed": 20,
+      "failed": 0
+    },
+    "cargo_test_orchestration_tactic_q_campaign": {
+      "passed": 3,
+      "failed": 0
+    },
+    "cargo_test_learning_tactic_exploration": {
+      "passed": 13,
+      "failed": 0
+    },
+    "cargo_check_dusklight_huntctl": true
+  },
+  "completion_order_equivalence": {
+    "request": "routes/Glitch Exhibition/ordon-exit-approach-learning/benchmarks/ordon-exit-approach-tactic-q-discovery-v1.request.json",
+    "execution": "build/campaigns/ordon-exit-approach-second-pair-20260725/execution-v4/execution.json",
+    "seed": 104729,
+    "decisions": 1,
+    "one_worker": {
+      "output": "build/campaigns/tactic-route-shared-pool-smoke-20260725-workers-1",
+      "report_sha256": "ab13e42a72eb47dc1924b3581dadb28ae1c866d8b2cc9b1e0a28228bb5babe65",
+      "outer_wall_micros": 66267006,
+      "campaign_wall_micros": 65413068,
+      "proposal_batch_wall_micros": 15438609,
+      "native_worker_occupancy_micros": 14245605,
+      "proposal_start_order": [
+        "proposal-000 at 2026-07-25T23:15:37.9875561Z",
+        "proposal-001 at 2026-07-25T23:15:52.1633647Z",
+        "proposal-002 at 2026-07-25T23:15:52.7426501Z",
+        "proposal-003 at 2026-07-25T23:15:52.9551554Z"
+      ]
+    },
+    "four_workers": {
+      "output": "build/campaigns/tactic-route-shared-pool-smoke-20260725-workers-4",
+      "report_sha256": "f5a870ee7f07480bdaf5cf2f753e70fe98993b4aa19a41cc300fe2527fedb0e1",
+      "outer_wall_micros": 65246588,
+      "campaign_wall_micros": 65231434,
+      "proposal_batch_wall_micros": 14015332,
+      "native_worker_occupancy_micros": 14092187,
+      "proposal_start_order": [
+        "proposal-000 at 2026-07-25T23:16:44.6179703Z",
+        "proposal-001 at 2026-07-25T23:16:44.6179703Z",
+        "proposal-002 at 2026-07-25T23:16:44.6185126Z",
+        "proposal-003 at 2026-07-25T23:16:44.6185126Z"
+      ],
+      "maximum_start_spread_micros": 542
+    },
+    "semantic_result_sha256": "6ac3affc6f9aece1b637968cfb06793552551f329f68385f2b9cb72b32e66055",
+    "semantic_result_identical": true,
+    "successful_tape_sha256": "2c3f74b5da9dfcc791a8de034efe3214769dea53aaa87816c5420cb4538ccbcd",
+    "successful_tape_identical": true,
+    "compacted_decision_segment_sha256": "21a22571654885296c4b0972864313bbf86235a77d6cbce0025a49bc039910e5",
+    "compacted_decision_segment_identical": true,
+    "selected_option_id": "move.curve.clockwise.00",
+    "evaluated_realized_ticks": 100,
+    "proposal_batch_wall_speedup_millionths": 1101560,
+    "outer_wall_speedup_millionths": 1015640
+  },
+  "independent_seed_overlap": {
+    "output": "build/campaigns/tactic-route-shared-pool-two-seed-smoke-20260725",
+    "report_sha256": "cf59791a48907e32945c4ebe308abba26ecddcf75611382967680cd87b2432ac",
+    "workers": 4,
+    "seeds": [
+      104729,
+      130363
+    ],
+    "outer_wall_micros": 64574518,
+    "campaign_wall_micros": 64557732,
+    "decisions": 2,
+    "evaluated_realized_ticks": 156,
+    "proposal_count": 8,
+    "seed_104729_first_proposal_started_utc": "2026-07-25T23:18:22.9593599Z",
+    "seed_130363_first_proposal_started_utc": "2026-07-25T23:18:22.9593599Z",
+    "both_seed_primary_proposals_overlapped": true,
+    "useful_decision_rate_relative_to_one_seed_one_worker_millionths": 2052560
+  },
+  "frontier_expansion_overlap": {
+    "output": "build/campaigns/tactic-route-shared-pool-frontier-smoke-20260725",
+    "report_sha256": "89d7cc192cbc4fcde432f7bc62e624163e7bb528b434a84c04ce2e0c196fc6dd",
+    "workers": 4,
+    "seeds": [
+      130363,
+      155921
+    ],
+    "outer_wall_micros": 97306042,
+    "campaign_wall_micros": 97288955,
+    "total_decisions": 3,
+    "evaluated_realized_ticks": 218,
+    "checkpoint_branching_micros": 85207,
+    "expanded_seed": 130363,
+    "first_boundary_snapshot_sha256": "9e210ca293708b9f1699e53d4d02854e3c029515f204d1dc3452a929cfcf0ece",
+    "expanded_boundary_snapshot_sha256": "8c8c6261a64ba65a648c106f3aca92cbb208fb1bba4d4bc2e8af15ee6e30ebf7",
+    "expanded_boundary_is_distinct": true,
+    "expanded_proposal_count": 4,
+    "expanded_proposal_start_times_utc": [
+      "2026-07-25T23:20:39.8344348Z",
+      "2026-07-25T23:20:39.8344348Z",
+      "2026-07-25T23:20:39.8354419Z",
+      "2026-07-25T23:20:39.8354419Z"
+    ],
+    "maximum_start_spread_micros": 1007,
+    "all_expanded_trials_share_native_source": "620|87192dd0886f8e089a158f86ac8979eb"
+  },
+  "acceptance_status": {
+    "scheduler_task_complete": true,
+    "p1_end_to_end_tenfold_gate_met": false,
+    "reason": "The fixed startup and one 40-call progressive route proposal still dominate this small workload. The pool doubled useful decision throughput in the two-seed smoke and made proposal overlap real, but did not deliver the required order-of-magnitude end-to-end improvement."
+  }
+}
