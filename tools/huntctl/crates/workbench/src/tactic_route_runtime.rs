@@ -3,7 +3,8 @@
 use super::*;
 use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NativeTacticRouteRunConfig, run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6,
+    NativeTacticRouteRunConfig, run_native_tactic_route,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use serde_json::Value;
@@ -193,6 +194,7 @@ pub(super) fn tactic_route_learning_projection(
                     Some(schema)
                         if schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)

@@ -1436,9 +1436,7 @@ fn browser_ui_is_a_pannable_segment_graph_with_selection_details() {
     assert!(html.contains("aria-label=\"Custom boot\""));
     assert!(!html.contains("Move to folder (for example routes/"));
     assert!(html.contains("workspaceNodeSelection.kind==='folder'&&graph.projects.groups.some"));
-    assert!(
-        html.contains("${segmentActions(segment)}</div>${goalDetail(segment.id")
-    );
+    assert!(html.contains("${segmentActions(segment)}</div>${goalDetail(segment.id"));
     assert!(!html.contains("${generatedDetail(segment)}"));
     assert!(!html.contains("${optimizationDetail(segment.id)}"));
     assert!(!html.contains("${optionVisualization(segment)}"));

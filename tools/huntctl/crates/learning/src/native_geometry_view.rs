@@ -1005,6 +1005,8 @@ mod tests {
                 raw_hex: "00".repeat(32),
             }],
             exits: Vec::new(),
+            paths: Vec::new(),
+            path_points: Vec::new(),
             collisions: vec![CollisionInventoryRecord {
                 room: observation.room,
                 prism: KclInventoryPrism {

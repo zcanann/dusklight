@@ -723,6 +723,8 @@ mod tests {
                 raw_hex: "00".repeat(32),
             }],
             exits: Vec::new(),
+            paths: Vec::new(),
+            path_points: Vec::new(),
             collisions: Vec::new(),
             load_triggers: Vec::new(),
         }

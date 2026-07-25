@@ -9,7 +9,7 @@ use crate::world_geometry::{
     WorldGeometryError, query_triangle_point,
 };
 use crate::world_inventory::{
-    CollisionLoadTrigger, WORLD_INVENTORY_SCHEMA, WorldInventory, WorldInventoryError,
+    CollisionLoadTrigger, WorldInventory, WorldInventoryError, is_supported_world_inventory_schema,
 };
 use serde::Serialize;
 use sha2::{Digest as _, Sha256};
@@ -445,7 +445,7 @@ pub struct WorldSpatialIndex<'a> {
 
 impl<'a> WorldSpatialIndex<'a> {
     pub fn build(inventory: &'a WorldInventory) -> Result<Self, WorldSpatialError> {
-        if inventory.schema != WORLD_INVENTORY_SCHEMA {
+        if !is_supported_world_inventory_schema(&inventory.schema) {
             return Err(WorldSpatialError::new(format!(
                 "unsupported world inventory schema {:?}",
                 inventory.schema
@@ -1330,6 +1330,7 @@ fn component(value: Vec3, axis: usize) -> f32 {
 mod tests {
     use super::*;
     use crate::world_geometry::{CollisionCode, KclInventoryPrism, KclSourceIndices};
+    use crate::world_inventory::WORLD_INVENTORY_SCHEMA;
     use crate::world_inventory::{CollisionInventoryRecord, SourceKind, SourceScope, WorldSource};
 
     fn authored(id: &str, index: u16) -> KclAuthoredPrism {
@@ -1444,6 +1445,8 @@ mod tests {
             placements: Vec::new(),
             player_spawns: Vec::new(),
             exits: Vec::new(),
+            paths: Vec::new(),
+            path_points: Vec::new(),
             collisions,
             load_triggers: vec![trigger],
         }
@@ -1752,7 +1755,7 @@ mod tests {
     #[test]
     fn real_f_sp103_spatial_goldens_match_when_disc_is_present() {
         let stage_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../../..")
             .join("orig/GZ2E01/files/res/Stage/F_SP103");
         if !stage_dir.is_dir() {
             eprintln!("skipping F_SP103 spatial golden: original disc data is absent");

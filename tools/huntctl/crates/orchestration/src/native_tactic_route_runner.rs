@@ -16,7 +16,9 @@ use crate::tactic_q_campaign::{
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
-use dusklight_learning::default_tactic_catalog::goal_conditioned_route_tactic_catalog;
+use dusklight_learning::default_tactic_catalog::{
+    MAX_GOAL_SEEK_TARGETS, goal_conditioned_route_tactic_catalog,
+};
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
@@ -49,6 +51,7 @@ use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5: &str = "dusklight-native-tactic-route-report/v5";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6: &str = "dusklight-native-tactic-route-report/v6";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 const MAX_ROUTE_SEEDS: usize = 32;
@@ -373,7 +376,7 @@ pub fn run_native_tactic_route(
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
     let timing = aggregate_route_timing(&seed_results);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -1472,6 +1475,8 @@ pub struct NativeTacticGoalTargetReport {
     pub coordinate: [f32; 3],
     pub source_coordinate: [f32; 3],
     pub tactic_targets: Vec<[f32; 3]>,
+    pub route_sequences: Vec<Vec<[f32; 3]>>,
+    pub authored_route_ids: Vec<String>,
     pub supporting_load_triggers: usize,
     pub source_inventory_sha256: Digest,
     pub authored_route_coordinates_used: bool,
@@ -1482,7 +1487,10 @@ impl GoalTransitionTarget {
         &self,
         source_coordinate: [f32; 3],
         tactic_targets: Vec<[f32; 3]>,
+        route_sequences: Vec<Vec<[f32; 3]>>,
+        authored_route_ids: Vec<String>,
     ) -> NativeTacticGoalTargetReport {
+        let authored_route_coordinates_used = !authored_route_ids.is_empty();
         NativeTacticGoalTargetReport {
             source_stage: self.source_stage.clone(),
             source_room: self.source_room,
@@ -1492,9 +1500,11 @@ impl GoalTransitionTarget {
             coordinate: self.coordinate,
             source_coordinate,
             tactic_targets,
+            route_sequences,
+            authored_route_ids,
             supporting_load_triggers: self.supporting_load_triggers,
             source_inventory_sha256: self.source_inventory_sha256,
-            authored_route_coordinates_used: false,
+            authored_route_coordinates_used,
         }
     }
 }
@@ -1505,7 +1515,7 @@ pub(crate) fn goal_conditioned_tactic_runtime(
     execution: &NativeResidualExecutionBinding,
     initial_facts: &FactSnapshot,
 ) -> Result<GoalConditionedTacticRuntime, NativeTacticRouteRunError> {
-    let target = resolve_goal_transition_target(root, optimization, execution)?;
+    let (target, inventory) = resolve_goal_transition_target(root, optimization, execution)?;
     if initial_facts.world.stage != target.source_stage
         || initial_facts.world.room != target.source_room
     {
@@ -1514,8 +1524,12 @@ pub(crate) fn goal_conditioned_tactic_runtime(
         ));
     }
     let source_coordinate = initial_facts.player.position_f32_bits.map(f32::from_bits);
-    let (tactic_targets, route_sequences) =
-        goal_corridor_targets(source_coordinate, target.coordinate)?;
+    let (tactic_targets, route_sequences, authored_route_ids) = goal_route_targets(
+        source_coordinate,
+        target.coordinate,
+        target.source_room,
+        &inventory,
+    )?;
     let maximum_ticks = goal_tactic_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
     let route_sequence_maximum_ticks =
         goal_route_sequence_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
@@ -1531,7 +1545,12 @@ pub(crate) fn goal_conditioned_tactic_runtime(
     Ok(GoalConditionedTacticRuntime {
         catalog,
         encoder,
-        report: target.report(source_coordinate, tactic_targets),
+        report: target.report(
+            source_coordinate,
+            tactic_targets,
+            route_sequences,
+            authored_route_ids,
+        ),
     })
 }
 
@@ -1587,11 +1606,175 @@ fn goal_corridor_targets(
     Ok((targets, route_sequences))
 }
 
+#[derive(Clone)]
+struct AuthoredRouteCandidate {
+    identity: String,
+    coordinates: Vec<[f32; 3]>,
+    endpoint_cost: f32,
+}
+
+fn goal_route_targets(
+    source: [f32; 3],
+    goal: [f32; 3],
+    room: i8,
+    inventory: &WorldInventory,
+) -> Result<(Vec<[f32; 3]>, Vec<Vec<[f32; 3]>>, Vec<String>), NativeTacticRouteRunError> {
+    if source
+        .iter()
+        .chain(goal.iter())
+        .any(|value| !value.is_finite())
+    {
+        return Err(route_message(
+            "goal routes require finite source and target coordinates",
+        ));
+    }
+    let paths = inventory
+        .paths
+        .iter()
+        .filter(|path| path.scope.room == Some(room))
+        .map(|path| ((path.source_sha256, path.record_index), path))
+        .collect::<BTreeMap<_, _>>();
+    if paths.is_empty() {
+        let (targets, routes) = goal_corridor_targets(source, goal)?;
+        return Ok((targets, routes, Vec::new()));
+    }
+    let points = inventory
+        .path_points
+        .iter()
+        .filter(|point| point.scope.room == Some(room))
+        .fold(BTreeMap::<_, Vec<_>>::new(), |mut by_source, point| {
+            by_source
+                .entry(point.source_sha256)
+                .or_default()
+                .push(point);
+            by_source
+        });
+    let incoming = paths
+        .values()
+        .filter_map(|path| {
+            path.next_path_index
+                .map(|next| (path.source_sha256, usize::from(next)))
+        })
+        .collect::<BTreeSet<_>>();
+    let roots = paths
+        .keys()
+        .filter(|key| !incoming.contains(key))
+        .copied()
+        .collect::<Vec<_>>();
+    let direct_distance = planar_distance(source, goal);
+    let attachment_limit = (direct_distance * 0.25).max(512.0);
+    let mut candidates = Vec::new();
+    for root in roots {
+        let mut coordinates = Vec::new();
+        let mut identities = Vec::new();
+        let mut visited = BTreeSet::new();
+        let mut current = Some(root);
+        while let Some(key) = current {
+            if !visited.insert(key) {
+                return Err(route_message("authored path chain contains a cycle"));
+            }
+            let path = paths
+                .get(&key)
+                .ok_or_else(|| route_message("authored path chain references an absent path"))?;
+            let source_points = points
+                .get(&path.source_sha256)
+                .ok_or_else(|| route_message("authored path has no point table"))?;
+            let end = path
+                .first_point_index
+                .checked_add(usize::from(path.point_count))
+                .ok_or_else(|| route_message("authored path point range overflowed"))?;
+            let path_points = source_points
+                .get(path.first_point_index..end)
+                .ok_or_else(|| route_message("authored path point range is unavailable"))?;
+            for point in path_points {
+                let coordinate = [point.position.x, point.position.y, point.position.z];
+                if coordinates.last() != Some(&coordinate) {
+                    coordinates.push(coordinate);
+                }
+            }
+            identities.push(path.stable_id.as_str());
+            current = path
+                .next_path_index
+                .map(|next| (path.source_sha256, usize::from(next)));
+        }
+        if coordinates.is_empty() || coordinates.len() >= MAX_GOAL_SEEK_TARGETS {
+            continue;
+        }
+        for (orientation, mut oriented) in [
+            ("forward", coordinates.clone()),
+            ("reverse", {
+                let mut reverse = coordinates.clone();
+                reverse.reverse();
+                reverse
+            }),
+        ] {
+            let first = *oriented.first().expect("nonempty authored path");
+            let last = *oriented.last().expect("nonempty authored path");
+            let source_cost = planar_distance(source, first);
+            let goal_cost = planar_distance(last, goal);
+            if source_cost > attachment_limit || goal_cost > attachment_limit {
+                continue;
+            }
+            if last.map(f32::to_bits) != goal.map(f32::to_bits) {
+                oriented.push(goal);
+            }
+            candidates.push(AuthoredRouteCandidate {
+                identity: format!("{}:{orientation}", identities.join("+")),
+                coordinates: oriented,
+                endpoint_cost: source_cost + goal_cost,
+            });
+        }
+    }
+    candidates.sort_by(|left, right| {
+        left.endpoint_cost
+            .total_cmp(&right.endpoint_cost)
+            .then_with(|| left.identity.cmp(&right.identity))
+    });
+    candidates.dedup_by(|left, right| {
+        left.coordinates
+            .iter()
+            .map(|coordinate| coordinate.map(f32::to_bits))
+            .eq(right
+                .coordinates
+                .iter()
+                .map(|coordinate| coordinate.map(f32::to_bits)))
+    });
+    candidates.truncate(5);
+    if candidates.is_empty() {
+        let (targets, routes) = goal_corridor_targets(source, goal)?;
+        return Ok((targets, routes, Vec::new()));
+    }
+
+    let route_sequences = candidates
+        .iter()
+        .map(|candidate| candidate.coordinates.clone())
+        .collect::<Vec<_>>();
+    let authored_route_ids = candidates
+        .iter()
+        .map(|candidate| candidate.identity.clone())
+        .collect::<Vec<_>>();
+    let mut targets = vec![goal];
+    let mut target_identities = BTreeSet::from([goal.map(f32::to_bits)]);
+    for coordinate in route_sequences.iter().flatten().copied() {
+        if targets.len() == MAX_GOAL_SEEK_TARGETS {
+            break;
+        }
+        if target_identities.insert(coordinate.map(f32::to_bits)) {
+            targets.push(coordinate);
+        }
+    }
+    Ok((targets, route_sequences, authored_route_ids))
+}
+
+fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
+    (right[0] - left[0]).hypot(right[2] - left[2])
+}
+
 fn resolve_goal_transition_target(
     root: &Path,
     optimization: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
-) -> Result<GoalTransitionTarget, NativeTacticRouteRunError> {
+) -> Result<(GoalTransitionTarget, WorldInventory), NativeTacticRouteRunError> {
     let program_bytes =
         fs::read(root.join(&execution.milestone_program.path)).map_err(route_error)?;
     let decoded =
@@ -1679,16 +1862,19 @@ fn resolve_goal_transition_target(
     if coordinate.iter().any(|value| !value.is_finite()) {
         return Err(route_message("goal target centroid is non-finite"));
     }
-    Ok(GoalTransitionTarget {
-        source_stage,
-        source_room,
-        destination_stage,
-        destination_room,
-        destination_point,
-        coordinate,
-        supporting_load_triggers: collision_ids.len(),
-        source_inventory_sha256: stage_binding.inventory_sha256,
-    })
+    Ok((
+        GoalTransitionTarget {
+            source_stage,
+            source_room,
+            destination_stage,
+            destination_room,
+            destination_point,
+            coordinate,
+            supporting_load_triggers: collision_ids.len(),
+            source_inventory_sha256: stage_binding.inventory_sha256,
+        },
+        inventory,
+    ))
 }
 
 fn exact_symbol_literal(
@@ -2173,6 +2359,81 @@ mod tests {
                 .all(|route| route.last() == Some(&goal))
         );
         assert!(goal_corridor_targets(source, source).is_err());
+    }
+
+    #[test]
+    fn authored_room_paths_replace_the_synthetic_corridor_with_attached_routes() {
+        use dusklight_world::world_inventory::{
+            AuthoredPathPointRecord, AuthoredPathRecord, SourceKind, SourceScope,
+            WORLD_INVENTORY_SCHEMA,
+        };
+
+        let source_digest = Digest([7; 32]);
+        let scope = SourceScope {
+            kind: SourceKind::Room,
+            room: Some(1),
+        };
+        let path = |record_index, first_point_index, point_count| AuthoredPathRecord {
+            stable_id: format!("path/{record_index}"),
+            source_sha256: source_digest,
+            scope,
+            record_index,
+            point_count,
+            next_path_index: None,
+            path_argument: u8::MAX,
+            closed: false,
+            closed_raw: 0,
+            switch_no: None,
+            unknown_07: 0,
+            point_offset: u32::try_from(first_point_index * 16).unwrap(),
+            first_point_index,
+            raw_hex: "00".repeat(12),
+        };
+        let point = |record_index, position: [f32; 3]| AuthoredPathPointRecord {
+            stable_id: format!("point/{record_index}"),
+            source_sha256: source_digest,
+            scope,
+            record_index,
+            arguments: [u8::MAX; 4],
+            position: dusklight_world::world_geometry::Vec3 {
+                x: position[0],
+                y: position[1],
+                z: position[2],
+            },
+            raw_hex: "00".repeat(16),
+        };
+        let inventory = WorldInventory {
+            schema: WORLD_INVENTORY_SCHEMA.into(),
+            stage: "TEST".into(),
+            sources: Vec::new(),
+            chunks: Vec::new(),
+            placements: Vec::new(),
+            player_spawns: Vec::new(),
+            exits: Vec::new(),
+            paths: vec![path(0, 0, 2), path(1, 2, 2), path(2, 4, 2)],
+            path_points: vec![
+                point(0, [100.0, 0.0, 100.0]),
+                point(1, [100.0, 0.0, 900.0]),
+                point(2, [300.0, 0.0, 200.0]),
+                point(3, [300.0, 0.0, 700.0]),
+                point(4, [450.0, 0.0, 300.0]),
+                point(5, [450.0, 0.0, 600.0]),
+            ],
+            collisions: Vec::new(),
+            load_triggers: Vec::new(),
+        };
+        let goal = [0.0, 0.0, 1_000.0];
+        let (targets, routes, route_ids) =
+            goal_route_targets([0.0, 0.0, 0.0], goal, 1, &inventory).unwrap();
+
+        assert_eq!(routes.len(), 2);
+        assert_eq!(route_ids.len(), routes.len());
+        assert_eq!(routes[0][0], [100.0, 0.0, 100.0]);
+        assert_eq!(routes[0][1], [100.0, 0.0, 900.0]);
+        assert_eq!(routes[0].last(), Some(&goal));
+        assert!(route_ids[0].contains("path/0:forward"));
+        assert_eq!(targets[0], goal);
+        assert!(targets.contains(&[100.0, 0.0, 100.0]));
     }
 
     #[test]

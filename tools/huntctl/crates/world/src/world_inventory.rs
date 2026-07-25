@@ -16,13 +16,24 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub const WORLD_INVENTORY_SCHEMA: &str = "dusklight-world-inventory/v1";
+pub const WORLD_INVENTORY_SCHEMA_V1: &str = "dusklight-world-inventory/v1";
+pub const WORLD_INVENTORY_SCHEMA_V2: &str = "dusklight-world-inventory/v2";
+pub const WORLD_INVENTORY_SCHEMA: &str = WORLD_INVENTORY_SCHEMA_V2;
 const STAGE_CHUNK_HEADER_SIZE: usize = 12;
 const PLACEMENT_SIZE: usize = 0x20;
 const SCALED_PLACEMENT_SIZE: usize = 0x24;
 const SCLS_SIZE: usize = 0x0d;
+const RPAT_SIZE: usize = 0x0c;
+const RPPN_SIZE: usize = 0x10;
 const MAX_STAGE_CHUNKS: usize = 4096;
 const MAX_STAGE_RECORDS: usize = 1_000_000;
+
+pub fn is_supported_world_inventory_schema(schema: &str) -> bool {
+    matches!(
+        schema,
+        WORLD_INVENTORY_SCHEMA_V1 | WORLD_INVENTORY_SCHEMA_V2
+    )
+}
 
 #[derive(Debug)]
 pub enum WorldInventoryError {
@@ -161,6 +172,37 @@ pub struct StageExitRecord {
     pub raw_hex: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredPathRecord {
+    pub stable_id: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub record_index: usize,
+    pub point_count: u16,
+    pub next_path_index: Option<u16>,
+    pub path_argument: u8,
+    pub closed: bool,
+    pub closed_raw: u8,
+    pub switch_no: Option<u8>,
+    pub unknown_07: u8,
+    pub point_offset: u32,
+    pub first_point_index: usize,
+    pub raw_hex: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoredPathPointRecord {
+    pub stable_id: String,
+    pub source_sha256: Digest,
+    pub scope: SourceScope,
+    pub record_index: usize,
+    pub arguments: [u8; 4],
+    pub position: Vec3,
+    pub raw_hex: String,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollisionInventoryRecord {
@@ -193,6 +235,10 @@ pub struct WorldInventory {
     pub placements: Vec<PlacementRecord>,
     pub player_spawns: Vec<PlacementRecord>,
     pub exits: Vec<StageExitRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<AuthoredPathRecord>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path_points: Vec<AuthoredPathPointRecord>,
     pub collisions: Vec<CollisionInventoryRecord>,
     pub load_triggers: Vec<CollisionLoadTrigger>,
 }
@@ -213,6 +259,8 @@ impl WorldInventory {
         let mut placements = Vec::new();
         let mut player_spawns = Vec::new();
         let mut exits = Vec::new();
+        let mut paths = Vec::new();
+        let mut path_points = Vec::new();
         let mut collisions = Vec::new();
 
         let stage_archive = RarcArchive::parse(&fs::read(&stage_archive_path)?)?;
@@ -228,6 +276,8 @@ impl WorldInventory {
         placements.extend(decoded.placements);
         player_spawns.extend(decoded.player_spawns);
         exits.extend(decoded.exits);
+        paths.extend(decoded.paths);
+        path_points.extend(decoded.path_points);
         sources.push(WorldSource {
             scope: stage_scope,
             archive_sha256: stage_archive.sha256(),
@@ -254,6 +304,8 @@ impl WorldInventory {
             placements.extend(decoded.placements);
             player_spawns.extend(decoded.player_spawns);
             exits.extend(decoded.exits);
+            paths.extend(decoded.paths);
+            path_points.extend(decoded.path_points);
 
             let kcl = archive.unique_basename("room.kcl")?;
             let plc = archive.unique_basename("room.plc")?;
@@ -291,6 +343,8 @@ impl WorldInventory {
             placements,
             player_spawns,
             exits,
+            paths,
+            path_points,
             collisions,
             load_triggers,
         };
@@ -318,11 +372,18 @@ impl WorldInventory {
     }
 
     pub fn validate(&self) -> Result<(), WorldInventoryError> {
-        if self.schema != WORLD_INVENTORY_SCHEMA {
+        if !is_supported_world_inventory_schema(&self.schema) {
             return Err(WorldInventoryError::Invalid(format!(
                 "unsupported world inventory schema {:?}",
                 self.schema
             )));
+        }
+        if self.schema == WORLD_INVENTORY_SCHEMA_V1
+            && (!self.paths.is_empty() || !self.path_points.is_empty())
+        {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory v1 cannot contain authored path records".into(),
+            ));
         }
         validate_stage_name(&self.stage)?;
         if self.sources.is_empty()
@@ -436,6 +497,12 @@ impl WorldInventory {
                 ));
             }
         }
+        validate_authored_paths(
+            &self.paths,
+            &self.path_points,
+            &source_by_data,
+            &self.chunks,
+        )?;
 
         let mut collision_counts = BTreeMap::<i8, usize>::new();
         let mut expected_prism = BTreeMap::<i8, u16>::new();
@@ -498,6 +565,8 @@ struct DecodedStageData {
     placements: Vec<PlacementRecord>,
     player_spawns: Vec<PlacementRecord>,
     exits: Vec<StageExitRecord>,
+    paths: Vec<AuthoredPathRecord>,
+    path_points: Vec<AuthoredPathPointRecord>,
 }
 
 #[derive(Clone)]
@@ -561,6 +630,8 @@ fn decode_stage_data(
     let mut placements = Vec::new();
     let mut player_spawns = Vec::new();
     let mut exits = Vec::new();
+    let mut paths = Vec::new();
+    let mut path_points = Vec::new();
     let mut recognized_ranges = Vec::new();
     for header in headers {
         let record_kind = classify_chunk(&header.tag);
@@ -595,6 +666,8 @@ fn decode_stage_data(
             };
             match kind {
                 StageRecordKind::Scls => exits.push(parse_scls(record, &context)?),
+                StageRecordKind::Path => paths.push(parse_path(record, &context)?),
+                StageRecordKind::PathPoint => path_points.push(parse_path_point(record, &context)?),
                 StageRecordKind::Player => player_spawns.push(parse_placement(
                     record,
                     &context,
@@ -621,6 +694,8 @@ fn decode_stage_data(
         placements,
         player_spawns,
         exits,
+        paths,
+        path_points,
     })
 }
 
@@ -629,6 +704,8 @@ enum StageRecordKind {
     Actor(PlacementKind, bool),
     Player,
     Scls,
+    Path,
+    PathPoint,
 }
 
 impl StageRecordKind {
@@ -637,6 +714,8 @@ impl StageRecordKind {
             Self::Actor(_, false) | Self::Player => PLACEMENT_SIZE,
             Self::Actor(_, true) => SCALED_PLACEMENT_SIZE,
             Self::Scls => SCLS_SIZE,
+            Self::Path => RPAT_SIZE,
+            Self::PathPoint => RPPN_SIZE,
         }
     }
 }
@@ -644,6 +723,12 @@ impl StageRecordKind {
 fn classify_chunk(tag: &str) -> Option<StageRecordKind> {
     if tag == "SCLS" {
         return Some(StageRecordKind::Scls);
+    }
+    if tag == "RPAT" {
+        return Some(StageRecordKind::Path);
+    }
+    if tag == "RPPN" {
+        return Some(StageRecordKind::PathPoint);
     }
     if tag == "PLYR" {
         return Some(StageRecordKind::Player);
@@ -756,6 +841,195 @@ fn parse_scls(
         raw_wipe,
         raw_hex: hex(record),
     })
+}
+
+fn parse_path(
+    record: &[u8],
+    context: &StageRecordContext<'_>,
+) -> Result<AuthoredPathRecord, WorldInventoryError> {
+    let point_offset = read_u32(record, 8, "RPAT point offset")?;
+    if !(point_offset as usize).is_multiple_of(RPPN_SIZE) {
+        return Err(WorldInventoryError::Invalid(format!(
+            "RPAT[{}] point offset is not aligned to an RPPN record",
+            context.record_index
+        )));
+    }
+    let next_raw = read_u16(record, 2, "RPAT next path index")?;
+    let closed_raw = record[5];
+    Ok(AuthoredPathRecord {
+        stable_id: source_record_id(
+            context.id_prefix,
+            context.digest,
+            context.tag,
+            context.record_index,
+        ),
+        source_sha256: context.digest,
+        scope: context.scope,
+        record_index: context.record_index,
+        point_count: read_u16(record, 0, "RPAT point count")?,
+        next_path_index: (next_raw != u16::MAX).then_some(next_raw),
+        path_argument: record[4],
+        closed: closed_raw & 1 != 0,
+        closed_raw,
+        switch_no: (record[6] != u8::MAX).then_some(record[6]),
+        unknown_07: record[7],
+        point_offset,
+        first_point_index: point_offset as usize / RPPN_SIZE,
+        raw_hex: hex(record),
+    })
+}
+
+fn parse_path_point(
+    record: &[u8],
+    context: &StageRecordContext<'_>,
+) -> Result<AuthoredPathPointRecord, WorldInventoryError> {
+    let position = Vec3 {
+        x: read_f32(record, 4, "RPPN position X")?,
+        y: read_f32(record, 8, "RPPN position Y")?,
+        z: read_f32(record, 12, "RPPN position Z")?,
+    };
+    if !finite_vec3(position) {
+        return Err(WorldInventoryError::Invalid(format!(
+            "RPPN[{}] has non-finite position",
+            context.record_index
+        )));
+    }
+    Ok(AuthoredPathPointRecord {
+        stable_id: source_record_id(
+            context.id_prefix,
+            context.digest,
+            context.tag,
+            context.record_index,
+        ),
+        source_sha256: context.digest,
+        scope: context.scope,
+        record_index: context.record_index,
+        arguments: [record[3], record[0], record[1], record[2]],
+        position,
+        raw_hex: hex(record),
+    })
+}
+
+fn validate_authored_paths(
+    paths: &[AuthoredPathRecord],
+    points: &[AuthoredPathPointRecord],
+    source_by_data: &BTreeMap<Digest, SourceScope>,
+    chunks: &[StageChunkSummary],
+) -> Result<(), WorldInventoryError> {
+    let mut point_counts = BTreeMap::<Digest, usize>::new();
+    let mut point_source = None;
+    let mut completed_point_sources = BTreeSet::new();
+    let mut previous_point_index = None;
+    for point in points {
+        if point_source != Some(point.source_sha256) {
+            if let Some(source) = point_source
+                && !completed_point_sources.insert(source)
+            {
+                return Err(WorldInventoryError::Invalid(
+                    "world inventory authored path-point sources are interleaved".into(),
+                ));
+            }
+            point_source = Some(point.source_sha256);
+            previous_point_index = None;
+        }
+        let prefix = match point.scope.kind {
+            SourceKind::Stage => "dzs",
+            SourceKind::Room => "dzr",
+        };
+        if source_by_data.get(&point.source_sha256) != Some(&point.scope)
+            || point.stable_id
+                != source_record_id(prefix, point.source_sha256, "RPPN", point.record_index)
+            || !finite_vec3(point.position)
+            || !canonical_hex(&point.raw_hex, RPPN_SIZE)
+            || previous_point_index.is_some_and(|previous| previous >= point.record_index)
+        {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory contains an invalid or unordered authored path point".into(),
+            ));
+        }
+        previous_point_index = Some(point.record_index);
+        *point_counts.entry(point.source_sha256).or_default() += 1;
+    }
+
+    let mut path_counts = BTreeMap::<Digest, usize>::new();
+    for path in paths {
+        *path_counts.entry(path.source_sha256).or_default() += 1;
+    }
+    let mut path_source = None;
+    let mut completed_path_sources = BTreeSet::new();
+    let mut previous_path_index = None;
+    for path in paths {
+        if path_source != Some(path.source_sha256) {
+            if let Some(source) = path_source
+                && !completed_path_sources.insert(source)
+            {
+                return Err(WorldInventoryError::Invalid(
+                    "world inventory authored path sources are interleaved".into(),
+                ));
+            }
+            path_source = Some(path.source_sha256);
+            previous_path_index = None;
+        }
+        let prefix = match path.scope.kind {
+            SourceKind::Stage => "dzs",
+            SourceKind::Room => "dzr",
+        };
+        let source_point_count = point_counts
+            .get(&path.source_sha256)
+            .copied()
+            .unwrap_or_default();
+        let point_end = path
+            .first_point_index
+            .checked_add(usize::from(path.point_count))
+            .ok_or_else(|| {
+                WorldInventoryError::Invalid("authored path point range overflowed".into())
+            })?;
+        if source_by_data.get(&path.source_sha256) != Some(&path.scope)
+            || path.stable_id
+                != source_record_id(prefix, path.source_sha256, "RPAT", path.record_index)
+            || path.closed != (path.closed_raw & 1 != 0)
+            || path.switch_no == Some(u8::MAX)
+            || !(path.point_offset as usize).is_multiple_of(RPPN_SIZE)
+            || path.first_point_index != path.point_offset as usize / RPPN_SIZE
+            || point_end > source_point_count
+            || path
+                .next_path_index
+                .is_some_and(|next| usize::from(next) >= path_counts[&path.source_sha256])
+            || !canonical_hex(&path.raw_hex, RPAT_SIZE)
+            || previous_path_index.is_some_and(|previous| previous >= path.record_index)
+        {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory contains an invalid or unordered authored path".into(),
+            ));
+        }
+        previous_path_index = Some(path.record_index);
+    }
+
+    for (digest, scope) in source_by_data {
+        let expected_paths = chunks
+            .iter()
+            .find(|chunk| chunk.source_sha256 == *digest && chunk.tag == "RPAT")
+            .map(|chunk| chunk.record_count)
+            .unwrap_or_default();
+        let expected_points = chunks
+            .iter()
+            .find(|chunk| chunk.source_sha256 == *digest && chunk.tag == "RPPN")
+            .map(|chunk| chunk.record_count)
+            .unwrap_or_default();
+        if path_counts.get(digest).copied().unwrap_or_default() != expected_paths
+            || point_counts.get(digest).copied().unwrap_or_default() != expected_points
+            || chunks.iter().any(|chunk| {
+                chunk.source_sha256 == *digest
+                    && chunk.scope != *scope
+                    && matches!(chunk.tag.as_str(), "RPAT" | "RPPN")
+            })
+        {
+            return Err(WorldInventoryError::Invalid(
+                "world inventory authored path coverage differs from its chunk directory".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn join_load_triggers(
@@ -1061,6 +1335,8 @@ mod tests {
             placements: Vec::new(),
             player_spawns: Vec::new(),
             exits: Vec::new(),
+            paths: Vec::new(),
+            path_points: Vec::new(),
             collisions: vec![CollisionInventoryRecord {
                 room: 0,
                 prism: KclInventoryPrism {
@@ -1138,6 +1414,42 @@ mod tests {
         bytes
     }
 
+    fn path_stage_data() -> Vec<u8> {
+        let directory = 4 + 2 * STAGE_CHUNK_HEADER_SIZE;
+        let path_offset = directory;
+        let point_offset = path_offset + RPAT_SIZE;
+        let mut bytes = vec![0; point_offset + 2 * RPPN_SIZE];
+        put_u32(&mut bytes, 0, 2);
+        for (index, (tag, count, offset)) in
+            [(b"RPAT", 1_u32, path_offset), (b"RPPN", 2, point_offset)]
+                .into_iter()
+                .enumerate()
+        {
+            let node = 4 + index * STAGE_CHUNK_HEADER_SIZE;
+            bytes[node..node + 4].copy_from_slice(tag);
+            put_u32(&mut bytes, node + 4, count);
+            put_u32(&mut bytes, node + 8, offset as u32);
+        }
+        put_u16(&mut bytes, path_offset, 2);
+        put_u16(&mut bytes, path_offset + 2, u16::MAX);
+        bytes[path_offset + 4] = 7;
+        bytes[path_offset + 5] = 1;
+        bytes[path_offset + 6] = u8::MAX;
+        bytes[path_offset + 7] = 9;
+        put_u32(&mut bytes, path_offset + 8, 0);
+        for (index, position) in [[1.0_f32, 2.0, 3.0], [4.0, 5.0, 6.0]]
+            .into_iter()
+            .enumerate()
+        {
+            let offset = point_offset + index * RPPN_SIZE;
+            bytes[offset..offset + 4].copy_from_slice(&[1, 2, 3, 4]);
+            put_f32(&mut bytes, offset + 4, position[0]);
+            put_f32(&mut bytes, offset + 8, position[1]);
+            put_f32(&mut bytes, offset + 12, position[2]);
+        }
+        bytes
+    }
+
     #[test]
     fn decodes_authored_records_with_structural_ids_and_raw_bytes() {
         let bytes = stage_data();
@@ -1173,6 +1485,59 @@ mod tests {
         assert_eq!(exit.wipe, 19);
         assert_eq!(exit.wipe_time, 4);
         assert_eq!(exit.time_hour, -1);
+    }
+
+    #[test]
+    fn decodes_authored_paths_with_checked_point_spans() {
+        let bytes = path_stage_data();
+        let digest = sha256(&bytes);
+        let scope = SourceScope {
+            kind: SourceKind::Room,
+            room: Some(1),
+        };
+        let decoded = decode_stage_data(&bytes, digest, scope, "dzr").unwrap();
+        assert_eq!(decoded.paths.len(), 1);
+        assert_eq!(decoded.path_points.len(), 2);
+        let path = &decoded.paths[0];
+        assert_eq!(path.point_count, 2);
+        assert_eq!(path.first_point_index, 0);
+        assert_eq!(path.next_path_index, None);
+        assert_eq!(path.path_argument, 7);
+        assert!(path.closed);
+        assert_eq!(path.switch_no, None);
+        assert_eq!(path.unknown_07, 9);
+        assert_eq!(decoded.path_points[0].arguments, [4, 1, 2, 3]);
+        assert_eq!(
+            decoded.path_points[1].position,
+            Vec3 {
+                x: 4.0,
+                y: 5.0,
+                z: 6.0
+            }
+        );
+        assert_eq!(decoded.chunks[0].recognized_record_size, Some(RPAT_SIZE));
+        assert_eq!(decoded.chunks[1].recognized_record_size, Some(RPPN_SIZE));
+
+        let source_by_data = BTreeMap::from([(digest, scope)]);
+        validate_authored_paths(
+            &decoded.paths,
+            &decoded.path_points,
+            &source_by_data,
+            &decoded.chunks,
+        )
+        .unwrap();
+
+        let mut invalid = decoded.paths.clone();
+        invalid[0].point_count = 3;
+        assert!(
+            validate_authored_paths(
+                &invalid,
+                &decoded.path_points,
+                &source_by_data,
+                &decoded.chunks,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1241,7 +1606,7 @@ mod tests {
     #[test]
     fn real_f_sp103_inventory_matches_content_golden_when_disc_is_present() {
         let stage_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
+            .join("../../../..")
             .join("orig/GZ2E01/files/res/Stage/F_SP103");
         if !stage_dir.is_dir() {
             eprintln!("skipping F_SP103 content golden: original disc data is absent");

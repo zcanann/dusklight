@@ -10,7 +10,9 @@
 
 use crate::artifact::Digest;
 use crate::world_geometry::{CollisionCode, KclReconstruction, Vec3};
-use crate::world_inventory::{CollisionLoadTrigger, WORLD_INVENTORY_SCHEMA, WorldInventory};
+use crate::world_inventory::{
+    CollisionLoadTrigger, WorldInventory, is_supported_world_inventory_schema,
+};
 use crate::world_spatial::WorldSpatialIndex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -365,7 +367,7 @@ pub struct WorldSurfaceGraph {
 
 impl WorldSurfaceGraph {
     pub fn build(inventory: &WorldInventory) -> Result<Self, WorldSurfaceGraphError> {
-        if inventory.schema != WORLD_INVENTORY_SCHEMA {
+        if !is_supported_world_inventory_schema(&inventory.schema) {
             return Err(WorldSurfaceGraphError::new(format!(
                 "unsupported world inventory schema {:?}",
                 inventory.schema
@@ -1040,6 +1042,7 @@ mod tests {
     use crate::world_geometry::{
         CollisionPlane, KclAuthoredPrism, KclInventoryPrism, KclSourceIndices,
     };
+    use crate::world_inventory::WORLD_INVENTORY_SCHEMA;
     use crate::world_inventory::{
         CollisionInventoryRecord, SourceKind, SourceScope, StageExitRecord, WorldSource,
     };
@@ -1212,6 +1215,8 @@ mod tests {
             placements: Vec::new(),
             player_spawns: Vec::new(),
             exits: vec![exit],
+            paths: Vec::new(),
+            path_points: Vec::new(),
             collisions,
             load_triggers: vec![CollisionLoadTrigger {
                 stable_id: format!("load-trigger-sha256:{trigger_digest}"),

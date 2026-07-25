@@ -443,6 +443,8 @@ mod tests {
                 coordinate: [1.0, 2.0, 3.0],
                 source_coordinate: [4.0, 5.0, 6.0],
                 tactic_targets: vec![[1.0, 2.0, 3.0]],
+                route_sequences: Vec::new(),
+                authored_route_ids: Vec::new(),
                 supporting_load_triggers: 1,
                 source_inventory_sha256: Digest([13; 32]),
                 authored_route_coordinates_used: false,

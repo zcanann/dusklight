@@ -177,6 +177,8 @@ mod tests {
             placements: Vec::new(),
             player_spawns: Vec::new(),
             exits: Vec::new(),
+            paths: Vec::new(),
+            path_points: Vec::new(),
             collisions: Vec::new(),
             load_triggers: Vec::new(),
         }

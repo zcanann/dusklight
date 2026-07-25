@@ -97,6 +97,8 @@ pub(crate) fn command_world(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "placements": inventory.placements.len(),
                     "player_spawns": inventory.player_spawns.len(),
                     "exits": inventory.exits.len(),
+                    "paths": inventory.paths.len(),
+                    "path_points": inventory.path_points.len(),
                     "collisions": inventory.collisions.len(),
                     "load_triggers": inventory.load_triggers.len(),
                 }))?
