@@ -43,10 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P0 - Remove storage and orchestration from the hot path
 
-- [ ] Remove periodic full graph projections from the hot path; derive them
-      from compact transition and frontier records on demand.
-- [ ] Make diagnostics, knowledge graphs, edge tapes, and readable summaries
-      on-demand projections from the binary store.
 - [ ] Compact the journal at bounded intervals without rewriting unchanged
       snapshots, replay rows, or tape data.
 - [ ] Prove exact resume equivalence across interruption: selected actions,

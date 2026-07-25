@@ -1171,7 +1171,7 @@ fn insert_graph_node(
     Ok(())
 }
 
-fn has_no_progress_loop(
+pub(crate) fn has_no_progress_loop(
     replay: &[OptionTransitionSample],
     episode_groups: &[u64],
 ) -> Result<bool, TacticQCampaignError> {

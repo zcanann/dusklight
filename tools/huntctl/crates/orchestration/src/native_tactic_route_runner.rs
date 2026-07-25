@@ -11,7 +11,9 @@ use crate::native_tactic_worker::{
 };
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics, TacticQCampaign, TacticQCampaignError,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics, TacticCampaignGraphProjection,
+    TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode, TacticQCampaign,
+    TacticQCampaignError, has_no_progress_loop, route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
@@ -32,6 +34,7 @@ use dusklight_learning::reward_shaping::{
 use dusklight_learning::tactic_exploration::{TacticExplorationConfig, TacticSelectionReason};
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
+use dusklight_proposals::behavior_archive::BehaviorArchive;
 use dusklight_search::search::{MacroAction, SearchPadState};
 use dusklight_search::suffix_batch::{
     NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation, NativeSuffixBatch,
@@ -224,6 +227,7 @@ pub struct NativeTacticValueTrace {
 struct NativeTacticDecisionRecord {
     decision_index: u64,
     episode: u64,
+    episode_group: u64,
     route_suffix_ticks: u64,
     selection_reason: TacticSelectionReason,
     selected_q: Option<f64>,
@@ -235,6 +239,8 @@ struct NativeTacticDecisionRecord {
     terminal: bool,
     frontier_cells: usize,
     visited_states: usize,
+    root_checkpoint_sha256: Digest,
+    root_tape: StoredContentRef,
     transition: StoredContentRef,
 }
 
@@ -797,7 +803,10 @@ fn run_seed(
         native_ticks = native_ticks.saturating_add(u64::from(
             step.step.transition.execution.duration.realized_ticks,
         ));
-        let diagnostics = campaign.diagnostics().map_err(route_error)?;
+        let frontier_cells = campaign
+            .frontier_archive()
+            .map_err(route_error)?
+            .tactic_len();
         let before_features = encoder
             .encode(&step.step.transition.before)
             .map_err(route_error)?;
@@ -856,7 +865,7 @@ fn run_seed(
             goal_distance_before: before_features[encoder.goal_distance_feature()],
             goal_distance_after: after_features[encoder.goal_distance_feature()],
             terminal: step.step.transition.value_sample.terminal,
-            frontier_cells: diagnostics.frontier_cells,
+            frontier_cells,
             visited_states: campaign.visited_state_count(),
             before: tactic_state_trace(&step.step.transition.before)?,
             after: tactic_state_trace(&step.step.transition.after)?,
@@ -869,12 +878,18 @@ fn run_seed(
         let transition = content_store
             .store_option_transition(&step.step.transition, &campaign.route_tape)
             .map_err(route_error)?;
-        append_tactic_decision_record(&seed_root, &decision_record(&decision_trace, transition))?;
-        write_new(
-            &seed_root
-                .join("edge-tapes")
-                .join(format!("edge-{decision_index:06}.tape")),
-            &campaign.route_tape.encode().map_err(route_error)?,
+        let root_tape = content_store
+            .store_tape(route_prefix)
+            .map_err(route_error)?;
+        append_tactic_decision_record(
+            &seed_root,
+            &decision_record(
+                &decision_trace,
+                campaign.episode_group,
+                campaign.root_checkpoint_sha256,
+                root_tape,
+                transition,
+            ),
         )?;
         trace.push(decision_trace);
         if cancellation_requested(config) {
@@ -891,17 +906,6 @@ fn run_seed(
             )?;
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
-        }
-        if step.step.transition.value_sample.terminal
-            || campaign.decision_index % config.branch_every_decisions == 0
-        {
-            let graph_root = seed_root.join("knowledge-graph");
-            fs::create_dir_all(&graph_root).map_err(route_error)?;
-            write_new(
-                &graph_root.join(format!("graph-{:06}.json", campaign.decision_index)),
-                &serde_json::to_vec_pretty(&campaign.graph_projection().map_err(route_error)?)
-                    .map_err(route_error)?,
-            )?;
         }
         let run_finished = step.step.transition.value_sample.terminal
             || campaign.decision_index >= config.decisions_per_seed
@@ -935,12 +939,6 @@ fn run_seed(
         )
         .map_err(route_error)?;
     remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
-    let graph_path = seed_root.join("graph.json");
-    write_new(
-        &graph_path,
-        &serde_json::to_vec_pretty(&campaign.graph_projection().map_err(route_error)?)
-            .map_err(route_error)?,
-    )?;
     let (successful_tape, final_result) = if success {
         let tape_path = seed_root.join("successful.tape");
         write_new(
@@ -985,9 +983,9 @@ fn run_seed(
         useful_decisions,
         timing,
         selection_counts,
-        diagnostics: Some(campaign.diagnostics().map_err(route_error)?),
+        diagnostics: None,
         final_checkpoint: Some(path_text(&final_checkpoint)),
-        graph: Some(path_text(&graph_path)),
+        graph: None,
         successful_tape,
         final_result,
         trace,
@@ -1309,13 +1307,314 @@ fn read_tactic_decision_records(
     Ok(decoded.records)
 }
 
+pub fn project_tactic_decision_graph(
+    seed_root: &Path,
+) -> Result<Option<TacticCampaignGraphProjection>, NativeTacticRouteRunError> {
+    if !tactic_decision_journal_path(seed_root).exists() {
+        return Ok(None);
+    }
+    let replay = load_tactic_journal_replay(seed_root)?;
+    let first = replay
+        .transitions
+        .first()
+        .ok_or_else(|| route_message("tactic graph has no root transition"))?;
+    let last = replay
+        .transitions
+        .last()
+        .ok_or_else(|| route_message("tactic graph has no current transition"))?;
+    let root_checkpoint_sha256 = first.source_checkpoint_sha256;
+    let root_state_sha256 = first.before_state_sha256;
+    let current = (last.next_checkpoint_sha256, last.after_state_sha256);
+    let mut archive = BehaviorArchive::default();
+    for (index, (transition, route)) in replay.transitions.iter().zip(&replay.routes).enumerate() {
+        archive
+            .consider_tactic_endpoint(
+                replay.root_checkpoint_sha256,
+                transition.clone(),
+                route.clone(),
+                index as u64,
+            )
+            .map_err(route_error)?;
+    }
+    let retained = archive.tactic_route_checkpoints().collect::<BTreeSet<_>>();
+    let mut nodes = BTreeMap::new();
+    let mut edges = Vec::with_capacity(replay.records.len());
+    for (record, transition) in replay.records.iter().zip(&replay.transitions) {
+        for (checkpoint_sha256, state_sha256, state, terminal) in [
+            (
+                transition.source_checkpoint_sha256,
+                transition.before_state_sha256,
+                &transition.before,
+                transition.before.terminal.reached == Some(true),
+            ),
+            (
+                transition.next_checkpoint_sha256,
+                transition.after_state_sha256,
+                &transition.after,
+                transition.value_sample.terminal,
+            ),
+        ] {
+            let identity = (checkpoint_sha256, state_sha256);
+            let node = TacticCampaignGraphProjectionNode {
+                checkpoint_sha256,
+                state_sha256,
+                stage: state.world.stage.clone(),
+                room: state.world.room,
+                player_position: state.player.position_f32_bits.map(f32::from_bits),
+                terminal,
+                retained_frontier: retained.contains(&checkpoint_sha256),
+                current: identity == current,
+            };
+            if nodes
+                .insert(identity, node.clone())
+                .is_some_and(|existing| existing != node)
+            {
+                return Err(route_message(
+                    "tactic decision journal has conflicting graph nodes",
+                ));
+            }
+        }
+        edges.push(TacticCampaignGraphProjectionEdge {
+            edge_index: record.decision_index,
+            episode_group: record.episode_group,
+            before_state_sha256: transition.before_state_sha256,
+            after_state_sha256: transition.after_state_sha256,
+            source_checkpoint_sha256: transition.source_checkpoint_sha256,
+            next_checkpoint_sha256: transition.next_checkpoint_sha256,
+            option_id: transition.value_sample.action.option_id.clone(),
+            reward: record.reward,
+            duration_ticks: transition.execution.duration.realized_ticks,
+            terminal: transition.value_sample.terminal,
+            start_frame: transition.execution.realized_tape_range.start_frame,
+            end_frame_exclusive: transition.execution.realized_tape_range.end_frame_exclusive,
+        });
+    }
+    let mut reachable = BTreeSet::from([(root_checkpoint_sha256, root_state_sha256)]);
+    loop {
+        let before = reachable.len();
+        for edge in &edges {
+            if reachable.contains(&(edge.source_checkpoint_sha256, edge.before_state_sha256)) {
+                reachable.insert((edge.next_checkpoint_sha256, edge.after_state_sha256));
+            }
+        }
+        if reachable.len() == before {
+            break;
+        }
+    }
+    Ok(Some(TacticCampaignGraphProjection {
+        schema: "dusklight-tactic-campaign-graph-projection/v1".into(),
+        root_checkpoint_sha256,
+        root_state_sha256,
+        root_connected: nodes.keys().all(|identity| reachable.contains(identity)),
+        frontier_cells: retained.len(),
+        nodes: nodes.into_values().collect(),
+        edges,
+    }))
+}
+
+pub fn project_tactic_decision_diagnostics(
+    seed_root: &Path,
+) -> Result<Option<TacticCampaignDiagnostics>, NativeTacticRouteRunError> {
+    if !tactic_decision_journal_path(seed_root).exists() {
+        return Ok(None);
+    }
+    let replay = load_tactic_journal_replay(seed_root)?;
+    let graph = project_tactic_decision_graph(seed_root)?
+        .ok_or_else(|| route_message("tactic diagnostics have no graph"))?;
+    let mut compositions = BTreeMap::<u64, Vec<Digest>>::new();
+    let mut selected_actions = BTreeSet::new();
+    for (record, transition) in replay.records.iter().zip(&replay.transitions) {
+        let bytes = serde_cbor::to_vec(&transition.value_sample.action).map_err(route_error)?;
+        let digest = Digest(Sha256::digest(&bytes).into());
+        selected_actions.insert(digest);
+        compositions
+            .entry(record.episode_group)
+            .or_default()
+            .push(digest);
+    }
+    let mut composition_counts = BTreeMap::<Vec<Digest>, usize>::new();
+    for composition in compositions.into_values().filter(|row| !row.is_empty()) {
+        *composition_counts.entry(composition).or_default() += 1;
+    }
+    let episode_groups = replay
+        .records
+        .iter()
+        .map(|record| record.episode_group)
+        .collect::<Vec<_>>();
+    Ok(Some(TacticCampaignDiagnostics {
+        replay_rows: replay.transitions.len(),
+        frontier_cells: graph.frontier_cells,
+        unique_selected_actions: selected_actions.len(),
+        zero_diversity_selection: replay.transitions.len() >= 2 && selected_actions.len() <= 1,
+        repeated_identical_compositions: composition_counts.values().any(|count| *count > 1),
+        no_progress_loop: has_no_progress_loop(&replay.transitions, &episode_groups)
+            .map_err(route_error)?,
+        frontier_lost_root_connectivity: !graph.root_connected,
+    }))
+}
+
+pub fn materialize_tactic_decision_route(
+    seed_root: &Path,
+    decision_index: u64,
+) -> Result<InputTape, NativeTacticRouteRunError> {
+    let replay = load_tactic_journal_replay(seed_root)?;
+    let target_index = usize::try_from(decision_index).map_err(route_error)?;
+    let target_record = replay
+        .records
+        .get(target_index)
+        .ok_or_else(|| route_message("tactic decision route is absent"))?;
+    if target_record.decision_index != decision_index {
+        return Err(route_message("tactic decision route index is detached"));
+    }
+    replay
+        .routes
+        .get(target_index)
+        .cloned()
+        .ok_or_else(|| route_message("tactic decision route is absent"))
+}
+
+struct TacticJournalReplay {
+    root_checkpoint_sha256: Digest,
+    records: Vec<NativeTacticDecisionRecord>,
+    transitions: Vec<dusklight_learning::option_transition::OptionTransitionSample>,
+    routes: Vec<InputTape>,
+}
+
+fn load_tactic_journal_replay(
+    seed_root: &Path,
+) -> Result<TacticJournalReplay, NativeTacticRouteRunError> {
+    let records = read_tactic_decision_records(seed_root)?;
+    let first_record = records
+        .first()
+        .ok_or_else(|| route_message("tactic decision journal is empty"))?;
+    if first_record.root_checkpoint_sha256 == Digest::ZERO
+        || records.iter().any(|record| {
+            record.root_checkpoint_sha256 != first_record.root_checkpoint_sha256
+                || record.root_tape != first_record.root_tape
+        })
+    {
+        return Err(route_message(
+            "tactic decision journal has conflicting root identities",
+        ));
+    }
+    let store =
+        TacticQContentStore::open(tactic_content_store_path(seed_root)).map_err(route_error)?;
+    let root_tape = store
+        .load_tape(first_record.root_tape)
+        .map_err(route_error)?;
+    let transitions = records
+        .iter()
+        .map(|record| {
+            store
+                .load_option_transition(record.transition)
+                .map_err(route_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let first_transition = transitions
+        .first()
+        .ok_or_else(|| route_message("tactic decision journal has no root transition"))?;
+    if route_checkpoint(first_record.root_checkpoint_sha256, &root_tape).map_err(route_error)?
+        != first_transition.source_checkpoint_sha256
+        || root_tape.frames.len() as u64
+            != first_transition.execution.realized_tape_range.start_frame
+    {
+        return Err(route_message(
+            "tactic decision journal root tape is detached",
+        ));
+    }
+    let root_identity = (
+        first_transition.source_checkpoint_sha256,
+        first_transition.before_state_sha256,
+    );
+    let mut parents = BTreeMap::<(Digest, Digest), usize>::new();
+    for (index, transition) in transitions.iter().enumerate() {
+        parents
+            .entry((
+                transition.next_checkpoint_sha256,
+                transition.after_state_sha256,
+            ))
+            .or_insert(index);
+    }
+    let routes = transitions
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            materialize_journal_route(index, &root_tape, root_identity, &parents, &transitions)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    for ((record, transition), route) in records.iter().zip(&transitions).zip(&routes) {
+        transition
+            .execution
+            .validate_against_tape(route)
+            .map_err(route_error)?;
+        if record.terminal != transition.value_sample.terminal
+            || record.reward_components.duration_ticks
+                != transition.execution.duration.realized_ticks
+            || route_checkpoint(first_record.root_checkpoint_sha256, route).map_err(route_error)?
+                != transition.next_checkpoint_sha256
+            || route.frames.len() as u64
+                != transition.execution.realized_tape_range.end_frame_exclusive
+        {
+            return Err(route_message(
+                "tactic decision journal transition route is detached",
+            ));
+        }
+    }
+    Ok(TacticJournalReplay {
+        root_checkpoint_sha256: first_record.root_checkpoint_sha256,
+        records,
+        transitions,
+        routes,
+    })
+}
+
+fn materialize_journal_route(
+    target_index: usize,
+    root_tape: &InputTape,
+    root_identity: (Digest, Digest),
+    parents: &BTreeMap<(Digest, Digest), usize>,
+    transitions: &[dusklight_learning::option_transition::OptionTransitionSample],
+) -> Result<InputTape, NativeTacticRouteRunError> {
+    let target = transitions
+        .get(target_index)
+        .ok_or_else(|| route_message("tactic decision route is absent"))?;
+    let mut cursor = (target.source_checkpoint_sha256, target.before_state_sha256);
+    let mut fragments = vec![target.execution.emitted_raw_actions.clone()];
+    while cursor != root_identity {
+        let parent_index = *parents
+            .get(&cursor)
+            .ok_or_else(|| route_message("tactic decision route is detached from its root"))?;
+        if parent_index >= target_index {
+            return Err(route_message(
+                "tactic decision route parent is not journaled before its child",
+            ));
+        }
+        let parent = &transitions[parent_index];
+        fragments.push(parent.execution.emitted_raw_actions.clone());
+        cursor = (parent.source_checkpoint_sha256, parent.before_state_sha256);
+        if fragments.len() > transitions.len() {
+            return Err(route_message("tactic decision route contains a cycle"));
+        }
+    }
+    let mut route = root_tape.clone();
+    for fragment in fragments.into_iter().rev() {
+        route.frames.extend(fragment);
+    }
+    route.validate().map_err(route_error)?;
+    Ok(route)
+}
+
 fn decision_record(
     trace: &NativeTacticDecisionTrace,
+    episode_group: u64,
+    root_checkpoint_sha256: Digest,
+    root_tape: StoredContentRef,
     transition: StoredContentRef,
 ) -> NativeTacticDecisionRecord {
     NativeTacticDecisionRecord {
         decision_index: trace.decision_index,
         episode: trace.episode,
+        episode_group,
         route_suffix_ticks: trace.route_suffix_ticks,
         selection_reason: trace.selection_reason,
         selected_q: trace.selected_q,
@@ -1327,6 +1626,8 @@ fn decision_record(
         terminal: trace.terminal,
         frontier_cells: trace.frontier_cells,
         visited_states: trace.visited_states,
+        root_checkpoint_sha256,
+        root_tape,
         transition,
     }
 }
@@ -2486,11 +2787,21 @@ mod tests {
     }
 
     fn journal_record(decision_index: u64) -> NativeTacticDecisionRecord {
+        let root_tape = StoredContentRef {
+            kind: dusklight_evidence::content_store::ContentKind::InputTape,
+            sha256: Digest([2; 32]),
+        };
         let transition = StoredContentRef {
             kind: dusklight_evidence::content_store::ContentKind::TacticTransition,
             sha256: Digest([1; 32]),
         };
-        decision_record(&journal_trace(decision_index), transition)
+        decision_record(
+            &journal_trace(decision_index),
+            2,
+            Digest([3; 32]),
+            root_tape,
+            transition,
+        )
     }
 
     #[test]
@@ -2522,6 +2833,119 @@ mod tests {
         bytes[last] ^= 1;
         fs::write(&path, bytes).unwrap();
         assert!(read_tactic_decision_records(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn journal_projects_graph_and_materializes_routes_from_content_objects() {
+        use dusklight_control::option_execution::{
+            OptionCondition, OptionEndReason, OptionExecution, OptionType, TapeRange,
+        };
+        use dusklight_evidence::native_episode_shard::NativeObservationPhase;
+        use dusklight_learning::fact_snapshot::{FactSnapshot, FactTerminalReason};
+        use dusklight_learning::option_transition::OptionTransitionSample;
+
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-journal-route-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let native = &shard.episodes[0].steps[0];
+        let mut before =
+            FactSnapshot::from_native_learning(&native.pre_input, &[], None, Vec::new()).unwrap();
+        let mut next_boundary = native.post_simulation.clone();
+        next_boundary.phase = NativeObservationPhase::PreInput;
+        next_boundary.simulation_tick += 1;
+        next_boundary.tape_frame += 1;
+        let mut after = FactSnapshot::from_native_learning(
+            &next_boundary,
+            &[native.pre_input.clone()],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        before.terminal.configured = Some(true);
+        before.terminal.reached = Some(false);
+        before.terminal.reason = FactTerminalReason::None;
+        after.terminal.configured = Some(true);
+        after.terminal.reached = Some(false);
+        after.terminal.reason = FactTerminalReason::None;
+        let mut route = InputTape {
+            frames: vec![
+                dusklight_automation_contracts::tape::InputFrame::default();
+                after.tape_frame as usize
+            ],
+            ..InputTape::default()
+        };
+        after.tape_frame = route.frames.len() as u64;
+        route.frames[before.tape_frame as usize] =
+            dusklight_automation_contracts::tape::InputFrame::default();
+        let execution = OptionExecution::capture(
+            "wait".into(),
+            OptionType::Neutral,
+            BTreeMap::new(),
+            1,
+            1,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &route,
+            TapeRange {
+                start_frame: before.tape_frame,
+                end_frame_exclusive: after.tape_frame,
+            },
+        )
+        .unwrap();
+        let root_tape = InputTape {
+            boot: route.boot.clone(),
+            tick_rate_numerator: route.tick_rate_numerator,
+            tick_rate_denominator: route.tick_rate_denominator,
+            frames: route.frames[..before.tape_frame as usize].to_vec(),
+        };
+        let root_checkpoint_sha256 = Digest([9; 32]);
+        let source_checkpoint_sha256 =
+            route_checkpoint(root_checkpoint_sha256, &root_tape).unwrap();
+        let next_checkpoint_sha256 = route_checkpoint(root_checkpoint_sha256, &route).unwrap();
+        let transition = OptionTransitionSample::capture(
+            Digest([1; 32]),
+            source_checkpoint_sha256,
+            next_checkpoint_sha256,
+            before,
+            after,
+            execution,
+            &route,
+            0.25,
+            false,
+            |facts| Ok::<_, &'static str>(vec![facts.player.position_f32_bits[0] as f32]),
+        )
+        .unwrap();
+        let store = TacticQContentStore::initialize(tactic_content_store_path(&root)).unwrap();
+        let root_ref = store.store_tape(&root_tape).unwrap();
+        let transition_ref = store.store_option_transition(&transition, &route).unwrap();
+        let mut trace = journal_trace(0);
+        trace.reward_components.duration_ticks = 1;
+        append_tactic_decision_record(
+            &root,
+            &decision_record(&trace, 2, root_checkpoint_sha256, root_ref, transition_ref),
+        )
+        .unwrap();
+
+        let graph = project_tactic_decision_graph(&root).unwrap().unwrap();
+        assert!(graph.root_connected);
+        assert_eq!(graph.nodes.len(), 2);
+        assert_eq!(graph.edges.len(), 1);
+        assert_eq!(graph.edges[0].option_id, "wait");
+        let diagnostics = project_tactic_decision_diagnostics(&root).unwrap().unwrap();
+        assert_eq!(diagnostics.replay_rows, 1);
+        assert_eq!(diagnostics.frontier_cells, 1);
+        assert_eq!(diagnostics.unique_selected_actions, 1);
+        assert!(!diagnostics.frontier_lost_root_connectivity);
+        let materialized = materialize_tactic_decision_route(&root, 0).unwrap();
+        assert_eq!(materialized, route);
         fs::remove_dir_all(root).unwrap();
     }
 
