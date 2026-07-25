@@ -43,9 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P0 - Remove storage and orchestration from the hot path
 
-- [ ] Prove exact resume equivalence across interruption: selected actions,
-      model state, frontier state, route tapes, and final candidate identities
-      must match an uninterrupted run.
 - [ ] Benchmark the same sealed campaign before and after the change. Report
       bytes written, serialization time, useful decisions per second, native
       ticks per second, and peak memory.

@@ -1955,5 +1955,123 @@ mod tests {
         assert_eq!(next.selected.reason, TacticSelectionReason::Greedy);
         assert_eq!(next.ranking.values.ranked.len(), 1);
         assert!(next.ranking.values.unsupported.is_empty());
+
+        // Continue the original in-memory campaign and the campaign loaded
+        // from the sealed checkpoint through the same terminal outcome. This
+        // makes interruption equivalence cover selection, refit, frontier,
+        // tape, and final proof identities rather than only decoding.
+        let mut uninterrupted = campaign;
+        let mut resumed = from_file;
+        let uninterrupted_decision = uninterrupted.decide(&catalog, &[], &encode).unwrap();
+        let resumed_decision = resumed.decide(&catalog, &[], &encode).unwrap();
+        assert_eq!(uninterrupted_decision, resumed_decision);
+        assert_eq!(uninterrupted_decision, next);
+
+        let mut terminal_route = uninterrupted.route_tape.clone();
+        terminal_route.frames.push(InputFrame {
+            owned_ports: 1,
+            ..InputFrame::default()
+        });
+        let start_frame = uninterrupted.current.snapshot.tape_frame;
+        let terminal_execution = OptionExecution::capture(
+            uninterrupted_decision.selected.descriptor.option_id.clone(),
+            uninterrupted_decision
+                .selected
+                .descriptor
+                .option_type
+                .clone(),
+            uninterrupted_decision
+                .selected
+                .descriptor
+                .parameters
+                .clone(),
+            1,
+            1,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &terminal_route,
+            TapeRange {
+                start_frame,
+                end_frame_exclusive: start_frame + 1,
+            },
+        )
+        .unwrap();
+        let mut terminal_facts = uninterrupted.current.snapshot.clone();
+        terminal_facts.boundary_index += 1;
+        terminal_facts.simulation_tick += 1;
+        terminal_facts.tape_frame += 1;
+        terminal_facts.state_identity = [0x5a; 16];
+        terminal_facts.player.position_f32_bits[0] =
+            (f32::from_bits(terminal_facts.player.position_f32_bits[0]) + 512.0).to_bits();
+        terminal_facts.terminal.configured = Some(true);
+        terminal_facts.terminal.reached = Some(true);
+        terminal_facts.terminal.reason =
+            dusklight_learning::fact_snapshot::FactTerminalReason::GoalReached;
+        terminal_facts.terminal.first_hit_tick = Some(terminal_facts.simulation_tick);
+        let terminal_outcome = NativeTacticWorkerOutcome {
+            schema: crate::native_tactic_worker::NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2.into(),
+            source_checkpoint_sha256: uninterrupted.root_checkpoint_sha256,
+            checkpoint_identity: "resume-equivalence-terminal".into(),
+            episode_shard_sha256: shard.content_sha256,
+            selected: uninterrupted_decision.selected.clone(),
+            execution: terminal_execution,
+            native_queries: Vec::new(),
+            route_tape: terminal_route,
+            next_facts: terminal_facts,
+            terminal: true,
+        };
+        let uninterrupted_step = uninterrupted
+            .retain_and_refit_rewarded(
+                uninterrupted_decision,
+                terminal_outcome.clone(),
+                &catalog,
+                &[],
+                &registry,
+                &encode,
+                |_| true,
+                &reward_spec,
+                true,
+            )
+            .unwrap();
+        let resumed_step = resumed
+            .retain_and_refit_rewarded(
+                resumed_decision,
+                terminal_outcome,
+                &catalog,
+                &[],
+                &registry,
+                &encode,
+                |_| true,
+                &reward_spec,
+                true,
+            )
+            .unwrap();
+        assert_eq!(uninterrupted_step, resumed_step);
+        assert_eq!(
+            serde_cbor::to_vec(&uninterrupted.model()).unwrap(),
+            serde_cbor::to_vec(&resumed.model()).unwrap()
+        );
+        assert_eq!(
+            uninterrupted.graph_projection().unwrap(),
+            resumed.graph_projection().unwrap()
+        );
+        assert_eq!(
+            uninterrupted
+                .sample_root_and_frontier(8, 0, &[], usize::MAX)
+                .unwrap(),
+            resumed
+                .sample_root_and_frontier(8, 0, &[], usize::MAX)
+                .unwrap()
+        );
+        assert_eq!(uninterrupted.route_tape, resumed.route_tape);
+        assert_eq!(
+            uninterrupted.checkpoint().unwrap(),
+            resumed.checkpoint().unwrap()
+        );
+        assert_eq!(
+            uninterrupted.final_result().unwrap(),
+            resumed.final_result().unwrap()
+        );
     }
 }
