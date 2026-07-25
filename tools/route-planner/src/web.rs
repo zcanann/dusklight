@@ -6,7 +6,7 @@ use crate::workspace::{
     BUILTIN_LIBRARY_VERSION, WorkspaceAssetCommandRequest, WorkspaceAssetSaveRequest,
     WorkspaceCreateRequest, WorkspaceExport, WorkspaceFolderCommandRequest,
     WorkspaceFolderTrashCommandRequest, WorkspaceLibraryForkRequest, WorkspaceRegistry,
-    WorkspaceRouteGraphSaveRequest, WorkspaceTrashCommandRequest,
+    WorkspaceRouteGraphSaveRequest, WorkspaceScenarioCreateRequest, WorkspaceTrashCommandRequest,
 };
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -319,6 +319,41 @@ fn dispatch_workspace_record(request: HttpRequest, state: &WebState) -> HttpResp
                 .export(workspace_id)
                 .map_err(|error| error.to_string())
         }),
+        [_, "scenarios"] if request.method == "POST" => {
+            let create =
+                match serde_json::from_slice::<WorkspaceScenarioCreateRequest>(&request.body) {
+                    Ok(create) => create,
+                    Err(error) => {
+                        return project_error_response(400, "Bad Request", &error.to_string());
+                    }
+                };
+            project_response(|| {
+                let project = {
+                    let projects = state
+                        .projects
+                        .lock()
+                        .map_err(|_| "project store lock is poisoned".to_owned())?;
+                    projects
+                        .load(&create.library_id)
+                        .map_err(|error| error.to_string())?
+                };
+                if !project.read_only {
+                    return Err("only read-only exact Library content can ground a scenario".into());
+                }
+                let registry = state
+                    .workspaces
+                    .lock()
+                    .map_err(|_| "workspace registry lock is poisoned".to_owned())?;
+                registry
+                    .create_blank_scenario(
+                        workspace_id,
+                        &project.project,
+                        project.revision_sha256,
+                        create,
+                    )
+                    .map_err(|error| error.to_string())
+            })
+        }
         [_, "assets", asset_id] if !asset_id.is_empty() => {
             dispatch_workspace_asset(request, state, workspace_id, asset_id)
         }
@@ -809,8 +844,11 @@ mod tests {
         assert_eq!(app.status, 200);
         let app_text = String::from_utf8(app.body).unwrap();
         assert!(app_text.contains("evaluate_transition"));
-        assert!(app_text.contains("Browse Library templates"));
+        assert!(app_text.contains("Choose context and anchor"));
         for required in [
+            "workspace-scenario-create/v1",
+            "openNewScenarioDialog",
+            "Empty grounded scenario created from selected context, anchor, and goal",
             "workspace-folder-command/v1",
             "workspace-folder-trash-command/v1",
             "workspaceFolderItem",
@@ -1175,6 +1213,88 @@ mod tests {
         );
         assert_eq!(origin["library_sha256"], source_library["revision_sha256"]);
         assert_eq!(origin["source_asset_id"], "demo-forest-keyed-door:graph");
+
+        let goal_id = source_library["project"]["catalog"]["mechanics"]["goals"][0]["id"]
+            .as_str()
+            .unwrap();
+        let scenario_create = serde_json::json!({
+            "schema": crate::workspace::WORKSPACE_SCENARIO_CREATE_SCHEMA,
+            "library_id": "demo-forest-keyed-door",
+            "namespace": "blank-forest-route",
+            "label": "Blank forest route",
+            "goal_id": goal_id,
+        });
+        let scenario_created = dispatch(
+            HttpRequest {
+                method: "POST".into(),
+                target: "/api/workspaces/ordon-route/scenarios".into(),
+                body: serde_json::to_vec(&scenario_create).unwrap(),
+            },
+            &state,
+        );
+        assert_eq!(scenario_created.status, 200);
+        let scenario_created: serde_json::Value =
+            serde_json::from_slice(&scenario_created.body).unwrap();
+        for (id, kind) in [
+            ("scenario.blank-forest-route", "scenario"),
+            ("route-graph.blank-forest-route", "route_graph"),
+            ("state-seed.blank-forest-route", "state_seed"),
+            ("route-book.blank-forest-route", "route_book"),
+            ("layout.blank-forest-route", "layout"),
+        ] {
+            assert!(
+                scenario_created["assets"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|asset| { asset["id"] == id && asset["kind"] == kind })
+            );
+        }
+        let blank_route_book = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces/ordon-route/assets/route-book.blank-forest-route".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(blank_route_book.status, 200);
+        let blank_route_book: serde_json::Value =
+            serde_json::from_slice(&blank_route_book.body).unwrap();
+        assert_eq!(
+            blank_route_book["asset"]["payload"]["route_book"]["goal_ids"],
+            serde_json::json!([goal_id])
+        );
+        assert_eq!(
+            blank_route_book["asset"]["payload"]["route_book"]["steps"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            blank_route_book["asset"]["payload"]["route_book"]["methods"],
+            serde_json::json!([])
+        );
+        let blank_scenario = dispatch(
+            HttpRequest {
+                method: "GET".into(),
+                target: "/api/workspaces/ordon-route/assets/scenario.blank-forest-route".into(),
+                body: Vec::new(),
+            },
+            &state,
+        );
+        assert_eq!(blank_scenario.status, 200);
+        let blank_scenario: serde_json::Value =
+            serde_json::from_slice(&blank_scenario.body).unwrap();
+        assert_eq!(
+            blank_scenario["asset"]["payload"]["anchor"],
+            serde_json::json!({
+                "kind": "state_seed",
+                "state_seed_id": "state-seed.blank-forest-route",
+            })
+        );
+        assert_eq!(
+            blank_scenario["asset"]["header"]["origin"]["library_id"],
+            "demo-forest-keyed-door"
+        );
 
         let asset = crate::workspace::WorkspaceAsset {
             schema: crate::workspace::WORKSPACE_ASSET_SCHEMA.into(),

@@ -318,20 +318,37 @@ try {
     "custom-node tab close",
     `document.querySelectorAll("#editor-tabs .editor-tab").length === 0`,
   );
+  await evaluate(`document.getElementById("new-scenario").click()`);
+  await browserUntil(
+    "new scenario exact context choices",
+    `document.getElementById("new-scenario-dialog").open
+      && [...document.getElementById("new-scenario-library").options]
+        .some((option) => option.value === "demo-forest-keyed-door")`,
+  );
   await evaluate(`(() => {
-    document.getElementById("library-tab").click();
-    const row = document.querySelector(
-      '.library-content-row[data-library-id="demo-forest-keyed-door"]',
-    );
-    const create = row?.querySelector(".content-primary-action");
-    if (!create) throw new Error("Library template has no direct Create scenario action");
-    create.click();
+    const library = document.getElementById("new-scenario-library");
+    library.value = "demo-forest-keyed-door";
+    library.dispatchEvent(new Event("change", { bubbles: true }));
+    document.getElementById("new-scenario-label").value = "Browser grounded route";
+    document.getElementById("new-scenario-id").value = "browser-grounded-route";
+    if (!document.getElementById("new-scenario-context").textContent.includes("en")) {
+      throw new Error("new scenario does not expose the selected exact runtime context");
+    }
+    if (document.getElementById("new-scenario-anchor").value !== "library_state") {
+      throw new Error("new scenario does not expose its authenticated state anchor");
+    }
+    if (!document.getElementById("new-scenario-goal").value) {
+      throw new Error("new scenario does not require an authored goal");
+    }
+    document.getElementById("new-scenario-form").requestSubmit();
     return true;
   })()`);
   await browserUntil(
     "grounded scenario authoring context",
-    `document.getElementById("status").textContent === "Grounded scenario created from exact Library content"
-      && document.getElementById("project-name").textContent.includes("Forest Temple small-key door")
+    `document.getElementById("status").textContent
+        === "Empty grounded scenario created from selected context, anchor, and goal"
+      && document.getElementById("project-name").textContent.includes("Browser grounded route")
+      && document.getElementById("canvas").dataset.routeStepCount === "0"
       && document.querySelector('#node-kind-list [data-node-kind="mechanic"]') != null`,
   );
   await evaluate(`(() => {
@@ -367,7 +384,7 @@ try {
   await evaluate(`(() => {
     document.querySelector("#region-breadcrumbs button")?.click();
     const route = [...document.querySelectorAll("#region-children .enter-region")]
-      .find((button) => button.textContent.includes("Forest Temple"));
+      .find((button) => button.textContent.includes("Browser grounded route"));
     if (!route) throw new Error("authored route has no top-level graph region");
     route.click();
     const authored = [...document.querySelectorAll("#region-children .enter-region")]

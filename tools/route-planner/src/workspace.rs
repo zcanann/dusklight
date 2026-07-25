@@ -45,6 +45,8 @@ pub const WORKSPACE_FOLDER_COMMAND_SCHEMA: &str =
 pub const WORKSPACE_FOLDER_TRASH_COMMAND_SCHEMA: &str =
     "dusklight.route-planner.workspace-folder-trash-command/v1";
 pub const WORKSPACE_LIBRARY_FORK_SCHEMA: &str = "dusklight.route-planner.workspace-library-fork/v1";
+pub const WORKSPACE_SCENARIO_CREATE_SCHEMA: &str =
+    "dusklight.route-planner.workspace-scenario-create/v1";
 pub const WORKSPACE_EXPORT_SCHEMA: &str = "dusklight.route-planner.workspace-export/v2";
 pub const BUILTIN_LIBRARY_VERSION: &str = "builtin-v1";
 pub const WORKSPACE_FORMAT_VERSION: u32 = 1;
@@ -61,6 +63,11 @@ const FOLDER_TRASH_PAYLOAD: &str = "payload";
 const FOLDER_TRASH_RECORD_SCHEMA: &str = "dusklight.route-planner.workspace-folder-trash/v1";
 const TRANSACTION_SCHEMA: &str = "dusklight.route-planner.workspace-transaction/v1";
 static NEXT_TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+
+struct BlankScenarioConfiguration<'a> {
+    label: &'a str,
+    goal_id: &'a str,
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -484,6 +491,16 @@ pub struct WorkspaceTrashCommandRequest {
 pub struct WorkspaceLibraryForkRequest {
     pub schema: String,
     pub namespace: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceScenarioCreateRequest {
+    pub schema: String,
+    pub library_id: String,
+    pub namespace: String,
+    pub label: String,
+    pub goal_id: String,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1495,6 +1512,34 @@ impl WorkspaceRegistry {
     ) -> Result<WorkspaceRecord, WorkspaceError> {
         let mut store = self.open_workspace(workspace_id)?;
         store.import_project_template(project, library_sha256)?;
+        workspace_record(&store)
+    }
+
+    pub fn create_blank_scenario(
+        &self,
+        workspace_id: &str,
+        project: &PlannerWebProject,
+        library_sha256: Digest,
+        request: WorkspaceScenarioCreateRequest,
+    ) -> Result<WorkspaceRecord, WorkspaceError> {
+        if request.schema != WORKSPACE_SCENARIO_CREATE_SCHEMA {
+            return Err(WorkspaceError::new(
+                "workspace scenario create schema is unsupported",
+            ));
+        }
+        if request.library_id != project.id {
+            return Err(WorkspaceError::new(
+                "scenario Library identity does not match the selected exact source",
+            ));
+        }
+        let mut store = self.open_workspace(workspace_id)?;
+        store.import_blank_scenario(
+            project,
+            library_sha256,
+            &request.namespace,
+            &request.label,
+            &request.goal_id,
+        )?;
         workspace_record(&store)
     }
 
@@ -2623,7 +2668,7 @@ impl WorkspaceStore {
         library_sha256: Digest,
     ) -> Result<(), WorkspaceError> {
         let fragment = stable_fragment(&project.id);
-        self.import_project_template_as(project, library_sha256, &fragment)
+        self.import_project_template_as(project, library_sha256, &fragment, None)
     }
 
     fn fork_project_template(
@@ -2639,7 +2684,32 @@ impl WorkspaceStore {
                 "Library fork namespace must contain letters or digits",
             ));
         }
-        self.import_project_template_as(project, library_sha256, &fragment)
+        self.import_project_template_as(project, library_sha256, &fragment, None)
+    }
+
+    fn import_blank_scenario(
+        &mut self,
+        project: &PlannerWebProject,
+        library_sha256: Digest,
+        namespace: &str,
+        label: &str,
+        goal_id: &str,
+    ) -> Result<(), WorkspaceError> {
+        validate_stable_id("scenario namespace", namespace)?;
+        validate_label("scenario label", label)?;
+        validate_stable_id("scenario goal", goal_id)?;
+        let fragment = stable_fragment(namespace);
+        if fragment.is_empty() {
+            return Err(WorkspaceError::new(
+                "scenario namespace must contain letters or digits",
+            ));
+        }
+        self.import_project_template_as(
+            project,
+            library_sha256,
+            &fragment,
+            Some(BlankScenarioConfiguration { label, goal_id }),
+        )
     }
 
     fn import_project_template_as(
@@ -2647,6 +2717,7 @@ impl WorkspaceStore {
         project: &PlannerWebProject,
         library_sha256: Digest,
         fragment: &str,
+        blank: Option<BlankScenarioConfiguration<'_>>,
     ) -> Result<(), WorkspaceError> {
         project
             .validate()
@@ -2668,6 +2739,9 @@ impl WorkspaceStore {
         let state_id = format!("state-seed.{fragment}");
         let route_book_id = format!("route-book.{fragment}");
         let layout_id = format!("layout.{fragment}");
+        let scenario_label = blank
+            .as_ref()
+            .map_or(project.label.as_str(), |configuration| configuration.label);
         let origin = |source_asset_id: String| {
             Some(WorkspaceAssetOrigin {
                 library_id: project.id.clone(),
@@ -2676,38 +2750,45 @@ impl WorkspaceStore {
                 source_asset_id,
             })
         };
-        let route_book = match &project.route_book {
-            Some(route_book) => route_book.clone(),
-            None => {
+        let route_book = match (&blank, &project.route_book) {
+            (None, Some(route_book)) => route_book.clone(),
+            _ => {
                 let scope = ContextScope {
                     selectors: vec![ContextSelector::Exact {
                         context: exact_context.clone(),
                     }],
                 };
-                let goal_id = project
-                    .catalog
-                    .mechanics
-                    .goals
-                    .first()
-                    .ok_or_else(|| {
+                let selected_goal = match &blank {
+                    Some(configuration) => project
+                        .catalog
+                        .mechanics
+                        .goals
+                        .iter()
+                        .find(|goal| goal.id == configuration.goal_id)
+                        .ok_or_else(|| {
+                            WorkspaceError::new(format!(
+                                "goal {} is not defined by exact Library {}",
+                                configuration.goal_id, project.id
+                            ))
+                        })?,
+                    None => project.catalog.mechanics.goals.first().ok_or_else(|| {
                         WorkspaceError::new(
                             "Library template needs a goal before authoring a route",
                         )
-                    })?
-                    .id
-                    .clone();
+                    })?,
+                };
                 RouteBook {
                     schema: ROUTE_BOOK_SCHEMA.into(),
                     manifest: RouteBookManifest {
                         id: route_book_id.clone(),
                         version: "1.0.0".into(),
-                        label: format!("{} authored route", project.label),
+                        label: format!("{scenario_label} authored route"),
                         author: "Route Planner".into(),
                         source: "Workspace-authored exact transition sequence".into(),
                         scope: scope.clone(),
                         refinement_stack_sha256: Some(project.catalog.refinement_stack.digest()?),
                     },
-                    goal_ids: vec![goal_id],
+                    goal_ids: vec![selected_goal.id.clone()],
                     constraints: Vec::new(),
                     directives: Vec::new(),
                     steps: Vec::new(),
@@ -2723,7 +2804,7 @@ impl WorkspaceStore {
             schema: WORKSPACE_ASSET_SCHEMA.into(),
             header: WorkspaceAssetHeader {
                 id: state_id.clone(),
-                label: format!("{} start state", project.label),
+                label: format!("{scenario_label} start state"),
                 kind: WorkspaceAssetKind::StateSeed,
                 version: 1,
                 origin: origin(format!("{}:start-state", project.id)),
@@ -2739,7 +2820,7 @@ impl WorkspaceStore {
             schema: WORKSPACE_ASSET_SCHEMA.into(),
             header: WorkspaceAssetHeader {
                 id: graph_id.clone(),
-                label: project.label.clone(),
+                label: scenario_label.into(),
                 kind: WorkspaceAssetKind::RouteGraph,
                 version: 1,
                 origin: origin(format!("{}:graph", project.id)),
@@ -2751,7 +2832,7 @@ impl WorkspaceStore {
             schema: WORKSPACE_ASSET_SCHEMA.into(),
             header: WorkspaceAssetHeader {
                 id: layout_id.clone(),
-                label: format!("{} layout", project.label),
+                label: format!("{scenario_label} layout"),
                 kind: WorkspaceAssetKind::Layout,
                 version: 1,
                 origin: origin(format!("{}:presentation", project.id)),
@@ -2798,7 +2879,7 @@ impl WorkspaceStore {
             schema: WORKSPACE_ASSET_SCHEMA.into(),
             header: WorkspaceAssetHeader {
                 id: scenario_id,
-                label: project.label.clone(),
+                label: scenario_label.into(),
                 kind: WorkspaceAssetKind::Scenario,
                 version: 1,
                 origin: origin(format!("{}:scenario", project.id)),

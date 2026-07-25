@@ -475,6 +475,112 @@ async function createWorkspace(event) {
   }
 }
 
+async function openNewScenarioDialog() {
+  if (!state.workspace) {
+    setStatus("Create or open a workspace first", "bad");
+    return;
+  }
+  const dialog = elements["new-scenario-dialog"];
+  elements["new-scenario-error"].textContent = "";
+  elements["new-scenario-library"].replaceChildren(new Option("Loading exact contexts...", ""));
+  elements["new-scenario-goal"].replaceChildren();
+  elements["new-scenario-context"].textContent = "Loading exact Library contexts...";
+  dialog.showModal();
+  try {
+    const records = await Promise.all(state.libraries.map((library) =>
+      projectApi(`/api/projects/${encodeURIComponent(library.id)}`)));
+    if (!dialog.open) return;
+    state.scenarioLibraryRecords = new Map(records.map((record) => [
+      record.project.id,
+      record,
+    ]));
+    elements["new-scenario-library"].replaceChildren();
+    for (const library of state.libraries) {
+      const record = state.scenarioLibraryRecords.get(library.id);
+      const runtime = record?.project.start_state?.snapshot?.environment?.runtime_configuration;
+      if (!runtime || !(record?.project.catalog?.mechanics?.goals?.length)) continue;
+      elements["new-scenario-library"].append(new Option(
+        `${library.label} · ${runtime.language}`,
+        library.id,
+      ));
+    }
+    if (!elements["new-scenario-library"].options.length) {
+      throw new Error("No installed Library provides both an exact state anchor and an authored goal");
+    }
+    renderNewScenarioContext();
+    elements["new-scenario-label"].focus();
+  } catch (error) {
+    elements["new-scenario-library"].replaceChildren();
+    elements["new-scenario-context"].textContent = "No usable exact context.";
+    elements["new-scenario-error"].textContent = error.message;
+  }
+}
+
+function renderNewScenarioContext() {
+  const libraryId = elements["new-scenario-library"].value;
+  const record = state.scenarioLibraryRecords.get(libraryId);
+  const project = record?.project;
+  const runtime = project?.start_state?.snapshot?.environment?.runtime_configuration;
+  const goals = project?.catalog?.mechanics?.goals ?? [];
+  elements["new-scenario-goal"].replaceChildren(...goals.map((goal) =>
+    new Option(goal.label, goal.id)));
+  if (!runtime) {
+    elements["new-scenario-context"].textContent = "This Library has no exact runtime context.";
+    return;
+  }
+  const settings = Object.entries(runtime.settings ?? {})
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .join(", ");
+  elements["new-scenario-context"].textContent =
+    `${shortDigest(runtime.content_sha256)} · ${runtime.language}`
+    + `${settings ? ` · ${settings}` : ""}`;
+  if (project) {
+    elements["new-scenario-label"].value = `${project.label} route`;
+    elements["new-scenario-id"].value = `${slug(project.id)}-route`;
+  }
+}
+
+async function createBlankScenario(event) {
+  event.preventDefault();
+  if (!state.workspace) return;
+  const libraryId = elements["new-scenario-library"].value;
+  const namespace = elements["new-scenario-id"].value.trim();
+  const label = elements["new-scenario-label"].value.trim();
+  const goalId = elements["new-scenario-goal"].value;
+  elements["new-scenario-error"].textContent = "";
+  try {
+    const workspaceId = state.workspace.manifest.id;
+    setStatus(`Creating empty grounded scenario ${label}...`);
+    state.workspace = await projectApi(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/scenarios`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schema: WORKSPACE_SCENARIO_CREATE_SCHEMA,
+          library_id: libraryId,
+          namespace,
+          label,
+          goal_id: goalId,
+        }),
+      },
+    );
+    state.workspaceSignature = workspaceSignature(state.workspace);
+    elements["new-scenario-dialog"].close();
+    await refreshTrash();
+    await refreshWorkspaces(workspaceId);
+    selectContentSource("workspace");
+    const graphId = `route-graph.${slug(namespace)}`;
+    const graph = state.workspace.assets.find((asset) => asset.id === graphId);
+    if (!graph) throw new Error("The grounded scenario was created without its route graph");
+    await inspectWorkspaceAsset(graph);
+    setStatus("Empty grounded scenario created from selected context, anchor, and goal", "good");
+  } catch (error) {
+    elements["new-scenario-error"].textContent = error.message;
+    setStatus(error.message, "bad");
+  }
+}
+
 async function exportWorkspace() {
   if (!state.workspace) return;
   try {
@@ -667,20 +773,20 @@ async function openWorkspaceRecord(record) {
   if (record.assets.length) {
     setEmptyState(
       "Open a route graph",
-      "Choose an existing graph, or browse exact Library content to add another scenario.",
+      "Choose an existing graph, or create another scenario by selecting its exact context, anchor, and goal.",
+      "New grounded scenario",
+      openNewScenarioDialog,
       "Browse workspace assets",
       () => focusContentBrowser("workspace"),
-      "Browse Library",
-      () => focusContentBrowser("library"),
     );
   } else {
     setEmptyState(
       "Create a grounded scenario",
-      "Choose an exact Library template; its context and anchor will ground the new scenario.",
-      "Browse Library templates",
+      "Choose an exact Library context, authenticated entry anchor, and authored goal. Your route starts empty.",
+      "Choose context and anchor",
+      openNewScenarioDialog,
+      "Open a template",
       () => focusContentBrowser("library"),
-      "Import asset",
-      () => elements["workspace-asset-file"].click(),
     );
   }
   elements["detail-title"].textContent = "Nothing selected";

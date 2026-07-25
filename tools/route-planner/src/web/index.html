@@ -42,6 +42,7 @@
           <div class="browser-title">
             <strong>Content Browser</strong>
             <span class="browser-actions">
+              <button id="new-scenario" type="button" disabled>Scenario</button>
               <button id="import-asset" type="button" disabled>Import</button>
               <button id="new-asset" type="button" disabled aria-label="Create workspace asset">+</button>
             </span>
@@ -166,6 +167,39 @@
         <footer>
           <button id="cancel-new-workspace" type="button">Cancel</button>
           <button type="submit">Create workspace</button>
+        </footer>
+      </form>
+    </dialog>
+    <dialog id="new-scenario-dialog">
+      <form id="new-scenario-form">
+        <header>
+          <h2>New grounded scenario</h2>
+          <p>Choose an exact Library context, authenticated entry state, and goal. The route starts empty.</p>
+        </header>
+        <label>Scenario name
+          <input id="new-scenario-label" name="label" required maxlength="160" value="New scenario">
+        </label>
+        <label>Stable ID
+          <input id="new-scenario-id" name="id" required maxlength="96"
+            pattern="[a-z0-9._-]+" value="new-scenario">
+        </label>
+        <label>Exact Library context
+          <select id="new-scenario-library" name="library" required></select>
+          <small id="new-scenario-context">Select a Library context.</small>
+        </label>
+        <label>Entry anchor
+          <select id="new-scenario-anchor" name="anchor" required>
+            <option value="library_state">Authenticated Library state seed</option>
+          </select>
+          <small>The state seed is copied into its own Workspace file and remains pinned to this exact context.</small>
+        </label>
+        <label>Goal
+          <select id="new-scenario-goal" name="goal" required></select>
+        </label>
+        <p id="new-scenario-error" class="dialog-error" role="alert"></p>
+        <footer>
+          <button id="cancel-new-scenario" type="button">Cancel</button>
+          <button type="submit">Create empty route</button>
         </footer>
       </form>
     </dialog>
