@@ -1029,8 +1029,10 @@ fn pad_for(
             query.camera_yaw_radians_f32_bits = observation.camera_yaw_radians_f32_bits;
             let intermediate_tolerance = f32::from_bits(*intermediate_tolerance_f32_bits);
             while *coordinate_index + 1 < coordinates_f32_bits.len()
-                && planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index]))
+                && (planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index]))
                     <= intermediate_tolerance
+                    || planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index + 1]))
+                        < planar_distance(player, bits3(coordinates_f32_bits[*coordinate_index])))
             {
                 *coordinate_index += 1;
             }
@@ -1545,6 +1547,38 @@ mod tests {
         assert!(!queries[0].target_reached);
         assert!(!queries[1].target_reached);
         assert!(queries[3].target_reached);
+    }
+
+    #[test]
+    fn coordinate_sequence_resumes_at_the_nearest_forward_waypoint() {
+        let plan = NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits: vec![
+                    [1.0_f32.to_bits(), 0.0_f32.to_bits(), 0.0_f32.to_bits()],
+                    [3.0_f32.to_bits(), 0.0_f32.to_bits(), 0.0_f32.to_bits()],
+                    [5.0_f32.to_bits(), 0.0_f32.to_bits(), 0.0_f32.to_bits()],
+                ],
+                intermediate_tolerance_f32_bits: 0.25_f32.to_bits(),
+                final_tolerance_f32_bits: 0.25_f32.to_bits(),
+                magnitude: 100,
+            },
+            8,
+        );
+        let (frames, queries, reason) = realize(
+            &plan,
+            &[
+                observation(0, [2.25, 0.0, 0.0]),
+                observation(1, [3.0, 0.0, 0.0]),
+                observation(2, [5.0, 0.0, 0.0]),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(reason, OptionEndReason::Terminated);
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0].pads[0].stick_x, -100);
+        assert!(!queries[0].target_reached);
+        assert!(queries[2].target_reached);
     }
 
     #[test]
