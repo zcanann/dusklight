@@ -43,9 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P1 - Use the simulator's available throughput
 
-- [ ] Benchmark 1, 2, 4, and 8 persistent workers on the current host under one
-      sealed workload. Report scaling efficiency, memory, restore time, native
-      ticks per second, and useful decisions per second.
 - [ ] Evaluate a diverse batch of applicable tactic proposals from the same
       restored state before choosing the next frontier transition.
 - [ ] Schedule independent seeds, frontier expansions, and equal-source tactic
