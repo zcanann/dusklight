@@ -18,17 +18,23 @@ cargo run --quiet --manifest-path tools/huntctl/Cargo.toml -- world inventory `
 ```
 
 The output is canonical compact JSON using schema
-`dusklight-world-inventory/v1`. Host paths and timestamps are excluded, so the
+`dusklight-world-inventory/v2`. Host paths and timestamps are excluded, so the
 same source bytes produce the same artifact digest. The checked GZ2E01 content
 currently produces SHA-256
-`370675af90d40e5b6d8e17b8dce3ad48873bec74c7f7c05bb69b50de95201e7f`.
+`e4f63e67da30035c8d15cc92595bc384dcc84adbe7a5d361acbcb0302bdcd743`.
 
-## What version 1 contains
+Version 1 artifacts remain readable and retain their original canonical bytes.
+Version 2 adds checked authored room paths without changing any v1 meaning.
+
+## What version 2 contains
 
 - every parsed chunk directory entry from `stage.dzs` and each `room.dzr`;
 - recognized actor, treasure, scaled/door, and player-spawn placements with
   source transform, parameters, set ID, layer, and raw record bytes;
 - every SCLS exit with its normalized destination and retained raw fields;
+- every fixed-layout `RPAT` path and paired `RPPN` point, including exact
+  arguments, optional next-path links, closed/switch fields, checked point
+  spans, authored coordinates, and raw record bytes;
 - every addressable KCL prism with authored height, source indices, material
   attribute, decoded PLC words, and a content-stable ID;
 - reconstructed triangle and plane geometry where the retail data permits it;
@@ -57,9 +63,10 @@ cargo test --manifest-path tools/huntctl/Cargo.toml `
 ```
 
 The checked fixture contains three archives, 1,442 placements, 48 player
-spawns, 44 exits, 10,794 addressable collision prisms, and 40 inferred load
-triggers. Four authored prisms cannot be reconstructed; all four remain in the
-artifact with their source facts and explicit failure reasons.
+spawns, 44 exits, 82 paths, 426 path points, 10,794 addressable collision
+prisms, and 40 inferred load triggers. Four authored prisms cannot be
+reconstructed; all four remain in the artifact with their source facts and
+explicit failure reasons.
 
 The acceptance test also proves the route-critical join:
 
@@ -77,10 +84,11 @@ copied into every frame or fed wholesale to a model.
 
 ## Current limits
 
-Version 1 recognizes the placement, spawn, SCLS, KCL, and PLC slices required
-for the first Ordon route. A separate content-addressed per-room spatial index
-now provides nearest-surface, AABB broad-phase, and finite-ray inspection over
-these triangles. Paths, rails, water/trigger volumes, cameras, event tables,
-switch semantics, region containment, and broader stage formats still need
-explicit decoders. Unknown DZS/DZR chunks remain listed in the chunk inventory
-rather than guessed at or silently presented as decoded.
+A separate content-addressed per-room spatial index provides nearest-surface,
+AABB broad-phase, and finite-ray inspection over the decoded triangles.
+Authored paths are immutable proposals, not a claim that Link can traverse
+them in the current state; native execution remains authoritative. Water and
+trigger volumes, cameras, event tables, switch semantics beyond the retained
+path field, region containment, and broader stage formats still need explicit
+decoders. Unknown DZS/DZR chunks remain listed rather than guessed at or
+silently presented as decoded.

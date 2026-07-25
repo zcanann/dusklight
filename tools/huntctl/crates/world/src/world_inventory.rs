@@ -1590,6 +1590,15 @@ mod tests {
         let bytes = inventory.canonical_bytes().unwrap();
         assert_eq!(WorldInventory::decode_canonical(&bytes).unwrap(), inventory);
 
+        let mut legacy = inventory.clone();
+        legacy.schema = WORLD_INVENTORY_SCHEMA_V1.into();
+        let legacy_bytes = legacy.canonical_bytes().unwrap();
+        assert!(!legacy_bytes.windows(7).any(|bytes| bytes == b"\"paths\""));
+        assert_eq!(
+            WorldInventory::decode_canonical(&legacy_bytes).unwrap(),
+            legacy
+        );
+
         let pretty = serde_json::to_vec_pretty(&inventory).unwrap();
         assert!(WorldInventory::decode_canonical(&pretty).is_err());
 
@@ -1618,11 +1627,13 @@ mod tests {
         assert_eq!(inventory.placements.len(), 1_442);
         assert_eq!(inventory.player_spawns.len(), 48);
         assert_eq!(inventory.exits.len(), 44);
+        assert_eq!(inventory.paths.len(), 82);
+        assert_eq!(inventory.path_points.len(), 426);
         assert_eq!(inventory.collisions.len(), 10_794);
         assert_eq!(inventory.load_triggers.len(), 40);
         assert_eq!(
             inventory.digest().unwrap().to_string(),
-            "370675af90d40e5b6d8e17b8dce3ad48873bec74c7f7c05bb69b50de95201e7f"
+            "e4f63e67da30035c8d15cc92595bc384dcc84adbe7a5d361acbcb0302bdcd743"
         );
 
         let degenerate = inventory
@@ -1656,5 +1667,53 @@ mod tests {
                 && exit.wipe_time == 4
                 && exit.time_hour == -1
         }));
+    }
+
+    #[test]
+    fn real_f_sp104_main_path_is_available_when_disc_is_present() {
+        let stage_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../..")
+            .join("orig/GZ2E01/files/res/Stage/F_SP104");
+        if !stage_dir.is_dir() {
+            eprintln!("skipping F_SP104 path golden: original disc data is absent");
+            return;
+        }
+
+        let inventory = WorldInventory::build(&stage_dir, "F_SP104").unwrap();
+        assert_eq!(inventory.paths.len(), 18);
+        assert_eq!(inventory.path_points.len(), 81);
+        assert_eq!(
+            inventory.digest().unwrap().to_string(),
+            "833ed87c4e4a82b2a110ba637ce71dd5f159ddddbe7e04e4e79f491586dca6fb"
+        );
+        let route = inventory
+            .paths
+            .iter()
+            .find(|path| path.scope.room == Some(1) && path.record_index == 14)
+            .expect("F_SP104 room path 14 must be decoded");
+        assert_eq!(route.point_count, 8);
+        let source_points = inventory
+            .path_points
+            .iter()
+            .filter(|point| point.source_sha256 == route.source_sha256)
+            .collect::<Vec<_>>();
+        let points = &source_points
+            [route.first_point_index..route.first_point_index + route.point_count as usize];
+        assert_eq!(
+            points[0].position,
+            Vec3 {
+                x: 300.0,
+                y: 270.81253,
+                z: -3950.0
+            }
+        );
+        assert_eq!(
+            points[7].position,
+            Vec3 {
+                x: -441.90887,
+                y: 314.0304,
+                z: -19270.963
+            }
+        );
     }
 }

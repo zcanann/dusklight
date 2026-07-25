@@ -1765,7 +1765,7 @@ mod tests {
         let index = WorldSpatialIndex::build(&inventory).unwrap();
         assert_eq!(
             index.artifact_digest().unwrap().to_string(),
-            "2ad975eee45193b4325bb420a7ba5a78d533bed80cbcfeace29dcc5418e73834"
+            "dda6381f80f735821eea4a199510568281980978c902d963b9f8684db7dc4d1a"
         );
         let room0 = index
             .artifact()

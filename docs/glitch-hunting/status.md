@@ -488,11 +488,12 @@ v2 extraction writes a matching spec sidecar while preserving movement-v1
 compatibility.
 
 The offline world reader now builds canonical
-`dusklight-world-inventory/v1` artifacts directly from immutable
+`dusklight-world-inventory/v2` artifacts directly from immutable
 RARC/DZS/DZR/KCL/PLC content. The checked F_SP103 fixture inventories 1,442
-placements, 48 player spawns, 44 SCLS exits, 10,794 collision prisms, and 40
-inferred collision-to-SCLS load triggers. Its artifact SHA-256 is
-`370675af90d40e5b6d8e17b8dce3ad48873bec74c7f7c05bb69b50de95201e7f`.
+placements, 48 player spawns, 44 SCLS exits, 82 authored paths, 426 path
+points, 10,794 collision prisms, and 40 inferred collision-to-SCLS load
+triggers. Its artifact SHA-256 is
+`e4f63e67da30035c8d15cc92595bc384dcc84adbe7a5d361acbcb0302bdcd743`.
 Four degenerate retail prisms remain addressable with explicit reconstruction
 failures. The content-golden test independently proves that room-1 prism 2217,
 PLC attribute 19 and exit 1 join room-1 SCLS record 1 and `F_SP104` room 1.
@@ -501,7 +502,7 @@ This path is offline and read-only; no native or gameplay file participates.
 The inventory now feeds a canonical per-room median-AABB BVH and bounded
 coordinate inspector. The checked F_SP103 spatial artifact contains 10,790
 reconstructed triangles and four explicit degeneracy exclusions; its SHA-256
-is `2ad975eee45193b4325bb420a7ba5a78d533bed80cbcfeace29dcc5418e73834`.
+is `dda6381f80f735821eea4a199510568281980978c902d963b9f8684db7dc4d1a`.
 `huntctl world query point|aabb|ray` requires an authored room coordinate scope,
 applies exact trigger/destination filters before ranking, returns stable source
 facts, and reports truncation plus traversal cost. Real goldens prove the live

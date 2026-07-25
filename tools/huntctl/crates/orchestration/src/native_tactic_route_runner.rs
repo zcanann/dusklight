@@ -1475,7 +1475,9 @@ pub struct NativeTacticGoalTargetReport {
     pub coordinate: [f32; 3],
     pub source_coordinate: [f32; 3],
     pub tactic_targets: Vec<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub route_sequences: Vec<Vec<[f32; 3]>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authored_route_ids: Vec<String>,
     pub supporting_load_triggers: usize,
     pub source_inventory_sha256: Digest,
@@ -2434,6 +2436,27 @@ mod tests {
         assert!(route_ids[0].contains("path/0:forward"));
         assert_eq!(targets[0], goal);
         assert!(targets.contains(&[100.0, 0.0, 100.0]));
+    }
+
+    #[test]
+    fn real_f_sp104_authored_main_path_is_the_bootstrap_route_when_disc_is_present() {
+        let stage_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../..")
+            .join("orig/GZ2E01/files/res/Stage/F_SP104");
+        if !stage_dir.is_dir() {
+            eprintln!("skipping F_SP104 route-basis golden: original disc data is absent");
+            return;
+        }
+        let inventory = WorldInventory::build(&stage_dir, "F_SP104").unwrap();
+        let source = [150.21315, 306.54245, -2785.0728];
+        let goal = [-430.95392, 241.77234, -21165.0];
+        let (_, routes, route_ids) = goal_route_targets(source, goal, 1, &inventory).unwrap();
+
+        assert_eq!(routes.len(), 1);
+        assert!(route_ids[0].contains("/chunk/RPAT/record/14:forward"));
+        assert_eq!(routes[0][0], [300.0, 270.81253, -3950.0]);
+        assert_eq!(routes[0][7], [-441.90887, 314.0304, -19270.963]);
+        assert_eq!(routes[0].last(), Some(&goal));
     }
 
     #[test]
