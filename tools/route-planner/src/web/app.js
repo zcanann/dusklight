@@ -13,6 +13,7 @@ const WORKSPACE_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-trash-
 const WORKSPACE_FOLDER_COMMAND_SCHEMA = "dusklight.route-planner.workspace-folder-command/v1";
 const WORKSPACE_FOLDER_TRASH_COMMAND_SCHEMA = "dusklight.route-planner.workspace-folder-trash-command/v1";
 const WORKSPACE_LIBRARY_FORK_SCHEMA = "dusklight.route-planner.workspace-library-fork/v1";
+const WORKSPACE_SCENARIO_CREATE_SCHEMA = "dusklight.route-planner.workspace-scenario-create/v1";
 const WORKSPACE_EXPORT_SCHEMA = "dusklight.route-planner.workspace-export/v2";
 const LEGACY_WORKSPACE_EXPORT_SCHEMA = "dusklight.route-planner.workspace-export/v1";
 const WORKSPACE_ROUTE_GRAPH_SAVE_SCHEMA = "dusklight.route-planner.workspace-route-graph-save/v1";
@@ -87,6 +88,9 @@ const elements = Object.fromEntries([
   "workspace-list", "new-workspace", "workspace-tab", "library-tab", "content-search",
   "content-browser-list", "new-workspace-dialog", "new-workspace-form",
   "new-workspace-label", "new-workspace-id", "new-workspace-error", "cancel-new-workspace",
+  "new-scenario", "new-scenario-dialog", "new-scenario-form", "new-scenario-label",
+  "new-scenario-id", "new-scenario-library", "new-scenario-context", "new-scenario-anchor",
+  "new-scenario-goal", "new-scenario-error", "cancel-new-scenario",
   "new-asset", "new-asset-dialog", "new-asset-form", "new-asset-label", "new-asset-id",
   "new-asset-error", "cancel-new-asset", "import-asset", "workspace-asset-file",
   "folder-dialog", "folder-form", "folder-dialog-title", "folder-dialog-help",
@@ -117,6 +121,7 @@ const state = {
   trash: [],
   folderTrash: [],
   libraries: [],
+  scenarioLibraryRecords: new Map(),
   contentSource: "workspace",
   selectedWorkspaceAsset: null,
   project: null,
@@ -165,6 +170,8 @@ const COMMANDS = [
     () => true, () => elements["import-workspace"].click()),
   command("workspace.export", "Export workspace", "Workspace", "",
     () => buttonEnabled("export-workspace"), () => elements["export-workspace"].click()),
+  command("scenario.new", "New grounded scenario", "Workspace", "",
+    () => Boolean(state.workspace), openNewScenarioDialog),
   command("content.workspace", "Browse Workspace assets", "Content Browser", "Alt+1",
     () => Boolean(state.workspace), () => focusContentBrowser("workspace")),
   command("content.library", "Browse Library content", "Content Browser", "Alt+2",
@@ -264,6 +271,12 @@ elements["export-workspace"].addEventListener("click", exportWorkspace);
 elements["workspace-file"].addEventListener("change", importWorkspace);
 elements["empty-primary"].addEventListener("click", () => state.emptyActions.primary?.());
 elements["empty-secondary"].addEventListener("click", () => state.emptyActions.secondary?.());
+elements["new-scenario"].addEventListener("click", openNewScenarioDialog);
+elements["cancel-new-scenario"].addEventListener("click", () => {
+  elements["new-scenario-dialog"].close();
+});
+elements["new-scenario-library"].addEventListener("change", renderNewScenarioContext);
+elements["new-scenario-form"].addEventListener("submit", createBlankScenario);
 elements["new-asset"].addEventListener("click", () => {
   elements["new-asset-error"].textContent = "";
   elements["new-asset-dialog"].showModal();
@@ -877,6 +890,7 @@ function selectContentSource(source) {
     elements[`${name}-tab`].classList.toggle("active", active);
     elements[`${name}-tab`].setAttribute("aria-selected", String(active));
   }
+  elements["new-scenario"].disabled = source !== "workspace" || !state.workspace;
   elements["new-asset"].disabled = source !== "workspace" || !state.workspace;
   elements["import-asset"].disabled = source !== "workspace" || !state.workspace;
   renderContentBrowser();
