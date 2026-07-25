@@ -226,6 +226,34 @@ fn validates_and_seals_the_ordon_optimization_request() {
 }
 
 #[test]
+fn validates_a_from_scratch_discovery_target_without_a_fabricated_proof() {
+    let repository = repository();
+    let request_path = "routes/Glitch Exhibition/faron-tactic-learning/benchmarks/faron-woods-tactic-q-discovery-v1.request.json";
+    let validated = Command::new(env!("CARGO_BIN_EXE_huntctl"))
+        .current_dir(&repository)
+        .args([
+            "campaign",
+            "validate-optimization-request",
+            "--input",
+            request_path,
+        ])
+        .arg("--repository-root")
+        .arg(&repository)
+        .output()
+        .unwrap();
+    assert!(
+        validated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&validated.stderr)
+    );
+    let report: Value = serde_json::from_slice(&validated.stdout).unwrap();
+    assert_eq!(report["campaign_class"], "from_scratch_discovery");
+    assert_eq!(report["segment"], "to_faron_woods");
+    assert_eq!(report["source_boundary_index"], 733);
+    assert!(report["incumbent_first_hit_tick"].is_null());
+}
+
+#[test]
 fn seeds_a_digest_bound_reverse_curriculum_terminal_window() {
     let repository = repository();
     let nonce = SystemTime::now()

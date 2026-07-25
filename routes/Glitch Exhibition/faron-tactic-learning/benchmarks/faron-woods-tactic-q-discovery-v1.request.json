@@ -1,0 +1,116 @@
+{
+  "schema": "dusklight-optimization-request/v2",
+  "content_sha256": "653dc628e5cabccbc39c8ce975715ac32b7caa6107f0e964459e26999768d15c",
+  "id": "faron-woods-tactic-q-discovery-v1",
+  "campaign_class": "from_scratch_discovery",
+  "route": {
+    "timeline": {
+      "path": "routes/Glitch Exhibition/faron-tactic-learning.timeline",
+      "sha256": "5e0cbf9182b817138409ad67cc284bcf644eafab220f08ad6a5e479275a59559"
+    },
+    "lineage": "main",
+    "segment": "to_faron_woods",
+    "source_boundary_index": 733,
+    "source_boundary_fingerprint": "1135b0533f958361c99733a81e7525d0",
+    "native_source_boundary_fingerprint": "1135b0533f958361c99733a81e7525d0"
+  },
+  "terminal_predicate": {
+    "goal": "faron_woods_load_committed",
+    "source": {
+      "path": "routes/Glitch Exhibition/faron-tactic-learning/predicates/faron_woods_load_committed.milestones",
+      "sha256": "b09d04f0c35e6bc2278f5ed7b4e8f2be2788a3954a39317bd330dbf9d9d64a4d"
+    },
+    "program_sha256": "925003c3f21f9f7fb519214368f2536dff75e1469afccf9aec9d2b7147ac9394",
+    "definition_sha256": "0bc70d38b7fa66b5a198117fe45d31902842377718264b914147930cd3faf55c"
+  },
+  "budgets": {
+    "exploration_horizon_ticks": 2048,
+    "promotion_before_tick": 2047,
+    "candidate_budget": 256,
+    "simulated_tick_budget": 524288
+  },
+  "execution": {
+    "workers": 1,
+    "deterministic_seeds": [
+      181081
+    ],
+    "repetitions": 1,
+    "fidelity": "headless"
+  },
+  "proposal": {
+    "action_schema": {
+      "id": "dusklight-raw-pad-action/v2",
+      "sha256": "483953b663e327c6d839d88b72ce652cfcc5d0aeb420570e0c076a4c62e3ab7c"
+    },
+    "proposal_schema": {
+      "id": "dusklight-residual-action/v1",
+      "sha256": "8b11beebb1528ebb225f0366c997cd32171b10d596c0f1c4b6ffa740879e2313"
+    },
+    "search_space": {
+      "schema": "dusklight-residual-search-space/v1",
+      "start_frame": 0,
+      "end_frame_exclusive": 64,
+      "candidate_slots": 4,
+      "ports": [
+        0
+      ],
+      "analog_channels": [
+        "main_x",
+        "main_y",
+        "camera_x",
+        "camera_y"
+      ],
+      "analog_delta_values": [
+        -64,
+        -32,
+        -16,
+        -8,
+        -4,
+        4,
+        8,
+        16,
+        32,
+        64
+      ],
+      "button_masks": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32,
+        64,
+        256,
+        512,
+        1024,
+        2048,
+        4096
+      ],
+      "duration_values": [
+        1,
+        2,
+        4,
+        8,
+        16,
+        32
+      ]
+    },
+    "optimizer": {
+      "kind": "random",
+      "samples": 1
+    }
+  },
+  "resume": {
+    "state_path": "build/campaigns/faron-woods-tactic-q-discovery-v1/state.json",
+    "journal_path": "build/campaigns/faron-woods-tactic-q-discovery-v1/journal.jsonl",
+    "checkpoint_every_candidates": 64
+  },
+  "retention": {
+    "retain_all_successes": true,
+    "failed_episodes": "diversity_reservoir",
+    "failed_episode_limit": 256,
+    "retain_realized_tapes": true,
+    "retain_native_episode_shards": true,
+    "retain_gameplay_traces": false
+  }
+}

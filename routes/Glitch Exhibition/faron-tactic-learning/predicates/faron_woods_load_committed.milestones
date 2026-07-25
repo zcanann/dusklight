@@ -1,0 +1,7 @@
+milestones 1.7
+
+# Earliest committed transition from Faron Woods' southern room to its field.
+milestone faron_woods_load_committed {
+  phase post_sim
+  when stage.name == "F_SP104" && stage.room == 1 && next_stage.name == "F_SP108" && next_stage.room == 0 && next_stage.spawn == 0
+}

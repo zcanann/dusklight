@@ -335,10 +335,19 @@ impl OptimizationRequest {
         }
         validate_schema("action", &self.proposal.action_schema)?;
         validate_schema("proposal", &self.proposal.proposal_schema)?;
-        if self.campaign_class != CampaignClass::LocalTasRefinement {
-            return Err(request_error(
-                "incumbent-relative residual proposal surfaces must be classified as local_tas_refinement, never discovery",
-            ));
+        match self.campaign_class {
+            CampaignClass::LocalTasRefinement => {}
+            CampaignClass::FromScratchDiscovery if self.incumbent.is_none() => {}
+            CampaignClass::FromScratchDiscovery => {
+                return Err(request_error(
+                    "from-scratch discovery cannot bind an incumbent",
+                ));
+            }
+            CampaignClass::DemonstrationAssistedDiscovery => {
+                return Err(request_error(
+                    "demonstration-assisted discovery belongs to an authenticated learning loop, not a residual optimization request",
+                ));
+            }
         }
         if self.proposal.action_schema.id != "dusklight-raw-pad-action/v2"
             || self.proposal.action_schema.sha256
@@ -660,23 +669,28 @@ impl OptimizationRequest {
                 "terminal predicate source differs from the timeline-owned goal source",
             ));
         }
-        let proof = timeline
-            .proofs
-            .iter()
-            .find(|proof| {
-                proof.segment == self.route.segment && proof.goal == self.terminal_predicate.goal
-            })
-            .ok_or_else(|| request_error("incumbent segment lacks the selected terminal proof"))?;
-        if proof.predicate_program_sha256 != self.terminal_predicate.program_sha256.to_string()
-            || proof.predicate_definition_sha256
-                != self.terminal_predicate.definition_sha256.to_string()
-        {
+        let proof = timeline.proofs.iter().find(|proof| {
+            proof.segment == self.route.segment && proof.goal == self.terminal_predicate.goal
+        });
+        if let Some(proof) = proof {
+            if proof.predicate_program_sha256 != self.terminal_predicate.program_sha256.to_string()
+                || proof.predicate_definition_sha256
+                    != self.terminal_predicate.definition_sha256.to_string()
+            {
+                return Err(request_error(
+                    "terminal predicate identities differ from the timeline proof",
+                ));
+            }
+        } else if self.campaign_class != CampaignClass::FromScratchDiscovery {
             return Err(request_error(
-                "terminal predicate identities differ from the timeline proof",
+                "non-discovery segment lacks the selected terminal proof",
             ));
         }
 
         if let Some(incumbent) = &self.incumbent {
+            let proof = proof.ok_or_else(|| {
+                request_error("incumbent segment lacks the selected terminal proof")
+            })?;
             let incumbent_path = validate_artifact_file(&root, "incumbent tape", &incumbent.tape)?;
             let ArtifactSource::Tape(segment_tape) = &segment.artifact else {
                 return Err(request_error(

@@ -1,0 +1,17 @@
+{
+  "schema": "dusklight-automation-card-fixture/v2",
+  "name": "Canonical process boot (89e1737 container, Faron control boundary)",
+  "root": "orig/automation-card-fixtures/process-boot",
+  "files": [
+    {
+      "path": "USA/Card A/01-GZ2E-gczelda2.gci",
+      "sha256": "89e1737bde8fd9b66e9c44822991b64347f1c92a2154cce758df8c0c99ec3c60"
+    }
+  ],
+  "source_boundaries": [
+    {
+      "source_frame": 733,
+      "fingerprint": "1135b0533f958361c99733a81e7525d0"
+    }
+  ]
+}

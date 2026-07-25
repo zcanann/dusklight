@@ -1,0 +1,10 @@
+dusktape 1
+rate 30/1
+ports 0x0f
+
+state neutral {}
+
+# The Ordon Spring transition commits on the final frame of the preceding
+# q125 segment. One hundred and one released frames reach a controllable
+# F_SP104 state that has remained stable for 31 ticks (absolute boundary 733).
+repeat 101 neutral
