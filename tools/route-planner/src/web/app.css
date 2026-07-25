@@ -100,6 +100,7 @@ button:disabled { opacity: .42; cursor: default; }
 .graph-edge.route-accepted { stroke: var(--good); stroke-width: 2.2; opacity: .95; }
 .graph-edge.route-unknown { stroke: var(--unknown); stroke-width: 2.2; stroke-dasharray: 6 4; opacity: 1; }
 .graph-edge.route-rejected { stroke: #ff7d7d; stroke-width: 2.2; stroke-dasharray: 6 4; opacity: 1; }
+.graph-edge.pin-connection-preview { stroke: var(--accent); stroke-width: 2.4; stroke-dasharray: 6 3; opacity: 1; pointer-events: none; }
 .node { cursor: grab; }
 .node:active { cursor: grabbing; }
 .node rect { fill: #222933; stroke: #56616d; stroke-width: 1.25; rx: 5; vector-effect: non-scaling-stroke; }
@@ -122,6 +123,8 @@ button:disabled { opacity: .42; cursor: default; }
 .node.method-selected rect { stroke: #5ee09a; stroke-width: 2.2; }
 .node text { fill: #edf1f5; font-size: 12px; pointer-events: none; }
 .node .kind { fill: #9ca8b5; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+.node .execution-pin { fill: #14221e; stroke: #83d6b8; stroke-width: 2; cursor: crosshair; vector-effect: non-scaling-stroke; }
+.node .execution-pin:hover, .node .execution-pin:focus { fill: #83d6b8; stroke: #d8fff0; outline: none; }
 
 .details { border-top: 1px solid #303740; background: var(--panel); padding: 14px 17px; display: grid; grid-template-columns: minmax(220px, .65fr) minmax(320px, 1.1fr) minmax(0, 1.35fr); gap: 20px; overflow: auto; }
 .details h2 { margin: 5px 0 3px; font-size: 18px; }

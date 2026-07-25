@@ -37,8 +37,11 @@ The remaining usability gap is direct route authoring:
 - The canvas can place compatible catalogue mechanics into an independently
   serialized Workspace Route Book and persist its derived graph and layout
   atomically. A visible route step can be right-clicked to insert a mechanic
-  after it with authoritative downstream replay, but the canvas does not yet
-  author typed pins, branches, subgraphs, or general semantic graph rewiring.
+  after it with authoritative downstream replay. Authenticated execution states
+  expose typed output pins; dragging one opens the same catalogue assessed from
+  that exact state and filters out incompatible mechanics before authoritative
+  insertion. The canvas does not yet author the remaining pin families,
+  branches, subgraphs, or general semantic graph rewiring.
 - Asset-level undo/redo remains incomplete. Primary current operations share one
   searchable command palette and shortcut registry. Route Book edits,
   presentation regions, evidence changes, and node moves have semantic undo/redo
@@ -49,8 +52,9 @@ The remaining usability gap is direct route authoring:
   custom-node tab, creates a grounded scenario from a direct Library action,
   preserves a dirty graph's selection and viewport while switching asset tabs,
   opens and executes the keyboard command palette, uses save, close-tab, and
-  tab-switch shortcuts, adds, undoes, redoes, and right-click-inserts after its
-  first route step, then undoes that insertion and persists the route. It
+  tab-switch shortcuts, adds, undoes, redoes, drags an exact-state execution pin
+  into a compatible-node catalogue, inserts and undoes its result, and
+  right-click-inserts after its first route step before persisting the route. It
   continues through the preassembled keyed-door example. Root, anchor, goal, and
   context selection are not yet independently authorable.
 - No fresh-file glitchless route, versioned 100% route, or standard Any% route
@@ -116,8 +120,6 @@ or test fixture does not count as progress by itself.
 
 ### 5.1 Node catalogue and placement
 
-- [ ] Let dragging from a pin open the same catalogue filtered to compatible
-      nodes.
 - [ ] Merge three sources into the catalogue without conflating them:
       code-authored node kinds, immutable mechanics/library references, and
       Workspace subgraphs/custom nodes.

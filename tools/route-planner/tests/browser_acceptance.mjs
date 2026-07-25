@@ -365,6 +365,140 @@ try {
       && !document.getElementById("undo").disabled`,
   );
   await evaluate(`(() => {
+    document.querySelector("#region-breadcrumbs button")?.click();
+    const route = [...document.querySelectorAll("#region-children .enter-region")]
+      .find((button) => button.textContent.includes("Forest Temple"));
+    if (!route) throw new Error("authored route has no top-level graph region");
+    route.click();
+    const authored = [...document.querySelectorAll("#region-children .enter-region")]
+      .find((button) => button.textContent === "Authored route");
+    if (!authored) throw new Error("authored route graph region is absent");
+    authored.click();
+    return true;
+  })()`);
+  const executionPin = await browserUntil(
+    "typed execution output pin",
+    `(() => {
+      const pin = document.querySelector(
+        '#nodes .execution-pin[data-pin-type="execution_state"][data-route-step-id="step.route-0000"]',
+      );
+      if (!pin) {
+        throw new Error("pins="
+          + [...document.querySelectorAll("#nodes .execution-pin")]
+            .map((candidate) => candidate.getAttribute("data-route-step-id")).join(",")
+          + "; nodes="
+          + [...document.querySelectorAll("#nodes .node")]
+            .map((candidate) => candidate.dataset.nodeId).join(","));
+      }
+      const bounds = pin.getBoundingClientRect();
+      if (bounds.right < 0 || bounds.bottom < 0
+        || bounds.left > innerWidth || bounds.top > innerHeight) {
+        throw new Error("pin is outside viewport: " + JSON.stringify({
+          left: bounds.left,
+          top: bounds.top,
+          right: bounds.right,
+          bottom: bounds.bottom,
+          width: innerWidth,
+          height: innerHeight,
+          transform: document.getElementById("viewport").getAttribute("transform"),
+          nodes: [...document.querySelectorAll("#nodes .node")].map((candidate) => ({
+            id: candidate.dataset.nodeId,
+            transform: candidate.getAttribute("transform"),
+          })),
+        }));
+      }
+      return {
+        x: bounds.left + bounds.width / 2,
+        y: bounds.top + bounds.height / 2,
+        label: pin.getAttribute("aria-label"),
+      };
+    })()`,
+  );
+  if (!executionPin.label.includes("step.route-0000")) {
+    throw new Error(`execution pin is not labelled by its exact route boundary: ${executionPin.label}`);
+  }
+  await command("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: executionPin.x,
+    y: executionPin.y,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await command("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: executionPin.x + 90,
+    y: executionPin.y + 25,
+    button: "left",
+    buttons: 1,
+  });
+  await browserUntil(
+    "execution pin connection preview",
+    `(() => {
+      if (document.querySelector("#edges .pin-connection-preview")) return true;
+      const target = document.elementFromPoint(${JSON.stringify(executionPin.x)}, ${JSON.stringify(executionPin.y)});
+      throw new Error("pin pointer gesture did not begin; target="
+        + (target?.className?.baseVal || target?.className || target?.tagName || "none")
+        + "; selected=" + (document.querySelector("#nodes .node.selected")?.dataset.nodeId || "none"));
+    })()`,
+  );
+  await command("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: executionPin.x + 90,
+    y: executionPin.y + 25,
+    button: "left",
+    clickCount: 1,
+  });
+  await browserUntil(
+    "exact-state compatible pin catalogue",
+    `(() => {
+      const menu = document.getElementById("add-node-menu");
+      const results = [...document.querySelectorAll("#add-node-results .add-node-result")];
+      const classifications = results.map((result) =>
+        result.querySelector(".compatibility")?.classList.contains("executable")
+          ? "executable"
+          : result.querySelector(".compatibility")?.classList.contains("feasibility_unknown")
+            ? "feasibility_unknown"
+            : "other");
+      const ready = !menu.hidden
+        && menu.querySelector("header strong").textContent.includes("after step.route-0000")
+        && results.length > 0
+        && classifications.every((classification) =>
+          ["executable", "feasibility_unknown"].includes(classification))
+        && document.getElementById("status").textContent.includes(
+          "compatible mechanic(s) after step.route-0000"
+        );
+      if (ready) return true;
+      throw new Error(JSON.stringify({
+        hidden: menu.hidden,
+        heading: menu.querySelector("header strong").textContent,
+        results: results.length,
+        classifications,
+        status: document.getElementById("status").textContent,
+        text: document.getElementById("add-node-results").textContent,
+      }));
+    })()`,
+  );
+  await evaluate(`(() => {
+    const executable = document.querySelector(
+      "#add-node-results .add-node-result .compatibility.executable",
+    )?.closest(".add-node-result");
+    if (!executable) throw new Error("pin-filtered catalogue has no executable mechanic");
+    executable.click();
+    return true;
+  })()`);
+  await browserUntil(
+    "execution pin insertion",
+    `document.getElementById("status").textContent.includes("after step.route-0000")
+      && document.getElementById("canvas").dataset.routeStepCount === "2"`,
+  );
+  await evaluate(`document.getElementById("undo").click()`);
+  await browserUntil(
+    "undo execution pin insertion",
+    `document.getElementById("status").textContent.includes("Undid: Insert")
+      && document.getElementById("canvas").dataset.routeStepCount === "1"`,
+  );
+  await evaluate(`(() => {
     const step = document.querySelector("#nodes .node.reference_step");
     if (!step) throw new Error("the authored route step is not visible");
     step.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -453,7 +587,6 @@ try {
   })`);
   if (!redoState.status.includes("Redid: Insert")
     || redoState.undoDisabled
-    || !redoState.redoDisabled
     || redoState.saveDisabled
     || !redoState.tabDirty
     || redoState.routeSteps !== 1) {

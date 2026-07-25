@@ -147,6 +147,10 @@ const state = {
   redoStack: [],
   historyBusy: false,
   addNodeAfterStepId: null,
+  addNodeCompatibility: null,
+  addNodeLoading: false,
+  addNodeSourceLabel: null,
+  addNodeRequestToken: 0,
   folderDialog: null,
   editorTabs: [],
   activeEditorTabId: null,
@@ -2640,14 +2644,55 @@ function ensurePositions() {
     [...state.groupSelection].filter((nodeId) => validNodeIds.has(nodeId)),
   );
   const columns = new Map();
+  const occupied = [...state.positions.entries()]
+    .filter(([nodeId]) => validNodeIds.has(nodeId))
+    .map(([, position]) => position);
   for (const node of state.graph.nodes) {
     if (state.positions.has(node.id)) continue;
+    const routePosition = authoredRoutePosition(node);
+    if (routePosition) {
+      state.positions.set(node.id, routePosition);
+      occupied.push(routePosition);
+      continue;
+    }
     const kind = node.payload.kind;
     const column = kind === "goal" ? 4 : kind === "transition" ? 2 : kind === "obstruction" ? 3 : kind === "reference_step" ? 1 : 0;
-    const row = columns.get(column) ?? 0;
+    let row = columns.get(column) ?? 0;
+    let position = { x: column * 260, y: row * 82 };
+    while (occupied.some((candidate) =>
+      Math.abs(candidate.x - position.x) < NODE_WIDTH + 24
+      && Math.abs(candidate.y - position.y) < NODE_HEIGHT + 24)) {
+      row += 1;
+      position = { x: column * 260, y: row * 82 };
+    }
     columns.set(column, row + 1);
-    state.positions.set(node.id, { x: column * 260, y: row * 82 });
+    state.positions.set(node.id, position);
+    occupied.push(position);
   }
+}
+
+function authoredRoutePosition(node) {
+  const method = state.project?.route_book?.methods.find((candidate) =>
+    candidate.id === "method.authored-route");
+  if (!method) return null;
+  if (node.payload.kind === "plan_method"
+    && node.payload.method_id === method.id) {
+    return { x: -230, y: 0 };
+  }
+  if (node.payload.kind === "plan_region"
+    && node.payload.plan_region_id === method.region_id) {
+    return { x: -460, y: 0 };
+  }
+  if (node.payload.kind === "execution_state") {
+    if (node.payload.route_step_id == null) return { x: 0, y: 0 };
+    const index = method.step_ids.indexOf(node.payload.route_step_id);
+    return index < 0 ? null : { x: (index * 2 + 2) * 230, y: 0 };
+  }
+  if (node.payload.kind === "reference_step") {
+    const index = method.step_ids.indexOf(node.payload.step_id);
+    return index < 0 ? null : { x: (index * 2 + 1) * 230, y: 0 };
+  }
+  return null;
 }
 
 function render() {
@@ -3140,6 +3185,17 @@ function renderEdges() {
     elements.edges.append(path);
   }
   renderRejectedRouteJoin();
+  renderPendingPinConnection();
+}
+
+function renderPendingPinConnection() {
+  const gesture = state.gesture;
+  if (gesture?.kind !== "execution_pin") return;
+  const bend = Math.max(45, Math.abs(gesture.currentX - gesture.sourceX) * 0.45);
+  elements.edges.append(svg("path", {
+    class: "graph-edge pin-connection-preview",
+    d: `M ${gesture.sourceX} ${gesture.sourceY} C ${gesture.sourceX + bend} ${gesture.sourceY}, ${gesture.currentX - bend} ${gesture.currentY}, ${gesture.currentX} ${gesture.currentY}`,
+  }));
 }
 
 function renderRejectedRouteJoin() {
@@ -3183,6 +3239,9 @@ function renderNodes() {
     const label = svg("text", { x: 10, y: 35 });
     label.textContent = elide(node.label, 25);
     group.append(kind, label);
+    if (node.payload.kind === "execution_state" && !state.readOnly) {
+      group.append(executionOutputPin(node));
+    }
     group.addEventListener("pointerdown", (event) => beginNodeDrag(event, node));
     group.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -3204,22 +3263,118 @@ function renderNodes() {
   }
 }
 
+function executionOutputPin(node) {
+  const afterStepId = node.payload.route_step_id ?? null;
+  const label = afterStepId == null
+    ? "Add a mechanic from the scenario root"
+    : `Add a mechanic after ${afterStepId}`;
+  const pin = svg("circle", {
+    class: "execution-pin",
+    cx: NODE_WIDTH,
+    cy: NODE_HEIGHT / 2,
+    r: 7,
+    tabindex: "0",
+    role: "button",
+    "aria-label": label,
+    "data-pin-type": "execution_state",
+    "data-route-step-id": afterStepId ?? "",
+  });
+  const title = svg("title", {});
+  title.textContent = `${label}. Drag to open compatible nodes.`;
+  pin.append(title);
+  pin.addEventListener("pointerdown", (event) => beginExecutionPinDrag(event, node));
+  pin.addEventListener("keydown", (event) => {
+    if (!["Enter", " "].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const bounds = pin.getBoundingClientRect();
+    openAddNodeFromExecutionPin(
+      node,
+      bounds.left + bounds.width / 2 + 28,
+      bounds.top + bounds.height / 2,
+    );
+  });
+  return pin;
+}
+
 function openAddNodeMenu(event) {
   if (!state.graph || !state.project) return;
   event.preventDefault();
   event.stopPropagation();
   const targetNodeId = event.target.closest?.(".node.reference_step")?.dataset.nodeId;
   const targetNode = state.graph.nodes.find((node) => node.id === targetNodeId);
-  state.addNodeAfterStepId = targetNode?.payload.kind === "reference_step"
+  const afterStepId = targetNode?.payload.kind === "reference_step"
     ? targetNode.payload.step_id
     : null;
+  showAddNodeMenu(event.clientX, event.clientY, {
+    afterStepId,
+    sourceLabel: targetNode ? `after ${targetNode.label}` : null,
+  });
+}
+
+async function openAddNodeFromExecutionPin(node, clientX, clientY) {
+  if (state.readOnly || node.payload.kind !== "execution_state") return;
+  const inspection = state.executionStateInspections.get(node.id);
+  if (!inspection) {
+    setStatus("This execution pin has no authenticated state to assess", "bad");
+    return;
+  }
+  const afterStepId = node.payload.route_step_id ?? null;
+  const sourceLabel = afterStepId == null ? "from Scenario Root" : `after ${afterStepId}`;
+  showAddNodeMenu(clientX, clientY, {
+    afterStepId,
+    sourceLabel,
+    loading: true,
+  });
+  const token = state.addNodeRequestToken;
+  try {
+    const payload = await service({
+      command: "inspect_route_frontier",
+      request_id: requestId("execution-pin-catalogue"),
+      state: inspection.state,
+      catalog: state.project.catalog,
+      equivalence_sets: state.project.equivalence_sets ?? [],
+      route_book: null,
+      evidence_mode: projectEvidenceMode(),
+    });
+    if (payload.kind !== "route_frontier") {
+      throw new Error(`Unexpected response ${payload.kind}`);
+    }
+    if (token !== state.addNodeRequestToken || elements["add-node-menu"].hidden) return;
+    state.addNodeCompatibility = new Map(payload.transitions.map((record) => [
+      record.transition_id,
+      record.assessment.classification,
+    ]));
+    state.addNodeLoading = false;
+    renderAddNodeMenu();
+    const compatible = payload.transitions.filter((record) =>
+      ["executable", "feasibility_unknown"].includes(record.assessment.classification)).length;
+    setStatus(`${compatible} compatible mechanic(s) ${sourceLabel}`, "good");
+  } catch (error) {
+    if (token !== state.addNodeRequestToken || elements["add-node-menu"].hidden) return;
+    state.addNodeLoading = false;
+    state.addNodeCompatibility = new Map();
+    renderAddNodeMenu();
+    setStatus(`Could not assess this execution pin: ${error.message}`, "bad");
+  }
+}
+
+function showAddNodeMenu(clientX, clientY, options = {}) {
+  state.addNodeRequestToken += 1;
+  state.addNodeAfterStepId = options.afterStepId ?? null;
+  state.addNodeCompatibility = options.compatibility ?? null;
+  state.addNodeLoading = options.loading ?? false;
+  state.addNodeSourceLabel = options.sourceLabel ?? null;
   const bounds = elements.canvas.getBoundingClientRect();
   const menu = elements["add-node-menu"];
   menu.hidden = false;
+  menu.querySelector("header strong").textContent = state.addNodeSourceLabel
+    ? `Add Node · ${state.addNodeSourceLabel}`
+    : "Add Node";
   const width = 330;
   const height = Math.min(520, bounds.height - 24);
-  menu.style.left = `${Math.max(8, Math.min(event.clientX - bounds.left, bounds.width - width - 8))}px`;
-  menu.style.top = `${Math.max(8, Math.min(event.clientY - bounds.top, bounds.height - height - 8))}px`;
+  menu.style.left = `${Math.max(8, Math.min(clientX - bounds.left, bounds.width - width - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(clientY - bounds.top, bounds.height - height - 8))}px`;
   elements["add-node-search"].value = "";
   renderAddNodeMenu();
   elements["add-node-search"].focus();
@@ -3227,13 +3382,21 @@ function openAddNodeMenu(event) {
 
 function closeAddNodeMenu() {
   elements["add-node-menu"].hidden = true;
+  state.addNodeRequestToken += 1;
   state.addNodeAfterStepId = null;
+  state.addNodeCompatibility = null;
+  state.addNodeLoading = false;
+  state.addNodeSourceLabel = null;
 }
 
 function renderAddNodeMenu() {
   const results = elements["add-node-results"];
   results.replaceChildren();
   if (!state.graph) return;
+  if (state.addNodeLoading) {
+    results.append(contentMessage("Checking mechanics against this exact execution state..."));
+    return;
+  }
   const query = elements["add-node-search"].value.trim().toLowerCase();
   const authoredMethod = state.project?.route_book?.methods.find((method) =>
     method.id === "method.authored-route");
@@ -3245,13 +3408,18 @@ function renderAddNodeMenu() {
     record.transition_id,
     record.assessment.classification,
   ]));
+  const compatibleClassifications = new Set(["executable", "feasibility_unknown"]);
   const matches = state.graph.nodes
     .filter((node) => node.payload.kind === "transition")
     .map((node) => ({
       node,
       contract: selectedContract(node),
-      classification: frontier.get(node.payload.transition_id) ?? "not_assessed",
+      classification: state.addNodeCompatibility == null
+        ? frontier.get(node.payload.transition_id) ?? "not_assessed"
+        : state.addNodeCompatibility.get(node.payload.transition_id) ?? "not_assessed",
     }))
+    .filter(({ classification }) => state.addNodeCompatibility == null
+      || compatibleClassifications.has(classification))
     .filter(({ node }) =>
       !query || `${node.label} ${node.payload.transition_id} ${state.transitionSearch.get(node.payload.transition_id) ?? ""}`
         .toLowerCase().includes(query))
@@ -3305,7 +3473,11 @@ function renderAddNodeMenu() {
     });
     results.append(button);
   }
-  if (!matches.length) results.append(contentMessage("No compatible node kinds found."));
+  if (!matches.length) {
+    results.append(contentMessage(state.addNodeCompatibility == null
+      ? "No node kinds match this search."
+      : "No compatible mechanics are available from this execution state."));
+  }
 }
 
 function renderNodeKindCatalogue() {
@@ -4921,6 +5093,40 @@ function beginNodeDrag(event, node) {
   renderDetails();
 }
 
+function beginExecutionPinDrag(event, node) {
+  if (event.button !== 0 || state.readOnly) return;
+  event.preventDefault();
+  event.stopPropagation();
+  closeAddNodeMenu();
+  elements.canvas.setPointerCapture(event.pointerId);
+  const position = state.positions.get(node.id);
+  const sourceX = position.x + NODE_WIDTH;
+  const sourceY = position.y + NODE_HEIGHT / 2;
+  state.gesture = {
+    kind: "execution_pin",
+    pointerId: event.pointerId,
+    nodeId: node.id,
+    startX: event.clientX,
+    startY: event.clientY,
+    sourceX,
+    sourceY,
+    currentX: sourceX,
+    currentY: sourceY,
+  };
+  state.selected = { type: "node", value: node };
+  state.transitionEvaluation = null;
+  renderDetails();
+  renderEdges();
+}
+
+function graphPointFromClient(clientX, clientY) {
+  const bounds = elements.canvas.getBoundingClientRect();
+  return {
+    x: (clientX - bounds.left - state.transform.x) / state.transform.scale,
+    y: (clientY - bounds.top - state.transform.y) / state.transform.scale,
+  };
+}
+
 function moveGesture(event) {
   const gesture = state.gesture;
   if (!gesture || event.pointerId !== gesture.pointerId) return;
@@ -4930,12 +5136,17 @@ function moveGesture(event) {
     state.transform.x = gesture.x + dx;
     state.transform.y = gesture.y + dy;
     applyTransform();
-  } else {
+  } else if (gesture.kind === "node") {
     state.positions.set(gesture.nodeId, { x: gesture.x + dx / state.transform.scale, y: gesture.y + dy / state.transform.scale });
     renderEdges();
     const node = elements.nodes.querySelector(`[data-node-id="${CSS.escape(gesture.nodeId)}"]`);
     const position = state.positions.get(gesture.nodeId);
     node?.setAttribute("transform", `translate(${position.x} ${position.y})`);
+  } else if (gesture.kind === "execution_pin") {
+    const point = graphPointFromClient(event.clientX, event.clientY);
+    gesture.currentX = point.x;
+    gesture.currentY = point.y;
+    renderEdges();
   }
 }
 
@@ -4946,6 +5157,12 @@ function endGesture(event) {
     && (event.clientX !== gesture.startX || event.clientY !== gesture.startY);
   state.gesture = null;
   if (elements.canvas.hasPointerCapture(event.pointerId)) elements.canvas.releasePointerCapture(event.pointerId);
+  if (gesture.kind === "execution_pin") {
+    renderEdges();
+    const node = state.graph?.nodes.find((candidate) => candidate.id === gesture.nodeId);
+    if (node) openAddNodeFromExecutionPin(node, event.clientX, event.clientY);
+    return;
+  }
   if (changedLayout) commitAuthoringCommand("Move node", gesture.historyBefore);
 }
 
