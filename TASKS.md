@@ -43,8 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P1 - Use the simulator's available throughput
 
-- [ ] Evaluate a diverse batch of applicable tactic proposals from the same
-      restored state before choosing the next frontier transition.
 - [ ] Schedule independent seeds, frontier expansions, and equal-source tactic
       batches concurrently without allowing completion order to affect seeded
       decisions or result identities.

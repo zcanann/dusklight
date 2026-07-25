@@ -1,0 +1,124 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-proposal-batch-smoke/v1",
+  "date": "2026-07-25",
+  "claim": "One native tactic-Q decision evaluated four deterministic, option-type-diverse proposals from one authenticated source boundary, retained the terminal proposal only after evaluating the full batch, and reconstructed every trial from the binary decision journal and content store.",
+  "implementation": {
+    "commit": "77689e4c1ef745f7e81c1016c04c60ab1b2ba875",
+    "binary": "tools/huntctl/target/debug/huntctl.exe",
+    "binary_sha256": "21d73eb7acedf3a75bac742ee13859949aeb22917099459c38cab68bf2ef3a7d",
+    "primary_policy_unchanged": true,
+    "alternative_order": "seeded rotation over option-id order, distinct option types before repeated types",
+    "winner_order": [
+      "authenticated terminal",
+      "training reward",
+      "shorter realized duration",
+      "stable proposal order"
+    ],
+    "unchosen_trials_mutate_campaign": false,
+    "all_trials_retained_as_binary_transition_objects": true
+  },
+  "validation": {
+    "cargo_test_learning_tactic_exploration": {
+      "passed": 13,
+      "failed": 0
+    },
+    "cargo_test_orchestration_tactic_q_campaign": {
+      "passed": 3,
+      "failed": 0
+    },
+    "cargo_test_orchestration_native_tactic_route_runner": {
+      "passed": 19,
+      "failed": 0
+    },
+    "cargo_test_route_workbench": {
+      "passed": 91,
+      "failed": 0
+    },
+    "cargo_check_dusklight_huntctl": true
+  },
+  "native_smoke": {
+    "output": "build/campaigns/tactic-route-proposal-batch-smoke-20260725",
+    "report_sha256": "eb62c28f4c9e989a97af685e71e615ff9cb83b8c01d22ecdd574621ed193792f",
+    "request": "routes/Glitch Exhibition/ordon-exit-approach-learning/benchmarks/ordon-exit-approach-tactic-q-discovery-v1.request.json",
+    "execution": "build/campaigns/ordon-exit-approach-second-pair-20260725/execution-v4/execution.json",
+    "seed": 104729,
+    "workers": 1,
+    "decisions": 1,
+    "proposal_count": 4,
+    "native_request_count": 43,
+    "unique_native_source_count": 1,
+    "source_frame": 620,
+    "source_boundary_fingerprint": "87192dd0886f8e089a158f86ac8979eb",
+    "evaluated_realized_ticks": 100,
+    "proposals": [
+      {
+        "option_id": "goal.seek.route.01",
+        "selection_reason": "unsupported_bootstrap",
+        "realized_ticks": 40,
+        "training_reward": 1.450483,
+        "terminal": false,
+        "retained": false,
+        "after_snapshot_sha256": "8c8c6261a64ba65a648c106f3aca92cbb208fb1bba4d4bc2e8af15ee6e30ebf7"
+      },
+      {
+        "option_id": "goal.seek.coordinate.02",
+        "selection_reason": "batch_diversity",
+        "realized_ticks": 40,
+        "training_reward": 0.8310022,
+        "terminal": false,
+        "retained": false,
+        "after_snapshot_sha256": "0dae6ba23f794ed6f35fa19fa5beb766a596ea4ebedfedcf13d488c002926bb7"
+      },
+      {
+        "option_id": "interact.long",
+        "selection_reason": "batch_diversity",
+        "realized_ticks": 6,
+        "training_reward": 1.0033829,
+        "terminal": false,
+        "retained": false,
+        "after_snapshot_sha256": "981b75ff7419986de03f93eb5f2a9cbd089c8719919a956bf9bd406859cbc346"
+      },
+      {
+        "option_id": "move.curve.clockwise.00",
+        "selection_reason": "batch_diversity",
+        "realized_ticks": 14,
+        "training_reward": 100.05,
+        "terminal": true,
+        "retained": true,
+        "after_snapshot_sha256": "95e4097473362ee410c31497e2006c3796d24aaa688013feb09009b3296a97fc"
+      }
+    ],
+    "timing_micros": {
+      "wall": 65949234,
+      "tactic_selection": 8118,
+      "tactic_execution": 14965331,
+      "native_simulation": 13809455,
+      "tactic_preparation_and_fact_extraction": 1155875,
+      "model_update": 48165,
+      "evidence_projection_and_persistence": 707642
+    }
+  },
+  "operational_storage": {
+    "journal": "build/campaigns/tactic-route-proposal-batch-smoke-20260725/seed-000-104729/decisions.dtqj",
+    "journal_header_bytes_after_compaction": 12,
+    "compacted_segment": "build/campaigns/tactic-route-proposal-batch-smoke-20260725/seed-000-104729/decision-journal/segment-000000000000-000000000001.dtqz",
+    "compacted_segment_bytes": 1464,
+    "compacted_segment_sha256": "21a22571654885296c4b0972864313bbf86235a77d6cbce0025a49bc039910e5",
+    "content_object_files": 80,
+    "report_is_projection_not_operational_state": true
+  },
+  "diagnostic_cold_replay": {
+    "proof": "build/campaigns/tactic-route-proposal-batch-proof-20260725/cold-replay.proof.json",
+    "proof_sha256": "2865e8e372f18a634b13b571584b50d4416f283b7b0b94fa1121f4648bd7927f",
+    "repetitions": 2,
+    "controller_in_loop": false,
+    "model_in_loop": false,
+    "goal": "ordon_spring_load_committed",
+    "input_tape_sha256": "2c3f74b5da9dfcc791a8de034efe3214769dea53aaa87816c5420cb4538ccbcd",
+    "sim_tick": 633,
+    "tape_frame": 633,
+    "boundary_fingerprint": "4560ec02bd28b4b946c9be75f80fe742",
+    "exact_terminal_evidence_identical": true
+  },
+  "scope_limit": "This is P1 same-source batch evidence, not the P6 route-quality result. The smoke starts at the later Ordon exit-approach boundary at absolute frame 620. The 125-tick incumbent benchmark starts at the to_ordon_spring_q125 boundary at absolute frame 506, so the terminal at frame 633 cannot be compared as a 13-versus-125 improvement."
+}
