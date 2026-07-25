@@ -813,6 +813,11 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(|value| value.parse())
                     .transpose()?
                     .unwrap_or(350_000),
+                workers: usize_option(
+                    learn_args,
+                    "--workers",
+                    usize::from(request.execution.workers),
+                )?,
                 cancellation: None,
                 resume: false,
             })?;

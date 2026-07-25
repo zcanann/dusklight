@@ -4,9 +4,9 @@ use super::*;
 use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6,
-    NativeTacticDecisionTrace, NativeTacticRouteRunConfig, has_tactic_decision_journal,
-    materialize_tactic_decision_route, project_tactic_decision_graph, read_tactic_decision_journal,
-    run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7, NativeTacticDecisionTrace, NativeTacticRouteRunConfig,
+    has_tactic_decision_journal, materialize_tactic_decision_route, project_tactic_decision_graph,
+    read_tactic_decision_journal, run_native_tactic_route,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use dusklight_orchestration::tactic_q_campaign::TACTIC_Q_CHECKPOINT_EXTENSION;
@@ -198,6 +198,7 @@ pub(super) fn tactic_route_learning_projection(
                         if schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
@@ -386,6 +387,7 @@ fn launch_tactic_route_learning(
                 branch_every_decisions: TACTIC_ROUTE_BRANCH_EVERY_DECISIONS,
                 refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,
                 epsilon_per_million: TACTIC_ROUTE_EPSILON_PER_MILLION,
+                workers: usize::from(optimization.execution.workers),
                 cancellation: Some(&thread_cancellation),
                 resume,
             });

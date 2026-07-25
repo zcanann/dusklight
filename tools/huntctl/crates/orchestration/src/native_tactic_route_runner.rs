@@ -57,6 +57,7 @@ use std::time::{Duration, Instant};
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5: &str = "dusklight-native-tactic-route-report/v5";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6: &str = "dusklight-native-tactic-route-report/v6";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7: &str = "dusklight-native-tactic-route-report/v7";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -94,6 +95,7 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub branch_every_decisions: u64,
     pub refit_every_decisions: u64,
     pub epsilon_per_million: u32,
+    pub workers: usize,
     pub cancellation: Option<&'a AtomicBool>,
     pub resume: bool,
 }
@@ -111,6 +113,7 @@ pub struct NativeTacticRouteReport {
     pub reward_spec: TacticRewardSpec,
     pub demonstration_transitions: u64,
     pub exploration_seeds: Vec<u64>,
+    pub workers: usize,
     pub decisions_per_seed: u64,
     pub refit_every_decisions: u64,
     pub successful_seeds: u64,
@@ -256,6 +259,7 @@ struct NativeTacticDecisionRecord {
 pub fn run_native_tactic_route(
     config: &NativeTacticRouteRunConfig<'_>,
 ) -> Result<NativeTacticRouteReport, NativeTacticRouteRunError> {
+    let campaign_started = Instant::now();
     validate_config(config)?;
     let root = config.repository_root.canonicalize().map_err(route_error)?;
     config
@@ -278,7 +282,6 @@ pub fn run_native_tactic_route(
         return Err(route_message("completed tactic route cannot be resumed"));
     }
     fs::create_dir_all(config.output_root).map_err(route_error)?;
-    let attempt_root = reserve_attempt_root(config.output_root)?;
 
     let registry = FactRegistry::canonical();
     let process_tape = InputTape::decode(
@@ -301,13 +304,6 @@ pub fn run_native_tactic_route(
     route_prefix.validate().map_err(route_error)?;
 
     let initial_batch = initial_probe_batch(config)?;
-    let initial_root = attempt_root.join("initial");
-    fs::create_dir_all(&initial_root).map_err(route_error)?;
-    let initial_batch_path = initial_root.join("request.json");
-    write_new(
-        &initial_batch_path,
-        &serde_json::to_vec_pretty(&initial_batch).map_err(route_error)?,
-    )?;
     let terminal = NativeTerminalBinding {
         goal: config.optimization.terminal_predicate.goal.clone(),
         program_sha256: config.optimization.terminal_predicate.program_sha256,
@@ -317,28 +313,65 @@ pub fn run_native_tactic_route(
         .execution
         .card_fixture_root(&root, config.optimization)
         .map_err(route_error)?;
-    let launch = NativeSuffixWorkerLaunch {
-        executable: root.join(&config.execution.executable.path),
-        game_data: root.join(&config.execution.game_data.path),
-        input_tape: root.join(&config.execution.process_boot_tape.path),
-        milestone_program: root.join(&config.execution.milestone_program.path),
-        card_fixture,
-        card_fixture_sha256: config.execution.card_fixture_manifest.sha256,
-        working_directory: root.clone(),
-        state_root: attempt_root.join("native-state"),
-        world_context_sha256: config.execution.world_context.sha256,
-        terminal,
-        initial_batch: initial_batch_path,
-        initial_result: initial_root.join("result.json"),
-        initial_winner_tape: None,
-    };
-    let (mut worker, initial) = NativeSuffixWorkerSession::launch(&launch).map_err(route_error)?;
-    let initial_facts = initial_facts(&initial)?;
+    let worker_count = config.workers.min(config.exploration_seeds.len());
+    let attempt_roots = (0..worker_count)
+        .map(|_| reserve_attempt_root(config.output_root))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut launched = std::thread::scope(|scope| {
+        let root = &root;
+        let initial_batch = &initial_batch;
+        let terminal = &terminal;
+        let card_fixture = &card_fixture;
+        let handles = attempt_roots
+            .iter()
+            .enumerate()
+            .map(|(worker_index, attempt_root)| {
+                scope.spawn(move || {
+                    launch_tactic_route_worker(
+                        config,
+                        root,
+                        attempt_root,
+                        initial_batch,
+                        terminal,
+                        card_fixture,
+                    )
+                    .map(|worker| (worker_index, worker))
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .map_err(|_| route_message("native tactic route worker launch panicked"))?
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    launched.sort_by_key(|(worker_index, _)| *worker_index);
+    let mut workers = Vec::with_capacity(worker_count);
+    let mut worker_initial_facts = Vec::with_capacity(worker_count);
+    let mut worker_root_checkpoints = Vec::with_capacity(worker_count);
+    for (_, (worker, facts, root_checkpoint_sha256)) in launched {
+        workers.push(worker);
+        worker_initial_facts.push(facts);
+        worker_root_checkpoints.push(root_checkpoint_sha256);
+    }
+    let initial_facts = worker_initial_facts
+        .first()
+        .cloned()
+        .ok_or_else(|| route_message("tactic route worker pool is empty"))?;
     if initial_facts.tape_frame != config.optimization.route.source_boundary_index
         || initial_facts.terminal.reached != Some(false)
+        || worker_initial_facts
+            .iter()
+            .any(|facts| facts != &initial_facts)
+        || worker_root_checkpoints
+            .iter()
+            .any(|checkpoint| *checkpoint != worker_root_checkpoints[0])
     {
         return Err(route_message(
-            "native source observation is not the requested nonterminal tactic boundary",
+            "native worker pool does not share the requested source boundary",
         ));
     }
     let GoalConditionedTacticRuntime {
@@ -351,60 +384,65 @@ pub fn run_native_tactic_route(
         config.execution,
         &initial_facts,
     )?;
-    let root_checkpoint_sha256 =
-        tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;
+    let root_checkpoint_sha256 = worker_root_checkpoints[0];
     let reward_spec = route_tactic_reward_spec(&encoder, &initial_facts)?;
 
-    let run = (|| {
-        let mut seed_results = Vec::with_capacity(config.exploration_seeds.len());
-        for (seed_index, seed) in config.exploration_seeds.iter().copied().enumerate() {
-            let seed_root = config
-                .output_root
-                .join(format!("seed-{seed_index:03}-{seed}"));
-            let seed_result_path = seed_root.join("seed-result.json");
-            if seed_result_path.exists() {
-                if !config.resume {
-                    return Err(route_message("unexpected pre-existing tactic seed result"));
-                }
-                seed_results.push(read_completed_seed_result(
-                    &seed_result_path,
-                    seed,
-                    config.decisions_per_seed,
-                )?);
-                continue;
-            }
-            let result = run_seed(
-                config,
-                &mut worker,
-                &catalog,
-                &registry,
-                &encoder,
-                &reward_spec,
-                &initial_facts,
-                &route_prefix,
-                root_checkpoint_sha256,
-                seed_index,
-                seed,
-            )?;
-            write_new(
-                &seed_result_path,
-                &serde_json::to_vec_pretty(&result).map_err(route_error)?,
-            )?;
-            seed_results.push(result);
+    let mut indexed_results = std::thread::scope(|scope| {
+        let mut handles = Vec::with_capacity(worker_count);
+        for (worker_index, worker) in workers.into_iter().enumerate() {
+            let catalog = &catalog;
+            let registry = &registry;
+            let encoder = &encoder;
+            let reward_spec = &reward_spec;
+            let initial_facts = &initial_facts;
+            let route_prefix = &route_prefix;
+            handles.push(scope.spawn(move || {
+                run_seed_partition(
+                    config,
+                    worker,
+                    catalog,
+                    registry,
+                    encoder,
+                    reward_spec,
+                    initial_facts,
+                    route_prefix,
+                    root_checkpoint_sha256,
+                    worker_index,
+                    worker_count,
+                )
+            }));
         }
-        Ok::<_, NativeTacticRouteRunError>(seed_results)
-    })();
-    let shutdown = worker.shutdown().map_err(route_error);
-    let seed_results = match (run, shutdown) {
-        (Ok(seed_results), Ok(())) => seed_results,
-        (Err(error), _) => return Err(error),
-        (Ok(_), Err(error)) => return Err(error),
-    };
+        let mut results = Vec::with_capacity(config.exploration_seeds.len());
+        for handle in handles {
+            let partition = handle
+                .join()
+                .map_err(|_| route_message("native tactic route worker thread panicked"))??;
+            results.extend(partition);
+        }
+        Ok::<_, NativeTacticRouteRunError>(results)
+    })?;
+    indexed_results.sort_by_key(|(seed_index, _)| *seed_index);
+    if indexed_results.len() != config.exploration_seeds.len()
+        || indexed_results
+            .iter()
+            .enumerate()
+            .any(|(expected, (actual, _))| expected != *actual)
+    {
+        return Err(route_message(
+            "native tactic route worker pool returned detached seeds",
+        ));
+    }
+    let seed_results = indexed_results
+        .into_iter()
+        .map(|(_, result)| result)
+        .collect::<Vec<_>>();
 
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
-    let timing = aggregate_route_timing(&seed_results);
+    let mut timing = aggregate_route_timing(&seed_results);
+    timing.wall_micros = elapsed_micros(campaign_started.elapsed());
+    refresh_route_throughput(&mut timing, &seed_results);
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -414,6 +452,7 @@ pub fn run_native_tactic_route(
         reward_spec,
         demonstration_transitions: 0,
         exploration_seeds: config.exploration_seeds.to_vec(),
+        workers: worker_count,
         decisions_per_seed: config.decisions_per_seed,
         refit_every_decisions: config.refit_every_decisions,
         successful_seeds: seed_results.iter().filter(|seed| seed.success).count() as u64,
@@ -428,6 +467,112 @@ pub fn run_native_tactic_route(
         &serde_json::to_vec_pretty(&report).map_err(route_error)?,
     )?;
     Ok(report)
+}
+
+fn launch_tactic_route_worker(
+    config: &NativeTacticRouteRunConfig<'_>,
+    repository_root: &Path,
+    attempt_root: &Path,
+    initial_batch: &NativeSuffixBatch,
+    terminal: &NativeTerminalBinding,
+    card_fixture: &Path,
+) -> Result<(NativeSuffixWorkerSession, FactSnapshot, Digest), NativeTacticRouteRunError> {
+    let initial_root = attempt_root.join("initial");
+    fs::create_dir_all(&initial_root).map_err(route_error)?;
+    let initial_batch_path = initial_root.join("request.json");
+    write_new(
+        &initial_batch_path,
+        &serde_json::to_vec_pretty(initial_batch).map_err(route_error)?,
+    )?;
+    let launch = NativeSuffixWorkerLaunch {
+        executable: repository_root.join(&config.execution.executable.path),
+        game_data: repository_root.join(&config.execution.game_data.path),
+        input_tape: repository_root.join(&config.execution.process_boot_tape.path),
+        milestone_program: repository_root.join(&config.execution.milestone_program.path),
+        card_fixture: card_fixture.to_path_buf(),
+        card_fixture_sha256: config.execution.card_fixture_manifest.sha256,
+        working_directory: repository_root.to_path_buf(),
+        state_root: attempt_root.join("native-state"),
+        world_context_sha256: config.execution.world_context.sha256,
+        terminal: terminal.clone(),
+        initial_batch: initial_batch_path,
+        initial_result: initial_root.join("result.json"),
+        initial_winner_tape: None,
+    };
+    let (worker, initial) = NativeSuffixWorkerSession::launch(&launch).map_err(route_error)?;
+    let facts = initial_facts(&initial)?;
+    let root_checkpoint_sha256 =
+        tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;
+    Ok((worker, facts, root_checkpoint_sha256))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_seed_partition(
+    config: &NativeTacticRouteRunConfig<'_>,
+    mut worker: NativeSuffixWorkerSession,
+    catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
+    registry: &FactRegistry,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    reward_spec: &TacticRewardSpec,
+    initial_facts: &FactSnapshot,
+    route_prefix: &InputTape,
+    root_checkpoint_sha256: Digest,
+    worker_index: usize,
+    worker_count: usize,
+) -> Result<Vec<(usize, NativeTacticSeedResult)>, NativeTacticRouteRunError> {
+    let run = (|| {
+        let mut results = Vec::new();
+        for seed_index in
+            worker_seed_indices(worker_index, worker_count, config.exploration_seeds.len())
+        {
+            let seed = config.exploration_seeds[seed_index];
+            let seed_root = config
+                .output_root
+                .join(format!("seed-{seed_index:03}-{seed}"));
+            let seed_result_path = seed_root.join("seed-result.json");
+            let result = if seed_result_path.exists() {
+                if !config.resume {
+                    return Err(route_message("unexpected pre-existing tactic seed result"));
+                }
+                read_completed_seed_result(&seed_result_path, seed, config.decisions_per_seed)?
+            } else {
+                let result = run_seed(
+                    config,
+                    &mut worker,
+                    catalog,
+                    registry,
+                    encoder,
+                    reward_spec,
+                    initial_facts,
+                    route_prefix,
+                    root_checkpoint_sha256,
+                    seed_index,
+                    seed,
+                )?;
+                write_new(
+                    &seed_result_path,
+                    &serde_json::to_vec_pretty(&result).map_err(route_error)?,
+                )?;
+                result
+            };
+            results.push((seed_index, result));
+        }
+        Ok::<_, NativeTacticRouteRunError>(results)
+    })();
+    let shutdown = worker.shutdown().map_err(route_error);
+    match (run, shutdown) {
+        (Ok(results), Ok(())) => Ok(results),
+        (Err(error), _) => Err(error),
+        (Ok(_), Err(error)) => Err(error),
+    }
+}
+
+fn worker_seed_indices(
+    worker_index: usize,
+    worker_count: usize,
+    seed_count: usize,
+) -> impl Iterator<Item = usize> {
+    (worker_index..seed_count).step_by(worker_count)
 }
 
 struct TimedTacticWorker<'a, W> {
@@ -484,9 +629,6 @@ fn per_second_millionths(count: u64, wall_micros: u64) -> u64 {
 
 fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> NativeTacticRouteTiming {
     let mut timing = NativeTacticRouteTiming::default();
-    let mut useful_decisions = 0_u64;
-    let mut native_ticks = 0_u64;
-    let mut episodes = 0_u64;
     for seed in seeds {
         timing.wall_micros = timing.wall_micros.saturating_add(seed.timing.wall_micros);
         timing.tactic_selection_micros = timing
@@ -510,16 +652,23 @@ fn aggregate_route_timing(seeds: &[NativeTacticSeedResult]) -> NativeTacticRoute
         timing.evidence_projection_and_persistence_micros = timing
             .evidence_projection_and_persistence_micros
             .saturating_add(seed.timing.evidence_projection_and_persistence_micros);
-        useful_decisions = useful_decisions.saturating_add(seed.useful_decisions);
-        native_ticks = native_ticks.saturating_add(seed.native_ticks);
-        episodes = episodes.saturating_add(seed.episodes);
     }
+    refresh_route_throughput(&mut timing, seeds);
+    timing
+}
+
+fn refresh_route_throughput(
+    timing: &mut NativeTacticRouteTiming,
+    seeds: &[NativeTacticSeedResult],
+) {
+    let useful_decisions = seeds.iter().map(|seed| seed.useful_decisions).sum();
+    let native_ticks = seeds.iter().map(|seed| seed.native_ticks).sum();
+    let episodes = seeds.iter().map(|seed| seed.episodes).sum();
     timing.useful_decisions_per_second_millionths =
         per_second_millionths(useful_decisions, timing.wall_micros);
     timing.native_ticks_per_second_millionths =
         per_second_millionths(native_ticks, timing.wall_micros);
     timing.episodes_per_second_millionths = per_second_millionths(episodes, timing.wall_micros);
-    timing
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2889,6 +3038,7 @@ fn validate_config(
 ) -> Result<(), NativeTacticRouteRunError> {
     if config.exploration_seeds.is_empty()
         || config.exploration_seeds.len() > MAX_ROUTE_SEEDS
+        || config.workers == 0
         || config.decisions_per_seed == 0
         || config.decisions_per_seed > MAX_ROUTE_DECISIONS
         || config.branch_every_decisions == 0
@@ -3352,6 +3502,24 @@ mod tests {
         assert_eq!(timing.native_ticks_per_second_millionths, 15_000_000);
         assert_eq!(timing.episodes_per_second_millionths, 1_000_000);
         assert_eq!(timing.native_simulation_micros, 900_000);
+    }
+
+    #[test]
+    fn worker_partitions_cover_each_seed_once_and_preserve_report_order() {
+        let worker_count = 4;
+        let seed_count = 11;
+        let partitions = (0..worker_count)
+            .map(|worker_index| {
+                worker_seed_indices(worker_index, worker_count, seed_count).collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(partitions[0], vec![0, 4, 8]);
+        assert_eq!(partitions[1], vec![1, 5, 9]);
+        assert_eq!(partitions[2], vec![2, 6, 10]);
+        assert_eq!(partitions[3], vec![3, 7]);
+        let mut report_order = partitions.into_iter().flatten().collect::<Vec<_>>();
+        report_order.sort_unstable();
+        assert_eq!(report_order, (0..seed_count).collect::<Vec<_>>());
     }
 
     #[test]
