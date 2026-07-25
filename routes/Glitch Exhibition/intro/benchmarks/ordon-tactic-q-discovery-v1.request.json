@@ -1,6 +1,6 @@
 {
   "schema": "dusklight-optimization-request/v2",
-  "content_sha256": "84f31b45fcebed96c27f7fe343662008a35c34baf978a09effb2927ce125b773",
+  "content_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
   "id": "ordon-tactic-q-discovery-v1",
   "campaign_class": "local_tas_refinement",
   "route": {
@@ -12,7 +12,7 @@
     "segment": "to_ordon_spring_q125",
     "source_boundary_index": 506,
     "source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
-    "native_source_boundary_fingerprint": "e7ac8251329f22a5df682bbe5eb2a2ba"
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc"
   },
   "terminal_predicate": {
     "goal": "ordon_spring_load_committed",
