@@ -43,8 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P1 - Use the simulator's available throughput
 
-- [ ] Separate fast exploration from retained-candidate proof. Ordinary failed
-      trials must not pay for knowledge-graph projection or cold replay.
 - [ ] Profile remaining CPU simulation work only after persistence and worker
       utilization are fixed. Preserve callbacks whose removal changes gameplay.
 

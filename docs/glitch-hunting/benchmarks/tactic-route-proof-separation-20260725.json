@@ -1,0 +1,85 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-proof-separation/v1",
+  "date": "2026-07-25",
+  "claim": "Native tactic-route exploration retains resumable binary learning state for every seed, but only terminal-admitted candidates emit successful tapes and final-result artifacts. Knowledge-graph projection and cold replay remain explicit downstream operations and are not executed by the hot campaign.",
+  "implementation": {
+    "commit": "9f628ad9e1fcbf9eabe17ac25f69b34edad8d98c",
+    "binary": "tools/huntctl/target/debug/huntctl.exe",
+    "binary_sha256": "138303e2183d3d539dfa98ef9b8dd79a72b7744ef608018c054e7bf554bea71b",
+    "completed_campaign_reprojects_binary_transition_history": false,
+    "resume_reprojects_only_the_history_required_to_reconstruct_the_interrupted_seed": true,
+    "candidate_artifact_time_is_separate": true,
+    "failed_seed_candidate_artifact_time_must_be_zero": true,
+    "failed_seed_candidate_paths_must_be_absent": true,
+    "resume_tick_accounting_includes_every_evaluated_proposal": true,
+    "cold_replay_invoked_by_campaign": false
+  },
+  "validation": {
+    "cargo_test_orchestration_native_tactic_route_runner": {
+      "passed": 20,
+      "failed": 0
+    },
+    "cargo_test_route_workbench": {
+      "passed": 91,
+      "failed": 0
+    },
+    "cargo_check_dusklight_huntctl": true
+  },
+  "native_smoke": {
+    "output": "build/campaigns/tactic-route-proof-separation-smoke-20260725",
+    "report_sha256": "12b293d153ca92f92c3c79388247408bc475589b24464d56386f08ae9c0fd868",
+    "workers": 4,
+    "seeds": [
+      104729,
+      130363
+    ],
+    "decisions_per_seed": 1,
+    "outer_wall_micros": 66504306,
+    "campaign_retained_candidate_artifact_micros": 235560,
+    "knowledge_graph_files": 0,
+    "cold_replay_or_proof_files": 0,
+    "retained_candidate": {
+      "seed": 104729,
+      "success": true,
+      "retained_candidate_artifact_micros": 235560,
+      "successful_tape": "build/campaigns/tactic-route-proof-separation-smoke-20260725/seed-000-104729/successful.tape",
+      "successful_tape_exists": true,
+      "final_result": "build/campaigns/tactic-route-proof-separation-smoke-20260725/seed-000-104729/final-result.json",
+      "final_result_exists": true,
+      "graph_in_report": null,
+      "diagnostics_in_report": null
+    },
+    "exploration_only": {
+      "seed": 130363,
+      "success": false,
+      "retained_candidate_artifact_micros": 0,
+      "successful_tape": null,
+      "successful_tape_exists": false,
+      "final_result": null,
+      "final_result_exists": false,
+      "graph_in_report": null,
+      "diagnostics_in_report": null,
+      "binary_checkpoint_and_transition_corpus_retained": true
+    }
+  },
+  "phase_boundary": {
+    "hot_exploration": [
+      "native proposal execution",
+      "reward and transition capture",
+      "binary content-addressed transition storage",
+      "append-only binary decision journal",
+      "bounded resumable learner checkpoint"
+    ],
+    "retained_candidate_only": [
+      "successful binary input tape",
+      "authenticated final-result projection"
+    ],
+    "explicit_downstream_only": [
+      "knowledge-graph projection for inspection",
+      "route minimization",
+      "independent cold replay proof",
+      "promotion"
+    ]
+  },
+  "performance_claim": "No persistence speedup is inferred from this noisy two-seed smoke. The verified claim is phase isolation: the failed seed spent exactly zero candidate-artifact microseconds and produced no proof, graph, successful-tape, or final-result artifact."
+}
