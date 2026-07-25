@@ -46,9 +46,8 @@ must not define privileged actions, observations, state, or terminals.
 - [ ] Store fact snapshots, actor snapshots, tapes, and tactic definitions once
       by content digest. Store transition and frontier references instead of
       embedding repeated copies.
-- [ ] Replace per-decision JSON files and full graph projections with a compact
-      append-only transition journal that can recover cleanly from a truncated
-      final record.
+- [ ] Remove periodic full graph projections from the hot path; derive them
+      from compact transition and frontier records on demand.
 - [ ] Make diagnostics, knowledge graphs, edge tapes, and readable summaries
       on-demand projections from the binary store.
 - [ ] Compact the journal at bounded intervals without rewriting unchanged

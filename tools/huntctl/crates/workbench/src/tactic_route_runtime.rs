@@ -4,7 +4,8 @@ use super::*;
 use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6,
-    NativeTacticRouteRunConfig, run_native_tactic_route,
+    NativeTacticDecisionTrace, NativeTacticRouteRunConfig, read_tactic_decision_journal,
+    run_native_tactic_route, tactic_decision_journal_path,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use dusklight_orchestration::tactic_q_campaign::TACTIC_Q_CHECKPOINT_EXTENSION;
@@ -590,8 +591,15 @@ fn load_tactic_route_decision_trace(
     seed: u64,
     decision_index: u64,
 ) -> Result<GraphTacticDecisionTrace, WorkbenchError> {
-    let path = output
-        .join(format!("seed-{seed_index:03}-{seed}"))
+    let seed_root = output.join(format!("seed-{seed_index:03}-{seed}"));
+    if tactic_decision_journal_path(&seed_root).is_file() {
+        let decisions = read_tactic_decision_journal(&seed_root).map_err(tactic_route_error)?;
+        let decision = decisions
+            .get(usize::try_from(decision_index).map_err(tactic_route_error)?)
+            .ok_or_else(|| WorkbenchError::new("route-learning decision is not in the journal"))?;
+        return project_native_decision_trace(decision);
+    }
+    let path = seed_root
         .join("decision-trace")
         .join(format!("decision-{decision_index:06}.json"));
     let metadata = fs::symlink_metadata(&path).map_err(tactic_route_error)?;
@@ -616,6 +624,13 @@ fn load_tactic_route_decision_trace(
         ));
     }
     Ok(decision)
+}
+
+fn project_native_decision_trace(
+    decision: &NativeTacticDecisionTrace,
+) -> Result<GraphTacticDecisionTrace, WorkbenchError> {
+    serde_json::from_value(serde_json::to_value(decision).map_err(tactic_route_error)?)
+        .map_err(tactic_route_error)
 }
 
 pub(super) fn replay_tactic_route_edge(
@@ -881,9 +896,31 @@ fn project_completed_seed_results(
 
 fn project_latest_decision(output: &Path, seeds: &[u64]) -> Option<GraphTacticDecisionSummary> {
     for (index, seed) in seeds.iter().enumerate().rev() {
-        let directory = output
-            .join(format!("seed-{index:03}-{seed}"))
-            .join("decision-summary");
+        let seed_root = output.join(format!("seed-{index:03}-{seed}"));
+        if tactic_decision_journal_path(&seed_root).is_file() {
+            let decision = read_tactic_decision_journal(&seed_root)
+                .ok()?
+                .into_iter()
+                .last()?;
+            let selection_reason = serde_json::to_value(decision.selection_reason)
+                .ok()?
+                .as_str()?
+                .to_owned();
+            return Some(GraphTacticDecisionSummary {
+                seed_index: index,
+                seed: *seed,
+                decision_index: decision.decision_index,
+                episode: decision.episode,
+                selected_option_id: decision.selected_option_id,
+                selection_reason,
+                reward: decision.reward,
+                duration_ticks: decision.reward_components.duration_ticks,
+                goal_distance_before: decision.goal_distance_before,
+                goal_distance_after: decision.goal_distance_after,
+                terminal: decision.terminal,
+            });
+        }
+        let directory = seed_root.join("decision-summary");
         let Ok(entries) = fs::read_dir(directory) else {
             continue;
         };
@@ -974,6 +1011,88 @@ fn tactic_route_error(error: impl fmt::Display) -> WorkbenchError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn journal_projects_latest_decision_and_detail_without_json_trace_files() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-journal-projection-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let seed_root = root.join("seed-000-42");
+        let decision: NativeTacticDecisionTrace =
+            serde_json::from_value(serde_json::json!({
+                "decision_index": 0,
+                "episode": 1,
+                "route_suffix_ticks": 4,
+                "selected_option_id": "move.east",
+                "selection_reason": "greedy",
+                "selected_q": 1.0,
+                "best_q": 1.0,
+                "reward": 0.5,
+                "reward_components": {
+                    "terminal_observed": false,
+                    "endpoint_novel": true,
+                    "duration_ticks": 4,
+                    "terminal_component": 0.0,
+                    "tick_cost_component": 0.0,
+                    "novelty_component": 0.5,
+                    "base_reward": 0.5,
+                    "potential": null,
+                    "training_reward": 0.5,
+                    "terminal_objective_unchanged": true,
+                    "promotion_authority": false
+                },
+                "goal_distance_before": 10.0,
+                "goal_distance_after": 8.0,
+                "terminal": false,
+                "frontier_cells": 2,
+                "visited_states": 3,
+                "before": {
+                    "snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "stage": "F_SP103", "room": 1, "layer": 0, "point": 0,
+                    "simulation_tick": 10, "tape_frame": 20,
+                    "player_position": [0.0, 0.0, 0.0],
+                    "player_velocity": [0.0, 0.0, 0.0],
+                    "player_procedure": 3, "player_contacts": 1,
+                    "event_running": false, "event_id": -1,
+                    "terminal_reached": false, "actor_count": 4,
+                    "same_room_actor_count": 3, "recent_option_id": null
+                },
+                "after": {
+                    "snapshot_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "stage": "F_SP103", "room": 1, "layer": 0, "point": 0,
+                    "simulation_tick": 14, "tape_frame": 24,
+                    "player_position": [1.0, 0.0, 0.0],
+                    "player_velocity": [1.0, 0.0, 0.0],
+                    "player_procedure": 3, "player_contacts": 1,
+                    "event_running": false, "event_id": -1,
+                    "terminal_reached": false, "actor_count": 4,
+                    "same_room_actor_count": 3, "recent_option_id": "move.east"
+                },
+                "measurements": [{"name": "goal_distance", "before": 10.0, "after": 8.0}],
+                "applicable_tactics": [{
+                    "option_id": "move.east", "mean_q": 1.0,
+                    "ensemble_variance": 0.0, "selected": true
+                }]
+            }))
+            .unwrap();
+        dusklight_orchestration::native_tactic_route_runner::append_tactic_decision_journal(
+            &seed_root, &decision,
+        )
+        .unwrap();
+
+        let summary = project_latest_decision(&root, &[42]).unwrap();
+        assert_eq!(summary.decision_index, 0);
+        assert_eq!(summary.selected_option_id, "move.east");
+        assert_eq!(summary.selection_reason, "greedy");
+        let detail = load_tactic_route_decision_trace(&root, 0, 42, 0).unwrap();
+        assert_eq!(detail.selected_option_id, "move.east");
+        assert_eq!(detail.before.snapshot_sha256, "a".repeat(64));
+        assert!(!seed_root.join("decision-trace").exists());
+        assert!(!seed_root.join("decision-summary").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn completed_report_projects_the_tactic_route_summary_without_loading_checkpoints() {

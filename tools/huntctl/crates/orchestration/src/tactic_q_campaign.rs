@@ -743,9 +743,36 @@ impl TacticQCampaign {
     }
 
     pub fn read_checkpoint(path: &Path) -> Result<Self, TacticQCampaignError> {
+        Self::resume(Self::read_checkpoint_payload(path)?)
+    }
+
+    /// Reads and validates the durable checkpoint payload without rebuilding
+    /// the fitted model. Orchestration uses this to authenticate run-specific
+    /// identities before calling `resume`.
+    pub fn read_checkpoint_payload(
+        path: &Path,
+    ) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
+        let maximum_envelope_bytes = MAXIMUM_TACTIC_Q_CHECKPOINT_RAW_BYTES
+            .checked_add(TACTIC_Q_CHECKPOINT_HEADER_SIZE as u64)
+            .and_then(|value| value.checked_add(1024 * 1024))
+            .ok_or(TacticQCampaignError::InvalidState(
+                "checkpoint envelope size bound overflows",
+            ))?;
+        if !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() < TACTIC_Q_CHECKPOINT_HEADER_SIZE as u64
+            || metadata.len() > maximum_envelope_bytes
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "checkpoint path is not a bounded physical binary envelope",
+            ));
+        }
         let bytes = fs::read(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
         let checkpoint = decode_checkpoint_envelope(&bytes)?;
-        Self::resume(checkpoint)
+        validate_checkpoint(&checkpoint)?;
+        Ok(checkpoint)
     }
 
     pub fn resume(checkpoint: TacticQCampaignCheckpoint) -> Result<Self, TacticQCampaignError> {
@@ -2004,6 +2031,17 @@ mod tests {
         let stored = fs::read(&path).unwrap();
         assert_eq!(&stored[..8], TACTIC_Q_CHECKPOINT_MAGIC);
         assert_ne!(stored.first(), Some(&b'{'));
+        assert!(
+            stored.len()
+                < serde_json::to_vec(&campaign.checkpoint().unwrap())
+                    .unwrap()
+                    .len()
+        );
+        let payload = TacticQCampaign::read_checkpoint_payload(&path).unwrap();
+        assert_eq!(
+            payload.content_sha256,
+            campaign.checkpoint().unwrap().content_sha256
+        );
         let from_file = TacticQCampaign::read_checkpoint(&path).unwrap();
         assert_eq!(from_file.replay, campaign.replay);
         let mut tampered_envelope = stored;

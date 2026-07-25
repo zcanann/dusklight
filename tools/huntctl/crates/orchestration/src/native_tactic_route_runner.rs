@@ -11,8 +11,7 @@ use crate::native_tactic_worker::{
 };
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics, TacticQCampaign,
-    TacticQCampaignCheckpoint, TacticQCampaignError,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics, TacticQCampaign, TacticQCampaignError,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputTape, RawPadState};
@@ -41,6 +40,7 @@ use dusklight_world::world_context::WorldContext;
 use dusklight_world::world_geometry::KclReconstruction;
 use dusklight_world::world_inventory::WorldInventory;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -55,6 +55,12 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5: &str = "dusklight-native-tactic-
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6: &str = "dusklight-native-tactic-route-report/v6";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
+pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
+const NATIVE_TACTIC_DECISION_JOURNAL_MAGIC: &[u8; 8] = b"DSKTQJ01";
+const NATIVE_TACTIC_DECISION_JOURNAL_VERSION: u16 = 1;
+const NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE: usize = 8 + 2 + 2;
+const NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE: usize = 4 + 32;
+const MAXIMUM_TACTIC_DECISION_RECORD_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ROUTE_SEEDS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
@@ -209,21 +215,6 @@ pub struct NativeTacticValueTrace {
     pub mean_q: Option<f64>,
     pub ensemble_variance: Option<f64>,
     pub selected: bool,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(deny_unknown_fields)]
-struct NativeTacticDecisionSummary<'a> {
-    schema: &'static str,
-    decision_index: u64,
-    episode: u64,
-    selected_option_id: &'a str,
-    selection_reason: TacticSelectionReason,
-    reward: f32,
-    duration_ticks: u32,
-    goal_distance_before: f32,
-    goal_distance_after: f32,
-    terminal: bool,
 }
 
 pub fn run_native_tactic_route(
@@ -851,30 +842,7 @@ fn run_seed(
         if decision_trace_is_useful(&decision_trace) {
             useful_decisions = useful_decisions.saturating_add(1);
         }
-        let decision_trace_root = seed_root.join("decision-trace");
-        fs::create_dir_all(&decision_trace_root).map_err(route_error)?;
-        write_new(
-            &decision_trace_root.join(format!("decision-{decision_index:06}.json")),
-            &serde_json::to_vec_pretty(&decision_trace).map_err(route_error)?,
-        )?;
-        write_new(
-            &seed_root
-                .join("decision-summary")
-                .join(format!("decision-{decision_index:06}.json")),
-            &serde_json::to_vec_pretty(&NativeTacticDecisionSummary {
-                schema: NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1,
-                decision_index,
-                episode,
-                selected_option_id: &decision_trace.selected_option_id,
-                selection_reason: decision_trace.selection_reason,
-                reward: decision_trace.reward,
-                duration_ticks: decision_trace.reward_components.duration_ticks,
-                goal_distance_before: decision_trace.goal_distance_before,
-                goal_distance_after: decision_trace.goal_distance_after,
-                terminal: decision_trace.terminal,
-            })
-            .map_err(route_error)?,
-        )?;
+        append_tactic_decision_journal(&seed_root, &decision_trace)?;
         write_new(
             &seed_root
                 .join("edge-tapes")
@@ -1150,7 +1118,8 @@ fn resume_seed(
     seed: u64,
 ) -> Result<ResumedSeedState, NativeTacticRouteRunError> {
     let (checkpoint_decision, checkpoint_path) = latest_pause_checkpoint(seed_root)?;
-    let checkpoint: TacticQCampaignCheckpoint = read_bounded_json(&checkpoint_path)?;
+    let checkpoint =
+        TacticQCampaign::read_checkpoint_payload(&checkpoint_path).map_err(route_error)?;
     let expected_exploration = TacticExplorationConfig {
         seed,
         epsilon_per_million: config.epsilon_per_million,
@@ -1260,40 +1229,176 @@ fn read_resumed_trace(
     seed_root: &Path,
     decision_count: u64,
 ) -> Result<Vec<NativeTacticDecisionTrace>, NativeTacticRouteRunError> {
-    let trace_root = seed_root.join("decision-trace");
-    if decision_count == 0 && !trace_root.exists() {
-        return Ok(Vec::new());
-    }
-    let actual_count = fs::read_dir(&trace_root)
-        .map_err(route_error)?
-        .filter_map(Result::ok)
-        .filter(|entry| {
-            entry
-                .file_type()
-                .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
-                && entry
-                    .path()
-                    .extension()
-                    .is_some_and(|value| value == "json")
-        })
-        .count() as u64;
-    if actual_count != decision_count {
+    let trace = read_tactic_decision_journal(seed_root)?;
+    if trace.len() as u64 != decision_count {
         return Err(route_message(
-            "paused tactic decision trace does not exactly match its checkpoint",
+            "paused tactic decision journal does not exactly match its checkpoint",
         ));
     }
-    let mut trace = Vec::with_capacity(usize::try_from(decision_count).map_err(route_error)?);
-    for decision_index in 0..decision_count {
-        let path = trace_root.join(format!("decision-{decision_index:06}.json"));
-        let decision: NativeTacticDecisionTrace = read_bounded_json(&path)?;
-        if decision.decision_index != decision_index {
+    Ok(trace)
+}
+
+pub fn tactic_decision_journal_path(seed_root: &Path) -> PathBuf {
+    seed_root.join(NATIVE_TACTIC_DECISION_JOURNAL_FILE)
+}
+
+pub fn read_tactic_decision_journal(
+    seed_root: &Path,
+) -> Result<Vec<NativeTacticDecisionTrace>, NativeTacticRouteRunError> {
+    let path = tactic_decision_journal_path(seed_root);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let metadata = fs::symlink_metadata(&path).map_err(route_error)?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(route_message(
+            "tactic decision journal is not a physical file",
+        ));
+    }
+    let bytes = fs::read(&path).map_err(route_error)?;
+    let decoded = decode_tactic_decision_journal(&bytes)?;
+    Ok(decoded.records)
+}
+
+pub fn append_tactic_decision_journal(
+    seed_root: &Path,
+    decision: &NativeTacticDecisionTrace,
+) -> Result<(), NativeTacticRouteRunError> {
+    fs::create_dir_all(seed_root).map_err(route_error)?;
+    let path = tactic_decision_journal_path(seed_root);
+    ensure_tactic_decision_journal(&path)?;
+    let bytes = fs::read(&path).map_err(route_error)?;
+    let decoded = decode_tactic_decision_journal(&bytes)?;
+    if decoded.records.len() as u64 != decision.decision_index {
+        return Err(route_message(
+            "tactic decision journal append index is detached",
+        ));
+    }
+    if decoded.valid_bytes != bytes.len() {
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_len(decoded.valid_bytes as u64))
+            .map_err(route_error)?;
+    }
+    let payload = serde_cbor::to_vec(decision).map_err(route_error)?;
+    if payload.len() > MAXIMUM_TACTIC_DECISION_RECORD_BYTES {
+        return Err(route_message(
+            "tactic decision journal record exceeds its size bound",
+        ));
+    }
+    let payload_len = u32::try_from(payload.len()).map_err(route_error)?;
+    let payload_sha256: [u8; 32] = Sha256::digest(&payload).into();
+    let mut record = Vec::with_capacity(NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE + payload.len());
+    record.extend_from_slice(&payload_len.to_le_bytes());
+    record.extend_from_slice(&payload_sha256);
+    record.extend_from_slice(&payload);
+    let mut file = OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .map_err(route_error)?;
+    file.write_all(&record)
+        .and_then(|_| file.sync_data())
+        .map_err(route_error)
+}
+
+fn ensure_tactic_decision_journal(path: &Path) -> Result<(), NativeTacticRouteRunError> {
+    if path.exists() {
+        return Ok(());
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| route_message("tactic decision journal has no parent"))?;
+    let partial = parent.join(format!(
+        ".{NATIVE_TACTIC_DECISION_JOURNAL_FILE}.{}.partial",
+        std::process::id()
+    ));
+    if partial.exists() {
+        fs::remove_file(&partial).map_err(route_error)?;
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)
+        .map_err(route_error)?;
+    file.write_all(NATIVE_TACTIC_DECISION_JOURNAL_MAGIC)
+        .and_then(|_| file.write_all(&NATIVE_TACTIC_DECISION_JOURNAL_VERSION.to_le_bytes()))
+        .and_then(|_| file.write_all(&0_u16.to_le_bytes()))
+        .and_then(|_| file.sync_all())
+        .map_err(route_error)?;
+    drop(file);
+    match fs::rename(&partial, path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            fs::remove_file(&partial).map_err(route_error)
+        }
+        Err(error) => Err(route_error(error)),
+    }
+}
+
+struct DecodedTacticDecisionJournal {
+    records: Vec<NativeTacticDecisionTrace>,
+    valid_bytes: usize,
+}
+
+fn decode_tactic_decision_journal(
+    bytes: &[u8],
+) -> Result<DecodedTacticDecisionJournal, NativeTacticRouteRunError> {
+    if bytes.len() < NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE
+        || &bytes[..8] != NATIVE_TACTIC_DECISION_JOURNAL_MAGIC
+        || u16::from_le_bytes(bytes[8..10].try_into().expect("fixed slice"))
+            != NATIVE_TACTIC_DECISION_JOURNAL_VERSION
+        || u16::from_le_bytes(bytes[10..12].try_into().expect("fixed slice")) != 0
+    {
+        return Err(route_message("tactic decision journal header is invalid"));
+    }
+    let mut records = Vec::new();
+    let mut cursor = NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE;
+    while cursor < bytes.len() {
+        let remaining = bytes.len() - cursor;
+        if remaining < NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE {
+            break;
+        }
+        let payload_len =
+            u32::from_le_bytes(bytes[cursor..cursor + 4].try_into().expect("fixed slice")) as usize;
+        if payload_len > MAXIMUM_TACTIC_DECISION_RECORD_BYTES {
             return Err(route_message(
-                "paused tactic decision trace has a detached index",
+                "tactic decision journal record length is invalid",
             ));
         }
-        trace.push(decision);
+        let record_len = NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE
+            .checked_add(payload_len)
+            .ok_or_else(|| route_message("tactic decision journal record length overflows"))?;
+        if remaining < record_len {
+            break;
+        }
+        let expected_sha256: [u8; 32] = bytes[cursor + 4..cursor + 36]
+            .try_into()
+            .expect("fixed slice");
+        let payload =
+            &bytes[cursor + NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE..cursor + record_len];
+        let actual_sha256: [u8; 32] = Sha256::digest(payload).into();
+        if actual_sha256 != expected_sha256 {
+            return Err(route_message(
+                "tactic decision journal record digest is invalid",
+            ));
+        }
+        let mut deserializer = serde_cbor::Deserializer::from_slice(payload);
+        let decision =
+            NativeTacticDecisionTrace::deserialize(&mut deserializer).map_err(route_error)?;
+        deserializer.end().map_err(route_error)?;
+        if decision.decision_index != records.len() as u64 {
+            return Err(route_message(
+                "tactic decision journal record index is detached",
+            ));
+        }
+        records.push(decision);
+        cursor += record_len;
     }
-    Ok(trace)
+    Ok(DecodedTacticDecisionJournal {
+        records,
+        valid_bytes: cursor,
+    })
 }
 
 fn read_completed_seed_result(
@@ -2193,6 +2298,115 @@ impl From<TacticQCampaignError> for NativeTacticRouteRunError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn journal_trace(decision_index: u64) -> NativeTacticDecisionTrace {
+        serde_json::from_value(serde_json::json!({
+            "decision_index": decision_index,
+            "episode": 2,
+            "route_suffix_ticks": decision_index + 4,
+            "selected_option_id": format!("move.{decision_index}"),
+            "selection_reason": "epsilon",
+            "selected_q": 1.5,
+            "best_q": 2.0,
+            "reward": 0.25,
+            "reward_components": {
+                "terminal_observed": false,
+                "endpoint_novel": true,
+                "duration_ticks": 4,
+                "terminal_component": 0.0,
+                "tick_cost_component": 0.0,
+                "novelty_component": 0.25,
+                "base_reward": 0.25,
+                "potential": null,
+                "training_reward": 0.25,
+                "terminal_objective_unchanged": true,
+                "promotion_authority": false
+            },
+            "goal_distance_before": 8.0,
+            "goal_distance_after": 7.0,
+            "terminal": false,
+            "frontier_cells": 3,
+            "visited_states": 4,
+            "before": {
+                "snapshot_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "stage": "F_SP103",
+                "room": 1,
+                "layer": 0,
+                "point": 0,
+                "simulation_tick": 10,
+                "tape_frame": 20,
+                "player_position": [0.0, 1.0, 2.0],
+                "player_velocity": [0.0, 0.0, 1.0],
+                "player_procedure": 3,
+                "player_contacts": 1,
+                "event_running": false,
+                "event_id": -1,
+                "terminal_reached": false,
+                "actor_count": 4,
+                "same_room_actor_count": 3,
+                "recent_option_id": null
+            },
+            "after": {
+                "snapshot_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "stage": "F_SP103",
+                "room": 1,
+                "layer": 0,
+                "point": 0,
+                "simulation_tick": 14,
+                "tape_frame": 24,
+                "player_position": [1.0, 1.0, 2.0],
+                "player_velocity": [1.0, 0.0, 0.0],
+                "player_procedure": 3,
+                "player_contacts": 1,
+                "event_running": false,
+                "event_id": -1,
+                "terminal_reached": false,
+                "actor_count": 4,
+                "same_room_actor_count": 3,
+                "recent_option_id": format!("move.{decision_index}")
+            },
+            "measurements": [{"name": "goal_distance", "before": 8.0, "after": 7.0}],
+            "applicable_tactics": [{
+                "option_id": format!("move.{decision_index}"),
+                "mean_q": 1.5,
+                "ensemble_variance": 0.25,
+                "selected": true
+            }]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn tactic_decision_journal_round_trips_and_recovers_a_truncated_tail() {
+        let root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-decision-journal-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        append_tactic_decision_journal(&root, &journal_trace(0)).unwrap();
+        append_tactic_decision_journal(&root, &journal_trace(1)).unwrap();
+        let records = read_tactic_decision_journal(&root).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].selected_option_id, "move.1");
+
+        let path = tactic_decision_journal_path(&root);
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(&[7, 8, 9])
+            .unwrap();
+        assert_eq!(read_tactic_decision_journal(&root).unwrap().len(), 2);
+        append_tactic_decision_journal(&root, &journal_trace(2)).unwrap();
+        assert_eq!(read_tactic_decision_journal(&root).unwrap().len(), 3);
+
+        let mut bytes = fs::read(&path).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 1;
+        fs::write(&path, bytes).unwrap();
+        assert!(read_tactic_decision_journal(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn first_route_proof_does_not_optimize_speed() {
