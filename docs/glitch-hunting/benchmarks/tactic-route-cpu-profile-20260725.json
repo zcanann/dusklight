@@ -1,0 +1,116 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-cpu-profile/v1",
+  "date": "2026-07-25",
+  "claim": "After binary persistence isolation and shared-worker scheduling, the dominant remaining cost is repeated progressive-prefix native evaluation, not GPU rendering. The headless renderer already discards every candidate frame before GPU encoding; gameplay and CPU render traversal callbacks remain intact.",
+  "implementation": {
+    "commit": "9f628ad9e1fcbf9eabe17ac25f69b34edad8d98c",
+    "binary": "tools/huntctl/target/debug/huntctl.exe",
+    "binary_sha256": "138303e2183d3d539dfa98ef9b8dd79a72b7744ef608018c054e7bf554bea71b",
+    "headless_backend": "null",
+    "gpu_frame_policy": "discard before encoding and submission",
+    "cpu_draw_traversal_retained": true,
+    "cpu_renderer_submission_retained": true,
+    "gameplay_callbacks_removed": false
+  },
+  "profile_source": {
+    "campaign": "build/campaigns/tactic-route-proof-separation-smoke-20260725",
+    "report_sha256": "12b293d153ca92f92c3c79388247408bc475589b24464d56386f08ae9c0fd868",
+    "workers": 4,
+    "seeds": [
+      104729,
+      130363
+    ],
+    "decisions": 2,
+    "campaign_wall_micros": 65609118,
+    "reported_native_worker_occupancy_micros": 28115479,
+    "profile_schema": "dusklight-suffix-batch-timing/v1",
+    "simulation_boundary": "after PADRead through deterministic clock commit",
+    "nested_simulation_phases": [
+      "cpu_draw_traversal",
+      "cpu_renderer_submission"
+    ]
+  },
+  "initial_worker_probes": {
+    "native_calls": 4,
+    "candidate_ticks": 640,
+    "summed_batch_wall_micros": 15194538,
+    "checkpoint_restore_micros": 172666,
+    "simulation_micros": 1362438,
+    "cpu_draw_traversal_micros": 271571,
+    "cpu_renderer_submission_micros": 586673,
+    "observation_capture_micros": 92729,
+    "corpus_encoding_micros": 685105,
+    "discarded_gpu_frames": 700,
+    "note": "Discarded frames include checkpoint-validation work that is not counted as candidate ticks."
+  },
+  "proposal_evaluation": {
+    "native_calls": 86,
+    "logical_realized_tactic_ticks": 156,
+    "evaluated_native_candidate_ticks": 1716,
+    "native_tick_amplification_millionths": 11000000,
+    "summed_batch_wall_micros": 26535409,
+    "checkpoint_restore_micros": 2127915,
+    "simulation_micros": 4135063,
+    "corpus_encoding_micros": 1893819,
+    "cpu_draw_traversal_micros": 736402,
+    "cpu_renderer_submission_micros": 1681339,
+    "observation_capture_micros": 267433,
+    "policy_application_micros": 116,
+    "compressed_corpus_bytes": 1379094,
+    "uncompressed_corpus_bytes": 78093894,
+    "discarded_gpu_frames": 1716,
+    "gpu_code_creation_absent_in_every_call": true,
+    "gpu_queue_operations_absent_in_every_call": true,
+    "shares_millionths": {
+      "checkpoint_restore_of_batch_wall": 80192,
+      "simulation_of_batch_wall": 155832,
+      "corpus_encoding_of_batch_wall": 71370,
+      "measured_nonoverlapping_phases_of_batch_wall": 307393,
+      "remaining_batch_boundary_overhead": 692607,
+      "cpu_draw_traversal_of_simulation": 178087,
+      "cpu_renderer_submission_of_simulation": 406605,
+      "combined_cpu_render_of_simulation": 584693,
+      "observation_capture_of_simulation": 64674,
+      "impossible_zero_cpu_render_upper_bound_of_batch_wall": 91114
+    }
+  },
+  "progressive_route_bottleneck": {
+    "proposal_index": 0,
+    "native_calls": 80,
+    "logical_realized_tactic_ticks": 80,
+    "evaluated_native_candidate_ticks": 1640,
+    "native_tick_amplification_millionths": 20500000,
+    "summed_batch_wall_micros": 24909658,
+    "share_of_all_proposal_batch_wall_millionths": 938733,
+    "checkpoint_restore_micros": 1938075,
+    "simulation_micros": 3937760,
+    "corpus_encoding_micros": 1806277,
+    "cause": "Each 40-tick state-aware route proposal evaluates prefixes 1 through 40 as separate native batches, replaying the authenticated source and re-encoding an episode shard for every observation boundary."
+  },
+  "other_proposals": [
+    {
+      "proposal_index": 1,
+      "native_calls": 2,
+      "candidate_ticks": 48,
+      "summed_batch_wall_micros": 837795
+    },
+    {
+      "proposal_index": 2,
+      "native_calls": 2,
+      "candidate_ticks": 10,
+      "summed_batch_wall_micros": 365627
+    },
+    {
+      "proposal_index": 3,
+      "native_calls": 2,
+      "candidate_ticks": 18,
+      "summed_batch_wall_micros": 422329
+    }
+  ],
+  "decision": {
+    "remove_cpu_draw_or_renderer_callbacks": false,
+    "reason": "They are inside the authoritative simulation boundary and may run game-visible draw callbacks. They account for only 9.1% of proposal-batch wall time even under an unattainable complete-removal bound.",
+    "next_optimization": "Use restorable frontier checkpoints and one native observation loop or equal-source batch so progressive tactics do not restore, replay, cross IPC, and encode a corpus once per prefix.",
+    "p1_end_to_end_tenfold_gate_met": false
+  }
+}

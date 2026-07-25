@@ -43,9 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P1 - Use the simulator's available throughput
 
-- [ ] Profile remaining CPU simulation work only after persistence and worker
-      utilization are fixed. Preserve callbacks whose removal changes gameplay.
-
 Acceptance:
 
 - A multi-worker tactic-route campaign demonstrably uses the requested workers.
