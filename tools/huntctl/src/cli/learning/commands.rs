@@ -685,6 +685,16 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
         Some("prioritized-q") => cli::learning::command_prioritized_q(&args[1..]),
         Some("ablate-q") => cli::learning::command_q_ablation(&args[1..]),
         Some("option-values") => cli::learning::command_option_values(&args[1..]),
+        Some("benchmark-tactic-checkpoint-codecs") => {
+            let learn_args = &args[1..];
+            let benchmark = TacticQCampaign::benchmark_checkpoint_serialization(
+                &required_path(learn_args, "--legacy-json-checkpoint")?,
+                &required_path(learn_args, "--current-checkpoint")?,
+                u64_option(learn_args, "--iterations", 100)?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&benchmark)?);
+            Ok(())
+        }
         Some("freeze-tactic-policy") => {
             let learn_args = &args[1..];
             let checkpoint =

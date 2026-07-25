@@ -44,6 +44,8 @@ use std::path::{Path, PathBuf};
 pub const TACTIC_Q_CAMPAIGN_SCHEMA_V1: &str = "dusklight-tactic-q-campaign/v1";
 pub const TACTIC_Q_CHECKPOINT_SCHEMA_V2: &str = "dusklight-tactic-q-checkpoint/v2";
 pub const TACTIC_Q_CHECKPOINT_EXTENSION: &str = "dtqz";
+pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
+    "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V1: &str = "dusklight-tactic-q-final-result/v1";
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
 
@@ -237,6 +239,19 @@ pub struct TacticQCampaign {
     model: Option<OptionValueModel>,
     visited_states: BTreeSet<TacticStateDescriptor>,
     hindsight: HindsightOptionReplay,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticQCheckpointSerializationBenchmark {
+    pub schema: String,
+    pub iterations: u64,
+    pub decision_index: u64,
+    pub replay_transitions: u64,
+    pub legacy_json_bytes_per_iteration: u64,
+    pub current_manifest_envelope_bytes_per_iteration: u64,
+    pub legacy_json_serialization_total_nanos: u64,
+    pub current_manifest_serialization_total_nanos: u64,
 }
 
 impl TacticQCampaign {
@@ -724,6 +739,21 @@ impl TacticQCampaign {
         path: &Path,
     ) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
         tactic_q_checkpoint_store::read_checkpoint(path)
+    }
+
+    /// Measures only deterministic checkpoint-root serialization. Native
+    /// simulation, object-store writes, filesystem sync, and report projection
+    /// are deliberately outside this codec boundary.
+    pub fn benchmark_checkpoint_serialization(
+        legacy_json_path: &Path,
+        current_checkpoint_path: &Path,
+        iterations: u64,
+    ) -> Result<TacticQCheckpointSerializationBenchmark, TacticQCampaignError> {
+        tactic_q_checkpoint_store::benchmark_checkpoint_serialization(
+            legacy_json_path,
+            current_checkpoint_path,
+            iterations,
+        )
     }
 
     pub fn resume(checkpoint: TacticQCampaignCheckpoint) -> Result<Self, TacticQCampaignError> {
@@ -1926,6 +1956,27 @@ mod tests {
         );
         let from_file = TacticQCampaign::read_checkpoint(&path).unwrap();
         assert_eq!(from_file.replay, campaign.replay);
+        let mut legacy_checkpoint = campaign.checkpoint().unwrap();
+        legacy_checkpoint.schema = "dusklight-tactic-q-checkpoint/v1".into();
+        let legacy_path = directory.join("legacy-checkpoint.json");
+        fs::write(
+            &legacy_path,
+            serde_json::to_vec(&legacy_checkpoint).unwrap(),
+        )
+        .unwrap();
+        let codec_benchmark =
+            TacticQCampaign::benchmark_checkpoint_serialization(&legacy_path, &path, 2).unwrap();
+        assert_eq!(codec_benchmark.iterations, 2);
+        assert_eq!(codec_benchmark.decision_index, campaign.decision_index);
+        assert_eq!(
+            codec_benchmark.replay_transitions,
+            campaign.replay.len() as u64
+        );
+        assert!(
+            codec_benchmark.legacy_json_bytes_per_iteration
+                > codec_benchmark.current_manifest_envelope_bytes_per_iteration
+        );
+        fs::remove_file(legacy_path).unwrap();
         let objects = directory.join("objects");
         let hidden_objects = directory.join("objects-unavailable");
         fs::rename(&objects, &hidden_objects).unwrap();

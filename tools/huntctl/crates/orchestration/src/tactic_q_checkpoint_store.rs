@@ -1,7 +1,8 @@
 //! Tactic-learning codecs over the shared content-addressed evidence store.
 
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TacticQCampaignCheckpoint, TacticQCampaignError,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1,
+    TacticQCampaignCheckpoint, TacticQCampaignError, TacticQCheckpointSerializationBenchmark,
     checkpoint_digest, validate_checkpoint,
 };
 use dusklight_automation_contracts::artifact::Digest;
@@ -26,6 +27,7 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 const FACT_OBJECT_SCHEMA_V1: &str = "dusklight-tactic-q-fact-object/v1";
 const CHECKPOINT_MANIFEST_SCHEMA_V1: &str = "dusklight-tactic-q-checkpoint-manifest/v1";
@@ -35,6 +37,7 @@ const CHECKPOINT_HEADER_SIZE: usize = 8 + 2 + 2 + 8 + 32;
 const MAXIMUM_CHECKPOINT_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
 const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
 const CONTENT_DIRECTORY: &str = "objects";
+const LEGACY_CHECKPOINT_SCHEMA_V1: &str = "dusklight-tactic-q-checkpoint/v1";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -435,6 +438,91 @@ pub(crate) fn read_checkpoint(
     Err(TacticQCampaignError::InvalidState(
         "checkpoint content objects are unavailable or invalid",
     ))
+}
+
+pub(crate) fn benchmark_checkpoint_serialization(
+    legacy_json_path: &Path,
+    current_checkpoint_path: &Path,
+    iterations: u64,
+) -> Result<TacticQCheckpointSerializationBenchmark, TacticQCampaignError> {
+    if iterations == 0 {
+        return Err(TacticQCampaignError::InvalidState(
+            "checkpoint serialization benchmark requires at least one iteration",
+        ));
+    }
+    let legacy_bytes =
+        fs::read(legacy_json_path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
+    let legacy: TacticQCampaignCheckpoint = serde_json::from_slice(&legacy_bytes)
+        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+    if legacy.schema != LEGACY_CHECKPOINT_SCHEMA_V1 {
+        return Err(TacticQCampaignError::InvalidState(
+            "legacy checkpoint does not use the v1 JSON schema",
+        ));
+    }
+
+    let current_envelope = fs::read(current_checkpoint_path)
+        .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
+    let current_raw = decode_checkpoint_envelope(&current_envelope)?;
+    let current_manifest: StoredCheckpointManifest =
+        decode_cbor(&current_raw).map_err(checkpoint_store_error)?;
+    let current = read_checkpoint(current_checkpoint_path)?;
+
+    let mut normalized_legacy = legacy.clone();
+    normalized_legacy.schema.clear();
+    normalized_legacy.content_sha256 = Digest::ZERO;
+    let mut normalized_current = current.clone();
+    normalized_current.schema.clear();
+    normalized_current.content_sha256 = Digest::ZERO;
+    if normalized_legacy != normalized_current {
+        return Err(TacticQCampaignError::InvalidState(
+            "legacy and current checkpoints do not contain the same logical campaign state",
+        ));
+    }
+
+    let legacy_round_trip = serde_json::to_vec(&legacy)
+        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+    if legacy_round_trip != legacy_bytes {
+        return Err(TacticQCampaignError::InvalidState(
+            "legacy JSON checkpoint is not canonically encoded",
+        ));
+    }
+    let current_round_trip = encode_checkpoint_envelope(
+        &serde_cbor::to_vec(&current_manifest)
+            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?,
+    )?;
+    if current_round_trip != current_envelope {
+        return Err(TacticQCampaignError::InvalidState(
+            "current checkpoint manifest is not canonically encoded",
+        ));
+    }
+
+    let legacy_started = Instant::now();
+    for _ in 0..iterations {
+        let encoded = serde_json::to_vec(&legacy)
+            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+        std::hint::black_box(encoded);
+    }
+    let legacy_nanos = u64::try_from(legacy_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+
+    let current_started = Instant::now();
+    for _ in 0..iterations {
+        let raw = serde_cbor::to_vec(&current_manifest)
+            .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+        let envelope = encode_checkpoint_envelope(&raw)?;
+        std::hint::black_box(envelope);
+    }
+    let current_nanos = u64::try_from(current_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+
+    Ok(TacticQCheckpointSerializationBenchmark {
+        schema: TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1.into(),
+        iterations,
+        decision_index: current.decision_index,
+        replay_transitions: current.replay.len() as u64,
+        legacy_json_bytes_per_iteration: legacy_bytes.len() as u64,
+        current_manifest_envelope_bytes_per_iteration: current_envelope.len() as u64,
+        legacy_json_serialization_total_nanos: legacy_nanos,
+        current_manifest_serialization_total_nanos: current_nanos,
+    })
 }
 
 fn store_checkpoint_manifest(

@@ -43,10 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P0 - Remove storage and orchestration from the hot path
 
-- [ ] Benchmark the same sealed campaign before and after the change. Report
-      bytes written, serialization time, useful decisions per second, native
-      ticks per second, and peak memory.
-
 Acceptance:
 
 - No operational tactic-Q checkpoint or hot-path journal is JSON.

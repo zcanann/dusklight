@@ -313,6 +313,9 @@ fn print_usage() {
         "  huntctl learn option-values --input BATCH.json --model-output MODEL.json [--artifact-store ROOT] [--query-sample N] [--query-side state|next-state] [--iterations N] [--trees N] [--max-depth N] [--min-samples-leaf N] [--features-per-split N] [--max-thresholds N] [--categorical-feature INDEX] [--discount D] [--seed N]"
     );
     eprintln!(
+        "  huntctl learn benchmark-tactic-checkpoint-codecs --legacy-json-checkpoint TACTIC-Q.json --current-checkpoint TACTIC-Q.dtqz [--iterations N]"
+    );
+    eprintln!(
         "  huntctl learn freeze-tactic-policy --checkpoint TACTIC-Q.dtqz --output POLICY.json"
     );
     eprintln!(
