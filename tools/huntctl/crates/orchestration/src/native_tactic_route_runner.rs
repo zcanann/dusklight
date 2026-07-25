@@ -822,41 +822,6 @@ fn run_seed(
         let after_features = encoder
             .encode(&step.step.transition.after)
             .map_err(route_error)?;
-        let measurements = encoder
-            .feature_names
-            .iter()
-            .cloned()
-            .zip(before_features.iter().copied())
-            .zip(after_features.iter().copied())
-            .map(|((name, before), after)| NativeTacticMeasurementTrace {
-                name,
-                before,
-                after,
-            })
-            .collect();
-        let applicable_tactics = step
-            .step
-            .decision
-            .ranking
-            .choices
-            .iter()
-            .map(|choice| {
-                let value = step
-                    .step
-                    .decision
-                    .ranking
-                    .values
-                    .ranked
-                    .iter()
-                    .find(|value| value.descriptor == choice.descriptor);
-                NativeTacticValueTrace {
-                    option_id: choice.choice_id.clone(),
-                    mean_q: value.map(|value| value.mean_q),
-                    ensemble_variance: value.map(|value| value.ensemble_variance),
-                    selected: choice.descriptor == selected.descriptor,
-                }
-            })
-            .collect();
         let decision_trace = NativeTacticDecisionTrace {
             decision_index,
             episode,
@@ -878,8 +843,8 @@ fn run_seed(
             visited_states: campaign.visited_state_count(),
             before: tactic_state_trace(&step.step.transition.before)?,
             after: tactic_state_trace(&step.step.transition.after)?,
-            measurements,
-            applicable_tactics,
+            measurements: Vec::new(),
+            applicable_tactics: Vec::new(),
         };
         if decision_trace_is_useful(&decision_trace) {
             useful_decisions = useful_decisions.saturating_add(1);
@@ -976,6 +941,7 @@ fn run_seed(
         per_second_millionths(native_ticks, timing.wall_micros);
     timing.episodes_per_second_millionths =
         per_second_millionths(episode.saturating_add(1), timing.wall_micros);
+    trace = read_resumed_trace(&seed_root, campaign.decision_index)?;
     persist_seed_performance(
         &seed_root,
         campaign.decision_index,
