@@ -19,6 +19,10 @@ static TEMPORARY_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[serde(rename_all = "snake_case")]
 pub enum ContentKind {
     InputTape,
+    FactSnapshot,
+    ActorSnapshot,
+    TacticDefinition,
+    TacticTransition,
     GameplayTrace,
     TransitionCorpus,
     TransitionEvidence,
@@ -49,6 +53,10 @@ impl ContentKind {
     pub fn media_type(self) -> &'static str {
         match self {
             Self::InputTape => "application/x-dusktape",
+            Self::FactSnapshot => "application/vnd.dusklight.fact-snapshot+cbor",
+            Self::ActorSnapshot => "application/vnd.dusklight.actor-snapshot+cbor",
+            Self::TacticDefinition => "application/vnd.dusklight.tactic-definition+cbor",
+            Self::TacticTransition => "application/vnd.dusklight.tactic-transition+cbor",
             Self::GameplayTrace => "application/x-dusktrace",
             Self::TransitionCorpus => "application/x-dusklight-transition-corpus",
             Self::TransitionEvidence => "application/vnd.dusklight.transition-evidence+json",
@@ -221,6 +229,26 @@ impl ContentStore {
             return Err(ContentStoreError::InvalidReference);
         }
         verify_file(&self.root.join(&blob.relative_path), blob.sha256, blob.size)
+    }
+
+    pub fn read_bytes(&self, blob: &ContentBlob) -> Result<Vec<u8>, ContentStoreError> {
+        self.verify(blob)?;
+        fs::read(self.root.join(&blob.relative_path)).map_err(ContentStoreError::Io)
+    }
+
+    pub fn reference_for_digest(
+        &self,
+        kind: ContentKind,
+        digest: Digest,
+    ) -> Result<ContentBlob, ContentStoreError> {
+        let path = self.blob_path(digest);
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(ContentStoreError::InvalidReference);
+        }
+        let reference = self.reference(kind, digest, metadata.len());
+        self.verify(&reference)?;
+        Ok(reference)
     }
 
     pub fn blob_path(&self, digest: Digest) -> PathBuf {
@@ -529,6 +557,10 @@ mod tests {
         let bytes = b"immutable artifact";
         for kind in [
             ContentKind::InputTape,
+            ContentKind::FactSnapshot,
+            ContentKind::ActorSnapshot,
+            ContentKind::TacticDefinition,
+            ContentKind::TacticTransition,
             ContentKind::GameplayTrace,
             ContentKind::TransitionCorpus,
             ContentKind::TransitionEvidence,

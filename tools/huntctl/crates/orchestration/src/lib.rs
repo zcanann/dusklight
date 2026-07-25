@@ -32,6 +32,7 @@ pub mod stage_observation_coverage;
 pub mod stage_survey;
 mod stage_survey_artifact;
 pub mod tactic_q_campaign;
+mod tactic_q_checkpoint_store;
 
 pub use anchored_search::{
     ANCHORED_RUN_SCHEMA, AnchoredSearchRunConfig, AnchoredSearchRunSummary, run_anchored_search,

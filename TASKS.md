@@ -43,12 +43,6 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P0 - Remove storage and orchestration from the hot path
 
-- [ ] Store fact snapshots, actor snapshots, tapes, and tactic definitions once
-      by content digest. Store transition and frontier references instead of
-      embedding repeated copies.
-- [ ] Make the append-only decision journal the operational transition
-      journal: record only compact references sufficient to resume, learn, and
-      verify identities instead of report-shaped decision traces.
 - [ ] Remove periodic full graph projections from the hot path; derive them
       from compact transition and frontier records on demand.
 - [ ] Make diagnostics, knowledge graphs, edge tapes, and readable summaries

@@ -5,6 +5,7 @@ use crate::native_tactic_worker::{
     NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
     PersistentTacticBatchWorker, execute_selected_tactic,
 };
+use crate::tactic_q_checkpoint_store;
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_control::option_execution::OptionExecution;
@@ -38,8 +39,6 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const TACTIC_Q_CAMPAIGN_SCHEMA_V1: &str = "dusklight-tactic-q-campaign/v1";
@@ -47,11 +46,6 @@ pub const TACTIC_Q_CHECKPOINT_SCHEMA_V2: &str = "dusklight-tactic-q-checkpoint/v
 pub const TACTIC_Q_CHECKPOINT_EXTENSION: &str = "dtqz";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V1: &str = "dusklight-tactic-q-final-result/v1";
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
-const TACTIC_Q_CHECKPOINT_MAGIC: &[u8; 8] = b"DSKTQZ01";
-const TACTIC_Q_CHECKPOINT_FORMAT_VERSION: u16 = 1;
-const TACTIC_Q_CHECKPOINT_HEADER_SIZE: usize = 8 + 2 + 2 + 8 + 32;
-const MAXIMUM_TACTIC_Q_CHECKPOINT_RAW_BYTES: u64 = 1024 * 1024 * 1024;
-const TACTIC_Q_CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -707,39 +701,16 @@ impl TacticQCampaign {
     /// file, never a half-written checkpoint at the final path.
     pub fn write_checkpoint(&self, directory: &Path) -> Result<PathBuf, TacticQCampaignError> {
         let checkpoint = self.checkpoint()?;
-        fs::create_dir_all(directory)
-            .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-        let final_path = directory.join(format!(
-            "tactic-q-{}.{}",
-            checkpoint.content_sha256, TACTIC_Q_CHECKPOINT_EXTENSION
-        ));
-        let bytes = encode_checkpoint_envelope(&checkpoint)?;
-        if final_path.exists() {
-            let existing = fs::read(&final_path)
-                .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-            if existing == bytes {
-                return Ok(final_path);
-            }
-            return Err(TacticQCampaignError::InvalidState(
-                "content-addressed checkpoint path contains different bytes",
-            ));
-        }
-        let partial_path = directory.join(format!(
-            ".tactic-q-{}.{}.partial",
-            checkpoint.content_sha256,
-            std::process::id()
-        ));
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&partial_path)
-            .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-        file.write_all(&bytes)
-            .and_then(|_| file.sync_all())
-            .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-        fs::rename(&partial_path, &final_path)
-            .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-        Ok(final_path)
+        tactic_q_checkpoint_store::write_checkpoint_with_local_store(&checkpoint, directory)
+    }
+
+    pub fn write_checkpoint_with_store(
+        &self,
+        directory: &Path,
+        content_root: &Path,
+    ) -> Result<PathBuf, TacticQCampaignError> {
+        let checkpoint = self.checkpoint()?;
+        tactic_q_checkpoint_store::write_checkpoint(&checkpoint, directory, content_root)
     }
 
     pub fn read_checkpoint(path: &Path) -> Result<Self, TacticQCampaignError> {
@@ -752,27 +723,7 @@ impl TacticQCampaign {
     pub fn read_checkpoint_payload(
         path: &Path,
     ) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
-        let metadata = fs::symlink_metadata(path)
-            .map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-        let maximum_envelope_bytes = MAXIMUM_TACTIC_Q_CHECKPOINT_RAW_BYTES
-            .checked_add(TACTIC_Q_CHECKPOINT_HEADER_SIZE as u64)
-            .and_then(|value| value.checked_add(1024 * 1024))
-            .ok_or(TacticQCampaignError::InvalidState(
-                "checkpoint envelope size bound overflows",
-            ))?;
-        if !metadata.file_type().is_file()
-            || metadata.file_type().is_symlink()
-            || metadata.len() < TACTIC_Q_CHECKPOINT_HEADER_SIZE as u64
-            || metadata.len() > maximum_envelope_bytes
-        {
-            return Err(TacticQCampaignError::InvalidState(
-                "checkpoint path is not a bounded physical binary envelope",
-            ));
-        }
-        let bytes = fs::read(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
-        let checkpoint = decode_checkpoint_envelope(&bytes)?;
-        validate_checkpoint(&checkpoint)?;
-        Ok(checkpoint)
+        tactic_q_checkpoint_store::read_checkpoint(path)
     }
 
     pub fn resume(checkpoint: TacticQCampaignCheckpoint) -> Result<Self, TacticQCampaignError> {
@@ -1255,7 +1206,9 @@ fn semantic_state_digest(snapshot: &FactSnapshot) -> Result<Digest, TacticQCampa
     Ok(sha256(&bytes))
 }
 
-fn validate_checkpoint(checkpoint: &TacticQCampaignCheckpoint) -> Result<(), TacticQCampaignError> {
+pub(crate) fn validate_checkpoint(
+    checkpoint: &TacticQCampaignCheckpoint,
+) -> Result<(), TacticQCampaignError> {
     checkpoint.current.validate()?;
     checkpoint
         .route_tape
@@ -1366,7 +1319,7 @@ fn replay_model(
     Ok(Some(OptionValueModel::fit_batch(&batch, config)?))
 }
 
-fn checkpoint_digest(
+pub(crate) fn checkpoint_digest(
     checkpoint: &TacticQCampaignCheckpoint,
 ) -> Result<Digest, TacticQCampaignError> {
     let mut canonical = checkpoint.clone();
@@ -1374,78 +1327,6 @@ fn checkpoint_digest(
     let bytes = serde_cbor::to_vec(&canonical)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
     Ok(sha256(&bytes))
-}
-
-fn encode_checkpoint_envelope(
-    checkpoint: &TacticQCampaignCheckpoint,
-) -> Result<Vec<u8>, TacticQCampaignError> {
-    validate_checkpoint(checkpoint)?;
-    let raw = serde_cbor::to_vec(checkpoint)
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    let raw_len = u64::try_from(raw.len())
-        .map_err(|_| TacticQCampaignError::InvalidState("checkpoint length overflows"))?;
-    if raw_len > MAXIMUM_TACTIC_Q_CHECKPOINT_RAW_BYTES {
-        return Err(TacticQCampaignError::InvalidState(
-            "checkpoint exceeds the binary size bound",
-        ));
-    }
-    let raw_sha256 = sha256(&raw);
-    let compressed = zstd::bulk::compress(&raw, TACTIC_Q_CHECKPOINT_COMPRESSION_LEVEL)
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    let capacity = TACTIC_Q_CHECKPOINT_HEADER_SIZE
-        .checked_add(compressed.len())
-        .ok_or(TacticQCampaignError::InvalidState(
-            "checkpoint envelope length overflows",
-        ))?;
-    let mut envelope = Vec::with_capacity(capacity);
-    envelope.extend_from_slice(TACTIC_Q_CHECKPOINT_MAGIC);
-    envelope.extend_from_slice(&TACTIC_Q_CHECKPOINT_FORMAT_VERSION.to_le_bytes());
-    envelope.extend_from_slice(&0_u16.to_le_bytes());
-    envelope.extend_from_slice(&raw_len.to_le_bytes());
-    envelope.extend_from_slice(&raw_sha256.0);
-    debug_assert_eq!(envelope.len(), TACTIC_Q_CHECKPOINT_HEADER_SIZE);
-    envelope.extend_from_slice(&compressed);
-    Ok(envelope)
-}
-
-fn decode_checkpoint_envelope(
-    envelope: &[u8],
-) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
-    if envelope.len() < TACTIC_Q_CHECKPOINT_HEADER_SIZE
-        || &envelope[..8] != TACTIC_Q_CHECKPOINT_MAGIC
-    {
-        return Err(TacticQCampaignError::InvalidState(
-            "checkpoint binary envelope is invalid",
-        ));
-    }
-    let format_version = u16::from_le_bytes(envelope[8..10].try_into().expect("fixed slice"));
-    let flags = u16::from_le_bytes(envelope[10..12].try_into().expect("fixed slice"));
-    let raw_len = u64::from_le_bytes(envelope[12..20].try_into().expect("fixed slice"));
-    let expected_sha256 = Digest(envelope[20..52].try_into().expect("fixed slice"));
-    if format_version != TACTIC_Q_CHECKPOINT_FORMAT_VERSION
-        || flags != 0
-        || raw_len > MAXIMUM_TACTIC_Q_CHECKPOINT_RAW_BYTES
-    {
-        return Err(TacticQCampaignError::InvalidState(
-            "checkpoint binary envelope identity is invalid",
-        ));
-    }
-    let raw_len = usize::try_from(raw_len)
-        .map_err(|_| TacticQCampaignError::InvalidState("checkpoint length overflows"))?;
-    let raw = zstd::bulk::decompress(&envelope[TACTIC_Q_CHECKPOINT_HEADER_SIZE..], raw_len)
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    if raw.len() != raw_len || sha256(&raw) != expected_sha256 {
-        return Err(TacticQCampaignError::InvalidState(
-            "checkpoint binary payload identity is invalid",
-        ));
-    }
-    let mut deserializer = serde_cbor::Deserializer::from_slice(&raw);
-    let checkpoint = TacticQCampaignCheckpoint::deserialize(&mut deserializer)
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    deserializer
-        .end()
-        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
-    Ok(checkpoint)
 }
 
 fn validate_final_result(result: &TacticQFinalResult) -> Result<(), TacticQCampaignError> {
@@ -1522,7 +1403,7 @@ fn extends(prefix: &InputTape, route: &InputTape) -> bool {
         && route.frames.len() > prefix.frames.len()
 }
 
-fn route_checkpoint(
+pub(crate) fn route_checkpoint(
     root_checkpoint_sha256: Digest,
     route: &InputTape,
 ) -> Result<Digest, TacticQCampaignError> {
@@ -1660,6 +1541,7 @@ mod tests {
     };
     use dusklight_learning::tactic_asset::{TacticAssetSource, TacticCatalogEntry};
     use dusklight_learning::tactic_exploration::TacticSelectionReason;
+    use std::fs;
 
     #[test]
     fn seeded_frontier_rotation_visits_every_eligible_cell_before_repeating() {
@@ -2029,7 +1911,7 @@ mod tests {
             Some(TACTIC_Q_CHECKPOINT_EXTENSION)
         );
         let stored = fs::read(&path).unwrap();
-        assert_eq!(&stored[..8], TACTIC_Q_CHECKPOINT_MAGIC);
+        assert_eq!(&stored[..8], b"DSKTQZ01");
         assert_ne!(stored.first(), Some(&b'{'));
         assert!(
             stored.len()
@@ -2044,12 +1926,20 @@ mod tests {
         );
         let from_file = TacticQCampaign::read_checkpoint(&path).unwrap();
         assert_eq!(from_file.replay, campaign.replay);
+        let objects = directory.join("objects");
+        let hidden_objects = directory.join("objects-unavailable");
+        fs::rename(&objects, &hidden_objects).unwrap();
+        assert!(TacticQCampaign::read_checkpoint(&path).is_err());
+        fs::rename(&hidden_objects, &objects).unwrap();
         let mut tampered_envelope = stored;
         let last = tampered_envelope.len() - 1;
         tampered_envelope[last] ^= 1;
-        assert!(decode_checkpoint_envelope(&tampered_envelope).is_err());
+        let tampered_path = path.with_file_name("tampered.dtqz");
+        fs::write(&tampered_path, tampered_envelope).unwrap();
+        assert!(TacticQCampaign::read_checkpoint_payload(&tampered_path).is_err());
+        fs::remove_file(tampered_path).unwrap();
         fs::remove_file(&path).unwrap();
-        fs::remove_dir(&directory).unwrap();
+        fs::remove_dir_all(&directory).unwrap();
 
         if terminal {
             let final_result = campaign.final_result().unwrap();
