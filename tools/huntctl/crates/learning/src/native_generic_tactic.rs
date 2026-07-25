@@ -28,9 +28,6 @@ pub const MINED_TACTIC_CONDITIONS_SCHEMA_V1: &str = "dusklight-mined-tactic-cond
 pub const MAX_NATIVE_TACTIC_TICKS: u32 = 10_000;
 pub const MAX_NATIVE_TACTIC_ACTORS: usize = 4_096;
 pub const MAX_SEEK_COORDINATES: usize = 64;
-const SEEK_SEQUENCE_STATIONARY_TICKS: u32 = 16;
-const SEEK_SEQUENCE_STATIONARY_DISTANCE: f32 = 1.0;
-const SEEK_SEQUENCE_STALL_GRACE_TICKS: u32 = 40;
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -55,6 +52,9 @@ pub enum GenericTactic {
         coordinates_f32_bits: Vec<[u32; 3]>,
         intermediate_tolerance_f32_bits: u32,
         final_tolerance_f32_bits: u32,
+        stall_grace_ticks: u32,
+        stationary_window_ticks: u32,
+        stationary_distance_f32_bits: u32,
         magnitude: u8,
     },
     SeekActor {
@@ -494,6 +494,9 @@ impl NativeGenericTacticPlan {
                 coordinates_f32_bits,
                 intermediate_tolerance_f32_bits,
                 final_tolerance_f32_bits,
+                stall_grace_ticks,
+                stationary_window_ticks,
+                stationary_distance_f32_bits,
                 magnitude: value,
             } => {
                 !coordinates_f32_bits.is_empty()
@@ -503,6 +506,11 @@ impl NativeGenericTacticPlan {
                         .all(|coordinate| finite_bits3(*coordinate))
                     && positive(*intermediate_tolerance_f32_bits)
                     && positive(*final_tolerance_f32_bits)
+                    && *stationary_window_ticks > 0
+                    && *stationary_window_ticks <= *stall_grace_ticks
+                    && *stall_grace_ticks <= self.maximum_ticks
+                    && f32::from_bits(*stationary_distance_f32_bits).is_finite()
+                    && f32::from_bits(*stationary_distance_f32_bits) > 0.0
                     && magnitude(*value)
             }
             GenericTactic::SeekActor {
@@ -616,6 +624,9 @@ impl NativeGenericTacticPlan {
                 coordinates_f32_bits,
                 intermediate_tolerance_f32_bits,
                 final_tolerance_f32_bits,
+                stall_grace_ticks,
+                stationary_window_ticks,
+                stationary_distance_f32_bits,
                 magnitude,
             } => {
                 parameters.insert(
@@ -632,6 +643,18 @@ impl NativeGenericTacticPlan {
                 parameters.insert(
                     "final_tolerance".into(),
                     OptionParameter::F32Bits(*final_tolerance_f32_bits),
+                );
+                parameters.insert(
+                    "stall_grace_ticks".into(),
+                    OptionParameter::Unsigned(u64::from(*stall_grace_ticks)),
+                );
+                parameters.insert(
+                    "stationary_window_ticks".into(),
+                    OptionParameter::Unsigned(u64::from(*stationary_window_ticks)),
+                );
+                parameters.insert(
+                    "stationary_distance".into(),
+                    OptionParameter::F32Bits(*stationary_distance_f32_bits),
                 );
                 parameters.insert(
                     "magnitude".into(),
@@ -886,16 +909,26 @@ impl NativeGenericTacticStepper {
             ));
         }
         let local_tick = self.next_tick;
-        if matches!(
-            self.plan.tactic,
-            GenericTactic::SeekCoordinateSequence { .. }
-        ) {
+        let stall_config = match &self.plan.tactic {
+            GenericTactic::SeekCoordinateSequence {
+                stall_grace_ticks,
+                stationary_window_ticks,
+                stationary_distance_f32_bits,
+                ..
+            } => Some((
+                *stall_grace_ticks,
+                *stationary_window_ticks,
+                f32::from_bits(*stationary_distance_f32_bits),
+            )),
+            _ => None,
+        };
+        if let Some((_, _, stationary_distance)) = stall_config {
             self.stationary_ticks = match &self.previous_observation {
                 Some(previous)
                     if planar_distance(
                         bits3(previous.player_position_f32_bits),
                         bits3(observation.player_position_f32_bits),
-                    ) <= SEEK_SEQUENCE_STATIONARY_DISTANCE =>
+                    ) <= stationary_distance =>
                 {
                     self.stationary_ticks.saturating_add(1)
                 }
@@ -914,8 +947,11 @@ impl NativeGenericTacticStepper {
         query.target_reached = reached;
         self.next_tick += 1;
         self.previous_observation = Some(observation);
-        let stalled = self.next_tick >= SEEK_SEQUENCE_STALL_GRACE_TICKS
-            && self.stationary_ticks >= SEEK_SEQUENCE_STATIONARY_TICKS;
+        let stalled =
+            stall_config.is_some_and(|(stall_grace_ticks, stationary_window_ticks, _)| {
+                self.next_tick >= stall_grace_ticks
+                    && self.stationary_ticks >= stationary_window_ticks
+            });
         let end_reason = if reached && self.next_tick >= self.plan.minimum_ticks {
             Some(OptionEndReason::Terminated)
         } else if stalled && self.next_tick >= self.plan.minimum_ticks {
@@ -1046,6 +1082,7 @@ fn pad_for(
             intermediate_tolerance_f32_bits,
             final_tolerance_f32_bits,
             magnitude,
+            ..
         } => {
             query
                 .queried_fields
@@ -1553,6 +1590,9 @@ mod tests {
                 ],
                 intermediate_tolerance_f32_bits: 0.25_f32.to_bits(),
                 final_tolerance_f32_bits: 0.25_f32.to_bits(),
+                stall_grace_ticks: 4,
+                stationary_window_ticks: 2,
+                stationary_distance_f32_bits: 1.0_f32.to_bits(),
                 magnitude: 100,
             },
             8,
@@ -1585,6 +1625,9 @@ mod tests {
                 ],
                 intermediate_tolerance_f32_bits: 0.25_f32.to_bits(),
                 final_tolerance_f32_bits: 0.25_f32.to_bits(),
+                stall_grace_ticks: 4,
+                stationary_window_ticks: 2,
+                stationary_distance_f32_bits: 1.0_f32.to_bits(),
                 magnitude: 100,
             },
             8,
@@ -1617,6 +1660,9 @@ mod tests {
                 ]],
                 intermediate_tolerance_f32_bits: 0.25_f32.to_bits(),
                 final_tolerance_f32_bits: 0.25_f32.to_bits(),
+                stall_grace_ticks: 40,
+                stationary_window_ticks: 16,
+                stationary_distance_f32_bits: 1.0_f32.to_bits(),
                 magnitude: 100,
             },
             64,
@@ -1627,7 +1673,7 @@ mod tests {
         let (frames, queries, reason) = realize(&plan, &observations).unwrap();
 
         assert_eq!(reason, OptionEndReason::Completed);
-        assert_eq!(frames.len(), SEEK_SEQUENCE_STALL_GRACE_TICKS as usize);
+        assert_eq!(frames.len(), 40);
         assert!(queries.iter().all(|query| !query.target_reached));
     }
 
