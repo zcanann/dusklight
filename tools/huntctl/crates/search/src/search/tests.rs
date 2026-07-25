@@ -239,6 +239,52 @@ fn absolute_tape_inference_keeps_route_analog_but_boot_rejects_it() {
 }
 
 #[test]
+fn semantic_movement_import_is_lossless_and_exposes_motion_paths() {
+    let source = Candidate {
+        schema: CANDIDATE_SCHEMA.into(),
+        segment: SegmentProfile::Fsp103ToFsp104,
+        boot: TapeBoot::Process,
+        actions: vec![
+            MacroAction::PadRun {
+                pad: SearchPadState::from(RawPadState {
+                    buttons: BUTTON_A,
+                    stick_x: 80,
+                    stick_y: 90,
+                    ..RawPadState::default()
+                }),
+                frames: 1,
+            },
+            MacroAction::PadRun {
+                pad: SearchPadState::from(RawPadState {
+                    stick_x: 72,
+                    stick_y: 100,
+                    ..RawPadState::default()
+                }),
+                frames: 3,
+            },
+        ],
+        ancestry: Ancestry::default(),
+    }
+    .compile()
+    .unwrap();
+    let imported =
+        Candidate::from_semantic_movement_tape(SegmentProfile::Fsp103ToFsp104, &source).unwrap();
+    assert_eq!(imported.compile().unwrap(), source);
+    assert!(
+        imported
+            .actions
+            .iter()
+            .any(|action| matches!(action, MacroAction::PortOneMotionPath { .. }))
+    );
+    assert!(
+        imported
+            .actions
+            .iter()
+            .any(|action| matches!(action, MacroAction::PadRun { .. }))
+    );
+}
+
+#[test]
 fn promoted_tunnel_suffix_imports_losslessly_as_compact_pad_runs() {
     let disconnected = RawPadState {
         connected: false,

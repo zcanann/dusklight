@@ -2,7 +2,9 @@
 
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState, TapeBoot};
 use dusklight_control::game_tactic::GameTacticPlan;
-use dusklight_control::motion_path::MotionPathPlan;
+use dusklight_control::motion_path::{
+    MAX_PATH_POINTS, MotionPathPlan, SamplePhase, StickPath, StickPoint,
+};
 use dusklight_control::roll_option::{RollOptionPlan, RollSpacing};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
@@ -144,6 +146,12 @@ pub enum MacroAction {
     MotionPath {
         plan: MotionPathPlan,
     },
+    /// Static motion path with the exact port-zero ownership convention used
+    /// by imported anchored suffixes. Keeping this distinct preserves the
+    /// established four-port MotionPath identity and direct-stage behavior.
+    PortOneMotionPath {
+        plan: MotionPathPlan,
+    },
     /// Lossless run-length encoded port-zero state used to import an observed
     /// absolute movement tape without quantizing its analog samples.
     PadRun {
@@ -222,7 +230,9 @@ impl MacroAction {
                 plan.planned_ticks()
                     .unwrap_or(crate::game_tactic::MAX_TACTIC_TICKS + 1),
             ),
-            Self::MotionPath { plan } => u64::from(plan.duration_ticks),
+            Self::MotionPath { plan } | Self::PortOneMotionPath { plan } => {
+                u64::from(plan.duration_ticks)
+            }
             Self::PadRun { frames, .. } => u64::from(*frames),
         }
     }
@@ -377,7 +387,7 @@ impl Candidate {
                     plan.validate()
                         .map_err(|error| SearchError::NonCanonicalTape(error.to_string()))?;
                 }
-                MacroAction::MotionPath { plan } => {
+                MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan } => {
                     if !plan.cancellation_conditions.is_empty() {
                         return Err(SearchError::NonCanonicalTape(
                             "static search paths cannot declare reactive cancellation conditions"
@@ -479,6 +489,17 @@ impl Candidate {
                         .realize(None)
                         .map_err(|error| SearchError::NonCanonicalTape(error.to_string()))?;
                     frames.extend(realization.frames);
+                }
+                MacroAction::PortOneMotionPath { plan } => {
+                    let realization = plan
+                        .realize(None)
+                        .map_err(|error| SearchError::NonCanonicalTape(error.to_string()))?;
+                    frames.extend(
+                        realization
+                            .frames
+                            .into_iter()
+                            .map(|frame| imported_frame(frame.pads[0])),
+                    );
                 }
                 MacroAction::PadRun { pad, frames: count } => {
                     push_frames(&mut frames, imported_frame((*pad).into()), *count)
@@ -630,6 +651,121 @@ impl Candidate {
         if candidate.compile()? != *tape {
             return Err(SearchError::NonCanonicalTape(
                 "typed inference did not reproduce the source tape exactly".into(),
+            ));
+        }
+        Ok(candidate)
+    }
+
+    /// Losslessly lifts ordinary movement-only spans into typed waypoint
+    /// paths while retaining button or otherwise non-path PAD states as exact
+    /// runs. This gives continuous refinement semantic duration and path-point
+    /// axes without changing the compiled native input or inventing a second
+    /// candidate format.
+    pub fn from_semantic_movement_tape(
+        segment: SegmentProfile,
+        tape: &InputTape,
+    ) -> Result<Self, SearchError> {
+        tape.validate()?;
+        if !matches!(
+            segment,
+            SegmentProfile::Fsp103ToFsp104 | SegmentProfile::LinkControlToTunnelCrawlStart
+        ) {
+            return Err(SearchError::NonCanonicalTape(
+                "semantic motion-path import requires an anchored movement segment".into(),
+            ));
+        }
+        if tape.tick_rate_numerator != 30
+            || tape.tick_rate_denominator != 1
+            || tape.frames.is_empty()
+        {
+            return Err(SearchError::NonCanonicalTape(
+                "semantic motion-path import requires a nonempty 30/1 tape".into(),
+            ));
+        }
+        let disconnected = RawPadState {
+            connected: false,
+            error: -1,
+            ..RawPadState::default()
+        };
+        for frame in &tape.frames {
+            if frame.owned_ports != 0x01
+                || frame.wait_condition != crate::tape::WaitCondition::None
+                || frame.wait_timeout_ticks != 0
+                || frame.pads[1..] != [disconnected; 3]
+            {
+                return Err(SearchError::NonCanonicalTape(
+                    "semantic motion-path imports require absolute port-one ownership, no reactive waits, and canonical disconnected secondary ports"
+                        .into(),
+                ));
+            }
+        }
+
+        let is_path_frame = |pad: RawPadState| {
+            pad == RawPadState {
+                stick_x: pad.stick_x,
+                stick_y: pad.stick_y,
+                ..RawPadState::default()
+            }
+        };
+        let mut actions = Vec::new();
+        let mut index = 0;
+        while index < tape.frames.len() {
+            if is_path_frame(tape.frames[index].pads[0]) {
+                let start = index;
+                while index < tape.frames.len()
+                    && is_path_frame(tape.frames[index].pads[0])
+                    && index - start < MAX_PATH_POINTS
+                {
+                    index += 1;
+                }
+                let points = tape.frames[start..index]
+                    .iter()
+                    .map(|frame| StickPoint {
+                        x: i16::from(frame.pads[0].stick_x),
+                        y: i16::from(frame.pads[0].stick_y),
+                    })
+                    .collect::<Vec<_>>();
+                actions.push(MacroAction::PortOneMotionPath {
+                    plan: MotionPathPlan {
+                        schema: crate::motion_path::MOTION_PATH_SCHEMA_V1.into(),
+                        duration_ticks: points.len() as u32,
+                        path: StickPath::Waypoint { points },
+                        sample_phase: SamplePhase::default(),
+                        cancellation_conditions: Vec::new(),
+                    },
+                });
+                continue;
+            }
+
+            let pad = SearchPadState::from(tape.frames[index].pads[0]);
+            let start = index;
+            while index < tape.frames.len()
+                && tape.frames[index].pads[0] == RawPadState::from(pad)
+                && !is_path_frame(tape.frames[index].pads[0])
+            {
+                index += 1;
+            }
+            actions.push(MacroAction::PadRun {
+                pad,
+                frames: (index - start) as u32,
+            });
+        }
+        let candidate = Self {
+            schema: CANDIDATE_SCHEMA.into(),
+            segment,
+            boot: tape.boot.clone(),
+            actions,
+            ancestry: Ancestry {
+                generation: 0,
+                parent_id: None,
+                mutation: Some("lossless semantic motion-path import".into()),
+                intervention: None,
+            },
+        };
+        candidate.validate()?;
+        if candidate.compile()? != *tape {
+            return Err(SearchError::NonCanonicalTape(
+                "semantic motion-path import did not reproduce the source tape exactly".into(),
             ));
         }
         Ok(candidate)
@@ -1824,7 +1960,9 @@ fn change_duration(action: &mut MacroAction, delta: i32) {
         MacroAction::Press { neutral_frames, .. } => {
             *neutral_frames = adjusted(*neutral_frames, delta, 0)
         }
-        MacroAction::GameTactic { .. } | MacroAction::MotionPath { .. } => {}
+        MacroAction::GameTactic { .. }
+        | MacroAction::MotionPath { .. }
+        | MacroAction::PortOneMotionPath { .. } => {}
     }
 }
 

@@ -471,19 +471,21 @@ fn read_parameter(
                 recovery_frames, ..
             },
         ) => Ok(f64::from(*recovery_frames)),
-        (ContinuousParameter::MotionPathDuration, MacroAction::MotionPath { plan }) => {
-            Ok(f64::from(plan.duration_ticks))
-        }
-        (ContinuousParameter::MotionPathSamplePhaseNumerator, MacroAction::MotionPath { plan }) => {
-            Ok(f64::from(plan.sample_phase.numerator))
-        }
+        (
+            ContinuousParameter::MotionPathDuration,
+            MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan },
+        ) => Ok(f64::from(plan.duration_ticks)),
+        (
+            ContinuousParameter::MotionPathSamplePhaseNumerator,
+            MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan },
+        ) => Ok(f64::from(plan.sample_phase.numerator)),
         (
             ContinuousParameter::MotionPathPointX { point_index },
-            MacroAction::MotionPath { plan },
+            MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan },
         ) => Ok(f64::from(path_point(plan, *point_index)?.x)),
         (
             ContinuousParameter::MotionPathPointY { point_index },
-            MacroAction::MotionPath { plan },
+            MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan },
         ) => Ok(f64::from(path_point(plan, *point_index)?.y)),
         _ => Err(ContinuousSearchError::new(
             "continuous axis parameter does not match its candidate action",
@@ -526,21 +528,25 @@ fn write_parameter(
         ) => {
             *recovery_frames = convert_u32(rounded)?;
         }
-        (ContinuousParameter::MotionPathDuration, MacroAction::MotionPath { plan }) => {
+        (
+            ContinuousParameter::MotionPathDuration,
+            MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan },
+        ) => {
             plan.duration_ticks = convert_u32(rounded)?;
         }
-        (ContinuousParameter::MotionPathSamplePhaseNumerator, MacroAction::MotionPath { plan }) => {
-            plan.sample_phase.numerator = convert_u32(rounded)?
-        }
+        (
+            ContinuousParameter::MotionPathSamplePhaseNumerator,
+            MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan },
+        ) => plan.sample_phase.numerator = convert_u32(rounded)?,
         (
             ContinuousParameter::MotionPathPointX { point_index },
-            MacroAction::MotionPath { plan },
+            MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan },
         ) => {
             path_point_mut(plan, *point_index)?.x = convert_i16(rounded)?;
         }
         (
             ContinuousParameter::MotionPathPointY { point_index },
-            MacroAction::MotionPath { plan },
+            MacroAction::MotionPath { plan } | MacroAction::PortOneMotionPath { plan },
         ) => {
             path_point_mut(plan, *point_index)?.y = convert_i16(rounded)?;
         }

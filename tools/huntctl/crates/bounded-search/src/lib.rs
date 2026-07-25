@@ -598,17 +598,24 @@ pub fn run_continuous_search(
                 continue;
             };
             let tape = candidate.compile()?;
-            let Some(intervention) = tape_intervention(&seed_tape, &tape) else {
+            let id = candidate.id()?;
+            if let Some(intervention) = tape_intervention(&seed_tape, &tape) {
+                candidate.ancestry = Ancestry {
+                    generation,
+                    parent_id: Some(seed_id.clone()),
+                    mutation: Some(format!("{:?} bounded continuous sample", config.method)),
+                    intervention: Some(intervention),
+                };
+            } else if generation == 0 && id == seed_id {
+                // Both optimizers deliberately emit their current mean as
+                // sample zero. At generation zero that is the exact supplied
+                // seed and is the only authenticated baseline for deciding
+                // whether any sampled descendant is an improvement.
+                candidate = config.seed_candidate.clone();
+            } else {
                 duplicate_proposals += 1;
                 continue;
-            };
-            candidate.ancestry = Ancestry {
-                generation,
-                parent_id: Some(seed_id.clone()),
-                mutation: Some(format!("{:?} bounded continuous sample", config.method)),
-                intervention: Some(intervention),
-            };
-            let id = candidate.id()?;
+            }
             if !seen.insert(id.clone()) {
                 duplicate_proposals += 1;
                 continue;

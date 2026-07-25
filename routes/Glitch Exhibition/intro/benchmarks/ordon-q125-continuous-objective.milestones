@@ -1,0 +1,18 @@
+milestones 1.7
+
+milestone link_control {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && stage.spawn == 1 && player.exists && player.is_link && !event.running && event.id == -1
+}
+
+milestone ordon_spring_exit_approach {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 &&
+       player.exists && player.is_link &&
+       player.in_aabb(-1900.0, 650.0, -4050.0, -1400.0, 900.0, -3800.0)
+}
+
+milestone ordon_spring_load_committed {
+  phase post_sim
+  when stage.name == "F_SP103" && stage.room == 1 && next_stage.name == "F_SP104" && next_stage.room == 1 && next_stage.spawn == 0
+}

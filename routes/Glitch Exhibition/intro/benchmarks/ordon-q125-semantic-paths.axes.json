@@ -1,0 +1,117 @@
+{
+  "schema": "dusklight-continuous-axes/v1",
+  "axes": [
+    {
+      "name": "path_00_duration",
+      "action_index": 1,
+      "parameter": { "kind": "motion_path_duration" },
+      "minimum": 17,
+      "maximum": 20
+    },
+    {
+      "name": "path_20_duration",
+      "action_index": 3,
+      "parameter": { "kind": "motion_path_duration" },
+      "minimum": 17,
+      "maximum": 20
+    },
+    {
+      "name": "path_40_duration",
+      "action_index": 5,
+      "parameter": { "kind": "motion_path_duration" },
+      "minimum": 17,
+      "maximum": 20
+    },
+    {
+      "name": "path_60_duration",
+      "action_index": 7,
+      "parameter": { "kind": "motion_path_duration" },
+      "minimum": 17,
+      "maximum": 20
+    },
+    {
+      "name": "path_80_duration",
+      "action_index": 9,
+      "parameter": { "kind": "motion_path_duration" },
+      "minimum": 17,
+      "maximum": 20
+    },
+    {
+      "name": "path_100_duration",
+      "action_index": 11,
+      "parameter": { "kind": "motion_path_duration" },
+      "minimum": 17,
+      "maximum": 20
+    },
+    {
+      "name": "path_00_mid_x",
+      "action_index": 1,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 9 },
+      "minimum": 81,
+      "maximum": 113
+    },
+    {
+      "name": "path_00_mid_y",
+      "action_index": 1,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 9 },
+      "minimum": 66,
+      "maximum": 98
+    },
+    {
+      "name": "path_20_turn_x",
+      "action_index": 3,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 14 },
+      "minimum": 32,
+      "maximum": 64
+    },
+    {
+      "name": "path_20_turn_y",
+      "action_index": 3,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 14 },
+      "minimum": 102,
+      "maximum": 127
+    },
+    {
+      "name": "path_40_mid_x",
+      "action_index": 5,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 9 },
+      "minimum": 28,
+      "maximum": 60
+    },
+    {
+      "name": "path_40_mid_y",
+      "action_index": 5,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 9 },
+      "minimum": 103,
+      "maximum": 127
+    },
+    {
+      "name": "path_60_turn_x",
+      "action_index": 7,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 14 },
+      "minimum": 79,
+      "maximum": 111
+    },
+    {
+      "name": "path_60_turn_y",
+      "action_index": 7,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 14 },
+      "minimum": 68,
+      "maximum": 100
+    },
+    {
+      "name": "path_80_mid_x",
+      "action_index": 9,
+      "parameter": { "kind": "motion_path_point_x", "point_index": 9 },
+      "minimum": 26,
+      "maximum": 58
+    },
+    {
+      "name": "path_80_mid_y",
+      "action_index": 9,
+      "parameter": { "kind": "motion_path_point_y", "point_index": 9 },
+      "minimum": 104,
+      "maximum": 127
+    }
+  ]
+}

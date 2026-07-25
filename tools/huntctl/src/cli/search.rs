@@ -466,7 +466,11 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                     frame.pads[1..].fill(disconnected);
                 }
             }
-            let candidate = Candidate::from_absolute_tape(segment, &tape)?;
+            let candidate = if flag(search_args, "--semantic-motion-paths") {
+                Candidate::from_semantic_movement_tape(segment, &tape)?
+            } else {
+                Candidate::from_absolute_tape(segment, &tape)?
+            };
             if let Some(parent) = output
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
@@ -475,11 +479,12 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
             }
             fs::write(&output, serde_json::to_vec_pretty(&candidate)?)?;
             println!(
-                "wrote {} frames as {} actions to {} (port-one-normalized: {})",
+                "wrote {} frames as {} actions to {} (port-one-normalized: {}, semantic-motion-paths: {})",
                 candidate.frame_count(),
                 candidate.actions.len(),
                 output.display(),
-                flag(search_args, "--normalize-port-one")
+                flag(search_args, "--normalize-port-one"),
+                flag(search_args, "--semantic-motion-paths")
             );
             Ok(())
         }
