@@ -1,0 +1,179 @@
+{
+  "schema": "dusklight-tactic-route-equal-native-tick-baseline-report/v1",
+  "date": "2026-07-26",
+  "claim": "Shared learned Q improves terminal discovery reliability per proposal-native tick over the random-valid and structured baselines, but it does not optimize route cost. Under the common 1427-tick whole-decision cutoff, learned reaches terminal in 5/8 decisions with best cost 147, structured reaches terminal in 3/7 decisions with best cost 130, and random-valid reaches terminal in 1/2 decisions with best cost 160. Learned generation two repeats the first 147-tick terminal instead of improving it, while structured search finds 130. P5 therefore remains unsatisfied.",
+  "implementation": {
+    "shared_generation_commit": "107b40dd5d",
+    "random_applicability_commit": "6a0334e631",
+    "native_bounded_completion_commit": "c204905a52",
+    "reactive_result_validation_commit": "c74c57ffbc",
+    "controller_reinference_commit": "2768072708"
+  },
+  "bindings": {
+    "optimization_request": "routes/Glitch Exhibition/intro/benchmarks/ordon-tactic-q-discovery-v1.request.json",
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "execution_binding": "build/campaigns/ordon-q125-selected-opt-execution-c204905a52-20260726/execution.json",
+    "execution_binding_sha256": "acc1c5cc2282f175129126696201da25382d4a79eb9cedff00da0550fa0e7b20",
+    "source_boundary_index": 506,
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "terminal": "authenticated F_SP103 to F_SP104 load-zone commit"
+  },
+  "workload": {
+    "seeds": [
+      104729,
+      222001,
+      333001,
+      444001,
+      555001,
+      687733,
+      865079,
+      890413
+    ],
+    "workers": 4,
+    "decisions_per_seed": 1,
+    "learned_episodes_per_generation": 4,
+    "proposals_per_decision": 4,
+    "execution_strategy": "native_controller",
+    "epsilon_per_million": 350000,
+    "equal_budget_rule": "Retain deterministic seed-order decisions only when the entire four-proposal decision fits within 1427 proposal-native ticks. Post-run macro validation is reported separately and excluded from this learning-policy cutoff."
+  },
+  "treatments": {
+    "learned": {
+      "report": "build/campaigns/ordon-q125-learned-complete-8x1-w4-2768072708-20260726/run/report.json",
+      "proposal_native_ticks": 1427,
+      "post_run_macro_validation_ticks": 28,
+      "total_native_ticks": 1455,
+      "wall_micros": 50509796,
+      "native_simulation_micros": 14243598,
+      "preparation_micros": 2742085,
+      "persistence_micros": 21958927,
+      "evaluated_proposals": 32,
+      "failed_proposals": 0,
+      "useful_transitions": 17,
+      "unique_actions": 22,
+      "unique_tapes": 22,
+      "unique_endpoints": 22,
+      "globally_unique_training_rows": 23,
+      "successful_decisions": 5,
+      "best_route_ticks": 147,
+      "first_terminal": {
+        "cumulative_proposal_native_ticks": 171,
+        "route_ticks": 147
+      },
+      "later_improvement": null,
+      "generation_one": {
+        "successful_decisions": 1,
+        "best_route_ticks": 147
+      },
+      "generation_two": {
+        "successful_decisions": 4,
+        "best_route_ticks": 147
+      }
+    },
+    "structured_non_learning": {
+      "report": "build/campaigns/ordon-q125-structured-complete-8x1-w4-2768072708-20260726/run/report.json",
+      "proposal_native_ticks": 1441,
+      "post_run_macro_validation_ticks": 88,
+      "total_native_ticks": 1529,
+      "wall_micros": 51228526,
+      "native_simulation_micros": 15540726,
+      "preparation_micros": 3132990,
+      "persistence_micros": 11364910,
+      "evaluated_proposals": 32,
+      "failed_proposals": 0,
+      "useful_transitions": 17,
+      "unique_actions": 23,
+      "unique_tapes": 23,
+      "unique_endpoints": 23,
+      "globally_unique_training_rows": 25,
+      "successful_decisions": 4,
+      "best_route_ticks": 130,
+      "first_terminal": {
+        "cumulative_proposal_native_ticks": 171,
+        "route_ticks": 147
+      },
+      "first_cost_improvement": {
+        "cumulative_proposal_native_ticks": 1093,
+        "route_ticks": 130
+      }
+    },
+    "random_valid": {
+      "report": "build/campaigns/ordon-q125-random-valid-complete-8x1-w4-2768072708-20260726/run/report.json",
+      "proposal_native_ticks": 4033,
+      "post_run_macro_validation_ticks": 0,
+      "total_native_ticks": 4033,
+      "wall_micros": 49439326,
+      "native_simulation_micros": 34881894,
+      "preparation_micros": 9456327,
+      "persistence_micros": 15866608,
+      "evaluated_proposals": 32,
+      "failed_proposals": 0,
+      "useful_transitions": 31,
+      "unique_actions": 27,
+      "unique_tapes": 27,
+      "unique_endpoints": 27,
+      "globally_unique_training_rows": 27,
+      "successful_decisions": 6,
+      "best_route_ticks": 130,
+      "first_terminal": {
+        "cumulative_proposal_native_ticks": 640,
+        "route_ticks": 160
+      },
+      "first_cost_improvements": [
+        {
+          "cumulative_proposal_native_ticks": 1760,
+          "route_ticks": 152
+        },
+        {
+          "cumulative_proposal_native_ticks": 2787,
+          "route_ticks": 150
+        },
+        {
+          "cumulative_proposal_native_ticks": 3650,
+          "route_ticks": 130
+        }
+      ]
+    }
+  },
+  "equal_1427_proposal_native_tick_cutoff": {
+    "learned": {
+      "charged_ticks": 1427,
+      "whole_decisions": 8,
+      "successful_decisions": 5,
+      "best_route_ticks": 147
+    },
+    "structured_non_learning": {
+      "charged_ticks": 1273,
+      "whole_decisions": 7,
+      "successful_decisions": 3,
+      "best_route_ticks": 130
+    },
+    "random_valid": {
+      "charged_ticks": 1128,
+      "whole_decisions": 2,
+      "successful_decisions": 1,
+      "best_route_ticks": 160
+    }
+  },
+  "framework_defects_closed_during_comparison": [
+    "Random-valid now consumes the same live applicability mask as learned and structured policies.",
+    "A bounded observation-driven tactic may terminate unsuccessfully before the enclosing batch horizon without being mislabeled as an invalid learning observation.",
+    "Native suffix validation accepts early unsuccessful completion only for controller-program candidates; static and frozen-policy candidates retain exact horizon checks.",
+    "Rust controller re-inference now reproduces the native coordinate-sequence final-target terminal state."
+  ],
+  "interpretation": {
+    "keep_mining": false,
+    "throughput": "All treatments finish in roughly 49-51 wall seconds despite 2.8x variation in proposal-native ticks. Native simulation occupies 14-35 seconds, while preparation and evidence persistence consume substantial additional time. More raw mining would spend most learned budget repeating the 147-tick terminal and would not address the cost objective.",
+    "learning": "The critic is useful for finding a terminal cheaply and reliably, but terminal reward dominates cost sensitivity. Later shared generations collapse onto the first successful 147-tick tactic. Structured search reaches a 130-tick route within a comparable native budget, disproving a learned route-quality advantage.",
+    "random_baseline": "Random-valid has the broadest coverage and ultimately matches the 130-tick structured best, but it requires 3650 proposal-native ticks to do so. Its 6/8 unnormalized success rate is not evidence that it beats learned search.",
+    "next_engineering_target": "Make successful-terminal value explicitly cost-conditioned and reserve acquisition capacity for refinements below the best observed terminal cost. Then rerun fixed-generation treatments under an enforced proposal-native tick budget. In parallel, reduce persistence/preparation overhead; raw native simulator speed is not the sole end-to-end bottleneck."
+  },
+  "gates": {
+    "equal_budget_baselines_complete": true,
+    "failures_coverage_diversity_and_time_to_improvement_published": true,
+    "learned_later_generation_improves_route_cost": false,
+    "p1_order_of_magnitude_throughput_met": false,
+    "p5_learning_beats_both_equal_budget_baselines": false,
+    "p6_sub_125_route_met": false
+  }
+}

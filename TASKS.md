@@ -58,9 +58,9 @@ proposals. Independent empty-model episodes are structured search evidence, not
 learning evidence. The learned batch must retain one exploit control while
 spending remaining capacity on state-local untried actions.
 
-- [ ] Compare the learned ranking against random valid proposals and
+- [x] Compare the learned ranking against random valid proposals and
       non-learning structured search under identical native-tick budgets.
-- [ ] Publish failures, coverage, candidate diversity, and time to improvement;
+- [x] Publish failures, coverage, candidate diversity, and time to improvement;
       do not substitute terminal success rate for route optimization.
 - [ ] Demonstrate that later learned generations improve terminal route cost
       rather than collapsing onto the first successful tactic.
