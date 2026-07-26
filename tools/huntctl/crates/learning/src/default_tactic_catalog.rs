@@ -18,7 +18,8 @@ const INTERMEDIATE_GOAL_SEEK_TOLERANCE: f32 = 96.0;
 const GOAL_ROUTE_STATIONARY_WINDOW_TICKS: u32 = 16;
 const GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE: f32 = 16.0;
 const GOAL_ROUTE_ROLL_BUTTON_MASK: u16 = 0x0100;
-const GOAL_ROUTE_ROLL_PERIODS: [u32; 5] = [16, 18, 20, 22, 24];
+const MIN_GOAL_ROUTE_ROLL_PERIOD: u32 = 12;
+const MAX_GOAL_ROUTE_ROLL_PERIOD: u32 = 32;
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -235,7 +236,10 @@ pub fn goal_conditioned_route_tactic_catalog(
             format!("goal.seek.route.{index:02}"),
             route_source,
         )?;
-        for period in GOAL_ROUTE_ROLL_PERIODS {
+        // This is a compact integer parameter domain, not a preferred cadence
+        // list. The learner must be able to compare adjacent controller
+        // values instead of being restricted to a hand-picked even grid.
+        for period in MIN_GOAL_ROUTE_ROLL_PERIOD..=MAX_GOAL_ROUTE_ROLL_PERIOD {
             for phase in [0, period / 2] {
                 let mut layers = sequence_layers.clone();
                 let mut pulse = phase;
@@ -435,8 +439,22 @@ mod tests {
         .unwrap();
         assert_eq!(
             catalog.entries().len(),
-            DEFAULT_ROUTE_TACTIC_COUNT + 3 + GOAL_ROUTE_ROLL_PERIODS.len() * 2
+            DEFAULT_ROUTE_TACTIC_COUNT
+                + 3
+                + ((MAX_GOAL_ROUTE_ROLL_PERIOD - MIN_GOAL_ROUTE_ROLL_PERIOD + 1) as usize) * 2
         );
+        for period in MIN_GOAL_ROUTE_ROLL_PERIOD..=MAX_GOAL_ROUTE_ROLL_PERIOD {
+            for phase in [0, period / 2] {
+                assert!(
+                    catalog
+                        .entry(&format!(
+                            "goal.seek.route.00.roll.period.{period:02}.phase.{phase:02}"
+                        ))
+                        .is_some(),
+                    "missing integer roll cadence period={period} phase={phase}"
+                );
+            }
+        }
         assert!(matches!(
             catalog.entry("goal.seek.route.00").unwrap().source(),
             TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan {
