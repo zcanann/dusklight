@@ -182,6 +182,10 @@ pub struct NativeTacticMacroDiscoveryReport {
     pub demoted_count: u64,
     pub validation_state_count: u64,
     pub comparison_count: u64,
+    /// Primitive outcomes reused from the proposal batch already evaluated at
+    /// the exact authenticated decision frontier.
+    #[serde(default)]
+    pub reused_primitive_baseline_count: u64,
     pub validation_native_ticks: u64,
     pub validation_wall_micros: u64,
     pub validation_native_simulation_micros: u64,
@@ -732,8 +736,6 @@ pub fn run_native_tactic_route(
                     config,
                     &pool,
                     &encoder,
-                    &goal_route_catalog,
-                    action_schema_sha256,
                     root_checkpoint_sha256,
                     mined,
                 )
@@ -991,6 +993,7 @@ fn mine_and_store_tactic_macros(
             demoted_count,
             validation_state_count: 0,
             comparison_count: 0,
+            reused_primitive_baseline_count: 0,
             validation_native_ticks: 0,
             validation_wall_micros: 0,
             validation_native_simulation_micros: 0,
@@ -1088,6 +1091,7 @@ struct TacticMacroValidationFrontier {
     state_sha256: Digest,
     snapshot: FactSnapshot,
     route_tape: InputTape,
+    primitive_baseline: TacticMacroMeasuredOutcome,
 }
 
 #[derive(Clone, Copy)]
@@ -1109,8 +1113,6 @@ fn validate_and_store_tactic_macros(
     config: &NativeTacticRouteRunConfig<'_>,
     pool: &NativeTacticProposalPool,
     encoder: &GoalConditionedTacticFeatureEncoder,
-    goal_route_catalog: &TacticAssetCatalog,
-    action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
     mut mined: MinedTacticMacros,
 ) -> Result<NativeTacticMacroDiscoveryReport, NativeTacticRouteRunError> {
@@ -1126,16 +1128,15 @@ fn validate_and_store_tactic_macros(
             config.output_root,
             config.exploration_seeds,
             root_checkpoint_sha256,
+            encoder,
         )?
     } else {
         Vec::new()
     };
-    let maximum_ticks =
-        goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
     let mut accounting = TacticMacroValidationAccounting::default();
-    let mut primitive_baselines = BTreeMap::<(u64, Digest, u64), TacticMacroMeasuredOutcome>::new();
     let mut validation_state_count = 0_u64;
     let mut comparison_count = 0_u64;
+    let mut reused_primitive_baseline_count = 0_u64;
     for candidate in candidates {
         let mut used_seeds = BTreeSet::new();
         let mut used_states = BTreeSet::new();
@@ -1156,67 +1157,8 @@ fn validate_and_store_tactic_macros(
             ) {
                 continue;
             }
-            let base = parameterized_catalog_for_state(
-                frontier.seed,
-                comparison_index,
-                &frontier.snapshot,
-                encoder,
-                maximum_ticks,
-                None,
-                goal_route_catalog,
-                action_schema_sha256,
-            )?;
-            let baseline_identity = (frontier.seed, frontier.state_sha256, comparison_index);
-            let primitive_outcome = if let Some(baseline) =
-                primitive_baselines.get(&baseline_identity).copied()
-            {
-                baseline
-            } else {
-                let primitive_catalog = Arc::new(base.catalog.clone());
-                let primitive_proposals = primitive_catalog
-                    .option_descriptors()
-                    .cloned()
-                    .map(|descriptor| SelectedTactic {
-                        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
-                        learner_snapshot_sha256: frontier.state_sha256,
-                        decision_index: comparison_index,
-                        descriptor,
-                        reason: TacticSelectionReason::BatchDiversity,
-                        exploration_draw: 0,
-                    })
-                    .collect::<Vec<_>>();
-                let baseline_root = config
-                    .output_root
-                    .join("tactic-macro-validation")
-                    .join("primitive-baselines")
-                    .join(format!(
-                        "seed-{}-{}-{comparison_index:02}",
-                        frontier.seed, frontier.state_sha256
-                    ));
-                let outcomes = evaluate_tactic_macro_validation_batch(
-                    pool,
-                    primitive_catalog,
-                    Arc::new(base.blueprints),
-                    &primitive_proposals,
-                    frontier,
-                    encoder,
-                    &baseline_root,
-                    &mut accounting,
-                )?;
-                let baseline = outcomes
-                    .into_iter()
-                    .map(|(_, outcome)| outcome)
-                    .reduce(|best, contender| {
-                        if tactic_macro_outcome_is_better(contender, best) {
-                            contender
-                        } else {
-                            best
-                        }
-                    })
-                    .ok_or_else(|| route_message("macro validation has no primitive comparison"))?;
-                primitive_baselines.insert(baseline_identity, baseline);
-                baseline
-            };
+            let primitive_outcome = frontier.primitive_baseline;
+            reused_primitive_baseline_count = reused_primitive_baseline_count.saturating_add(1);
             let candidate_entry = candidate.catalog_entry().map_err(route_error)?;
             let candidate_catalog =
                 Arc::new(TacticAssetCatalog::new(vec![candidate_entry]).map_err(route_error)?);
@@ -1324,6 +1266,7 @@ fn validate_and_store_tactic_macros(
     mined.report.demoted_count = demoted_count;
     mined.report.validation_state_count = validation_state_count;
     mined.report.comparison_count = comparison_count;
+    mined.report.reused_primitive_baseline_count = reused_primitive_baseline_count;
     mined.report.validation_native_ticks = accounting.native_ticks;
     mined.report.validation_wall_micros = elapsed_micros(started.elapsed());
     mined.report.validation_native_simulation_micros = accounting.native_simulation_micros;
@@ -1547,6 +1490,7 @@ fn collect_tactic_macro_validation_frontiers(
     output_root: &Path,
     exploration_seeds: &[u64],
     root_checkpoint_sha256: Digest,
+    encoder: &GoalConditionedTacticFeatureEncoder,
 ) -> Result<Vec<TacticMacroValidationFrontier>, NativeTacticRouteRunError> {
     let mut frontiers = BTreeMap::new();
     for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
@@ -1588,17 +1532,10 @@ fn collect_tactic_macro_validation_frontiers(
                     "macro validation route does not reconstruct its source checkpoint",
                 ));
             }
-            if first_transition.before.terminal.reached != Some(true) {
-                insert_tactic_macro_validation_frontier(
-                    &mut frontiers,
-                    TacticMacroValidationFrontier {
-                        seed,
-                        state_sha256: first_transition.before_state_sha256,
-                        snapshot: first_transition.before.clone(),
-                        route_tape: source_route.clone(),
-                    },
-                )?;
-            }
+            let before_distance = encoder
+                .encode(&first_transition.before)
+                .map_err(route_error)?[encoder.goal_distance_feature()];
+            let mut primitive_baseline = None;
             for proposal in &record.proposal_batch {
                 let transition = store
                     .load_option_transition(proposal.transition)
@@ -1613,11 +1550,6 @@ fn collect_tactic_macro_validation_frontiers(
                         "macro validation proposal batch does not share one source frontier",
                     ));
                 }
-                if transition.value_sample.terminal
-                    || transition.after.terminal.reached == Some(true)
-                {
-                    continue;
-                }
                 let mut endpoint_route = source_route.clone();
                 endpoint_route
                     .frames
@@ -1630,13 +1562,30 @@ fn collect_tactic_macro_validation_frontiers(
                         "macro validation proposal endpoint route is detached",
                     ));
                 }
+                let after_distance = encoder.encode(&transition.after).map_err(route_error)?
+                    [encoder.goal_distance_feature()];
+                let outcome = TacticMacroMeasuredOutcome {
+                    terminal: transition.value_sample.terminal
+                        || transition.after.terminal.reached == Some(true),
+                    progress: before_distance - after_distance,
+                    ticks: transition.execution.duration.realized_ticks,
+                };
+                primitive_baseline = Some(match primitive_baseline {
+                    Some(best) if !tactic_macro_outcome_is_better(outcome, best) => best,
+                    _ => outcome,
+                });
+            }
+            if first_transition.before.terminal.reached != Some(true) {
                 insert_tactic_macro_validation_frontier(
                     &mut frontiers,
                     TacticMacroValidationFrontier {
                         seed,
-                        state_sha256: transition.after_state_sha256,
-                        snapshot: transition.after,
-                        route_tape: endpoint_route,
+                        state_sha256: first_transition.before_state_sha256,
+                        snapshot: first_transition.before,
+                        route_tape: source_route,
+                        primitive_baseline: primitive_baseline.ok_or_else(|| {
+                            route_message("macro validation frontier has no primitive comparison")
+                        })?,
                     },
                 )?;
             }
@@ -1660,7 +1609,11 @@ fn insert_tactic_macro_validation_frontier(
     match frontiers.get(&identity) {
         Some(existing)
             if existing.snapshot != frontier.snapshot
-                || existing.route_tape != frontier.route_tape =>
+                || existing.route_tape != frontier.route_tape
+                || existing.primitive_baseline.terminal != frontier.primitive_baseline.terminal
+                || existing.primitive_baseline.progress.to_bits()
+                    != frontier.primitive_baseline.progress.to_bits()
+                || existing.primitive_baseline.ticks != frontier.primitive_baseline.ticks =>
         {
             Err(route_message(
                 "macro validation frontier identity has conflicting replay evidence",
@@ -5588,6 +5541,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn macro_primitive_baseline_keeps_a_terminal_proposal() {
+        let terminal = TacticMacroMeasuredOutcome {
+            terminal: true,
+            progress: 0.1,
+            ticks: 130,
+        };
+        let fast_progress = TacticMacroMeasuredOutcome {
+            terminal: false,
+            progress: 100.0,
+            ticks: 4,
+        };
+
+        assert!(tactic_macro_outcome_is_better(terminal, fast_progress));
+        assert!(!tactic_macro_outcome_is_better(fast_progress, terminal));
+    }
+
+    #[test]
     fn macro_validation_keeps_distinct_tapes_that_converge_on_one_fact_snapshot() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
@@ -5617,6 +5587,11 @@ mod tests {
                 state_sha256,
                 snapshot: snapshot.clone(),
                 route_tape: neutral_route.clone(),
+                primitive_baseline: TacticMacroMeasuredOutcome {
+                    terminal: false,
+                    progress: 1.0,
+                    ticks: 4,
+                },
             },
         )
         .unwrap();
@@ -5627,6 +5602,11 @@ mod tests {
                 state_sha256,
                 snapshot: snapshot.clone(),
                 route_tape: rolling_route,
+                primitive_baseline: TacticMacroMeasuredOutcome {
+                    terminal: false,
+                    progress: 1.0,
+                    ticks: 4,
+                },
             },
         )
         .unwrap();
@@ -5637,6 +5617,11 @@ mod tests {
                 state_sha256,
                 snapshot,
                 route_tape: neutral_route,
+                primitive_baseline: TacticMacroMeasuredOutcome {
+                    terminal: false,
+                    progress: 1.0,
+                    ticks: 4,
+                },
             },
         )
         .unwrap();

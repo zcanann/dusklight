@@ -2,7 +2,7 @@
 
 use super::MAX_LEARN_INPUT_CORPORA;
 use crate::cli;
-use crate::{option, repeated_option, required_path, u64_option, usage_error, usize_option};
+use crate::{flag, option, repeated_option, required_path, u64_option, usage_error, usize_option};
 use huntctl::Digest;
 use huntctl::actor_profile_catalog::ActorProfileCatalog;
 use huntctl::calibration::calibrate_fitted_q;
@@ -848,7 +848,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     usize::from(request.execution.workers),
                 )?,
                 cancellation: None,
-                resume: false,
+                resume: flag(learn_args, "--resume"),
             })?;
             println!(
                 "{}",
