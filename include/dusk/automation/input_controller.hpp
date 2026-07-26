@@ -5,6 +5,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 
 #include "dusk/automation/typed_facts.hpp"
@@ -22,12 +23,13 @@ inline constexpr std::array<std::uint8_t, 8> kInputControllerMagic{
     'L',
 };
 inline constexpr std::uint16_t kInputControllerMajorVersion = 1;
-inline constexpr std::uint16_t kInputControllerMinorVersion = 4;
+inline constexpr std::uint16_t kInputControllerMinorVersion = 5;
 inline constexpr std::size_t kInputControllerHeaderSize = 32;
 inline constexpr std::size_t kInputControllerRecordSize = 64;
 inline constexpr std::uint32_t kInputControllerMaximumDuration = 1'000'000;
 inline constexpr std::size_t kInputControllerMaximumLayers = 32;
 inline constexpr std::size_t kInputControllerMaximumActors = 256;
+inline constexpr std::size_t kInputControllerMaximumSequenceCoordinates = 4;
 
 enum class InputControllerError {
     None,
@@ -79,6 +81,7 @@ enum class InputControllerLayerKind : std::uint8_t {
     MaintainDistance = 12,
     Camera = 13,
     SafetyClamp = 14,
+    SeekCoordinateSequence = 15,
 };
 
 enum class InputControllerBlend : std::uint8_t {
@@ -150,6 +153,7 @@ struct ControllerObservation {
 enum class InputControllerTerminalReason : std::uint8_t {
     None = 0,
     TargetLost = 1,
+    TargetReached = 2,
 };
 
 struct InputControllerEvaluation {
@@ -232,6 +236,13 @@ struct InputControllerLayer {
     float headingRadians = 0.0F;
     float tolerance = 0.0F;
     float distance = 0.0F;
+    std::uint8_t coordinateCount = 0;
+    std::array<std::array<float, 2>, kInputControllerMaximumSequenceCoordinates>
+        coordinatesXZ{};
+    float intermediateStopRadius = 0.0F;
+    float finalStopRadius = 0.0F;
+    mutable std::size_t coordinateIndex = 0;
+    mutable std::uint32_t sequenceLastFrame = std::numeric_limits<std::uint32_t>::max();
     std::int16_t cameraX = 0;
     std::int16_t cameraY = 0;
     std::uint8_t mainLimit = 127;

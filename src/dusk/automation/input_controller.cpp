@@ -345,9 +345,44 @@ bool resolve_vector(const InputControllerCoordinateFrame frame,
     return finite(output.x) && finite(output.y) && finite(output.z);
 }
 
+std::size_t forward_coordinate_index(
+    const InputControllerLayer& layer, const ControllerObservation& observation) {
+    if (layer.coordinateCount < 2) {
+        return 0;
+    }
+    float nearestDistanceSquared = std::numeric_limits<float>::infinity();
+    std::size_t nearestIndex = 0;
+    for (std::size_t segmentIndex = 0; segmentIndex + 1 < layer.coordinateCount;
+         ++segmentIndex)
+    {
+        const auto& start = layer.coordinatesXZ[segmentIndex];
+        const auto& end = layer.coordinatesXZ[segmentIndex + 1];
+        const float segmentX = end[0] - start[0];
+        const float segmentZ = end[1] - start[1];
+        const float lengthSquared = segmentX * segmentX + segmentZ * segmentZ;
+        const float progress = lengthSquared > 0.0F ?
+                                   std::clamp(((observation.playerX - start[0]) * segmentX +
+                                                  (observation.playerZ - start[1]) * segmentZ) /
+                                                 lengthSquared,
+                                       0.0F, 1.0F) :
+                                   0.0F;
+        const float projectionX = start[0] + segmentX * progress;
+        const float projectionZ = start[1] + segmentZ * progress;
+        const float deltaX = observation.playerX - projectionX;
+        const float deltaZ = observation.playerZ - projectionZ;
+        const float distanceSquared = deltaX * deltaX + deltaZ * deltaZ;
+        if (distanceSquared < nearestDistanceSquared) {
+            nearestDistanceSquared = distanceSquared;
+            nearestIndex = segmentIndex + static_cast<std::size_t>(progress > 0.0F);
+        }
+    }
+    return nearestIndex;
+}
+
 StickValue evaluate_stick_layer(const InputControllerLayer& layer, const std::uint32_t localFrame,
-    const ControllerObservation& observation, bool& exactTargetLost) {
+    const ControllerObservation& observation, bool& exactTargetLost, bool& targetReached) {
     exactTargetLost = false;
+    targetReached = false;
     switch (layer.kind) {
     case InputControllerLayerKind::Bezier:
         return {
@@ -418,6 +453,38 @@ StickValue evaluate_stick_layer(const InputControllerLayer& layer, const std::ui
             return {};
         }
         return seek(layer, observation, target.x + offset.x, target.z + offset.z);
+    }
+    case InputControllerLayerKind::SeekCoordinateSequence: {
+        if (!observation.playerPresent || !observation.cameraPresent ||
+            !finite(observation.playerX) || !finite(observation.playerZ) ||
+            !finite(observation.cameraYawRadians))
+        {
+            return {};
+        }
+        if (localFrame == 0 || layer.sequenceLastFrame == std::numeric_limits<std::uint32_t>::max() ||
+            layer.sequenceLastFrame + 1 != localFrame)
+        {
+            layer.coordinateIndex = forward_coordinate_index(layer, observation);
+        }
+        layer.sequenceLastFrame = localFrame;
+        while (layer.coordinateIndex + 1 < layer.coordinateCount) {
+            const auto& coordinate = layer.coordinatesXZ[layer.coordinateIndex];
+            const float distance = std::hypot(
+                observation.playerX - coordinate[0], observation.playerZ - coordinate[1]);
+            if (distance > layer.intermediateStopRadius) {
+                break;
+            }
+            ++layer.coordinateIndex;
+        }
+        const bool finalCoordinate = layer.coordinateIndex + 1 == layer.coordinateCount;
+        const auto& target = layer.coordinatesXZ[layer.coordinateIndex];
+        InputControllerLayer seekLayer = layer;
+        seekLayer.stopRadius =
+            finalCoordinate ? layer.finalStopRadius : layer.intermediateStopRadius;
+        const float distance =
+            std::hypot(observation.playerX - target[0], observation.playerZ - target[1]);
+        targetReached = finalCoordinate && distance <= seekLayer.stopRadius;
+        return seek(seekLayer, observation, target[0], target[1]);
     }
     case InputControllerLayerKind::SeekPlane: {
         WorldPoint point;
@@ -575,13 +642,17 @@ InputControllerError decode_input_controller(
         InputControllerLayer& layer = candidate.mLayers[index];
 
         if (record[0] < static_cast<std::uint8_t>(InputControllerLayerKind::Bezier) ||
-            record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::SafetyClamp) ||
+            record[0] > static_cast<std::uint8_t>(
+                            InputControllerLayerKind::SeekCoordinateSequence) ||
             (minorVersion < 2 &&
                 record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::Buttons)) ||
             (minorVersion < 3 &&
                 record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::SeekResolved)) ||
             (minorVersion < 4 &&
-                record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::MaintainDistance)))
+                record[0] > static_cast<std::uint8_t>(InputControllerLayerKind::MaintainDistance)) ||
+            (minorVersion < 5 &&
+                record[0] ==
+                    static_cast<std::uint8_t>(InputControllerLayerKind::SeekCoordinateSequence)))
         {
             return InputControllerError::InvalidLayerKind;
         }
@@ -681,6 +752,38 @@ InputControllerError decode_input_controller(
                                                  InputControllerError::InvalidMagnitude;
             }
             if (!all_zero(record + 41, record + kInputControllerRecordSize)) {
+                return InputControllerError::InvalidUnusedData;
+            }
+            continue;
+        }
+
+        if (layer.kind == InputControllerLayerKind::SeekCoordinateSequence) {
+            layer.coordinateCount = record[12];
+            layer.magnitude = record[13];
+            layer.intermediateStopRadius = read_f32(record + 16);
+            layer.finalStopRadius = read_f32(record + 20);
+            if (layer.coordinateCount == 0 ||
+                layer.coordinateCount > kInputControllerMaximumSequenceCoordinates ||
+                layer.magnitude < 1 || layer.magnitude > 127 ||
+                !finite(layer.intermediateStopRadius) ||
+                !finite(layer.finalStopRadius) ||
+                layer.intermediateStopRadius < 0.0F || layer.finalStopRadius < 0.0F ||
+                !all_zero(record + 14, record + 16))
+            {
+                return InputControllerError::InvalidMotionControl;
+            }
+            for (std::size_t point = 0; point < layer.coordinateCount; ++point) {
+                layer.coordinatesXZ[point][0] = read_f32(record + 24 + point * 8);
+                layer.coordinatesXZ[point][1] = read_f32(record + 28 + point * 8);
+                if (!finite(layer.coordinatesXZ[point][0]) ||
+                    !finite(layer.coordinatesXZ[point][1]))
+                {
+                    return InputControllerError::InvalidFloat;
+                }
+            }
+            if (!all_zero(record + 24 + layer.coordinateCount * 8,
+                    record + kInputControllerRecordSize))
+            {
                 return InputControllerError::InvalidUnusedData;
             }
             continue;
@@ -1021,13 +1124,19 @@ InputControllerEvaluation InputControllerProgram::evaluateDetailed(
         }
 
         bool exactTargetLost = false;
+        bool targetReached = false;
         const StickValue value =
-            evaluate_stick_layer(layer, frame - layer.start, observation, exactTargetLost);
+            evaluate_stick_layer(
+                layer, frame - layer.start, observation, exactTargetLost, targetReached);
         if (exactTargetLost) {
             result = {};
             result.terminalReason = InputControllerTerminalReason::TargetLost;
             result.terminalLayer = static_cast<std::uint16_t>(layerIndex);
             return result;
+        }
+        if (targetReached) {
+            result.terminalReason = InputControllerTerminalReason::TargetReached;
+            result.terminalLayer = static_cast<std::uint16_t>(layerIndex);
         }
         if (layer.blend == InputControllerBlend::Replace) {
             replacement = value;

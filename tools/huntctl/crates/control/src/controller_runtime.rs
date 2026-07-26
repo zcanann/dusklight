@@ -342,6 +342,34 @@ fn evaluate_stick(
                 _ => [0, 0],
             }
         }
+        Operation::SeekCoordinateSequence {
+            coordinates_xz,
+            intermediate_stop_radius,
+            final_stop_radius,
+            magnitude,
+            ..
+        } => {
+            fields.extend([Field::PlayerPosition, Field::CameraYaw]);
+            let target_index = forward_coordinate_index_xz(
+                [
+                    observation.player_position[0],
+                    observation.player_position[2],
+                ],
+                coordinates_xz,
+            );
+            let target = coordinates_xz[target_index];
+            seek(
+                observation,
+                target[0],
+                target[1],
+                if target_index + 1 == coordinates_xz.len() {
+                    *final_stop_radius
+                } else {
+                    *intermediate_stop_radius
+                },
+                *magnitude,
+            )
+        }
         Operation::SeekPlane {
             frame,
             point,
@@ -501,6 +529,7 @@ fn operation_blend(operation: &Operation) -> StickBlend {
         | Operation::SeekPoint { blend, .. }
         | Operation::SeekActor { blend, .. }
         | Operation::SeekCoordinate { blend, .. }
+        | Operation::SeekCoordinateSequence { blend, .. }
         | Operation::SeekPlane { blend, .. }
         | Operation::SeekResolved { blend, .. }
         | Operation::Turn { blend, .. }
@@ -513,6 +542,33 @@ fn operation_blend(operation: &Operation) -> StickBlend {
             unreachable!()
         }
     }
+}
+
+fn forward_coordinate_index_xz(player: [f32; 2], coordinates: &[[f32; 2]]) -> usize {
+    if coordinates.len() < 2 {
+        return 0;
+    }
+    let mut best = (f32::INFINITY, 0);
+    for (index, pair) in coordinates.windows(2).enumerate() {
+        let segment = [pair[1][0] - pair[0][0], pair[1][1] - pair[0][1]];
+        let length_squared = segment[0] * segment[0] + segment[1] * segment[1];
+        let projection = if length_squared > 0.0 {
+            (((player[0] - pair[0][0]) * segment[0] + (player[1] - pair[0][1]) * segment[1])
+                / length_squared)
+                .clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let closest = [
+            pair[0][0] + segment[0] * projection,
+            pair[0][1] + segment[1] * projection,
+        ];
+        let distance_squared = (player[0] - closest[0]).powi(2) + (player[1] - closest[1]).powi(2);
+        if distance_squared < best.0 {
+            best = (distance_squared, index + usize::from(projection > 0.0));
+        }
+    }
+    best.1.min(coordinates.len() - 1)
 }
 
 fn compose(blend: StickBlend, value: [i64; 2], replacement: &mut [i64; 2], add: &mut [i64; 2]) {

@@ -253,6 +253,7 @@ private:
     bool mPolicyFeatureRowReady = false;
     bool mCandidateChosenPadReady = false;
     bool mCandidateControllerObservationReady = false;
+    bool mCandidateControllerReached = false;
     NativePolicyFeatureRow mPolicyFeatureRow{};
     ControllerObservation mCandidateControllerObservation{};
     std::array<float, kFactorizedPadPolicyHeadWidth> mPolicyOutput{};

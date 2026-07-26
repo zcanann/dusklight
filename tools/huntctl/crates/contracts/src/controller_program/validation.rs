@@ -85,6 +85,32 @@ impl ControllerProgram {
                     validate_floats(index, target, offset, *stop_radius)?;
                     validate_magnitude(index, *magnitude)?;
                 }
+                Operation::SeekCoordinateSequence {
+                    coordinates_xz,
+                    intermediate_stop_radius,
+                    final_stop_radius,
+                    magnitude,
+                    ..
+                } => {
+                    if coordinates_xz.is_empty()
+                        || coordinates_xz.len() > MAX_SEEK_COORDINATE_SEQUENCE_POINTS
+                        || coordinates_xz
+                            .iter()
+                            .flatten()
+                            .any(|value| !value.is_finite())
+                    {
+                        return Err(ControllerError::new(format!(
+                            "layer {index} coordinate sequence is empty, oversized, or non-finite"
+                        )));
+                    }
+                    validate_nonnegative(
+                        index,
+                        "intermediate stop radius",
+                        *intermediate_stop_radius,
+                    )?;
+                    validate_nonnegative(index, "final stop radius", *final_stop_radius)?;
+                    validate_magnitude(index, *magnitude)?;
+                }
                 Operation::SeekPlane {
                     point,
                     normal,
@@ -255,6 +281,9 @@ impl Layer {
                 blend: StickBlend::Replace,
                 ..
             } | Operation::SeekCoordinate {
+                blend: StickBlend::Replace,
+                ..
+            } | Operation::SeekCoordinateSequence {
                 blend: StickBlend::Replace,
                 ..
             } | Operation::SeekPlane {

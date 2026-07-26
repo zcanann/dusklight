@@ -5,6 +5,42 @@ impl ControllerProgram {
         self.encode_for_version(VERSION_MINOR)
     }
 
+    /// Encodes with the oldest format version that can represent every layer.
+    ///
+    /// Native execution bindings are immutable and may contain an older
+    /// controller decoder. Generated runtime programs use this surface so
+    /// adding a new operation does not needlessly invalidate old bindings that
+    /// only exercise existing operations.
+    pub fn encode_compatible(&self) -> Result<Vec<u8>, ControllerError> {
+        let required_minor = self
+            .layers
+            .iter()
+            .fold(MIN_SUPPORTED_MINOR, |minor, layer| {
+                minor.max(match &layer.operation {
+                    Operation::SeekActor {
+                        selector: ActorSelector::Process { .. } | ActorSelector::Placed { .. },
+                        ..
+                    } => 1,
+                    Operation::SeekCoordinate { .. }
+                    | Operation::SeekPlane { .. }
+                    | Operation::SeekResolved { .. } => 2,
+                    Operation::Neutral
+                    | Operation::Turn { .. }
+                    | Operation::Brake { .. }
+                    | Operation::Align { .. }
+                    | Operation::MaintainHeading { .. }
+                    | Operation::MaintainDistance { .. } => 3,
+                    Operation::Camera { .. } | Operation::SafetyClamp { .. } => 4,
+                    Operation::SeekCoordinateSequence { .. } => 5,
+                    Operation::CubicBezier { .. }
+                    | Operation::SeekPoint { .. }
+                    | Operation::SeekActor { .. }
+                    | Operation::Buttons { .. } => 0,
+                })
+            });
+        self.encode_for_version(required_minor)
+    }
+
     pub fn decode(input: &[u8]) -> Result<Self, ControllerError> {
         if input.len() < HEADER_SIZE {
             return Err(ControllerError::new(
@@ -138,6 +174,16 @@ impl ControllerProgram {
                 "camera and safety-clamp layers require controller version 1.4",
             ));
         }
+        if minor < 5
+            && self
+                .layers
+                .iter()
+                .any(|layer| matches!(layer.operation, Operation::SeekCoordinateSequence { .. }))
+        {
+            return Err(ControllerError::new(
+                "coordinate sequences require controller version 1.5",
+            ));
+        }
         let payload_len = self.layers.len() * RECORD_SIZE;
         let mut output = vec![0_u8; HEADER_SIZE + payload_len];
         output[..8].copy_from_slice(MAGIC);
@@ -240,6 +286,28 @@ fn encode_layer(layer: &Layer, output: &mut [u8], minor: u16) -> Result<(), Cont
             }
             put_f32(output, 40, *stop_radius);
             output[44] = *magnitude;
+        }
+        Operation::SeekCoordinateSequence {
+            blend,
+            coordinates_xz,
+            intermediate_stop_radius,
+            final_stop_radius,
+            magnitude,
+        } if minor >= 5 => {
+            output[0] = KIND_SEEK_COORDINATE_SEQUENCE;
+            output[1] = encode_blend(*blend);
+            output[12] = coordinates_xz.len() as u8;
+            output[13] = *magnitude;
+            put_f32(output, 16, *intermediate_stop_radius);
+            put_f32(output, 20, *final_stop_radius);
+            for (index, value) in coordinates_xz.iter().flatten().enumerate() {
+                put_f32(output, 24 + index * 4, *value);
+            }
+        }
+        Operation::SeekCoordinateSequence { .. } => {
+            return Err(ControllerError::new(
+                "coordinate sequences require controller version 1.5",
+            ));
         }
         Operation::SeekPlane {
             blend,
@@ -512,6 +580,34 @@ fn decode_layer(index: usize, input: &[u8], minor: u16) -> Result<Layer, Control
                 offset: [get_f32(input, 28), get_f32(input, 32), get_f32(input, 36)],
                 stop_radius: get_f32(input, 40),
                 magnitude: input[44],
+            }
+        }
+        KIND_SEEK_COORDINATE_SEQUENCE if minor >= 5 => {
+            if input[14] != 0 || input[15] != 0 {
+                return Err(ControllerError::new(format!(
+                    "layer {index} has noncanonical coordinate-sequence reserved bytes"
+                )));
+            }
+            let count = usize::from(input[12]);
+            if count == 0 || count > MAX_SEEK_COORDINATE_SEQUENCE_POINTS {
+                return Err(ControllerError::new(format!(
+                    "layer {index} has invalid coordinate-sequence point count {count}"
+                )));
+            }
+            require_zero(index, input, 24 + count * 8)?;
+            Operation::SeekCoordinateSequence {
+                blend: decode_stick_blend(index, input[1])?,
+                coordinates_xz: (0..count)
+                    .map(|point| {
+                        [
+                            get_f32(input, 24 + point * 8),
+                            get_f32(input, 28 + point * 8),
+                        ]
+                    })
+                    .collect(),
+                intermediate_stop_radius: get_f32(input, 16),
+                final_stop_radius: get_f32(input, 20),
+                magnitude: input[13],
             }
         }
         KIND_SEEK_PLANE if minor >= 2 => {

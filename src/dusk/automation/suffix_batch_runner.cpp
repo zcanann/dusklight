@@ -350,6 +350,7 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mPolicyFeatureRowReady = false;
     mCandidateChosenPadReady = false;
     mCandidateControllerObservationReady = false;
+    mCandidateControllerReached = false;
     resetBatchProfile(true);
     mError.clear();
     mCompleted = false;
@@ -807,6 +808,7 @@ bool SuffixBatchRunner::captureEpisodePreInput(
     mPolicyFeatureRowReady = false;
     mCandidateChosenPadReady = false;
     mCandidateControllerObservationReady = false;
+    mCandidateControllerReached = false;
     if (mCandidateTick == 0) {
         AccumulateMicros encoding(mProfile.corpusEncodingMicros);
         begin_learning_episode(mCurrentEpisode);
@@ -1047,10 +1049,12 @@ void SuffixBatchRunner::applyCandidateInput() {
                 static_cast<std::uint32_t>(
                     mCandidateTick - candidate.controllerStartTick),
                 mCandidateControllerObservation);
-        if (evaluation.terminalReason != InputControllerTerminalReason::None) {
+        if (evaluation.terminalReason == InputControllerTerminalReason::TargetLost) {
             fail("reactive suffix controller lost an exact target");
             return;
         }
+        mCandidateControllerReached =
+            evaluation.terminalReason == InputControllerTerminalReason::TargetReached;
         chosen = evaluation.input;
     } else {
         chosen = candidate.pads[mCandidateTick];
@@ -1404,7 +1408,8 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         mGoalTracker.observe(observation, simulationTick, tapeFrame);
     }
     const bool success = mGoalTracker.goalReached();
-    const bool exhausted = mCandidateTick + 1 == mDefinition.maximumTicks;
+    const bool exhausted =
+        mCandidateControllerReached || mCandidateTick + 1 == mDefinition.maximumTicks;
     if (!appendEpisodePostSimulation(
             observation, expectedPad, simulationTick, success || exhausted, error)) {
         fail(error);
@@ -1412,6 +1417,7 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     }
     mPolicyFeatureRowReady = false;
     mCandidateChosenPadReady = false;
+    mCandidateControllerReached = false;
     if (!success && !exhausted) {
         ++mCandidateTick;
         return false;

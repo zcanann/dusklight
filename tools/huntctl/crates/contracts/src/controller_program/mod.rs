@@ -11,12 +11,13 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 8] = b"DUSKCTRL";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 4;
+pub const VERSION_MINOR: u16 = 5;
 const MIN_SUPPORTED_MINOR: u16 = 0;
 pub const HEADER_SIZE: usize = 32;
 pub const RECORD_SIZE: usize = 64;
 pub const MAX_DURATION_FRAMES: u32 = 1_000_000;
 pub const MAX_LAYERS: usize = 32;
+pub const MAX_SEEK_COORDINATE_SEQUENCE_POINTS: usize = 4;
 
 const KIND_CUBIC_BEZIER: u8 = 1;
 const KIND_SEEK_POINT: u8 = 2;
@@ -32,6 +33,7 @@ const KIND_HEADING: u8 = 11;
 const KIND_MAINTAIN_DISTANCE: u8 = 12;
 const KIND_CAMERA: u8 = 13;
 const KIND_SAFETY_CLAMP: u8 = 14;
+const KIND_SEEK_COORDINATE_SEQUENCE: u8 = 15;
 const BLEND_REPLACE: u8 = 0;
 const BLEND_ADD: u8 = 1;
 const BLEND_OR: u8 = 2;
@@ -78,6 +80,14 @@ pub enum Operation {
         target: [f32; 3],
         offset: [f32; 3],
         stop_radius: f32,
+        magnitude: u8,
+    },
+    SeekCoordinateSequence {
+        blend: StickBlend,
+        /// World-space horizontal `(x, z)` targets.
+        coordinates_xz: Vec<[f32; 2]>,
+        intermediate_stop_radius: f32,
+        final_stop_radius: f32,
         magnitude: u8,
     },
     SeekPlane {

@@ -387,10 +387,11 @@ clamp from 0 for 4 main 90 substick 80
         }
     ));
     let bytes = program.encode().unwrap();
-    assert_eq!(get_u16(&bytes, 10), 4);
+    assert_eq!(get_u16(&bytes, 10), VERSION_MINOR);
     assert_eq!(bytes[HEADER_SIZE + RECORD_SIZE], KIND_CAMERA);
     assert_eq!(bytes[HEADER_SIZE + 4 * RECORD_SIZE], KIND_SAFETY_CLAMP);
     assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
+    assert_eq!(get_u16(&program.encode_compatible().unwrap(), 10), 4);
     assert!(program.encode_for_version(3).is_err());
 
     let overlapping_camera = source.replace(
@@ -403,6 +404,35 @@ clamp from 0 for 4 main 90 substick 80
         "clamp from 0 for 4 main 90 substick 80\nclamp from 1 for 1 main 1 substick 1",
     );
     assert!(parse(&overlapping_clamp).is_err());
+}
+
+#[test]
+fn coordinate_sequence_round_trips_in_version_1_5() {
+    let program = ControllerProgram {
+        duration_frames: 40,
+        layers: vec![Layer {
+            start_frame: 0,
+            duration_frames: 40,
+            operation: Operation::SeekCoordinateSequence {
+                blend: StickBlend::Replace,
+                coordinates_xz: vec![
+                    [-2501.3477, -3931.8281],
+                    [-2534.9966, -4164.2246],
+                    [-2568.6455, -4396.6206],
+                    [-1842.2203, -4739.0684],
+                ],
+                intermediate_stop_radius: 96.0,
+                final_stop_radius: 32.0,
+                magnitude: 127,
+            },
+        }],
+    };
+    let bytes = program.encode().unwrap();
+    assert_eq!(get_u16(&bytes, 10), 5);
+    assert_eq!(bytes[HEADER_SIZE], KIND_SEEK_COORDINATE_SEQUENCE);
+    assert_eq!(ControllerProgram::decode(&bytes).unwrap(), program);
+    assert_eq!(get_u16(&program.encode_compatible().unwrap(), 10), 5);
+    assert!(program.encode_for_version(4).is_err());
 }
 
 #[test]

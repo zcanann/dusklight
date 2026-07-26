@@ -645,6 +645,31 @@ fn native_generic_controller_program(
             stop_radius: f32::from_bits(*tolerance_f32_bits),
             magnitude: *magnitude,
         },
+        GenericTactic::SeekCoordinateSequence {
+            coordinates_f32_bits,
+            intermediate_tolerance_f32_bits,
+            final_tolerance_f32_bits,
+            stall_grace_ticks,
+            magnitude,
+            ..
+        } if coordinates_f32_bits.len()
+            <= dusklight_control::controller_program::MAX_SEEK_COORDINATE_SEQUENCE_POINTS
+            && *stall_grace_ticks >= duration.maximum_ticks
+            && duration.minimum_ticks <= 1 =>
+        {
+            Operation::SeekCoordinateSequence {
+                blend: StickBlend::Replace,
+                coordinates_xz: coordinates_f32_bits
+                    .iter()
+                    .map(|coordinate| {
+                        [f32::from_bits(coordinate[0]), f32::from_bits(coordinate[2])]
+                    })
+                    .collect(),
+                intermediate_stop_radius: f32::from_bits(*intermediate_tolerance_f32_bits),
+                final_stop_radius: f32::from_bits(*final_tolerance_f32_bits),
+                magnitude: *magnitude,
+            }
+        }
         GenericTactic::ShortCurve { control } => Operation::CubicBezier {
             blend: StickBlend::Replace,
             points: control.map(|point| point.map(i16::from)),
@@ -1348,7 +1373,7 @@ fn tactic_controller_batch(
     retain_candidate_checkpoint: bool,
 ) -> Result<NativeSuffixBatch, NativeTacticWorkerError> {
     let program_bytes = program
-        .encode()
+        .encode_compatible()
         .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
     let maximum_ticks = prefix_frames
         .len()
@@ -2031,6 +2056,97 @@ mod tests {
         assert_eq!(stop_radius.to_bits(), 24.0_f32.to_bits());
         assert_eq!(magnitude, 127);
         assert_eq!(program.duration_frames, 80);
+    }
+
+    #[test]
+    fn seek_coordinate_sequence_becomes_one_linear_native_controller_candidate() {
+        let coordinates = [
+            [-2501.3477_f32, 717.0, -3931.8281],
+            [-2534.9966, 717.0, -4164.2246],
+            [-2568.6455, 717.0, -4396.6206],
+            [-1842.2203, 717.0, -4739.0684],
+        ];
+        let plan = NativeGenericTacticPlan::new(
+            GenericTactic::SeekCoordinateSequence {
+                coordinates_f32_bits: coordinates
+                    .map(|coordinate| coordinate.map(f32::to_bits))
+                    .to_vec(),
+                intermediate_tolerance_f32_bits: 96.0_f32.to_bits(),
+                final_tolerance_f32_bits: 32.0_f32.to_bits(),
+                magnitude: 127,
+                stall_grace_ticks: 40,
+                stationary_window_ticks: 16,
+                stationary_window_distance_f32_bits: 1.0_f32.to_bits(),
+            },
+            40,
+        );
+        let program = native_generic_controller_program(
+            &plan,
+            TacticDurationBounds {
+                minimum_ticks: 1,
+                maximum_ticks: 40,
+            },
+        )
+        .unwrap()
+        .expect("a four-point coordinate sequence has a native controller equivalent");
+        let Operation::SeekCoordinateSequence {
+            coordinates_xz,
+            intermediate_stop_radius,
+            final_stop_radius,
+            magnitude,
+            ..
+        } = &program.layers[0].operation
+        else {
+            panic!("coordinate sequence must compile to one sequence controller operation");
+        };
+        assert_eq!(
+            coordinates_xz,
+            &coordinates
+                .iter()
+                .map(|coordinate| [coordinate[0], coordinate[2]])
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(intermediate_stop_radius.to_bits(), 96.0_f32.to_bits());
+        assert_eq!(final_stop_radius.to_bits(), 32.0_f32.to_bits());
+        assert_eq!(*magnitude, 127);
+        assert_eq!(program.duration_frames, 40);
+
+        let mut early_stall_plan = plan.clone();
+        let GenericTactic::SeekCoordinateSequence {
+            stall_grace_ticks, ..
+        } = &mut early_stall_plan.tactic
+        else {
+            unreachable!();
+        };
+        *stall_grace_ticks = 20;
+        assert!(
+            native_generic_controller_program(
+                &early_stall_plan,
+                TacticDurationBounds {
+                    minimum_ticks: 1,
+                    maximum_ticks: 40,
+                },
+            )
+            .unwrap()
+            .is_none(),
+            "a sequence with an observable early-stall boundary must keep the Rust observation loop"
+        );
+        let delayed_stop_plan = NativeGenericTacticPlan {
+            minimum_ticks: 2,
+            ..plan
+        };
+        assert!(
+            native_generic_controller_program(
+                &delayed_stop_plan,
+                TacticDurationBounds {
+                    minimum_ticks: 2,
+                    maximum_ticks: 40,
+                },
+            )
+            .unwrap()
+            .is_none(),
+            "a sequence with a delayed stopping boundary must keep the Rust observation loop"
+        );
     }
 
     #[test]

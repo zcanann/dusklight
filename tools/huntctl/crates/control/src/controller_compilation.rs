@@ -291,6 +291,11 @@ fn provenance_for_operation(
             framed(*frame, fields(&[Field::PlayerPosition, Field::CameraYaw])),
             None,
         )),
+        Operation::SeekCoordinateSequence { .. } => Some((
+            "seek_coordinate_sequence",
+            fields(&[Field::PlayerPosition, Field::CameraYaw]),
+            None,
+        )),
         Operation::SeekPlane { frame, .. } => Some((
             "seek_plane",
             framed(*frame, fields(&[Field::PlayerPosition, Field::CameraYaw])),

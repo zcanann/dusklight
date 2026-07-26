@@ -229,6 +229,22 @@ void setClamp(std::uint8_t* record, const std::uint32_t start, const std::uint32
     record[13] = substickLimit;
 }
 
+void setCoordinateSequence(std::uint8_t* record, const std::uint8_t blend,
+    const std::uint32_t start, const std::uint32_t duration,
+    const std::span<const std::array<float, 2>> coordinates,
+    const float intermediateStopRadius, const float finalStopRadius,
+    const std::uint8_t magnitude) {
+    setCommon(record, 15, blend, start, duration);
+    record[12] = static_cast<std::uint8_t>(coordinates.size());
+    record[13] = magnitude;
+    writeF32(record + 16, intermediateStopRadius);
+    writeF32(record + 20, finalStopRadius);
+    for (std::size_t index = 0; index < coordinates.size(); ++index) {
+        writeF32(record + 24 + index * 8, coordinates[index][0]);
+        writeF32(record + 28 + index * 8, coordinates[index][1]);
+    }
+}
+
 void setButtons(std::uint8_t* record, const std::uint32_t start, const std::uint32_t duration,
     const std::uint16_t buttons) {
     setCommon(record, 4, 2, start, duration);
@@ -834,6 +850,52 @@ void testVersion14CompositionSurfacesAndClamps() {
     REQUIRE(decode_input_controller(oldVersion, rejected) == InputControllerError::InvalidLayerKind);
 }
 
+void testVersion15CoordinateSequence() {
+    using namespace dusk::automation;
+    constexpr std::array coordinates{
+        std::array{0.0F, 0.0F},
+        std::array{10.0F, 0.0F},
+        std::array{20.0F, 0.0F},
+    };
+    auto bytes = makeProgram(4, 1);
+    setCoordinateSequence(layer(bytes, 0), 0, 0, 4, coordinates, 1.0F, 0.5F, 127);
+    const InputControllerProgram program = decode(bytes);
+    REQUIRE(program.layers()[0].kind == InputControllerLayerKind::SeekCoordinateSequence);
+
+    ControllerObservation observation{
+        .playerPresent = true,
+        .cameraPresent = true,
+    };
+    InputControllerEvaluation evaluation = program.evaluateDetailed(0, observation);
+    REQUIRE(evaluation.input.stickX == -127);
+    REQUIRE(evaluation.input.stickY == 0);
+    REQUIRE(evaluation.terminalReason == InputControllerTerminalReason::None);
+
+    observation.playerX = 10.0F;
+    evaluation = program.evaluateDetailed(1, observation);
+    REQUIRE(evaluation.input.stickX == -127);
+    REQUIRE(evaluation.input.stickY == 0);
+    REQUIRE(evaluation.terminalReason == InputControllerTerminalReason::None);
+
+    observation.playerX = 20.0F;
+    evaluation = program.evaluateDetailed(2, observation);
+    REQUIRE(evaluation.input == RawPadState{});
+    REQUIRE(evaluation.terminalReason == InputControllerTerminalReason::TargetReached);
+    REQUIRE(evaluation.terminalLayer == 0);
+
+    auto oldVersion = bytes;
+    writeU16(oldVersion.data() + 10, 4);
+    InputControllerProgram rejected;
+    REQUIRE(decode_input_controller(oldVersion, rejected) == InputControllerError::InvalidLayerKind);
+
+    auto invalid = bytes;
+    layer(invalid, 0)[12] = 0;
+    REQUIRE(decode_input_controller(invalid, rejected) == InputControllerError::InvalidMotionControl);
+    invalid = bytes;
+    layer(invalid, 0)[63] = 1;
+    REQUIRE(decode_input_controller(invalid, rejected) == InputControllerError::InvalidUnusedData);
+}
+
 void testVersionedPreInputStepContract() {
     using namespace dusk::automation;
     auto bytes = makeProgram(2, 1);
@@ -912,6 +974,7 @@ int main() {
     testStrictCanonicalValidation();
     testMaximumDurationAndEmptyLayerSet();
     testVersion14CompositionSurfacesAndClamps();
+    testVersion15CoordinateSequence();
     testVersionedPreInputStepContract();
     return 0;
 }
