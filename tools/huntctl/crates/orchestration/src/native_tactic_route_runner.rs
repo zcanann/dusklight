@@ -17,8 +17,8 @@ use crate::tactic_macro_store::{
 use crate::tactic_q_campaign::{
     EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics,
     TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
-    TacticCampaignGraphProjectionNode, TacticQCampaign, TacticQCampaignError, TacticQDecision,
-    has_no_progress_loop, route_checkpoint,
+    TacticCampaignGraphProjectionNode, TacticFrontierAcquisition, TacticQCampaign,
+    TacticQCampaignError, TacticQDecision, has_no_progress_loop, route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
@@ -82,6 +82,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9: &str = "dusklight-native-tactic-
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10: &str = "dusklight-native-tactic-route-report/v10";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11: &str = "dusklight-native-tactic-route-report/v11";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12: &str = "dusklight-native-tactic-route-report/v12";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13: &str = "dusklight-native-tactic-route-report/v13";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -375,6 +376,8 @@ pub struct NativeTacticDecisionTrace {
     pub goal_distance_before: f32,
     pub goal_distance_after: f32,
     pub terminal: bool,
+    #[serde(default)]
+    pub branch_acquisition: Option<TacticFrontierAcquisition>,
     pub frontier_cells: usize,
     #[serde(default)]
     pub logical_frontier_records: usize,
@@ -470,6 +473,8 @@ struct NativeTacticDecisionRecord {
     goal_distance_before: f32,
     goal_distance_after: f32,
     terminal: bool,
+    #[serde(default)]
+    branch_acquisition: Option<TacticFrontierAcquisition>,
     frontier_cells: usize,
     #[serde(default)]
     logical_frontier_records: usize,
@@ -751,7 +756,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -2333,6 +2338,7 @@ fn run_seed(
     let mut rolling_checkpoint = None;
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
+    let mut branch_acquisition: Option<TacticFrontierAcquisition> = None;
 
     while campaign.decision_index < config.decisions_per_seed
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -2363,15 +2369,17 @@ fn run_seed(
             )
             .map_err(route_error)?;
             let [root, frontier] = campaign
-                .sample_root_and_frontier(
+                .sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
+                    &encode,
                 )
                 .map_err(route_error)?;
             let prefer_root = episode % 4 == 0;
             let selected_branch = if prefer_root { &root } else { &frontier };
+            branch_acquisition = selected_branch.acquisition.clone();
             let branch_proposals = parameterized_catalog_for_state(
                 seed,
                 campaign.decision_index,
@@ -2478,15 +2486,17 @@ fn run_seed(
             )
             .map_err(route_error)?;
             let [root, frontier] = campaign
-                .sample_root_and_frontier(
+                .sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
+                    &encode,
                 )
                 .map_err(route_error)?;
             let prefer_root = episode % 4 == 0;
             let selected_branch = if prefer_root { &root } else { &frontier };
+            branch_acquisition = selected_branch.acquisition.clone();
             let branch_proposals = parameterized_catalog_for_state(
                 seed,
                 campaign.decision_index,
@@ -2740,6 +2750,7 @@ fn run_seed(
             goal_distance_before: before_features[encoder.goal_distance_feature()],
             goal_distance_after: after_features[encoder.goal_distance_feature()],
             terminal: step.step.transition.value_sample.terminal,
+            branch_acquisition: branch_acquisition.take(),
             frontier_cells,
             logical_frontier_records: frontier_cells.saturating_add(1),
             directly_restorable_native_frontiers: usize::from(directly_restored_frontier),
@@ -3573,6 +3584,7 @@ fn decision_record(
         goal_distance_before: trace.goal_distance_before,
         goal_distance_after: trace.goal_distance_after,
         terminal: trace.terminal,
+        branch_acquisition: trace.branch_acquisition.clone(),
         frontier_cells: trace.frontier_cells,
         logical_frontier_records: trace.logical_frontier_records,
         directly_restorable_native_frontiers: trace.directly_restorable_native_frontiers,
@@ -3663,6 +3675,7 @@ fn project_tactic_decision_record(
         goal_distance_before: record.goal_distance_before,
         goal_distance_after: record.goal_distance_after,
         terminal: record.terminal,
+        branch_acquisition: record.branch_acquisition,
         frontier_cells: record.frontier_cells,
         logical_frontier_records: record.logical_frontier_records,
         directly_restorable_native_frontiers: record.directly_restorable_native_frontiers,

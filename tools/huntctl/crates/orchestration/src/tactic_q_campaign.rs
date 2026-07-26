@@ -167,9 +167,22 @@ pub struct TacticCampaignBranch {
     pub kind: TacticBranchKind,
     pub logical_frontier: LogicalTacticFrontierRecord,
     pub restorable_native_checkpoint: Option<RestorableNativeTacticCheckpoint>,
+    pub acquisition: Option<TacticFrontierAcquisition>,
     pub state: FactSnapshot,
     pub route_tape: InputTape,
     pub descriptor: Option<TacticEndpointDescriptor>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticFrontierAcquisition {
+    pub expansion_count: u64,
+    pub terminal: bool,
+    pub reward: f32,
+    pub best_mean_q: Option<f64>,
+    pub maximum_ensemble_variance: Option<f64>,
+    pub novelty_rank: u64,
+    pub replayed_prefix_ticks: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -607,6 +620,7 @@ impl TacticQCampaign {
                 replayed_prefix_ticks: 0,
             },
             restorable_native_checkpoint: None,
+            acquisition: None,
             state: first.before.clone(),
             route_tape: root_route,
             descriptor: None,
@@ -641,9 +655,143 @@ impl TacticQCampaign {
                 replayed_prefix_ticks,
             },
             restorable_native_checkpoint: None,
+            acquisition: None,
             state: selected.transition.after.clone(),
             route_tape: selected.route_tape.clone(),
             descriptor: Some(selected.descriptor.clone()),
+        };
+        Ok([root, frontier])
+    }
+
+    /// Return the authenticated root plus one learned frontier acquisition.
+    ///
+    /// Coverage is the first ordering key so an already expanded choke cannot
+    /// absorb the campaign. Within the least-expanded tier, terminal evidence,
+    /// observed reward, critic uncertainty, critic value, archive novelty, and
+    /// route cost determine the next branch. All values are projections over
+    /// retained native transitions; none grants restore or terminal authority.
+    pub fn sample_root_and_ranked_frontier<E, F>(
+        &self,
+        seed: u64,
+        round: u64,
+        reference: &[TacticEndpointDescriptor],
+        maximum_route_frames: usize,
+        encode: &F,
+    ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+    {
+        let [root, _] =
+            self.sample_root_and_frontier(seed, round, reference, maximum_route_frames)?;
+        let root_frames = root.route_tape.frames.len();
+        let archive = self.frontier_archive()?;
+        let choices = archive
+            .select_tactic_frontier(reference, archive.tactic_len())
+            .into_iter()
+            .filter(|entry| entry.route_tape.frames.len() <= maximum_route_frames)
+            .collect::<Vec<_>>();
+        if choices.is_empty() {
+            return Err(TacticQCampaignError::InvalidState(
+                "frontier archive has no eligible learned acquisition",
+            ));
+        }
+        let tie_offset = seeded_frontier_index(seed, round, choices.len());
+        let choice_count = choices.len();
+        let mut ranked = choices
+            .into_iter()
+            .enumerate()
+            .map(|(novelty_rank, entry)| {
+                let features = encode(&entry.transition.after)
+                    .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+                if features.is_empty() || features.iter().any(|value| !value.is_finite()) {
+                    return Err(TacticQCampaignError::Features(
+                        "frontier encoding is empty or non-finite".into(),
+                    ));
+                }
+                let estimates = self
+                    .model
+                    .as_ref()
+                    .map(|model| model.rank_options(&features))
+                    .transpose()?;
+                let best_mean_q = estimates
+                    .as_ref()
+                    .and_then(|values| values.first())
+                    .map(|value| value.mean_q);
+                let maximum_ensemble_variance = estimates.as_ref().and_then(|values| {
+                    values
+                        .iter()
+                        .map(|value| value.ensemble_variance)
+                        .max_by(f64::total_cmp)
+                });
+                let expansion_count = self
+                    .replay
+                    .iter()
+                    .filter(|transition| {
+                        transition.before_state_sha256 == entry.transition.after_state_sha256
+                            && transition.source_checkpoint_sha256 == entry.route_checkpoint_sha256
+                    })
+                    .count() as u64;
+                let replayed_prefix_ticks = entry
+                    .route_tape
+                    .frames
+                    .len()
+                    .checked_sub(root_frames)
+                    .ok_or(TacticQCampaignError::InvalidState(
+                    "learned frontier route precedes its native root",
+                ))? as u64;
+                let acquisition = TacticFrontierAcquisition {
+                    expansion_count,
+                    terminal: entry.transition.value_sample.terminal,
+                    reward: entry.transition.value_sample.reward,
+                    best_mean_q,
+                    maximum_ensemble_variance,
+                    novelty_rank: novelty_rank as u64,
+                    replayed_prefix_ticks,
+                };
+                let tie_rank = (novelty_rank + choice_count - tie_offset) % choice_count;
+                Ok((entry, acquisition, tie_rank))
+            })
+            .collect::<Result<Vec<_>, TacticQCampaignError>>()?;
+        ranked.sort_by(|left, right| {
+            left.1
+                .expansion_count
+                .cmp(&right.1.expansion_count)
+                .then_with(|| right.1.terminal.cmp(&left.1.terminal))
+                .then_with(|| right.1.reward.total_cmp(&left.1.reward))
+                .then_with(|| {
+                    option_f64(right.1.maximum_ensemble_variance)
+                        .total_cmp(&option_f64(left.1.maximum_ensemble_variance))
+                })
+                .then_with(|| {
+                    option_f64(right.1.best_mean_q).total_cmp(&option_f64(left.1.best_mean_q))
+                })
+                .then_with(|| left.2.cmp(&right.2))
+                .then_with(|| left.1.novelty_rank.cmp(&right.1.novelty_rank))
+                .then_with(|| {
+                    left.1
+                        .replayed_prefix_ticks
+                        .cmp(&right.1.replayed_prefix_ticks)
+                })
+                .then_with(|| left.0.descriptor.cmp(&right.0.descriptor))
+        });
+        let (selected, acquisition, _) = ranked
+            .into_iter()
+            .next()
+            .expect("nonempty learned frontier ranking");
+        let frontier = TacticCampaignBranch {
+            kind: TacticBranchKind::RetainedFrontier,
+            logical_frontier: LogicalTacticFrontierRecord {
+                identity_sha256: selected.route_checkpoint_sha256,
+                state_sha256: selected.transition.after_state_sha256,
+                route_frames: selected.route_tape.frames.len() as u64,
+                replayed_prefix_ticks: acquisition.replayed_prefix_ticks,
+            },
+            restorable_native_checkpoint: None,
+            acquisition: Some(acquisition),
+            state: selected.transition.after.clone(),
+            route_tape: selected.route_tape,
+            descriptor: Some(selected.descriptor),
         };
         Ok([root, frontier])
     }
@@ -1453,6 +1601,10 @@ fn seeded_frontier_index(seed: u64, round: u64, choice_count: usize) -> usize {
     let count = choice_count as u64;
     let offset = u64::from_le_bytes(digest[..8].try_into().unwrap()) % count;
     ((offset + round % count) % count) as usize
+}
+
+fn option_f64(value: Option<f64>) -> f64 {
+    value.unwrap_or(f64::NEG_INFINITY)
 }
 
 fn ensure_blueprint_proposal(
@@ -2352,6 +2504,18 @@ mod tests {
         assert!(frontier_branch.restorable_native_checkpoint.is_none());
         assert_eq!(root_branch.logical_frontier.replayed_prefix_ticks, 0);
         assert!(frontier_branch.logical_frontier.replayed_prefix_ticks > 0);
+        let [ranked_root, ranked_frontier] = restored
+            .sample_root_and_ranked_frontier(5, 0, &[], usize::MAX, &encode)
+            .unwrap();
+        assert!(ranked_root.acquisition.is_none());
+        let acquisition = ranked_frontier.acquisition.as_ref().unwrap();
+        assert_eq!(acquisition.expansion_count, 0);
+        assert_eq!(
+            acquisition.replayed_prefix_ticks,
+            ranked_frontier.logical_frontier.replayed_prefix_ticks
+        );
+        assert!(acquisition.best_mean_q.is_some());
+        assert!(acquisition.maximum_ensemble_variance.is_some());
         let mut forged_native_frontier = frontier_branch.clone();
         forged_native_frontier.restorable_native_checkpoint =
             Some(RestorableNativeTacticCheckpoint {
