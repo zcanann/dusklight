@@ -63,9 +63,10 @@ use dusklight_search::suffix_batch::{
 use dusklight_world::world_context::WorldContext;
 use dusklight_world::world_geometry::KclReconstruction;
 use dusklight_world::world_inventory::WorldInventory;
+use dusklight_world::world_surface_graph::WorldSurfaceGraph;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -112,6 +113,9 @@ const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
 const ROUTE_TACTIC_TICK_COST: f32 = 0.01;
 const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
+const NAVIGABLE_SURFACE_MINIMUM_UP_NORMAL: f32 = 0.5;
+const NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE: f32 = 512.0;
+const NAVIGABLE_SURFACE_ROUTE_TARGETS: usize = 4;
 const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
 const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2: &str = "dusklight-native-tactic-route-performance/v2";
@@ -4638,6 +4642,196 @@ fn goal_corridor_targets(
     Ok((targets, route_sequences))
 }
 
+#[derive(Clone, Debug)]
+struct NavigableSurfaceNode {
+    collision_id: String,
+    coordinate: [f32; 3],
+}
+
+fn goal_surface_route(
+    source: [f32; 3],
+    goal: [f32; 3],
+    room: i8,
+    inventory: &WorldInventory,
+) -> Result<Option<(String, Vec<[f32; 3]>)>, NativeTacticRouteRunError> {
+    if inventory.collisions.is_empty() {
+        return Ok(None);
+    }
+    let graph = WorldSurfaceGraph::build(inventory).map_err(route_error)?;
+    let inventory_sha256 = graph.artifact().inventory_sha256;
+    let nodes = graph
+        .artifact()
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.room == room && node.plane_normal.y >= NAVIGABLE_SURFACE_MINIMUM_UP_NORMAL
+        })
+        .map(|node| NavigableSurfaceNode {
+            collision_id: node.collision_id.clone(),
+            coordinate: [node.centroid.x, node.centroid.y, node.centroid.z],
+        })
+        .collect::<Vec<_>>();
+    let edges = graph
+        .artifact()
+        .edges
+        .iter()
+        .filter(|edge| edge.room == room)
+        .map(|edge| {
+            (
+                edge.left_collision_id.as_str(),
+                edge.right_collision_id.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+    let Some(route) = shortest_navigable_surface_route(&nodes, &edges, source, goal)? else {
+        return Ok(None);
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-goal-surface-route/v1");
+    hasher.update(inventory_sha256.0);
+    hasher.update(room.to_le_bytes());
+    for coordinate in &route {
+        for component in coordinate {
+            hasher.update(component.to_bits().to_le_bytes());
+        }
+    }
+    let digest = hasher.finalize();
+    let identity = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(Some((format!("surface-graph:{identity}"), route)))
+}
+
+fn shortest_navigable_surface_route(
+    nodes: &[NavigableSurfaceNode],
+    edges: &[(&str, &str)],
+    source: [f32; 3],
+    goal: [f32; 3],
+) -> Result<Option<Vec<[f32; 3]>>, NativeTacticRouteRunError> {
+    if nodes.is_empty()
+        || source
+            .iter()
+            .chain(goal.iter())
+            .any(|value| !value.is_finite())
+    {
+        return Ok(None);
+    }
+    let nearest = |target: [f32; 3]| {
+        nodes
+            .iter()
+            .enumerate()
+            .map(|(index, node)| {
+                let dx = node.coordinate[0] - target[0];
+                let dy = node.coordinate[1] - target[1];
+                let dz = node.coordinate[2] - target[2];
+                (index, dx.mul_add(dx, dy.mul_add(dy, dz * dz)).sqrt())
+            })
+            .min_by(|left, right| {
+                left.1
+                    .total_cmp(&right.1)
+                    .then_with(|| nodes[left.0].collision_id.cmp(&nodes[right.0].collision_id))
+            })
+    };
+    let Some((source_index, source_distance)) = nearest(source) else {
+        return Ok(None);
+    };
+    let Some((goal_index, goal_distance)) = nearest(goal) else {
+        return Ok(None);
+    };
+    if source_distance > NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE
+        || goal_distance > NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE
+    {
+        return Ok(None);
+    }
+
+    let indices = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.collision_id.as_str(), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut adjacency = vec![Vec::new(); nodes.len()];
+    for (left, right) in edges {
+        let (Some(&left), Some(&right)) = (indices.get(left), indices.get(right)) else {
+            continue;
+        };
+        adjacency[left].push(right);
+        adjacency[right].push(left);
+    }
+    for neighbors in &mut adjacency {
+        neighbors.sort_unstable_by(|left, right| {
+            nodes[*left].collision_id.cmp(&nodes[*right].collision_id)
+        });
+        neighbors.dedup();
+    }
+
+    let mut previous = vec![None; nodes.len()];
+    previous[source_index] = Some(source_index);
+    let mut pending = VecDeque::from([source_index]);
+    while let Some(current) = pending.pop_front() {
+        if current == goal_index {
+            break;
+        }
+        for &neighbor in &adjacency[current] {
+            if previous[neighbor].is_none() {
+                previous[neighbor] = Some(current);
+                pending.push_back(neighbor);
+            }
+        }
+    }
+    if previous[goal_index].is_none() {
+        return Ok(None);
+    }
+    let mut path = vec![goal_index];
+    while *path
+        .last()
+        .ok_or_else(|| route_message("surface route reconstruction is empty"))?
+        != source_index
+    {
+        let current = *path.last().expect("surface route is nonempty");
+        path.push(
+            previous[current]
+                .ok_or_else(|| route_message("surface route predecessor is absent"))?,
+        );
+    }
+    path.reverse();
+    let coordinates = path
+        .into_iter()
+        .map(|index| nodes[index].coordinate)
+        .collect::<Vec<_>>();
+    Ok(sample_navigable_surface_route(&coordinates, goal))
+}
+
+fn sample_navigable_surface_route(path: &[[f32; 3]], goal: [f32; 3]) -> Option<Vec<[f32; 3]>> {
+    if path.len() < 2 {
+        return None;
+    }
+    let mut cumulative = vec![0.0_f32; path.len()];
+    for index in 1..path.len() {
+        cumulative[index] = cumulative[index - 1] + planar_distance(path[index - 1], path[index]);
+    }
+    let total = *cumulative.last()?;
+    if !total.is_finite() || total <= 0.0 {
+        return None;
+    }
+    let mut route = Vec::with_capacity(NAVIGABLE_SURFACE_ROUTE_TARGETS);
+    for fraction in [0.25_f32, 0.5, 0.75] {
+        let threshold = total * fraction;
+        let index = cumulative
+            .iter()
+            .position(|distance| *distance >= threshold)
+            .unwrap_or(path.len() - 1);
+        let coordinate = path[index];
+        if route.last() != Some(&coordinate) {
+            route.push(coordinate);
+        }
+    }
+    if route.last() != Some(&goal) {
+        route.push(goal);
+    }
+    (route.len() >= 2 && route.len() <= NAVIGABLE_SURFACE_ROUTE_TARGETS).then_some(route)
+}
+
 #[derive(Clone)]
 struct AuthoredRouteCandidate {
     identity: String,
@@ -4660,6 +4854,7 @@ fn goal_route_targets(
             "goal routes require finite source and target coordinates",
         ));
     }
+    let surface_route = goal_surface_route(source, goal, room, inventory)?;
     let paths = inventory
         .paths
         .iter()
@@ -4667,8 +4862,7 @@ fn goal_route_targets(
         .map(|path| ((path.source_sha256, path.record_index), path))
         .collect::<BTreeMap<_, _>>();
     if paths.is_empty() {
-        let (targets, routes) = goal_corridor_targets(source, goal)?;
-        return Ok((targets, routes, Vec::new()));
+        return fallback_goal_routes(source, goal, surface_route);
     }
     let points = inventory
         .path_points
@@ -4773,18 +4967,25 @@ fn goal_route_targets(
     });
     candidates.truncate(5);
     if candidates.is_empty() {
-        let (targets, routes) = goal_corridor_targets(source, goal)?;
-        return Ok((targets, routes, Vec::new()));
+        return fallback_goal_routes(source, goal, surface_route);
     }
 
-    let route_sequences = candidates
+    let mut route_sequences = candidates
         .iter()
         .map(|candidate| candidate.coordinates.clone())
         .collect::<Vec<_>>();
-    let authored_route_ids = candidates
+    let mut authored_route_ids = candidates
         .iter()
         .map(|candidate| candidate.identity.clone())
         .collect::<Vec<_>>();
+    if let Some((identity, route)) = surface_route
+        && !route_sequences.iter().any(|candidate| candidate == &route)
+    {
+        route_sequences.insert(0, route);
+        authored_route_ids.insert(0, identity);
+        route_sequences.truncate(5);
+        authored_route_ids.truncate(5);
+    }
     let mut targets = vec![goal];
     let mut target_identities = BTreeSet::from([goal.map(f32::to_bits)]);
     for coordinate in route_sequences.iter().flatten().copied() {
@@ -4796,6 +4997,32 @@ fn goal_route_targets(
         }
     }
     Ok((targets, route_sequences, authored_route_ids))
+}
+
+fn fallback_goal_routes(
+    source: [f32; 3],
+    goal: [f32; 3],
+    surface_route: Option<(String, Vec<[f32; 3]>)>,
+) -> Result<(Vec<[f32; 3]>, Vec<Vec<[f32; 3]>>, Vec<String>), NativeTacticRouteRunError> {
+    let (mut targets, mut routes) = goal_corridor_targets(source, goal)?;
+    let mut route_ids = Vec::new();
+    if let Some((identity, route)) = surface_route {
+        for coordinate in &route {
+            if targets.len() == MAX_GOAL_SEEK_TARGETS {
+                break;
+            }
+            if !targets
+                .iter()
+                .any(|target| target.map(f32::to_bits) == coordinate.map(f32::to_bits))
+            {
+                targets.push(*coordinate);
+            }
+        }
+        routes.insert(0, route);
+        routes.truncate(5);
+        route_ids.push(identity);
+    }
+    Ok((targets, routes, route_ids))
 }
 
 fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
@@ -5993,6 +6220,76 @@ mod tests {
                 .all(|route| route.last() == Some(&goal))
         );
         assert!(goal_corridor_targets(source, source).is_err());
+    }
+
+    #[test]
+    fn navigable_surface_route_follows_ground_adjacency_and_samples_four_targets() {
+        let nodes = (0..=4)
+            .map(|index| NavigableSurfaceNode {
+                collision_id: format!("surface-{index}"),
+                coordinate: [index as f32 * 100.0, 10.0, 0.0],
+            })
+            .collect::<Vec<_>>();
+        let edges = [
+            ("surface-0", "surface-1"),
+            ("surface-1", "surface-2"),
+            ("surface-2", "surface-3"),
+            ("surface-3", "surface-4"),
+        ];
+
+        let route =
+            shortest_navigable_surface_route(&nodes, &edges, [0.0, 10.0, 0.0], [400.0, 10.0, 0.0])
+                .unwrap()
+                .expect("connected ground surfaces must produce a route");
+
+        assert_eq!(
+            route,
+            vec![
+                [100.0, 10.0, 0.0],
+                [200.0, 10.0, 0.0],
+                [300.0, 10.0, 0.0],
+                [400.0, 10.0, 0.0],
+            ]
+        );
+        assert!(
+            shortest_navigable_surface_route(
+                &nodes,
+                &edges[..2],
+                [0.0, 10.0, 0.0],
+                [400.0, 10.0, 0.0],
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn surface_route_precedes_but_does_not_replace_generic_corridor_actions() {
+        let source = [0.0, 10.0, 0.0];
+        let goal = [1000.0, 20.0, 0.0];
+        let surface = vec![
+            [200.0, 11.0, 50.0],
+            [500.0, 15.0, 75.0],
+            [800.0, 18.0, 25.0],
+            goal,
+        ];
+        let (targets, routes, ids) = fallback_goal_routes(
+            source,
+            goal,
+            Some(("surface-graph:test".into(), surface.clone())),
+        )
+        .unwrap();
+
+        assert_eq!(routes.len(), 5);
+        assert_eq!(routes[0], surface);
+        assert_eq!(ids, vec!["surface-graph:test"]);
+        assert!(targets.contains(&[500.0, 15.0, 75.0]));
+        assert!(
+            routes
+                .iter()
+                .skip(1)
+                .all(|route| route.last() == Some(&goal))
+        );
     }
 
     #[test]

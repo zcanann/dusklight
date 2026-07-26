@@ -4,7 +4,9 @@ use crate::native_generic_tactic::{GenericTactic, NativeGenericTacticPlan};
 use crate::tactic_asset::{
     TacticAssetCatalog, TacticAssetError, TacticAssetSource, TacticCatalogEntry,
 };
-use dusklight_control::controller_program::ControllerProgram;
+use dusklight_control::controller_program::{
+    ControllerProgram, Layer, MAX_LAYERS, Operation, StickBlend,
+};
 use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::roll_option::RollOptionPlan;
 use std::f32::consts::TAU;
@@ -14,6 +16,8 @@ pub const MAX_GOAL_SEEK_TARGETS: usize = 64;
 const INTERMEDIATE_GOAL_SEEK_TOLERANCE: f32 = 96.0;
 const GOAL_ROUTE_STATIONARY_WINDOW_TICKS: u32 = 16;
 const GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE: f32 = 16.0;
+const GOAL_ROUTE_ROLL_BUTTON_MASK: u16 = 0x0100;
+const GOAL_ROUTE_ROLL_PERIODS: [u32; 5] = [16, 18, 20, 22, 24];
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -220,6 +224,50 @@ pub fn goal_conditioned_route_tactic_catalog(
                 route_sequence_maximum_ticks,
             )),
         )?;
+        for period in GOAL_ROUTE_ROLL_PERIODS {
+            for phase in [0, period / 2] {
+                let mut layers = vec![Layer {
+                    start_frame: 0,
+                    duration_frames: route_sequence_maximum_ticks,
+                    operation: Operation::SeekCoordinateSequence {
+                        blend: StickBlend::Replace,
+                        coordinates_xz: coordinates
+                            .iter()
+                            .map(|coordinate| [coordinate[0], coordinate[2]])
+                            .collect(),
+                        intermediate_stop_radius: INTERMEDIATE_GOAL_SEEK_TOLERANCE,
+                        final_stop_radius: 0.0,
+                        magnitude: 127,
+                    },
+                }];
+                let mut pulse = phase;
+                while pulse < route_sequence_maximum_ticks && layers.len() < MAX_LAYERS {
+                    layers.push(Layer {
+                        start_frame: pulse,
+                        duration_frames: 1,
+                        operation: Operation::Buttons {
+                            mask: GOAL_ROUTE_ROLL_BUTTON_MASK,
+                        },
+                    });
+                    pulse = pulse.saturating_add(period);
+                }
+                if pulse < route_sequence_maximum_ticks {
+                    continue;
+                }
+                let program = ControllerProgram {
+                    duration_frames: route_sequence_maximum_ticks,
+                    layers,
+                };
+                program
+                    .validate()
+                    .map_err(|error| TacticAssetError::InvalidAsset(error.to_string()))?;
+                push(
+                    &mut entries,
+                    format!("goal.seek.route.{index:02}.roll.period.{period:02}.phase.{phase:02}"),
+                    TacticAssetSource::ReactiveController(program),
+                )?;
+            }
+        }
     }
     for (index, coordinate) in targets.iter().copied().enumerate() {
         if coordinate.iter().any(|value| !value.is_finite()) {
@@ -339,10 +387,13 @@ mod tests {
             &[goal, waypoint],
             &[vec![waypoint, goal]],
             160,
-            640,
+            160,
         )
         .unwrap();
-        assert_eq!(catalog.entries().len(), DEFAULT_ROUTE_TACTIC_COUNT + 3);
+        assert_eq!(
+            catalog.entries().len(),
+            DEFAULT_ROUTE_TACTIC_COUNT + 3 + GOAL_ROUTE_ROLL_PERIODS.len() * 2
+        );
         assert!(matches!(
             catalog.entry("goal.seek.route.00").unwrap().source(),
             TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan {
@@ -353,16 +404,39 @@ mod tests {
                     stationary_window_distance_f32_bits,
                     ..
                 },
-                maximum_ticks: 640,
+                maximum_ticks: 160,
                 ..
             }) if coordinates_f32_bits
                 .iter()
                 .map(|coordinate| coordinate.map(f32::from_bits))
                 .collect::<Vec<_>>() == vec![waypoint, goal]
-                && *stall_grace_ticks == 640
+                && *stall_grace_ticks == 160
                 && f32::from_bits(*stationary_window_distance_f32_bits)
                     == GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE
         ));
+        let rolling = catalog
+            .entry("goal.seek.route.00.roll.period.20.phase.00")
+            .expect("goal route must expose a layered rolling composition");
+        let TacticAssetSource::ReactiveController(program) = rolling.source() else {
+            panic!("rolling goal route must be one native controller program");
+        };
+        assert!(matches!(
+            program.layers[0].operation,
+            Operation::SeekCoordinateSequence { .. }
+        ));
+        assert_eq!(
+            program
+                .layers
+                .iter()
+                .filter(|layer| matches!(
+                    layer.operation,
+                    Operation::Buttons {
+                        mask: GOAL_ROUTE_ROLL_BUTTON_MASK
+                    }
+                ))
+                .count(),
+            8
+        );
         let goal_entry = catalog.entry("goal.seek.coordinate.00").unwrap();
         assert_eq!(goal_entry.description().duration.maximum_ticks, 160);
         assert!(matches!(
