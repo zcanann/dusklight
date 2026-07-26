@@ -808,6 +808,17 @@ impl TacticAssetAdapter for ControllerProgram {
             OptionParameter::Unsigned(u64::from(self.duration_frames)),
         );
         if let Some((mask, period_ticks, phase_tick)) = periodic_button_overlay(self) {
+            let mut base_program = self.clone();
+            base_program
+                .layers
+                .retain(|layer| !matches!(layer.operation, Operation::Buttons { .. }));
+            let base_program_bytes = base_program
+                .encode()
+                .map_err(|error| invalid(error.to_string()))?;
+            parameters.insert(
+                "controller_base_sha256".into(),
+                OptionParameter::Digest(digest(&base_program_bytes)),
+            );
             parameters.insert(
                 "button_pulse_mask".into(),
                 OptionParameter::Unsigned(u64::from(mask)),

@@ -479,6 +479,20 @@ mod tests {
                 .get("button_pulse_phase_tick"),
             Some(&OptionParameter::Unsigned(0))
         );
+        assert_eq!(
+            rolling
+                .description()
+                .option
+                .parameters
+                .get("controller_base_sha256"),
+            catalog
+                .entry("goal.seek.route.00.roll.period.22.phase.00")
+                .unwrap()
+                .description()
+                .option
+                .parameters
+                .get("controller_base_sha256")
+        );
         assert!(matches!(
             program.layers[0].operation,
             Operation::SeekCoordinateSequence { .. }

@@ -639,7 +639,17 @@ fn same_refinement_family(
     candidate: &OptionActionDescriptor,
 ) -> bool {
     if is_route_sequence(incumbent) || is_route_sequence(candidate) {
-        return is_route_sequence(incumbent) && is_route_sequence(candidate);
+        if !is_route_sequence(incumbent) || !is_route_sequence(candidate) {
+            return false;
+        }
+        return match (
+            incumbent.parameters.get("controller_base_sha256"),
+            candidate.parameters.get("controller_base_sha256"),
+        ) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => incumbent.option_type == candidate.option_type,
+            _ => false,
+        };
     }
     incumbent.option_type == candidate.option_type
         && tunable_parameter_keys(incumbent) == tunable_parameter_keys(candidate)
@@ -650,7 +660,12 @@ fn tunable_parameter_keys(descriptor: &OptionActionDescriptor) -> Vec<&str> {
         .parameters
         .keys()
         .map(String::as_str)
-        .filter(|key| !matches!(*key, "program_sha256" | "duration_ticks"))
+        .filter(|key| {
+            !matches!(
+                *key,
+                "program_sha256" | "controller_base_sha256" | "duration_ticks"
+            )
+        })
         .collect()
 }
 
@@ -1107,6 +1122,10 @@ mod tests {
                 "program_sha256".into(),
                 OptionParameter::Digest(Digest([period as u8; 32])),
             );
+            route.parameters.insert(
+                "controller_base_sha256".into(),
+                OptionParameter::Digest(Digest([9; 32])),
+            );
             route
                 .parameters
                 .insert("duration_ticks".into(), OptionParameter::Unsigned(160));
@@ -1127,6 +1146,12 @@ mod tests {
         let incumbent = rolling_route(22);
         let period_20 = rolling_route(20);
         let period_24 = rolling_route(24);
+        let mut other_path = rolling_route(22);
+        other_path.option_id = "goal.seek.route.01.roll.period.22.phase.00".into();
+        other_path.parameters.insert(
+            "controller_base_sha256".into(),
+            OptionParameter::Digest(Digest([10; 32])),
+        );
         let escape = descriptor("interact", OptionType::Interact);
         let ranking = LiveTacticRanking {
             learner_snapshot_sha256: Digest([31; 32]),
@@ -1135,6 +1160,7 @@ mod tests {
                 choice(incumbent.clone()),
                 choice(period_20.clone()),
                 choice(period_24.clone()),
+                choice(other_path.clone()),
                 choice(escape.clone()),
             ],
             values: AvailableOptionRanking {
@@ -1144,7 +1170,12 @@ mod tests {
                     mean_q: 98.5,
                     ensemble_variance: 0.0,
                 }],
-                unsupported: vec![period_20.clone(), period_24.clone(), escape.clone()],
+                unsupported: vec![
+                    period_20.clone(),
+                    period_24.clone(),
+                    other_path.clone(),
+                    escape.clone(),
+                ],
             },
         };
         let mut proposals = choose_tactic_batch_with_state_untried(
@@ -1154,7 +1185,7 @@ mod tests {
                 seed: 7,
                 epsilon_per_million: 0,
             },
-            &[period_20.clone(), period_24, escape],
+            &[period_20.clone(), period_24, other_path, escape],
             1,
         )
         .unwrap();
