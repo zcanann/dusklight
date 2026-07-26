@@ -50,7 +50,7 @@ pub struct NativeSuffixBatchResult {
     pub checkpoint_bytes: u64,
     pub restore_identity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checkpoint_cache: Option<Value>,
+    pub checkpoint_cache: Option<NativeCheckpointCacheResult>,
     pub capture_micros: u64,
     pub restore_micros: Vec<u64>,
     pub timing: NativeSuffixTimingResult,
@@ -61,6 +61,29 @@ pub struct NativeSuffixBatchResult {
     pub candidates: Vec<NativeSuffixCandidateResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCheckpointCacheResult {
+    pub source_kind: String,
+    pub source_identity: Option<String>,
+    pub source_route_ticks: u64,
+    pub capacity_bytes: u64,
+    pub capacity_entries: u64,
+    pub resident_bytes: u64,
+    pub resident_checkpoint_bytes: u64,
+    pub resident_host_snapshot_bytes: u64,
+    pub resident_entries: u64,
+    pub insertions: u64,
+    pub replacements: u64,
+    pub evictions: u64,
+    pub hits: u64,
+    pub misses: u64,
+    pub source_pinned: bool,
+    pub batch_capture_attempts: u64,
+    pub batch_capture_successes: u64,
+    pub batch_capture_micros: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -211,6 +234,8 @@ pub struct ValidatedNativeSuffixBatch {
     pub restore_identity: String,
     pub checkpoint_bytes: u64,
     pub simulated_ticks: u64,
+    pub restore_micros: Vec<u64>,
+    pub checkpoint_cache: Option<NativeCheckpointCacheResult>,
     pub episode_shard_path: String,
     pub candidates: Vec<ValidatedNativeSuffixCandidate>,
 }
@@ -323,6 +348,8 @@ impl NativeSuffixBatchResult {
             restore_identity: restore_identity.into(),
             checkpoint_bytes: self.checkpoint_bytes,
             simulated_ticks,
+            restore_micros: self.restore_micros.clone(),
+            checkpoint_cache: self.checkpoint_cache.clone(),
             episode_shard_path: self.episode_shard.path.clone(),
             candidates,
         })
@@ -482,6 +509,8 @@ impl NativeSuffixBatchResult {
             restore_identity: restore_identity.into(),
             checkpoint_bytes: self.checkpoint_bytes,
             simulated_ticks,
+            restore_micros: self.restore_micros.clone(),
+            checkpoint_cache: None,
             episode_shard_path: self.episode_shard.path.clone(),
             candidates,
         })
@@ -558,70 +587,44 @@ impl NativeSuffixCandidateResult {
 }
 
 fn validate_checkpoint_cache(
-    actual: Option<&Value>,
+    actual: Option<&NativeCheckpointCacheResult>,
     request: &NativeSuffixBatch,
 ) -> Result<(), NativeSuffixResultError> {
     let Some(expected) = request.checkpoint_cache.as_ref() else {
-        if actual.is_some_and(|value| !value.is_null()) {
+        if actual.is_some() {
             return Err(result_error(
                 "uncached suffix request returned checkpoint-cache authority",
             ));
         }
         return Ok(());
     };
-    let actual = actual
-        .filter(|value| value.is_object())
-        .ok_or_else(|| result_error("cached suffix result lacks cache accounting"))?;
+    let actual =
+        actual.ok_or_else(|| result_error("cached suffix result lacks cache accounting"))?;
     let expected_source_kind = if expected.source_identity.is_some() {
         "direct_process_local_restore"
     } else {
         "authenticated_root_restore"
     };
-    if actual.get("source_kind").and_then(Value::as_str) != Some(expected_source_kind)
-        || actual.get("source_identity").and_then(Value::as_str)
-            != expected.source_identity.as_deref()
-        || actual.get("source_route_ticks").and_then(Value::as_u64)
-            != Some(expected.source_route_ticks as u64)
-        || actual.get("capacity_bytes").and_then(Value::as_u64)
-            != Some(expected.capacity_bytes as u64)
-        || actual.get("capacity_entries").and_then(Value::as_u64)
-            != Some(expected.capacity_entries as u64)
-        || actual
-            .get("resident_bytes")
-            .and_then(Value::as_u64)
-            .is_none()
-        || actual
-            .get("resident_checkpoint_bytes")
-            .and_then(Value::as_u64)
-            .is_none()
-        || actual
-            .get("resident_host_snapshot_bytes")
-            .and_then(Value::as_u64)
-            .is_none()
-        || actual
-            .get("resident_entries")
-            .and_then(Value::as_u64)
-            .is_none()
-        || actual.get("insertions").and_then(Value::as_u64).is_none()
-        || actual.get("evictions").and_then(Value::as_u64).is_none()
-        || actual.get("hits").and_then(Value::as_u64).is_none()
-        || actual.get("misses").and_then(Value::as_u64).is_none()
-        || actual.get("source_pinned").and_then(Value::as_bool)
-            != Some(expected.source_identity.is_some())
-        || actual.get("batch_capture_attempts").and_then(Value::as_u64)
-            != Some(if expected.retain_candidate_checkpoints {
+    if actual.source_kind != expected_source_kind
+        || actual.source_identity.as_deref() != expected.source_identity.as_deref()
+        || actual.source_route_ticks != expected.source_route_ticks as u64
+        || actual.capacity_bytes != expected.capacity_bytes as u64
+        || actual.capacity_entries != expected.capacity_entries as u64
+        || actual.source_pinned != expected.source_identity.is_some()
+        || actual.batch_capture_attempts
+            != if expected.retain_candidate_checkpoints {
                 request.candidates.len() as u64
             } else {
                 0
-            })
-        || actual
-            .get("batch_capture_successes")
-            .and_then(Value::as_u64)
-            .is_none()
-        || actual
-            .get("batch_capture_micros")
-            .and_then(Value::as_u64)
-            .is_none()
+            }
+        || actual.batch_capture_successes > actual.batch_capture_attempts
+        || actual.resident_entries > actual.capacity_entries
+        || actual.resident_bytes > actual.capacity_bytes
+        || actual.resident_bytes
+            != actual
+                .resident_checkpoint_bytes
+                .checked_add(actual.resident_host_snapshot_bytes)
+                .ok_or_else(|| result_error("native suffix cache resident bytes overflowed"))?
     {
         return Err(result_error(
             "native suffix checkpoint-cache report is incomplete or detached",
@@ -1085,26 +1088,29 @@ mod tests {
         let mut result = result(false, false);
         result.schema = NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V8.into();
         result.restore_identity = Some("a".repeat(32));
-        result.checkpoint_cache = Some(serde_json::json!({
-            "source_kind": "direct_process_local_restore",
-            "source_identity": "a".repeat(32),
-            "source_route_ticks": 40,
-            "capacity_bytes": 671_088_640_u64,
-            "capacity_entries": 2,
-            "resident_bytes": 256,
-            "resident_checkpoint_bytes": 240,
-            "resident_host_snapshot_bytes": 16,
-            "resident_entries": 2,
-            "insertions": 2,
-            "replacements": 0,
-            "evictions": 0,
-            "hits": 2,
-            "misses": 0,
-            "source_pinned": true,
-            "batch_capture_attempts": 1,
-            "batch_capture_successes": 1,
-            "batch_capture_micros": 1
-        }));
+        result.checkpoint_cache = Some(
+            serde_json::from_value(serde_json::json!({
+                "source_kind": "direct_process_local_restore",
+                "source_identity": "a".repeat(32),
+                "source_route_ticks": 40,
+                "capacity_bytes": 671_088_640_u64,
+                "capacity_entries": 2,
+                "resident_bytes": 256,
+                "resident_checkpoint_bytes": 240,
+                "resident_host_snapshot_bytes": 16,
+                "resident_entries": 2,
+                "insertions": 2,
+                "replacements": 0,
+                "evictions": 0,
+                "hits": 2,
+                "misses": 0,
+                "source_pinned": true,
+                "batch_capture_attempts": 1,
+                "batch_capture_successes": 1,
+                "batch_capture_micros": 1
+            }))
+            .unwrap(),
+        );
         result.candidates[0].retained_checkpoint = Some(NativeRetainedCheckpointResult {
             restore_identity: "b".repeat(32),
             image_digest: "c".repeat(32),
@@ -1122,8 +1128,19 @@ mod tests {
                 .map(|checkpoint| checkpoint.restore_identity.as_str()),
             Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
         );
+        assert_eq!(validated.restore_micros, vec![1]);
+        assert_eq!(
+            validated
+                .checkpoint_cache
+                .as_ref()
+                .map(|cache| (cache.hits, cache.resident_bytes)),
+            Some((2, 256))
+        );
 
         let mut detached = result;
+        detached.checkpoint_cache.as_mut().unwrap().resident_bytes += 1;
+        assert!(detached.validate_against(&request, &terminal()).is_err());
+        detached.checkpoint_cache.as_mut().unwrap().resident_bytes -= 1;
         detached.candidates[0]
             .retained_checkpoint
             .as_mut()

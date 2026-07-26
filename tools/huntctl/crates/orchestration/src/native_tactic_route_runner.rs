@@ -64,6 +64,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5: &str = "dusklight-native-tactic-
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6: &str = "dusklight-native-tactic-route-report/v6";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7: &str = "dusklight-native-tactic-route-report/v7";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8: &str = "dusklight-native-tactic-route-report/v8";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9: &str = "dusklight-native-tactic-route-report/v9";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -90,7 +91,7 @@ const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
 const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
 const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
-const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1: &str = "dusklight-native-tactic-route-performance/v1";
+const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2: &str = "dusklight-native-tactic-route-performance/v2";
 
 #[derive(Clone, Debug)]
 pub struct NativeTacticRouteRunConfig<'a> {
@@ -129,6 +130,7 @@ pub struct NativeTacticRouteReport {
     pub total_decisions: u64,
     pub useful_decisions: u64,
     pub frontier_availability: NativeTacticFrontierAvailability,
+    pub native_restore_accounting: NativeTacticRestoreAccounting,
     pub timing: NativeTacticRouteTiming,
     pub seeds: Vec<NativeTacticSeedResult>,
 }
@@ -167,12 +169,112 @@ pub struct NativeTacticRouteTiming {
     pub episodes_per_second_millionths: u64,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticRestoreAccounting {
+    /// Validated native suffix requests, including reactive tactic steps.
+    pub native_requests: u64,
+    pub authenticated_root_restore_requests: u64,
+    pub direct_process_local_restore_requests: u64,
+    /// Root replays performed solely to retain a logical non-root frontier.
+    pub prefix_materializations: u64,
+    pub replayed_prefix_ticks: u64,
+    /// Native restore timing samples. A request may report more than one
+    /// internal restore, so this is intentionally distinct from request count.
+    pub restore_samples: u64,
+    pub restore_micros: u64,
+    pub mean_restore_micros: u64,
+    pub direct_restore_request_rate_per_million: u64,
+    /// Deltas from the persistent native cache's own counters. A direct
+    /// request may perform multiple internal lookups.
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub cache_hit_rate_per_million: u64,
+    pub checkpoint_capture_attempts: u64,
+    pub checkpoint_capture_successes: u64,
+    pub checkpoint_capture_micros: u64,
+    pub peak_resident_entries: u64,
+    pub peak_resident_bytes: u64,
+    pub peak_resident_checkpoint_bytes: u64,
+    pub peak_resident_host_snapshot_bytes: u64,
+    /// Logical proposal outcomes admitted to batch evaluation. A transition is
+    /// useful when it reaches terminal, has positive shaped reward, or reduces
+    /// goal distance from its shared source.
+    pub proposal_transitions: u64,
+    pub useful_transitions: u64,
+    pub useful_transitions_per_restore_millionths: u64,
+}
+
+impl NativeTacticRestoreAccounting {
+    fn merge(&mut self, other: &Self) {
+        self.native_requests = self.native_requests.saturating_add(other.native_requests);
+        self.authenticated_root_restore_requests = self
+            .authenticated_root_restore_requests
+            .saturating_add(other.authenticated_root_restore_requests);
+        self.direct_process_local_restore_requests = self
+            .direct_process_local_restore_requests
+            .saturating_add(other.direct_process_local_restore_requests);
+        self.prefix_materializations = self
+            .prefix_materializations
+            .saturating_add(other.prefix_materializations);
+        self.replayed_prefix_ticks = self
+            .replayed_prefix_ticks
+            .saturating_add(other.replayed_prefix_ticks);
+        self.restore_samples = self.restore_samples.saturating_add(other.restore_samples);
+        self.restore_micros = self.restore_micros.saturating_add(other.restore_micros);
+        self.cache_hits = self.cache_hits.saturating_add(other.cache_hits);
+        self.cache_misses = self.cache_misses.saturating_add(other.cache_misses);
+        self.checkpoint_capture_attempts = self
+            .checkpoint_capture_attempts
+            .saturating_add(other.checkpoint_capture_attempts);
+        self.checkpoint_capture_successes = self
+            .checkpoint_capture_successes
+            .saturating_add(other.checkpoint_capture_successes);
+        self.checkpoint_capture_micros = self
+            .checkpoint_capture_micros
+            .saturating_add(other.checkpoint_capture_micros);
+        self.peak_resident_entries = self.peak_resident_entries.max(other.peak_resident_entries);
+        self.peak_resident_bytes = self.peak_resident_bytes.max(other.peak_resident_bytes);
+        self.peak_resident_checkpoint_bytes = self
+            .peak_resident_checkpoint_bytes
+            .max(other.peak_resident_checkpoint_bytes);
+        self.peak_resident_host_snapshot_bytes = self
+            .peak_resident_host_snapshot_bytes
+            .max(other.peak_resident_host_snapshot_bytes);
+        self.proposal_transitions = self
+            .proposal_transitions
+            .saturating_add(other.proposal_transitions);
+        self.useful_transitions = self
+            .useful_transitions
+            .saturating_add(other.useful_transitions);
+        self.refresh_rates();
+    }
+
+    fn refresh_rates(&mut self) {
+        self.mean_restore_micros = self
+            .restore_micros
+            .checked_div(self.restore_samples)
+            .unwrap_or(0);
+        self.direct_restore_request_rate_per_million = ratio_per_million(
+            self.direct_process_local_restore_requests,
+            self.native_requests,
+        );
+        self.cache_hit_rate_per_million = ratio_per_million(
+            self.cache_hits,
+            self.cache_hits.saturating_add(self.cache_misses),
+        );
+        self.useful_transitions_per_restore_millionths =
+            ratio_per_million(self.useful_transitions, self.restore_samples);
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct NativeTacticSeedPerformance {
     schema: String,
     decisions: u64,
     useful_decisions: u64,
+    native_restore_accounting: NativeTacticRestoreAccounting,
     timing: NativeTacticRouteTiming,
 }
 
@@ -188,6 +290,7 @@ pub struct NativeTacticSeedResult {
     pub visited_states: usize,
     #[serde(default)]
     pub useful_decisions: u64,
+    pub native_restore_accounting: NativeTacticRestoreAccounting,
     #[serde(default)]
     pub timing: NativeTacticRouteTiming,
     pub selection_counts: BTreeMap<String, u64>,
@@ -543,6 +646,10 @@ pub fn run_native_tactic_route(
         .collect::<Vec<_>>();
 
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
+    let mut native_restore_accounting = NativeTacticRestoreAccounting::default();
+    for seed in &seed_results {
+        native_restore_accounting.merge(&seed.native_restore_accounting);
+    }
     let mut timing = aggregate_route_timing(&seed_results);
     timing.wall_micros = elapsed_micros(campaign_started.elapsed());
     refresh_route_throughput(&mut timing, &seed_results);
@@ -565,7 +672,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -583,6 +690,7 @@ pub fn run_native_tactic_route(
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
         useful_decisions,
         frontier_availability,
+        native_restore_accounting,
         timing,
         seeds: seed_results,
     };
@@ -678,6 +786,9 @@ fn run_seed_coordinator(
 struct TimedTacticWorker<'a, W> {
     inner: &'a mut W,
     native_elapsed: Duration,
+    pending_accounting: NativeTacticRestoreAccounting,
+    prior_cache_hits: u64,
+    prior_cache_misses: u64,
 }
 
 impl<'a, W> TimedTacticWorker<'a, W> {
@@ -685,7 +796,112 @@ impl<'a, W> TimedTacticWorker<'a, W> {
         Self {
             inner,
             native_elapsed: Duration::ZERO,
+            pending_accounting: NativeTacticRestoreAccounting::default(),
+            prior_cache_hits: 0,
+            prior_cache_misses: 0,
         }
+    }
+
+    fn take_accounting(&mut self) -> NativeTacticRestoreAccounting {
+        let mut accounting = std::mem::take(&mut self.pending_accounting);
+        accounting.refresh_rates();
+        accounting
+    }
+
+    fn record_batch(
+        &mut self,
+        batch: &ValidatedNativeSuffixBatch,
+    ) -> Result<(), NativeTacticWorkerError> {
+        self.pending_accounting.native_requests =
+            self.pending_accounting.native_requests.saturating_add(1);
+        self.pending_accounting.restore_samples = self
+            .pending_accounting
+            .restore_samples
+            .saturating_add(batch.restore_micros.len() as u64);
+        self.pending_accounting.restore_micros =
+            self.pending_accounting.restore_micros.saturating_add(
+                batch
+                    .restore_micros
+                    .iter()
+                    .fold(0_u64, |total, micros| total.saturating_add(*micros)),
+            );
+        let Some(cache) = batch.checkpoint_cache.as_ref() else {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "tactic batch cache accounting",
+            ));
+        };
+        let direct_restore = match cache.source_kind.as_str() {
+            "authenticated_root_restore" => {
+                self.pending_accounting.authenticated_root_restore_requests = self
+                    .pending_accounting
+                    .authenticated_root_restore_requests
+                    .saturating_add(1);
+                false
+            }
+            "direct_process_local_restore" => {
+                self.pending_accounting
+                    .direct_process_local_restore_requests = self
+                    .pending_accounting
+                    .direct_process_local_restore_requests
+                    .saturating_add(1);
+                true
+            }
+            _ => {
+                return Err(NativeTacticWorkerError::DetachedResult(
+                    "tactic batch restore kind",
+                ));
+            }
+        };
+        let cache_hits = cache.hits.checked_sub(self.prior_cache_hits).ok_or(
+            NativeTacticWorkerError::DetachedResult("tactic cache hit counter regressed"),
+        )?;
+        let cache_misses = cache.misses.checked_sub(self.prior_cache_misses).ok_or(
+            NativeTacticWorkerError::DetachedResult("tactic cache miss counter regressed"),
+        )?;
+        self.prior_cache_hits = cache.hits;
+        self.prior_cache_misses = cache.misses;
+        if cache_misses != 0 || direct_restore != (cache_hits != 0) {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "tactic cache lookup accounting",
+            ));
+        }
+        self.pending_accounting.cache_hits = self
+            .pending_accounting
+            .cache_hits
+            .saturating_add(cache_hits);
+        self.pending_accounting.cache_misses = self
+            .pending_accounting
+            .cache_misses
+            .saturating_add(cache_misses);
+        self.pending_accounting.checkpoint_capture_attempts = self
+            .pending_accounting
+            .checkpoint_capture_attempts
+            .saturating_add(cache.batch_capture_attempts);
+        self.pending_accounting.checkpoint_capture_successes = self
+            .pending_accounting
+            .checkpoint_capture_successes
+            .saturating_add(cache.batch_capture_successes);
+        self.pending_accounting.checkpoint_capture_micros = self
+            .pending_accounting
+            .checkpoint_capture_micros
+            .saturating_add(cache.batch_capture_micros);
+        self.pending_accounting.peak_resident_entries = self
+            .pending_accounting
+            .peak_resident_entries
+            .max(cache.resident_entries);
+        self.pending_accounting.peak_resident_bytes = self
+            .pending_accounting
+            .peak_resident_bytes
+            .max(cache.resident_bytes);
+        self.pending_accounting.peak_resident_checkpoint_bytes = self
+            .pending_accounting
+            .peak_resident_checkpoint_bytes
+            .max(cache.resident_checkpoint_bytes);
+        self.pending_accounting.peak_resident_host_snapshot_bytes = self
+            .pending_accounting
+            .peak_resident_host_snapshot_bytes
+            .max(cache.resident_host_snapshot_bytes);
+        Ok(())
     }
 }
 
@@ -702,7 +918,13 @@ impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTactic
         let started = Instant::now();
         let response = self.inner.run_tactic_batch(request, result);
         self.native_elapsed = self.native_elapsed.saturating_add(started.elapsed());
-        response
+        match response {
+            Ok(batch) => {
+                self.record_batch(&batch)?;
+                Ok(batch)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -726,6 +948,7 @@ struct NativeTacticProposalWork {
     outcome: NativeTacticWorkerOutcome,
     native_elapsed: Duration,
     preparation_elapsed: Duration,
+    restore_accounting: NativeTacticRestoreAccounting,
 }
 
 #[derive(Clone)]
@@ -755,6 +978,9 @@ impl NativeTacticProposalPool {
     ) -> Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError> {
         if self.senders.is_empty() {
             return Err(route_message("native tactic proposal pool is empty"));
+        }
+        if proposals.is_empty() {
+            return Err(route_message("native tactic proposal batch is empty"));
         }
         let replayed_prefix = source_route_tape
             .frames
@@ -833,12 +1059,12 @@ fn run_tactic_proposal_worker(
     catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
     receiver: mpsc::Receiver<NativeTacticProposalJob>,
 ) -> Result<(), NativeTacticRouteRunError> {
+    let mut timed_worker = TimedTacticWorker::new(&mut worker);
     loop {
         let job = receiver.recv();
         let Ok(job) = job else {
             break;
         };
-        let mut timed_worker = TimedTacticWorker::new(&mut worker);
         let batch_started = Instant::now();
         let native_before_materialization = timed_worker.native_elapsed;
         let checkpoint_source = if job.materialize_frontier {
@@ -874,6 +1100,25 @@ fn run_tactic_proposal_worker(
         let materialization_elapsed = batch_started.elapsed();
         let materialization_preparation_elapsed =
             materialization_elapsed.saturating_sub(materialization_native_elapsed);
+        let mut materialization_accounting = timed_worker.take_accounting();
+        if job.materialize_frontier {
+            materialization_accounting.prefix_materializations = materialization_accounting
+                .prefix_materializations
+                .saturating_add(1);
+            let source_frame = usize::try_from(timed_worker.identity().source_frame)
+                .map_err(|_| route_message("native tactic source frame exceeds platform limits"))?;
+            let replayed_prefix_ticks = u64::try_from(
+                job.source_route_tape
+                    .frames
+                    .len()
+                    .saturating_sub(source_frame),
+            )
+            .map_err(|_| route_message("replayed tactic prefix exceeds report limits"))?;
+            materialization_accounting.replayed_prefix_ticks = materialization_accounting
+                .replayed_prefix_ticks
+                .saturating_add(replayed_prefix_ticks);
+            materialization_accounting.refresh_rates();
+        }
 
         let mut work = Vec::with_capacity(job.proposals.len());
         let mut failed = None;
@@ -902,6 +1147,10 @@ fn run_tactic_proposal_worker(
             )
             .map_err(route_error);
             let native_elapsed = timed_worker.native_elapsed.saturating_sub(native_before);
+            let mut restore_accounting = timed_worker.take_accounting();
+            if batch_index == 0 {
+                restore_accounting.merge(&materialization_accounting);
+            }
             match outcome {
                 Ok(outcome) => {
                     let elapsed = execution_started.elapsed();
@@ -920,6 +1169,7 @@ fn run_tactic_proposal_worker(
                                 Duration::ZERO
                             },
                         ),
+                        restore_accounting,
                     });
                 }
                 Err(error) => {
@@ -933,6 +1183,7 @@ fn run_tactic_proposal_worker(
             None => Ok(work),
         });
     }
+    drop(timed_worker);
     worker.shutdown().map_err(route_error)
 }
 
@@ -966,6 +1217,14 @@ fn per_second_millionths(count: u64, wall_micros: u64) -> u64 {
         .saturating_mul(1_000_000)
         .saturating_mul(1_000_000)
         / u128::from(wall_micros);
+    u64::try_from(scaled).unwrap_or(u64::MAX)
+}
+
+fn ratio_per_million(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        return 0;
+    }
+    let scaled = u128::from(numerator).saturating_mul(1_000_000) / u128::from(denominator);
     u64::try_from(scaled).unwrap_or(u64::MAX)
 }
 
@@ -1076,13 +1335,15 @@ fn run_seed(
         load_seed_performance(&seed_root, campaign.decision_index)?
     } else {
         NativeTacticSeedPerformance {
-            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1.into(),
+            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
             decisions: 0,
             useful_decisions: 0,
+            native_restore_accounting: NativeTacticRestoreAccounting::default(),
             timing: NativeTacticRouteTiming::default(),
         }
     };
     let mut timing = performance.timing;
+    let mut native_restore_accounting = performance.native_restore_accounting;
     let prior_wall_micros = timing.wall_micros;
     let invocation_started = Instant::now();
     let mut useful_decisions = if has_performance {
@@ -1122,6 +1383,7 @@ fn run_seed(
                 campaign.decision_index,
                 &timing,
                 useful_decisions,
+                &native_restore_accounting,
             )?;
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
@@ -1273,6 +1535,10 @@ fn run_seed(
         let preparation_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
             total.saturating_add(work.preparation_elapsed)
         });
+        let mut decision_restore_accounting = NativeTacticRestoreAccounting::default();
+        for work in &proposal_work {
+            decision_restore_accounting.merge(&work.restore_accounting);
+        }
         let proposal_worker_slots = proposal_work
             .iter()
             .map(|work| work.worker_slot)
@@ -1422,6 +1688,18 @@ fn run_seed(
                 })
             })
             .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()?;
+        decision_restore_accounting.proposal_transitions = proposal_traces.len() as u64;
+        decision_restore_accounting.useful_transitions = proposal_traces
+            .iter()
+            .filter(|proposal| {
+                proposal.terminal
+                    || proposal.reward > 0.0
+                    || proposal.goal_distance_after
+                        < before_features[encoder.goal_distance_feature()]
+            })
+            .count() as u64;
+        decision_restore_accounting.refresh_rates();
+        native_restore_accounting.merge(&decision_restore_accounting);
         let decision_trace = NativeTacticDecisionTrace {
             decision_index,
             episode,
@@ -1493,6 +1771,7 @@ fn run_seed(
                 campaign.decision_index,
                 &timing,
                 useful_decisions,
+                &native_restore_accounting,
             )?;
             pause_tactic_campaign(&seed_root, &campaign)?;
             return Err(route_cancelled("native tactic route paused"));
@@ -1571,6 +1850,7 @@ fn run_seed(
         campaign.decision_index,
         &timing,
         useful_decisions,
+        &native_restore_accounting,
     )?;
     Ok(NativeTacticSeedResult {
         seed,
@@ -1581,6 +1861,7 @@ fn run_seed(
         replay_rows: campaign.replay.len(),
         visited_states: campaign.visited_state_count(),
         useful_decisions,
+        native_restore_accounting,
         timing,
         selection_counts,
         diagnostics: None,
@@ -1648,11 +1929,13 @@ fn persist_seed_performance(
     decisions: u64,
     timing: &NativeTacticRouteTiming,
     useful_decisions: u64,
+    native_restore_accounting: &NativeTacticRestoreAccounting,
 ) -> Result<(), NativeTacticRouteRunError> {
     let performance = NativeTacticSeedPerformance {
-        schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1.into(),
+        schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
         decisions,
         useful_decisions,
+        native_restore_accounting: native_restore_accounting.clone(),
         timing: timing.clone(),
     };
     let root = seed_performance_root(seed_root);
@@ -1686,9 +1969,10 @@ fn load_seed_performance(
     let root = seed_performance_root(seed_root);
     if !root.exists() {
         return Ok(NativeTacticSeedPerformance {
-            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1.into(),
+            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
             decisions,
             useful_decisions: 0,
+            native_restore_accounting: NativeTacticRestoreAccounting::default(),
             timing: NativeTacticRouteTiming::default(),
         });
     }
@@ -1711,14 +1995,15 @@ fn load_seed_performance(
     paths.sort();
     let Some(path) = paths.last() else {
         return Ok(NativeTacticSeedPerformance {
-            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1.into(),
+            schema: TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2.into(),
             decisions,
             useful_decisions: 0,
+            native_restore_accounting: NativeTacticRestoreAccounting::default(),
             timing: NativeTacticRouteTiming::default(),
         });
     };
     let performance: NativeTacticSeedPerformance = read_bounded_json(path)?;
-    if performance.schema != TACTIC_ROUTE_PERFORMANCE_SCHEMA_V1
+    if performance.schema != TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2
         || performance.decisions != decisions
         || performance.useful_decisions > decisions
     {
@@ -4080,6 +4365,7 @@ mod tests {
             replay_rows: 4,
             visited_states: 3,
             useful_decisions: 2,
+            native_restore_accounting: NativeTacticRestoreAccounting::default(),
             timing: NativeTacticRouteTiming {
                 wall_micros: 2_000_000,
                 tactic_selection_micros: 10,
@@ -4105,6 +4391,62 @@ mod tests {
         assert_eq!(timing.native_ticks_per_second_millionths, 15_000_000);
         assert_eq!(timing.episodes_per_second_millionths, 1_000_000);
         assert_eq!(timing.native_simulation_micros, 900_000);
+    }
+
+    #[test]
+    fn restore_accounting_aggregates_cost_cache_memory_and_transition_yield() {
+        let mut first = NativeTacticRestoreAccounting {
+            native_requests: 3,
+            authenticated_root_restore_requests: 1,
+            direct_process_local_restore_requests: 2,
+            prefix_materializations: 1,
+            replayed_prefix_ticks: 40,
+            restore_samples: 3,
+            restore_micros: 30,
+            cache_hits: 2,
+            checkpoint_capture_attempts: 3,
+            checkpoint_capture_successes: 2,
+            checkpoint_capture_micros: 50,
+            peak_resident_entries: 2,
+            peak_resident_bytes: 600,
+            peak_resident_checkpoint_bytes: 590,
+            peak_resident_host_snapshot_bytes: 10,
+            proposal_transitions: 2,
+            useful_transitions: 1,
+            ..NativeTacticRestoreAccounting::default()
+        };
+        first.refresh_rates();
+        let mut second = NativeTacticRestoreAccounting {
+            native_requests: 1,
+            authenticated_root_restore_requests: 1,
+            restore_samples: 1,
+            restore_micros: 30,
+            checkpoint_capture_attempts: 1,
+            checkpoint_capture_successes: 1,
+            checkpoint_capture_micros: 20,
+            peak_resident_entries: 1,
+            peak_resident_bytes: 300,
+            peak_resident_checkpoint_bytes: 295,
+            peak_resident_host_snapshot_bytes: 5,
+            proposal_transitions: 2,
+            useful_transitions: 2,
+            ..NativeTacticRestoreAccounting::default()
+        };
+        second.refresh_rates();
+
+        first.merge(&second);
+
+        assert_eq!(first.native_requests, 4);
+        assert_eq!(first.restore_samples, 4);
+        assert_eq!(first.restore_micros, 60);
+        assert_eq!(first.mean_restore_micros, 15);
+        assert_eq!(first.direct_restore_request_rate_per_million, 500_000);
+        assert_eq!(first.cache_hit_rate_per_million, 1_000_000);
+        assert_eq!(first.replayed_prefix_ticks, 40);
+        assert_eq!(first.peak_resident_bytes, 600);
+        assert_eq!(first.proposal_transitions, 4);
+        assert_eq!(first.useful_transitions, 3);
+        assert_eq!(first.useful_transitions_per_restore_millionths, 750_000);
     }
 
     #[test]
@@ -4150,14 +4492,22 @@ mod tests {
             native_simulation_micros: 70,
             ..NativeTacticRouteTiming::default()
         };
+        let mut native_restore_accounting = NativeTacticRestoreAccounting {
+            native_requests: 2,
+            restore_samples: 2,
+            restore_micros: 50,
+            ..NativeTacticRestoreAccounting::default()
+        };
+        native_restore_accounting.refresh_rates();
 
-        persist_seed_performance(&directory, 3, &timing, 2).unwrap();
+        persist_seed_performance(&directory, 3, &timing, 2, &native_restore_accounting).unwrap();
         let loaded = load_seed_performance(&directory, 3).unwrap();
         assert_eq!(loaded.decisions, 3);
         assert_eq!(loaded.useful_decisions, 2);
         assert_eq!(loaded.timing, timing);
-        persist_seed_performance(&directory, 3, &timing, 2).unwrap();
-        persist_seed_performance(&directory, 3, &timing, 1).unwrap();
+        assert_eq!(loaded.native_restore_accounting, native_restore_accounting);
+        persist_seed_performance(&directory, 3, &timing, 2, &native_restore_accounting).unwrap();
+        persist_seed_performance(&directory, 3, &timing, 1, &native_restore_accounting).unwrap();
         assert_eq!(
             load_seed_performance(&directory, 3)
                 .unwrap()

@@ -2162,6 +2162,8 @@ mod tests {
             restore_identity: shard.metadata.checkpoint_identity.clone(),
             checkpoint_bytes: 1,
             simulated_ticks: 1,
+            restore_micros: vec![1],
+            checkpoint_cache: None,
             episode_shard_path: fixture_path.to_string_lossy().into_owned(),
             candidates: vec![ValidatedNativeSuffixCandidate {
                 id: episode.id.clone(),

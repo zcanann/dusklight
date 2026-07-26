@@ -5,9 +5,9 @@ use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8,
-    NativeTacticDecisionTrace, NativeTacticRouteRunConfig, has_tactic_decision_journal,
-    materialize_tactic_decision_route, project_tactic_decision_graph, read_tactic_decision_journal,
-    run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9, NativeTacticDecisionTrace, NativeTacticRouteRunConfig,
+    has_tactic_decision_journal, materialize_tactic_decision_route, project_tactic_decision_graph,
+    read_tactic_decision_journal, run_native_tactic_route,
 };
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use dusklight_orchestration::tactic_q_campaign::TACTIC_Q_CHECKPOINT_EXTENSION;
@@ -201,6 +201,7 @@ pub(super) fn tactic_route_learning_projection(
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
