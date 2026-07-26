@@ -9,10 +9,11 @@ use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14,
-    NativeTacticDecisionTrace, NativeTacticRouteRunConfig, has_tactic_decision_journal,
-    materialize_tactic_decision_route, project_tactic_decision_graph, read_tactic_decision_journal,
-    run_native_tactic_route,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15, NativeTacticDecisionTrace, NativeTacticRouteRunConfig,
+    has_tactic_decision_journal, materialize_tactic_decision_route, project_tactic_decision_graph,
+    read_tactic_decision_journal, run_native_tactic_route,
 };
+use dusklight_orchestration::native_tactic_worker::NativeGenericExecutionStrategy;
 use dusklight_orchestration::optimization_request::OptimizationRequest;
 use dusklight_orchestration::tactic_q_campaign::TACTIC_Q_CHECKPOINT_EXTENSION;
 use serde_json::Value;
@@ -211,6 +212,7 @@ pub(super) fn tactic_route_learning_projection(
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
@@ -396,6 +398,7 @@ fn launch_tactic_route_learning(
                 output_root: &output,
                 exploration_seeds: &seeds,
                 proposal_policy: TacticProposalPolicy::Learned,
+                execution_strategy: NativeGenericExecutionStrategy::NativeController,
                 decisions_per_seed: TACTIC_ROUTE_DECISIONS_PER_SEED,
                 branch_every_decisions: TACTIC_ROUTE_BRANCH_EVERY_DECISIONS,
                 refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,

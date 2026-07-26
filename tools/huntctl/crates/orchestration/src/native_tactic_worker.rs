@@ -51,6 +51,13 @@ pub const NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2: &str =
 const TACTIC_CHECKPOINT_CACHE_BYTES: usize = 640 * 1024 * 1024;
 const TACTIC_CHECKPOINT_CACHE_ENTRIES: usize = 2;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NativeGenericExecutionStrategy {
+    NativeController,
+    ProgressiveAudit,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeTacticWorkerPaths {
     pub request: PathBuf,
@@ -307,6 +314,35 @@ pub fn execute_selected_tactic_with_checkpoint_retention<W: PersistentTacticBatc
     paths: &NativeTacticWorkerPaths,
     retain_candidate_checkpoint: bool,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
+    execute_selected_tactic_with_checkpoint_retention_and_strategy(
+        worker,
+        selected,
+        catalog,
+        blueprints,
+        before,
+        route_prefix,
+        checkpoint_source,
+        paths,
+        retain_candidate_checkpoint,
+        NativeGenericExecutionStrategy::NativeController,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn execute_selected_tactic_with_checkpoint_retention_and_strategy<
+    W: PersistentTacticBatchWorker,
+>(
+    worker: &mut W,
+    selected: &SelectedTactic,
+    catalog: &TacticAssetCatalog,
+    blueprints: &[TacticBlueprint],
+    before: &FactSnapshot,
+    route_prefix: &InputTape,
+    checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    paths: &NativeTacticWorkerPaths,
+    retain_candidate_checkpoint: bool,
+    execution_strategy: NativeGenericExecutionStrategy,
+) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     let root_checkpoint_sha256 = tactic_root_checkpoint_sha256(worker.identity())?;
     before
         .validate()
@@ -391,6 +427,7 @@ pub fn execute_selected_tactic_with_checkpoint_retention<W: PersistentTacticBatc
             stepper,
             duration,
             termination,
+            execution_strategy,
         ),
         PreparedNativeExecution::ReactiveController {
             stepper,
@@ -477,8 +514,13 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
     mut stepper: NativeGenericTacticStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
+    execution_strategy: NativeGenericExecutionStrategy,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
-    if let Some(program) = native_generic_controller_program(stepper.plan(), duration)? {
+    if let Some(program) = native_generic_controller_program_for_strategy(
+        stepper.plan(),
+        duration,
+        execution_strategy,
+    )? {
         return execute_native_generic_controller(
             worker,
             root_checkpoint_sha256,
@@ -603,6 +645,19 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
     }
     Err(NativeTacticWorkerError::InvalidDuration)
+}
+
+fn native_generic_controller_program_for_strategy(
+    plan: &dusklight_learning::native_generic_tactic::NativeGenericTacticPlan,
+    duration: TacticDurationBounds,
+    execution_strategy: NativeGenericExecutionStrategy,
+) -> Result<Option<ControllerProgram>, NativeTacticWorkerError> {
+    match execution_strategy {
+        NativeGenericExecutionStrategy::NativeController => {
+            native_generic_controller_program(plan, duration)
+        }
+        NativeGenericExecutionStrategy::ProgressiveAudit => Ok(None),
+    }
 }
 
 fn native_generic_controller_program(
@@ -2233,7 +2288,7 @@ mod tests {
         );
         let delayed_stop_plan = NativeGenericTacticPlan {
             minimum_ticks: 2,
-            ..plan
+            ..plan.clone()
         };
         assert!(
             native_generic_controller_program(
@@ -2246,6 +2301,19 @@ mod tests {
             .unwrap()
             .is_none(),
             "a sequence with a delayed stopping boundary must keep the Rust observation loop"
+        );
+        assert!(
+            native_generic_controller_program_for_strategy(
+                &plan,
+                TacticDurationBounds {
+                    minimum_ticks: 1,
+                    maximum_ticks: 40,
+                },
+                NativeGenericExecutionStrategy::ProgressiveAudit,
+            )
+            .unwrap()
+            .is_none(),
+            "the audit strategy must force the progressive observation loop"
         );
     }
 

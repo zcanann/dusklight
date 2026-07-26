@@ -95,6 +95,7 @@ use huntctl::search_evaluator::native_tactic_policy_runner::{
 use huntctl::search_evaluator::native_tactic_route_runner::{
     NativeTacticRouteRunConfig, run_native_tactic_route,
 };
+use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
 use huntctl::search_evaluator::tactic_q_campaign::TacticQCampaign;
 use huntctl::tape::InputTape;
@@ -813,6 +814,19 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .into());
                 }
             };
+            let execution_strategy = match option(learn_args, "--execution-strategy")
+                .as_deref()
+                .unwrap_or("native-controller")
+            {
+                "native-controller" => NativeGenericExecutionStrategy::NativeController,
+                "progressive-audit" => NativeGenericExecutionStrategy::ProgressiveAudit,
+                value => {
+                    return Err(format!(
+                        "unknown tactic execution strategy {value:?}; expected native-controller or progressive-audit"
+                    )
+                    .into());
+                }
+            };
             let report = run_native_tactic_route(&NativeTacticRouteRunConfig {
                 repository_root: &repository_root,
                 optimization: &request,
@@ -820,6 +834,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 output_root: &output,
                 exploration_seeds: &seeds,
                 proposal_policy,
+                execution_strategy,
                 decisions_per_seed: u64_option(learn_args, "--decisions-per-seed", 256)?,
                 branch_every_decisions: u64_option(learn_args, "--branch-every", 8)?,
                 refit_every_decisions: u64_option(learn_args, "--refit-every", 4)?,
@@ -843,6 +858,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "successful_seeds": report.successful_seeds,
                     "exploration_seeds": report.exploration_seeds,
                     "proposal_policy": report.proposal_policy,
+                    "execution_strategy": report.execution_strategy,
                     "total_decisions": report.total_decisions,
                     "total_native_ticks": report.total_native_ticks,
                     "demonstration_transitions": report.demonstration_transitions,

@@ -6,9 +6,9 @@ use crate::native_suffix_worker::{
     NativeSuffixWorkerError, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
 };
 use crate::native_tactic_worker::{
-    NativeTacticCheckpointSource, NativeTacticWorkerError, NativeTacticWorkerOutcome,
-    NativeTacticWorkerPaths, PersistentTacticBatchWorker,
-    execute_selected_tactic_with_checkpoint_retention, materialize_tactic_frontier,
+    NativeGenericExecutionStrategy, NativeTacticCheckpointSource, NativeTacticWorkerError,
+    NativeTacticWorkerOutcome, NativeTacticWorkerPaths, PersistentTacticBatchWorker,
+    execute_selected_tactic_with_checkpoint_retention_and_strategy, materialize_tactic_frontier,
     tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::OptimizationRequest;
@@ -86,6 +86,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12: &str = "dusklight-native-tactic-route-report/v12";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13: &str = "dusklight-native-tactic-route-report/v13";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14: &str = "dusklight-native-tactic-route-report/v14";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15: &str = "dusklight-native-tactic-route-report/v15";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -123,6 +124,7 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub output_root: &'a Path,
     pub exploration_seeds: &'a [u64],
     pub proposal_policy: TacticProposalPolicy,
+    pub execution_strategy: NativeGenericExecutionStrategy,
     pub decisions_per_seed: u64,
     pub branch_every_decisions: u64,
     pub refit_every_decisions: u64,
@@ -146,6 +148,7 @@ pub struct NativeTacticRouteReport {
     pub demonstration_transitions: u64,
     pub exploration_seeds: Vec<u64>,
     pub proposal_policy: TacticProposalPolicy,
+    pub execution_strategy: NativeGenericExecutionStrategy,
     pub workers: usize,
     pub decisions_per_seed: u64,
     pub refit_every_decisions: u64,
@@ -675,6 +678,7 @@ pub fn run_native_tactic_route(
             next_worker: Arc::new(AtomicUsize::new(0)),
             direct_restore_enabled: config.exploration_seeds.len() == 1,
             root_source_frame,
+            execution_strategy: config.execution_strategy,
         };
         let coordinator_handles = config
             .exploration_seeds
@@ -796,7 +800,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -807,6 +811,7 @@ pub fn run_native_tactic_route(
         demonstration_transitions: 0,
         exploration_seeds: config.exploration_seeds.to_vec(),
         proposal_policy: config.proposal_policy,
+        execution_strategy: config.execution_strategy,
         workers: worker_count,
         decisions_per_seed: config.decisions_per_seed,
         refit_every_decisions: config.refit_every_decisions,
@@ -1972,6 +1977,7 @@ struct NativeTacticProposalJob {
     source_route_tape: InputTape,
     checkpoint_source: Option<NativeTacticCheckpointSource>,
     materialize_frontier: bool,
+    execution_strategy: NativeGenericExecutionStrategy,
     paths_root: PathBuf,
     response: mpsc::SyncSender<Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError>>,
 }
@@ -1995,6 +2001,7 @@ struct NativeTacticProposalPool {
     next_worker: Arc<AtomicUsize>,
     direct_restore_enabled: bool,
     root_source_frame: usize,
+    execution_strategy: NativeGenericExecutionStrategy,
 }
 
 #[derive(Clone, Debug)]
@@ -2053,6 +2060,7 @@ impl NativeTacticProposalPool {
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: direct.map(|frontier| frontier.source.clone()),
                     materialize_frontier: direct.is_none(),
+                    execution_strategy: self.execution_strategy,
                     paths_root: paths_root.to_path_buf(),
                     response,
                 })
@@ -2078,6 +2086,7 @@ impl NativeTacticProposalPool {
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: None,
                     materialize_frontier: false,
+                    execution_strategy: self.execution_strategy,
                     paths_root: paths_root.to_path_buf(),
                     response,
                 })
@@ -2175,7 +2184,7 @@ fn run_tactic_proposal_worker(
             }
             let execution_started = Instant::now();
             let native_before = timed_worker.native_elapsed;
-            let outcome = execute_selected_tactic_with_checkpoint_retention(
+            let outcome = execute_selected_tactic_with_checkpoint_retention_and_strategy(
                 &mut timed_worker,
                 &proposal.selected,
                 &job.proposal_catalog,
@@ -2188,6 +2197,7 @@ fn run_tactic_proposal_worker(
                     result: proposal_root.join("result.json"),
                 },
                 false,
+                job.execution_strategy,
             )
             .map_err(route_error);
             let native_elapsed = timed_worker.native_elapsed.saturating_sub(native_before);
@@ -5613,9 +5623,9 @@ mod tests {
         )
         .unwrap();
         let mut child_route = alternate_route.clone();
-        child_route.frames.push(
-            dusklight_automation_contracts::tape::InputFrame::default(),
-        );
+        child_route
+            .frames
+            .push(dusklight_automation_contracts::tape::InputFrame::default());
         let child_before = alternate_after;
         let mut child_after = child_before.clone();
         child_after.simulation_tick += 1;
@@ -5658,10 +5668,7 @@ mod tests {
         for (decision_index, proposals) in proposal_transitions.iter().enumerate() {
             for (proposal_index, proposal) in proposals.iter().enumerate() {
                 parents.insert(
-                    (
-                        proposal.next_checkpoint_sha256,
-                        proposal.after_state_sha256,
-                    ),
+                    (proposal.next_checkpoint_sha256, proposal.after_state_sha256),
                     (decision_index, proposal_index),
                 );
             }
