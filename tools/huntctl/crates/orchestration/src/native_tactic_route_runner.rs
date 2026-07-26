@@ -49,9 +49,9 @@ use dusklight_learning::tactic_exploration::{
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_learning::tactic_macro_promotion::{
     DiscoveredMacroCandidate, MAX_DISCOVERED_MACRO_TICKS, MAX_DISCOVERED_MACROS,
-    MAX_DISCOVERY_OBSERVATIONS, MacroComparisonEvidence, MacroDiscoveryObservation,
-    MacroPromotionStatus, MacroSourceProvenance, TacticMacroPromotionRegistry,
-    discover_replay_macros, replay_macro_candidate,
+    MAX_DISCOVERY_OBSERVATIONS, MIN_PROMOTION_COMPARISONS, MacroComparisonEvidence,
+    MacroDiscoveryObservation, MacroPromotionStatus, MacroSourceProvenance,
+    TacticMacroPromotionRegistry, discover_replay_macros, replay_macro_candidate,
 };
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_proposals::behavior_archive::BehaviorArchive;
@@ -1090,11 +1090,16 @@ fn validate_and_store_tactic_macros(
         .records()
         .map(|record| record.candidate.clone())
         .collect::<Vec<_>>();
-    let validation_frontiers = collect_tactic_macro_validation_frontiers(
-        config.output_root,
-        config.exploration_seeds,
-        root_checkpoint_sha256,
-    )?;
+    let validation_frontiers = if tactic_macro_promotion_has_seed_support(config.exploration_seeds)
+    {
+        collect_tactic_macro_validation_frontiers(
+            config.output_root,
+            config.exploration_seeds,
+            root_checkpoint_sha256,
+        )?
+    } else {
+        Vec::new()
+    };
     let maximum_ticks =
         goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
     let mut accounting = TacticMacroValidationAccounting::default();
@@ -1296,6 +1301,15 @@ fn validate_and_store_tactic_macros(
     mined.report.registry_path = path_text(&validated_path);
     mined.report.registry_sha256 = registry_sha256;
     Ok(mined.report)
+}
+
+fn tactic_macro_promotion_has_seed_support(exploration_seeds: &[u64]) -> bool {
+    exploration_seeds
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>()
+        .len()
+        >= MIN_PROMOTION_COMPARISONS
 }
 
 fn reuse_promoted_tactic_macro(
@@ -5689,6 +5703,16 @@ mod tests {
         assert!(!tactic_model_refit_due(3, 4));
         assert!(tactic_model_refit_due(4, 4));
         assert!(tactic_model_refit_due(8, 4));
+    }
+
+    #[test]
+    fn tactic_macro_validation_waits_for_independent_seed_support() {
+        assert!(!tactic_macro_promotion_has_seed_support(&[]));
+        assert!(!tactic_macro_promotion_has_seed_support(&[104_729]));
+        assert!(!tactic_macro_promotion_has_seed_support(&[
+            104_729, 104_729
+        ]));
+        assert!(tactic_macro_promotion_has_seed_support(&[104_729, 130_363]));
     }
 
     #[test]
