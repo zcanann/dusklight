@@ -793,7 +793,7 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .boundaryIndex = 10,
         .simulationTick = 10,
         .tapeFrame = 440,
-        .remainingTicks = 1,
+        .remainingTicks = 4,
         .stateIdentity = "11111111111111111111111111111111",
         .gameplayTrace = &fixture.gameplayTrace,
         .collisionPlanes = fixture.collisionPlanes,
@@ -810,7 +810,9 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .boundaryIndex = 11,
         .simulationTick = 10,
         .tapeFrame = 440,
-        .remainingTicks = 0,
+        // An observation-driven option may terminate unsuccessfully before
+        // consuming its enclosing batch horizon.
+        .remainingTicks = 3,
         .stateIdentity = "22222222222222222222222222222222",
         .previousInput = pad,
         .gameplayTrace = &fixture.gameplayTrace,

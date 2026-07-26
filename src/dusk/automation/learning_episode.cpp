@@ -1224,7 +1224,7 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     const bool terminalOutcomeIsValid =
         (context.terminalReason != LearningTerminalReason::GoalReached || context.goal.reached) &&
         (context.terminalReason != LearningTerminalReason::TickBudgetExhausted ||
-            (!context.goal.reached && context.remainingTicks == 0));
+            !context.goal.reached);
     const GameplayTracePhase expectedTracePhase =
         context.phase == LearningObservationPhase::PreInput ? GameplayTracePhase::PreInput :
                                                               GameplayTracePhase::PostSimulation;
@@ -1239,8 +1239,16 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
         error = "learning observation has an invalid boundary phase";
         return false;
     }
-    if (!validTerminalReason || !terminalPhaseIsValid || !terminalOutcomeIsValid) {
-        error = "learning observation has inconsistent terminal context";
+    if (!validTerminalReason) {
+        error = "learning observation has an invalid terminal reason";
+        return false;
+    }
+    if (!terminalPhaseIsValid) {
+        error = "learning observation terminal reason appears before post-simulation";
+        return false;
+    }
+    if (!terminalOutcomeIsValid) {
+        error = "learning observation terminal reason disagrees with the goal outcome";
         return false;
     }
     if (!traceBoundaryIsValid) {

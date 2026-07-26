@@ -35,6 +35,9 @@ enum class LearningObservationPhase : std::uint8_t {
 enum class LearningTerminalReason : std::uint8_t {
     None = 0,
     GoalReached = 1,
+    // Historical wire name retained for schema compatibility. This denotes
+    // any final unsuccessful option step, including an observation-driven
+    // controller ending before the enclosing maximum-tick horizon.
     TickBudgetExhausted = 2,
 };
 
