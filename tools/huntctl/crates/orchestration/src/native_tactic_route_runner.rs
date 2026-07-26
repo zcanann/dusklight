@@ -27,7 +27,9 @@ use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
-use dusklight_learning::default_tactic_catalog::MAX_GOAL_SEEK_TARGETS;
+use dusklight_learning::default_tactic_catalog::{
+    MAX_GOAL_SEEK_TARGETS, goal_route_roll_phase_variants,
+};
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
@@ -1812,6 +1814,7 @@ fn parameterized_catalog_for_state(
     encoder: &GoalConditionedTacticFeatureEncoder,
     maximum_ticks: u32,
     feedback: Option<ParameterizedTacticFeedback>,
+    terminal_incumbent: Option<&dusklight_learning::option_values::OptionActionDescriptor>,
     goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
 ) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
@@ -1828,6 +1831,11 @@ fn parameterized_catalog_for_state(
     .map_err(route_error)?;
     let mut entries = proposals.catalog.entries().to_vec();
     entries.extend_from_slice(goal_route_catalog.entries());
+    if let Some(incumbent) = terminal_incumbent {
+        entries.extend(
+            goal_route_roll_phase_variants(goal_route_catalog, incumbent).map_err(route_error)?,
+        );
+    }
     proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
     proposals.family_schema_sha256 = action_schema_sha256;
     Ok(proposals)
@@ -2433,6 +2441,7 @@ fn run_seed(
             encoder,
             maximum_tactic_ticks,
             None,
+            None,
             goal_route_catalog,
             action_schema_sha256,
         )?;
@@ -2559,6 +2568,7 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
+                campaign.current_terminal_incumbent().as_ref(),
                 goal_route_catalog,
                 action_schema_sha256,
             )?;
@@ -2600,6 +2610,7 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 proposal_feedback,
+                campaign.current_terminal_incumbent().as_ref(),
                 goal_route_catalog,
                 action_schema_sha256,
             )?;
@@ -2691,6 +2702,7 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
+                campaign.current_terminal_incumbent().as_ref(),
                 goal_route_catalog,
                 action_schema_sha256,
             )?;
@@ -2805,6 +2817,7 @@ fn run_seed(
             encoder,
             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
             None,
+            campaign.current_terminal_incumbent().as_ref(),
             goal_route_catalog,
             action_schema_sha256,
         )?;

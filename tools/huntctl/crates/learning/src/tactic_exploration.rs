@@ -347,9 +347,10 @@ pub fn choose_tactic_batch_for_policy(
 /// state cell has produced a terminal action.
 ///
 /// The incumbent remains in the batch through the ordinary greedy lane. This
-/// function inserts the closest untried, applicable descriptor in the same
-/// structural family immediately after that control, displacing only the last
-/// acquisition proposal when the batch is full.
+/// function inserts an untried, applicable descriptor in the same structural
+/// family immediately after that control, displacing only the last acquisition
+/// proposal when the batch is full. Separate typed parameter axes receive
+/// separate acquisition lanes when both are available.
 pub fn ensure_terminal_cost_refinement(
     ranking: &LiveTacticRanking,
     state_untried: &[OptionActionDescriptor],
@@ -399,20 +400,50 @@ pub fn ensure_terminal_cost_refinement(
     // to the nearest few values traps refinement in whichever cadence/phase
     // basin happened to produce the first terminal route.
     let lane = (acquisition_partition % maximum_proposals as u64) as usize;
-    let refinement_index = if lane == 0 {
-        candidates
-            .iter()
-            .enumerate()
-            .filter_map(|(index, candidate)| {
-                local_parameter_value(ranking, candidate).map(|value| (index, value))
-            })
-            .max_by(|left, right| {
-                left.1
-                    .total_cmp(&right.1)
-                    .then_with(|| right.0.cmp(&left.0))
-            })
-            .map(|(index, _)| index)
-            .unwrap_or(0)
+    let incumbent_period = incumbent.parameters.get("button_pulse_period_ticks");
+    let mut same_period = Vec::new();
+    let mut other_period = Vec::new();
+    let mut represented_periods = BTreeSet::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        let candidate_period = candidate.parameters.get("button_pulse_period_ticks");
+        if incumbent_period.is_some() && candidate_period == incumbent_period {
+            same_period.push(index);
+        } else if let Some(OptionParameter::Unsigned(period)) = candidate_period {
+            // Cadence acquisition owns one representative per period. The
+            // distance ordering makes this the phase closest to the current
+            // incumbent; phase refinement has its own lane.
+            if represented_periods.insert(*period) {
+                other_period.push(index);
+            }
+        } else {
+            other_period.push(index);
+        }
+    }
+    let split_parameter_axes = !same_period.is_empty() && !other_period.is_empty();
+    let refinement_index = if split_parameter_axes && lane == 0 {
+        best_local_parameter_candidate(ranking, &candidates, &other_period)
+            .unwrap_or(other_period[0])
+    } else if split_parameter_axes && lane == 1 {
+        best_local_parameter_candidate(ranking, &candidates, &same_period).unwrap_or(same_period[0])
+    } else if split_parameter_axes {
+        let coverage_lane = lane.saturating_sub(2);
+        let coverage_lanes = maximum_proposals.saturating_sub(2);
+        // The learned lane already owns the local neighborhood. Spend the
+        // remaining cadence lanes at interior/far quantiles, so introducing a
+        // phase axis cannot silently remove the middle of a finite interval.
+        let index = coverage_lane
+            .saturating_add(1)
+            .saturating_mul(other_period.len() - 1)
+            .div_ceil(coverage_lanes)
+            .min(other_period.len() - 1);
+        other_period[index]
+    } else if lane == 0 {
+        best_local_parameter_candidate(
+            ranking,
+            &candidates,
+            &(0..candidates.len()).collect::<Vec<_>>(),
+        )
+        .unwrap_or(0)
     } else if candidates.len() == 1 {
         0
     } else {
@@ -442,6 +473,25 @@ pub fn ensure_terminal_cost_refinement(
     proposals.insert(insertion_index.min(proposals.len()), proposal);
     proposals.truncate(maximum_proposals);
     Ok(())
+}
+
+fn best_local_parameter_candidate(
+    ranking: &LiveTacticRanking,
+    candidates: &[&OptionActionDescriptor],
+    indices: &[usize],
+) -> Option<usize> {
+    indices
+        .iter()
+        .copied()
+        .filter_map(|index| {
+            local_parameter_value(ranking, candidates[index]).map(|value| (index, value))
+        })
+        .max_by(|left, right| {
+            left.1
+                .total_cmp(&right.1)
+                .then_with(|| right.0.cmp(&left.0))
+        })
+        .map(|(index, _)| index)
 }
 
 /// Reserve one acquisition slot for a distinct high-level route hypothesis.
@@ -1630,6 +1680,139 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert_eq!(spread.len(), 4);
         assert!(spread.contains("goal.seek.route.00.roll.period.32.phase.00"));
+
+        let mut phase_01 = incumbent.clone();
+        phase_01.option_id = "goal.seek.route.00.roll.period.22.phase.01".into();
+        phase_01.parameters.insert(
+            "button_pulse_phase_tick".into(),
+            OptionParameter::Unsigned(1),
+        );
+        let mut phase_21 = incumbent.clone();
+        phase_21.option_id = "goal.seek.route.00.roll.period.22.phase.21".into();
+        phase_21.parameters.insert(
+            "button_pulse_phase_tick".into(),
+            OptionParameter::Unsigned(21),
+        );
+        let axis_candidates = [wide_candidates, vec![phase_01.clone(), phase_21.clone()]].concat();
+        let axis_ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([43; 32]),
+            action_universe_sha256: Digest([44; 32]),
+            choices: std::iter::once(choice(incumbent.clone()))
+                .chain(axis_candidates.iter().cloned().map(choice))
+                .collect(),
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: incumbent.clone(),
+                    mean_q: 98.5,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: axis_candidates.clone(),
+            },
+        };
+        let axis_selections = (0..4)
+            .map(|partition| {
+                let mut proposals = vec![SelectedTactic {
+                    schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                    learner_snapshot_sha256: axis_ranking.learner_snapshot_sha256,
+                    decision_index: 0,
+                    descriptor: incumbent.clone(),
+                    reason: TacticSelectionReason::Greedy,
+                    exploration_draw: 0,
+                }];
+                ensure_terminal_cost_refinement(
+                    &axis_ranking,
+                    &axis_candidates,
+                    Some(&incumbent),
+                    partition,
+                    4,
+                    &mut proposals,
+                )
+                .unwrap();
+                proposals[1].descriptor.clone()
+            })
+            .collect::<Vec<_>>();
+        assert_ne!(
+            axis_selections[0]
+                .parameters
+                .get("button_pulse_period_ticks"),
+            Some(&OptionParameter::Unsigned(22))
+        );
+        assert_eq!(
+            axis_selections[1]
+                .parameters
+                .get("button_pulse_period_ticks"),
+            Some(&OptionParameter::Unsigned(22))
+        );
+        assert!(
+            axis_selections[1] == phase_01 || axis_selections[1] == phase_21,
+            "phase lane did not preserve the incumbent period"
+        );
+        assert_eq!(
+            axis_selections[3].option_id,
+            "goal.seek.route.00.roll.period.32.phase.00"
+        );
+
+        let lower_incumbent = rolling_route(12);
+        let mut lower_phase = lower_incumbent.clone();
+        lower_phase.option_id = "goal.seek.route.00.roll.period.12.phase.01".into();
+        lower_phase.parameters.insert(
+            "button_pulse_phase_tick".into(),
+            OptionParameter::Unsigned(1),
+        );
+        let lower_candidates = (13..=32)
+            .flat_map(|period| {
+                let phase_00 = rolling_route(period);
+                let mut half_phase = phase_00.clone();
+                half_phase.option_id = format!(
+                    "goal.seek.route.00.roll.period.{period:02}.phase.{:02}",
+                    period / 2
+                );
+                half_phase.parameters.insert(
+                    "button_pulse_phase_tick".into(),
+                    OptionParameter::Unsigned(period / 2),
+                );
+                [phase_00, half_phase]
+            })
+            .chain(std::iter::once(lower_phase))
+            .collect::<Vec<_>>();
+        let lower_ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([45; 32]),
+            action_universe_sha256: Digest([46; 32]),
+            choices: std::iter::once(choice(lower_incumbent.clone()))
+                .chain(lower_candidates.iter().cloned().map(choice))
+                .collect(),
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: lower_incumbent.clone(),
+                    mean_q: 98.5,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: lower_candidates.clone(),
+            },
+        };
+        let mut midpoint_proposals = vec![SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: lower_ranking.learner_snapshot_sha256,
+            decision_index: 0,
+            descriptor: lower_incumbent.clone(),
+            reason: TacticSelectionReason::Greedy,
+            exploration_draw: 0,
+        }];
+        ensure_terminal_cost_refinement(
+            &lower_ranking,
+            &lower_candidates,
+            Some(&lower_incumbent),
+            2,
+            4,
+            &mut midpoint_proposals,
+        )
+        .unwrap();
+        assert_eq!(
+            midpoint_proposals[1].descriptor.option_id,
+            "goal.seek.route.00.roll.period.23.phase.00"
+        );
     }
 
     #[test]

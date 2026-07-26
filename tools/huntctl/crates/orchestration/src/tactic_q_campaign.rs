@@ -1450,15 +1450,7 @@ impl TacticQCampaign {
             .into_iter()
             .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
             .collect::<Vec<_>>();
-        let terminal_incumbent = self
-            .training_replay
-            .iter()
-            .filter(|transition| {
-                transition.value_sample.terminal
-                    && tactic_state_descriptor(&transition.before, false) == current_cell
-            })
-            .min_by_key(|transition| transition.value_sample.duration_ticks)
-            .map(|transition| transition.value_sample.action.clone());
+        let terminal_incumbent = self.current_terminal_incumbent();
         let mut proposals = choose_tactic_batch_for_policy(
             &ranking,
             self.decision_index,
@@ -1488,6 +1480,21 @@ impl TacticQCampaign {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
         Ok(TacticQProposalBatch { ranking, proposals })
+    }
+
+    /// Best authenticated terminal action observed from the current coarse
+    /// learner cell. Callers may use its typed parameters to instantiate a
+    /// bounded local action neighborhood before the next decision.
+    pub fn current_terminal_incumbent(&self) -> Option<OptionActionDescriptor> {
+        let current_cell = tactic_state_descriptor(&self.current.snapshot, false);
+        self.training_replay
+            .iter()
+            .filter(|transition| {
+                transition.value_sample.terminal
+                    && tactic_state_descriptor(&transition.before, false) == current_cell
+            })
+            .min_by_key(|transition| transition.value_sample.duration_ticks)
+            .map(|transition| transition.value_sample.action.clone())
     }
 
     /// Score and capture a native proposal without mutating the retained

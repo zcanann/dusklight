@@ -1,6 +1,7 @@
 //! Route-agnostic bounded tactic catalog used to bootstrap route learning.
 
 use crate::native_generic_tactic::{GenericTactic, NativeGenericTacticPlan};
+use crate::option_values::OptionActionDescriptor;
 use crate::tactic_asset::{
     TacticAssetCatalog, TacticAssetError, TacticAssetSource, TacticCatalogEntry,
 };
@@ -9,6 +10,7 @@ use dusklight_control::controller_program::{
     StickBlend,
 };
 use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
+use dusklight_control::option_execution::OptionParameter;
 use dusklight_control::roll_option::RollOptionPlan;
 use std::f32::consts::TAU;
 
@@ -309,6 +311,107 @@ pub fn goal_conditioned_route_tactic_catalog(
     TacticAssetCatalog::new(entries)
 }
 
+/// Materialize the complete phase domain only for the best terminal
+/// controller-period family observed at the current learner state.
+///
+/// The base goal catalog keeps two bootstrap phases per period and remains
+/// below the global finite-choice bound. Once native evidence identifies a
+/// useful structural family, this bounded state-local extension exposes every
+/// remaining integer phase for that one period without eagerly constructing
+/// the route × period × phase Cartesian product.
+pub fn goal_route_roll_phase_variants(
+    catalog: &TacticAssetCatalog,
+    incumbent: &OptionActionDescriptor,
+) -> Result<Vec<TacticCatalogEntry>, TacticAssetError> {
+    let Some(route_prefix) = incumbent
+        .option_id
+        .split_once(".roll.period.")
+        .map(|(prefix, _)| prefix)
+        .filter(|prefix| prefix.starts_with("goal.seek.route."))
+    else {
+        return Ok(Vec::new());
+    };
+    let Some(OptionParameter::Unsigned(period)) =
+        incumbent.parameters.get("button_pulse_period_ticks")
+    else {
+        return Ok(Vec::new());
+    };
+    let period = u32::try_from(*period).map_err(|_| {
+        TacticAssetError::InvalidAsset("route roll period exceeds controller bounds".into())
+    })?;
+    if !(MIN_GOAL_ROUTE_ROLL_PERIOD..=MAX_GOAL_ROUTE_ROLL_PERIOD).contains(&period) {
+        return Ok(Vec::new());
+    }
+    let Some(base_identity) = incumbent.parameters.get("controller_base_sha256") else {
+        return Ok(Vec::new());
+    };
+    let Some(OptionParameter::Unsigned(mask)) = incumbent.parameters.get("button_pulse_mask")
+    else {
+        return Ok(Vec::new());
+    };
+    let mask = u16::try_from(*mask).map_err(|_| {
+        TacticAssetError::InvalidAsset("route roll button mask exceeds controller bounds".into())
+    })?;
+    let source = catalog
+        .entries()
+        .iter()
+        .find(|entry| {
+            entry.option_id().starts_with(route_prefix)
+                && entry
+                    .description()
+                    .option
+                    .parameters
+                    .get("controller_base_sha256")
+                    == Some(base_identity)
+                && entry
+                    .description()
+                    .option
+                    .parameters
+                    .get("button_pulse_period_ticks")
+                    == Some(&OptionParameter::Unsigned(u64::from(period)))
+        })
+        .ok_or_else(|| {
+            TacticAssetError::InvalidAsset(
+                "terminal route controller family is absent from its live catalog".into(),
+            )
+        })?;
+    let TacticAssetSource::ReactiveController(source_program) = source.source() else {
+        return Err(TacticAssetError::InvalidAsset(
+            "terminal route controller family is not reactive".into(),
+        ));
+    };
+    let mut base_layers = source_program.layers.clone();
+    base_layers.retain(|layer| !matches!(layer.operation, Operation::Buttons { .. }));
+    let mut variants = Vec::new();
+    for phase in 0..period {
+        let option_id = format!("{route_prefix}.roll.period.{period:02}.phase.{phase:02}");
+        if catalog.entry(&option_id).is_some() {
+            continue;
+        }
+        let mut layers = base_layers.clone();
+        let mut pulse = phase;
+        while pulse < source_program.duration_frames && layers.len() < MAX_LAYERS {
+            layers.push(Layer {
+                start_frame: pulse,
+                duration_frames: 1,
+                operation: Operation::Buttons { mask },
+            });
+            pulse = pulse.saturating_add(period);
+        }
+        if pulse < source_program.duration_frames {
+            continue;
+        }
+        variants.push(TacticCatalogEntry::new(
+            option_id,
+            TacticAssetSource::ReactiveController(ControllerProgram {
+                duration_frames: source_program.duration_frames,
+                layers,
+            }),
+        )?);
+    }
+    Ok(variants)
+}
+
 fn coordinate_sequence_layers(
     coordinates: &[[f32; 3]],
     duration_frames: u32,
@@ -511,6 +614,37 @@ mod tests {
                 .parameters
                 .get("controller_base_sha256")
         );
+        let phase_variants =
+            goal_route_roll_phase_variants(&catalog, &rolling.description().option).unwrap();
+        assert_eq!(phase_variants.len(), 18);
+        assert!(
+            phase_variants
+                .iter()
+                .any(|entry| entry.option_id() == "goal.seek.route.00.roll.period.20.phase.01")
+        );
+        assert!(
+            phase_variants
+                .iter()
+                .any(|entry| entry.option_id() == "goal.seek.route.00.roll.period.20.phase.19")
+        );
+        assert!(phase_variants.iter().all(|entry| {
+            entry
+                .description()
+                .option
+                .parameters
+                .get("controller_base_sha256")
+                == rolling
+                    .description()
+                    .option
+                    .parameters
+                    .get("controller_base_sha256")
+                && entry
+                    .description()
+                    .option
+                    .parameters
+                    .get("button_pulse_period_ticks")
+                    == Some(&OptionParameter::Unsigned(20))
+        }));
         assert!(matches!(
             program.layers[0].operation,
             Operation::SeekCoordinateSequence { .. }
