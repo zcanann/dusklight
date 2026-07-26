@@ -225,6 +225,7 @@ bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
                 definition.checkpointCache->capacityEntries);
     }
     mEnabled = true;
+    mAuthenticatedRootBoundaryFingerprint = definition.sourceBoundaryFingerprint;
     mDefinition = std::move(definition);
     mFrozenPolicyModel = std::move(frozenPolicy);
     mResultPath = std::move(resultPath);
@@ -296,22 +297,23 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
             error = "root suffix source cannot claim replayed route ticks";
             return false;
         } else if (definition.sourceBoundaryFingerprint !=
-                   mDefinition.sourceBoundaryFingerprint)
+                   mAuthenticatedRootBoundaryFingerprint)
         {
             error = "root suffix source changed its authenticated boundary fingerprint";
             return false;
         } else {
-            mActualSourceBoundaryFingerprint = mDefinition.sourceBoundaryFingerprint;
+            mActualSourceBoundaryFingerprint = mAuthenticatedRootBoundaryFingerprint;
         }
     } else if (mCheckpointCache != nullptr) {
         mCheckpointCache->unpin();
-        if (definition.sourceBoundaryFingerprint != mDefinition.sourceBoundaryFingerprint) {
+        if (definition.sourceBoundaryFingerprint !=
+            mAuthenticatedRootBoundaryFingerprint) {
             error = "uncached suffix source changed its authenticated boundary fingerprint";
             return false;
         }
-        mActualSourceBoundaryFingerprint = mDefinition.sourceBoundaryFingerprint;
+        mActualSourceBoundaryFingerprint = mAuthenticatedRootBoundaryFingerprint;
     } else if (definition.sourceBoundaryFingerprint !=
-               mDefinition.sourceBoundaryFingerprint)
+               mAuthenticatedRootBoundaryFingerprint)
     {
         error = "next suffix batch changed its authenticated source boundary fingerprint";
         return false;
@@ -501,7 +503,7 @@ bool SuffixBatchRunner::beginEpisodeShard(std::string& error) {
         objectiveIdentityMaterial += authored->definitionDigest;
     }
     LearningEpisodeShardMetadata metadata{
-        .sourceFrame = mDefinition.sourceFrame,
+        .sourceFrame = mDefinition.sourceFrame + activeSourceRouteTicks(),
         .maximumTicks = mDefinition.maximumTicks,
         .sourceBoundaryFingerprint = mDefinition.sourceBoundaryFingerprint,
         .checkpointIdentity = activeSourceIdentity(),

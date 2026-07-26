@@ -6,8 +6,9 @@ use crate::native_suffix_worker::{
     NativeSuffixWorkerError, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
 };
 use crate::native_tactic_worker::{
-    NativeTacticWorkerError, NativeTacticWorkerOutcome, NativeTacticWorkerPaths,
-    PersistentTacticBatchWorker, execute_selected_tactic, tactic_root_checkpoint_sha256,
+    NativeTacticCheckpointSource, NativeTacticWorkerError, NativeTacticWorkerOutcome,
+    NativeTacticWorkerPaths, PersistentTacticBatchWorker, execute_selected_tactic,
+    tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_q_campaign::{
@@ -54,8 +55,8 @@ use std::fmt;
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4: &str = "dusklight-native-tactic-route-report/v4";
@@ -451,17 +452,24 @@ pub fn run_native_tactic_route(
     let reward_spec = route_tactic_reward_spec(&encoder, &initial_facts)?;
 
     let mut indexed_results = std::thread::scope(|scope| {
-        let (sender, receiver) = mpsc::channel();
-        let receiver = Arc::new(Mutex::new(receiver));
+        let mut senders = Vec::with_capacity(workers.len());
         let worker_handles = workers
             .into_iter()
-            .map(|worker| {
-                let receiver = Arc::clone(&receiver);
+            .enumerate()
+            .map(|(worker_slot, worker)| {
+                let (sender, receiver) = mpsc::channel();
+                senders.push(sender);
                 let catalog = &catalog;
-                scope.spawn(move || run_tactic_proposal_worker(worker, catalog, &receiver))
+                scope.spawn(move || {
+                    run_tactic_proposal_worker(worker_slot, worker, catalog, receiver)
+                })
             })
             .collect::<Vec<_>>();
-        let pool = NativeTacticProposalPool { sender };
+        let pool = NativeTacticProposalPool {
+            senders: Arc::new(senders),
+            next_worker: Arc::new(AtomicUsize::new(0)),
+            direct_restore_enabled: config.exploration_seeds.len() == 1,
+        };
         let coordinator_handles = config
             .exploration_seeds
             .iter()
@@ -699,11 +707,13 @@ struct NativeTacticProposalJob {
     selected: SelectedTactic,
     source_snapshot: FactSnapshot,
     source_route_tape: InputTape,
+    checkpoint_source: Option<NativeTacticCheckpointSource>,
     paths: NativeTacticWorkerPaths,
     response: mpsc::SyncSender<Result<NativeTacticProposalWork, NativeTacticRouteRunError>>,
 }
 
 struct NativeTacticProposalWork {
+    worker_slot: usize,
     outcome: NativeTacticWorkerOutcome,
     native_elapsed: Duration,
     preparation_elapsed: Duration,
@@ -711,7 +721,17 @@ struct NativeTacticProposalWork {
 
 #[derive(Clone)]
 struct NativeTacticProposalPool {
-    sender: mpsc::Sender<NativeTacticProposalJob>,
+    senders: Arc<Vec<mpsc::Sender<NativeTacticProposalJob>>>,
+    next_worker: Arc<AtomicUsize>,
+    direct_restore_enabled: bool,
+}
+
+#[derive(Clone, Debug)]
+struct CachedTacticFrontier {
+    worker_slot: usize,
+    source: NativeTacticCheckpointSource,
+    state_sha256: Digest,
+    route_frames: usize,
 }
 
 impl NativeTacticProposalPool {
@@ -720,18 +740,33 @@ impl NativeTacticProposalPool {
         proposals: &[SelectedTactic],
         source_snapshot: &FactSnapshot,
         source_route_tape: &InputTape,
+        cached_frontier: Option<&CachedTacticFrontier>,
         paths_root: &Path,
     ) -> Result<Vec<NativeTacticProposalWork>, NativeTacticRouteRunError> {
         let mut responses = Vec::with_capacity(proposals.len());
+        if self.senders.is_empty() {
+            return Err(route_message("native tactic proposal pool is empty"));
+        }
         for (proposal_index, selected) in proposals.iter().enumerate() {
             let proposal_root = paths_root.join(format!("proposal-{proposal_index:03}"));
             fs::create_dir_all(&proposal_root).map_err(route_error)?;
             let (response, receiver) = mpsc::sync_channel(1);
-            self.sender
+            let direct = (proposal_index == 0)
+                .then_some(cached_frontier)
+                .flatten()
+                .filter(|frontier| {
+                    self.direct_restore_enabled && frontier.worker_slot < self.senders.len()
+                });
+            let worker_slot = direct.map_or_else(
+                || self.next_worker.fetch_add(1, Ordering::Relaxed) % self.senders.len(),
+                |frontier| frontier.worker_slot,
+            );
+            self.senders[worker_slot]
                 .send(NativeTacticProposalJob {
                     selected: selected.clone(),
                     source_snapshot: source_snapshot.clone(),
                     source_route_tape: source_route_tape.clone(),
+                    checkpoint_source: direct.map(|frontier| frontier.source.clone()),
                     paths: NativeTacticWorkerPaths {
                         request: proposal_root.join("request.json"),
                         result: proposal_root.join("result.json"),
@@ -753,15 +788,13 @@ impl NativeTacticProposalPool {
 }
 
 fn run_tactic_proposal_worker(
+    worker_slot: usize,
     mut worker: NativeSuffixWorkerSession,
     catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
-    receiver: &Mutex<mpsc::Receiver<NativeTacticProposalJob>>,
+    receiver: mpsc::Receiver<NativeTacticProposalJob>,
 ) -> Result<(), NativeTacticRouteRunError> {
     loop {
-        let job = receiver
-            .lock()
-            .map_err(|_| route_message("native tactic proposal queue is poisoned"))?
-            .recv();
+        let job = receiver.recv();
         let Ok(job) = job else {
             break;
         };
@@ -774,6 +807,7 @@ fn run_tactic_proposal_worker(
             &[],
             &job.source_snapshot,
             &job.source_route_tape,
+            job.checkpoint_source.as_ref(),
             &job.paths,
         )
         .map_err(route_error);
@@ -781,6 +815,7 @@ fn run_tactic_proposal_worker(
         let work = outcome.map(|outcome| {
             let elapsed = execution_started.elapsed();
             NativeTacticProposalWork {
+                worker_slot,
                 outcome,
                 native_elapsed,
                 preparation_elapsed: elapsed.saturating_sub(native_elapsed),
@@ -962,6 +997,8 @@ fn run_seed(
     let content_store =
         TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?;
     let mut rolling_checkpoint = None;
+    // Process-local handles intentionally do not survive campaign resume.
+    let mut cached_frontier: Option<CachedTacticFrontier> = None;
 
     while campaign.decision_index < config.decisions_per_seed
         && native_ticks < config.optimization.budgets.simulated_tick_budget
@@ -1106,10 +1143,18 @@ fn run_seed(
         let execution_started = Instant::now();
         let source_snapshot = campaign.current.snapshot.clone();
         let source_route_tape = campaign.route_tape.clone();
+        let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
+        let usable_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
+            pool.direct_restore_enabled
+                && frontier.state_sha256 == source_snapshot_sha256
+                && frontier.route_frames == source_route_tape.frames.len()
+        });
+        let directly_restored_frontier = usable_cached_frontier.is_some();
         let proposal_work = pool.execute_batch(
             &proposal_batch.proposals,
             &source_snapshot,
             &source_route_tape,
+            usable_cached_frontier,
             &paths_root,
         )?;
         let native_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
@@ -1118,6 +1163,10 @@ fn run_seed(
         let preparation_elapsed = proposal_work.iter().fold(Duration::ZERO, |total, work| {
             total.saturating_add(work.preparation_elapsed)
         });
+        let proposal_worker_slots = proposal_work
+            .iter()
+            .map(|work| work.worker_slot)
+            .collect::<Vec<_>>();
         let evaluated = proposal_work
             .into_iter()
             .map(|work| {
@@ -1158,7 +1207,7 @@ fn run_seed(
         let step = campaign
             .retain_and_refit_rewarded(
                 decision,
-                winning_outcome,
+                winning_outcome.clone(),
                 catalog,
                 &[],
                 registry,
@@ -1178,6 +1227,38 @@ fn run_seed(
         timing.model_update_micros = timing
             .model_update_micros
             .saturating_add(elapsed_micros(model_started.elapsed()));
+        cached_frontier = match (
+            winning_outcome.retained_native_checkpoint.as_ref(),
+            winning_outcome
+                .retained_native_boundary_fingerprint
+                .as_ref(),
+        ) {
+            (Some(checkpoint), Some(boundary_fingerprint))
+                if checkpoint.route_ticks
+                    == winning_outcome
+                        .route_tape
+                        .frames
+                        .len()
+                        .saturating_sub(source_frame as usize) as u64 =>
+            {
+                Some(CachedTacticFrontier {
+                    worker_slot: proposal_worker_slots[winner_index],
+                    source: NativeTacticCheckpointSource {
+                        restore_identity: checkpoint.restore_identity.clone(),
+                        boundary_fingerprint: boundary_fingerprint.clone(),
+                        route_ticks: checkpoint.route_ticks as usize,
+                    },
+                    state_sha256: step.step.transition.after_state_sha256,
+                    route_frames: winning_outcome.route_tape.frames.len(),
+                })
+            }
+            (None, None) => None,
+            _ => {
+                return Err(route_message(
+                    "retained native checkpoint lacks its exact endpoint boundary",
+                ));
+            }
+        };
         let evidence_started = Instant::now();
         let selected = &step.step.decision.selected;
         *selection_counts
@@ -1250,8 +1331,9 @@ fn run_seed(
             terminal: step.step.transition.value_sample.terminal,
             frontier_cells,
             logical_frontier_records: frontier_cells.saturating_add(1),
-            directly_restorable_native_frontiers: 0,
-            replay_only_frontiers: frontier_cells,
+            directly_restorable_native_frontiers: usize::from(directly_restored_frontier),
+            replay_only_frontiers: frontier_cells
+                .saturating_sub(usize::from(directly_restored_frontier)),
             visited_states: campaign.visited_state_count(),
             before: tactic_state_trace(&step.step.transition.before)?,
             after: tactic_state_trace(&step.step.transition.after)?,

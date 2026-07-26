@@ -264,6 +264,7 @@ private:
     std::vector<CandidateResult> mResults;
     std::optional<std::size_t> mWinnerResultIndex;
     std::uint64_t mCaptureMicros = 0;
+    std::string mAuthenticatedRootBoundaryFingerprint;
     std::string mActualSourceBoundaryFingerprint;
     std::string mSourceSemanticDigest;
     std::vector<std::string> mValidationFreshDigests;

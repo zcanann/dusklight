@@ -300,6 +300,7 @@ pub fn run_native_tactic_policy(
                 &[],
                 &state.snapshot,
                 &route_tape,
+                None,
                 &NativeTacticWorkerPaths {
                     request: decision_root.join("request.json"),
                     result: decision_root.join("result.json"),

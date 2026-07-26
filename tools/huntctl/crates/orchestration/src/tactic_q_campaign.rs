@@ -1111,6 +1111,7 @@ impl TacticQCampaign {
             blueprints,
             &self.current.snapshot,
             &self.route_tape,
+            None,
             paths,
         )?;
         self.retain_and_refit(
@@ -1158,6 +1159,7 @@ impl TacticQCampaign {
             blueprints,
             &self.current.snapshot,
             &self.route_tape,
+            None,
             paths,
         )?;
         self.retain_and_refit_rewarded(
@@ -1918,6 +1920,8 @@ mod tests {
             route_tape,
             next_facts: after,
             terminal,
+            retained_native_checkpoint: None,
+            retained_native_boundary_fingerprint: None,
         };
         let reward_spec = TacticRewardSpec {
             schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
@@ -2283,6 +2287,8 @@ mod tests {
             route_tape: terminal_route,
             next_facts: terminal_facts,
             terminal: true,
+            retained_native_checkpoint: None,
+            retained_native_boundary_fingerprint: None,
         };
         let uninterrupted_step = uninterrupted
             .retain_and_refit_rewarded(
