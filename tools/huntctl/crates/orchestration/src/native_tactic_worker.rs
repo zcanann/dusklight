@@ -110,6 +110,11 @@ struct PreparedNativeTactic {
     duration: TacticDurationBounds,
 }
 
+struct LoadedCandidateEpisode {
+    shard_content_sha256: Digest,
+    episode: NativeEpisode,
+}
+
 #[derive(Clone, Debug)]
 enum PreparedNativeExecution {
     Static(PreparedNativeTactic),
@@ -519,6 +524,7 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
         candidate_prefix_ticks,
         request,
         validated,
+        None,
         Vec::new(),
     )
 }
@@ -598,7 +604,8 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
         write_new_json(&iteration_paths.request, &request)?;
         let validated =
             worker.run_tactic_batch(&iteration_paths.request, &iteration_paths.result)?;
-        let episode = inspect_candidate_episode(&request, &validated, &candidate_tape)?;
+        let loaded_episode = inspect_candidate_episode(&request, &validated, &candidate_tape)?;
+        let episode = &loaded_episode.episode;
         if episode.steps.len() <= candidate_prefix_ticks {
             return Err(NativeTacticWorkerError::DetachedResult(
                 "route prefix terminated before the selected tactic",
@@ -654,6 +661,7 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
                 candidate_prefix_ticks,
                 request,
                 validated,
+                Some(loaded_episode),
                 queries
                     .into_iter()
                     .map(TacticRuntimeQuery::NativeGeneric)
@@ -810,7 +818,8 @@ fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
     )?;
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
-    let episode = load_candidate_episode(&request, &validated)?;
+    let loaded_episode = load_candidate_episode(&request, &validated)?;
+    let episode = &loaded_episode.episode;
     if episode.steps.len() <= candidate_prefix_ticks
         || episode.steps.len()
             > candidate_prefix_ticks.saturating_add(duration.maximum_ticks as usize)
@@ -901,6 +910,7 @@ fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
         candidate_prefix_ticks,
         request,
         validated,
+        Some(loaded_episode),
         queries
             .into_iter()
             .map(TacticRuntimeQuery::NativeGeneric)
@@ -953,7 +963,8 @@ fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>(
     )?;
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
-    let episode = load_candidate_episode(&request, &validated)?;
+    let loaded_episode = load_candidate_episode(&request, &validated)?;
+    let episode = &loaded_episode.episode;
     if episode.steps.len() <= candidate_prefix_ticks
         || episode.steps.len()
             > candidate_prefix_ticks.saturating_add(duration.maximum_ticks as usize)
@@ -1065,6 +1076,7 @@ fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>(
         candidate_prefix_ticks,
         request,
         validated,
+        Some(loaded_episode),
         queries
             .into_iter()
             .map(TacticRuntimeQuery::ReactiveController)
@@ -1097,7 +1109,12 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
         frames: Vec::new(),
     };
     let mut queries = Vec::new();
-    let mut last_run: Option<(InputTape, NativeSuffixBatch, ValidatedNativeSuffixBatch)> = None;
+    let mut last_run: Option<(
+        InputTape,
+        NativeSuffixBatch,
+        ValidatedNativeSuffixBatch,
+        LoadedCandidateEpisode,
+    )> = None;
 
     for local_tick in 0..duration.maximum_ticks {
         let step = stepper
@@ -1105,7 +1122,7 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
             .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
         queries.push(step.query);
         if matches!(step.end, Some(ControllerRuntimeEnd::TargetLost { .. })) {
-            let Some((candidate_tape, request, validated)) = last_run else {
+            let Some((candidate_tape, request, validated, loaded_episode)) = last_run else {
                 return Err(NativeTacticWorkerError::Observation(
                     "reactive controller lost its exact target before emitting any input".into(),
                 ));
@@ -1135,6 +1152,7 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
                 candidate_prefix_ticks,
                 request,
                 validated,
+                Some(loaded_episode),
                 queries
                     .into_iter()
                     .map(TacticRuntimeQuery::ReactiveController)
@@ -1166,7 +1184,8 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
         write_new_json(&iteration_paths.request, &request)?;
         let validated =
             worker.run_tactic_batch(&iteration_paths.request, &iteration_paths.result)?;
-        let episode = inspect_candidate_episode(&request, &validated, &candidate_tape)?;
+        let loaded_episode = inspect_candidate_episode(&request, &validated, &candidate_tape)?;
+        let episode = &loaded_episode.episode;
         if episode.steps.len() <= candidate_prefix_ticks {
             return Err(NativeTacticWorkerError::DetachedResult(
                 "route prefix terminated before the selected tactic",
@@ -1219,6 +1238,7 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
                 candidate_prefix_ticks,
                 request,
                 validated,
+                Some(loaded_episode),
                 queries
                     .into_iter()
                     .map(TacticRuntimeQuery::ReactiveController)
@@ -1231,7 +1251,7 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
             .last()
             .ok_or(NativeTacticWorkerError::DetachedResult("empty episode"))?;
         observation = controller_observation_from_post_simulation(&last.post_simulation)?;
-        last_run = Some((candidate_tape, request, validated));
+        last_run = Some((candidate_tape, request, validated, loaded_episode));
     }
     Err(NativeTacticWorkerError::InvalidDuration)
 }
@@ -1431,25 +1451,25 @@ fn inspect_candidate_episode(
     request: &NativeSuffixBatch,
     validated: &ValidatedNativeSuffixBatch,
     candidate_tape: &InputTape,
-) -> Result<NativeEpisode, NativeTacticWorkerError> {
-    let episode = load_candidate_episode(request, validated)?;
-    if episode.steps.len() > candidate_tape.frames.len() {
+) -> Result<LoadedCandidateEpisode, NativeTacticWorkerError> {
+    let loaded = load_candidate_episode(request, validated)?;
+    if loaded.episode.steps.len() > candidate_tape.frames.len() {
         return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
     }
-    for (step, expected) in episode.steps.iter().zip(&candidate_tape.frames) {
+    for (step, expected) in loaded.episode.steps.iter().zip(&candidate_tape.frames) {
         if !same_pad(step.chosen_pad, expected.pads[0])
             || !same_pad(step.consumed_pad, expected.pads[0])
         {
             return Err(NativeTacticWorkerError::PadMismatch);
         }
     }
-    Ok(episode)
+    Ok(loaded)
 }
 
 fn load_candidate_episode(
     request: &NativeSuffixBatch,
     validated: &ValidatedNativeSuffixBatch,
-) -> Result<NativeEpisode, NativeTacticWorkerError> {
+) -> Result<LoadedCandidateEpisode, NativeTacticWorkerError> {
     if validated.candidates.len() != 1
         || validated.candidates[0].id != request.candidates[0].id
         || validated.candidates[0].simulated_ticks == 0
@@ -1464,9 +1484,10 @@ fn load_candidate_episode(
     if shard.metadata.checkpoint_identity != validated.restore_identity {
         return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
     }
+    let shard_content_sha256 = shard.content_sha256;
     let mut episodes = shard
         .episodes
-        .iter()
+        .into_iter()
         .filter(|episode| episode.id == validated.candidates[0].id);
     let episode = episodes
         .next()
@@ -1476,7 +1497,10 @@ fn load_candidate_episode(
     {
         return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
     }
-    Ok(episode.clone())
+    Ok(LoadedCandidateEpisode {
+        shard_content_sha256,
+        episode,
+    })
 }
 
 fn prepare_selected(
@@ -1746,34 +1770,11 @@ fn observe_outcome(
     candidate_prefix_ticks: usize,
     request: NativeSuffixBatch,
     validated: ValidatedNativeSuffixBatch,
+    loaded_episode: Option<LoadedCandidateEpisode>,
     native_queries: Vec<TacticRuntimeQuery>,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
-    if validated.candidates.len() != 1
-        || validated.candidates[0].id != request.candidates[0].id
-        || validated.candidates[0].simulated_ticks == 0
-        || validated.candidates[0].simulated_ticks > request.maximum_ticks as u64
-    {
-        return Err(NativeTacticWorkerError::DetachedResult("candidate summary"));
-    }
-    let bytes = fs::read(&validated.episode_shard_path)
-        .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
-    let shard = NativeEpisodeShard::decode(&bytes)
-        .map_err(|error| NativeTacticWorkerError::Evidence(error.to_string()))?;
-    if shard.metadata.checkpoint_identity != validated.restore_identity {
-        return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
-    }
-    let mut episodes = shard
-        .episodes
-        .iter()
-        .filter(|episode| episode.id == validated.candidates[0].id);
-    let episode = episodes
-        .next()
-        .ok_or(NativeTacticWorkerError::DetachedResult("episode id"))?;
-    if episodes.next().is_some()
-        || episode.steps.len() as u64 != validated.candidates[0].simulated_ticks
-    {
-        return Err(NativeTacticWorkerError::DetachedResult("episode shard"));
-    }
+    let loaded = loaded_episode.map_or_else(|| load_candidate_episode(&request, &validated), Ok)?;
+    let episode = &loaded.episode;
     if episode.steps.len() <= candidate_prefix_ticks {
         return Err(NativeTacticWorkerError::DetachedResult(
             "route prefix terminated before the selected tactic",
@@ -1896,7 +1897,7 @@ fn observe_outcome(
         checkpoint_identity: validated.restore_identity,
         retained_native_checkpoint,
         retained_native_boundary_fingerprint,
-        episode_shard_sha256: shard.content_sha256,
+        episode_shard_sha256: loaded.shard_content_sha256,
         selected: selected.clone(),
         execution,
         native_queries,
@@ -2763,6 +2764,7 @@ mod tests {
             frames: vec![InputFrame::default(); before.tape_frame as usize],
             ..InputTape::default()
         };
+        let loaded_episode = load_candidate_episode(&request, &validated).unwrap();
         let outcome = observe_outcome(
             Digest([12; 32]),
             &selected,
@@ -2773,6 +2775,7 @@ mod tests {
             0,
             request,
             validated,
+            Some(loaded_episode),
             Vec::new(),
         )
         .unwrap();
