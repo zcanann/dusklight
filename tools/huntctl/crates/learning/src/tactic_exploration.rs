@@ -355,8 +355,12 @@ fn choose_random_valid_batch(
     let mut descriptors = ranking
         .choices
         .iter()
+        .filter(|choice| choice.applicable)
         .map(|choice| choice.descriptor.clone())
         .collect::<Vec<_>>();
+    if descriptors.is_empty() {
+        return Err(TacticExplorationError::NoApplicableTactic);
+    }
     descriptors.sort_by(|left, right| {
         random_baseline_key(
             config.seed,
@@ -587,6 +591,7 @@ fn deterministic_draw(seed: u64, decision_index: u64, state: Digest, lane: u8) -
 pub enum TacticExplorationError {
     InvalidInput,
     DetachedRanking,
+    NoApplicableTactic,
 }
 
 impl fmt::Display for TacticExplorationError {
@@ -595,6 +600,9 @@ impl fmt::Display for TacticExplorationError {
             Self::InvalidInput => formatter.write_str("tactic exploration input is invalid"),
             Self::DetachedRanking => {
                 formatter.write_str("tactic ranking is detached from its live catalog")
+            }
+            Self::NoApplicableTactic => {
+                formatter.write_str("tactic ranking has no applicable action")
             }
         }
     }
@@ -1339,5 +1347,41 @@ mod tests {
                 .len(),
             3
         );
+    }
+
+    #[test]
+    fn random_valid_baseline_obeys_the_live_applicability_mask() {
+        let available = descriptor("available", OptionType::Move);
+        let unavailable = descriptor("unavailable", OptionType::Roll);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([23; 32]),
+            action_universe_sha256: Digest([24; 32]),
+            choices: vec![
+                choice(available.clone()),
+                LearnerActionMaskEntry {
+                    applicable: false,
+                    ..choice(unavailable)
+                },
+            ],
+            values: AvailableOptionRanking {
+                ranked: Vec::new(),
+                unsupported: vec![available.clone()],
+            },
+        };
+        let selected = choose_tactic_batch_for_policy(
+            &ranking,
+            0,
+            TacticExplorationConfig {
+                seed: 104_729,
+                epsilon_per_million: 0,
+            },
+            std::slice::from_ref(&available),
+            4,
+            TacticProposalPolicy::RandomValid,
+        )
+        .unwrap();
+
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].descriptor, available);
     }
 }
