@@ -81,6 +81,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8: &str = "dusklight-native-tactic-
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9: &str = "dusklight-native-tactic-route-report/v9";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10: &str = "dusklight-native-tactic-route-report/v10";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11: &str = "dusklight-native-tactic-route-report/v11";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12: &str = "dusklight-native-tactic-route-report/v12";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -152,7 +153,7 @@ pub struct NativeTacticRouteReport {
     pub seeds: Vec<NativeTacticSeedResult>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticMacroDiscoveryReport {
     pub observation_count: u64,
@@ -169,8 +170,27 @@ pub struct NativeTacticMacroDiscoveryReport {
     pub validation_native_simulation_micros: u64,
     pub validation_preparation_micros: u64,
     pub validation_restore_accounting: NativeTacticRestoreAccounting,
+    pub reuse: Option<NativeTacticMacroReuseReport>,
     pub registry_path: String,
     pub registry_sha256: Digest,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticMacroReuseReport {
+    pub candidate_sha256: Digest,
+    pub option_id: String,
+    pub promotion_registry_sha256: Digest,
+    pub seed: u64,
+    pub source_state_sha256: Digest,
+    pub held_out_from_promotion_states: bool,
+    pub realized_ticks: u32,
+    pub goal_progress: f32,
+    pub terminal: bool,
+    pub after_state_sha256: Digest,
+    pub emitted_tape_sha256: Digest,
+    pub complete_route_tape_sha256: Digest,
+    pub complete_route_tape_path: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -731,7 +751,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -911,6 +931,7 @@ fn mine_and_store_tactic_macros(
             validation_native_simulation_micros: 0,
             validation_preparation_micros: 0,
             validation_restore_accounting: NativeTacticRestoreAccounting::default(),
+            reuse: None,
             registry_path: path_text(&registry_path),
             registry_sha256,
         },
@@ -1203,6 +1224,15 @@ fn validate_and_store_tactic_macros(
             "validated tactic macro registry failed exact round-trip verification",
         ));
     }
+    let reuse = reuse_promoted_tactic_macro(
+        config,
+        pool,
+        encoder,
+        &validation_frontiers,
+        &mined.registry,
+        registry_sha256,
+        &mut accounting,
+    )?;
     let (proposed_count, promoted_count, demoted_count) =
         mined
             .registry
@@ -1225,9 +1255,140 @@ fn validate_and_store_tactic_macros(
     mined.report.validation_native_simulation_micros = accounting.native_simulation_micros;
     mined.report.validation_preparation_micros = accounting.preparation_micros;
     mined.report.validation_restore_accounting = accounting.restore;
+    mined.report.reuse = reuse;
     mined.report.registry_path = path_text(&validated_path);
     mined.report.registry_sha256 = registry_sha256;
     Ok(mined.report)
+}
+
+fn reuse_promoted_tactic_macro(
+    config: &NativeTacticRouteRunConfig<'_>,
+    pool: &NativeTacticProposalPool,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    validation_frontiers: &[TacticMacroValidationFrontier],
+    registry: &TacticMacroPromotionRegistry,
+    registry_sha256: Digest,
+    accounting: &mut TacticMacroValidationAccounting,
+) -> Result<Option<NativeTacticMacroReuseReport>, NativeTacticRouteRunError> {
+    let Some(promoted) = registry.promoted().next() else {
+        return Ok(None);
+    };
+    let promotion_states = promoted
+        .comparisons
+        .iter()
+        .map(|comparison| comparison.frontier_state_sha256)
+        .collect::<BTreeSet<_>>();
+    let fits = |frontier: &&TacticMacroValidationFrontier| {
+        let suffix_ticks = frontier
+            .route_tape
+            .frames
+            .len()
+            .saturating_sub(pool.root_source_frame) as u64;
+        selected_tactic_fits_horizon(
+            suffix_ticks,
+            promoted.candidate.tape.frames.len() as u32,
+            config.optimization.budgets.exploration_horizon_ticks,
+        )
+    };
+    let frontier = validation_frontiers
+        .iter()
+        .filter(fits)
+        .find(|frontier| !promotion_states.contains(&frontier.state_sha256))
+        .or_else(|| validation_frontiers.iter().find(fits))
+        .ok_or_else(|| route_message("promoted tactic has no reusable authenticated frontier"))?;
+    let held_out_from_promotion_states = !promotion_states.contains(&frontier.state_sha256);
+    let candidate_entry = promoted.candidate.catalog_entry().map_err(route_error)?;
+    let catalog = Arc::new(TacticAssetCatalog::new(vec![candidate_entry]).map_err(route_error)?);
+    let selected = SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: frontier.state_sha256,
+        decision_index: config.decisions_per_seed,
+        descriptor: catalog
+            .option_descriptors()
+            .next()
+            .cloned()
+            .ok_or_else(|| route_message("promoted tactic catalog is empty"))?,
+        reason: TacticSelectionReason::Greedy,
+        exploration_draw: 0,
+    };
+    let reuse_root = config
+        .output_root
+        .join("tactic-macro-reuse")
+        .join(promoted.candidate.candidate_sha256.to_string());
+    fs::create_dir_all(&reuse_root).map_err(route_error)?;
+    let mut work = pool.execute_batch(
+        std::slice::from_ref(&selected),
+        catalog,
+        Arc::new(Vec::new()),
+        &frontier.snapshot,
+        &frontier.route_tape,
+        None,
+        &reuse_root,
+    )?;
+    if work.len() != 1 {
+        return Err(route_message(
+            "promoted tactic reuse did not produce one native outcome",
+        ));
+    }
+    let evaluated = work.remove(0);
+    accounting.native_simulation_micros = accounting
+        .native_simulation_micros
+        .saturating_add(elapsed_micros(evaluated.native_elapsed));
+    accounting.preparation_micros = accounting
+        .preparation_micros
+        .saturating_add(elapsed_micros(evaluated.preparation_elapsed));
+    accounting.restore.merge(&evaluated.restore_accounting);
+    accounting.native_ticks = accounting.native_ticks.saturating_add(u64::from(
+        evaluated.outcome.execution.duration.realized_ticks,
+    ));
+    let mut expected_route = frontier.route_tape.clone();
+    expected_route
+        .frames
+        .extend_from_slice(&promoted.candidate.tape.frames);
+    if evaluated.outcome.selected.descriptor.option_id != promoted.candidate.option_id
+        || evaluated.outcome.execution.emitted_raw_actions != promoted.candidate.tape.frames
+        || evaluated.outcome.route_tape != expected_route
+    {
+        return Err(route_message(
+            "promoted tactic reuse differs from its exact binary candidate",
+        ));
+    }
+    let before_distance =
+        encoder.encode(&frontier.snapshot).map_err(route_error)?[encoder.goal_distance_feature()];
+    let after_distance = encoder
+        .encode(&evaluated.outcome.next_facts)
+        .map_err(route_error)?[encoder.goal_distance_feature()];
+    let emitted_bytes = promoted.candidate.tape.encode().map_err(route_error)?;
+    let complete_route_bytes = evaluated.outcome.route_tape.encode().map_err(route_error)?;
+    let complete_route_tape_path = config.output_root.join("promoted-reuse.tape");
+    if complete_route_tape_path.exists() {
+        if fs::read(&complete_route_tape_path).map_err(route_error)? != complete_route_bytes {
+            return Err(route_message(
+                "promoted tactic reuse tape path contains different immutable content",
+            ));
+        }
+    } else {
+        write_new(&complete_route_tape_path, &complete_route_bytes)?;
+    }
+    Ok(Some(NativeTacticMacroReuseReport {
+        candidate_sha256: promoted.candidate.candidate_sha256,
+        option_id: promoted.candidate.option_id.clone(),
+        promotion_registry_sha256: registry_sha256,
+        seed: frontier.seed,
+        source_state_sha256: frontier.state_sha256,
+        held_out_from_promotion_states,
+        realized_ticks: evaluated.outcome.execution.duration.realized_ticks,
+        goal_progress: before_distance - after_distance,
+        terminal: evaluated.outcome.terminal,
+        after_state_sha256: evaluated
+            .outcome
+            .next_facts
+            .content_sha256()
+            .map_err(route_error)?,
+        emitted_tape_sha256: Digest(Sha256::digest(&emitted_bytes).into()),
+        complete_route_tape_sha256: Digest(Sha256::digest(&complete_route_bytes).into()),
+        complete_route_tape_path: path_text(&complete_route_tape_path),
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
