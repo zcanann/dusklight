@@ -21,8 +21,8 @@ use dusklight_control::controller_program::{
 use dusklight_control::game_tactic::{GAME_TACTIC_SCHEMA_V1, GameTacticPlan};
 use dusklight_control::motion_path::{MOTION_PATH_SCHEMA_V1, MotionPathPlan};
 use dusklight_control::option_execution::{
-    MAX_OPTION_CONDITIONS, OptionCondition, OptionEndReason, OptionExecution, OptionParameter,
-    OptionType, TapeRange, validate_condition,
+    MAX_OPTION_CONDITIONS, MAX_OPTION_TICKS, OptionCondition, OptionEndReason, OptionExecution,
+    OptionParameter, OptionType, TapeRange, validate_condition,
 };
 use dusklight_control::roll_option::{ROLL_OPTION_SCHEMA_V1, RollOptionPlan};
 use dusklight_control::tape::{InputFrame, InputTape};
@@ -43,6 +43,7 @@ pub enum TacticAssetKind {
     MotionPath,
     Roll,
     ReactiveController,
+    RecordedTape,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -218,6 +219,7 @@ pub enum TacticAssetSource {
     MotionPath(MotionPathPlan),
     Roll(RollOptionPlan),
     ReactiveController(ControllerProgram),
+    RecordedTape(InputTape),
 }
 
 impl TacticAssetAdapter for TacticAssetSource {
@@ -228,6 +230,7 @@ impl TacticAssetAdapter for TacticAssetSource {
             Self::MotionPath(plan) => plan.describe(option_id),
             Self::Roll(plan) => plan.describe(option_id),
             Self::ReactiveController(plan) => plan.describe(option_id),
+            Self::RecordedTape(tape) => tape.describe(option_id),
         }
     }
 
@@ -238,6 +241,7 @@ impl TacticAssetAdapter for TacticAssetSource {
             Self::MotionPath(plan) => TacticAssetAdapter::canonical_bytes(plan),
             Self::Roll(plan) => TacticAssetAdapter::canonical_bytes(plan),
             Self::ReactiveController(plan) => TacticAssetAdapter::canonical_bytes(plan),
+            Self::RecordedTape(tape) => TacticAssetAdapter::canonical_bytes(tape),
         }
     }
 
@@ -248,6 +252,7 @@ impl TacticAssetAdapter for TacticAssetSource {
             Self::MotionPath(plan) => plan.static_frames(),
             Self::Roll(plan) => plan.static_frames(),
             Self::ReactiveController(plan) => plan.static_frames(),
+            Self::RecordedTape(tape) => tape.static_frames(),
         }
     }
 
@@ -261,6 +266,7 @@ impl TacticAssetAdapter for TacticAssetSource {
             Self::MotionPath(plan) => plan.exact_static_realization(option_id),
             Self::Roll(plan) => plan.exact_static_realization(option_id),
             Self::ReactiveController(plan) => plan.exact_static_realization(option_id),
+            Self::RecordedTape(tape) => tape.exact_static_realization(option_id),
         }
     }
 }
@@ -581,6 +587,99 @@ impl TacticAssetAdapter for MotionPathPlan {
         exact.validate_against(&description)?;
         Ok(Some(exact))
     }
+}
+
+impl TacticAssetAdapter for InputTape {
+    fn describe(&self, option_id: &str) -> Result<TacticAssetDescription, TacticAssetError> {
+        validate_option_id(option_id)?;
+        let exact = recorded_tape_realization(self, option_id)?;
+        let canonical = self.canonical_bytes()?;
+        checked(TacticAssetDescription {
+            schema: TACTIC_ASSET_ADAPTER_SCHEMA_V1.into(),
+            kind: TacticAssetKind::RecordedTape,
+            source_schema: "dusklight-input-tape/binary".into(),
+            content_sha256: digest(&canonical),
+            option: descriptor(&exact.execution),
+            duration: TacticDurationBounds {
+                minimum_ticks: exact.execution.duration.minimum_ticks,
+                maximum_ticks: exact.execution.duration.maximum_ticks,
+            },
+            applicability: TacticApplicability::InputOnly,
+            required_observations: BTreeSet::new(),
+            executor: TacticExecutor::StaticPlan,
+            stopping: TacticStoppingContract {
+                termination: exact.execution.termination_condition.clone(),
+                cancellation: exact.execution.cancellation_conditions.clone(),
+            },
+            statically_realizable: true,
+        })
+    }
+
+    fn canonical_bytes(&self) -> Result<Vec<u8>, TacticAssetError> {
+        self.validate()
+            .map_err(|error| invalid(error.to_string()))?;
+        if self.frames.is_empty() || self.frames.len() > MAX_OPTION_TICKS as usize {
+            return Err(invalid("recorded tactic tape has an invalid duration"));
+        }
+        self.encode().map_err(|error| invalid(error.to_string()))
+    }
+
+    fn static_frames(&self) -> Result<Option<Vec<InputFrame>>, TacticAssetError> {
+        self.canonical_bytes()?;
+        Ok(Some(self.frames.clone()))
+    }
+
+    fn exact_static_realization(
+        &self,
+        option_id: &str,
+    ) -> Result<Option<ExactTacticRealization>, TacticAssetError> {
+        let description = self.describe(option_id)?;
+        let exact = recorded_tape_realization(self, option_id)?;
+        exact.validate_against(&description)?;
+        Ok(Some(exact))
+    }
+}
+
+fn recorded_tape_realization(
+    tape: &InputTape,
+    option_id: &str,
+) -> Result<ExactTacticRealization, TacticAssetError> {
+    tape.validate()
+        .map_err(|error| invalid(error.to_string()))?;
+    let duration = u32::try_from(tape.frames.len())
+        .ok()
+        .filter(|duration| *duration > 0 && *duration <= MAX_OPTION_TICKS)
+        .ok_or_else(|| invalid("recorded tactic tape has an invalid duration"))?;
+    let canonical = tape.encode().map_err(|error| invalid(error.to_string()))?;
+    let mut parameters = BTreeMap::new();
+    parameters.insert(
+        "input_tape_sha256".into(),
+        OptionParameter::Digest(digest(&canonical)),
+    );
+    parameters.insert(
+        "duration_ticks".into(),
+        OptionParameter::Unsigned(u64::from(duration)),
+    );
+    let execution = OptionExecution::capture(
+        option_id.into(),
+        OptionType::Custom("recorded_tape".into()),
+        parameters,
+        duration,
+        duration,
+        OptionCondition::DurationElapsed,
+        Vec::new(),
+        OptionEndReason::Completed,
+        tape,
+        TapeRange {
+            start_frame: 0,
+            end_frame_exclusive: u64::from(duration),
+        },
+    )
+    .map_err(|error| invalid(error.to_string()))?;
+    Ok(ExactTacticRealization {
+        tape: tape.clone(),
+        execution,
+    })
 }
 
 impl TacticAssetAdapter for RollOptionPlan {
@@ -1300,6 +1399,44 @@ mod tests {
             panic!("expected reactive controller executor input");
         };
         assert_eq!(program.duration_frames, 3);
+    }
+
+    #[test]
+    fn recorded_binary_tape_is_an_exact_static_tactic() {
+        let mut frame = InputFrame::default();
+        frame.owned_ports = 1;
+        frame.pads[0].stick_x = 73;
+        frame.pads[0].buttons = 0x0100;
+        let tape = InputTape {
+            frames: vec![frame.clone(), frame, InputFrame::default()],
+            ..InputTape::default()
+        };
+        let entry = TacticCatalogEntry::new(
+            "promoted/example",
+            TacticAssetSource::RecordedTape(tape.clone()),
+        )
+        .unwrap();
+        assert_eq!(entry.description().kind, TacticAssetKind::RecordedTape);
+        assert_eq!(entry.description().duration.maximum_ticks, 3);
+        assert_eq!(
+            entry
+                .description()
+                .option
+                .parameters
+                .get("input_tape_sha256"),
+            Some(&OptionParameter::Digest(digest(&tape.encode().unwrap())))
+        );
+        let catalog = TacticAssetCatalog::new(vec![entry]).unwrap();
+        let PreparedTacticExecution::Static(realized) =
+            catalog.prepare_execution("promoted/example").unwrap()
+        else {
+            panic!("recorded tape must use the exact static executor");
+        };
+        assert_eq!(realized.tape, tape);
+        assert_eq!(realized.execution.emitted_raw_actions, tape.frames);
+        realized
+            .validate_against(catalog.entry("promoted/example").unwrap().description())
+            .unwrap();
     }
 
     #[test]

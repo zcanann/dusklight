@@ -772,6 +772,7 @@ fn realize_entry_frames(
         TacticAssetSource::ReactiveController(program) => compile_static_controller(program)
             .map(|tape| tape.frames)
             .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string())),
+        TacticAssetSource::RecordedTape(tape) => Ok(tape.frames.clone()),
         TacticAssetSource::NativeGenericTactic(_) => Err(TacticBlueprintError::StaticExecution(
             format!("option {:?} has no static realization", entry.option_id()),
         )),
@@ -793,7 +794,7 @@ fn capture_entry_execution(
         TacticAssetSource::Roll(plan) => plan
             .capture_execution(entry.option_id().into(), tape, range, None)
             .map_err(|error| TacticBlueprintError::StaticExecution(error.to_string()))?,
-        TacticAssetSource::ReactiveController(_) => {
+        TacticAssetSource::ReactiveController(_) | TacticAssetSource::RecordedTape(_) => {
             let description = entry.description();
             OptionExecution::capture(
                 entry.option_id().into(),
