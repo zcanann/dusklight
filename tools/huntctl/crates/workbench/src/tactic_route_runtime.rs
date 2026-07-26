@@ -9,7 +9,8 @@ use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14,
-    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15, NativeTacticDecisionTrace, NativeTacticRouteRunConfig,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17, NativeTacticDecisionTrace, NativeTacticRouteRunConfig,
     has_tactic_decision_journal, materialize_tactic_decision_route, project_tactic_decision_graph,
     read_tactic_decision_journal, run_native_tactic_route,
 };
@@ -213,6 +214,8 @@ pub(super) fn tactic_route_learning_projection(
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
@@ -1250,7 +1253,7 @@ mod tests {
         fs::write(
             output.join("report.json"),
             serde_json::to_vec(&serde_json::json!({
-                "schema": NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5,
+                "schema": NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17,
                 "optimization_request_sha256": optimization.content_sha256,
                 "successful_seeds": 1,
                 "total_decisions": 70,

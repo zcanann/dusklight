@@ -323,7 +323,7 @@ pub struct TacticQCampaign {
 /// carries only authenticated transition rows and their exact controller
 /// routes so a later episode can fit from earlier native trials without
 /// pretending those trials belong to its retained path.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TacticQTrainingCorpus {
     pub feature_schema_sha256: Digest,
     pub objective_sha256: Digest,
@@ -331,6 +331,19 @@ pub struct TacticQTrainingCorpus {
     pub transitions: Vec<OptionTransitionSample>,
     pub routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
+}
+
+impl TacticQTrainingCorpus {
+    /// Writes only this corpus's authenticated rows and route references. This
+    /// is the durable completed-episode handoff; it intentionally excludes the
+    /// campaign's inherited history and executable checkpoint state.
+    pub fn write(&self, path: &Path, content_root: &Path) -> Result<(), TacticQCampaignError> {
+        tactic_q_checkpoint_store::write_training_corpus(self, path, content_root)
+    }
+
+    pub fn read(path: &Path) -> Result<Self, TacticQCampaignError> {
+        tactic_q_checkpoint_store::read_training_corpus(path)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -2134,6 +2147,36 @@ pub(crate) fn validate_checkpoint(
     Ok(())
 }
 
+pub(crate) fn validate_training_corpus(
+    corpus: &TacticQTrainingCorpus,
+) -> Result<(), TacticQCampaignError> {
+    if corpus.feature_schema_sha256 == Digest::ZERO
+        || corpus.objective_sha256 == Digest::ZERO
+        || corpus.root_checkpoint_sha256 == Digest::ZERO
+        || corpus.transitions.len() != corpus.routes.len()
+        || corpus.transitions.len() != corpus.episode_groups.len()
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "shared tactic training corpus identity or shape is invalid",
+        ));
+    }
+    let mut identities = BTreeSet::new();
+    for (transition, route) in corpus.transitions.iter().zip(&corpus.routes) {
+        validate_training_transition(
+            corpus.feature_schema_sha256,
+            corpus.root_checkpoint_sha256,
+            transition,
+            route,
+        )?;
+        if !identities.insert(transition.replay_identity_sha256()?) {
+            return Err(TacticQCampaignError::InvalidState(
+                "shared tactic training corpus contains duplicate transitions",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_training_transition(
     feature_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
@@ -2774,6 +2817,22 @@ mod tests {
         assert_eq!(restored.replay_routes, campaign.replay_routes);
         assert!(restored.model().is_some());
         let corpus = campaign.training_corpus();
+        let corpus_root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-training-corpus-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&corpus_root);
+        let corpus_path = corpus_root.join("seed-000-41/generated-training.dtqc");
+        corpus
+            .write(&corpus_path, &corpus_root.join("objects"))
+            .unwrap();
+        assert_eq!(TacticQTrainingCorpus::read(&corpus_path).unwrap(), corpus);
+        let mut tampered = fs::read(&corpus_path).unwrap();
+        *tampered.last_mut().unwrap() ^= 0x01;
+        let tampered_path = corpus_root.join("tampered.dtqc");
+        fs::write(&tampered_path, tampered).unwrap();
+        assert!(TacticQTrainingCorpus::read(&tampered_path).is_err());
+        fs::remove_dir_all(corpus_root).unwrap();
         let fresh_current =
             LearnerState::build(before.clone(), &registry, &catalog, &[], |_| true).unwrap();
         let mut fresh_episode = TacticQCampaign::new(

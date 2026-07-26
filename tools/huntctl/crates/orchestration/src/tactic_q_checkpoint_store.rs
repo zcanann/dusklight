@@ -3,8 +3,8 @@
 use crate::tactic_q_campaign::{
     TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_CHECKPOINT_SCHEMA_V2, TACTIC_Q_CHECKPOINT_SCHEMA_V3,
     TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1, TacticQCampaignCheckpoint,
-    TacticQCampaignError, TacticQCheckpointSerializationBenchmark, checkpoint_digest,
-    validate_checkpoint,
+    TacticQCampaignError, TacticQCheckpointSerializationBenchmark, TacticQTrainingCorpus,
+    checkpoint_digest, validate_checkpoint, validate_training_corpus,
 };
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
@@ -33,8 +33,11 @@ use std::time::Instant;
 const FACT_OBJECT_SCHEMA_V1: &str = "dusklight-tactic-q-fact-object/v1";
 const CHECKPOINT_MANIFEST_SCHEMA_V1: &str = "dusklight-tactic-q-checkpoint-manifest/v1";
 const CHECKPOINT_MANIFEST_SCHEMA_V2: &str = "dusklight-tactic-q-checkpoint-manifest/v2";
+const TRAINING_CORPUS_MANIFEST_SCHEMA_V1: &str = "dusklight-tactic-q-training-corpus-manifest/v1";
 const CHECKPOINT_MAGIC: &[u8; 8] = b"DSKTQZ01";
+const TRAINING_CORPUS_MAGIC: &[u8; 8] = b"DSKTQC01";
 const CHECKPOINT_FORMAT_VERSION: u16 = 2;
+const TRAINING_CORPUS_FORMAT_VERSION: u16 = 1;
 const CHECKPOINT_HEADER_SIZE: usize = 8 + 2 + 2 + 8 + 32;
 const MAXIMUM_CHECKPOINT_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
 const CHECKPOINT_COMPRESSION_LEVEL: i32 = 1;
@@ -139,23 +142,11 @@ impl TacticQContentStore {
         snapshot
             .validate()
             .map_err(TacticQContentStoreError::domain)?;
-        let snapshot_sha256 = snapshot
-            .content_sha256()
-            .map_err(TacticQContentStoreError::domain)?;
-        let actors = snapshot
-            .actors
-            .iter()
-            .map(|actor| self.store_actor(actor))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut snapshot_without_actors = snapshot.clone();
-        snapshot_without_actors.actors.clear();
-        let raw = serde_cbor::to_vec(&StoredFactSnapshot {
-            schema: FACT_OBJECT_SCHEMA_V1.into(),
-            snapshot_sha256,
-            actors,
-            snapshot_without_actors,
-        })
-        .map_err(TacticQContentStoreError::domain)?;
+        // One durable object per fact is substantially cheaper than syncing
+        // one file per actor for every proposal. The canonical snapshot still
+        // retains the complete typed actor population and its authenticated
+        // identity; `load_fact` continues to accept the legacy split layout.
+        let raw = serde_cbor::to_vec(snapshot).map_err(TacticQContentStoreError::domain)?;
         Ok(StoredContentRef::from(
             &self
                 .store
@@ -169,7 +160,14 @@ impl TacticQContentStore {
         reference: StoredContentRef,
     ) -> Result<FactSnapshot, TacticQContentStoreError> {
         require_kind(reference, ContentKind::FactSnapshot)?;
-        let stored: StoredFactSnapshot = self.read_cbor(reference)?;
+        let raw = self.read_bytes(reference)?;
+        if let Ok(snapshot) = decode_cbor::<FactSnapshot>(&raw) {
+            snapshot
+                .validate()
+                .map_err(TacticQContentStoreError::domain)?;
+            return Ok(snapshot);
+        }
+        let stored: StoredFactSnapshot = decode_cbor(&raw)?;
         if stored.schema != FACT_OBJECT_SCHEMA_V1 || stored.snapshot_sha256 == Digest::ZERO {
             return Err(TacticQContentStoreError::Invalid(
                 "stored fact identity is invalid",
@@ -197,6 +195,7 @@ impl TacticQContentStore {
         Ok(snapshot)
     }
 
+    #[cfg(test)]
     pub fn store_actor(
         &self,
         actor: &ActorFactSnapshot,
@@ -380,6 +379,18 @@ struct StoredCheckpointManifest {
     exploration: TacticExplorationConfig,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct StoredTrainingCorpusManifest {
+    schema: String,
+    feature_schema_sha256: Digest,
+    objective_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+    transitions: Vec<StoredContentRef>,
+    routes: Vec<StoredContentRef>,
+    episode_groups: Vec<u64>,
+}
+
 pub(crate) fn write_checkpoint_with_local_store(
     checkpoint: &TacticQCampaignCheckpoint,
     directory: &Path,
@@ -408,8 +419,125 @@ pub(crate) fn write_checkpoint(
         "tactic-q-{}.{}",
         checkpoint.content_sha256, TACTIC_Q_CHECKPOINT_EXTENSION
     ));
-    install_checkpoint(&final_path, &envelope)?;
+    install_binary_artifact(&final_path, &envelope)?;
     Ok(final_path)
+}
+
+pub(crate) fn write_training_corpus(
+    corpus: &TacticQTrainingCorpus,
+    path: &Path,
+    content_root: &Path,
+) -> Result<(), TacticQCampaignError> {
+    validate_training_corpus(corpus)?;
+    if content_root.file_name().and_then(|name| name.to_str()) != Some(CONTENT_DIRECTORY) {
+        return Err(TacticQCampaignError::InvalidState(
+            "training corpus content root must use the discoverable objects directory",
+        ));
+    }
+    let parent = path.parent().ok_or(TacticQCampaignError::InvalidState(
+        "training corpus path has no parent",
+    ))?;
+    fs::create_dir_all(parent).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
+    let store = TacticQContentStore::initialize(content_root).map_err(checkpoint_store_error)?;
+    let transitions = corpus
+        .transitions
+        .iter()
+        .zip(&corpus.routes)
+        .map(|(transition, route)| {
+            store
+                .store_option_transition(transition, route)
+                .map_err(checkpoint_store_error)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let routes = corpus
+        .routes
+        .iter()
+        .map(|route| store.store_tape(route).map_err(checkpoint_store_error))
+        .collect::<Result<Vec<_>, _>>()?;
+    let manifest = StoredTrainingCorpusManifest {
+        schema: TRAINING_CORPUS_MANIFEST_SCHEMA_V1.into(),
+        feature_schema_sha256: corpus.feature_schema_sha256,
+        objective_sha256: corpus.objective_sha256,
+        root_checkpoint_sha256: corpus.root_checkpoint_sha256,
+        transitions,
+        routes,
+        episode_groups: corpus.episode_groups.clone(),
+    };
+    let raw = serde_cbor::to_vec(&manifest)
+        .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
+    let envelope =
+        encode_binary_envelope(&raw, TRAINING_CORPUS_MAGIC, TRAINING_CORPUS_FORMAT_VERSION)?;
+    install_binary_artifact(path, &envelope)
+}
+
+pub(crate) fn read_training_corpus(
+    path: &Path,
+) -> Result<TacticQTrainingCorpus, TacticQCampaignError> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?;
+    if !metadata.file_type().is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() < CHECKPOINT_HEADER_SIZE as u64
+        || metadata.len() > MAXIMUM_CHECKPOINT_MANIFEST_BYTES + CHECKPOINT_HEADER_SIZE as u64
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "training corpus path is not a bounded physical binary envelope",
+        ));
+    }
+    let raw = decode_binary_envelope(
+        &fs::read(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))?,
+        TRAINING_CORPUS_MAGIC,
+        TRAINING_CORPUS_FORMAT_VERSION,
+    )?;
+    let manifest: StoredTrainingCorpusManifest =
+        decode_cbor(&raw).map_err(checkpoint_store_error)?;
+    if manifest.schema != TRAINING_CORPUS_MANIFEST_SCHEMA_V1
+        || manifest.feature_schema_sha256 == Digest::ZERO
+        || manifest.objective_sha256 == Digest::ZERO
+        || manifest.root_checkpoint_sha256 == Digest::ZERO
+        || manifest.transitions.len() != manifest.routes.len()
+        || manifest.transitions.len() != manifest.episode_groups.len()
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "training corpus manifest identity or shape is invalid",
+        ));
+    }
+    let parent = path.parent().ok_or(TacticQCampaignError::InvalidState(
+        "training corpus path has no parent",
+    ))?;
+    for ancestor in parent.ancestors() {
+        let content_root = ancestor.join(CONTENT_DIRECTORY);
+        let Ok(store) = TacticQContentStore::open(&content_root) else {
+            continue;
+        };
+        let transitions = manifest
+            .transitions
+            .iter()
+            .map(|transition| store.load_option_transition(*transition))
+            .collect::<Result<Vec<_>, _>>();
+        let routes = manifest
+            .routes
+            .iter()
+            .map(|route| store.load_tape(*route))
+            .collect::<Result<Vec<_>, _>>();
+        let (Ok(transitions), Ok(routes)) = (transitions, routes) else {
+            continue;
+        };
+        let corpus = TacticQTrainingCorpus {
+            feature_schema_sha256: manifest.feature_schema_sha256,
+            objective_sha256: manifest.objective_sha256,
+            root_checkpoint_sha256: manifest.root_checkpoint_sha256,
+            transitions,
+            routes,
+            episode_groups: manifest.episode_groups.clone(),
+        };
+        if validate_training_corpus(&corpus).is_ok() {
+            return Ok(corpus);
+        }
+    }
+    Err(TacticQCampaignError::InvalidState(
+        "training corpus content objects are unavailable or invalid",
+    ))
 }
 
 pub(crate) fn read_checkpoint(
@@ -823,13 +951,13 @@ fn load_transition(
     Ok(transition)
 }
 
-fn install_checkpoint(path: &Path, bytes: &[u8]) -> Result<(), TacticQCampaignError> {
+fn install_binary_artifact(path: &Path, bytes: &[u8]) -> Result<(), TacticQCampaignError> {
     if path.exists() {
         if fs::read(path).map_err(|error| TacticQCampaignError::Io(error.to_string()))? == bytes {
             return Ok(());
         }
         return Err(TacticQCampaignError::InvalidState(
-            "content-addressed checkpoint path contains different bytes",
+            "immutable binary artifact path contains different bytes",
         ));
     }
     let parent = path.parent().ok_or(TacticQCampaignError::InvalidState(
@@ -858,19 +986,27 @@ fn install_checkpoint(path: &Path, bytes: &[u8]) -> Result<(), TacticQCampaignEr
 }
 
 fn encode_checkpoint_envelope(raw: &[u8]) -> Result<Vec<u8>, TacticQCampaignError> {
+    encode_binary_envelope(raw, CHECKPOINT_MAGIC, CHECKPOINT_FORMAT_VERSION)
+}
+
+fn encode_binary_envelope(
+    raw: &[u8],
+    magic: &[u8; 8],
+    version: u16,
+) -> Result<Vec<u8>, TacticQCampaignError> {
     let raw_len = u64::try_from(raw.len())
-        .map_err(|_| TacticQCampaignError::InvalidState("checkpoint manifest length overflows"))?;
+        .map_err(|_| TacticQCampaignError::InvalidState("binary manifest length overflows"))?;
     if raw_len > MAXIMUM_CHECKPOINT_MANIFEST_BYTES {
         return Err(TacticQCampaignError::InvalidState(
-            "checkpoint manifest exceeds its size bound",
+            "binary manifest exceeds its size bound",
         ));
     }
     let raw_sha256 = Digest(Sha256::digest(raw).into());
     let compressed = zstd::bulk::compress(raw, CHECKPOINT_COMPRESSION_LEVEL)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
     let mut envelope = Vec::with_capacity(CHECKPOINT_HEADER_SIZE + compressed.len());
-    envelope.extend_from_slice(CHECKPOINT_MAGIC);
-    envelope.extend_from_slice(&CHECKPOINT_FORMAT_VERSION.to_le_bytes());
+    envelope.extend_from_slice(magic);
+    envelope.extend_from_slice(&version.to_le_bytes());
     envelope.extend_from_slice(&0_u16.to_le_bytes());
     envelope.extend_from_slice(&raw_len.to_le_bytes());
     envelope.extend_from_slice(&raw_sha256.0);
@@ -880,30 +1016,35 @@ fn encode_checkpoint_envelope(raw: &[u8]) -> Result<Vec<u8>, TacticQCampaignErro
 }
 
 fn decode_checkpoint_envelope(envelope: &[u8]) -> Result<Vec<u8>, TacticQCampaignError> {
-    if envelope.len() < CHECKPOINT_HEADER_SIZE || &envelope[..8] != CHECKPOINT_MAGIC {
+    decode_binary_envelope(envelope, CHECKPOINT_MAGIC, CHECKPOINT_FORMAT_VERSION)
+}
+
+fn decode_binary_envelope(
+    envelope: &[u8],
+    magic: &[u8; 8],
+    expected_version: u16,
+) -> Result<Vec<u8>, TacticQCampaignError> {
+    if envelope.len() < CHECKPOINT_HEADER_SIZE || &envelope[..8] != magic {
         return Err(TacticQCampaignError::InvalidState(
-            "checkpoint binary envelope is invalid",
+            "binary artifact envelope is invalid",
         ));
     }
     let version = u16::from_le_bytes(envelope[8..10].try_into().expect("fixed slice"));
     let flags = u16::from_le_bytes(envelope[10..12].try_into().expect("fixed slice"));
     let raw_len = u64::from_le_bytes(envelope[12..20].try_into().expect("fixed slice"));
     let raw_sha256 = Digest(envelope[20..52].try_into().expect("fixed slice"));
-    if version != CHECKPOINT_FORMAT_VERSION
-        || flags != 0
-        || raw_len > MAXIMUM_CHECKPOINT_MANIFEST_BYTES
-    {
+    if version != expected_version || flags != 0 || raw_len > MAXIMUM_CHECKPOINT_MANIFEST_BYTES {
         return Err(TacticQCampaignError::InvalidState(
-            "checkpoint binary envelope identity is invalid",
+            "binary artifact envelope identity is invalid",
         ));
     }
     let raw_len = usize::try_from(raw_len)
-        .map_err(|_| TacticQCampaignError::InvalidState("checkpoint manifest length overflows"))?;
+        .map_err(|_| TacticQCampaignError::InvalidState("binary manifest length overflows"))?;
     let raw = zstd::bulk::decompress(&envelope[CHECKPOINT_HEADER_SIZE..], raw_len)
         .map_err(|error| TacticQCampaignError::Serialization(error.to_string()))?;
     if raw.len() != raw_len || Digest(Sha256::digest(&raw).into()) != raw_sha256 {
         return Err(TacticQCampaignError::InvalidState(
-            "checkpoint binary payload identity is invalid",
+            "binary artifact payload identity is invalid",
         ));
     }
     Ok(raw)
@@ -990,7 +1131,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_store_deduplicates_actor_objects_and_reconstructs_facts() {
+    fn shared_store_round_trips_whole_facts_and_reads_legacy_split_objects() {
         let root = std::env::temp_dir().join(format!(
             "dusklight-tactic-shared-content-store-{}",
             std::process::id()
@@ -1005,6 +1146,10 @@ mod tests {
         let first_ref = store.store_fact(&first).unwrap();
         let second_ref = store.store_fact(&second).unwrap();
         assert_ne!(first_ref, second_ref);
+        assert_eq!(
+            first_ref.sha256,
+            Digest(Sha256::digest(serde_cbor::to_vec(&first).unwrap()).into())
+        );
         assert_eq!(store.load_fact(first_ref).unwrap(), first);
         assert_eq!(store.load_fact(second_ref).unwrap(), second);
 
@@ -1019,19 +1164,27 @@ mod tests {
         let tape_ref = store.store_tape(&tape).unwrap();
         assert_eq!(store.load_tape(tape_ref).unwrap(), tape);
 
-        let content = ContentStore::open(&root).unwrap();
-        let actor_blobs = first
+        let actors = first
             .actors
             .iter()
-            .map(|actor| serde_cbor::to_vec(actor).unwrap())
-            .map(|raw| {
-                content
-                    .put_bytes(&raw, ContentKind::ActorSnapshot)
-                    .unwrap()
-                    .sha256
-            })
-            .collect::<std::collections::BTreeSet<_>>();
-        assert_eq!(actor_blobs.len(), first.actors.len());
+            .map(|actor| store.store_actor(actor).unwrap())
+            .collect::<Vec<_>>();
+        let mut snapshot_without_actors = first.clone();
+        snapshot_without_actors.actors.clear();
+        let legacy_raw = serde_cbor::to_vec(&StoredFactSnapshot {
+            schema: FACT_OBJECT_SCHEMA_V1.into(),
+            snapshot_sha256: first.content_sha256().unwrap(),
+            actors,
+            snapshot_without_actors,
+        })
+        .unwrap();
+        let legacy_ref = StoredContentRef::from(
+            &ContentStore::open(&root)
+                .unwrap()
+                .put_bytes(&legacy_raw, ContentKind::FactSnapshot)
+                .unwrap(),
+        );
+        assert_eq!(store.load_fact(legacy_ref).unwrap(), first);
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -93,6 +93,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14: &str = "dusklight-native-tactic-route-report/v14";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15: &str = "dusklight-native-tactic-route-report/v15";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16: &str = "dusklight-native-tactic-route-report/v16";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17: &str = "dusklight-native-tactic-route-report/v17";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -390,6 +391,9 @@ pub struct NativeTacticSeedResult {
     pub timing: NativeTacticRouteTiming,
     pub selection_counts: BTreeMap<String, u64>,
     pub diagnostics: Option<TacticCampaignDiagnostics>,
+    #[serde(default)]
+    pub generated_training_corpus: Option<String>,
+    #[serde(default)]
     pub final_checkpoint: Option<String>,
     pub graph: Option<String>,
     pub successful_tape: Option<String>,
@@ -855,7 +859,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V17.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -1798,10 +1802,12 @@ fn run_seed_coordinator(
 fn load_generated_training_corpus(
     result: &NativeTacticSeedResult,
 ) -> Result<TacticQTrainingCorpus, NativeTacticRouteRunError> {
-    let checkpoint = result
-        .final_checkpoint
-        .as_deref()
-        .ok_or_else(|| route_message("completed tactic seed has no final checkpoint"))?;
+    if let Some(corpus) = result.generated_training_corpus.as_deref() {
+        return TacticQTrainingCorpus::read(Path::new(corpus)).map_err(route_error);
+    }
+    let checkpoint = result.final_checkpoint.as_deref().ok_or_else(|| {
+        route_message("completed tactic seed has no generated training corpus or checkpoint")
+    })?;
     TacticQCampaign::read_checkpoint(Path::new(checkpoint))
         .and_then(|campaign| campaign.training_corpus_from(result.imported_training_replay_rows))
         .map_err(route_error)
@@ -3053,11 +3059,12 @@ fn run_seed(
     let final_persistence_started = Instant::now();
     compact_tactic_decision_journal(&seed_root)?;
     let success = campaign.current.snapshot.terminal.reached == Some(true);
-    let final_checkpoint = campaign
-        .write_checkpoint_with_store(
-            &seed_root.join("final-checkpoint"),
-            &checkpoint_content_root,
-        )
+    let generated_training = campaign
+        .training_corpus_from(imported_training_replay_rows)
+        .map_err(route_error)?;
+    let generated_training_path = seed_root.join("generated-training.dtqc");
+    generated_training
+        .write(&generated_training_path, &checkpoint_content_root)
         .map_err(route_error)?;
     remove_rolling_checkpoint(&checkpoint_root, &mut rolling_checkpoint)?;
     let (successful_tape, final_result) = if success {
@@ -3103,9 +3110,6 @@ fn run_seed(
         useful_decisions,
         &native_restore_accounting,
     )?;
-    let generated_training = campaign
-        .training_corpus_from(imported_training_replay_rows)
-        .map_err(route_error)?;
     Ok(CompletedNativeTacticSeed {
         result: NativeTacticSeedResult {
             seed,
@@ -3129,7 +3133,8 @@ fn run_seed(
             timing,
             selection_counts,
             diagnostics: None,
-            final_checkpoint: Some(path_text(&final_checkpoint)),
+            generated_training_corpus: Some(path_text(&generated_training_path)),
+            final_checkpoint: None,
             graph: None,
             successful_tape,
             final_result,
@@ -3437,7 +3442,23 @@ pub fn has_tactic_decision_journal(seed_root: &Path) -> bool {
 }
 
 pub fn tactic_content_store_path(seed_root: &Path) -> PathBuf {
-    seed_root.join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY)
+    let legacy_local = seed_root.join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY);
+    if legacy_local.exists() {
+        return legacy_local;
+    }
+    // New campaigns share immutable content objects across seed directories.
+    // This turns imported replay from an O(seeds²) rewrite into references to
+    // objects already durably installed by prior generations. Legacy
+    // per-seed stores remain discoverable and resume without migration.
+    if seed_root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("seed-"))
+        && let Some(campaign_root) = seed_root.parent()
+    {
+        return campaign_root.join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY);
+    }
+    legacy_local
 }
 
 pub fn read_tactic_decision_journal(
@@ -4406,6 +4427,7 @@ fn read_completed_seed_result(
         || result.useful_decisions > result.decisions
         || result.success != result.successful_tape.is_some()
         || result.success != result.final_result.is_some()
+        || result.generated_training_corpus.is_some() == result.final_checkpoint.is_some()
         || (!result.success && result.timing.retained_candidate_artifact_micros != 0)
         || result.trace.len() as u64 != result.decisions
         || result
@@ -6140,6 +6162,27 @@ mod tests {
     }
 
     #[test]
+    fn new_seed_directories_share_content_while_legacy_local_stores_win() {
+        let campaign_root = std::env::temp_dir().join(format!(
+            "dusklight-tactic-shared-seed-content-{}",
+            std::process::id()
+        ));
+        let seed_root = campaign_root.join("seed-000-1");
+        let _ = fs::remove_dir_all(&campaign_root);
+        fs::create_dir_all(&seed_root).unwrap();
+
+        assert_eq!(
+            tactic_content_store_path(&seed_root),
+            campaign_root.join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY)
+        );
+        let legacy_local = seed_root.join(NATIVE_TACTIC_CONTENT_STORE_DIRECTORY);
+        fs::create_dir_all(&legacy_local).unwrap();
+        assert_eq!(tactic_content_store_path(&seed_root), legacy_local);
+
+        fs::remove_dir_all(campaign_root).unwrap();
+    }
+
+    #[test]
     fn tactic_decision_journal_round_trips_and_recovers_a_truncated_tail() {
         let root = std::env::temp_dir().join(format!(
             "dusklight-tactic-decision-journal-{}",
@@ -6520,6 +6563,7 @@ mod tests {
             },
             selection_counts: BTreeMap::new(),
             diagnostics: None,
+            generated_training_corpus: None,
             final_checkpoint: None,
             graph: None,
             successful_tape: None,
