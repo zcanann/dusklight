@@ -1728,14 +1728,13 @@ static bool finish_suffix_batch_tick() {
     // without evaluating the process-global milestone tracker a second time.
     ++automationSimulationTick;
     if (!terminal) return false;
-    if (batch.failed()) {
-        suffixBatchFailed = true;
+    const bool batchFailed = batch.failed();
+    if (batchFailed)
         DuskLog.error("Suffix batch failed: {}", error);
-        dusk::IsRunning = false;
-        return true;
-    }
-    DuskLog.info("Suffix batch completed");
+    else
+        DuskLog.info("Suffix batch completed");
     if (!dusk::automation::engine_worker_enabled()) {
+        suffixBatchFailed = batchFailed;
         dusk::IsRunning = false;
         return true;
     }
@@ -1746,6 +1745,10 @@ static bool finish_suffix_batch_tick() {
         dusk::IsRunning = false;
         return true;
     }
+    // A persistent worker publishes batch-local failures just like completed
+    // batches. The controller can charge the measured failed-candidate ticks
+    // and submit another proposal without paying process boot and source replay
+    // again.
     dusk::automation::publish_engine_worker_batch_complete(engineWorkerBatchRequestId,
         batch.resultPath(), batch.episodeShardPath());
 

@@ -250,7 +250,7 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     std::filesystem::path resultPath, std::filesystem::path winnerTapePath,
     std::string& error) {
     error.clear();
-    if (!mEnabled || !mCompleted || mFailed || !mArtifactsWritten || !mValidationVerified ||
+    if (!mEnabled || (!mCompleted && !mFailed) || !mArtifactsWritten || !mValidationVerified ||
         mImage.entries.empty() || mEpisodeShard.active() || definition.candidates.empty() ||
         definition.maximumTicks == 0 || definition.sourceFrame != mDefinition.sourceFrame ||
         definition.checkpointValidation != mDefinition.checkpointValidation ||
@@ -326,6 +326,7 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mEpisodeShardPath += ".episodes.dseps";
     mCandidateIndex = 0;
     mCandidateTick = 0;
+    mFailedCandidateTicks = 0;
     mConsumedPads.clear();
     mConsumedPads.reserve(mDefinition.maximumTicks);
     mCurrentEpisode.clear();
@@ -353,6 +354,7 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mCandidateControllerReached = false;
     resetBatchProfile(true);
     mError.clear();
+    mFailed = false;
     mCompleted = false;
     mArtifactsWritten = false;
     mPhase = Phase::RestoreNext;
@@ -1459,14 +1461,24 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
 }
 
 void SuffixBatchRunner::fail(std::string message) {
+    mFailedCandidateTicks =
+        mPhase == Phase::Candidate && mResults.size() == mCandidateIndex
+            ? mConsumedPads.size()
+            : 0;
     mFailed = true;
     mPhase = Phase::Failed;
     mError = std::move(message);
+    finishBatchProfile();
 }
 
 bool SuffixBatchRunner::writeArtifacts(std::string& error) {
     if (!mEnabled) return true;
     if (mArtifactsWritten) return true;
+    // A failed candidate cannot yield a complete learning episode. Discard the
+    // unsealed shard so a persistent worker can rearm the authenticated source
+    // for the next independent proposal.
+    if (mFailed && mEpisodeShard.active())
+        mEpisodeShard.abandon();
     nlohmann::json candidates = nlohmann::json::array();
     for (const CandidateResult& result : mResults) {
         nlohmann::json consumed = nullptr;
@@ -1520,10 +1532,14 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
             }},
         });
     }
-    const std::uint64_t candidateTicks = std::accumulate(mResults.begin(), mResults.end(),
+    const std::uint64_t completedCandidateTicks = std::accumulate(mResults.begin(), mResults.end(),
         std::uint64_t{0}, [](const std::uint64_t total, const CandidateResult& candidate) {
             return total + candidate.ticksExecuted;
         });
+    // Charge every input that crossed the native PAD boundary for an incomplete
+    // candidate, but do not double-charge a completed candidate if a later
+    // checkpoint-retention or shard-finalization operation failed.
+    const std::uint64_t candidateTicks = completedCandidateTicks + mFailedCandidateTicks;
     std::uint64_t expectedPolicyHeadDecodeSamples = 0;
     std::uint64_t expectedPolicyInferenceSamples = 0;
     for (std::size_t index = 0; index < mResults.size(); ++index) {

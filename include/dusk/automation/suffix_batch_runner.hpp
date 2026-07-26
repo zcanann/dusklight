@@ -246,6 +246,7 @@ private:
     ControllerObservationStorage mEpisodeControllerStorage;
     std::size_t mCandidateIndex = 0;
     std::size_t mCandidateTick = 0;
+    std::size_t mFailedCandidateTicks = 0;
     std::size_t mValidationTick = 0;
     std::vector<RawPadState> mConsumedPads;
     std::vector<std::uint8_t> mCurrentEpisode;

@@ -928,7 +928,7 @@ void test_inconsistent_actor_completeness_fails_closed() {
             .stateIdentity = "11111111111111111111111111111111",
         },
         error));
-    REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
+    REQUIRE(error.find("actor count does not match") != std::string::npos);
 }
 
 void test_actor_population_is_not_limited_by_controller_capacity() {
@@ -981,7 +981,7 @@ void test_temporary_event_register_bank_is_required() {
             .stateIdentity = "11111111111111111111111111111111",
         },
         error));
-    REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
+    REQUIRE(error.find("register-bank width") != std::string::npos);
 }
 
 void test_player_resources_presence_matches_player_presence() {
@@ -995,7 +995,7 @@ void test_player_resources_presence_matches_player_presence() {
             .stateIdentity = "11111111111111111111111111111111",
         },
         error));
-    REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
+    REQUIRE(error.find("player-resource presence") != std::string::npos);
 }
 
 void test_runtime_file_attachment_fails_closed() {
@@ -1362,7 +1362,7 @@ void test_mechanics_boundary_and_surface_identity_fail_closed() {
             .playerForm = {.present = true},
         },
         error));
-    REQUIRE(error.find("incomplete or inconsistent channels") != std::string::npos);
+    REQUIRE(error.find("gameplay trace is detached") != std::string::npos);
 
     fixture.setTraceBoundary(GameplayTracePhase::PreInput, 10, 10, 440);
     fixture.gameplayTrace.playerCollisionSurfaces.surfaces[0].flags = 0;

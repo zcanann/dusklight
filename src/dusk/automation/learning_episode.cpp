@@ -1234,26 +1234,56 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
             context.gameplayTrace->core.boundaryIndex == context.boundaryIndex &&
             context.gameplayTrace->core.simulationTick == context.simulationTick &&
             context.gameplayTrace->core.tapeFrame == context.tapeFrame);
-    if ((context.phase != LearningObservationPhase::PreInput &&
-            context.phase != LearningObservationPhase::PostSimulation) ||
-        !validTerminalReason || !terminalPhaseIsValid || !terminalOutcomeIsValid ||
-        !traceBoundaryIsValid ||
-        observation.actors.size() > std::numeric_limits<std::uint16_t>::max() ||
-        observation.dynamicColliders.size() > std::numeric_limits<std::uint16_t>::max() ||
-        observation.actorObservedCount != observation.actors.size() ||
-        observation.actorsTruncated || observation.dynamicCollidersTruncated ||
-        (!observation.dynamicCollidersPresent && !observation.dynamicColliders.empty()) ||
-        observation.playerResourcesPresent != observation.playerPresent ||
-        observation.playerRelationshipsPresent != observation.playerIsLink ||
-        observation.playerCollisionSolverPresent != observation.playerIsLink ||
-        (observation.flagsPresent &&
-            (observation.eventFlags.size() != kMilestoneEventFlagCount ||
-                observation.temporaryFlags.size() != kMilestoneTemporaryFlagCount ||
-                observation.temporaryEventBytes.size() != kMilestoneTemporaryEventByteCount ||
-                observation.dungeonFlags.size() != kMilestoneDungeonFlagCount ||
-                observation.switchFlags.size() != kMilestoneSwitchFlagCount)))
-    {
-        error = "learning observation has incomplete or inconsistent channels";
+    if (context.phase != LearningObservationPhase::PreInput &&
+        context.phase != LearningObservationPhase::PostSimulation) {
+        error = "learning observation has an invalid boundary phase";
+        return false;
+    }
+    if (!validTerminalReason || !terminalPhaseIsValid || !terminalOutcomeIsValid) {
+        error = "learning observation has inconsistent terminal context";
+        return false;
+    }
+    if (!traceBoundaryIsValid) {
+        error = "learning observation gameplay trace is detached from its boundary";
+        return false;
+    }
+    if (observation.actors.size() > std::numeric_limits<std::uint16_t>::max() ||
+        observation.dynamicColliders.size() > std::numeric_limits<std::uint16_t>::max()) {
+        error = "learning observation channel population exceeds its encoded capacity";
+        return false;
+    }
+    if (observation.actorObservedCount != observation.actors.size()) {
+        error = "learning observation actor count does not match the captured actor set";
+        return false;
+    }
+    if (observation.actorsTruncated || observation.dynamicCollidersTruncated) {
+        error = "learning observation contains a truncated actor or collider channel";
+        return false;
+    }
+    if (!observation.dynamicCollidersPresent && !observation.dynamicColliders.empty()) {
+        error = "learning observation has colliders while the collider channel is absent";
+        return false;
+    }
+    if (observation.playerResourcesPresent != observation.playerPresent) {
+        error = "learning observation player-resource presence does not match player presence";
+        return false;
+    }
+    if (observation.playerRelationshipsPresent != observation.playerIsLink) {
+        error = "learning observation player-relationship presence does not match Link presence";
+        return false;
+    }
+    if (observation.playerCollisionSolverPresent != observation.playerIsLink) {
+        error =
+            "learning observation player-collision-solver presence does not match Link presence";
+        return false;
+    }
+    if (observation.flagsPresent &&
+        (observation.eventFlags.size() != kMilestoneEventFlagCount ||
+            observation.temporaryFlags.size() != kMilestoneTemporaryFlagCount ||
+            observation.temporaryEventBytes.size() != kMilestoneTemporaryEventByteCount ||
+            observation.dungeonFlags.size() != kMilestoneDungeonFlagCount ||
+            observation.switchFlags.size() != kMilestoneSwitchFlagCount)) {
+        error = "learning observation flag channel has an inconsistent register-bank width";
         return false;
     }
     if (std::ranges::adjacent_find(observation.actors,
