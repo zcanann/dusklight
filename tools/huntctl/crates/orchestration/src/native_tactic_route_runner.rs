@@ -68,6 +68,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6: &str = "dusklight-native-tactic-
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7: &str = "dusklight-native-tactic-route-report/v7";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8: &str = "dusklight-native-tactic-route-report/v8";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9: &str = "dusklight-native-tactic-route-report/v9";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10: &str = "dusklight-native-tactic-route-report/v10";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -383,6 +384,8 @@ pub struct NativeTacticProposalTrace {
     pub reward: f32,
     pub reward_components: TacticRewardBreakdown,
     pub realized_ticks: u32,
+    #[serde(default)]
+    pub emitted_tape_sha256: Digest,
     pub terminal: bool,
     pub goal_distance_after: f32,
     pub after_snapshot_sha256: Digest,
@@ -669,7 +672,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -1757,6 +1760,7 @@ fn run_seed(
                     reward: proposal.reward.training_reward,
                     reward_components: proposal.reward.clone(),
                     realized_ticks: proposal.outcome.execution.duration.realized_ticks,
+                    emitted_tape_sha256: proposal.transition.value_sample.realized_tape_sha256,
                     terminal: proposal.outcome.terminal,
                     goal_distance_after: after_features[encoder.goal_distance_feature()],
                     after_snapshot_sha256: proposal.transition.after_state_sha256,
@@ -2673,6 +2677,9 @@ fn project_tactic_decision_record(
                 .map_err(route_error)?;
             if candidate.value_sample.action.option_id != proposal.trace.option_id
                 || candidate.execution.duration.realized_ticks != proposal.trace.realized_ticks
+                || (proposal.trace.emitted_tape_sha256 != Digest::ZERO
+                    && candidate.value_sample.realized_tape_sha256
+                        != proposal.trace.emitted_tape_sha256)
                 || candidate.value_sample.terminal != proposal.trace.terminal
                 || candidate.after_state_sha256 != proposal.trace.after_snapshot_sha256
                 || candidate.value_sample.reward.to_bits() != proposal.trace.reward.to_bits()
@@ -4380,27 +4387,28 @@ mod tests {
             reward: transition.value_sample.reward,
             reward_components: trace.reward_components.clone(),
             realized_ticks: transition.execution.duration.realized_ticks,
+            emitted_tape_sha256: transition.value_sample.realized_tape_sha256,
             terminal: transition.value_sample.terminal,
             goal_distance_after: trace.goal_distance_after,
             after_snapshot_sha256: transition.after_state_sha256,
             retained: true,
         };
         trace.proposal_batch = vec![proposal_trace.clone()];
-        append_tactic_decision_record(
-            &root,
-            &decision_record(
-                &trace,
-                2,
-                root_checkpoint_sha256,
-                root_ref,
-                transition_ref,
-                vec![NativeTacticProposalRecord {
-                    trace: proposal_trace,
-                    transition: transition_ref,
-                }],
-            ),
-        )
-        .unwrap();
+        let record = decision_record(
+            &trace,
+            2,
+            root_checkpoint_sha256,
+            root_ref,
+            transition_ref,
+            vec![NativeTacticProposalRecord {
+                trace: proposal_trace,
+                transition: transition_ref,
+            }],
+        );
+        let mut detached = record.clone();
+        detached.proposal_batch[0].trace.emitted_tape_sha256 = Digest([0xff; 32]);
+        assert!(project_tactic_decision_record(&store, detached).is_err());
+        append_tactic_decision_record(&root, &record).unwrap();
 
         let projected_trace = read_tactic_decision_journal(&root).unwrap();
         assert_eq!(projected_trace[0].proposal_batch, trace.proposal_batch);
@@ -4565,6 +4573,7 @@ mod tests {
                 reward: index as f32,
                 reward_components: trace.reward_components.clone(),
                 realized_ticks,
+                emitted_tape_sha256: Digest([index as u8 + 1; 32]),
                 terminal: index == 1,
                 goal_distance_after: 7.0,
                 after_snapshot_sha256: Digest([index as u8 + 1; 32]),
