@@ -4323,7 +4323,12 @@ fn remove_rolling_checkpoint(
 fn initial_probe_batch(
     config: &NativeTacticRouteRunConfig<'_>,
 ) -> Result<NativeSuffixBatch, NativeTacticRouteRunError> {
-    tactic_root_probe_batch(config.optimization, config.execution)
+    // The root observation is the first pre-input row. Running the entire
+    // exploration horizon here produces no additional authority: the
+    // persistent worker has already captured the authenticated source
+    // checkpoint before it evaluates this candidate, and subsequent batches
+    // declare their own bounded horizons.
+    tactic_root_probe_batch_with_ticks(config.optimization, config.execution, 1)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -4936,6 +4941,23 @@ pub(crate) fn tactic_root_probe_batch(
 ) -> Result<NativeSuffixBatch, NativeTacticRouteRunError> {
     let maximum_ticks =
         usize::try_from(optimization.budgets.exploration_horizon_ticks).map_err(route_error)?;
+    tactic_root_probe_batch_with_ticks(optimization, execution, maximum_ticks)
+}
+
+fn tactic_root_probe_batch_with_ticks(
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    maximum_ticks: usize,
+) -> Result<NativeSuffixBatch, NativeTacticRouteRunError> {
+    if maximum_ticks == 0
+        || maximum_ticks
+            > usize::try_from(optimization.budgets.exploration_horizon_ticks)
+                .map_err(route_error)?
+    {
+        return Err(route_message(
+            "tactic root probe exceeds the exploration horizon",
+        ));
+    }
     Ok(NativeSuffixBatch {
         schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: usize::try_from(optimization.route.source_boundary_index)
