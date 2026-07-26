@@ -50,18 +50,6 @@ Acceptance:
   the sealed Ordon workload without changing its semantic results.
 - Worker scaling is measured rather than inferred from raw simulator tests.
 
-## P3 - Replace the fixed action grid with tactic proposals
-
-- [ ] Generate multiple diverse parameter proposals from each retained state
-      using progress, novelty, uncertainty, and previous outcomes.
-
-Acceptance:
-
-- The learner can evaluate parameters and compositions that were not present as
-  individual blessed catalog entries at campaign start.
-- The same generic tactic runtime works for Ordon and at least one held-out
-  start/goal pair without route-specific preferred-action scripts.
-
 ## P4 - Discover, validate, and promote tactics
 
 - [ ] Mine successful and high-value replay fragments for recurring bounded

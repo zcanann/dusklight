@@ -1,0 +1,79 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-outcome-conditioned-proposals/v1",
+  "date": "2026-07-25",
+  "claim": "Parameterized tactic generation consumes authenticated prior reward, planar progress, endpoint novelty, terminal outcome, and fitted-model ensemble uncertainty. The same generic family runtime generated and executed two decisions on the held-out Faron Woods start/goal pair without a route-specific preferred-action script.",
+  "implementation": {
+    "commit": "e784bc6520",
+    "feedback_identity": "the latest replay transition whose authenticated after-state digest exactly matches the current retained state",
+    "feedback_fields": [
+      "previous reward",
+      "goal-distance progress",
+      "ensemble uncertainty for the prior exact action at the current state",
+      "whether the endpoint is a first visit",
+      "terminal outcome"
+    ],
+    "adaptation": "Progress narrows heading probes and permits longer goal-seek duration; regression or a repeated endpoint widens heading and curve probes; ensemble uncertainty expands deterministic angular jitter.",
+    "serialization": "Feedback is stored in the binary decision journal and projected into the human-readable v10 report. It is not a JSON checkpoint."
+  },
+  "validation": {
+    "cargo_test_parameterized_tactic_proposals": {
+      "passed": 5,
+      "failed": 0,
+      "specific_check": "identical seed/state with measured regression, repeated endpoint, and nonzero uncertainty generates different exact instances under the same family schema"
+    },
+    "cargo_test_native_tactic_route_runner": {
+      "passed": 21,
+      "failed": 0
+    },
+    "cargo_test_route_workbench": {
+      "passed": 4,
+      "failed": 0
+    },
+    "cargo_check_huntctl": "passed",
+    "held_out_native_smoke": {
+      "request": "routes/Glitch Exhibition/faron-tactic-learning/benchmarks/faron-woods-tactic-q-discovery-v1.request.json",
+      "request_sha256": "653dc628e5cabccbc39c8ce975715ac32b7caa6107f0e964459e26999768d15c",
+      "execution": "build/campaigns/faron-tactic-route-current-execution-20260725/execution.json",
+      "execution_sha256": "e3285289821f4cb8bacbb85fb92d63b9be10e0923ea7155d8ba0d328fe2e6515",
+      "output": "build/campaigns/faron-tactic-route-outcome-feedback-20260725-v2",
+      "report_sha256": "6059c2dba9858440162ba08018a8c60c42e4ea693fec8c841d544c0d9be403bd",
+      "huntctl_binary_sha256": "4460d6edb75021a3f15f9a3f7c42c5f61288fe83fe7e047dc998fef3e2919924",
+      "seed": 181081,
+      "workers": 4,
+      "decisions": 2,
+      "native_ticks": 72,
+      "wall_micros": 105569549,
+      "proposal_transitions": 8,
+      "useful_transitions": 5,
+      "source_coordinate": [
+        150.21315,
+        306.54245,
+        -2785.0728
+      ],
+      "goal_coordinate": [
+        -430.95392,
+        241.77234,
+        -21165.0
+      ],
+      "decision_0": {
+        "feedback": null,
+        "retained_option_id": "family/short-curve/76479bd249adccd54001",
+        "goal_distance_before": 18389.113,
+        "goal_distance_after": 18251.895
+      },
+      "decision_1": {
+        "feedback": {
+          "previous_reward": 0.08730978,
+          "goal_progress": 137.21875,
+          "ensemble_uncertainty": 4.9303807e-32,
+          "endpoint_novel": true,
+          "terminal": false
+        },
+        "retained_option_id": "blueprint/generated-sequence-30a17f567a37d9da5a7f",
+        "goal_distance_before": 18251.895,
+        "goal_distance_after": 17930.945
+      }
+    }
+  },
+  "scope": "This closes generic proposal generation and held-out runtime acceptance for P3. The two-decision Faron smoke did not reach terminal and is not a route-performance claim."
+}
