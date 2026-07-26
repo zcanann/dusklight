@@ -1,0 +1,51 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-exact-proposal-tapes/v1",
+  "date": "2026-07-25",
+  "claim": "Every evaluated native tactic proposal, including rejected alternatives, is stored as a content-addressed CBOR transition referencing its exact binary input tape and realized duration. Report schema v10 exposes the authenticated emitted-tape digest for direct inspection, and journal projection rejects a mismatched digest.",
+  "implementation": {
+    "commit": "56f9525cd3",
+    "report_schema": "dusklight-native-tactic-route-report/v10",
+    "operational_storage": [
+      "binary tactic decision journal",
+      "CBOR tactic transition object",
+      "content-addressed binary InputTape object"
+    ],
+    "retention_scope": "all evaluated proposals are recorded; only the winning proposal enters training replay",
+    "compatibility": "The workbench continues to read v9 reports and accepts the new v10 report."
+  },
+  "validation": {
+    "cargo_test_native_tactic_route_runner": {
+      "passed": 21,
+      "failed": 0,
+      "adversarial_check": "journal projection rejects a proposal trace whose emitted-tape digest differs from its stored transition"
+    },
+    "cargo_test_route_workbench": {
+      "passed": 4,
+      "failed": 0
+    },
+    "cargo_check_huntctl": "passed",
+    "native_smoke": {
+      "output": "build/campaigns/tactic-route-exact-proposal-tapes-20260725",
+      "report_sha256": "d104735ebf343f44b932b0b9bf6f8f48151437b5065ab44750e4d95f41865e6d",
+      "huntctl_binary_sha256": "ed5da9419b3e8bf22379151122f50481a89a74b047f3dbdac45d61559f6dfdb3",
+      "execution_content_sha256": "799f52c24a184b7619866b526ccf9402612b2a833744fabef7dd98a093183644",
+      "seed": 130363,
+      "workers": 4,
+      "decisions": 2,
+      "proposal_records": 8,
+      "nonzero_emitted_tape_digests": 8,
+      "distinct_emitted_tape_digests": 7,
+      "realized_ticks": [
+        2,
+        8,
+        4,
+        10,
+        2,
+        2,
+        2,
+        2
+      ]
+    }
+  },
+  "scope": "Repeated exact input can legitimately share a content digest. Seven distinct tape identities across eight proposals reflect one repeated two-tick interaction tape, not missing evidence."
+}

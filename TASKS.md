@@ -54,8 +54,6 @@ Acceptance:
 
 - [ ] Generate multiple diverse parameter proposals from each retained state
       using progress, novelty, uncertainty, and previous outcomes.
-- [ ] Record the exact compiled controller tape and realized duration for every
-      proposal so learned tactics remain ordinary replayable input.
 
 Acceptance:
 
