@@ -1,0 +1,83 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-restore-accounting/v1",
+  "date": "2026-07-25",
+  "claim": "The tactic-route report now exposes validated native request, root/direct restore, prefix replay, restore-cost, cache, checkpoint-capture, peak-memory, and logical transition-yield accounting. Persistent worker cache counters are converted to per-job deltas so concurrent seed totals do not double-count cumulative process state.",
+  "implementation": {
+    "commit": "80a8a71c6ffa720f3672b7a14131e1f912beede5",
+    "report_schema": "dusklight-native-tactic-route-report/v9",
+    "resume_performance_schema": "dusklight-native-tactic-route-performance/v2",
+    "cache_result_contract": "typed, deny-unknown-fields, request-bound, and validated before its counters enter the report",
+    "resume_policy": "older performance checkpoints without restore accounting fail schema validation instead of producing fabricated zero measurements",
+    "useful_transition_definition": "a logical proposal outcome that reaches terminal, has positive shaped reward, or reduces goal distance from its shared source",
+    "rate_units": "integer millionths; useful_transitions_per_restore_millionths is useful logical proposal transitions divided by native restore samples",
+    "cache_counter_semantics": "cache_hits and cache_misses are deltas from the native cache's internal counters; direct_process_local_restore_requests separately counts externally visible direct requests because one request may perform multiple internal cache lookups"
+  },
+  "validation": {
+    "cargo_check_huntctl": "passed",
+    "cargo_test_native_suffix_result": {
+      "passed": 6,
+      "failed": 0
+    },
+    "cargo_test_native_tactic_route_runner": {
+      "passed": 21,
+      "failed": 0
+    },
+    "cargo_test_tactic_route_runtime": {
+      "passed": 4,
+      "failed": 0
+    },
+    "cargo_test_orchestration": {
+      "passed": 128,
+      "failed": 2,
+      "unrelated_failures": [
+        "residual_horizon_tightening fixture digest",
+        "residual_reverse_curriculum fixture digest"
+      ]
+    }
+  },
+  "native_smoke": {
+    "output": "build/campaigns/tactic-route-restore-accounting-smoke-20260725",
+    "execution_content_sha256": "799f52c24a184b7619866b526ccf9402612b2a833744fabef7dd98a093183644",
+    "execution_file_sha256": "f37e1d7c155186e808351c63fb753e3a86a42ced928eb9381bf09417e1759812",
+    "game_binary_sha256": "a6cbc123b96a9a5a1d1b5efdfe55855ee63cf307cf94bb6363c2df3c6ab2b5df",
+    "huntctl_binary_sha256": "ac0af88e20cf9380495426cc9b0b6b74e95fd5f1809ab2cf9c6714dff6da4770",
+    "report_sha256": "a7040043464e621505948f0d84eac0dd135437d9af78719bb30a54e38778ecab",
+    "seed_104729_result_sha256": "85e9240e738e14ea9e902f16471b4fa23f0354f6a26ab3afcb60c9d71050d088",
+    "seed_130363_result_sha256": "34e64f6105fcab9421fc14bf572926a164637b77eb448fce6eda2355282b8ae3",
+    "seeds": [
+      104729,
+      130363
+    ],
+    "workers": 4,
+    "decisions": 3,
+    "useful_decisions": 3,
+    "successful_seeds": 2,
+    "native_ticks": 218,
+    "wall_micros": 133557768,
+    "restore_accounting": {
+      "native_requests": 130,
+      "authenticated_root_restore_requests": 87,
+      "direct_process_local_restore_requests": 43,
+      "prefix_materializations": 1,
+      "replayed_prefix_ticks": 40,
+      "restore_samples": 130,
+      "restore_micros": 2553162,
+      "mean_restore_micros": 19639,
+      "direct_restore_request_rate_per_million": 330769,
+      "cache_hits": 86,
+      "cache_misses": 0,
+      "cache_hit_rate_per_million": 1000000,
+      "checkpoint_capture_attempts": 130,
+      "checkpoint_capture_successes": 130,
+      "checkpoint_capture_micros": 41366991,
+      "peak_resident_entries": 2,
+      "peak_resident_bytes": 589443328,
+      "peak_resident_checkpoint_bytes": 589442848,
+      "peak_resident_host_snapshot_bytes": 480,
+      "proposal_transitions": 12,
+      "useful_transitions": 11,
+      "useful_transitions_per_restore_millionths": 84615
+    }
+  },
+  "scope": "This closes explicit P2 restore/replay/cache/memory/transition-yield measurement. The smoke also demonstrates that the current reactive tactic is extremely restore-heavy: 130 native restore samples produced only 12 logical proposal transitions, making tactic execution granularity an explicit P3 throughput target."
+}

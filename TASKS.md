@@ -52,8 +52,6 @@ Acceptance:
 
 ## P2 - Make retained states computationally real
 
-- [ ] Measure restore cost, replayed-prefix ticks, cache hit rate, memory, and
-      useful transitions produced per restore.
 - [ ] Reject detached, mismatched, or semantically invalid checkpoints without
       silently falling back to fabricated state.
 
