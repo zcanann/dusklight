@@ -353,6 +353,7 @@ pub fn ensure_terminal_cost_refinement(
     ranking: &LiveTacticRanking,
     state_untried: &[OptionActionDescriptor],
     terminal_incumbent: Option<&OptionActionDescriptor>,
+    config: TacticExplorationConfig,
     maximum_proposals: usize,
     proposals: &mut Vec<SelectedTactic>,
 ) -> Result<(), TacticExplorationError> {
@@ -363,6 +364,7 @@ pub fn ensure_terminal_cost_refinement(
         || proposals.is_empty()
         || proposals.len() > maximum_proposals
         || ranking.learner_snapshot_sha256 == Digest::ZERO
+        || config.epsilon_per_million > EPSILON_SCALE
     {
         return if proposals.len() <= maximum_proposals && !proposals.is_empty() {
             Ok(())
@@ -388,9 +390,21 @@ pub fn ensure_terminal_cost_refinement(
             .cmp(&refinement_distance(incumbent, right))
             .then_with(|| left.option_id.cmp(&right.option_id))
     });
-    let Some(descriptor) = candidates.first().copied().cloned() else {
+    if candidates.is_empty() {
         return Ok(());
-    };
+    }
+    // Workers in one learned generation share the same replay boundary. Use
+    // their sealed exploration seeds to cover a small nearest-neighbor window
+    // instead of spending every worker on an identical deterministic replay.
+    // The window stays local and bounded by the native proposal batch width.
+    let refinement_window = candidates.len().min(maximum_proposals);
+    let refinement_index = (deterministic_draw(
+        config.seed,
+        proposals[0].decision_index,
+        ranking.learner_snapshot_sha256,
+        7,
+    ) % refinement_window as u64) as usize;
+    let descriptor = candidates[refinement_index].clone();
     let proposal = SelectedTactic {
         schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
         learner_snapshot_sha256: ranking.learner_snapshot_sha256,
@@ -767,7 +781,7 @@ mod tests {
     use crate::tactic_asset::TacticDurationBounds;
     use crate::tactic_blueprint::ConcreteTacticChoiceKind;
     use dusklight_control::option_execution::{OptionParameter, OptionType};
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn descriptor(id: &str, option_type: OptionType) -> OptionActionDescriptor {
         OptionActionDescriptor {
@@ -1198,6 +1212,10 @@ mod tests {
             &ranking,
             &[period_20.clone(), rolling_route(24)],
             Some(&incumbent),
+            TacticExplorationConfig {
+                seed: 0,
+                epsilon_per_million: 0,
+            },
             3,
             &mut proposals,
         )
@@ -1205,10 +1223,39 @@ mod tests {
 
         assert_eq!(proposals.len(), 3);
         assert_eq!(proposals[0].descriptor, incumbent);
-        assert_eq!(proposals[1].descriptor, period_20);
+        assert!(
+            proposals[1].descriptor == period_20 || proposals[1].descriptor == rolling_route(24)
+        );
         assert_eq!(
             proposals[1].reason,
             TacticSelectionReason::TerminalCostRefinement
+        );
+
+        let selected_neighbors = (0..32)
+            .map(|seed| {
+                let mut proposals = proposals.clone();
+                proposals.remove(1);
+                ensure_terminal_cost_refinement(
+                    &ranking,
+                    &[period_20.clone(), rolling_route(24)],
+                    Some(&incumbent),
+                    TacticExplorationConfig {
+                        seed,
+                        epsilon_per_million: 0,
+                    },
+                    3,
+                    &mut proposals,
+                )
+                .unwrap();
+                proposals[1].descriptor.option_id.clone()
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            selected_neighbors,
+            BTreeSet::from([
+                period_20.option_id.clone(),
+                rolling_route(24).option_id.clone()
+            ])
         );
     }
 

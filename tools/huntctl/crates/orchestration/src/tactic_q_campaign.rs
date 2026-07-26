@@ -1470,6 +1470,7 @@ impl TacticQCampaign {
                 &ranking,
                 &state_untried,
                 terminal_incumbent.as_ref(),
+                self.exploration,
                 maximum_proposals,
                 &mut proposals,
             )?;
