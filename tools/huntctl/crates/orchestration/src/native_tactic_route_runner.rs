@@ -68,7 +68,7 @@ use dusklight_world::world_inventory::WorldInventory;
 use dusklight_world::world_surface_graph::WorldSurfaceGraph;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -4737,6 +4737,36 @@ struct NavigableSurfaceEdge {
     shared_edge: [[f32; 3]; 2],
 }
 
+#[derive(Clone, Copy, Debug)]
+struct NavigableSurfaceFrontier {
+    distance: f32,
+    node: usize,
+}
+
+impl PartialEq for NavigableSurfaceFrontier {
+    fn eq(&self, other: &Self) -> bool {
+        self.distance.to_bits() == other.distance.to_bits() && self.node == other.node
+    }
+}
+
+impl Eq for NavigableSurfaceFrontier {}
+
+impl PartialOrd for NavigableSurfaceFrontier {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NavigableSurfaceFrontier {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // BinaryHeap is a max-heap; reverse distance ordering for a min frontier.
+        other
+            .distance
+            .total_cmp(&self.distance)
+            .then_with(|| other.node.cmp(&self.node))
+    }
+}
+
 fn goal_surface_routes(
     source: [f32; 3],
     goal: [f32; 3],
@@ -4872,17 +4902,38 @@ fn shortest_navigable_surface_routes(
         neighbors.dedup();
     }
 
+    let mut distances = vec![f32::INFINITY; nodes.len()];
     let mut previous = vec![None; nodes.len()];
+    distances[source_index] = 0.0;
     previous[source_index] = Some((source_index, usize::MAX));
-    let mut pending = VecDeque::from([source_index]);
-    while let Some(current) = pending.pop_front() {
-        if current == goal_index {
+    let mut pending = BinaryHeap::from([NavigableSurfaceFrontier {
+        distance: 0.0,
+        node: source_index,
+    }]);
+    while let Some(frontier) = pending.pop() {
+        if frontier.distance > distances[frontier.node] {
+            continue;
+        }
+        if frontier.node == goal_index {
             break;
         }
-        for &(neighbor, edge_index) in &adjacency[current] {
-            if previous[neighbor].is_none() {
-                previous[neighbor] = Some((current, edge_index));
-                pending.push_back(neighbor);
+        for &(neighbor, edge_index) in &adjacency[frontier.node] {
+            let edge_distance =
+                planar_distance(nodes[frontier.node].coordinate, nodes[neighbor].coordinate);
+            let candidate_distance = frontier.distance + edge_distance;
+            let improves_distance = candidate_distance < distances[neighbor];
+            let improves_tie_break = candidate_distance.to_bits() == distances[neighbor].to_bits()
+                && previous[neighbor].is_some_and(|(predecessor, prior_edge)| {
+                    (nodes[frontier.node].collision_id.as_str(), edge_index)
+                        < (nodes[predecessor].collision_id.as_str(), prior_edge)
+                });
+            if improves_distance || improves_tie_break {
+                distances[neighbor] = candidate_distance;
+                previous[neighbor] = Some((frontier.node, edge_index));
+                pending.push(NavigableSurfaceFrontier {
+                    distance: candidate_distance,
+                    node: neighbor,
+                });
             }
         }
     }
@@ -6647,6 +6698,55 @@ mod tests {
             .unwrap()
             .is_none()
         );
+    }
+
+    #[test]
+    fn navigable_surface_route_minimizes_travel_distance_not_triangle_count() {
+        let nodes = vec![
+            NavigableSurfaceNode {
+                collision_id: "source".into(),
+                coordinate: [0.0, 10.0, 0.0],
+            },
+            NavigableSurfaceNode {
+                collision_id: "detour".into(),
+                coordinate: [200.0, 10.0, 1_000.0],
+            },
+            NavigableSurfaceNode {
+                collision_id: "straight-a".into(),
+                coordinate: [100.0, 10.0, 0.0],
+            },
+            NavigableSurfaceNode {
+                collision_id: "straight-b".into(),
+                coordinate: [300.0, 10.0, 0.0],
+            },
+            NavigableSurfaceNode {
+                collision_id: "goal".into(),
+                coordinate: [400.0, 10.0, 0.0],
+            },
+        ];
+        let edge = |left: &str, right: &str, x: f32, z: f32| NavigableSurfaceEdge {
+            left_collision_id: left.into(),
+            right_collision_id: right.into(),
+            shared_edge: [[x, 10.0, z - 50.0], [x, 10.0, z + 50.0]],
+        };
+        let edges = vec![
+            edge("source", "detour", 100.0, 500.0),
+            edge("detour", "goal", 300.0, 500.0),
+            edge("source", "straight-a", 50.0, 0.0),
+            edge("straight-a", "straight-b", 200.0, 0.0),
+            edge("straight-b", "goal", 350.0, 0.0),
+        ];
+
+        let routes = shortest_navigable_surface_routes(
+            &nodes,
+            &edges,
+            nodes[0].coordinate,
+            nodes[4].coordinate,
+        )
+        .unwrap()
+        .expect("both corridors connect the source and goal");
+
+        assert_eq!(routes[0], vec![nodes[4].coordinate]);
     }
 
     #[test]
