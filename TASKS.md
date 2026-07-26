@@ -52,15 +52,8 @@ Acceptance:
 
 ## P3 - Replace the fixed action grid with tactic proposals
 
-- [ ] Add bounded composition of generated controller-operation families;
-      heading, stick magnitude, duration, curve, roll timing, target, and
-      interaction timing are already parameterized.
-- [ ] Preserve applicability and safety constraints in the executor so a
-      proposer cannot emit invalid or unbounded programs.
 - [ ] Generate multiple diverse parameter proposals from each retained state
       using progress, novelty, uncertainty, and previous outcomes.
-- [ ] Make the native route learner execute tactic blueprints; remove the empty
-      blueprint path from the real campaign.
 - [ ] Record the exact compiled controller tape and realized duration for every
       proposal so learned tactics remain ordinary replayable input.
 

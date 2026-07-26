@@ -1,0 +1,67 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-bounded-composition/v1",
+  "date": "2026-07-25",
+  "claim": "The real native route campaign generates bounded sequence blueprints from ephemeral tactic-family instances, reserves proposal-batch coverage for a composition, compiles it to an exact controller tape, executes it through the native worker, and can retain it as the next learned boundary.",
+  "implementation": {
+    "commit": "933c189982",
+    "family_schema": "dusklight-parameterized-tactic-families/v1",
+    "family_schema_sha256": "b614c45079ff8c3e50b8a2e3ec36bf9232b515e3b12354ebe8f6ee7a9f60dc1b",
+    "composition_kind": "bounded static sequence over content-addressed ephemeral family instances",
+    "safety": [
+      "maximum proposal count is 32",
+      "maximum tactic duration is 4096 ticks",
+      "composition duration is checked before admission and again against its compiled exact tape",
+      "missing observations, absent gameplay context, completed terminals, unavailable blueprint start paths, and detached descriptors fail closed in the native executor"
+    ],
+    "legacy_compatibility": "The frozen-policy runner retains its sealed categorical catalog. Exploratory route learning constructs only ephemeral parameterized catalogs and generated blueprints."
+  },
+  "validation": {
+    "cargo_test_learner_state": {
+      "passed": 3,
+      "failed": 0
+    },
+    "cargo_test_parameterized_tactic_proposals": {
+      "passed": 4,
+      "failed": 0
+    },
+    "cargo_test_native_tactic_worker": {
+      "passed": 6,
+      "failed": 0
+    },
+    "cargo_test_tactic_q_campaign": {
+      "passed": 4,
+      "failed": 0
+    },
+    "cargo_test_native_tactic_route_runner": {
+      "passed": 21,
+      "failed": 0
+    },
+    "cargo_check_huntctl": "passed",
+    "native_smoke": {
+      "output": "build/campaigns/tactic-route-composition-smoke-20260725-v4",
+      "report_schema": "dusklight-native-tactic-route-report/v9",
+      "report_sha256": "45c1d28fd78e20e2659236e79d79c4b3e9acee643c5c22e971d7d0bbc611d508",
+      "huntctl_binary_sha256": "b15679841cb9179d6c9dd0f2e62ca92ae59e4a63486c915efb61313901cf0041",
+      "execution_content_sha256": "799f52c24a184b7619866b526ccf9402612b2a833744fabef7dd98a093183644",
+      "seed": 130363,
+      "workers": 4,
+      "decisions": 2,
+      "native_ticks": 32,
+      "wall_micros": 53874903,
+      "proposal_transitions": 8,
+      "useful_transitions": 8,
+      "decision_0": {
+        "retained_option_id": "blueprint/generated-sequence-1574cf0c88be2a03e7c3",
+        "retained_realized_ticks": 10,
+        "terminal": false
+      },
+      "decision_1": {
+        "evaluated_option_id": "blueprint/generated-sequence-38d41c22855ad382679c",
+        "realized_ticks": 2,
+        "terminal": true,
+        "retained": false
+      }
+    }
+  },
+  "scope": "This is bounded-composition and executor-safety evidence, not route-performance evidence. The generated sequence is deliberately small; discovery and promotion of useful replay-derived macros remain P4 work."
+}
