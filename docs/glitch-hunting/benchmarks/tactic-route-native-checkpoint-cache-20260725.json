@@ -1,0 +1,68 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-native-checkpoint-cache/v1",
+  "date": "2026-07-25",
+  "claim": "Persistent native tactic workers retain genuine same-process candidate endpoint checkpoints in a bounded per-worker LRU cache. Cache authority is an opaque process-local restore handle; machine image bytes, fixed host snapshot bytes, capacity, residency, insertions, replacements, evictions, hits, misses, capture attempts, and capture time are explicit in the v8 suffix result.",
+  "implementation": {
+    "commit": "39a03796fe5cc0e1685b71ce11e7fc90bcb57021",
+    "request_schema": "dusklight-suffix-batch/v9",
+    "result_schema": "dusklight-suffix-batch-result/v8",
+    "capacity_bytes_per_worker": 671088640,
+    "capacity_entries_per_worker": 2,
+    "eviction": "deterministic least-recently-used with canonical identity tie-break; the active direct-restore source is pinned",
+    "oversize_or_pinned_capacity_failure_is_non_mutating": true,
+    "detached_handle_falls_back_to_root": false,
+    "checkpoint_serialization": "none; native images and restore handles remain process-local memory",
+    "game_binary_sha256": "d588c31240a6e982ed1f96d493af6c5d845fdd3e49552772e45f381081be9f11",
+    "huntctl_binary_sha256": "01517a30b325db513296f125113d8b7a79473152f9f88b2a4aba59ac6ee504ae"
+  },
+  "validation": {
+    "cpp_suffix_batch_parser": "passed",
+    "cpp_native_checkpoint_cache": "passed",
+    "cpp_game_build": "passed",
+    "cargo_check_huntctl": "passed",
+    "cargo_test_native_suffix_result": {
+      "passed": 6,
+      "failed": 0,
+      "includes": [
+        "direct source handle binding",
+        "retained endpoint route-boundary binding",
+        "cache accounting validation",
+        "detached retained checkpoint rejection"
+      ]
+    },
+    "cargo_test_orchestration": {
+      "passed": 127,
+      "failed": 2,
+      "unrelated_failures": [
+        "residual_horizon_tightening fixture digest",
+        "residual_reverse_curriculum fixture digest"
+      ]
+    }
+  },
+  "native_smoke": {
+    "output": "build/campaigns/tactic-route-cache-smoke-20260725/run-v2",
+    "execution_content_sha256": "5501d80bdf0b2552ba638cfac356129cbbc55a8324dc7e2905a0d05df6f00f33",
+    "execution_file_sha256": "e69986a38e5c6d778e044886e3aac5e3c253b9de8387cd84a8bdfc1801237432",
+    "report_sha256": "32013a86cc95749a608b1795e72e9d8519f38ac040bc28e4c036756100204707",
+    "seed": 130363,
+    "workers": 1,
+    "decisions": 1,
+    "evaluated_realized_ticks": 56,
+    "successful": false,
+    "checkpoint_bytes_per_entry": 294721424,
+    "resident_entries": 2,
+    "resident_bytes": 589443328,
+    "capacity_respected": true,
+    "reactive_proposal_endpoint_insertions": 40,
+    "reactive_proposal_evictions": 38,
+    "final_retained_route_ticks": 40,
+    "final_restore_handle": "558b898b1bd6437295afcedcc471ec44",
+    "final_capture_micros": 333230,
+    "other_proposal_endpoint_handles": [
+      "62ba791937a6bafc53cdcf29d0e81d28",
+      "01a5d1eb64e9fb396b4329ea66479b13",
+      "cf49d273f21b4a693d25972584848bfe"
+    ]
+  },
+  "scope": "This closes bounded native endpoint retention only. The route scheduler still reports zero directly restorable frontiers because it does not yet route the winning handle back to its owning worker; direct restore and prefix elimination remain the next P2 milestone."
+}

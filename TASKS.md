@@ -52,8 +52,6 @@ Acceptance:
 
 ## P2 - Make retained states computationally real
 
-- [ ] Add a bounded per-worker native checkpoint cache for valuable frontier
-      states, with explicit memory accounting and deterministic eviction.
 - [ ] Restore a cached frontier directly when available instead of restoring
       the root checkpoint and replaying the complete accumulated route.
 - [ ] Batch competing proposals at a frontier so one restore and prefix replay
