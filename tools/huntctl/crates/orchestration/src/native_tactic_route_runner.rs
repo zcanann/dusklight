@@ -109,6 +109,7 @@ const MAX_ROUTE_WORKERS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
+const ROUTE_TACTIC_TICK_COST: f32 = 0.01;
 const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
 const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
@@ -633,15 +634,26 @@ pub fn run_native_tactic_route(
             "native worker pool does not share the requested source boundary",
         ));
     }
-    let GoalConditionedTacticContext {
+    let GoalConditionedTacticRuntime {
+        catalog: goal_catalog,
         encoder,
         report: goal_target,
-    } = goal_conditioned_tactic_context(
+    } = goal_conditioned_tactic_runtime(
         &root,
         config.optimization,
         config.execution,
         &initial_facts,
     )?;
+    let goal_route_catalog = TacticAssetCatalog::new(
+        goal_catalog
+            .entries()
+            .iter()
+            .filter(|entry| entry.option_id().starts_with("goal.seek.route."))
+            .cloned()
+            .collect(),
+    )
+    .map_err(route_error)?;
+    let action_schema_sha256 = goal_route_action_schema_sha256(&goal_route_catalog);
     let root_checkpoint_sha256 = worker_root_checkpoints[0];
     let reward_spec = route_tactic_reward_spec(&encoder, &initial_facts)?;
     let root_source_frame = usize::try_from(initial_facts.tape_frame)
@@ -676,6 +688,7 @@ pub fn run_native_tactic_route(
                 let reward_spec = &reward_spec;
                 let initial_facts = &initial_facts;
                 let route_prefix = &route_prefix;
+                let goal_route_catalog = &goal_route_catalog;
                 scope.spawn(move || {
                     run_seed_coordinator(
                         config,
@@ -685,6 +698,8 @@ pub fn run_native_tactic_route(
                         reward_spec,
                         initial_facts,
                         route_prefix,
+                        goal_route_catalog,
+                        action_schema_sha256,
                         root_checkpoint_sha256,
                         seed_index,
                         seed,
@@ -708,6 +723,8 @@ pub fn run_native_tactic_route(
                     config,
                     &pool,
                     &encoder,
+                    &goal_route_catalog,
+                    action_schema_sha256,
                     root_checkpoint_sha256,
                     mined,
                 )
@@ -784,7 +801,7 @@ pub fn run_native_tactic_route(
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
-        action_schema_sha256: parameterized_tactic_family_schema_sha256(),
+        action_schema_sha256,
         goal_target,
         reward_spec,
         demonstration_transitions: 0,
@@ -876,9 +893,10 @@ fn mine_and_store_tactic_macros(
                     goal_progress: record.goal_distance_before - proposal.trace.goal_distance_after,
                     terminal: proposal.trace.terminal,
                 };
-                if observation.terminal
-                    || observation.reward > 0.0
-                    || observation.goal_progress > 0.0
+                if observation.tape.frames.len() <= MAX_DISCOVERED_MACRO_TICKS
+                    && (observation.terminal
+                        || observation.reward > 0.0
+                        || observation.goal_progress > 0.0)
                 {
                     high_value_observation_count = high_value_observation_count.saturating_add(1);
                     observations.push(observation);
@@ -1081,6 +1099,8 @@ fn validate_and_store_tactic_macros(
     config: &NativeTacticRouteRunConfig<'_>,
     pool: &NativeTacticProposalPool,
     encoder: &GoalConditionedTacticFeatureEncoder,
+    goal_route_catalog: &TacticAssetCatalog,
+    action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
     mut mined: MinedTacticMacros,
 ) -> Result<NativeTacticMacroDiscoveryReport, NativeTacticRouteRunError> {
@@ -1133,6 +1153,8 @@ fn validate_and_store_tactic_macros(
                 encoder,
                 maximum_ticks,
                 None,
+                goal_route_catalog,
+                action_schema_sha256,
             )?;
             let baseline_identity = (frontier.seed, frontier.state_sha256, comparison_index);
             let primitive_outcome = if let Some(baseline) =
@@ -1697,6 +1719,8 @@ fn run_seed_coordinator(
     reward_spec: &TacticRewardSpec,
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
+    goal_route_catalog: &TacticAssetCatalog,
+    action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
     seed_index: usize,
     seed: u64,
@@ -1719,6 +1743,8 @@ fn run_seed_coordinator(
             reward_spec,
             initial_facts,
             route_prefix,
+            goal_route_catalog,
+            action_schema_sha256,
             root_checkpoint_sha256,
             seed_index,
             seed,
@@ -1738,8 +1764,10 @@ fn parameterized_catalog_for_state(
     encoder: &GoalConditionedTacticFeatureEncoder,
     maximum_ticks: u32,
     feedback: Option<ParameterizedTacticFeedback>,
+    goal_route_catalog: &TacticAssetCatalog,
+    action_schema_sha256: Digest,
 ) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
-    propose_parameterized_tactics(ParameterizedTacticProposalContext {
+    let mut proposals = propose_parameterized_tactics(ParameterizedTacticProposalContext {
         seed,
         decision_index,
         state_sha256: state.content_sha256().map_err(route_error)?,
@@ -1749,7 +1777,12 @@ fn parameterized_catalog_for_state(
         maximum_ticks,
         feedback,
     })
-    .map_err(route_error)
+    .map_err(route_error)?;
+    let mut entries = proposals.catalog.entries().to_vec();
+    entries.extend_from_slice(goal_route_catalog.entries());
+    proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
+    proposals.family_schema_sha256 = action_schema_sha256;
+    Ok(proposals)
 }
 
 fn parameterized_feedback_for_state(
@@ -2295,6 +2328,8 @@ fn run_seed(
     reward_spec: &TacticRewardSpec,
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
+    goal_route_catalog: &TacticAssetCatalog,
+    action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
     seed_index: usize,
     seed: u64,
@@ -2330,6 +2365,8 @@ fn run_seed(
                 encoder,
                 maximum_tactic_ticks,
                 None,
+                goal_route_catalog,
+                action_schema_sha256,
             )?;
             let current = LearnerState::build(
                 initial_facts.clone(),
@@ -2447,6 +2484,8 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
+                goal_route_catalog,
+                action_schema_sha256,
             )?;
             campaign
                 .restore_branch(
@@ -2486,6 +2525,8 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 proposal_feedback,
+                goal_route_catalog,
+                action_schema_sha256,
             )?;
             let proposal_catalog = Arc::new(proposals.catalog);
             let proposal_blueprints = Arc::new(proposals.blueprints);
@@ -2494,7 +2535,7 @@ fn run_seed(
                 .decide_parameterized_batch_with_policy(
                     &proposal_catalog,
                     &proposal_blueprints,
-                    parameterized_tactic_family_schema_sha256(),
+                    action_schema_sha256,
                     &encode,
                     TACTIC_PROPOSALS_PER_DECISION,
                     config.proposal_policy,
@@ -2574,6 +2615,8 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
+                goal_route_catalog,
+                action_schema_sha256,
             )?;
             campaign
                 .restore_branch(
@@ -2686,6 +2729,8 @@ fn run_seed(
             encoder,
             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
             None,
+            goal_route_catalog,
+            action_schema_sha256,
         )?;
         let step = campaign
             .retain_and_refit_rewarded(
@@ -4417,6 +4462,14 @@ pub(crate) struct GoalConditionedTacticContext {
     pub report: NativeTacticGoalTargetReport,
 }
 
+fn goal_route_action_schema_sha256(goal_route_catalog: &TacticAssetCatalog) -> Digest {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-goal-conditioned-parameterized-action-schema/v1");
+    hasher.update(parameterized_tactic_family_schema_sha256().0);
+    hasher.update(goal_route_catalog.action_schema_sha256().0);
+    Digest(hasher.finalize().into())
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticGoalTargetReport {
@@ -4971,11 +5024,11 @@ fn route_tactic_base_reward_spec() -> TacticRewardSpec {
     TacticRewardSpec {
         schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
         terminal_reward: 100.0,
-        // The first route-learning proof is about competence, not speed. Keep
-        // temporary detours value-neutral so the learner can discover paths
-        // around collision geometry without paying an implicit route-time
-        // objective that the product contract explicitly excludes.
-        tick_cost: 0.0,
+        // Terminal evidence remains overwhelmingly dominant, while every
+        // simulated controller tick has a small explicit cost. This makes the
+        // learned value function prefer a shorter terminal route without
+        // making necessary collision-avoidance detours worse than failure.
+        tick_cost: ROUTE_TACTIC_TICK_COST,
         novelty_reward: ROUTE_TACTIC_NOVELTY_REWARD,
         per_tick_discount: 1.0,
         potential: None,
@@ -5630,11 +5683,12 @@ mod tests {
     }
 
     #[test]
-    fn first_route_proof_does_not_optimize_speed() {
+    fn route_reward_keeps_terminal_dominant_and_charges_every_tick() {
         let reward = route_tactic_base_reward_spec();
         let values = route_option_value_config(42);
 
-        assert_eq!(reward.tick_cost, 0.0);
+        assert_eq!(reward.tick_cost, ROUTE_TACTIC_TICK_COST);
+        assert!(reward.terminal_reward > reward.tick_cost * 1_024.0);
         assert_eq!(reward.per_tick_discount, 1.0);
         assert_eq!(values.fitted_q.discount, ROUTE_TACTIC_VALUE_DISCOUNT);
         assert!(values.fitted_q.discount > 0.995);

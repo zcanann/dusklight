@@ -12,7 +12,6 @@ use std::f32::consts::TAU;
 pub const DEFAULT_ROUTE_TACTIC_COUNT: usize = 136;
 pub const MAX_GOAL_SEEK_TARGETS: usize = 64;
 const INTERMEDIATE_GOAL_SEEK_TOLERANCE: f32 = 96.0;
-const GOAL_ROUTE_STALL_GRACE_TICKS: u32 = 40;
 const GOAL_ROUTE_STATIONARY_WINDOW_TICKS: u32 = 16;
 const GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE: f32 = 16.0;
 
@@ -208,7 +207,11 @@ pub fn goal_conditioned_route_tactic_catalog(
                         .collect(),
                     intermediate_tolerance_f32_bits: INTERMEDIATE_GOAL_SEEK_TOLERANCE.to_bits(),
                     final_tolerance_f32_bits: 0.0_f32.to_bits(),
-                    stall_grace_ticks: GOAL_ROUTE_STALL_GRACE_TICKS,
+                    // The native controller owns this bounded composition in
+                    // one process call. Keep stall detection beyond the
+                    // declared horizon so the coordinator never falls back to
+                    // replaying one progressively longer prefix per tick.
+                    stall_grace_ticks: route_sequence_maximum_ticks,
                     stationary_window_ticks: GOAL_ROUTE_STATIONARY_WINDOW_TICKS,
                     stationary_window_distance_f32_bits: GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE
                         .to_bits(),
@@ -345,7 +348,7 @@ mod tests {
             TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan {
                 tactic: GenericTactic::SeekCoordinateSequence {
                     coordinates_f32_bits,
-                    stall_grace_ticks: GOAL_ROUTE_STALL_GRACE_TICKS,
+                    stall_grace_ticks,
                     stationary_window_ticks: GOAL_ROUTE_STATIONARY_WINDOW_TICKS,
                     stationary_window_distance_f32_bits,
                     ..
@@ -356,6 +359,7 @@ mod tests {
                 .iter()
                 .map(|coordinate| coordinate.map(f32::from_bits))
                 .collect::<Vec<_>>() == vec![waypoint, goal]
+                && *stall_grace_ticks == 640
                 && f32::from_bits(*stationary_window_distance_f32_bits)
                     == GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE
         ));
