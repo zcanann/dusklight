@@ -54,12 +54,6 @@ Acceptance:
 
 - [ ] Mine successful and high-value replay fragments for recurring bounded
       action sequences and state-conditioned tactic parameters.
-- [ ] Propose reusable macro tactics from those fragments without modifying the
-      underlying controller-input contract.
-- [ ] Evaluate each candidate macro against its primitive components from
-      multiple authenticated frontier states and deterministic seeds.
-- [ ] Promote a tactic only when it improves terminal probability, progress per
-      simulated tick, or route cost under a sealed comparison.
 - [ ] Retain provenance from source transitions through composition, evaluation,
       promotion, and every later execution.
 - [ ] Demote tactics that cease to add value while keeping historical replay
