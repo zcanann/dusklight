@@ -20,6 +20,7 @@
   "implementation": {
     "mining_commit": "1fc1f7ecbd",
     "native_validation_commit": "b31adb36a6",
+    "baseline_deduplication_commit": "93951ce87d",
     "report_schema": "dusklight-native-tactic-route-report/v11",
     "registry_extension": "dtmr",
     "registry_encoding": "versioned checksummed envelope containing zstd-compressed CBOR; tapes use the canonical binary InputTape encoding"
@@ -30,10 +31,10 @@
     "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
     "feature_schema_sha256": "be03e8360126d502306be142f800480e4c53cacd0970dc41bfca0d9f20ef0148",
     "action_schema_sha256": "b614c45079ff8c3e50b8a2e3ec36bf9232b515e3b12354ebe8f6ee7a9f60dc1b",
-    "huntctl_sha256": "1cca1ff245ae4a0238ac91d22f2c1236e9bd8bee85a075aac9515fe18265a48c"
+    "huntctl_sha256": "4d716757522231f81b0b85c56577092a66b84448c1251555286d479f8b0672f7"
   },
   "campaign": {
-    "output": "build/campaigns/tactic-macro-validation-smoke-20260725-v3",
+    "output": "build/campaigns/tactic-macro-validation-smoke-20260725-v4",
     "seeds": [
       104729,
       130363
@@ -49,21 +50,35 @@
     "comparisons": 12,
     "promoted": 0,
     "demoted": 0,
-    "total_native_ticks": 1447,
-    "validation_native_ticks": 1368,
-    "wall_micros": 161607951,
-    "validation_wall_micros": 102883318,
-    "validation_native_simulation_micros": 98666492,
-    "validation_preparation_micros": 3357306,
-    "validation_native_requests": 180,
-    "validation_direct_restore_requests": 168,
-    "validation_prefix_materializations": 12,
-    "validation_replayed_prefix_ticks": 192,
-    "validation_cache_hits": 336,
+    "total_native_ticks": 347,
+    "validation_native_ticks": 268,
+    "wall_micros": 87719427,
+    "validation_wall_micros": 30321908,
+    "validation_native_simulation_micros": 28690940,
+    "validation_preparation_micros": 888697,
+    "validation_native_requests": 52,
+    "validation_direct_restore_requests": 38,
+    "validation_prefix_materializations": 14,
+    "validation_replayed_prefix_ticks": 224,
+    "validation_cache_hits": 76,
     "validation_cache_misses": 0
   },
+  "baseline_deduplication": {
+    "semantic_check": "before and after produced the identical validated registry content SHA-256",
+    "before_output": "build/campaigns/tactic-macro-validation-smoke-20260725-v3",
+    "after_output": "build/campaigns/tactic-macro-validation-smoke-20260725-v4",
+    "before_validation_native_ticks": 1368,
+    "after_validation_native_ticks": 268,
+    "native_tick_reduction_millionths": 804093,
+    "before_validation_native_requests": 180,
+    "after_validation_native_requests": 52,
+    "native_request_reduction_millionths": 711111,
+    "before_validation_wall_micros": 102883318,
+    "after_validation_wall_micros": 30321908,
+    "validation_wall_reduction_millionths": 705278
+  },
   "artifacts": {
-    "report_sha256": "7276fb1fe9c8f15ac2b4639c7f6ceef1500afd2a6666af8b0771a330ef70419f",
+    "report_sha256": "a2ea6941e07b0d440008de8b47ad36fd02bd3d04f200cd403a5616e892f7d9c7",
     "proposed_registry_file_sha256": "a35db4433e4beb8c4c30f17f2eadaaa33d8296f8dc616deace790b81e5c11b49",
     "validated_registry_file_sha256": "3816f997f9f2c1a2fe74d0e8ba02344dd96745be4d5c960afe61f4fd7e63554f",
     "validated_registry_content_sha256": "94fc9caebcf9d05ec0a139c0fff483bfb0d1ae53a547cfe8119fed1e907bc26a"
