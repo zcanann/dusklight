@@ -22,7 +22,7 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V18: &str = "dusklight-native-corpus-inspection/v18";
+pub const NATIVE_CORPUS_INSPECTION_SCHEMA_V19: &str = "dusklight-native-corpus-inspection/v19";
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ChannelCoverage {
@@ -74,6 +74,30 @@ pub struct NativeActionCoverage {
     pub chosen_consumed_mismatches: u64,
     pub button_mask_counts: BTreeMap<String, u64>,
     pub stick_sample_counts: BTreeMap<String, u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct NativePlayerTrajectorySummary {
+    pub episode_id: String,
+    pub success: bool,
+    pub ticks_executed: u32,
+    pub first_hit_tick: Option<u32>,
+    pub start_position: [f32; 3],
+    pub end_position: [f32; 3],
+    pub planar_path_length: f64,
+    pub planar_displacement: f64,
+    pub planar_straightness: f64,
+    pub mean_planar_speed: f64,
+    pub mean_absolute_forward_speed: f64,
+    pub maximum_absolute_forward_speed: f64,
+    pub final_planar_velocity: f64,
+    pub commanded_motion_ticks: u32,
+    pub commanded_stall_ticks: u32,
+    pub roll_button_ticks: u32,
+    pub wall_solver_contact_ticks: u32,
+    pub collision_correction_ticks: u32,
+    pub collision_correction_total: f64,
+    pub collision_correction_maximum: f64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -156,7 +180,7 @@ pub struct ActorTemporalCoverage {
     pub profiles: Vec<ActorTemporalProfileCoverage>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct NativeCorpusInspection {
     pub schema: String,
     pub shard_count: usize,
@@ -188,6 +212,7 @@ pub struct NativeCorpusInspection {
     pub flag_mask_coverage: BTreeMap<String, FlagMaskCoverage>,
     pub constant_pre_input_channels: BTreeMap<String, String>,
     pub action_coverage: NativeActionCoverage,
+    pub player_trajectories: Vec<NativePlayerTrajectorySummary>,
     pub duplicate_trajectory_groups: Vec<DuplicateTrajectoryGroup>,
     pub determinism_conflicts: Vec<DeterminismConflictGroup>,
     pub identities: NativeIdentityInspection,
@@ -1069,6 +1094,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     let mut terminal_observation_count = 0_u64;
     let mut chosen_consumed_mismatches = 0_u64;
     let mut truncated_actor_observations = 0_u64;
+    let mut player_trajectories = Vec::new();
 
     for shard in shards {
         let detailed_lifecycle = matches!(
@@ -1089,6 +1115,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
             .entry(shard.metadata.action_schema.clone())
             .or_default() += 1;
         for episode in &shard.episodes {
+            player_trajectories.push(summarize_player_trajectory(episode));
             record_actor_temporal_episode(&mut actor_temporal, episode);
             episode_count += 1;
             success_count += u64::from(episode.success);
@@ -1466,7 +1493,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
     }
 
     NativeCorpusInspection {
-        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V18.into(),
+        schema: NATIVE_CORPUS_INSPECTION_SCHEMA_V19.into(),
         shard_count: shards.len(),
         shard_content_sha256: shards
             .iter()
@@ -1525,6 +1552,7 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
             button_mask_counts,
             stick_sample_counts,
         },
+        player_trajectories,
         duplicate_trajectory_groups,
         determinism_conflicts,
         identities: NativeIdentityInspection {
@@ -1533,6 +1561,86 @@ pub fn inspect_native_episode_corpus(shards: &[NativeEpisodeShard]) -> NativeCor
         },
         warnings,
     }
+}
+
+fn summarize_player_trajectory(episode: &NativeEpisode) -> NativePlayerTrajectorySummary {
+    let first = &episode.steps[0].pre_input;
+    let last = &episode
+        .steps
+        .last()
+        .expect("validated episode has steps")
+        .post_simulation;
+    let mut planar_path_length = 0.0_f64;
+    let mut absolute_forward_speed = 0.0_f64;
+    let mut maximum_absolute_forward_speed = 0.0_f64;
+    let mut commanded_motion_ticks = 0_u32;
+    let mut commanded_stall_ticks = 0_u32;
+    let mut roll_button_ticks = 0_u32;
+    let mut wall_solver_contact_ticks = 0_u32;
+    let mut collision_correction_ticks = 0_u32;
+    let mut collision_correction_total = 0.0_f64;
+    let mut collision_correction_maximum = 0.0_f64;
+    for step in &episode.steps {
+        let distance = planar_distance(
+            step.pre_input.player_position,
+            step.post_simulation.player_position,
+        );
+        planar_path_length += distance;
+        let commanded = f64::from(step.consumed_pad.stick_x)
+            .hypot(f64::from(step.consumed_pad.stick_y))
+            >= 32.0;
+        commanded_motion_ticks += u32::from(commanded);
+        commanded_stall_ticks += u32::from(commanded && distance < 1.0);
+        roll_button_ticks += u32::from(step.consumed_pad.buttons & 0x0100 != 0);
+        let forward_speed = f64::from(step.post_simulation.player_forward_speed).abs();
+        absolute_forward_speed += forward_speed;
+        maximum_absolute_forward_speed = maximum_absolute_forward_speed.max(forward_speed);
+        wall_solver_contact_ticks += u32::from(
+            step.post_simulation
+                .player_collision_solver
+                .as_ref()
+                .is_some_and(|solver| solver.wall_circles.iter().any(|wall| wall.flags != 0)),
+        );
+        if let Some(correction) = step.post_simulation.collision_correction {
+            let magnitude = f64::from(correction[0]).hypot(f64::from(correction[1]));
+            collision_correction_ticks += u32::from(magnitude > 0.0);
+            collision_correction_total += magnitude;
+            collision_correction_maximum = collision_correction_maximum.max(magnitude);
+        }
+    }
+    let planar_displacement = planar_distance(first.player_position, last.player_position);
+    let ticks = f64::from(episode.ticks_executed.max(1));
+    NativePlayerTrajectorySummary {
+        episode_id: episode.id.clone(),
+        success: episode.success,
+        ticks_executed: episode.ticks_executed,
+        first_hit_tick: episode.first_hit_tick,
+        start_position: first.player_position,
+        end_position: last.player_position,
+        planar_path_length,
+        planar_displacement,
+        planar_straightness: if planar_path_length > f64::EPSILON {
+            (planar_displacement / planar_path_length).clamp(0.0, 1.0)
+        } else {
+            0.0
+        },
+        mean_planar_speed: planar_path_length / ticks,
+        mean_absolute_forward_speed: absolute_forward_speed / ticks,
+        maximum_absolute_forward_speed,
+        final_planar_velocity: f64::from(last.player_velocity[0])
+            .hypot(f64::from(last.player_velocity[2])),
+        commanded_motion_ticks,
+        commanded_stall_ticks,
+        roll_button_ticks,
+        wall_solver_contact_ticks,
+        collision_correction_ticks,
+        collision_correction_total,
+        collision_correction_maximum,
+    }
+}
+
+fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f64 {
+    f64::from(right[0] - left[0]).hypot(f64::from(right[2] - left[2]))
 }
 
 // Avoid another public dependency just to render fixed-size identities.
@@ -1558,6 +1666,14 @@ mod tests {
         assert_eq!(report.failure_count, 2);
         assert_eq!(report.transition_count, 4);
         assert_eq!(report.observation_count, 8);
+        assert_eq!(report.player_trajectories.len(), 4);
+        assert!(report.player_trajectories.iter().all(|trajectory| {
+            trajectory.ticks_executed > 0
+                && trajectory.planar_path_length >= trajectory.planar_displacement
+                && (0.0..=1.0).contains(&trajectory.planar_straightness)
+                && trajectory.commanded_stall_ticks <= trajectory.commanded_motion_ticks
+                && trajectory.collision_correction_maximum <= trajectory.collision_correction_total
+        }));
         assert_eq!(report.truncated_actor_observations, 0);
         assert_eq!(report.actor_set_sizes.minimum, 257);
         assert_eq!(report.actor_set_sizes.maximum, 257);
@@ -1631,7 +1747,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v9.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V18);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V19);
         assert_eq!(
             report.channel_coverage["player_resources"].present,
             report.observation_count
@@ -1658,7 +1774,7 @@ mod tests {
             include_bytes!("../../../../../tests/fixtures/automation/native_episode_v10.dseps");
         let shard = NativeEpisodeShard::decode(bytes).unwrap();
         let report = inspect_native_episode_corpus(&[shard]);
-        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V18);
+        assert_eq!(report.schema, NATIVE_CORPUS_INSPECTION_SCHEMA_V19);
         assert_eq!(
             report.channel_coverage["player_relationships"].present,
             report.observation_count

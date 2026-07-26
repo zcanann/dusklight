@@ -1,4 +1,5 @@
 use huntctl::artifact::Digest;
+use huntctl::learning::fqi::MAX_FQI_ACTIONS;
 use huntctl::learning::native_auxiliary_dataset::NativeAuxiliaryDataset;
 use huntctl::learning::native_goal_trajectory::NativeGoalTrajectoryDataset;
 use huntctl::learning::native_replay_corpus::NativeReplayCorpus;
@@ -38,7 +39,7 @@ fn native_corpus_inspection_reports_complete_cpp_shard() {
         String::from_utf8_lossy(&output.stderr)
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "dusklight-native-corpus-inspection/v18");
+    assert_eq!(report["schema"], "dusklight-native-corpus-inspection/v19");
     assert_eq!(report["episode_count"], 2);
     assert_eq!(report["success_count"], 1);
     assert_eq!(report["failure_count"], 1);
@@ -1338,7 +1339,7 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         Digest([0x11; 32]),
         Digest([0x22; 32]),
         1,
-        (0..129)
+        (0..=MAX_FQI_ACTIONS as u32)
             .map(|action| transition(0.0, action, 0.0, 0.0, true))
             .collect(),
     )
@@ -1351,7 +1352,8 @@ fn native_learning_cli_inspects_and_ranks_a_compact_batch() {
         .unwrap();
     assert!(!too_many_actions.status.success());
     assert!(
-        String::from_utf8_lossy(&too_many_actions.stderr).contains("at most 128 distinct actions")
+        String::from_utf8_lossy(&too_many_actions.stderr)
+            .contains(&format!("at most {MAX_FQI_ACTIONS} distinct actions"))
     );
 
     let benchmark = Command::new(executable)
