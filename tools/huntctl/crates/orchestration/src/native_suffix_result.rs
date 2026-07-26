@@ -320,6 +320,7 @@ impl NativeSuffixBatchResult {
             let validated = actual.validate_common(
                 request.maximum_ticks,
                 request.verify_state_hashes,
+                expected.controller_program_hex.is_some(),
                 terminal,
             )?;
             validate_retained_checkpoint(actual, request, self.checkpoint_bytes)?;
@@ -477,6 +478,7 @@ impl NativeSuffixBatchResult {
             candidates.push(actual.validate_common(
                 request.maximum_ticks,
                 request.verify_state_hashes,
+                false,
                 terminal,
             )?);
             simulated_ticks = simulated_ticks
@@ -525,6 +527,7 @@ impl NativeSuffixCandidateResult {
         &self,
         maximum_ticks: usize,
         verify_state_hashes: bool,
+        early_unsuccessful_terminal_allowed: bool,
         terminal: &NativeTerminalBinding,
     ) -> Result<ValidatedNativeSuffixCandidate, NativeSuffixResultError> {
         let exact_verdict = match (self.success, self.first_hit_tick) {
@@ -534,7 +537,13 @@ impl NativeSuffixCandidateResult {
             {
                 true
             }
-            (false, None) if self.ticks_executed == maximum_ticks as u64 => false,
+            (false, None)
+                if self.ticks_executed == maximum_ticks as u64
+                    || early_unsuccessful_terminal_allowed
+                        && (1..maximum_ticks as u64).contains(&self.ticks_executed) =>
+            {
+                false
+            }
             _ => {
                 return Err(result_error(
                     "native suffix candidate has an invalid exact terminal verdict",
@@ -1073,6 +1082,26 @@ mod tests {
             .unwrap();
         assert_eq!(success.simulated_ticks, 1);
         assert_eq!(success.candidates[0].first_hit_tick, Some(0));
+    }
+
+    #[test]
+    fn accepts_early_unsuccessful_reactive_controller_completion_only() {
+        let mut early = result(false, false);
+        early.candidates[0].ticks_executed = 1;
+        early.timing.candidate_ticks = 1;
+
+        assert!(
+            early
+                .clone()
+                .validate_against(&request(false), &terminal())
+                .is_err()
+        );
+
+        let mut reactive = request(false);
+        reactive.candidates[0].controller_program_hex = Some("00".into());
+        let validated = early.validate_against(&reactive, &terminal()).unwrap();
+        assert_eq!(validated.simulated_ticks, 1);
+        assert_eq!(validated.candidates[0].first_hit_tick, None);
     }
 
     #[test]
