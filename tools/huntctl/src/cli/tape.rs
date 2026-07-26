@@ -581,6 +581,7 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
     if repetitions < 2 {
         return Err("tape minimize requires at least two repetitions".into());
     }
+    let frozen_prefix_frames = usize_option(args, "--frozen-prefix-frames", 0)?;
     if output.exists() {
         return Err(format!("minimized tape already exists: {}", output.display()).into());
     }
@@ -602,6 +603,13 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
     let source_bytes = fs::read(&input)?;
     let source = InputTape::decode(&source_bytes)?.tape;
     validate_proof_tape(&source, "tape minimize")?;
+    if frozen_prefix_frames > source.frames.len() {
+        return Err(format!(
+            "tape minimize --frozen-prefix-frames {frozen_prefix_frames} exceeds the source tape's {} frames",
+            source.frames.len()
+        )
+        .into());
+    }
     let timeout = timeout_option(args)?;
     let game_args = repeated_option(args, "--game-arg");
     validate_replay_game_args("tape minimize", &game_args)?;
@@ -628,11 +636,13 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
     )?
     .ok_or("source tape does not reach the requested milestone goal")?;
     let source_active_frames = tape_active_frames(&source).len();
+    let optimizable_source_active_frames =
+        tape_active_frames_from(&source, frozen_prefix_frames).len();
     let mut current = source.clone();
 
     let mut granularity = 2_usize;
     loop {
-        let active = tape_active_frames(&current);
+        let active = tape_active_frames_from(&current, frozen_prefix_frames);
         if active.is_empty() {
             break;
         }
@@ -672,7 +682,7 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
     }
 
     loop {
-        let active = tape_active_frames(&current);
+        let active = tape_active_frames_from(&current, frozen_prefix_frames);
         let mut accepted = None;
         for frame in active {
             let mut candidate = current.clone();
@@ -701,9 +711,10 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
         current = candidate;
     }
 
-    let required_frames = usize::try_from(target.tape_frame)?
+    let goal_required_frames = usize::try_from(target.tape_frame)?
         .checked_add(1)
         .ok_or("goal tape frame overflows")?;
+    let required_frames = goal_required_frames.max(frozen_prefix_frames);
     if required_frames > current.frames.len() {
         return Err("goal tape frame lies outside the source tape".into());
     }
@@ -757,8 +768,12 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
         },
         "source_frames": source.frames.len(),
         "minimized_frames": current.frames.len(),
+        "frozen_prefix_frames": frozen_prefix_frames,
         "source_active_frames": source_active_frames,
+        "optimizable_source_active_frames": optimizable_source_active_frames,
         "minimized_active_frames": tape_active_frames(&current).len(),
+        "minimized_optimizable_active_frames":
+            tape_active_frames_from(&current, frozen_prefix_frames).len(),
         "evaluated_candidates": evaluation_index,
         "repetitions": repetitions,
         "proof": {
@@ -776,9 +791,14 @@ fn command_tape_minimize(args: &[String]) -> Result<(), Box<dyn Error>> {
 }
 
 fn tape_active_frames(tape: &InputTape) -> Vec<usize> {
+    tape_active_frames_from(tape, 0)
+}
+
+fn tape_active_frames_from(tape: &InputTape, start: usize) -> Vec<usize> {
     tape.frames
         .iter()
         .enumerate()
+        .skip(start)
         .filter_map(|(index, frame)| {
             frame
                 .pads

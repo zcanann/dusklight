@@ -390,6 +390,48 @@ frame neutral
     assert_eq!(minimized.boot, absolute.boot);
     assert_eq!(minimized.frames.len(), 1);
 
+    let frozen_minimized_path = directory.join("frozen-minimized.tape");
+    let frozen_minimize = Command::new(executable)
+        .args([
+            "tape",
+            "minimize",
+            absolute_path.to_str().unwrap(),
+            frozen_minimized_path.to_str().unwrap(),
+            "--game",
+            executable,
+            "--game-arg",
+            "mock-search-worker",
+            "--dvd",
+            dvd.to_str().unwrap(),
+            "--state-root",
+            directory.join("frozen-minimize-state").to_str().unwrap(),
+            "--milestone-goal",
+            "arbitrary-map-goal",
+            "--frozen-prefix-frames",
+            "1",
+            "--repetitions",
+            "2",
+            "--timeout-seconds",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        frozen_minimize.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen_minimize.stderr)
+    );
+    let frozen_summary: serde_json::Value =
+        serde_json::from_slice(&frozen_minimize.stdout).unwrap();
+    assert_eq!(frozen_summary["frozen_prefix_frames"], 1);
+    assert_eq!(frozen_summary["optimizable_source_active_frames"], 1);
+    assert_eq!(frozen_summary["minimized_optimizable_active_frames"], 0);
+    assert_eq!(frozen_summary["minimized_frames"], 1);
+    let frozen_minimized = InputTape::decode(&fs::read(&frozen_minimized_path).unwrap())
+        .unwrap()
+        .tape;
+    assert_eq!(frozen_minimized.frames, absolute.frames[..1]);
+
     let fidelity_override_root = directory.join("invalid-minimize-state");
     let fidelity_override = Command::new(executable)
         .args([

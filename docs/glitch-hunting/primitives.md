@@ -150,6 +150,10 @@ artifacts remain under the supplied state root. The proof also binds the source
 and minimized tapes, executable, game data, optional milestone program, launch
 arguments, and headless fixed-step fidelity by content digest. Reactive tapes
 and replay-owned launch overrides are rejected before minimization begins.
+For an authenticated route whose boot-to-source prefix is already sealed,
+`--frozen-prefix-frames N` excludes those first `N` frames from reduction while
+still replaying and content-binding the complete process-boot tape. The proof
+reports both total and optimizable active-frame counts.
 
 `tape resample` treats the source as a piecewise-constant authoring signal and
 samples it at the start of every canonical 30 Hz tick. Upsampling repeats exact
