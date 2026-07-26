@@ -1137,10 +1137,40 @@ mod tests {
             Some((2, 256))
         );
 
-        let mut detached = result;
+        let copy = |value: &NativeSuffixBatchResult| {
+            serde_json::from_slice::<NativeSuffixBatchResult>(&serde_json::to_vec(value).unwrap())
+                .unwrap()
+        };
+        let mut detached = copy(&result);
+        detached.restore_identity = Some("e".repeat(32));
+        assert!(detached.validate_against(&request, &terminal()).is_err());
+
+        let mut detached = copy(&result);
+        detached.checkpoint_cache.as_mut().unwrap().source_identity = Some("e".repeat(32));
+        assert!(detached.validate_against(&request, &terminal()).is_err());
+
+        let mut detached = copy(&result);
+        detached.checkpoint_cache.as_mut().unwrap().source_kind =
+            "authenticated_root_restore".into();
+        assert!(detached.validate_against(&request, &terminal()).is_err());
+
+        let mut detached = copy(&result);
+        detached
+            .checkpoint_cache
+            .as_mut()
+            .unwrap()
+            .source_route_ticks = 39;
+        assert!(detached.validate_against(&request, &terminal()).is_err());
+
+        let mut detached = copy(&result);
+        detached.checkpoint_cache.as_mut().unwrap().source_pinned = false;
+        assert!(detached.validate_against(&request, &terminal()).is_err());
+
+        let mut detached = copy(&result);
         detached.checkpoint_cache.as_mut().unwrap().resident_bytes += 1;
         assert!(detached.validate_against(&request, &terminal()).is_err());
-        detached.checkpoint_cache.as_mut().unwrap().resident_bytes -= 1;
+
+        let mut detached = result;
         detached.candidates[0]
             .retained_checkpoint
             .as_mut()
