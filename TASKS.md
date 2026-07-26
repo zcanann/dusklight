@@ -50,17 +50,6 @@ Acceptance:
   the sealed Ordon workload without changing its semantic results.
 - Worker scaling is measured rather than inferred from raw simulator tests.
 
-## P2 - Make retained states computationally real
-
-- [ ] Reject detached, mismatched, or semantically invalid checkpoints without
-      silently falling back to fabricated state.
-
-Acceptance:
-
-- Search depth does not force every candidate to replay its entire path from
-  the root.
-- Reports expose how much work came from direct restores versus prefix replay.
-
 ## P3 - Replace the fixed action grid with tactic proposals
 
 - [ ] Treat the existing controller operations as executable tactic families,

@@ -1,0 +1,73 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-checkpoint-rejection/v1",
+  "date": "2026-07-25",
+  "claim": "Detached, mismatched, evicted, corrupt, or semantically divergent native tactic checkpoints fail closed. Neither the native runner nor the Rust scheduler substitutes the authenticated root or fabricates a logical endpoint after a direct-restore request fails.",
+  "implementation": {
+    "native_cache_commit": "39a03796fe5cc0e1685b71ce11e7fc90bcb57021",
+    "direct_restore_commit": "cc5cc5cd0f743c0798438f48435da735199687ca",
+    "shared_frontier_commit": "31bef3ef069e9a219aecf9f5893e70fb145473b1",
+    "typed_accounting_commit": "80a8a71c6ffa720f3672b7a14131e1f912beede5",
+    "adversarial_test_commit": "c2636276b6b48623ff5c2936b1f484e9d74324f5",
+    "native_configuration_gate": [
+      "the requested process-local identity must exist",
+      "the cached image and semantic digest must be present",
+      "cached route ticks must equal requested source_route_ticks",
+      "the cached boundary fingerprint must equal the request",
+      "the requested source must remain pinnable"
+    ],
+    "native_restore_gate": [
+      "the pinned source must still exist and retain the requested identity",
+      "trusted image restoration must succeed",
+      "input-tape and PAD host state restoration must succeed",
+      "the live semantic digest after restore must equal the digest captured with the source"
+    ],
+    "orchestration_gate": [
+      "the result restore identity must equal the requested process-local identity",
+      "source kind, identity, route ticks, cache bounds, pin state, and resident-byte accounting are request-bound",
+      "cache counters may not regress and a direct request must report cache hits with no miss",
+      "episode checkpoint identity, candidate identity, exact consumed pads, source frame, and tick count are verified",
+      "materialized frontiers must reproduce the expected logical state identity and exact next-boundary coordinates",
+      "retained endpoint route ticks, restore identity, and terminal boundary fingerprint are verified"
+    ],
+    "failure_propagation": "native configure/restore errors propagate through the persistent worker client and abort the proposal job; there is no retry-as-root path"
+  },
+  "validation": {
+    "dusk_native_checkpoint_cache_test": {
+      "status": "passed",
+      "coverage": [
+        "bounded LRU accounting",
+        "oversize and detached image rejection",
+        "measured misses",
+        "pinned source cannot be evicted"
+      ]
+    },
+    "dusk_state_checkpoint_test": {
+      "status": "passed",
+      "coverage": [
+        "raw digest mismatch",
+        "manifest mismatch",
+        "component restore failure",
+        "semantic digest distinguishes meaningful state from declared padding"
+      ]
+    },
+    "cargo_test_native_suffix_result": {
+      "passed": 6,
+      "failed": 0,
+      "adversarial_mutations": [
+        "restore identity",
+        "cache source identity",
+        "source kind",
+        "source route ticks",
+        "source pin state",
+        "resident-byte accounting",
+        "retained endpoint route ticks",
+        "source boundary",
+        "checkpoint validation digest",
+        "terminal evidence and tick accounting"
+      ]
+    },
+    "valid_direct_restore_smoke": "build/campaigns/tactic-route-direct-restore-smoke-20260725-v6",
+    "valid_shared_prefix_and_accounting_smoke": "build/campaigns/tactic-route-restore-accounting-smoke-20260725"
+  },
+  "scope": "This closes P2 checkpoint validity and fallback safety. Process-local native checkpoints remain deliberately non-serializable; logical frontiers remain durable in the binary tactic journal and are rematerialized only through authenticated replay."
+}
