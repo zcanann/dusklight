@@ -22,6 +22,7 @@ use dusklight_evidence::native_episode_shard::{
     NativeRawPad,
 };
 use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot};
+use dusklight_learning::learner_state::tactic_intrinsically_applicable;
 use dusklight_learning::native_generic_tactic::{
     GenericTactic, NativeGenericTacticStepper, NativeTacticObservation, NativeTacticQueryRecord,
 };
@@ -293,6 +294,24 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
             != before
                 .content_sha256()
                 .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?
+    {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+    let applicable = ApplicableTacticChoices::enumerate(
+        catalog,
+        blueprints,
+        |description| tactic_intrinsically_applicable(description, before),
+        |_| None,
+    )?;
+    if !applicable
+        .candidates
+        .iter()
+        .zip(&applicable.applicable_mask)
+        .any(|(choice, applicable)| {
+            *applicable
+                && choice.choice_id == selected.descriptor.option_id
+                && choice.descriptor == selected.descriptor
+        })
     {
         return Err(NativeTacticWorkerError::DetachedSelection);
     }

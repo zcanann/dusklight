@@ -21,22 +21,21 @@ use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
-use dusklight_learning::default_tactic_catalog::{
-    MAX_GOAL_SEEK_TARGETS, goal_conditioned_route_tactic_catalog,
-};
+use dusklight_learning::default_tactic_catalog::MAX_GOAL_SEEK_TARGETS;
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
 use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::option_values::OptionValueConfig;
 use dusklight_learning::parameterized_tactic_proposals::{
-    ParameterizedTacticProposalContext, parameterized_tactic_family_schema_sha256,
-    propose_parameterized_tactics,
+    ParameterizedTacticProposalCatalog, ParameterizedTacticProposalContext,
+    parameterized_tactic_family_schema_sha256, propose_parameterized_tactics,
 };
 use dusklight_learning::reward_shaping::{
     POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V1,
     TacticRewardBreakdown, TacticRewardSpec,
 };
+use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticSelectionReason,
 };
@@ -545,11 +544,10 @@ pub fn run_native_tactic_route(
             "native worker pool does not share the requested source boundary",
         ));
     }
-    let GoalConditionedTacticRuntime {
-        catalog,
+    let GoalConditionedTacticContext {
         encoder,
         report: goal_target,
-    } = goal_conditioned_tactic_runtime(
+    } = goal_conditioned_tactic_context(
         &root,
         config.optimization,
         config.execution,
@@ -584,7 +582,6 @@ pub fn run_native_tactic_route(
             .enumerate()
             .map(|(seed_index, seed)| {
                 let pool = pool.clone();
-                let catalog = &catalog;
                 let registry = &registry;
                 let encoder = &encoder;
                 let reward_spec = &reward_spec;
@@ -594,7 +591,6 @@ pub fn run_native_tactic_route(
                     run_seed_coordinator(
                         config,
                         &pool,
-                        catalog,
                         registry,
                         encoder,
                         reward_spec,
@@ -743,7 +739,6 @@ fn launch_tactic_route_worker(
 fn run_seed_coordinator(
     config: &NativeTacticRouteRunConfig<'_>,
     pool: &NativeTacticProposalPool,
-    catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
     registry: &FactRegistry,
     encoder: &GoalConditionedTacticFeatureEncoder,
     reward_spec: &TacticRewardSpec,
@@ -766,7 +761,6 @@ fn run_seed_coordinator(
         let result = run_seed(
             config,
             pool,
-            catalog,
             registry,
             encoder,
             reward_spec,
@@ -782,6 +776,25 @@ fn run_seed_coordinator(
         )?;
         Ok(result)
     }
+}
+
+fn parameterized_catalog_for_state(
+    seed: u64,
+    decision_index: u64,
+    state: &FactSnapshot,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    maximum_ticks: u32,
+) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
+    propose_parameterized_tactics(ParameterizedTacticProposalContext {
+        seed,
+        decision_index,
+        state_sha256: state.content_sha256().map_err(route_error)?,
+        player_position: state.player.position_f32_bits.map(f32::from_bits),
+        camera_yaw_radians: state.player.camera_yaw_radians_f32_bits.map(f32::from_bits),
+        goal_coordinate: encoder.target_coordinate_f32_bits.map(f32::from_bits),
+        maximum_ticks,
+    })
+    .map_err(route_error)
 }
 
 struct TimedTacticWorker<'a, W> {
@@ -932,6 +945,7 @@ impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTactic
 struct NativeTacticProposalJob {
     proposals: Vec<IndexedNativeTacticProposal>,
     proposal_catalog: Arc<dusklight_learning::tactic_asset::TacticAssetCatalog>,
+    proposal_blueprints: Arc<Vec<TacticBlueprint>>,
     source_snapshot: FactSnapshot,
     source_route_tape: InputTape,
     checkpoint_source: Option<NativeTacticCheckpointSource>,
@@ -974,6 +988,7 @@ impl NativeTacticProposalPool {
         &self,
         proposals: &[SelectedTactic],
         proposal_catalog: Arc<dusklight_learning::tactic_asset::TacticAssetCatalog>,
+        proposal_blueprints: Arc<Vec<TacticBlueprint>>,
         source_snapshot: &FactSnapshot,
         source_route_tape: &InputTape,
         cached_frontier: Option<&CachedTacticFrontier>,
@@ -1011,6 +1026,7 @@ impl NativeTacticProposalPool {
                         })
                         .collect(),
                     proposal_catalog,
+                    proposal_blueprints,
                     source_snapshot: source_snapshot.clone(),
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: direct.map(|frontier| frontier.source.clone()),
@@ -1035,6 +1051,7 @@ impl NativeTacticProposalPool {
                         selected: selected.clone(),
                     }],
                     proposal_catalog: Arc::clone(&proposal_catalog),
+                    proposal_blueprints: Arc::clone(&proposal_blueprints),
                     source_snapshot: source_snapshot.clone(),
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: None,
@@ -1140,7 +1157,7 @@ fn run_tactic_proposal_worker(
                 &mut timed_worker,
                 &proposal.selected,
                 &job.proposal_catalog,
-                &[],
+                &job.proposal_blueprints,
                 &job.source_snapshot,
                 &job.source_route_tape,
                 checkpoint_source.as_ref(),
@@ -1283,7 +1300,6 @@ fn refresh_route_throughput(
 fn run_seed(
     config: &NativeTacticRouteRunConfig<'_>,
     pool: &NativeTacticProposalPool,
-    catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
     registry: &FactRegistry,
     encoder: &GoalConditionedTacticFeatureEncoder,
     reward_spec: &TacticRewardSpec,
@@ -1297,6 +1313,9 @@ fn run_seed(
         .output_root
         .join(format!("seed-{seed_index:03}-{seed}"));
     let resuming_seed = seed_root.exists();
+    let source_frame = config.optimization.route.source_boundary_index;
+    let horizon = config.optimization.budgets.exploration_horizon_ticks;
+    let maximum_tactic_ticks = goal_tactic_maximum_ticks(horizon)?;
     let (mut campaign, mut trace, mut selection_counts, mut native_ticks, mut episode) =
         if resuming_seed {
             if !config.resume {
@@ -1314,9 +1333,21 @@ fn run_seed(
             )?
         } else {
             fs::create_dir_all(&seed_root).map_err(route_error)?;
-            let current =
-                LearnerState::build(initial_facts.clone(), registry, catalog, &[], |_| true)
-                    .map_err(route_error)?;
+            let initial_proposals = parameterized_catalog_for_state(
+                seed,
+                0,
+                initial_facts,
+                encoder,
+                maximum_tactic_ticks,
+            )?;
+            let current = LearnerState::build(
+                initial_facts.clone(),
+                registry,
+                &initial_proposals.catalog,
+                &initial_proposals.blueprints,
+                |_| true,
+            )
+            .map_err(route_error)?;
             let campaign = TacticQCampaign::new(
                 encoder.schema_sha256,
                 config.optimization.terminal_predicate.definition_sha256,
@@ -1358,9 +1389,7 @@ fn run_seed(
             .filter(|decision| decision_trace_is_useful(decision))
             .count() as u64
     };
-    let source_frame = config.optimization.route.source_boundary_index;
-    let horizon = config.optimization.budgets.exploration_horizon_ticks;
-    let maximum_tactic_ticks = u64::from(goal_tactic_maximum_ticks(horizon)?);
+    let maximum_tactic_ticks = u64::from(maximum_tactic_ticks);
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
     let checkpoint_root = seed_root.join("checkpoints");
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
@@ -1407,13 +1436,21 @@ fn run_seed(
                 )
                 .map_err(route_error)?;
             let prefer_root = episode % 4 == 0;
+            let selected_branch = if prefer_root { &root } else { &frontier };
+            let branch_proposals = parameterized_catalog_for_state(
+                seed,
+                campaign.decision_index,
+                &selected_branch.state,
+                encoder,
+                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+            )?;
             campaign
                 .restore_branch(
-                    if prefer_root { &root } else { &frontier },
+                    selected_branch,
                     seed_group(seed_index, episode)?,
                     registry,
-                    catalog,
-                    &[],
+                    &branch_proposals.catalog,
+                    &branch_proposals.blueprints,
                     |_| true,
                 )
                 .map_err(route_error)?;
@@ -1430,39 +1467,26 @@ fn run_seed(
         // Restoring a branch can change the selected tactic. Recheck until the
         // preview fits; the periodic root sample guarantees convergence because
         // every catalog entry is itself bounded by the exploration horizon.
-        let (proposal_batch, proposal_catalog) = loop {
+        let (proposal_batch, proposal_catalog, proposal_blueprints) = loop {
             let suffix_ticks = campaign
                 .route_tape
                 .frames
                 .len()
                 .saturating_sub(source_frame as usize) as u64;
-            let proposal_catalog = Arc::new(
-                propose_parameterized_tactics(ParameterizedTacticProposalContext {
-                    seed,
-                    decision_index: campaign.decision_index,
-                    state_sha256: campaign.current.snapshot_sha256,
-                    player_position: campaign
-                        .current
-                        .snapshot
-                        .player
-                        .position_f32_bits
-                        .map(f32::from_bits),
-                    camera_yaw_radians: campaign
-                        .current
-                        .snapshot
-                        .player
-                        .camera_yaw_radians_f32_bits
-                        .map(f32::from_bits),
-                    goal_coordinate: encoder.target_coordinate_f32_bits.map(f32::from_bits),
-                    maximum_ticks: u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
-                })
-                .map_err(route_error)?
-                .catalog,
-            );
+            let proposals = parameterized_catalog_for_state(
+                seed,
+                campaign.decision_index,
+                &campaign.current.snapshot,
+                encoder,
+                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+            )?;
+            let proposal_catalog = Arc::new(proposals.catalog);
+            let proposal_blueprints = Arc::new(proposals.blueprints);
             let selection_started = Instant::now();
             let mut preview = campaign
                 .decide_parameterized_batch(
                     &proposal_catalog,
+                    &proposal_blueprints,
                     parameterized_tactic_family_schema_sha256(),
                     &encode,
                     TACTIC_PROPOSALS_PER_DECISION,
@@ -1475,25 +1499,30 @@ fn run_seed(
                 .proposals
                 .first()
                 .ok_or_else(|| route_message("tactic proposal batch is empty"))?;
-            let selected_maximum_ticks = proposal_catalog
-                .entry(&primary.descriptor.option_id)
+            let selected_maximum_ticks = preview
+                .ranking
+                .choices
+                .iter()
+                .find(|choice| choice.choice_id == primary.descriptor.option_id)
                 .ok_or_else(|| route_message("selected tactic is absent from its catalog"))?
-                .description()
                 .duration
                 .maximum_ticks;
             if selected_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
                 preview.proposals.retain(|proposal| {
-                    proposal_catalog
-                        .entry(&proposal.descriptor.option_id)
-                        .is_some_and(|entry| {
+                    preview
+                        .ranking
+                        .choices
+                        .iter()
+                        .find(|choice| choice.choice_id == proposal.descriptor.option_id)
+                        .is_some_and(|choice| {
                             selected_tactic_fits_horizon(
                                 suffix_ticks,
-                                entry.description().duration.maximum_ticks,
+                                choice.duration.maximum_ticks,
                                 horizon,
                             )
                         })
                 });
-                break (preview, proposal_catalog);
+                break (preview, proposal_catalog, proposal_blueprints);
             }
             let branch_started = Instant::now();
             episode = episode
@@ -1513,13 +1542,21 @@ fn run_seed(
                 )
                 .map_err(route_error)?;
             let prefer_root = episode % 4 == 0;
+            let selected_branch = if prefer_root { &root } else { &frontier };
+            let branch_proposals = parameterized_catalog_for_state(
+                seed,
+                campaign.decision_index,
+                &selected_branch.state,
+                encoder,
+                u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+            )?;
             campaign
                 .restore_branch(
-                    if prefer_root { &root } else { &frontier },
+                    selected_branch,
                     seed_group(seed_index, episode)?,
                     registry,
-                    catalog,
-                    &[],
+                    &branch_proposals.catalog,
+                    &branch_proposals.blueprints,
                     |_| true,
                 )
                 .map_err(route_error)?;
@@ -1552,6 +1589,7 @@ fn run_seed(
         let proposal_work = pool.execute_batch(
             &proposal_batch.proposals,
             Arc::clone(&proposal_catalog),
+            Arc::clone(&proposal_blueprints),
             &source_snapshot,
             &source_route_tape,
             usable_cached_frontier,
@@ -1608,12 +1646,22 @@ fn run_seed(
             ))
         });
         let model_started = Instant::now();
+        let next_proposals = parameterized_catalog_for_state(
+            seed,
+            campaign
+                .decision_index
+                .checked_add(1)
+                .ok_or_else(|| route_message("decision index overflowed"))?,
+            &winning_outcome.next_facts,
+            encoder,
+            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+        )?;
         let step = campaign
             .retain_and_refit_rewarded(
                 decision,
                 winning_outcome.clone(),
-                &proposal_catalog,
-                &[],
+                &next_proposals.catalog,
+                &next_proposals.blueprints,
                 registry,
                 &encode,
                 |_| true,
@@ -3276,6 +3324,11 @@ pub(crate) struct GoalConditionedTacticRuntime {
     pub report: NativeTacticGoalTargetReport,
 }
 
+pub(crate) struct GoalConditionedTacticContext {
+    pub encoder: GoalConditionedTacticFeatureEncoder,
+    pub report: NativeTacticGoalTargetReport,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticGoalTargetReport {
@@ -3329,6 +3382,31 @@ pub(crate) fn goal_conditioned_tactic_runtime(
     execution: &NativeResidualExecutionBinding,
     initial_facts: &FactSnapshot,
 ) -> Result<GoalConditionedTacticRuntime, NativeTacticRouteRunError> {
+    let context = goal_conditioned_tactic_context(root, optimization, execution, initial_facts)?;
+    let maximum_ticks = goal_tactic_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
+    let route_sequence_maximum_ticks =
+        goal_route_sequence_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
+    let catalog =
+        dusklight_learning::default_tactic_catalog::goal_conditioned_route_tactic_catalog(
+            &context.report.tactic_targets,
+            &context.report.route_sequences,
+            maximum_ticks,
+            route_sequence_maximum_ticks,
+        )
+        .map_err(route_error)?;
+    Ok(GoalConditionedTacticRuntime {
+        catalog,
+        encoder: context.encoder,
+        report: context.report,
+    })
+}
+
+fn goal_conditioned_tactic_context(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    initial_facts: &FactSnapshot,
+) -> Result<GoalConditionedTacticContext, NativeTacticRouteRunError> {
     let (target, inventory) = resolve_goal_transition_target(root, optimization, execution)?;
     if initial_facts.world.stage != target.source_stage
         || initial_facts.world.room != target.source_room
@@ -3344,20 +3422,9 @@ pub(crate) fn goal_conditioned_tactic_runtime(
         target.source_room,
         &inventory,
     )?;
-    let maximum_ticks = goal_tactic_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
-    let route_sequence_maximum_ticks =
-        goal_route_sequence_maximum_ticks(optimization.budgets.exploration_horizon_ticks)?;
-    let catalog = goal_conditioned_route_tactic_catalog(
-        &tactic_targets,
-        &route_sequences,
-        maximum_ticks,
-        route_sequence_maximum_ticks,
-    )
-    .map_err(route_error)?;
     let encoder =
         GoalConditionedTacticFeatureEncoder::new(target.coordinate).map_err(route_error)?;
-    Ok(GoalConditionedTacticRuntime {
-        catalog,
+    Ok(GoalConditionedTacticContext {
         encoder,
         report: target.report(
             source_coordinate,

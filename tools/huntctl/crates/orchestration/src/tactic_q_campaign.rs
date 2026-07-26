@@ -14,7 +14,9 @@ use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::hindsight::{
     HindsightError, HindsightOptionReplay, RelabeledHindsightOption,
 };
-use dusklight_learning::learner_state::{LearnerActionMaskEntry, LearnerState, LearnerStateError};
+use dusklight_learning::learner_state::{
+    LearnerActionMaskEntry, LearnerState, LearnerStateError, tactic_intrinsically_applicable,
+};
 use dusklight_learning::live_tactic_catalog::{
     LiveTacticCatalog, LiveTacticCatalogError, LiveTacticRanking,
 };
@@ -25,9 +27,11 @@ use dusklight_learning::option_values::{
 };
 use dusklight_learning::reward_shaping::{ShapingError, TacticRewardBreakdown, TacticRewardSpec};
 use dusklight_learning::tactic_asset::{TacticAssetCatalog, TacticAssetDescription};
-use dusklight_learning::tactic_blueprint::{ConcreteTacticChoiceKind, TacticBlueprint};
+use dusklight_learning::tactic_blueprint::{
+    ApplicableTacticChoices, ConcreteTacticChoiceKind, TacticBlueprint,
+};
 use dusklight_learning::tactic_exploration::{
-    SelectedTactic, TacticExplorationConfig, TacticExplorationError,
+    SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticSelectionReason,
     choose_tactic_batch_with_state_untried,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
@@ -1014,13 +1018,14 @@ impl TacticQCampaign {
             .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
             .cloned()
             .collect::<Vec<_>>();
-        let proposals = choose_tactic_batch_with_state_untried(
+        let mut proposals = choose_tactic_batch_with_state_untried(
             &ranking,
             self.decision_index,
             self.exploration,
             &state_untried,
             maximum_proposals,
         )?;
+        ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         Ok(TacticQProposalBatch { ranking, proposals })
     }
 
@@ -1031,6 +1036,7 @@ impl TacticQCampaign {
     pub fn decide_parameterized_batch<E, F>(
         &self,
         proposal_catalog: &TacticAssetCatalog,
+        proposal_blueprints: &[TacticBlueprint],
         family_schema_sha256: Digest,
         encode: &F,
         maximum_proposals: usize,
@@ -1045,17 +1051,35 @@ impl TacticQCampaign {
                 "parameterized tactic proposal schema or capacity is invalid",
             ));
         }
-        let mut choices = Vec::with_capacity(proposal_catalog.entries().len());
+        for blueprint in proposal_blueprints {
+            blueprint
+                .compile_static(proposal_catalog)
+                .map_err(LiveTacticCatalogError::Blueprint)?;
+        }
+        let applicable = ApplicableTacticChoices::enumerate(
+            proposal_catalog,
+            proposal_blueprints,
+            |description| tactic_intrinsically_applicable(description, &self.current.snapshot),
+            |_| Some(false),
+        )
+        .map_err(LiveTacticCatalogError::Blueprint)?;
+        let mut choices = Vec::with_capacity(applicable.candidates.len());
         for entry in proposal_catalog.entries() {
             proposal_catalog
                 .prepare_execution(entry.option_id())
                 .map_err(LiveTacticCatalogError::Asset)?;
+        }
+        for (candidate, applicable) in applicable
+            .candidates
+            .into_iter()
+            .zip(applicable.applicable_mask)
+        {
             choices.push(LearnerActionMaskEntry {
-                choice_id: entry.option_id().into(),
-                kind: ConcreteTacticChoiceKind::CatalogEntry,
-                descriptor: entry.description().option.clone(),
-                duration: entry.description().duration,
-                applicable: true,
+                choice_id: candidate.choice_id,
+                kind: candidate.kind,
+                descriptor: candidate.descriptor,
+                duration: candidate.duration,
+                applicable,
             });
         }
         let descriptors = choices
@@ -1094,13 +1118,14 @@ impl TacticQCampaign {
             .into_iter()
             .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
             .collect::<Vec<_>>();
-        let proposals = choose_tactic_batch_with_state_untried(
+        let mut proposals = choose_tactic_batch_with_state_untried(
             &ranking,
             self.decision_index,
             self.exploration,
             &state_untried,
             maximum_proposals,
         )?;
+        ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         Ok(TacticQProposalBatch { ranking, proposals })
     }
 
@@ -1428,6 +1453,42 @@ fn seeded_frontier_index(seed: u64, round: u64, choice_count: usize) -> usize {
     let count = choice_count as u64;
     let offset = u64::from_le_bytes(digest[..8].try_into().unwrap()) % count;
     ((offset + round % count) % count) as usize
+}
+
+fn ensure_blueprint_proposal(
+    ranking: &LiveTacticRanking,
+    maximum_proposals: usize,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticQCampaignError> {
+    if maximum_proposals <= 1
+        || proposals
+            .iter()
+            .any(|proposal| proposal.descriptor.option_id.starts_with("blueprint/"))
+    {
+        return Ok(());
+    }
+    let Some(composition) = ranking
+        .choices
+        .iter()
+        .find(|choice| choice.applicable && choice.kind == ConcreteTacticChoiceKind::Blueprint)
+        .map(|choice| choice.descriptor.clone())
+    else {
+        return Ok(());
+    };
+    let mut selected = proposals
+        .last()
+        .cloned()
+        .ok_or(TacticQCampaignError::InvalidState(
+            "tactic proposal batch is empty",
+        ))?;
+    selected.descriptor = composition;
+    selected.reason = TacticSelectionReason::BatchDiversity;
+    if proposals.len() < maximum_proposals {
+        proposals.push(selected);
+    } else if let Some(last) = proposals.last_mut() {
+        *last = selected;
+    }
+    Ok(())
 }
 
 fn action_digest(action: &OptionActionDescriptor) -> Result<Digest, TacticQCampaignError> {
@@ -1958,9 +2019,10 @@ mod tests {
         let batch = campaign
             .decide_parameterized_batch(
                 &proposals.catalog,
+                &proposals.blueprints,
                 parameterized_tactic_family_schema_sha256(),
                 &|_: &FactSnapshot| Ok::<_, &'static str>(vec![0.0]),
-                4,
+                32,
             )
             .unwrap();
 
@@ -1968,24 +2030,32 @@ mod tests {
             batch.ranking.action_universe_sha256,
             parameterized_tactic_family_schema_sha256()
         );
-        assert_eq!(batch.proposals.len(), 4);
-        assert!(
-            batch
-                .proposals
-                .iter()
-                .all(|proposal| proposal.descriptor.option_id.starts_with("family/"))
-        );
+        assert!(batch.proposals.len() > 4);
+        assert!(batch.proposals.iter().all(|proposal| {
+            proposal.descriptor.option_id.starts_with("family/")
+                || proposal.descriptor.option_id.starts_with("blueprint/")
+        }));
         assert!(batch.proposals.iter().all(|proposal| {
             proposals
                 .catalog
                 .prepare_execution(&proposal.descriptor.option_id)
                 .is_ok()
+                || proposals.blueprints.iter().any(|blueprint| {
+                    format!("blueprint/{}", blueprint.asset_id) == proposal.descriptor.option_id
+                        && blueprint.compile_static(&proposals.catalog).is_ok()
+                })
         }));
         assert!(
             batch
                 .proposals
                 .iter()
                 .all(|proposal| proposal.descriptor.option_id != "shield")
+        );
+        assert!(
+            batch
+                .proposals
+                .iter()
+                .any(|proposal| proposal.descriptor.option_id.starts_with("blueprint/"))
         );
     }
 

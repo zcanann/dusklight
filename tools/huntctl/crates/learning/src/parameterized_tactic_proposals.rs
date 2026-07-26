@@ -9,6 +9,7 @@ use crate::native_generic_tactic::{GenericTactic, NativeGenericTacticPlan};
 use crate::tactic_asset::{
     TacticAssetAdapter, TacticAssetCatalog, TacticAssetError, TacticAssetSource, TacticCatalogEntry,
 };
+use crate::tactic_blueprint::{TacticBlueprint, TacticBlueprintNode};
 use dusklight_control::controller_program::ControllerProgram;
 use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::roll_option::RollOptionPlan;
@@ -29,6 +30,7 @@ pub enum ParameterizedTacticFamily {
     Roll,
     Interact,
     Neutral,
+    Sequence,
 }
 
 impl ParameterizedTacticFamily {
@@ -40,6 +42,7 @@ impl ParameterizedTacticFamily {
             Self::Roll => "roll",
             Self::Interact => "interact",
             Self::Neutral => "neutral",
+            Self::Sequence => "sequence",
         }
     }
 }
@@ -81,6 +84,7 @@ impl ParameterizedTacticProposalContext {
 pub struct ParameterizedTacticProposalCatalog {
     pub family_schema_sha256: Digest,
     pub catalog: TacticAssetCatalog,
+    pub blueprints: Vec<TacticBlueprint>,
 }
 
 pub fn parameterized_tactic_family_schema_sha256() -> Digest {
@@ -95,6 +99,7 @@ pub fn parameterized_tactic_family_schema_sha256() -> Digest {
         ParameterizedTacticFamily::Roll,
         ParameterizedTacticFamily::Interact,
         ParameterizedTacticFamily::Neutral,
+        ParameterizedTacticFamily::Sequence,
     ] {
         hasher.update(family.slug().as_bytes());
         hasher.update([0]);
@@ -210,10 +215,80 @@ pub fn propose_parameterized_tactics(
             "parameterized tactic proposal batch is empty or oversized".into(),
         ));
     }
+    let catalog = TacticAssetCatalog::new(entries.into_values().collect())?;
+    let blueprints = propose_bounded_compositions(&catalog, context.maximum_ticks)?;
+    if catalog.entries().len().saturating_add(blueprints.len()) > MAX_PARAMETERIZED_PROPOSALS {
+        return Err(TacticAssetError::InvalidAsset(
+            "parameterized tactic proposal batch is oversized".into(),
+        ));
+    }
     Ok(ParameterizedTacticProposalCatalog {
         family_schema_sha256,
-        catalog: TacticAssetCatalog::new(entries.into_values().collect())?,
+        catalog,
+        blueprints,
     })
+}
+
+fn propose_bounded_compositions(
+    catalog: &TacticAssetCatalog,
+    maximum_ticks: u32,
+) -> Result<Vec<TacticBlueprint>, TacticAssetError> {
+    let roll = catalog
+        .entries()
+        .iter()
+        .find(|entry| entry.option_id().starts_with("family/roll/"));
+    let interact = catalog
+        .entries()
+        .iter()
+        .find(|entry| entry.option_id().starts_with("family/interact/"));
+    let (Some(roll), Some(interact)) = (roll, interact) else {
+        return Ok(Vec::new());
+    };
+    let mut blueprints = Vec::new();
+    for option_ids in [
+        [roll.option_id(), interact.option_id()],
+        [interact.option_id(), roll.option_id()],
+    ] {
+        let duration = option_ids.iter().try_fold(0_u32, |total, option_id| {
+            catalog
+                .entry(option_id)
+                .and_then(|entry| total.checked_add(entry.description().duration.maximum_ticks))
+        });
+        if !duration.is_some_and(|duration| duration <= maximum_ticks) {
+            continue;
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V1.as_bytes());
+        hasher.update(ParameterizedTacticFamily::Sequence.slug().as_bytes());
+        for option_id in option_ids {
+            hasher.update((option_id.len() as u64).to_le_bytes());
+            hasher.update(option_id.as_bytes());
+        }
+        let digest = hasher.finalize();
+        let suffix = digest[..10]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let blueprint = TacticBlueprint::new(
+            format!("generated-sequence-{suffix}"),
+            TacticBlueprintNode::Sequence {
+                steps: option_ids
+                    .into_iter()
+                    .map(|option_id| TacticBlueprintNode::Invoke {
+                        option_id: option_id.into(),
+                    })
+                    .collect(),
+            },
+        )
+        .map_err(|error| TacticAssetError::InvalidAsset(error.to_string()))?;
+        let compiled = blueprint
+            .compile_static(catalog)
+            .map_err(|error| TacticAssetError::InvalidAsset(error.to_string()))?;
+        if compiled.tape.frames.len() <= maximum_ticks as usize {
+            blueprints.push(blueprint);
+        }
+    }
+    Ok(blueprints)
 }
 
 fn insert(
@@ -304,11 +379,23 @@ mod tests {
             parameterized_tactic_family_schema_sha256()
         );
         assert!(!first.catalog.entries().is_empty());
-        assert!(first.catalog.entries().len() <= MAX_PARAMETERIZED_PROPOSALS);
+        assert!(
+            first
+                .catalog
+                .entries()
+                .len()
+                .saturating_add(first.blueprints.len())
+                <= MAX_PARAMETERIZED_PROPOSALS
+        );
         for entry in first.catalog.entries() {
             assert!(entry.option_id().starts_with("family/"));
             assert!(entry.description().duration.maximum_ticks <= 40);
             first.catalog.prepare_execution(entry.option_id()).unwrap();
+        }
+        assert!(!first.blueprints.is_empty());
+        for blueprint in &first.blueprints {
+            let compiled = blueprint.compile_static(&first.catalog).unwrap();
+            assert!(compiled.tape.frames.len() <= 40);
         }
     }
 
@@ -349,6 +436,12 @@ mod tests {
                 && !descriptor.option_id.starts_with("move.heading.")
                 && !descriptor.option_id.starts_with("roll.direction.")
         }));
+        assert!(
+            proposals
+                .blueprints
+                .iter()
+                .all(|blueprint| blueprint.asset_id.starts_with("generated-sequence-"))
+        );
     }
 
     #[test]

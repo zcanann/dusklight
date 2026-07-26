@@ -6,7 +6,8 @@ use crate::fact_registry::{FactQuery, FactRead, FactRegistry, FactValue};
 use crate::fact_snapshot::FactSnapshot;
 use crate::option_values::OptionActionDescriptor;
 use crate::tactic_asset::{
-    TacticAssetCatalog, TacticAssetDescription, TacticDurationBounds, TacticObservationRequirement,
+    TacticApplicability, TacticAssetCatalog, TacticAssetDescription, TacticDurationBounds,
+    TacticObservationRequirement,
 };
 use crate::tactic_blueprint::{
     ApplicableTacticChoices, ConcreteTacticChoiceKind, TacticBlueprint, TacticBlueprintError,
@@ -63,7 +64,7 @@ impl LearnerState {
             blueprints,
             |description| {
                 entry_applicable(description)
-                    && tactic_observations_available(description, &snapshot)
+                    && tactic_intrinsically_applicable(description, &snapshot)
             },
             |condition| condition_value(registry, &snapshot, condition),
         )
@@ -300,6 +301,24 @@ pub fn tactic_observations_available(
             }
             TacticObservationRequirement::ActorSnapshotCompleteness => snapshot.actors_complete,
         })
+}
+
+/// Fail-closed executor applicability shared by state construction, ephemeral
+/// proposal ranking, and native execution. More specific callers may further
+/// restrict a tactic, but cannot override missing observations, a completed
+/// terminal, or an absent gameplay context.
+pub fn tactic_intrinsically_applicable(
+    description: &TacticAssetDescription,
+    snapshot: &FactSnapshot,
+) -> bool {
+    snapshot.terminal.reached != Some(true)
+        && tactic_observations_available(description, snapshot)
+        && match description.applicability {
+            TacticApplicability::InputOnly | TacticApplicability::ObservationBound => true,
+            TacticApplicability::GameContextRequired => {
+                snapshot.player.present && snapshot.player.procedure.is_some()
+            }
+        }
 }
 
 fn readable_optional(value: Option<bool>) -> &'static str {
@@ -548,6 +567,63 @@ mod tests {
         );
         assert!(
             state
+                .action_mask
+                .iter()
+                .find(|entry| entry.choice_id == "wait.neutral.04")
+                .unwrap()
+                .applicable
+        );
+    }
+
+    #[test]
+    fn completed_or_absent_game_context_fails_closed() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let snapshot = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let catalog = default_route_tactic_catalog().unwrap();
+
+        let mut terminal = snapshot.clone();
+        terminal.terminal.reached = Some(true);
+        let terminal_state =
+            LearnerState::build(terminal, &FactRegistry::canonical(), &catalog, &[], |_| {
+                true
+            })
+            .unwrap();
+        assert!(
+            terminal_state
+                .action_mask
+                .iter()
+                .all(|entry| !entry.applicable)
+        );
+
+        let mut missing_context = snapshot;
+        missing_context.player.procedure = None;
+        let missing_context_state = LearnerState::build(
+            missing_context,
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |_| true,
+        )
+        .unwrap();
+        assert!(
+            !missing_context_state
+                .action_mask
+                .iter()
+                .find(|entry| entry.choice_id == "interact.short")
+                .unwrap()
+                .applicable
+        );
+        assert!(
+            missing_context_state
                 .action_mask
                 .iter()
                 .find(|entry| entry.choice_id == "wait.neutral.04")
