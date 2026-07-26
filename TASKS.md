@@ -50,21 +50,6 @@ Acceptance:
   the sealed Ordon workload without changing its semantic results.
 - Worker scaling is measured rather than inferred from raw simulator tests.
 
-## P4 - Discover, validate, and promote tactics
-
-- [ ] Mine successful and high-value replay fragments for recurring bounded
-      action sequences and state-conditioned tactic parameters.
-- [ ] Retain provenance from source transitions through composition, evaluation,
-      promotion, and every later execution.
-- [ ] Demote tactics that cease to add value while keeping historical replay
-      data readable.
-
-Acceptance:
-
-- At least one tactic absent from the initial catalog is discovered, promoted
-  by measured results, reused in a later decision, and cold-replayed exactly.
-- Promotion is based on comparative execution evidence, not manual blessing.
-
 ## P5 - Couple search and learning around useful trials
 
 - [ ] Use the value/Q model to rank batches of state-conditioned tactic

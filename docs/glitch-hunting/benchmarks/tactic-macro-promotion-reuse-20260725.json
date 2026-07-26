@@ -1,0 +1,103 @@
+{
+  "schema": "dusklight-tactic-macro-promotion-reuse-evidence/v1",
+  "date": "2026-07-25",
+  "claim": "The native tactic-route campaign discovered controller sequences absent from its initial catalog, promoted two only after comparative native execution, reused one from a held-out authenticated frontier, and reproduced its complete emitted route exactly in two fresh processes.",
+  "scope": {
+    "establishes": [
+      "successful and high-value journal transitions produce bounded exact-input candidates and connected compositions",
+      "candidate source states, transitions, seeds, option identities, comparisons, lifecycle history, registry identity, and later reuse remain bound",
+      "promotion is determined by comparisons against the ordinary parameterized primitive catalog across authenticated native frontiers",
+      "a promoted tactic was selected and executed from a state excluded from its promotion comparisons",
+      "the later execution emitted the recorded tactic inputs exactly",
+      "two learner-free and controller-free process boots consumed the same complete binary tape and produced byte-identical authenticated gameplay traces"
+    ],
+    "does_not_establish": [
+      "an authenticated terminal hit",
+      "improvement against the authenticated 125-tick Ordon incumbent",
+      "P5 learned batch-ranking acceptance",
+      "P6 route-optimization acceptance"
+    ]
+  },
+  "implementation": {
+    "initial_mining_commit": "1fc1f7ecbd",
+    "comparative_validation_commit": "b31adb36a6",
+    "baseline_deduplication_commit": "93951ce87d",
+    "connected_composition_commit": "d59caa6691",
+    "later_reuse_commit": "63b1549f01",
+    "exact_replay_watchdog_commit": "fc1ececb8e",
+    "report_schema": "dusklight-native-tactic-route-report/v12",
+    "registry_extension": "dtmr",
+    "registry_encoding": "versioned checksummed envelope containing zstd-compressed CBOR; macro actions use the canonical binary InputTape encoding",
+    "lifecycle": "later comparative regressions demote a promoted record without deleting its sources, comparisons, history, or tape"
+  },
+  "bindings": {
+    "optimization_request_sha256": "653dc628e5cabccbc39c8ce975715ac32b7caa6107f0e964459e26999768d15c",
+    "execution_binding_sha256": "e3285289821f4cb8bacbb85fb92d63b9be10e0923ea7155d8ba0d328fe2e6515",
+    "objective_sha256": "0bc70d38b7fa66b5a198117fe45d31902842377718264b914147930cd3faf55c",
+    "feature_schema_sha256": "be03e8360126d502306be142f800480e4c53cacd0970dc41bfca0d9f20ef0148",
+    "action_schema_sha256": "b614c45079ff8c3e50b8a2e3ec36bf9232b515e3b12354ebe8f6ee7a9f60dc1b"
+  },
+  "campaign": {
+    "output": "build/campaigns/faron-tactic-macro-promotion-20260725-v3",
+    "workers": 4,
+    "seeds": [
+      104729,
+      130363
+    ],
+    "route_decisions": 6,
+    "journaled_proposal_observations": 24,
+    "high_value_observations": 7,
+    "mined_observations": 7,
+    "absent_from_initial_catalog_candidates": 10,
+    "comparative_validation_states": 20,
+    "comparisons": 20,
+    "proposed": 8,
+    "promoted": 2,
+    "demoted": 0,
+    "total_native_ticks": 784,
+    "validation_native_ticks": 570,
+    "wall_micros": 136302006,
+    "native_simulation_micros": 51465568,
+    "model_update_micros": 418942,
+    "evidence_projection_and_persistence_micros": 7191042
+  },
+  "later_reuse": {
+    "candidate_sha256": "15ef049dc8517fa92c31d744abe9ab345d22de29da6b4673bd287058036241f9",
+    "option_id": "promoted/15ef049dc8517fa92c31",
+    "promotion_registry_content_sha256": "663817e57cd84c0e6ef33e0a62d0f0cfdedcf7d3b35250d4df8ba400bd50c68e",
+    "seed": 104729,
+    "source_state_sha256": "319813c4d4c86865b39d3045d9c797a8bef27a7b83ff64c32fab0301f8686331",
+    "held_out_from_promotion_states": true,
+    "realized_ticks": 26,
+    "goal_progress": 595.58984,
+    "terminal": false,
+    "after_state_sha256": "932cc5de8d9cbc531a1c9303f76e2713b2fc5babeb6dbdf646761069e0ed656f",
+    "emitted_macro_tape_sha256": "861ddf8caefffbca2fac88f045fd80d9ff01f36c5a3d2b795421c3503362d489",
+    "complete_route_tape_sha256": "6b9ecb88df5a46e10c6c806b6b802749c353b7ca3cb336ab6a96ab7f00063bc4",
+    "complete_route_frames": 777
+  },
+  "cold_replay": {
+    "processes": 2,
+    "learner_in_loop": false,
+    "controller_in_loop": false,
+    "exit_codes": [
+      0,
+      0
+    ],
+    "trace_file_sha256": [
+      "ba653a85493db3800b0939f595b234636e1fd8fbc4e0976a17504356f7b52e4c",
+      "ba653a85493db3800b0939f595b234636e1fd8fbc4e0976a17504356f7b52e4c"
+    ],
+    "semantic_state_profile_sha256": "0ad2c51057ccafaa3431732cf6cfe501357fd7cbd5a714b7ead8c262fc12044f",
+    "semantic_state_series_sha256": "0ed192719cdce6ca2dfbc834f0c8ec6a47febcb032aa0de0c9cfa3dfd16b19f8",
+    "compared_boundaries": 777,
+    "identical": true
+  },
+  "artifacts": {
+    "report_sha256": "5e7c50b8a0cbdbe8c9562fd8ca044beb23419641ec79cf4053736b8b5e7d434e",
+    "validated_registry_file_sha256": "ff3f8e43da739e04023825486035595d2054fd5312820bf043a032ee47242755",
+    "validated_registry_content_sha256": "663817e57cd84c0e6ef33e0a62d0f0cfdedcf7d3b35250d4df8ba400bd50c68e",
+    "complete_route_tape_sha256": "6b9ecb88df5a46e10c6c806b6b802749c353b7ca3cb336ab6a96ab7f00063bc4"
+  },
+  "verdict": "P4 acceptance is met. This is tactic discovery, comparative promotion, held-out reuse, and exact cold-replay evidence only; it is not evidence that the Ordon incumbent was beaten."
+}
