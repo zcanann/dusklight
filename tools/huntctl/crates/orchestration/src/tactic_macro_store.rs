@@ -268,6 +268,16 @@ fn decode_registry(bytes: &[u8]) -> Result<(Digest, Vec<u8>), TacticMacroStoreEr
 }
 
 fn install_new(path: &Path, bytes: &[u8]) -> Result<(), TacticMacroStoreError> {
+    if path.exists() {
+        let existing = fs::read(path).map_err(TacticMacroStoreError::io)?;
+        return if existing == bytes {
+            Ok(())
+        } else {
+            Err(store_error(
+                "tactic macro registry path contains different immutable content",
+            ))
+        };
+    }
     let parent = path
         .parent()
         .ok_or_else(|| store_error("tactic macro registry has no parent"))?;
