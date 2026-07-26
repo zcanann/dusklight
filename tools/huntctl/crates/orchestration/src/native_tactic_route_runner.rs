@@ -46,8 +46,10 @@ use dusklight_learning::tactic_exploration::{
 };
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_learning::tactic_macro_promotion::{
+    DiscoveredMacroCandidate, MAX_DISCOVERED_MACRO_TICKS, MAX_DISCOVERED_MACROS,
     MAX_DISCOVERY_OBSERVATIONS, MacroComparisonEvidence, MacroDiscoveryObservation,
-    MacroPromotionStatus, TacticMacroPromotionRegistry, discover_replay_macros,
+    MacroPromotionStatus, MacroSourceProvenance, TacticMacroPromotionRegistry,
+    discover_replay_macros, replay_macro_candidate,
 };
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_proposals::behavior_archive::BehaviorArchive;
@@ -831,11 +833,42 @@ fn mine_and_store_tactic_macros(
         }
     }
     retain_bounded_macro_observations(&mut observations);
-    let candidates = if observations.is_empty() {
+    let mut candidates = if observations.is_empty() {
         Vec::new()
     } else {
         discover_replay_macros(&observations).map_err(route_error)?
     };
+    candidates.extend(mine_connected_tactic_macro_compositions(
+        output_root,
+        exploration_seeds,
+    )?);
+    let mut deduplicated = BTreeMap::<Digest, DiscoveredMacroCandidate>::new();
+    for candidate in candidates {
+        match deduplicated.remove(&candidate.candidate_sha256) {
+            Some(existing) => {
+                let mut sources = existing.sources;
+                sources.extend(candidate.sources);
+                deduplicated.insert(
+                    candidate.candidate_sha256,
+                    replay_macro_candidate(candidate.tape, sources).map_err(route_error)?,
+                );
+            }
+            None => {
+                deduplicated.insert(candidate.candidate_sha256, candidate);
+            }
+        }
+    }
+    let mut candidates = deduplicated.into_values().collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        right
+            .tape
+            .frames
+            .len()
+            .cmp(&left.tape.frames.len())
+            .then_with(|| right.sources.len().cmp(&left.sources.len()))
+            .then_with(|| left.candidate_sha256.cmp(&right.candidate_sha256))
+    });
+    candidates.truncate(MAX_DISCOVERED_MACROS);
     let mut registry = TacticMacroPromotionRegistry::default();
     for candidate in candidates {
         registry.propose(candidate).map_err(route_error)?;
@@ -882,6 +915,72 @@ fn mine_and_store_tactic_macros(
             registry_sha256,
         },
     })
+}
+
+fn mine_connected_tactic_macro_compositions(
+    output_root: &Path,
+    exploration_seeds: &[u64],
+) -> Result<Vec<DiscoveredMacroCandidate>, NativeTacticRouteRunError> {
+    let mut candidates = Vec::new();
+    for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
+        let seed_root = output_root.join(format!("seed-{seed_index:03}-{seed}"));
+        let replay = load_tactic_journal_replay(&seed_root)?;
+        let store = TacticQContentStore::open(tactic_content_store_path(&seed_root))
+            .map_err(route_error)?;
+        let root_tape = store
+            .load_tape(replay.records[0].root_tape)
+            .map_err(route_error)?;
+        for start in 0..replay.transitions.len() {
+            let mut frames = Vec::new();
+            let mut sources = Vec::new();
+            let mut high_value = false;
+            for end in start..replay.transitions.len() {
+                if end > start {
+                    let prior = &replay.transitions[end - 1];
+                    let current = &replay.transitions[end];
+                    if prior.next_checkpoint_sha256 != current.source_checkpoint_sha256
+                        || prior.after_state_sha256 != current.before_state_sha256
+                    {
+                        break;
+                    }
+                }
+                let transition = &replay.transitions[end];
+                if frames
+                    .len()
+                    .saturating_add(transition.execution.emitted_raw_actions.len())
+                    > MAX_DISCOVERED_MACRO_TICKS
+                {
+                    break;
+                }
+                frames.extend_from_slice(&transition.execution.emitted_raw_actions);
+                let record = &replay.records[end];
+                high_value |= record.terminal
+                    || record.reward > 0.0
+                    || record.goal_distance_after < record.goal_distance_before;
+                sources.push(MacroSourceProvenance {
+                    seed,
+                    frontier_state_sha256: transition.before_state_sha256,
+                    transition_sha256: record.transition.sha256,
+                    option_id: transition.value_sample.action.option_id.clone(),
+                });
+                if sources.len() >= 2 && high_value {
+                    candidates.push(
+                        replay_macro_candidate(
+                            InputTape {
+                                boot: root_tape.boot.clone(),
+                                tick_rate_numerator: root_tape.tick_rate_numerator,
+                                tick_rate_denominator: root_tape.tick_rate_denominator,
+                                frames: frames.clone(),
+                            },
+                            sources.clone(),
+                        )
+                        .map_err(route_error)?,
+                    );
+                }
+            }
+        }
+    }
+    Ok(candidates)
 }
 
 fn retain_bounded_macro_observations(observations: &mut Vec<MacroDiscoveryObservation>) {

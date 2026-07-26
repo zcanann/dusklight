@@ -54,6 +54,29 @@ impl DiscoveredMacroCandidate {
     }
 }
 
+pub fn replay_macro_candidate(
+    tape: InputTape,
+    mut sources: Vec<MacroSourceProvenance>,
+) -> Result<DiscoveredMacroCandidate, &'static str> {
+    sources.sort_by(|left, right| {
+        left.transition_sha256
+            .cmp(&right.transition_sha256)
+            .then_with(|| left.frontier_state_sha256.cmp(&right.frontier_state_sha256))
+            .then_with(|| left.seed.cmp(&right.seed))
+            .then_with(|| left.option_id.cmp(&right.option_id))
+    });
+    sources.dedup_by_key(|source| source.transition_sha256);
+    let candidate_sha256 = macro_tape_sha256(&tape)?;
+    let candidate = DiscoveredMacroCandidate {
+        candidate_sha256,
+        option_id: format!("promoted/{}", short_digest(candidate_sha256)),
+        tape,
+        sources,
+    };
+    validate_candidate(&candidate)?;
+    Ok(candidate)
+}
+
 pub fn discover_replay_macros(
     observations: &[MacroDiscoveryObservation],
 ) -> Result<Vec<DiscoveredMacroCandidate>, &'static str> {
@@ -372,9 +395,20 @@ fn validate_observation(observation: &MacroDiscoveryObservation) -> Result<(), &
 }
 
 fn validate_candidate(candidate: &DiscoveredMacroCandidate) -> Result<(), &'static str> {
+    let distinct_sources = candidate
+        .sources
+        .iter()
+        .map(|source| source.transition_sha256)
+        .collect::<BTreeSet<_>>();
     if candidate.candidate_sha256 == Digest::ZERO
         || candidate.option_id != format!("promoted/{}", short_digest(candidate.candidate_sha256))
         || candidate.sources.len() < MIN_DISCOVERY_OCCURRENCES
+        || candidate.sources.len() != distinct_sources.len()
+        || candidate.sources.iter().any(|source| {
+            source.frontier_state_sha256 == Digest::ZERO
+                || source.transition_sha256 == Digest::ZERO
+                || source.option_id.is_empty()
+        })
         || macro_tape_sha256(&candidate.tape)? != candidate.candidate_sha256
     {
         return Err("discovered macro candidate is invalid");
@@ -463,6 +497,40 @@ mod tests {
         let entry = longest.catalog_entry().unwrap();
         let exact = entry.exact_static_realization().unwrap().unwrap();
         assert_eq!(exact.tape, longest.tape);
+    }
+
+    #[test]
+    fn connected_component_provenance_can_propose_one_exact_composed_macro() {
+        let candidate = replay_macro_candidate(
+            tape(80, 16),
+            vec![
+                MacroSourceProvenance {
+                    seed: 11,
+                    frontier_state_sha256: Digest([1; 32]),
+                    transition_sha256: Digest([3; 32]),
+                    option_id: "family/seek/a".into(),
+                },
+                MacroSourceProvenance {
+                    seed: 11,
+                    frontier_state_sha256: Digest([2; 32]),
+                    transition_sha256: Digest([4; 32]),
+                    option_id: "family/curve/b".into(),
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(candidate.tape.frames.len(), 16);
+        assert_eq!(candidate.sources.len(), 2);
+        assert_eq!(
+            candidate
+                .catalog_entry()
+                .unwrap()
+                .exact_static_realization()
+                .unwrap()
+                .unwrap()
+                .tape,
+            candidate.tape
+        );
     }
 
     #[test]
