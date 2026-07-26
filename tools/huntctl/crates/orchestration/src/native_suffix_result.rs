@@ -337,7 +337,10 @@ impl NativeSuffixBatchResult {
             .candidates
             .iter()
             .filter(|candidate| candidate.success)
-            .min_by_key(|candidate| (candidate.first_hit_tick, candidate.id.as_str()))
+            // The native runner retains the first candidate at the best
+            // first-hit tick. Preserve request order for ties instead of
+            // imposing a second, detached lexical ordering on candidate IDs.
+            .min_by_key(|candidate| candidate.first_hit_tick)
             .map(|candidate| candidate.id.as_str());
         if self.winner_id.as_deref() != winner {
             return Err(result_error(
@@ -498,7 +501,7 @@ impl NativeSuffixBatchResult {
             .candidates
             .iter()
             .filter(|candidate| candidate.success)
-            .min_by_key(|candidate| (candidate.first_hit_tick, candidate.id.as_str()))
+            .min_by_key(|candidate| candidate.first_hit_tick)
             .map(|candidate| candidate.id.as_str());
         if self.winner_id.as_deref() != winner {
             return Err(result_error(
@@ -1070,6 +1073,30 @@ mod tests {
             .unwrap();
         assert_eq!(success.simulated_ticks, 1);
         assert_eq!(success.candidates[0].first_hit_tick, Some(0));
+    }
+
+    #[test]
+    fn equal_tick_winner_preserves_native_request_order() {
+        let mut request = request(false);
+        request.candidates[0].id = "candidate-z".into();
+        let mut second_request = request.candidates[0].clone();
+        second_request.id = "candidate-a".into();
+        request.candidates.push(second_request);
+
+        let mut result = result(true, false);
+        result.candidates[0].id = "candidate-z".into();
+        let mut second_result = result.candidates[0].clone();
+        second_result.id = "candidate-a".into();
+        result.candidates.push(second_result);
+        result.candidate_count = 2;
+        result.completed_candidates = 2;
+        result.restore_micros.push(1);
+        result.timing.candidate_ticks = 2;
+        result.episode_shard.episode_count = 2;
+        result.winner_id = Some("candidate-z".into());
+
+        let validated = result.validate_against(&request, &terminal()).unwrap();
+        assert_eq!(validated.candidates.len(), 2);
     }
 
     #[test]

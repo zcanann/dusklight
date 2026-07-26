@@ -11,6 +11,7 @@ use huntctl::learning::planning_priors::QBeamPriorTable;
 use huntctl::milestone_dsl;
 use huntctl::motion_path::{MotionPathPlan, PathCancellationHit};
 use huntctl::motion_path_golf::{MotionPathGolfSteps, golf_motion_path};
+use huntctl::optimization_request::OptimizationRequest;
 use huntctl::option_execution::OptionExecution;
 use huntctl::option_golf::{RollGolfSteps, golf_roll_option};
 use huntctl::roll_option::{RollCancellationHit, RollOptionPlan};
@@ -19,6 +20,11 @@ use huntctl::search::{
     Candidate, CandidateResult, EvaluationArtifact, EvolutionConfig, PopulationManifest,
     RESULTS_SCHEMA, SearchResults, SegmentProfile, collect_results, evolve_population,
     rank_population, write_explicit_population_with_seed, write_seed_population,
+};
+use huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding;
+use huntctl::search_evaluator::native_suffix_result::NativeTerminalBinding;
+use huntctl::search_evaluator::native_suffix_worker::{
+    NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
 };
 use huntctl::search_evaluator::{
     AnchoredInputGolfConfig, AnchoredObjectiveConfig, AnchoredRouteMinimizeConfig,
@@ -181,6 +187,94 @@ fn validated_route_card_fixture_root(
 
 pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
     match args.first().map(String::as_str) {
+        Some("evaluate-suffix-batch") => {
+            let search_args = &args[1..];
+            let repository_root = fs::canonicalize(
+                option(search_args, "--repository-root")
+                    .map(PathBuf::from)
+                    .unwrap_or(std::env::current_dir()?),
+            )?;
+            let request: OptimizationRequest =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--request")?)?)?;
+            let execution: NativeResidualExecutionBinding =
+                serde_json::from_slice(&fs::read(required_path(search_args, "--execution")?)?)?;
+            execution.validate_files(&repository_root, &request)?;
+
+            let input_tape = required_path(search_args, "--input-tape")?;
+            let input_tape = if input_tape.is_absolute() {
+                input_tape
+            } else {
+                repository_root.join(input_tape)
+            };
+            let batch = required_path(search_args, "--batch")?;
+            let batch = if batch.is_absolute() {
+                batch
+            } else {
+                repository_root.join(batch)
+            };
+            let output = required_path(search_args, "--output")?;
+            let output = if output.is_absolute() {
+                output
+            } else {
+                repository_root.join(output)
+            };
+            if output.exists() && fs::read_dir(&output)?.next().is_some() {
+                return Err(format!(
+                    "suffix-batch evaluation output must be new or empty: {}",
+                    output.display()
+                )
+                .into());
+            }
+            fs::create_dir_all(&output)?;
+
+            let terminal = NativeTerminalBinding {
+                goal: request.terminal_predicate.goal.clone(),
+                program_sha256: request.terminal_predicate.program_sha256,
+                definition_sha256: request.terminal_predicate.definition_sha256,
+            };
+            let launch = NativeSuffixWorkerLaunch {
+                executable: repository_root.join(&execution.executable.path),
+                game_data: repository_root.join(&execution.game_data.path),
+                input_tape,
+                milestone_program: repository_root.join(&execution.milestone_program.path),
+                card_fixture: execution.card_fixture_root(&repository_root, &request)?,
+                card_fixture_sha256: execution.card_fixture_manifest.sha256,
+                working_directory: repository_root.clone(),
+                state_root: output.join("native-state"),
+                world_context_sha256: execution.world_context.sha256,
+                terminal,
+                initial_batch: batch,
+                initial_result: output.join("result.json"),
+                initial_winner_tape: Some(output.join("winner.tape")),
+            };
+            let (worker, validated) = NativeSuffixWorkerSession::launch(&launch)?;
+            worker.shutdown()?;
+            let successful_candidates = validated
+                .candidates
+                .iter()
+                .filter(|candidate| candidate.first_hit_tick.is_some())
+                .count();
+            let best_first_hit_tick = validated
+                .candidates
+                .iter()
+                .filter_map(|candidate| candidate.first_hit_tick)
+                .min();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": "huntctl-evaluate-suffix-batch/v1",
+                    "result": output.join("result.json"),
+                    "winner_tape": output.join("winner.tape"),
+                    "candidate_count": validated.candidates.len(),
+                    "successful_candidates": successful_candidates,
+                    "best_first_hit_tick": best_first_hit_tick,
+                    "simulated_ticks": validated.simulated_ticks,
+                    "checkpoint_bytes": validated.checkpoint_bytes,
+                    "restore_identity": validated.restore_identity,
+                }))?
+            );
+            Ok(())
+        }
         Some("suffix-select") => {
             let search_args = &args[1..];
             let candidate_path = required_path(search_args, "--candidate")?;
