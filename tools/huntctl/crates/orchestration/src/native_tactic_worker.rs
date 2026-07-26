@@ -63,6 +63,12 @@ pub struct NativeTacticCheckpointSource {
     pub route_ticks: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MaterializedNativeTacticFrontier {
+    pub source: NativeTacticCheckpointSource,
+    pub episode_shard_sha256: Digest,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticWorkerOutcome {
@@ -146,6 +152,122 @@ pub fn tactic_root_checkpoint_sha256(
     let bytes = serde_json::to_vec(identity)
         .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?;
     Ok(sha256(&bytes))
+}
+
+pub fn materialize_tactic_frontier<W: PersistentTacticBatchWorker>(
+    worker: &mut W,
+    expected: &FactSnapshot,
+    route: &InputTape,
+    paths: &NativeTacticWorkerPaths,
+) -> Result<MaterializedNativeTacticFrontier, NativeTacticWorkerError> {
+    expected
+        .validate()
+        .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+    route
+        .validate()
+        .map_err(|error| NativeTacticWorkerError::Tape(error.to_string()))?;
+    let source_frame = usize::try_from(worker.identity().source_frame)
+        .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+    if expected.tape_frame != route.frames.len() as u64
+        || expected.terminal.reached != Some(false)
+        || route.frames.len() <= source_frame
+    {
+        return Err(NativeTacticWorkerError::DetachedSelection);
+    }
+    let replay_frames = &route.frames[source_frame..];
+    if replay_frames.len() > 4_096 {
+        return Err(NativeTacticWorkerError::InvalidDuration);
+    }
+    let request = NativeSuffixBatch {
+        schema: NATIVE_CACHED_SUFFIX_BATCH_SCHEMA.into(),
+        source_frame,
+        source_boundary_fingerprint: worker.identity().source_boundary_fingerprint.clone(),
+        checkpoint_validation: NativeCheckpointValidation {
+            kind: worker.identity().checkpoint_validation_kind.clone(),
+            ticks: usize::try_from(worker.identity().checkpoint_validation_ticks)
+                .map_err(|_| NativeTacticWorkerError::InvalidDuration)?,
+        },
+        maximum_ticks: replay_frames.len(),
+        verify_state_hashes: false,
+        checkpoint_cache: Some(tactic_checkpoint_cache_request(None)),
+        candidates: vec![NativeSuffixCandidate {
+            id: hex_digest(
+                route
+                    .encode()
+                    .map_err(|error| NativeTacticWorkerError::Tape(error.to_string()))?,
+            ),
+            actions: pad_runs(replay_frames)?,
+            controller_program_hex: None,
+        }],
+    };
+    write_new_json(&paths.request, &request)?;
+    let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
+    if validated.candidates.len() != 1
+        || validated.candidates[0].id != request.candidates[0].id
+        || validated.candidates[0].simulated_ticks != replay_frames.len() as u64
+        || validated.candidates[0].first_hit_tick.is_some()
+    {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "frontier materialization",
+        ));
+    }
+    let bytes = fs::read(&validated.episode_shard_path)
+        .map_err(|error| NativeTacticWorkerError::Io(error.to_string()))?;
+    let shard = NativeEpisodeShard::decode(&bytes)
+        .map_err(|error| NativeTacticWorkerError::Evidence(error.to_string()))?;
+    if shard.metadata.checkpoint_identity != validated.restore_identity
+        || shard.source_frame != source_frame as u64
+        || shard.episodes.len() != 1
+        || shard.episodes[0].id != request.candidates[0].id
+        || shard.episodes[0].steps.len() != replay_frames.len()
+    {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "frontier materialization episode",
+        ));
+    }
+    for (step, expected_frame) in shard.episodes[0].steps.iter().zip(replay_frames) {
+        if !same_pad(step.chosen_pad, expected_frame.pads[0])
+            || !same_pad(step.consumed_pad, expected_frame.pads[0])
+        {
+            return Err(NativeTacticWorkerError::PadMismatch);
+        }
+    }
+    let endpoint =
+        shard.episodes[0]
+            .steps
+            .last()
+            .ok_or(NativeTacticWorkerError::DetachedResult(
+                "frontier materialization endpoint",
+            ))?;
+    if endpoint.post_simulation.state_identity != expected.state_identity
+        || endpoint.post_simulation.simulation_tick.checked_add(1) != Some(expected.simulation_tick)
+        || endpoint.post_simulation.tape_frame.checked_add(1) != Some(expected.tape_frame)
+    {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "frontier materialization state",
+        ));
+    }
+    let retained = validated.candidates[0].retained_checkpoint.as_ref().ok_or(
+        NativeTacticWorkerError::DetachedResult("frontier materialization checkpoint"),
+    )?;
+    if retained.route_ticks != replay_frames.len() as u64
+        || !lower_hex_identity(&retained.restore_identity)
+        || !lower_hex_identity(&validated.candidates[0].terminal_boundary_fingerprint)
+    {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "frontier materialization checkpoint",
+        ));
+    }
+    Ok(MaterializedNativeTacticFrontier {
+        source: NativeTacticCheckpointSource {
+            restore_identity: retained.restore_identity.clone(),
+            boundary_fingerprint: validated.candidates[0]
+                .terminal_boundary_fingerprint
+                .clone(),
+            route_ticks: replay_frames.len(),
+        },
+        episode_shard_sha256: shard.content_sha256,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
