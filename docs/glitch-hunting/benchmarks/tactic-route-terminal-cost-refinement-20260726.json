@@ -74,6 +74,26 @@
     "report": "build/campaigns/ordon-q125-learned-terminal-refinement-d424f801ca-20260726/run/report.json",
     "finding": "Without a base-controller identity parameter, the refinement lane varied both path geometry and roll timing and selected route sequence 01. This run did not improve 147. The fail-closed comparison motivated the button-free controller digest used by the corrected treatment."
   },
+  "third_generation_followup": {
+    "report": "build/campaigns/ordon-q125-learned-terminal-refinement-12x1-b05b351a43-20260726/run/report.json",
+    "additional_seeds": [
+      1000003,
+      1100009,
+      1200007,
+      1300021
+    ],
+    "proposal": "goal.seek.route.00.roll.period.18.phase.00",
+    "proposal_terminal_route_ticks": 152,
+    "retained_incumbent_route_ticks": 130,
+    "repetitions": 4,
+    "finding": "All four third-generation workers compared the next closest available parameter value with the 130-tick incumbent. Period 18 reached the terminal in 152 ticks, so the learned treatment correctly retained period 20. The finite route catalog exposes only periods 16, 18, 20, 22, and 24; the next bottleneck is candidate support, because the learner cannot evaluate adjacent values such as 19 or 21.",
+    "aggregate_proposal_native_ticks": 3127,
+    "post_run_macro_validation_ticks": 88,
+    "aggregate_total_native_ticks": 3215,
+    "wall_micros": 33765036,
+    "native_simulation_micros": 29648146,
+    "persistence_micros": 28494848
+  },
   "gate_status": {
     "later_generation_cost_improvement": true,
     "better_than_random_valid_best_cost": true,
