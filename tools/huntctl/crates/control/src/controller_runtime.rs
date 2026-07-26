@@ -61,6 +61,7 @@ pub struct ControllerRuntimeQueryRecord {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ControllerRuntimeEnd {
     TargetLost { layer_index: u16 },
+    TargetReached { layer_index: u16 },
     MaximumDuration,
 }
 
@@ -143,6 +144,7 @@ impl ControllerProgramStepper {
         let mut camera_additions = [0_i64; 2];
         let mut buttons = 0_u16;
         let mut clamp = None;
+        let mut target_reached_layer = None;
 
         for (index, layer) in self.program.layers.iter().enumerate() {
             if controller_frame < layer.start_frame
@@ -187,6 +189,9 @@ impl ControllerProgramStepper {
                             end: Some(ControllerRuntimeEnd::TargetLost { layer_index }),
                         });
                     }
+                    if evaluated.target_reached {
+                        target_reached_layer = Some(layer_index);
+                    }
                     let blend = operation_blend(operation);
                     compose(
                         blend,
@@ -223,8 +228,12 @@ impl ControllerProgramStepper {
             ..RawPadState::default()
         };
         self.next_frame += 1;
-        let end = (self.next_frame == self.program.duration_frames)
-            .then_some(ControllerRuntimeEnd::MaximumDuration);
+        let end = target_reached_layer
+            .map(|layer_index| ControllerRuntimeEnd::TargetReached { layer_index })
+            .or_else(|| {
+                (self.next_frame == self.program.duration_frames)
+                    .then_some(ControllerRuntimeEnd::MaximumDuration)
+            });
         self.stopped = end.is_some();
         Ok(ControllerRuntimeStep {
             frame: Some(frame),
@@ -266,6 +275,7 @@ struct EvaluatedStick {
     queried_fields: Vec<ControllerObservationField>,
     selected_actor_stable_id: Option<u64>,
     target_lost: bool,
+    target_reached: bool,
 }
 
 fn evaluate_stick(
@@ -279,6 +289,7 @@ fn evaluate_stick(
     let mut fields = Vec::new();
     let mut selected_actor_stable_id = None;
     let mut target_lost = false;
+    let mut target_reached = false;
     let stick = match operation {
         Operation::CubicBezier { points, .. } => {
             [0, 1].map(|axis| bezier_axis(points, duration, local_frame, axis))
@@ -388,6 +399,8 @@ fn evaluate_stick(
             }
             let target_index = coordinate_sequence.coordinate_index;
             let target = coordinates_xz[target_index];
+            target_reached = target_index + 1 == coordinates_xz.len()
+                && (player[0] - target[0]).hypot(player[1] - target[1]) <= *final_stop_radius;
             seek(
                 observation,
                 target[0],
@@ -550,6 +563,7 @@ fn evaluate_stick(
         queried_fields: fields,
         selected_actor_stable_id,
         target_lost,
+        target_reached,
     })
 }
 
@@ -935,5 +949,41 @@ mod tests {
         observed.player_position[0] = 50.0;
         let third = stepper.step(&observed).unwrap().frame.unwrap();
         assert_eq!(third.pads[0].stick_x, -127);
+    }
+
+    #[test]
+    fn coordinate_sequence_reports_its_final_target_reached_before_maximum_duration() {
+        let program = ControllerProgram {
+            duration_frames: 3,
+            layers: vec![crate::controller_program::Layer {
+                start_frame: 0,
+                duration_frames: 3,
+                operation: Operation::SeekCoordinateSequence {
+                    blend: StickBlend::Replace,
+                    coordinates_xz: vec![[0.0, 0.0], [100.0, 0.0]],
+                    intermediate_stop_radius: 10.0,
+                    final_stop_radius: 2.0,
+                    magnitude: 127,
+                },
+            }],
+        };
+        let mut stepper = ControllerProgramStepper::new(program).unwrap();
+        let mut observed = observation();
+        assert_eq!(stepper.step(&observed).unwrap().end, None);
+
+        observed.boundary_index += 1;
+        observed.simulation_tick += 1;
+        observed.tape_frame += 1;
+        observed.player_position[0] = 100.0;
+        let reached = stepper.step(&observed).unwrap();
+        assert!(reached.frame.is_some());
+        assert_eq!(
+            reached.end,
+            Some(ControllerRuntimeEnd::TargetReached { layer_index: 0 })
+        );
+        assert!(matches!(
+            stepper.step(&observed),
+            Err(ControllerRuntimeError::Stopped)
+        ));
     }
 }

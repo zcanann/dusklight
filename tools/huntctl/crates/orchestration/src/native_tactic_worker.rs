@@ -1024,7 +1024,12 @@ fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>(
         });
         OptionEndReason::Cancelled { condition_index }
     } else {
-        if !matches!(stepper_end, Some(ControllerRuntimeEnd::MaximumDuration)) {
+        if !matches!(
+            stepper_end,
+            Some(
+                ControllerRuntimeEnd::MaximumDuration | ControllerRuntimeEnd::TargetReached { .. }
+            )
+        ) {
             return Err(NativeTacticWorkerError::DetachedResult(
                 "native controller stopped before its bounded tactic",
             ));
@@ -1174,7 +1179,12 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
             ));
         }
 
-        let controller_complete = matches!(step.end, Some(ControllerRuntimeEnd::MaximumDuration));
+        let controller_complete = matches!(
+            step.end,
+            Some(
+                ControllerRuntimeEnd::MaximumDuration | ControllerRuntimeEnd::TargetReached { .. }
+            )
+        );
         if episode.success || controller_complete {
             let mut final_cancellation = cancellation.clone();
             let end_reason = if episode.success && !controller_complete {
