@@ -24,7 +24,7 @@ use huntctl::search::{
 use huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding;
 use huntctl::search_evaluator::native_suffix_result::NativeTerminalBinding;
 use huntctl::search_evaluator::native_suffix_worker::{
-    NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
+    NativeSuffixPrevalidatedFileIdentities, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
 };
 use huntctl::search_evaluator::{
     AnchoredInputGolfConfig, AnchoredObjectiveConfig, AnchoredRouteMinimizeConfig,
@@ -247,7 +247,13 @@ pub(crate) fn command_search(args: &[String]) -> Result<(), Box<dyn Error>> {
                 initial_result: output.join("result.json"),
                 initial_winner_tape: Some(output.join("winner.tape")),
             };
-            let (worker, validated) = NativeSuffixWorkerSession::launch(&launch)?;
+            let (worker, validated) = NativeSuffixWorkerSession::launch_with_prevalidated_files(
+                &launch,
+                NativeSuffixPrevalidatedFileIdentities {
+                    executable_sha256: execution.executable.sha256,
+                    game_data_sha256: execution.game_data.sha256,
+                },
+            )?;
             worker.shutdown()?;
             let successful_candidates = validated
                 .candidates

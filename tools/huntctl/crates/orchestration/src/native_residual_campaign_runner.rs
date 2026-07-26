@@ -12,7 +12,8 @@ use crate::native_suffix_result::{
     NativeTerminalBinding, ValidatedNativeSuffixBatch, ValidatedNativeSuffixCandidate,
 };
 use crate::native_suffix_worker::{
-    NativeSuffixWorkerLaunch, NativeSuffixWorkerSession, validate_native_suffix_artifacts,
+    NativeSuffixPrevalidatedFileIdentities, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
+    validate_native_suffix_artifacts,
 };
 use crate::optimization_request::{OptimizationRequest, ResidualOptimizerConfig};
 use crate::optimization_resume::{
@@ -532,8 +533,14 @@ fn run_lane_job(
             initial_result: job.result_path.clone(),
             initial_winner_tape: None,
         };
-        let (session, validated) =
-            NativeSuffixWorkerSession::launch(&launch).map_err(native_error)?;
+        let (session, validated) = NativeSuffixWorkerSession::launch_with_prevalidated_files(
+            &launch,
+            NativeSuffixPrevalidatedFileIdentities {
+                executable_sha256: execution.executable.sha256,
+                game_data_sha256: execution.game_data.sha256,
+            },
+        )
+        .map_err(native_error)?;
         let identity = session.identity();
         if identity.source_frame != optimization.route.source_boundary_index
             || identity.source_boundary_fingerprint

@@ -2,7 +2,9 @@
 
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::native_suffix_result::NativeTerminalBinding;
-use crate::native_suffix_worker::{NativeSuffixWorkerLaunch, NativeSuffixWorkerSession};
+use crate::native_suffix_worker::{
+    NativeSuffixPrevalidatedFileIdentities, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
+};
 use crate::native_tactic_route_runner::{
     NativeTacticGoalTargetReport, goal_conditioned_tactic_runtime, initial_facts, path_text,
     tactic_root_probe_batch, write_new,
@@ -162,7 +164,14 @@ pub fn run_native_tactic_policy(
         initial_result: initial_root.join("result.json"),
         initial_winner_tape: None,
     };
-    let (mut worker, initial) = NativeSuffixWorkerSession::launch(&launch).map_err(policy_error)?;
+    let (mut worker, initial) = NativeSuffixWorkerSession::launch_with_prevalidated_files(
+        &launch,
+        NativeSuffixPrevalidatedFileIdentities {
+            executable_sha256: config.execution.executable.sha256,
+            game_data_sha256: config.execution.game_data.sha256,
+        },
+    )
+    .map_err(policy_error)?;
     let initial_snapshot = initial_facts(&initial).map_err(policy_error)?;
     let tactic_runtime = goal_conditioned_tactic_runtime(
         &launch.working_directory,
