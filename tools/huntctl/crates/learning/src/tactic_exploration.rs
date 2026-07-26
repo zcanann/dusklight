@@ -6,6 +6,7 @@ use crate::option_values::OptionActionDescriptor;
 use dusklight_control::option_execution::{OptionParameter, OptionType};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
@@ -423,6 +424,105 @@ pub fn ensure_terminal_cost_refinement(
     Ok(())
 }
 
+/// Reserve one acquisition slot for a distinct high-level route hypothesis.
+///
+/// Parallel learned workers share replay and therefore need an explicit
+/// partition over route families; otherwise independent seed hashes can spend
+/// an entire generation on the same route while leaving another route
+/// unmeasured. The existing primary/greedy control remains untouched. When
+/// possible, the partitioned route inherits the primary route's cadence and
+/// phase so this changes only the high-level path hypothesis.
+pub fn ensure_route_family_partition(
+    ranking: &LiveTacticRanking,
+    state_untried: &[OptionActionDescriptor],
+    acquisition_partition: u64,
+    maximum_proposals: usize,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticExplorationError> {
+    if maximum_proposals <= 1 {
+        return Ok(());
+    }
+    if proposals.is_empty()
+        || proposals.len() > maximum_proposals
+        || ranking.learner_snapshot_sha256 == Digest::ZERO
+    {
+        return Err(TacticExplorationError::InvalidInput);
+    }
+    let families = ranking
+        .choices
+        .iter()
+        .filter(|choice| choice.applicable)
+        .filter_map(|choice| route_family_id(&choice.descriptor.option_id))
+        .collect::<BTreeSet<_>>();
+    if families.len() <= 1 {
+        return Ok(());
+    }
+    let target_family = families
+        .iter()
+        .nth((acquisition_partition % families.len() as u64) as usize)
+        .expect("nonempty route family partition");
+    if proposals.iter().any(|proposal| {
+        route_family_id(&proposal.descriptor.option_id).as_ref() == Some(target_family)
+    }) {
+        return Ok(());
+    }
+
+    let mut candidates = ranking
+        .choices
+        .iter()
+        .filter(|choice| {
+            choice.applicable
+                && route_family_id(&choice.descriptor.option_id).as_ref() == Some(target_family)
+                && state_untried.contains(&choice.descriptor)
+        })
+        .map(|choice| &choice.descriptor)
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        candidates = ranking
+            .choices
+            .iter()
+            .filter(|choice| {
+                choice.applicable
+                    && route_family_id(&choice.descriptor.option_id).as_ref() == Some(target_family)
+            })
+            .map(|choice| &choice.descriptor)
+            .collect();
+    }
+    candidates.sort_by(|left, right| left.option_id.cmp(&right.option_id));
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let template_suffix = proposals.iter().find_map(|proposal| {
+        let family = route_family_id(&proposal.descriptor.option_id)?;
+        proposal
+            .descriptor
+            .option_id
+            .strip_prefix(&family)
+            .map(str::to_owned)
+    });
+    let descriptor = template_suffix
+        .as_deref()
+        .and_then(|suffix| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.option_id.strip_prefix(target_family) == Some(suffix))
+                .copied()
+        })
+        .unwrap_or_else(|| {
+            let lower_partition = acquisition_partition / families.len() as u64;
+            let index = (lower_partition.saturating_add(u64::from(proposals[0].exploration_draw))
+                % candidates.len() as u64) as usize;
+            candidates[index]
+        })
+        .clone();
+    let mut acquisition = proposals[0].clone();
+    acquisition.descriptor = descriptor;
+    acquisition.reason = TacticSelectionReason::BatchCoverage;
+    proposals.insert(1, acquisition);
+    proposals.truncate(maximum_proposals);
+    Ok(())
+}
+
 fn choose_random_valid_batch(
     ranking: &LiveTacticRanking,
     decision_index: u64,
@@ -641,6 +741,12 @@ fn is_route_sequence(descriptor: &OptionActionDescriptor) -> bool {
         // button overlays such as rolling, so they must remain in the same
         // exploration class as their native coordinate-sequence counterparts.
         || descriptor.option_id.starts_with("goal.seek.route.")
+}
+
+fn route_family_id(option_id: &str) -> Option<String> {
+    let suffix = option_id.strip_prefix("goal.seek.route.")?;
+    let route = suffix.split('.').next()?;
+    (!route.is_empty()).then(|| format!("goal.seek.route.{route}"))
 }
 
 fn same_refinement_family(
@@ -1118,6 +1224,58 @@ mod tests {
         let prioritized = prioritized_unsupported(&unsupported, false);
 
         assert_eq!(prioritized, vec![&rolling_route, &route]);
+    }
+
+    #[test]
+    fn parallel_acquisition_partitions_distinct_route_families() {
+        let routes = (0..3)
+            .map(|route| {
+                descriptor(
+                    &format!("goal.seek.route.{route:02}.roll.period.20.phase.00"),
+                    OptionType::Custom("reactive_controller".into()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([21; 32]),
+            action_universe_sha256: Digest([22; 32]),
+            choices: routes.iter().cloned().map(choice).collect(),
+            values: AvailableOptionRanking {
+                ranked: Vec::new(),
+                unsupported: routes.clone(),
+            },
+        };
+        let primary = SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+            decision_index: 0,
+            descriptor: routes[2].clone(),
+            reason: TacticSelectionReason::UnsupportedBootstrap,
+            exploration_draw: 17,
+        };
+        let covered = (0..3)
+            .map(|partition| {
+                let mut proposals = vec![primary.clone()];
+                ensure_route_family_partition(&ranking, &routes, partition, 3, &mut proposals)
+                    .unwrap();
+                assert_eq!(proposals[0], primary);
+                let target = format!("goal.seek.route.{partition:02}");
+                assert!(proposals.iter().any(|proposal| {
+                    route_family_id(&proposal.descriptor.option_id).as_deref()
+                        == Some(target.as_str())
+                }));
+                target
+            })
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(
+            covered,
+            BTreeSet::from([
+                "goal.seek.route.00".into(),
+                "goal.seek.route.01".into(),
+                "goal.seek.route.02".into(),
+            ])
+        );
     }
 
     #[test]

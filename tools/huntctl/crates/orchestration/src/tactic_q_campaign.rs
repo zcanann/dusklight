@@ -33,7 +33,7 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
     TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
-    ensure_terminal_cost_refinement,
+    ensure_route_family_partition, ensure_terminal_cost_refinement,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -1468,6 +1468,13 @@ impl TacticQCampaign {
             policy,
         )?;
         if policy == TacticProposalPolicy::Learned {
+            ensure_route_family_partition(
+                &ranking,
+                &state_untried,
+                acquisition_partition,
+                maximum_proposals,
+                &mut proposals,
+            )?;
             ensure_terminal_cost_refinement(
                 &ranking,
                 &state_untried,
