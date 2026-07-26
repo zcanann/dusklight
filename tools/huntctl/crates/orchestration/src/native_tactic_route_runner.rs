@@ -1645,10 +1645,17 @@ fn collect_tactic_macro_validation_frontiers(
 }
 
 fn insert_tactic_macro_validation_frontier(
-    frontiers: &mut BTreeMap<(u64, Digest), TacticMacroValidationFrontier>,
+    frontiers: &mut BTreeMap<(u64, Digest, Digest), TacticMacroValidationFrontier>,
     frontier: TacticMacroValidationFrontier,
 ) -> Result<(), NativeTacticRouteRunError> {
-    let identity = (frontier.seed, frontier.state_sha256);
+    // Fact snapshots are deliberately compact learner observations, not full
+    // emulator-state identities. Different input lineages can legitimately
+    // converge on the same visible snapshot, while their authenticated tapes
+    // remain distinct replay frontiers. Keep both; only conflicting evidence
+    // for the same exact route identity is corruption.
+    let route_sha256 =
+        Digest(Sha256::digest(frontier.route_tape.encode().map_err(route_error)?).into());
+    let identity = (frontier.seed, frontier.state_sha256, route_sha256);
     match frontiers.get(&identity) {
         Some(existing)
             if existing.snapshot != frontier.snapshot
@@ -5494,6 +5501,63 @@ impl From<TacticQCampaignError> for NativeTacticRouteRunError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macro_validation_keeps_distinct_tapes_that_converge_on_one_fact_snapshot() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let snapshot = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let state_sha256 = snapshot.content_sha256().unwrap();
+        let neutral_route = InputTape {
+            frames: vec![dusklight_automation_contracts::tape::InputFrame::default()],
+            ..InputTape::default()
+        };
+        let mut rolling_route = neutral_route.clone();
+        rolling_route.frames[0].owned_ports = 1;
+        rolling_route.frames[0].pads[0].buttons = 0x0100;
+        let mut frontiers = BTreeMap::new();
+
+        insert_tactic_macro_validation_frontier(
+            &mut frontiers,
+            TacticMacroValidationFrontier {
+                seed: 7,
+                state_sha256,
+                snapshot: snapshot.clone(),
+                route_tape: neutral_route.clone(),
+            },
+        )
+        .unwrap();
+        insert_tactic_macro_validation_frontier(
+            &mut frontiers,
+            TacticMacroValidationFrontier {
+                seed: 7,
+                state_sha256,
+                snapshot: snapshot.clone(),
+                route_tape: rolling_route,
+            },
+        )
+        .unwrap();
+        insert_tactic_macro_validation_frontier(
+            &mut frontiers,
+            TacticMacroValidationFrontier {
+                seed: 7,
+                state_sha256,
+                snapshot,
+                route_tape: neutral_route,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(frontiers.len(), 2);
+    }
 
     fn journal_trace(decision_index: u64) -> NativeTacticDecisionTrace {
         serde_json::from_value(serde_json::json!({
