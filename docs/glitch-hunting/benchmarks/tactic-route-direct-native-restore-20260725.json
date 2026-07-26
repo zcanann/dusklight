@@ -1,0 +1,74 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-direct-native-restore/v1",
+  "date": "2026-07-25",
+  "claim": "A tactic-route decision can route its exact logical frontier back to the persistent native worker that owns the retained endpoint, restore that opaque process-local checkpoint directly, and execute only the new tactic suffix. Detached handles and mismatched route, state, or boundary identities fail closed.",
+  "implementation": {
+    "commit": "cc5cc5cd0f743c0798438f48435da735199687ca",
+    "request_schema": "dusklight-suffix-batch/v9",
+    "result_schema": "dusklight-suffix-batch-result/v8",
+    "report_schema": "dusklight-native-tactic-route-report/v8",
+    "checkpoint_serialization": "none; the scheduler retains only an opaque process-local restore identity and exact logical state binding",
+    "worker_ownership": "dedicated proposal queues preserve stable worker slots; the direct proposal is sent to the slot that produced its source handle",
+    "root_identity": "the native session preserves its authenticated root boundary independently from the current cached source so direct and root-replay jobs may alternate",
+    "episode_coordinates": "the request remains bound to authenticated root frame 620 while the binary episode shard begins at root plus cached route ticks",
+    "concurrent_seed_scope": "direct restore is enabled for a single exploration seed; campaigns with concurrent seed coordinators remain replay-only until per-seed cache ownership is isolated"
+  },
+  "validation": {
+    "cpp_game_build": "passed",
+    "cargo_check_huntctl": "passed",
+    "cargo_test_native_tactic_worker": {
+      "passed": 6,
+      "failed": 0
+    },
+    "cargo_test_native_tactic_route_runner": {
+      "passed": 20,
+      "failed": 0
+    },
+    "cargo_test_orchestration": {
+      "passed": 127,
+      "failed": 2,
+      "unrelated_failures": [
+        "residual_horizon_tightening fixture digest",
+        "residual_reverse_curriculum fixture digest"
+      ]
+    }
+  },
+  "native_smoke": {
+    "output": "build/campaigns/tactic-route-direct-restore-smoke-20260725-v6",
+    "execution_content_sha256": "799f52c24a184b7619866b526ccf9402612b2a833744fabef7dd98a093183644",
+    "execution_file_sha256": "f37e1d7c155186e808351c63fb753e3a86a42ced928eb9381bf09417e1759812",
+    "game_binary_sha256": "a6cbc123b96a9a5a1d1b5efdfe55855ee63cf307cf94bb6363c2df3c6ab2b5df",
+    "huntctl_binary_sha256": "a8bd7cf4db11b207037139018ccfe9610507793b00ab56e3934f2fa547472af9",
+    "report_sha256": "02e7725878a42fa0e80f6021cb9239e8d4a895082595fc9fa774d7e8cc83e83f",
+    "request_sha256": "ed7c5e1beb75ab7565c6bf270e5a097f4dc2bf9bbb8053cc05228aa7a3eff20c",
+    "result_sha256": "0f3ac1a935d9c8ed65158b1a2358f7565fe2c7d76b867dbcd4f7847c8922c32d",
+    "episode_shard_sha256": "06c584ade7a621381356499a13ed4aa311522493462bd41d7d43039d7dd9d96d",
+    "seed": 130363,
+    "workers": 4,
+    "decisions": 2,
+    "successful_seeds": 1,
+    "request_source_frame": 620,
+    "requested_restore_identity": "6f69dd9412dddc01ef22c1669183eb23",
+    "requested_source_route_ticks": 40,
+    "request_action_ticks": 6,
+    "request_maximum_ticks": 6,
+    "result_source_kind": "direct_process_local_restore",
+    "result_restore_identity": "6f69dd9412dddc01ef22c1669183eb23",
+    "result_executed_ticks": 6,
+    "result_restore_micros": 45055,
+    "result_cache_hits": 2,
+    "retained_restore_identity": "1ca831e4ed1e7253ea88bcc5d330bc3e",
+    "retained_route_ticks": 46,
+    "retained_capture_micros": 355056,
+    "checkpoint_bytes": 294721424,
+    "host_snapshot_bytes": 240,
+    "resident_entries": 2,
+    "resident_bytes": 589443328,
+    "frontier_availability": {
+      "logical_frontier_records": 3,
+      "directly_restorable_native_frontiers": 1,
+      "replay_only_frontiers": 1
+    }
+  },
+  "scope": "This closes exact direct restore of a retained frontier and elimination of its replay prefix. Shared-prefix proposal batching, full restore/replay/transition accounting, and concurrent-seed cache ownership remain P2 work."
+}

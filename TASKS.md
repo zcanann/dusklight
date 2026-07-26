@@ -52,8 +52,6 @@ Acceptance:
 
 ## P2 - Make retained states computationally real
 
-- [ ] Restore a cached frontier directly when available instead of restoring
-      the root checkpoint and replaying the complete accumulated route.
 - [ ] Batch competing proposals at a frontier so one restore and prefix replay
       are amortized across many alternatives even when that frontier is not
       cached.
