@@ -2611,6 +2611,7 @@ fn run_seed(
                     action_schema_sha256,
                     &encode,
                     TACTIC_PROPOSALS_PER_DECISION,
+                    seed_index as u64,
                     config.proposal_policy,
                 )
                 .map_err(route_error)?;

@@ -353,7 +353,7 @@ pub fn ensure_terminal_cost_refinement(
     ranking: &LiveTacticRanking,
     state_untried: &[OptionActionDescriptor],
     terminal_incumbent: Option<&OptionActionDescriptor>,
-    config: TacticExplorationConfig,
+    acquisition_partition: u64,
     maximum_proposals: usize,
     proposals: &mut Vec<SelectedTactic>,
 ) -> Result<(), TacticExplorationError> {
@@ -364,7 +364,6 @@ pub fn ensure_terminal_cost_refinement(
         || proposals.is_empty()
         || proposals.len() > maximum_proposals
         || ranking.learner_snapshot_sha256 == Digest::ZERO
-        || config.epsilon_per_million > EPSILON_SCALE
     {
         return if proposals.len() <= maximum_proposals && !proposals.is_empty() {
             Ok(())
@@ -394,16 +393,12 @@ pub fn ensure_terminal_cost_refinement(
         return Ok(());
     }
     // Workers in one learned generation share the same replay boundary. Use
-    // their sealed exploration seeds to cover a small nearest-neighbor window
-    // instead of spending every worker on an identical deterministic replay.
-    // The window stays local and bounded by the native proposal batch width.
+    // the orchestrator's stable acquisition partition to cover a small
+    // nearest-neighbor window instead of spending every worker on an
+    // identical deterministic replay. The window stays local and bounded by
+    // the native proposal batch width.
     let refinement_window = candidates.len().min(maximum_proposals);
-    let refinement_index = (deterministic_draw(
-        config.seed,
-        proposals[0].decision_index,
-        ranking.learner_snapshot_sha256,
-        7,
-    ) % refinement_window as u64) as usize;
+    let refinement_index = (acquisition_partition % refinement_window as u64) as usize;
     let descriptor = candidates[refinement_index].clone();
     let proposal = SelectedTactic {
         schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
@@ -1212,10 +1207,7 @@ mod tests {
             &ranking,
             &[period_20.clone(), rolling_route(24)],
             Some(&incumbent),
-            TacticExplorationConfig {
-                seed: 0,
-                epsilon_per_million: 0,
-            },
+            0,
             3,
             &mut proposals,
         )
@@ -1231,18 +1223,15 @@ mod tests {
             TacticSelectionReason::TerminalCostRefinement
         );
 
-        let selected_neighbors = (0..32)
-            .map(|seed| {
+        let selected_neighbors = (0..2)
+            .map(|acquisition_partition| {
                 let mut proposals = proposals.clone();
                 proposals.remove(1);
                 ensure_terminal_cost_refinement(
                     &ranking,
                     &[period_20.clone(), rolling_route(24)],
                     Some(&incumbent),
-                    TacticExplorationConfig {
-                        seed,
-                        epsilon_per_million: 0,
-                    },
+                    acquisition_partition,
                     3,
                     &mut proposals,
                 )

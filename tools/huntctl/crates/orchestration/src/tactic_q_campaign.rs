@@ -1358,6 +1358,7 @@ impl TacticQCampaign {
             family_schema_sha256,
             encode,
             maximum_proposals,
+            0,
             TacticProposalPolicy::Learned,
         )
     }
@@ -1369,6 +1370,7 @@ impl TacticQCampaign {
         family_schema_sha256: Digest,
         encode: &F,
         maximum_proposals: usize,
+        acquisition_partition: u64,
         policy: TacticProposalPolicy,
     ) -> Result<TacticQProposalBatch, TacticQCampaignError>
     where
@@ -1470,7 +1472,7 @@ impl TacticQCampaign {
                 &ranking,
                 &state_untried,
                 terminal_incumbent.as_ref(),
-                self.exploration,
+                acquisition_partition,
                 maximum_proposals,
                 &mut proposals,
             )?;
