@@ -20,7 +20,8 @@ use crate::tactic_q_campaign::{
     EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics,
     TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
     TacticCampaignGraphProjectionNode, TacticFrontierAcquisition, TacticQCampaign,
-    TacticQCampaignError, TacticQDecision, has_no_progress_loop, route_checkpoint,
+    TacticQCampaignError, TacticQDecision, TacticQTrainingCorpus, has_no_progress_loop,
+    route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
@@ -89,6 +90,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13: &str = "dusklight-native-tactic-route-report/v13";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14: &str = "dusklight-native-tactic-route-report/v14";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15: &str = "dusklight-native-tactic-route-report/v15";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16: &str = "dusklight-native-tactic-route-report/v16";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -114,6 +116,7 @@ const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
 const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
 const ROUTE_TACTIC_TICK_COST: f32 = 0.01;
 const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
+const LEARNED_EPISODES_PER_GENERATION: usize = 4;
 const NAVIGABLE_SURFACE_MINIMUM_UP_NORMAL: f32 = 0.5;
 const NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE: f32 = 512.0;
 const NAVIGABLE_SURFACE_ROUTE_TARGETS: usize = 8;
@@ -162,7 +165,9 @@ pub struct NativeTacticRouteReport {
     pub total_native_ticks: u64,
     pub total_decisions: u64,
     pub useful_decisions: u64,
+    pub learned_episodes_per_generation: usize,
     pub training_replay_rows: u64,
+    pub shared_training_replay_rows: u64,
     pub duplicate_training_transitions: u64,
     pub frontier_availability: NativeTacticFrontierAvailability,
     pub native_restore_accounting: NativeTacticRestoreAccounting,
@@ -370,6 +375,8 @@ pub struct NativeTacticSeedResult {
     #[serde(default)]
     pub training_replay_rows: usize,
     #[serde(default)]
+    pub imported_training_replay_rows: usize,
+    #[serde(default)]
     pub duplicate_training_transitions: u64,
     pub visited_states: usize,
     #[serde(default)]
@@ -384,6 +391,11 @@ pub struct NativeTacticSeedResult {
     pub successful_tape: Option<String>,
     pub final_result: Option<String>,
     pub trace: Vec<NativeTacticDecisionTrace>,
+}
+
+struct CompletedNativeTacticSeed {
+    result: NativeTacticSeedResult,
+    generated_training: TacticQTrainingCorpus,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -672,90 +684,121 @@ pub fn run_native_tactic_route(
     let root_source_frame = usize::try_from(initial_facts.tape_frame)
         .map_err(|_| route_message("native tactic source frame exceeds platform limits"))?;
 
-    let (mut indexed_results, tactic_macro_discovery) = std::thread::scope(|scope| {
-        let mut senders = Vec::with_capacity(workers.len());
-        let worker_handles = workers
-            .into_iter()
-            .enumerate()
-            .map(|(worker_slot, worker)| {
-                let (sender, receiver) = mpsc::channel();
-                senders.push(sender);
-                scope.spawn(move || run_tactic_proposal_worker(worker_slot, worker, receiver))
-            })
-            .collect::<Vec<_>>();
-        let pool = NativeTacticProposalPool {
-            senders: Arc::new(senders),
-            next_worker: Arc::new(AtomicUsize::new(0)),
-            direct_restore_enabled: config.exploration_seeds.len() == 1,
-            root_source_frame,
-            execution_strategy: config.execution_strategy,
-        };
-        let coordinator_handles = config
-            .exploration_seeds
-            .iter()
-            .copied()
-            .enumerate()
-            .map(|(seed_index, seed)| {
-                let pool = pool.clone();
-                let registry = &registry;
-                let encoder = &encoder;
-                let reward_spec = &reward_spec;
-                let initial_facts = &initial_facts;
-                let route_prefix = &route_prefix;
-                let goal_route_catalog = &goal_route_catalog;
-                scope.spawn(move || {
-                    run_seed_coordinator(
+    let (mut indexed_results, tactic_macro_discovery, shared_training_replay_rows) =
+        std::thread::scope(|scope| {
+            let mut senders = Vec::with_capacity(workers.len());
+            let worker_handles = workers
+                .into_iter()
+                .enumerate()
+                .map(|(worker_slot, worker)| {
+                    let (sender, receiver) = mpsc::channel();
+                    senders.push(sender);
+                    scope.spawn(move || run_tactic_proposal_worker(worker_slot, worker, receiver))
+                })
+                .collect::<Vec<_>>();
+            let pool = NativeTacticProposalPool {
+                senders: Arc::new(senders),
+                next_worker: Arc::new(AtomicUsize::new(0)),
+                direct_restore_enabled: config.exploration_seeds.len() == 1,
+                root_source_frame,
+                execution_strategy: config.execution_strategy,
+            };
+            let indexed_seeds = config
+                .exploration_seeds
+                .iter()
+                .copied()
+                .enumerate()
+                .collect::<Vec<_>>();
+            let generation_width = if config.proposal_policy == TacticProposalPolicy::Learned {
+                LEARNED_EPISODES_PER_GENERATION
+            } else {
+                indexed_seeds.len().max(1)
+            };
+            let coordinator_results = (|| {
+                let mut results = Vec::with_capacity(indexed_seeds.len());
+                let mut shared_training = Vec::<TacticQTrainingCorpus>::new();
+                for generation in indexed_seeds.chunks(generation_width) {
+                    let inherited_training = shared_training.as_slice();
+                    let mut generation_results = std::thread::scope(|generation_scope| {
+                        let coordinator_handles = generation
+                            .iter()
+                            .copied()
+                            .map(|(seed_index, seed)| {
+                                let pool = pool.clone();
+                                let registry = &registry;
+                                let encoder = &encoder;
+                                let reward_spec = &reward_spec;
+                                let initial_facts = &initial_facts;
+                                let route_prefix = &route_prefix;
+                                let goal_route_catalog = &goal_route_catalog;
+                                generation_scope.spawn(move || {
+                                    run_seed_coordinator(
+                                        config,
+                                        &pool,
+                                        registry,
+                                        encoder,
+                                        reward_spec,
+                                        initial_facts,
+                                        route_prefix,
+                                        goal_route_catalog,
+                                        action_schema_sha256,
+                                        root_checkpoint_sha256,
+                                        inherited_training,
+                                        seed_index,
+                                        seed,
+                                    )
+                                    .map(|completion| (seed_index, completion))
+                                })
+                            })
+                            .collect::<Vec<_>>();
+                        coordinator_handles
+                            .into_iter()
+                            .map(|handle| {
+                                handle.join().map_err(|_| {
+                                    route_message("native tactic route coordinator panicked")
+                                })?
+                            })
+                            .collect::<Result<Vec<_>, NativeTacticRouteRunError>>()
+                    })?;
+                    generation_results.sort_by_key(|(seed_index, _)| *seed_index);
+                    for (_, completion) in &generation_results {
+                        shared_training.push(completion.generated_training.clone());
+                    }
+                    results.extend(
+                        generation_results
+                            .into_iter()
+                            .map(|(seed_index, completion)| (seed_index, completion.result)),
+                    );
+                }
+                let completion = (|| {
+                    let mined =
+                        mine_and_store_tactic_macros(config.output_root, config.exploration_seeds)?;
+                    validate_and_store_tactic_macros(
                         config,
                         &pool,
-                        registry,
-                        encoder,
-                        reward_spec,
-                        initial_facts,
-                        route_prefix,
-                        goal_route_catalog,
-                        action_schema_sha256,
+                        &encoder,
                         root_checkpoint_sha256,
-                        seed_index,
-                        seed,
+                        mined,
                     )
-                    .map(|result| (seed_index, result))
+                })()?;
+                let shared_training_replay_rows =
+                    shared_training_unique_rows(&shared_training)? as u64;
+                Ok((results, completion, shared_training_replay_rows))
+            })();
+            drop(pool);
+            let worker_results = worker_handles
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| route_message("native tactic route worker thread panicked"))?
                 })
-            })
-            .collect::<Vec<_>>();
-        let coordinator_results = coordinator_handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| route_message("native tactic route coordinator panicked"))?
-            })
-            .collect::<Result<Vec<_>, _>>()
-            .and_then(|results| {
-                let mined =
-                    mine_and_store_tactic_macros(config.output_root, config.exploration_seeds)?;
-                validate_and_store_tactic_macros(
-                    config,
-                    &pool,
-                    &encoder,
-                    root_checkpoint_sha256,
-                    mined,
-                )
-                .map(|validated| (results, validated))
-            });
-        drop(pool);
-        let worker_results = worker_handles
-            .into_iter()
-            .map(|handle| {
-                handle
-                    .join()
-                    .map_err(|_| route_message("native tactic route worker thread panicked"))?
-            })
-            .collect::<Result<Vec<_>, _>>();
-        match (coordinator_results, worker_results) {
-            (Ok(results), Ok(_)) => Ok(results),
-            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
-        }
-    })?;
+                .collect::<Result<Vec<_>, _>>();
+            match (coordinator_results, worker_results) {
+                (Ok(results), Ok(_)) => Ok(results),
+                (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            }
+        })?;
     indexed_results.sort_by_key(|(seed_index, _)| *seed_index);
     if indexed_results.len() != config.exploration_seeds.len()
         || indexed_results
@@ -808,7 +851,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V15.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V16.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -831,10 +874,15 @@ pub fn run_native_tactic_route(
             .saturating_add(tactic_macro_discovery.validation_native_ticks),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
         useful_decisions,
+        learned_episodes_per_generation: LEARNED_EPISODES_PER_GENERATION,
         training_replay_rows: seed_results
             .iter()
-            .map(|seed| seed.training_replay_rows as u64)
+            .map(|seed| {
+                seed.training_replay_rows
+                    .saturating_sub(seed.imported_training_replay_rows) as u64
+            })
             .sum(),
+        shared_training_replay_rows,
         duplicate_training_transitions: seed_results
             .iter()
             .map(|seed| seed.duplicate_training_transitions)
@@ -1700,9 +1748,10 @@ fn run_seed_coordinator(
     goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
+    shared_training: &[TacticQTrainingCorpus],
     seed_index: usize,
     seed: u64,
-) -> Result<NativeTacticSeedResult, NativeTacticRouteRunError> {
+) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
     let seed_root = config
         .output_root
         .join(format!("seed-{seed_index:03}-{seed}"));
@@ -1711,9 +1760,15 @@ fn run_seed_coordinator(
         if !config.resume {
             return Err(route_message("unexpected pre-existing tactic seed result"));
         }
-        read_completed_seed_result(&seed_result_path, seed, config.decisions_per_seed)
+        let result =
+            read_completed_seed_result(&seed_result_path, seed, config.decisions_per_seed)?;
+        let generated_training = load_generated_training_corpus(&result)?;
+        Ok(CompletedNativeTacticSeed {
+            result,
+            generated_training,
+        })
     } else {
-        let result = run_seed(
+        let completion = run_seed(
             config,
             pool,
             registry,
@@ -1724,15 +1779,28 @@ fn run_seed_coordinator(
             goal_route_catalog,
             action_schema_sha256,
             root_checkpoint_sha256,
+            shared_training,
             seed_index,
             seed,
         )?;
         write_new(
             &seed_result_path,
-            &serde_json::to_vec_pretty(&result).map_err(route_error)?,
+            &serde_json::to_vec_pretty(&completion.result).map_err(route_error)?,
         )?;
-        Ok(result)
+        Ok(completion)
     }
+}
+
+fn load_generated_training_corpus(
+    result: &NativeTacticSeedResult,
+) -> Result<TacticQTrainingCorpus, NativeTacticRouteRunError> {
+    let checkpoint = result
+        .final_checkpoint
+        .as_deref()
+        .ok_or_else(|| route_message("completed tactic seed has no final checkpoint"))?;
+    TacticQCampaign::read_checkpoint(Path::new(checkpoint))
+        .and_then(|campaign| campaign.training_corpus_from(result.imported_training_replay_rows))
+        .map_err(route_error)
 }
 
 fn parameterized_catalog_for_state(
@@ -2314,9 +2382,10 @@ fn run_seed(
     goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
+    shared_training: &[TacticQTrainingCorpus],
     seed_index: usize,
     seed: u64,
-) -> Result<NativeTacticSeedResult, NativeTacticRouteRunError> {
+) -> Result<CompletedNativeTacticSeed, NativeTacticRouteRunError> {
     let seed_root = config
         .output_root
         .join(format!("seed-{seed_index:03}-{seed}"));
@@ -2324,57 +2393,78 @@ fn run_seed(
     let source_frame = config.optimization.route.source_boundary_index;
     let horizon = config.optimization.budgets.exploration_horizon_ticks;
     let maximum_tactic_ticks = goal_tactic_maximum_ticks(horizon)?;
-    let (mut campaign, mut trace, mut selection_counts, mut native_ticks, mut episode) =
-        if resuming_seed {
-            if !config.resume {
-                return Err(route_message(
-                    "unexpected pre-existing tactic seed evidence",
-                ));
-            }
-            resume_seed(
-                config,
-                &seed_root,
-                encoder.schema_sha256,
-                root_checkpoint_sha256,
-                seed_index,
-                seed,
-            )?
+    let (
+        mut campaign,
+        mut trace,
+        mut selection_counts,
+        mut native_ticks,
+        mut episode,
+        imported_training_replay_rows,
+    ) = if resuming_seed {
+        if !config.resume {
+            return Err(route_message(
+                "unexpected pre-existing tactic seed evidence",
+            ));
+        }
+        let resumed = resume_seed(
+            config,
+            &seed_root,
+            encoder.schema_sha256,
+            root_checkpoint_sha256,
+            seed_index,
+            seed,
+        )?;
+        let imported = if config.proposal_policy == TacticProposalPolicy::Learned {
+            shared_training_unique_rows(shared_training)?
         } else {
-            fs::create_dir_all(&seed_root).map_err(route_error)?;
-            let initial_proposals = parameterized_catalog_for_state(
-                seed,
-                0,
-                initial_facts,
-                encoder,
-                maximum_tactic_ticks,
-                None,
-                goal_route_catalog,
-                action_schema_sha256,
-            )?;
-            let current = LearnerState::build(
-                initial_facts.clone(),
-                registry,
-                &initial_proposals.catalog,
-                &initial_proposals.blueprints,
-                |_| true,
-            )
-            .map_err(route_error)?;
-            let campaign = TacticQCampaign::new(
-                encoder.schema_sha256,
-                config.optimization.terminal_predicate.definition_sha256,
-                root_checkpoint_sha256,
-                seed_group(seed_index, 0)?,
-                current,
-                route_prefix.clone(),
-                route_option_value_config(seed),
-                TacticExplorationConfig {
-                    seed,
-                    epsilon_per_million: config.epsilon_per_million,
-                },
-            )
-            .map_err(route_error)?;
-            (campaign, Vec::new(), BTreeMap::new(), 0, 0)
+            0
         };
+        (
+            resumed.0, resumed.1, resumed.2, resumed.3, resumed.4, imported,
+        )
+    } else {
+        fs::create_dir_all(&seed_root).map_err(route_error)?;
+        let initial_proposals = parameterized_catalog_for_state(
+            seed,
+            0,
+            initial_facts,
+            encoder,
+            maximum_tactic_ticks,
+            None,
+            goal_route_catalog,
+            action_schema_sha256,
+        )?;
+        let current = LearnerState::build(
+            initial_facts.clone(),
+            registry,
+            &initial_proposals.catalog,
+            &initial_proposals.blueprints,
+            |_| true,
+        )
+        .map_err(route_error)?;
+        let mut campaign = TacticQCampaign::new(
+            encoder.schema_sha256,
+            config.optimization.terminal_predicate.definition_sha256,
+            root_checkpoint_sha256,
+            seed_group(seed_index, 0)?,
+            current,
+            route_prefix.clone(),
+            route_option_value_config(seed),
+            TacticExplorationConfig {
+                seed,
+                epsilon_per_million: config.epsilon_per_million,
+            },
+        )
+        .map_err(route_error)?;
+        let imported = if config.proposal_policy == TacticProposalPolicy::Learned {
+            campaign
+                .import_training_corpora(shared_training)
+                .map_err(route_error)?
+        } else {
+            0
+        };
+        (campaign, Vec::new(), BTreeMap::new(), 0, 0, imported)
+    };
     let has_performance =
         resuming_seed && seed_performance_exists(&seed_root, campaign.decision_index)?;
     let performance = if resuming_seed {
@@ -2993,29 +3083,50 @@ fn run_seed(
         useful_decisions,
         &native_restore_accounting,
     )?;
-    Ok(NativeTacticSeedResult {
-        seed,
-        success,
-        decisions: campaign.decision_index,
-        episodes: episode + 1,
-        native_ticks,
-        replay_rows: campaign.replay.len(),
-        training_replay_rows: campaign.training_replay_len(),
-        duplicate_training_transitions: native_restore_accounting
-            .proposal_transitions
-            .saturating_sub(campaign.training_replay_len() as u64),
-        visited_states: campaign.visited_state_count(),
-        useful_decisions,
-        native_restore_accounting,
-        timing,
-        selection_counts,
-        diagnostics: None,
-        final_checkpoint: Some(path_text(&final_checkpoint)),
-        graph: None,
-        successful_tape,
-        final_result,
-        trace,
+    let generated_training = campaign
+        .training_corpus_from(imported_training_replay_rows)
+        .map_err(route_error)?;
+    Ok(CompletedNativeTacticSeed {
+        result: NativeTacticSeedResult {
+            seed,
+            success,
+            decisions: campaign.decision_index,
+            episodes: episode + 1,
+            native_ticks,
+            replay_rows: campaign.replay.len(),
+            training_replay_rows: campaign.training_replay_len(),
+            imported_training_replay_rows,
+            duplicate_training_transitions: native_restore_accounting
+                .proposal_transitions
+                .saturating_sub(
+                    campaign
+                        .training_replay_len()
+                        .saturating_sub(imported_training_replay_rows) as u64,
+                ),
+            visited_states: campaign.visited_state_count(),
+            useful_decisions,
+            native_restore_accounting,
+            timing,
+            selection_counts,
+            diagnostics: None,
+            final_checkpoint: Some(path_text(&final_checkpoint)),
+            graph: None,
+            successful_tape,
+            final_result,
+            trace,
+        },
+        generated_training,
     })
+}
+
+fn shared_training_unique_rows(
+    corpora: &[TacticQTrainingCorpus],
+) -> Result<usize, NativeTacticRouteRunError> {
+    let mut identities = BTreeSet::new();
+    for transition in corpora.iter().flat_map(|corpus| corpus.transitions.iter()) {
+        identities.insert(transition.replay_identity_sha256().map_err(route_error)?);
+    }
+    Ok(identities.len())
 }
 
 fn cancellation_requested(config: &NativeTacticRouteRunConfig<'_>) -> bool {
@@ -6096,6 +6207,7 @@ mod tests {
             native_ticks: 30,
             replay_rows: 4,
             training_replay_rows: 12,
+            imported_training_replay_rows: 0,
             duplicate_training_transitions: 4,
             visited_states: 3,
             useful_decisions: 2,

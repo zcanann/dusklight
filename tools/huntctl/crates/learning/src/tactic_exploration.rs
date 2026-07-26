@@ -194,13 +194,41 @@ pub fn choose_tactic_batch_with_state_untried(
     if maximum_proposals == 1 || ranking.choices.len() == 1 {
         return Ok(result);
     }
+    // Epsilon controls which proposal leads the batch, not whether a measured
+    // exploit control exists at all. Keep one greedy control whenever the
+    // critic has support, then spend every remaining slot on acquisition.
+    // This makes exploration outcomes directly comparable with the current
+    // best action at the same native frontier.
+    if let Some(greedy) = ranking.values.ranked.first()
+        && greedy.descriptor != primary.descriptor
+        && result.len() < maximum_proposals
+    {
+        result.push(SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+            decision_index,
+            descriptor: greedy.descriptor.clone(),
+            reason: TacticSelectionReason::BatchValue,
+            exploration_draw: primary.exploration_draw,
+        });
+    }
+    if result.len() == maximum_proposals {
+        return Ok(result);
+    }
 
     let mut candidates = ranking
         .choices
         .iter()
         .map(|choice| choice.descriptor.clone())
-        .filter(|descriptor| descriptor != &primary.descriptor)
+        .filter(|descriptor| {
+            !result
+                .iter()
+                .any(|proposal| proposal.descriptor == *descriptor)
+        })
         .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        return Ok(result);
+    }
     candidates.sort_by(|left, right| left.option_id.cmp(&right.option_id));
     let rotation = deterministic_index(
         config.seed,
@@ -210,7 +238,10 @@ pub fn choose_tactic_batch_with_state_untried(
     );
     candidates.rotate_left(rotation);
 
-    let mut represented_types = vec![primary.descriptor.option_type.clone()];
+    let mut represented_types = result
+        .iter()
+        .map(|proposal| proposal.descriptor.option_type.clone())
+        .collect::<Vec<_>>();
     let acquisition_lanes = [
         BatchAcquisitionLane::Uncertainty,
         BatchAcquisitionLane::Value,
@@ -401,15 +432,21 @@ fn select_batch_candidate(
         .iter()
         .enumerate()
         .filter_map(|(index, descriptor)| {
+            let untried = state_untried.contains(descriptor);
             let estimate = ranking
                 .values
                 .ranked
                 .iter()
                 .find(|ranked| ranked.descriptor == *descriptor);
-            if !matches!(lane, BatchAcquisitionLane::Coverage) && estimate.is_none() {
+            // The primary slot already exploits the fitted critic. Additional
+            // acquisition lanes must not spend native ticks remeasuring an
+            // action already observed in this state cell. Uncertainty and
+            // value remain useful for actions learned in other states; when
+            // no such state-local untried action exists, the caller falls back
+            // to explicit coverage of a new executable descriptor.
+            if !matches!(lane, BatchAcquisitionLane::Coverage) && (estimate.is_none() || !untried) {
                 return None;
             }
-            let untried = state_untried.contains(descriptor);
             let unsupported = ranking.values.unsupported.contains(descriptor);
             let novel_type = !represented_types.contains(&descriptor.option_type);
             let mean_q = estimate.map_or(f64::NEG_INFINITY, |ranked| ranked.mean_q);
@@ -1082,7 +1119,7 @@ mod tests {
                 seed: 19,
                 epsilon_per_million: 0,
             },
-            std::slice::from_ref(&fresh),
+            &[uncertain.clone(), valuable.clone(), fresh.clone()],
             4,
         )
         .unwrap();
@@ -1094,6 +1131,92 @@ mod tests {
         assert_eq!(batch[2].reason, TacticSelectionReason::BatchValue);
         assert_eq!(batch[3].descriptor, fresh);
         assert_eq!(batch[3].reason, TacticSelectionReason::BatchCoverage);
+    }
+
+    #[test]
+    fn proposal_batch_covers_an_untried_action_before_remeasuring_ranked_actions() {
+        let greedy = descriptor("greedy", OptionType::Move);
+        let uncertain = descriptor("uncertain", OptionType::Bezier);
+        let fresh = descriptor("fresh", OptionType::Interact);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([17; 32]),
+            action_universe_sha256: Digest([18; 32]),
+            choices: vec![
+                choice(fresh.clone()),
+                choice(greedy.clone()),
+                choice(uncertain.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![
+                    RankedOption {
+                        action_id: 0,
+                        descriptor: greedy.clone(),
+                        mean_q: 9.0,
+                        ensemble_variance: 0.1,
+                    },
+                    RankedOption {
+                        action_id: 1,
+                        descriptor: uncertain,
+                        mean_q: 1.0,
+                        ensemble_variance: 8.0,
+                    },
+                ],
+                unsupported: vec![fresh.clone()],
+            },
+        };
+
+        let batch = choose_tactic_batch_with_state_untried(
+            &ranking,
+            0,
+            TacticExplorationConfig {
+                seed: 23,
+                epsilon_per_million: 0,
+            },
+            std::slice::from_ref(&fresh),
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(batch[0].descriptor, greedy);
+        assert_eq!(batch[1].descriptor, fresh);
+        assert_eq!(batch[1].reason, TacticSelectionReason::BatchCoverage);
+    }
+
+    #[test]
+    fn exploratory_batch_keeps_one_greedy_control() {
+        let greedy = descriptor("greedy", OptionType::Move);
+        let fresh = descriptor("fresh", OptionType::Interact);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([19; 32]),
+            action_universe_sha256: Digest([20; 32]),
+            choices: vec![choice(fresh.clone()), choice(greedy.clone())],
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: greedy.clone(),
+                    mean_q: 9.0,
+                    ensemble_variance: 0.1,
+                }],
+                unsupported: vec![fresh.clone()],
+            },
+        };
+
+        let batch = choose_tactic_batch_with_state_untried(
+            &ranking,
+            0,
+            TacticExplorationConfig {
+                seed: 29,
+                epsilon_per_million: EPSILON_SCALE,
+            },
+            std::slice::from_ref(&fresh),
+            2,
+        )
+        .unwrap();
+
+        assert_eq!(batch[0].descriptor, fresh);
+        assert_eq!(batch[0].reason, TacticSelectionReason::Epsilon);
+        assert_eq!(batch[1].descriptor, greedy);
+        assert_eq!(batch[1].reason, TacticSelectionReason::BatchValue);
     }
 
     #[test]

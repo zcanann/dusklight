@@ -316,6 +316,22 @@ pub struct TacticQCampaign {
     hindsight: HindsightOptionReplay,
 }
 
+/// In-memory training evidence shared across independent tactic episodes.
+///
+/// Executable episode lineage remains local to each campaign. This corpus
+/// carries only authenticated transition rows and their exact controller
+/// routes so a later episode can fit from earlier native trials without
+/// pretending those trials belong to its retained path.
+#[derive(Clone, Debug)]
+pub struct TacticQTrainingCorpus {
+    pub feature_schema_sha256: Digest,
+    pub objective_sha256: Digest,
+    pub root_checkpoint_sha256: Digest,
+    pub transitions: Vec<OptionTransitionSample>,
+    pub routes: Vec<InputTape>,
+    pub episode_groups: Vec<u64>,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticQCheckpointSerializationBenchmark {
@@ -390,6 +406,101 @@ impl TacticQCampaign {
 
     pub fn training_replay_len(&self) -> usize {
         self.training_replay.len()
+    }
+
+    pub fn training_corpus(&self) -> TacticQTrainingCorpus {
+        self.training_corpus_from(0)
+            .expect("zero is always a valid training corpus offset")
+    }
+
+    pub fn training_corpus_from(
+        &self,
+        first_row: usize,
+    ) -> Result<TacticQTrainingCorpus, TacticQCampaignError> {
+        if first_row > self.training_replay.len() {
+            return Err(TacticQCampaignError::InvalidState(
+                "shared tactic training corpus offset is invalid",
+            ));
+        }
+        Ok(TacticQTrainingCorpus {
+            feature_schema_sha256: self.feature_schema_sha256,
+            objective_sha256: self.objective_sha256,
+            root_checkpoint_sha256: self.root_checkpoint_sha256,
+            transitions: self.training_replay[first_row..].to_vec(),
+            routes: self.training_replay_routes[first_row..].to_vec(),
+            episode_groups: self.training_episode_groups[first_row..].to_vec(),
+        })
+    }
+
+    /// Merge evidence from independent episodes and immediately refit the
+    /// critic. Duplicate transitions are ignored by their authenticated replay
+    /// identity; conflicting or detached routes reject the entire import.
+    pub fn import_training_corpora(
+        &mut self,
+        corpora: &[TacticQTrainingCorpus],
+    ) -> Result<usize, TacticQCampaignError> {
+        let mut training_replay = self.training_replay.clone();
+        let mut training_replay_routes = self.training_replay_routes.clone();
+        let mut training_episode_groups = self.training_episode_groups.clone();
+        let mut identities = self.training_identities.clone();
+        let mut visited_states = self.visited_states.clone();
+        let mut admitted = 0_usize;
+
+        for corpus in corpora {
+            if corpus.feature_schema_sha256 != self.feature_schema_sha256
+                || corpus.objective_sha256 != self.objective_sha256
+                || corpus.root_checkpoint_sha256 != self.root_checkpoint_sha256
+                || corpus.transitions.len() != corpus.routes.len()
+                || corpus.transitions.len() != corpus.episode_groups.len()
+            {
+                return Err(TacticQCampaignError::InvalidState(
+                    "shared tactic training corpus identity or shape is invalid",
+                ));
+            }
+            for ((transition, route), episode_group) in corpus
+                .transitions
+                .iter()
+                .zip(&corpus.routes)
+                .zip(&corpus.episode_groups)
+            {
+                validate_training_transition(
+                    self.feature_schema_sha256,
+                    self.root_checkpoint_sha256,
+                    transition,
+                    route,
+                )?;
+                let identity = transition.replay_identity_sha256()?;
+                if identities.insert(identity) {
+                    training_replay.push(transition.clone());
+                    training_replay_routes.push(route.clone());
+                    training_episode_groups.push(*episode_group);
+                    visited_states.insert(tactic_state_descriptor(
+                        &transition.before,
+                        transition.before.terminal.reached == Some(true),
+                    ));
+                    visited_states.insert(tactic_state_descriptor(
+                        &transition.after,
+                        transition.value_sample.terminal,
+                    ));
+                    admitted = admitted.saturating_add(1);
+                }
+            }
+        }
+
+        let model = replay_model(
+            self.feature_schema_sha256,
+            self.objective_sha256,
+            &training_replay,
+            &training_episode_groups,
+            &self.model_config,
+        )?;
+        self.training_replay = training_replay;
+        self.training_replay_routes = training_replay_routes;
+        self.training_episode_groups = training_episode_groups;
+        self.training_identities = identities;
+        self.visited_states = visited_states;
+        self.model = model;
+        Ok(admitted)
     }
 
     pub fn visited_state_count(&self) -> usize {
@@ -1203,7 +1314,7 @@ impl TacticQCampaign {
         };
         let current_cell = tactic_state_descriptor(&self.current.snapshot, false);
         let tried_here = self
-            .replay
+            .training_replay
             .iter()
             .filter(|transition| tactic_state_descriptor(&transition.before, false) == current_cell)
             .map(|transition| transition.value_sample.action.option_id.as_str())
@@ -1327,7 +1438,7 @@ impl TacticQCampaign {
         };
         let current_cell = tactic_state_descriptor(&self.current.snapshot, false);
         let tried_here = self
-            .replay
+            .training_replay
             .iter()
             .filter(|transition| tactic_state_descriptor(&transition.before, false) == current_cell)
             .map(|transition| transition.value_sample.action.option_id.as_str())
@@ -1956,26 +2067,13 @@ pub(crate) fn validate_checkpoint(
         .zip(training_routes)
         .zip(training_groups)
     {
-        transition.validate()?;
-        transition
-            .execution
-            .validate_against_tape(route)
-            .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
-        let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
-            .map_err(|_| TacticQCampaignError::InvalidState("training tape range overflows"))?;
-        let end = usize::try_from(transition.execution.realized_tape_range.end_frame_exclusive)
-            .map_err(|_| TacticQCampaignError::InvalidState("training tape range overflows"))?;
-        if transition.feature_schema_sha256 != checkpoint.feature_schema_sha256
-            || end > route.frames.len()
-            || transition.source_checkpoint_sha256
-                != route_checkpoint(
-                    checkpoint.root_checkpoint_sha256,
-                    &tape_prefix(route, start),
-                )?
-            || transition.next_checkpoint_sha256
-                != route_checkpoint(checkpoint.root_checkpoint_sha256, &tape_prefix(route, end))?
-            || !training_identities.insert(transition.replay_identity_sha256()?)
-        {
+        validate_training_transition(
+            checkpoint.feature_schema_sha256,
+            checkpoint.root_checkpoint_sha256,
+            transition,
+            route,
+        )?;
+        if !training_identities.insert(transition.replay_identity_sha256()?) {
             return Err(TacticQCampaignError::InvalidState(
                 "campaign training replay is detached or duplicated",
             ));
@@ -1997,6 +2095,35 @@ pub(crate) fn validate_checkpoint(
         training_groups,
         &checkpoint.model_config,
     )?;
+    Ok(())
+}
+
+fn validate_training_transition(
+    feature_schema_sha256: Digest,
+    root_checkpoint_sha256: Digest,
+    transition: &OptionTransitionSample,
+    route: &InputTape,
+) -> Result<(), TacticQCampaignError> {
+    transition.validate()?;
+    transition
+        .execution
+        .validate_against_tape(route)
+        .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
+    let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
+        .map_err(|_| TacticQCampaignError::InvalidState("training tape range overflows"))?;
+    let end = usize::try_from(transition.execution.realized_tape_range.end_frame_exclusive)
+        .map_err(|_| TacticQCampaignError::InvalidState("training tape range overflows"))?;
+    if transition.feature_schema_sha256 != feature_schema_sha256
+        || end > route.frames.len()
+        || transition.source_checkpoint_sha256
+            != route_checkpoint(root_checkpoint_sha256, &tape_prefix(route, start))?
+        || transition.next_checkpoint_sha256
+            != route_checkpoint(root_checkpoint_sha256, &tape_prefix(route, end))?
+    {
+        return Err(TacticQCampaignError::InvalidState(
+            "campaign training replay is detached",
+        ));
+    }
     Ok(())
 }
 
@@ -2610,6 +2737,47 @@ mod tests {
         assert_eq!(restored.replay, campaign.replay);
         assert_eq!(restored.replay_routes, campaign.replay_routes);
         assert!(restored.model().is_some());
+        let corpus = campaign.training_corpus();
+        let fresh_current =
+            LearnerState::build(before.clone(), &registry, &catalog, &[], |_| true).unwrap();
+        let mut fresh_episode = TacticQCampaign::new(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            root_checkpoint_sha256,
+            99,
+            fresh_current,
+            tape_prefix(&campaign.replay_routes[0], before.tape_frame as usize),
+            OptionValueConfig::default(),
+            TacticExplorationConfig {
+                seed: 43,
+                epsilon_per_million: 0,
+            },
+        )
+        .unwrap();
+        assert!(fresh_episode.model().is_none());
+        assert_eq!(
+            fresh_episode
+                .import_training_corpora(std::slice::from_ref(&corpus))
+                .unwrap(),
+            1
+        );
+        assert!(fresh_episode.model().is_some());
+        assert!(fresh_episode.replay.is_empty());
+        assert_eq!(fresh_episode.training_replay_len(), 1);
+        assert_eq!(
+            fresh_episode
+                .import_training_corpora(std::slice::from_ref(&corpus))
+                .unwrap(),
+            0
+        );
+        let mut detached = corpus.clone();
+        detached.root_checkpoint_sha256 = Digest([9; 32]);
+        assert!(
+            fresh_episode
+                .import_training_corpora(std::slice::from_ref(&detached))
+                .is_err()
+        );
+        assert_eq!(fresh_episode.training_replay_len(), 1);
         let policy = restored.freeze_greedy_policy().unwrap();
         assert_eq!(
             policy.action_universe_sha256,
