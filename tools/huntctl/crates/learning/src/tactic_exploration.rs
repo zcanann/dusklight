@@ -420,11 +420,19 @@ pub fn ensure_terminal_cost_refinement(
         }
     }
     let split_parameter_axes = !same_period.is_empty() && !other_period.is_empty();
+    let local_parameter_axes =
+        single_parameter_axis_candidates(incumbent, &candidates, &same_period);
     let refinement_index = if split_parameter_axes && lane == 0 {
         best_local_parameter_candidate(ranking, &candidates, &other_period)
             .unwrap_or(other_period[0])
     } else if split_parameter_axes && lane == 1 {
-        best_local_parameter_candidate(ranking, &candidates, &same_period).unwrap_or(same_period[0])
+        let axis = local_parameter_axes
+            .get(
+                ((acquisition_partition / maximum_proposals as u64)
+                    % local_parameter_axes.len().max(1) as u64) as usize,
+            )
+            .unwrap_or(&same_period);
+        best_local_parameter_candidate(ranking, &candidates, axis).unwrap_or(axis[0])
     } else if split_parameter_axes {
         let coverage_lane = lane.saturating_sub(2);
         let coverage_lanes = maximum_proposals.saturating_sub(2);
@@ -492,6 +500,32 @@ fn best_local_parameter_candidate(
                 .then_with(|| right.0.cmp(&left.0))
         })
         .map(|(index, _)| index)
+}
+
+fn single_parameter_axis_candidates(
+    incumbent: &OptionActionDescriptor,
+    candidates: &[&OptionActionDescriptor],
+    indices: &[usize],
+) -> Vec<Vec<usize>> {
+    let keys = tunable_parameter_keys(incumbent);
+    keys.iter()
+        .copied()
+        .filter(|key| *key != "button_pulse_period_ticks")
+        .filter_map(|axis| {
+            let members = indices
+                .iter()
+                .copied()
+                .filter(|index| {
+                    let candidate = candidates[*index];
+                    candidate.parameters.get(axis) != incumbent.parameters.get(axis)
+                        && keys.iter().copied().filter(|key| *key != axis).all(|key| {
+                            candidate.parameters.get(key) == incumbent.parameters.get(key)
+                        })
+                })
+                .collect::<Vec<_>>();
+            (!members.is_empty()).then_some(members)
+        })
+        .collect()
 }
 
 /// Reserve one acquisition slot for a distinct high-level route hypothesis.
@@ -828,8 +862,8 @@ fn same_refinement_family(
             return false;
         }
         return match (
-            incumbent.parameters.get("controller_base_sha256"),
-            candidate.parameters.get("controller_base_sha256"),
+            controller_refinement_identity(incumbent),
+            controller_refinement_identity(candidate),
         ) {
             (Some(left), Some(right)) => left == right,
             (None, None) => incumbent.option_type == candidate.option_type,
@@ -840,6 +874,13 @@ fn same_refinement_family(
         && tunable_parameter_keys(incumbent) == tunable_parameter_keys(candidate)
 }
 
+fn controller_refinement_identity(descriptor: &OptionActionDescriptor) -> Option<&OptionParameter> {
+    descriptor
+        .parameters
+        .get("controller_structure_sha256")
+        .or_else(|| descriptor.parameters.get("controller_base_sha256"))
+}
+
 fn tunable_parameter_keys(descriptor: &OptionActionDescriptor) -> Vec<&str> {
     descriptor
         .parameters
@@ -848,7 +889,10 @@ fn tunable_parameter_keys(descriptor: &OptionActionDescriptor) -> Vec<&str> {
         .filter(|key| {
             !matches!(
                 *key,
-                "program_sha256" | "controller_base_sha256" | "duration_ticks"
+                "program_sha256"
+                    | "controller_base_sha256"
+                    | "controller_structure_sha256"
+                    | "duration_ticks"
             )
         })
         .collect()
@@ -1463,6 +1507,10 @@ mod tests {
                 "controller_base_sha256".into(),
                 OptionParameter::Digest(Digest([9; 32])),
             );
+            route.parameters.insert(
+                "controller_structure_sha256".into(),
+                OptionParameter::Digest(Digest([8; 32])),
+            );
             route
                 .parameters
                 .insert("duration_ticks".into(), OptionParameter::Unsigned(160));
@@ -1477,6 +1525,10 @@ mod tests {
                 "button_pulse_phase_tick".into(),
                 OptionParameter::Unsigned(0),
             );
+            route.parameters.insert(
+                "waypoint_switch_radius".into(),
+                OptionParameter::F32Bits(96.0_f32.to_bits()),
+            );
             route
         }
 
@@ -1487,6 +1539,10 @@ mod tests {
         other_path.option_id = "goal.seek.route.01.roll.period.22.phase.00".into();
         other_path.parameters.insert(
             "controller_base_sha256".into(),
+            OptionParameter::Digest(Digest([10; 32])),
+        );
+        other_path.parameters.insert(
+            "controller_structure_sha256".into(),
             OptionParameter::Digest(Digest([10; 32])),
         );
         let escape = descriptor("interact", OptionType::Interact);
@@ -1693,7 +1749,36 @@ mod tests {
             "button_pulse_phase_tick".into(),
             OptionParameter::Unsigned(21),
         );
-        let axis_candidates = [wide_candidates, vec![phase_01.clone(), phase_21.clone()]].concat();
+        let mut radius_80 = incumbent.clone();
+        radius_80.option_id = "goal.seek.route.00.roll.period.22.phase.00.radius.080".into();
+        radius_80.parameters.insert(
+            "controller_base_sha256".into(),
+            OptionParameter::Digest(Digest([80; 32])),
+        );
+        radius_80.parameters.insert(
+            "waypoint_switch_radius".into(),
+            OptionParameter::F32Bits(80.0_f32.to_bits()),
+        );
+        let mut radius_112 = incumbent.clone();
+        radius_112.option_id = "goal.seek.route.00.roll.period.22.phase.00.radius.112".into();
+        radius_112.parameters.insert(
+            "controller_base_sha256".into(),
+            OptionParameter::Digest(Digest([112; 32])),
+        );
+        radius_112.parameters.insert(
+            "waypoint_switch_radius".into(),
+            OptionParameter::F32Bits(112.0_f32.to_bits()),
+        );
+        let axis_candidates = [
+            wide_candidates,
+            vec![
+                phase_01.clone(),
+                phase_21.clone(),
+                radius_80.clone(),
+                radius_112.clone(),
+            ],
+        ]
+        .concat();
         let axis_ranking = LiveTacticRanking {
             learner_snapshot_sha256: Digest([43; 32]),
             action_universe_sha256: Digest([44; 32]),
@@ -1751,6 +1836,28 @@ mod tests {
         assert_eq!(
             axis_selections[3].option_id,
             "goal.seek.route.00.roll.period.32.phase.00"
+        );
+        let mut radius_proposals = vec![SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: axis_ranking.learner_snapshot_sha256,
+            decision_index: 0,
+            descriptor: incumbent.clone(),
+            reason: TacticSelectionReason::Greedy,
+            exploration_draw: 0,
+        }];
+        ensure_terminal_cost_refinement(
+            &axis_ranking,
+            &axis_candidates,
+            Some(&incumbent),
+            5,
+            4,
+            &mut radius_proposals,
+        )
+        .unwrap();
+        assert!(
+            radius_proposals[1].descriptor == radius_80
+                || radius_proposals[1].descriptor == radius_112,
+            "successive local-axis generations did not rotate to waypoint lookahead"
         );
 
         let lower_incumbent = rolling_route(12);

@@ -22,6 +22,7 @@ const GOAL_ROUTE_STATIONARY_WINDOW_DISTANCE: f32 = 16.0;
 const GOAL_ROUTE_ROLL_BUTTON_MASK: u16 = 0x0100;
 const MIN_GOAL_ROUTE_ROLL_PERIOD: u32 = 12;
 const MAX_GOAL_ROUTE_ROLL_PERIOD: u32 = 32;
+const GOAL_ROUTE_WAYPOINT_SWITCH_RADII: [u32; 8] = [32, 48, 64, 80, 112, 128, 144, 160];
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -342,7 +343,11 @@ pub fn goal_route_roll_phase_variants(
     if !(MIN_GOAL_ROUTE_ROLL_PERIOD..=MAX_GOAL_ROUTE_ROLL_PERIOD).contains(&period) {
         return Ok(Vec::new());
     }
-    let Some(base_identity) = incumbent.parameters.get("controller_base_sha256") else {
+    let Some(structural_identity) = incumbent
+        .parameters
+        .get("controller_structure_sha256")
+        .or_else(|| incumbent.parameters.get("controller_base_sha256"))
+    else {
         return Ok(Vec::new());
     };
     let Some(OptionParameter::Unsigned(mask)) = incumbent.parameters.get("button_pulse_mask")
@@ -361,8 +366,15 @@ pub fn goal_route_roll_phase_variants(
                     .description()
                     .option
                     .parameters
-                    .get("controller_base_sha256")
-                    == Some(base_identity)
+                    .get("controller_structure_sha256")
+                    .or_else(|| {
+                        entry
+                            .description()
+                            .option
+                            .parameters
+                            .get("controller_base_sha256")
+                    })
+                    == Some(structural_identity)
                 && entry
                     .description()
                     .option
@@ -382,10 +394,27 @@ pub fn goal_route_roll_phase_variants(
     };
     let mut base_layers = source_program.layers.clone();
     base_layers.retain(|layer| !matches!(layer.operation, Operation::Buttons { .. }));
+    let waypoint_switch_radius =
+        incumbent
+            .parameters
+            .get("waypoint_switch_radius")
+            .and_then(|parameter| match parameter {
+                OptionParameter::F32Bits(bits) => Some(f32::from_bits(*bits)),
+                _ => None,
+            });
+    if let Some(radius) = waypoint_switch_radius {
+        set_waypoint_switch_radius(&mut base_layers, radius);
+    }
     let mut variants = Vec::new();
     for phase in 0..period {
-        let option_id = format!("{route_prefix}.roll.period.{period:02}.phase.{phase:02}");
-        if catalog.entry(&option_id).is_some() {
+        let option_id = roll_variant_option_id(
+            route_prefix,
+            period,
+            phase,
+            incumbent.option_id.contains(".radius."),
+            waypoint_switch_radius,
+        );
+        if option_id == incumbent.option_id || catalog.entry(&option_id).is_some() {
             continue;
         }
         let mut layers = base_layers.clone();
@@ -410,6 +439,148 @@ pub fn goal_route_roll_phase_variants(
         )?);
     }
     Ok(variants)
+}
+
+/// Materialize a bounded waypoint-lookahead neighborhood only for the best
+/// terminal route, cadence, and phase observed in the current learner cell.
+pub fn goal_route_waypoint_switch_variants(
+    catalog: &TacticAssetCatalog,
+    incumbent: &OptionActionDescriptor,
+) -> Result<Vec<TacticCatalogEntry>, TacticAssetError> {
+    let Some(route_prefix) = incumbent
+        .option_id
+        .split_once(".roll.period.")
+        .map(|(prefix, _)| prefix)
+        .filter(|prefix| prefix.starts_with("goal.seek.route."))
+    else {
+        return Ok(Vec::new());
+    };
+    let (
+        Some(OptionParameter::Unsigned(period)),
+        Some(OptionParameter::Unsigned(phase)),
+        Some(OptionParameter::Unsigned(mask)),
+        Some(OptionParameter::F32Bits(current_radius_bits)),
+    ) = (
+        incumbent.parameters.get("button_pulse_period_ticks"),
+        incumbent.parameters.get("button_pulse_phase_tick"),
+        incumbent.parameters.get("button_pulse_mask"),
+        incumbent.parameters.get("waypoint_switch_radius"),
+    )
+    else {
+        return Ok(Vec::new());
+    };
+    let period = u32::try_from(*period).map_err(|_| {
+        TacticAssetError::InvalidAsset("route roll period exceeds controller bounds".into())
+    })?;
+    let phase = u32::try_from(*phase).map_err(|_| {
+        TacticAssetError::InvalidAsset("route roll phase exceeds controller bounds".into())
+    })?;
+    let mask = u16::try_from(*mask).map_err(|_| {
+        TacticAssetError::InvalidAsset("route roll button mask exceeds controller bounds".into())
+    })?;
+    let Some(structural_identity) = incumbent
+        .parameters
+        .get("controller_structure_sha256")
+        .or_else(|| incumbent.parameters.get("controller_base_sha256"))
+    else {
+        return Ok(Vec::new());
+    };
+    let source = catalog
+        .entries()
+        .iter()
+        .find(|entry| {
+            entry.option_id().starts_with(route_prefix)
+                && entry
+                    .description()
+                    .option
+                    .parameters
+                    .get("controller_structure_sha256")
+                    .or_else(|| {
+                        entry
+                            .description()
+                            .option
+                            .parameters
+                            .get("controller_base_sha256")
+                    })
+                    == Some(structural_identity)
+        })
+        .ok_or_else(|| {
+            TacticAssetError::InvalidAsset(
+                "terminal route controller structure is absent from its live catalog".into(),
+            )
+        })?;
+    let TacticAssetSource::ReactiveController(source_program) = source.source() else {
+        return Err(TacticAssetError::InvalidAsset(
+            "terminal route controller structure is not reactive".into(),
+        ));
+    };
+    let mut base_layers = source_program.layers.clone();
+    base_layers.retain(|layer| !matches!(layer.operation, Operation::Buttons { .. }));
+    if !base_layers
+        .iter()
+        .any(|layer| matches!(layer.operation, Operation::SeekCoordinateSequence { .. }))
+    {
+        return Ok(Vec::new());
+    }
+    let mut variants = Vec::new();
+    for radius in GOAL_ROUTE_WAYPOINT_SWITCH_RADII {
+        let radius = radius as f32;
+        if radius.to_bits() == *current_radius_bits {
+            continue;
+        }
+        let mut layers = base_layers.clone();
+        set_waypoint_switch_radius(&mut layers, radius);
+        let mut pulse = phase;
+        while pulse < source_program.duration_frames && layers.len() < MAX_LAYERS {
+            layers.push(Layer {
+                start_frame: pulse,
+                duration_frames: 1,
+                operation: Operation::Buttons { mask },
+            });
+            pulse = pulse.saturating_add(period);
+        }
+        if pulse < source_program.duration_frames {
+            continue;
+        }
+        variants.push(TacticCatalogEntry::new(
+            roll_variant_option_id(route_prefix, period, phase, true, Some(radius)),
+            TacticAssetSource::ReactiveController(ControllerProgram {
+                duration_frames: source_program.duration_frames,
+                layers,
+            }),
+        )?);
+    }
+    Ok(variants)
+}
+
+fn set_waypoint_switch_radius(layers: &mut [Layer], radius: f32) {
+    for layer in layers {
+        if let Operation::SeekCoordinateSequence {
+            intermediate_stop_radius,
+            ..
+        } = &mut layer.operation
+        {
+            *intermediate_stop_radius = radius;
+        }
+    }
+}
+
+fn roll_variant_option_id(
+    route_prefix: &str,
+    period: u32,
+    phase: u32,
+    include_radius: bool,
+    radius: Option<f32>,
+) -> String {
+    let base = format!("{route_prefix}.roll.period.{period:02}.phase.{phase:02}");
+    if include_radius {
+        format!(
+            "{base}.radius.{:03}",
+            radius.unwrap_or_default().round() as u32
+        )
+    } else {
+        base
+    }
 }
 
 fn coordinate_sequence_layers(
@@ -605,6 +776,16 @@ mod tests {
                 .description()
                 .option
                 .parameters
+                .get("waypoint_switch_radius"),
+            Some(&OptionParameter::F32Bits(
+                INTERMEDIATE_GOAL_SEEK_TOLERANCE.to_bits()
+            ))
+        );
+        assert_eq!(
+            rolling
+                .description()
+                .option
+                .parameters
                 .get("controller_base_sha256"),
             catalog
                 .entry("goal.seek.route.00.roll.period.22.phase.00")
@@ -613,6 +794,20 @@ mod tests {
                 .option
                 .parameters
                 .get("controller_base_sha256")
+        );
+        assert_eq!(
+            rolling
+                .description()
+                .option
+                .parameters
+                .get("controller_structure_sha256"),
+            catalog
+                .entry("goal.seek.route.00.roll.period.22.phase.00")
+                .unwrap()
+                .description()
+                .option
+                .parameters
+                .get("controller_structure_sha256")
         );
         let phase_variants =
             goal_route_roll_phase_variants(&catalog, &rolling.description().option).unwrap();
@@ -644,6 +839,53 @@ mod tests {
                     .parameters
                     .get("button_pulse_period_ticks")
                     == Some(&OptionParameter::Unsigned(20))
+        }));
+        let waypoint_variants =
+            goal_route_waypoint_switch_variants(&catalog, &rolling.description().option).unwrap();
+        assert_eq!(waypoint_variants.len(), 8);
+        let radius_80 = waypoint_variants
+            .iter()
+            .find(|entry| {
+                entry.option_id() == "goal.seek.route.00.roll.period.20.phase.00.radius.080"
+            })
+            .unwrap();
+        assert_eq!(
+            radius_80
+                .description()
+                .option
+                .parameters
+                .get("waypoint_switch_radius"),
+            Some(&OptionParameter::F32Bits(80.0_f32.to_bits()))
+        );
+        assert_eq!(
+            radius_80
+                .description()
+                .option
+                .parameters
+                .get("controller_structure_sha256"),
+            rolling
+                .description()
+                .option
+                .parameters
+                .get("controller_structure_sha256")
+        );
+        assert_ne!(
+            radius_80
+                .description()
+                .option
+                .parameters
+                .get("controller_base_sha256"),
+            rolling
+                .description()
+                .option
+                .parameters
+                .get("controller_base_sha256")
+        );
+        let radius_phases =
+            goal_route_roll_phase_variants(&catalog, &radius_80.description().option).unwrap();
+        assert_eq!(radius_phases.len(), 19);
+        assert!(radius_phases.iter().any(|entry| {
+            entry.option_id() == "goal.seek.route.00.roll.period.20.phase.01.radius.080"
         }));
         assert!(matches!(
             program.layers[0].operation,

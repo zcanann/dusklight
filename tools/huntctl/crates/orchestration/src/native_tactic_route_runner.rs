@@ -28,7 +28,7 @@ use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::default_tactic_catalog::{
-    MAX_GOAL_SEEK_TARGETS, goal_route_roll_phase_variants,
+    MAX_GOAL_SEEK_TARGETS, goal_route_roll_phase_variants, goal_route_waypoint_switch_variants,
 };
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
@@ -1834,6 +1834,10 @@ fn parameterized_catalog_for_state(
     if let Some(incumbent) = terminal_incumbent {
         entries.extend(
             goal_route_roll_phase_variants(goal_route_catalog, incumbent).map_err(route_error)?,
+        );
+        entries.extend(
+            goal_route_waypoint_switch_variants(goal_route_catalog, incumbent)
+                .map_err(route_error)?,
         );
     }
     proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;

@@ -831,6 +831,31 @@ impl TacticAssetAdapter for ControllerProgram {
                 "button_pulse_phase_tick".into(),
                 OptionParameter::Unsigned(u64::from(phase_tick)),
             );
+            if let Some(waypoint_switch_radius) =
+                uniform_sequence_waypoint_switch_radius(&base_program)
+            {
+                let mut structural_program = base_program.clone();
+                for layer in &mut structural_program.layers {
+                    if let Operation::SeekCoordinateSequence {
+                        intermediate_stop_radius,
+                        ..
+                    } = &mut layer.operation
+                    {
+                        *intermediate_stop_radius = 0.0;
+                    }
+                }
+                let structural_bytes = structural_program
+                    .encode()
+                    .map_err(|error| invalid(error.to_string()))?;
+                parameters.insert(
+                    "controller_structure_sha256".into(),
+                    OptionParameter::Digest(digest(&structural_bytes)),
+                );
+                parameters.insert(
+                    "waypoint_switch_radius".into(),
+                    OptionParameter::F32Bits(waypoint_switch_radius.to_bits()),
+                );
+            }
         }
         checked(TacticAssetDescription {
             schema: TACTIC_ASSET_ADAPTER_SCHEMA_V1.into(),
@@ -951,6 +976,24 @@ fn periodic_button_overlay(program: &ControllerProgram) -> Option<(u16, u32, u32
     }
     let period_ticks = pulses[1].0 - pulses[0].0;
     (period_ticks > 0).then_some((pulses[0].1, period_ticks, pulses[0].0))
+}
+
+fn uniform_sequence_waypoint_switch_radius(program: &ControllerProgram) -> Option<f32> {
+    let mut radii = program.layers.iter().filter_map(|layer| {
+        if let Operation::SeekCoordinateSequence {
+            intermediate_stop_radius,
+            ..
+        } = layer.operation
+        {
+            Some(intermediate_stop_radius)
+        } else {
+            None
+        }
+    });
+    let radius = radii.next()?;
+    radii
+        .all(|candidate| candidate.to_bits() == radius.to_bits())
+        .then_some(radius)
 }
 
 fn checked(
