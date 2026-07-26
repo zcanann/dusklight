@@ -72,6 +72,7 @@ pub mod online_lineage;
 pub mod option_policy;
 pub mod option_transition;
 pub mod option_values;
+pub mod parameterized_tactic_proposals;
 pub mod planning_priors;
 pub mod prioritized_replay;
 pub mod rainbow;
