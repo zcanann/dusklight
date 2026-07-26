@@ -3551,6 +3551,25 @@ fn load_tactic_journal_replay(
                 .map_err(route_error)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let proposal_transitions = records
+        .iter()
+        .zip(&transitions)
+        .map(|(record, selected)| {
+            if record.proposal_batch.is_empty() {
+                Ok(vec![selected.clone()])
+            } else {
+                record
+                    .proposal_batch
+                    .iter()
+                    .map(|proposal| {
+                        store
+                            .load_option_transition(proposal.transition)
+                            .map_err(route_error)
+                    })
+                    .collect()
+            }
+        })
+        .collect::<Result<Vec<Vec<_>>, NativeTacticRouteRunError>>()?;
     let first_transition = transitions
         .first()
         .ok_or_else(|| route_message("tactic decision journal has no root transition"))?;
@@ -3567,20 +3586,29 @@ fn load_tactic_journal_replay(
         first_transition.source_checkpoint_sha256,
         first_transition.before_state_sha256,
     );
-    let mut parents = BTreeMap::<(Digest, Digest), usize>::new();
-    for (index, transition) in transitions.iter().enumerate() {
-        parents
-            .entry((
-                transition.next_checkpoint_sha256,
-                transition.after_state_sha256,
-            ))
-            .or_insert(index);
+    let mut parents = BTreeMap::<(Digest, Digest), (usize, usize)>::new();
+    for (decision_index, proposals) in proposal_transitions.iter().enumerate() {
+        for (proposal_index, transition) in proposals.iter().enumerate() {
+            parents
+                .entry((
+                    transition.next_checkpoint_sha256,
+                    transition.after_state_sha256,
+                ))
+                .or_insert((decision_index, proposal_index));
+        }
     }
     let routes = transitions
         .iter()
         .enumerate()
-        .map(|(index, _)| {
-            materialize_journal_route(index, &root_tape, root_identity, &parents, &transitions)
+        .map(|(index, transition)| {
+            materialize_journal_route(
+                index,
+                transition,
+                &root_tape,
+                root_identity,
+                &parents,
+                &proposal_transitions,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     for ((record, transition), route) in records.iter().zip(&transitions).zip(&routes) {
@@ -3610,30 +3638,31 @@ fn load_tactic_journal_replay(
 }
 
 fn materialize_journal_route(
-    target_index: usize,
+    target_decision_index: usize,
+    target: &dusklight_learning::option_transition::OptionTransitionSample,
     root_tape: &InputTape,
     root_identity: (Digest, Digest),
-    parents: &BTreeMap<(Digest, Digest), usize>,
-    transitions: &[dusklight_learning::option_transition::OptionTransitionSample],
+    parents: &BTreeMap<(Digest, Digest), (usize, usize)>,
+    proposal_transitions: &[Vec<dusklight_learning::option_transition::OptionTransitionSample>],
 ) -> Result<InputTape, NativeTacticRouteRunError> {
-    let target = transitions
-        .get(target_index)
-        .ok_or_else(|| route_message("tactic decision route is absent"))?;
     let mut cursor = (target.source_checkpoint_sha256, target.before_state_sha256);
     let mut fragments = vec![target.execution.emitted_raw_actions.clone()];
     while cursor != root_identity {
-        let parent_index = *parents
+        let (parent_decision_index, parent_proposal_index) = *parents
             .get(&cursor)
             .ok_or_else(|| route_message("tactic decision route is detached from its root"))?;
-        if parent_index >= target_index {
+        if parent_decision_index >= target_decision_index {
             return Err(route_message(
                 "tactic decision route parent is not journaled before its child",
             ));
         }
-        let parent = &transitions[parent_index];
+        let parent = proposal_transitions
+            .get(parent_decision_index)
+            .and_then(|proposals| proposals.get(parent_proposal_index))
+            .ok_or_else(|| route_message("tactic decision route parent is absent"))?;
         fragments.push(parent.execution.emitted_raw_actions.clone());
         cursor = (parent.source_checkpoint_sha256, parent.before_state_sha256);
-        if fragments.len() > transitions.len() {
+        if fragments.len() > proposal_transitions.len() {
             return Err(route_message("tactic decision route contains a cycle"));
         }
     }
@@ -5436,8 +5465,8 @@ mod tests {
             Digest([1; 32]),
             source_checkpoint_sha256,
             next_checkpoint_sha256,
-            before,
-            after,
+            before.clone(),
+            after.clone(),
             execution,
             &route,
             0.25,
@@ -5496,6 +5525,107 @@ mod tests {
         assert!(!diagnostics.frontier_lost_root_connectivity);
         let materialized = materialize_tactic_decision_route(&root, 0).unwrap();
         assert_eq!(materialized, route);
+
+        let mut alternate_route = route.clone();
+        alternate_route.frames[before.tape_frame as usize].pads[0].stick_x = 64;
+        let mut alternate_after = after.clone();
+        alternate_after.player.position_f32_bits[0] ^= 1;
+        let alternate_execution = OptionExecution::capture(
+            "alternate".into(),
+            OptionType::Custom("alternate".into()),
+            BTreeMap::new(),
+            1,
+            1,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &alternate_route,
+            TapeRange {
+                start_frame: before.tape_frame,
+                end_frame_exclusive: alternate_after.tape_frame,
+            },
+        )
+        .unwrap();
+        let alternate_transition = OptionTransitionSample::capture(
+            Digest([1; 32]),
+            source_checkpoint_sha256,
+            route_checkpoint(root_checkpoint_sha256, &alternate_route).unwrap(),
+            before,
+            alternate_after.clone(),
+            alternate_execution,
+            &alternate_route,
+            0.5,
+            false,
+            |facts| Ok::<_, &'static str>(vec![facts.player.position_f32_bits[0] as f32]),
+        )
+        .unwrap();
+        let mut child_route = alternate_route.clone();
+        child_route.frames.push(
+            dusklight_automation_contracts::tape::InputFrame::default(),
+        );
+        let child_before = alternate_after;
+        let mut child_after = child_before.clone();
+        child_after.simulation_tick += 1;
+        child_after.tape_frame += 1;
+        child_after.state_identity[0] ^= 1;
+        let child_execution = OptionExecution::capture(
+            "child".into(),
+            OptionType::Custom("child".into()),
+            BTreeMap::new(),
+            1,
+            1,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &child_route,
+            TapeRange {
+                start_frame: child_before.tape_frame,
+                end_frame_exclusive: child_after.tape_frame,
+            },
+        )
+        .unwrap();
+        let child_transition = OptionTransitionSample::capture(
+            Digest([1; 32]),
+            alternate_transition.next_checkpoint_sha256,
+            route_checkpoint(root_checkpoint_sha256, &child_route).unwrap(),
+            child_before,
+            child_after,
+            child_execution,
+            &child_route,
+            0.75,
+            false,
+            |facts| Ok::<_, &'static str>(vec![facts.player.position_f32_bits[0] as f32]),
+        )
+        .unwrap();
+        let proposal_transitions = vec![
+            vec![transition.clone(), alternate_transition],
+            vec![child_transition.clone()],
+        ];
+        let mut parents = BTreeMap::new();
+        for (decision_index, proposals) in proposal_transitions.iter().enumerate() {
+            for (proposal_index, proposal) in proposals.iter().enumerate() {
+                parents.insert(
+                    (
+                        proposal.next_checkpoint_sha256,
+                        proposal.after_state_sha256,
+                    ),
+                    (decision_index, proposal_index),
+                );
+            }
+        }
+        let branched_route = materialize_journal_route(
+            1,
+            &child_transition,
+            &root_tape,
+            (
+                transition.source_checkpoint_sha256,
+                transition.before_state_sha256,
+            ),
+            &parents,
+            &proposal_transitions,
+        )
+        .unwrap();
+        assert_eq!(branched_route, child_route);
         fs::remove_dir_all(root).unwrap();
     }
 
