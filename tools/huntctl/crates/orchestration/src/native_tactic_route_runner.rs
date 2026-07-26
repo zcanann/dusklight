@@ -23,7 +23,7 @@ use crate::tactic_q_campaign::{
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
-use dusklight_automation_contracts::tape::{InputTape, RawPadState};
+use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::default_tactic_catalog::MAX_GOAL_SEEK_TARGETS;
 use dusklight_learning::fact_registry::FactRegistry;
@@ -1392,12 +1392,15 @@ fn reuse_promoted_tactic_macro(
     accounting.native_ticks = accounting.native_ticks.saturating_add(u64::from(
         evaluated.outcome.execution.duration.realized_ticks,
     ));
+    let emitted_tape = exact_realized_macro_tape(
+        &promoted.candidate.tape,
+        &evaluated.outcome.execution.emitted_raw_actions,
+    )?;
     let mut expected_route = frontier.route_tape.clone();
     expected_route
         .frames
-        .extend_from_slice(&promoted.candidate.tape.frames);
+        .extend_from_slice(&emitted_tape.frames);
     if evaluated.outcome.selected.descriptor.option_id != promoted.candidate.option_id
-        || evaluated.outcome.execution.emitted_raw_actions != promoted.candidate.tape.frames
         || evaluated.outcome.route_tape != expected_route
     {
         return Err(route_message(
@@ -1409,7 +1412,7 @@ fn reuse_promoted_tactic_macro(
     let after_distance = encoder
         .encode(&evaluated.outcome.next_facts)
         .map_err(route_error)?[encoder.goal_distance_feature()];
-    let emitted_bytes = promoted.candidate.tape.encode().map_err(route_error)?;
+    let emitted_bytes = emitted_tape.encode().map_err(route_error)?;
     let complete_route_bytes = evaluated.outcome.route_tape.encode().map_err(route_error)?;
     let complete_route_tape_path = config.output_root.join("promoted-reuse.tape");
     if complete_route_tape_path.exists() {
@@ -1440,6 +1443,23 @@ fn reuse_promoted_tactic_macro(
         complete_route_tape_sha256: Digest(Sha256::digest(&complete_route_bytes).into()),
         complete_route_tape_path: path_text(&complete_route_tape_path),
     }))
+}
+
+fn exact_realized_macro_tape(
+    candidate: &InputTape,
+    emitted: &[InputFrame],
+) -> Result<InputTape, NativeTacticRouteRunError> {
+    if emitted.is_empty()
+        || emitted.len() > candidate.frames.len()
+        || candidate.frames[..emitted.len()] != *emitted
+    {
+        return Err(route_message(
+            "promoted tactic reuse differs from its exact binary candidate prefix",
+        ));
+    }
+    let mut realized = candidate.clone();
+    realized.frames.truncate(emitted.len());
+    Ok(realized)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5713,6 +5733,33 @@ mod tests {
             104_729, 104_729
         ]));
         assert!(tactic_macro_promotion_has_seed_support(&[104_729, 130_363]));
+    }
+
+    #[test]
+    fn promoted_macro_reuse_accepts_only_an_exact_realized_prefix() {
+        let first = InputFrame {
+            owned_ports: 1,
+            ..InputFrame::default()
+        };
+        let mut second = first.clone();
+        second.pads[0].buttons = 0x0100;
+        let candidate = InputTape {
+            frames: vec![first.clone(), second.clone()],
+            ..InputTape::default()
+        };
+
+        assert_eq!(
+            exact_realized_macro_tape(&candidate, std::slice::from_ref(&first))
+                .unwrap()
+                .frames,
+            vec![first.clone()]
+        );
+        assert!(exact_realized_macro_tape(&candidate, &[second]).is_err());
+        assert!(exact_realized_macro_tape(&candidate, &[]).is_err());
+        assert!(
+            exact_realized_macro_tape(&candidate, &[first.clone(), first, InputFrame::default()])
+                .is_err()
+        );
     }
 
     #[test]

@@ -1550,22 +1550,24 @@ fn observe_outcome(
     let start_frame = route_prefix.frames.len() as u64;
     let end_frame_exclusive = route_tape.frames.len() as u64;
     let terminal = episode.success;
-    let end_reason = if realized_ticks < prepared.option_tape.frames.len() {
-        if !terminal {
-            return Err(NativeTacticWorkerError::DetachedResult("early stop"));
-        }
-        OptionEndReason::Terminated
-    } else {
-        prepared.execution.end_reason
-    };
+    if realized_ticks < prepared.option_tape.frames.len() && !terminal {
+        return Err(NativeTacticWorkerError::DetachedResult("early stop"));
+    }
+    let (end_reason, cancellation_conditions) =
+        realized_option_end(&prepared, realized_ticks, terminal)?;
+    let termination_condition = prepared.execution.termination_condition.clone();
+    let duration = prepared.duration;
+    let option_id = selected.descriptor.option_id.clone();
+    let option_type = selected.descriptor.option_type.clone();
+    let parameters = selected.descriptor.parameters.clone();
     let execution = OptionExecution::capture(
-        selected.descriptor.option_id.clone(),
-        selected.descriptor.option_type.clone(),
-        selected.descriptor.parameters.clone(),
-        prepared.duration.minimum_ticks,
-        prepared.duration.maximum_ticks,
-        prepared.execution.termination_condition,
-        prepared.execution.cancellation_conditions,
+        option_id,
+        option_type,
+        parameters,
+        duration.minimum_ticks,
+        duration.maximum_ticks,
+        termination_condition,
+        cancellation_conditions,
         end_reason,
         &route_tape,
         TapeRange {
@@ -1645,6 +1647,32 @@ fn observe_outcome(
         next_facts,
         terminal,
     })
+}
+
+fn realized_option_end(
+    prepared: &PreparedNativeTactic,
+    realized_ticks: usize,
+    terminal: bool,
+) -> Result<(OptionEndReason, Vec<OptionCondition>), NativeTacticWorkerError> {
+    if realized_ticks < prepared.option_tape.frames.len() {
+        if !terminal {
+            return Err(NativeTacticWorkerError::DetachedResult("early stop"));
+        }
+        let mut cancellation_conditions = prepared.execution.cancellation_conditions.clone();
+        let condition_index = u32::try_from(cancellation_conditions.len())
+            .map_err(|_| NativeTacticWorkerError::InvalidDuration)?;
+        cancellation_conditions.push(OptionCondition::TargetReached {
+            target: "authenticated_terminal".into(),
+        });
+        return Ok((
+            OptionEndReason::Cancelled { condition_index },
+            cancellation_conditions,
+        ));
+    }
+    Ok((
+        prepared.execution.end_reason,
+        prepared.execution.cancellation_conditions.clone(),
+    ))
 }
 
 fn same_pad(observed: NativeRawPad, expected: RawPadState) -> bool {
@@ -1795,6 +1823,78 @@ mod tests {
         tactic_exploration::TACTIC_EXPLORATION_SCHEMA_V1,
     };
     use std::collections::BTreeMap;
+
+    #[test]
+    fn authenticated_terminal_can_cancel_a_static_tactic_before_its_minimum_duration() {
+        let option_tape = InputTape {
+            frames: vec![
+                InputFrame {
+                    owned_ports: 1,
+                    ..InputFrame::default()
+                };
+                8
+            ],
+            ..InputTape::default()
+        };
+        let execution = OptionExecution::capture(
+            "macro/example".into(),
+            OptionType::Custom("macro".into()),
+            BTreeMap::new(),
+            8,
+            8,
+            OptionCondition::DurationElapsed,
+            Vec::new(),
+            OptionEndReason::Completed,
+            &option_tape,
+            TapeRange {
+                start_frame: 0,
+                end_frame_exclusive: 8,
+            },
+        )
+        .unwrap();
+        let prepared = PreparedNativeTactic {
+            option_tape,
+            execution,
+            duration: TacticDurationBounds {
+                minimum_ticks: 8,
+                maximum_ticks: 8,
+            },
+        };
+
+        let (end_reason, cancellation_conditions) =
+            realized_option_end(&prepared, 6, true).unwrap();
+
+        assert_eq!(
+            end_reason,
+            OptionEndReason::Cancelled { condition_index: 0 }
+        );
+        assert_eq!(
+            cancellation_conditions,
+            vec![OptionCondition::TargetReached {
+                target: "authenticated_terminal".into(),
+            }]
+        );
+        let realized_tape = InputTape {
+            frames: prepared.option_tape.frames[..6].to_vec(),
+            ..InputTape::default()
+        };
+        OptionExecution::capture(
+            "macro/example".into(),
+            OptionType::Custom("macro".into()),
+            BTreeMap::new(),
+            8,
+            8,
+            OptionCondition::DurationElapsed,
+            cancellation_conditions,
+            end_reason,
+            &realized_tape,
+            TapeRange {
+                start_frame: 0,
+                end_frame_exclusive: 6,
+            },
+        )
+        .unwrap();
+    }
 
     #[test]
     fn selected_static_tactic_becomes_one_exact_variable_horizon_batch() {
