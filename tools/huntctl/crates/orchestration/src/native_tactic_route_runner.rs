@@ -29,6 +29,10 @@ use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
 use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::option_values::OptionValueConfig;
+use dusklight_learning::parameterized_tactic_proposals::{
+    ParameterizedTacticProposalContext, parameterized_tactic_family_schema_sha256,
+    propose_parameterized_tactics,
+};
 use dusklight_learning::reward_shaping::{
     POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V1,
     TacticRewardBreakdown, TacticRewardSpec,
@@ -564,10 +568,7 @@ pub fn run_native_tactic_route(
             .map(|(worker_slot, worker)| {
                 let (sender, receiver) = mpsc::channel();
                 senders.push(sender);
-                let catalog = &catalog;
-                scope.spawn(move || {
-                    run_tactic_proposal_worker(worker_slot, worker, catalog, receiver)
-                })
+                scope.spawn(move || run_tactic_proposal_worker(worker_slot, worker, receiver))
             })
             .collect::<Vec<_>>();
         let pool = NativeTacticProposalPool {
@@ -677,7 +678,7 @@ pub fn run_native_tactic_route(
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
         feature_schema_sha256: encoder.schema_sha256,
-        action_schema_sha256: catalog.action_schema_sha256(),
+        action_schema_sha256: parameterized_tactic_family_schema_sha256(),
         goal_target,
         reward_spec,
         demonstration_transitions: 0,
@@ -930,6 +931,7 @@ impl<W: PersistentTacticBatchWorker> PersistentTacticBatchWorker for TimedTactic
 
 struct NativeTacticProposalJob {
     proposals: Vec<IndexedNativeTacticProposal>,
+    proposal_catalog: Arc<dusklight_learning::tactic_asset::TacticAssetCatalog>,
     source_snapshot: FactSnapshot,
     source_route_tape: InputTape,
     checkpoint_source: Option<NativeTacticCheckpointSource>,
@@ -971,6 +973,7 @@ impl NativeTacticProposalPool {
     fn execute_batch(
         &self,
         proposals: &[SelectedTactic],
+        proposal_catalog: Arc<dusklight_learning::tactic_asset::TacticAssetCatalog>,
         source_snapshot: &FactSnapshot,
         source_route_tape: &InputTape,
         cached_frontier: Option<&CachedTacticFrontier>,
@@ -1007,6 +1010,7 @@ impl NativeTacticProposalPool {
                             selected,
                         })
                         .collect(),
+                    proposal_catalog,
                     source_snapshot: source_snapshot.clone(),
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: direct.map(|frontier| frontier.source.clone()),
@@ -1030,6 +1034,7 @@ impl NativeTacticProposalPool {
                         proposal_index,
                         selected: selected.clone(),
                     }],
+                    proposal_catalog: Arc::clone(&proposal_catalog),
                     source_snapshot: source_snapshot.clone(),
                     source_route_tape: source_route_tape.clone(),
                     checkpoint_source: None,
@@ -1056,7 +1061,6 @@ impl NativeTacticProposalPool {
 fn run_tactic_proposal_worker(
     worker_slot: usize,
     mut worker: NativeSuffixWorkerSession,
-    catalog: &dusklight_learning::tactic_asset::TacticAssetCatalog,
     receiver: mpsc::Receiver<NativeTacticProposalJob>,
 ) -> Result<(), NativeTacticRouteRunError> {
     let mut timed_worker = TimedTacticWorker::new(&mut worker);
@@ -1135,7 +1139,7 @@ fn run_tactic_proposal_worker(
             let outcome = execute_selected_tactic(
                 &mut timed_worker,
                 &proposal.selected,
-                catalog,
+                &job.proposal_catalog,
                 &[],
                 &job.source_snapshot,
                 &job.source_route_tape,
@@ -1356,12 +1360,7 @@ fn run_seed(
     };
     let source_frame = config.optimization.route.source_boundary_index;
     let horizon = config.optimization.budgets.exploration_horizon_ticks;
-    let maximum_tactic_ticks = catalog
-        .entries()
-        .iter()
-        .map(|entry| u64::from(entry.description().duration.maximum_ticks))
-        .max()
-        .ok_or_else(|| route_message("tactic catalog is empty"))?;
+    let maximum_tactic_ticks = u64::from(goal_tactic_maximum_ticks(horizon)?);
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
     let checkpoint_root = seed_root.join("checkpoints");
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
@@ -1431,15 +1430,43 @@ fn run_seed(
         // Restoring a branch can change the selected tactic. Recheck until the
         // preview fits; the periodic root sample guarantees convergence because
         // every catalog entry is itself bounded by the exploration horizon.
-        let proposal_batch = loop {
+        let (proposal_batch, proposal_catalog) = loop {
             let suffix_ticks = campaign
                 .route_tape
                 .frames
                 .len()
                 .saturating_sub(source_frame as usize) as u64;
+            let proposal_catalog = Arc::new(
+                propose_parameterized_tactics(ParameterizedTacticProposalContext {
+                    seed,
+                    decision_index: campaign.decision_index,
+                    state_sha256: campaign.current.snapshot_sha256,
+                    player_position: campaign
+                        .current
+                        .snapshot
+                        .player
+                        .position_f32_bits
+                        .map(f32::from_bits),
+                    camera_yaw_radians: campaign
+                        .current
+                        .snapshot
+                        .player
+                        .camera_yaw_radians_f32_bits
+                        .map(f32::from_bits),
+                    goal_coordinate: encoder.target_coordinate_f32_bits.map(f32::from_bits),
+                    maximum_ticks: u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                })
+                .map_err(route_error)?
+                .catalog,
+            );
             let selection_started = Instant::now();
             let mut preview = campaign
-                .decide_batch(catalog, &[], &encode, TACTIC_PROPOSALS_PER_DECISION)
+                .decide_parameterized_batch(
+                    &proposal_catalog,
+                    parameterized_tactic_family_schema_sha256(),
+                    &encode,
+                    TACTIC_PROPOSALS_PER_DECISION,
+                )
                 .map_err(route_error)?;
             timing.tactic_selection_micros = timing
                 .tactic_selection_micros
@@ -1448,7 +1475,7 @@ fn run_seed(
                 .proposals
                 .first()
                 .ok_or_else(|| route_message("tactic proposal batch is empty"))?;
-            let selected_maximum_ticks = catalog
+            let selected_maximum_ticks = proposal_catalog
                 .entry(&primary.descriptor.option_id)
                 .ok_or_else(|| route_message("selected tactic is absent from its catalog"))?
                 .description()
@@ -1456,7 +1483,7 @@ fn run_seed(
                 .maximum_ticks;
             if selected_tactic_fits_horizon(suffix_ticks, selected_maximum_ticks, horizon) {
                 preview.proposals.retain(|proposal| {
-                    catalog
+                    proposal_catalog
                         .entry(&proposal.descriptor.option_id)
                         .is_some_and(|entry| {
                             selected_tactic_fits_horizon(
@@ -1466,7 +1493,7 @@ fn run_seed(
                             )
                         })
                 });
-                break preview;
+                break (preview, proposal_catalog);
             }
             let branch_started = Instant::now();
             episode = episode
@@ -1524,6 +1551,7 @@ fn run_seed(
         let directly_restored_frontier = usable_cached_frontier.is_some();
         let proposal_work = pool.execute_batch(
             &proposal_batch.proposals,
+            Arc::clone(&proposal_catalog),
             &source_snapshot,
             &source_route_tape,
             usable_cached_frontier,
@@ -1584,7 +1612,7 @@ fn run_seed(
             .retain_and_refit_rewarded(
                 decision,
                 winning_outcome.clone(),
-                catalog,
+                &proposal_catalog,
                 &[],
                 registry,
                 &encode,

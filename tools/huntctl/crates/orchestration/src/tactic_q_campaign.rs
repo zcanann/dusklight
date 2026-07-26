@@ -14,7 +14,7 @@ use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::hindsight::{
     HindsightError, HindsightOptionReplay, RelabeledHindsightOption,
 };
-use dusklight_learning::learner_state::{LearnerState, LearnerStateError};
+use dusklight_learning::learner_state::{LearnerActionMaskEntry, LearnerState, LearnerStateError};
 use dusklight_learning::live_tactic_catalog::{
     LiveTacticCatalog, LiveTacticCatalogError, LiveTacticRanking,
 };
@@ -25,7 +25,7 @@ use dusklight_learning::option_values::{
 };
 use dusklight_learning::reward_shaping::{ShapingError, TacticRewardBreakdown, TacticRewardSpec};
 use dusklight_learning::tactic_asset::{TacticAssetCatalog, TacticAssetDescription};
-use dusklight_learning::tactic_blueprint::TacticBlueprint;
+use dusklight_learning::tactic_blueprint::{ConcreteTacticChoiceKind, TacticBlueprint};
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError,
     choose_tactic_batch_with_state_untried,
@@ -1024,6 +1024,86 @@ impl TacticQCampaign {
         Ok(TacticQProposalBatch { ranking, proposals })
     }
 
+    /// Rank an ephemeral set of bounded instances under a stable tactic-family
+    /// schema. The executable instances may be new at this decision; the
+    /// option-value model scores exact instances it has seen and leaves new
+    /// parameter combinations explicit for exploration.
+    pub fn decide_parameterized_batch<E, F>(
+        &self,
+        proposal_catalog: &TacticAssetCatalog,
+        family_schema_sha256: Digest,
+        encode: &F,
+        maximum_proposals: usize,
+    ) -> Result<TacticQProposalBatch, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+    {
+        self.current.validate()?;
+        if family_schema_sha256 == Digest::ZERO || maximum_proposals == 0 {
+            return Err(TacticQCampaignError::InvalidState(
+                "parameterized tactic proposal schema or capacity is invalid",
+            ));
+        }
+        let mut choices = Vec::with_capacity(proposal_catalog.entries().len());
+        for entry in proposal_catalog.entries() {
+            proposal_catalog
+                .prepare_execution(entry.option_id())
+                .map_err(LiveTacticCatalogError::Asset)?;
+            choices.push(LearnerActionMaskEntry {
+                choice_id: entry.option_id().into(),
+                kind: ConcreteTacticChoiceKind::CatalogEntry,
+                descriptor: entry.description().option.clone(),
+                duration: entry.description().duration,
+                applicable: true,
+            });
+        }
+        let descriptors = choices
+            .iter()
+            .map(|choice| choice.descriptor.clone())
+            .collect::<Vec<_>>();
+        let features = encode(&self.current.snapshot)
+            .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+        if features.is_empty() || features.iter().any(|value| !value.is_finite()) {
+            return Err(TacticQCampaignError::Features(
+                "state encoding is empty or non-finite".into(),
+            ));
+        }
+        let values = if let Some(model) = &self.model {
+            model.rank_available_options(&features, &descriptors)?
+        } else {
+            AvailableOptionRanking {
+                ranked: Vec::new(),
+                unsupported: descriptors.clone(),
+            }
+        };
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: self.current.snapshot_sha256,
+            action_universe_sha256: family_schema_sha256,
+            choices,
+            values,
+        };
+        let current_cell = tactic_state_descriptor(&self.current.snapshot, false);
+        let tried_here = self
+            .replay
+            .iter()
+            .filter(|transition| tactic_state_descriptor(&transition.before, false) == current_cell)
+            .map(|transition| transition.value_sample.action.option_id.as_str())
+            .collect::<BTreeSet<_>>();
+        let state_untried = descriptors
+            .into_iter()
+            .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
+            .collect::<Vec<_>>();
+        let proposals = choose_tactic_batch_with_state_untried(
+            &ranking,
+            self.decision_index,
+            self.exploration,
+            &state_untried,
+            maximum_proposals,
+        )?;
+        Ok(TacticQProposalBatch { ranking, proposals })
+    }
+
     /// Score and capture a native proposal without mutating the retained
     /// campaign path. Callers can evaluate several outcomes from this exact
     /// boundary, choose one deterministically, and admit only that winner.
@@ -1737,6 +1817,10 @@ mod tests {
     use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
     use dusklight_control::option_execution::{OptionCondition, OptionEndReason, TapeRange};
     use dusklight_evidence::native_episode_shard::{NativeEpisodeShard, NativeObservationPhase};
+    use dusklight_learning::parameterized_tactic_proposals::{
+        ParameterizedTacticProposalContext, parameterized_tactic_family_schema_sha256,
+        propose_parameterized_tactics,
+    };
     use dusklight_learning::reward_shaping::{
         POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm,
         TACTIC_REWARD_SPEC_SCHEMA_V1,
@@ -1807,6 +1891,101 @@ mod tests {
         assert_ne!(
             tactic_state_descriptor(&original, false),
             tactic_state_descriptor(&new_cell, false)
+        );
+    }
+
+    #[test]
+    fn parameterized_batch_uses_family_instances_absent_from_the_state_catalog() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let before = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let bootstrap = TacticAssetCatalog::new(vec![
+            TacticCatalogEntry::new(
+                "shield",
+                TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Shield {
+                    frames: 1,
+                })),
+            )
+            .unwrap(),
+        ])
+        .unwrap();
+        let current = LearnerState::build(
+            before.clone(),
+            &FactRegistry::canonical(),
+            &bootstrap,
+            &[],
+            |_| true,
+        )
+        .unwrap();
+        let campaign = TacticQCampaign::new(
+            Digest([1; 32]),
+            Digest([2; 32]),
+            Digest([3; 32]),
+            0,
+            current,
+            InputTape {
+                frames: vec![InputFrame::default(); before.tape_frame as usize],
+                ..InputTape::default()
+            },
+            OptionValueConfig::default(),
+            TacticExplorationConfig {
+                seed: 17,
+                epsilon_per_million: 0,
+            },
+        )
+        .unwrap();
+        let proposals = propose_parameterized_tactics(ParameterizedTacticProposalContext {
+            seed: 17,
+            decision_index: 0,
+            state_sha256: campaign.current.snapshot_sha256,
+            player_position: before.player.position_f32_bits.map(f32::from_bits),
+            camera_yaw_radians: before
+                .player
+                .camera_yaw_radians_f32_bits
+                .map(f32::from_bits),
+            goal_coordinate: [100.0, 20.0, -50.0],
+            maximum_ticks: 40,
+        })
+        .unwrap();
+        let batch = campaign
+            .decide_parameterized_batch(
+                &proposals.catalog,
+                parameterized_tactic_family_schema_sha256(),
+                &|_: &FactSnapshot| Ok::<_, &'static str>(vec![0.0]),
+                4,
+            )
+            .unwrap();
+
+        assert_eq!(
+            batch.ranking.action_universe_sha256,
+            parameterized_tactic_family_schema_sha256()
+        );
+        assert_eq!(batch.proposals.len(), 4);
+        assert!(
+            batch
+                .proposals
+                .iter()
+                .all(|proposal| proposal.descriptor.option_id.starts_with("family/"))
+        );
+        assert!(batch.proposals.iter().all(|proposal| {
+            proposals
+                .catalog
+                .prepare_execution(&proposal.descriptor.option_id)
+                .is_ok()
+        }));
+        assert!(
+            batch
+                .proposals
+                .iter()
+                .all(|proposal| proposal.descriptor.option_id != "shield")
         );
     }
 
