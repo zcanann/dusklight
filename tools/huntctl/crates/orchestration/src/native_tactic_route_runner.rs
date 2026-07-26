@@ -11,6 +11,9 @@ use crate::native_tactic_worker::{
     materialize_tactic_frontier, tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::OptimizationRequest;
+use crate::tactic_macro_store::{
+    TACTIC_MACRO_REGISTRY_EXTENSION, read_tactic_macro_registry, write_tactic_macro_registry,
+};
 use crate::tactic_q_campaign::{
     EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics,
     TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
@@ -41,6 +44,10 @@ use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticSelectionReason,
 };
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
+use dusklight_learning::tactic_macro_promotion::{
+    MAX_DISCOVERY_OBSERVATIONS, MacroDiscoveryObservation, MacroPromotionStatus,
+    TacticMacroPromotionRegistry, discover_replay_macros,
+};
 use dusklight_objectives::milestone_dsl::{Comparison, Expression, Field, Value};
 use dusklight_proposals::behavior_archive::BehaviorArchive;
 use dusklight_search::search::{MacroAction, SearchPadState};
@@ -70,6 +77,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7: &str = "dusklight-native-tactic-
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8: &str = "dusklight-native-tactic-route-report/v8";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9: &str = "dusklight-native-tactic-route-report/v9";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10: &str = "dusklight-native-tactic-route-report/v10";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11: &str = "dusklight-native-tactic-route-report/v11";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -136,8 +144,23 @@ pub struct NativeTacticRouteReport {
     pub useful_decisions: u64,
     pub frontier_availability: NativeTacticFrontierAvailability,
     pub native_restore_accounting: NativeTacticRestoreAccounting,
+    pub tactic_macro_discovery: NativeTacticMacroDiscoveryReport,
     pub timing: NativeTacticRouteTiming,
     pub seeds: Vec<NativeTacticSeedResult>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeTacticMacroDiscoveryReport {
+    pub observation_count: u64,
+    pub high_value_observation_count: u64,
+    pub mined_observation_count: u64,
+    pub candidate_count: u64,
+    pub proposed_count: u64,
+    pub promoted_count: u64,
+    pub demoted_count: u64,
+    pub registry_path: String,
+    pub registry_sha256: Digest,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -649,6 +672,8 @@ pub fn run_native_tactic_route(
         .into_iter()
         .map(|(_, result)| result)
         .collect::<Vec<_>>();
+    let tactic_macro_discovery =
+        mine_and_store_tactic_macros(config.output_root, config.exploration_seeds)?;
 
     let useful_decisions = seed_results.iter().map(|seed| seed.useful_decisions).sum();
     let mut native_restore_accounting = NativeTacticRestoreAccounting::default();
@@ -677,7 +702,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -696,6 +721,7 @@ pub fn run_native_tactic_route(
         useful_decisions,
         frontier_availability,
         native_restore_accounting,
+        tactic_macro_discovery,
         timing,
         seeds: seed_results,
     };
@@ -704,6 +730,126 @@ pub fn run_native_tactic_route(
         &serde_json::to_vec_pretty(&report).map_err(route_error)?,
     )?;
     Ok(report)
+}
+
+fn mine_and_store_tactic_macros(
+    output_root: &Path,
+    exploration_seeds: &[u64],
+) -> Result<NativeTacticMacroDiscoveryReport, NativeTacticRouteRunError> {
+    let mut observations = Vec::new();
+    let mut observation_count = 0_u64;
+    let mut high_value_observation_count = 0_u64;
+    for (seed_index, seed) in exploration_seeds.iter().copied().enumerate() {
+        let seed_root = output_root.join(format!("seed-{seed_index:03}-{seed}"));
+        let records = read_tactic_decision_records(&seed_root)?;
+        if records.is_empty() {
+            continue;
+        }
+        let store = TacticQContentStore::open(tactic_content_store_path(&seed_root))
+            .map_err(route_error)?;
+        let root_tape = store.load_tape(records[0].root_tape).map_err(route_error)?;
+        for record in records {
+            for proposal in record.proposal_batch {
+                let transition = store
+                    .load_option_transition(proposal.transition)
+                    .map_err(route_error)?;
+                if transition.before_state_sha256 == Digest::ZERO
+                    || transition.before_state_sha256
+                        != transition.before.content_sha256().map_err(route_error)?
+                    || transition.execution.emitted_raw_actions.is_empty()
+                    || transition.execution.emitted_raw_actions.len()
+                        != transition.execution.duration.realized_ticks as usize
+                    || proposal.trace.option_id != transition.value_sample.action.option_id
+                {
+                    return Err(route_message(
+                        "tactic macro discovery source transition is detached",
+                    ));
+                }
+                observation_count = observation_count.saturating_add(1);
+                let observation = MacroDiscoveryObservation {
+                    seed,
+                    frontier_state_sha256: transition.before_state_sha256,
+                    transition_sha256: proposal.transition.sha256,
+                    option_id: transition.value_sample.action.option_id,
+                    tape: InputTape {
+                        boot: root_tape.boot.clone(),
+                        tick_rate_numerator: root_tape.tick_rate_numerator,
+                        tick_rate_denominator: root_tape.tick_rate_denominator,
+                        frames: transition.execution.emitted_raw_actions,
+                    },
+                    reward: proposal.trace.reward,
+                    goal_progress: record.goal_distance_before - proposal.trace.goal_distance_after,
+                    terminal: proposal.trace.terminal,
+                };
+                if observation.terminal
+                    || observation.reward > 0.0
+                    || observation.goal_progress > 0.0
+                {
+                    high_value_observation_count = high_value_observation_count.saturating_add(1);
+                    observations.push(observation);
+                    if observations.len() >= MAX_DISCOVERY_OBSERVATIONS.saturating_mul(2) {
+                        retain_bounded_macro_observations(&mut observations);
+                    }
+                }
+            }
+        }
+    }
+    retain_bounded_macro_observations(&mut observations);
+    let candidates = if observations.is_empty() {
+        Vec::new()
+    } else {
+        discover_replay_macros(&observations).map_err(route_error)?
+    };
+    let mut registry = TacticMacroPromotionRegistry::default();
+    for candidate in candidates {
+        registry.propose(candidate).map_err(route_error)?;
+    }
+    let registry_path =
+        output_root.join(format!("tactic-macros.{TACTIC_MACRO_REGISTRY_EXTENSION}"));
+    let registry_sha256 =
+        write_tactic_macro_registry(&registry_path, &registry).map_err(route_error)?;
+    let restored = read_tactic_macro_registry(&registry_path).map_err(route_error)?;
+    if restored.content_sha256 != registry_sha256 || restored.registry != registry {
+        return Err(route_message(
+            "persisted tactic macro registry failed exact round-trip verification",
+        ));
+    }
+    let (proposed_count, promoted_count, demoted_count) =
+        registry
+            .records()
+            .fold((0_u64, 0_u64, 0_u64), |mut counts, record| {
+                match record.status {
+                    MacroPromotionStatus::Proposed => counts.0 += 1,
+                    MacroPromotionStatus::Promoted => counts.1 += 1,
+                    MacroPromotionStatus::Demoted => counts.2 += 1,
+                }
+                counts
+            });
+    Ok(NativeTacticMacroDiscoveryReport {
+        observation_count,
+        high_value_observation_count,
+        mined_observation_count: observations.len() as u64,
+        candidate_count: registry.records().len() as u64,
+        proposed_count,
+        promoted_count,
+        demoted_count,
+        registry_path: path_text(&registry_path),
+        registry_sha256,
+    })
+}
+
+fn retain_bounded_macro_observations(observations: &mut Vec<MacroDiscoveryObservation>) {
+    if observations.len() <= MAX_DISCOVERY_OBSERVATIONS {
+        return;
+    }
+    observations.sort_by(|left, right| {
+        right
+            .terminal
+            .cmp(&left.terminal)
+            .then_with(|| left.transition_sha256.cmp(&right.transition_sha256))
+            .then_with(|| left.frontier_state_sha256.cmp(&right.frontier_state_sha256))
+    });
+    observations.truncate(MAX_DISCOVERY_OBSERVATIONS);
 }
 
 fn launch_tactic_route_worker(

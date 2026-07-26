@@ -31,6 +31,7 @@ pub mod stage_actor_coverage;
 pub mod stage_observation_coverage;
 pub mod stage_survey;
 mod stage_survey_artifact;
+mod tactic_macro_store;
 pub mod tactic_q_campaign;
 mod tactic_q_checkpoint_store;
 
