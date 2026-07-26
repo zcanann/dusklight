@@ -183,6 +183,45 @@ void test_reactive_controller_executes_as_one_native_candidate() {
     REQUIRE(!parse_suffix_batch(detached, batch, error));
 }
 
+void test_cached_batch_binds_bounded_process_local_source() {
+    const std::string source = R"({
+        "schema":"dusklight-suffix-batch/v9","source_frame":506,
+        "source_boundary_fingerprint":"e7ac8251329f22a5df682bbe5eb2a2ba",
+        "checkpoint_validation":{"kind":"recorded_replay_window","ticks":8},
+        "maximum_ticks":1,"verify_state_hashes":false,
+        "checkpoint_cache":{"capacity_bytes":671088640,"capacity_entries":2,
+          "source_identity":"0123456789abcdef0123456789abcdef",
+          "source_route_ticks":40,"retain_candidate_checkpoints":true},
+        "candidates":[{"id":"cached-step","actions":[
+          {"op":"pad_run","pad":{"buttons":0,"stick_x":0,"stick_y":127,
+           "substick_x":0,"substick_y":0,"trigger_left":0,"trigger_right":0,
+           "analog_a":0,"analog_b":0,"connected":true,"error":0},"frames":1}]}]
+    })";
+    SuffixBatchDefinition batch;
+    std::string error;
+    REQUIRE(parse_suffix_batch(source, batch, error));
+    REQUIRE(error.empty());
+    REQUIRE(batch.checkpointCache.has_value());
+    REQUIRE(batch.checkpointCache->capacityBytes == 671088640);
+    REQUIRE(batch.checkpointCache->capacityEntries == 2);
+    REQUIRE(batch.checkpointCache->sourceIdentity ==
+            std::optional<std::string>("0123456789abcdef0123456789abcdef"));
+    REQUIRE(batch.checkpointCache->sourceRouteTicks == 40);
+    REQUIRE(batch.checkpointCache->retainCandidateCheckpoints);
+
+    std::string detached = source;
+    const std::size_t identity = detached.find("0123456789abcdef0123456789abcdef");
+    REQUIRE(identity != std::string::npos);
+    detached[identity] = 'A';
+    REQUIRE(!parse_suffix_batch(detached, batch, error));
+
+    std::string unbounded = source;
+    const std::size_t capacity = unbounded.find("671088640");
+    REQUIRE(capacity != std::string::npos);
+    unbounded.replace(capacity, std::string("671088640").size(), "1073741825");
+    REQUIRE(!parse_suffix_batch(unbounded, batch, error));
+}
+
 std::string frozen_policy_batch() {
     return R"({
         "schema":"dusklight-suffix-batch/v7",
@@ -354,6 +393,7 @@ int main() {
     test_legacy_fixed_milestone_batch_remains_distinct();
     test_factorized_policy_rows_expand_to_an_online_native_program();
     test_reactive_controller_executes_as_one_native_candidate();
+    test_cached_batch_binds_bounded_process_local_source();
     test_frozen_policy_is_content_bound_and_one_tick();
     test_invalid_batches_fail_closed();
     std::cout << "suffix batch tests passed\n";

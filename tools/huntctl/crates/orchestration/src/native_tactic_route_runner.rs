@@ -3358,6 +3358,7 @@ pub(crate) fn tactic_root_probe_batch(
         },
         maximum_ticks,
         verify_state_hashes: execution.verify_state_hashes,
+        checkpoint_cache: None,
         candidates: vec![NativeSuffixCandidate {
             id: "tactic-root-probe".into(),
             actions: vec![MacroAction::PadRun {

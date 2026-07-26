@@ -25,6 +25,7 @@ struct NativeCheckpointCacheStats {
     std::uint64_t evictions = 0;
     std::uint64_t hits = 0;
     std::uint64_t misses = 0;
+    bool sourcePinned = false;
 };
 
 [[nodiscard]] inline std::size_t state_checkpoint_image_payload_bytes(
@@ -77,13 +78,19 @@ public:
         std::vector<std::string>* const evictedIdentities = nullptr)
     {
         const std::size_t checkpointBytes = state_checkpoint_image_payload_bytes(image);
-        if (identity.empty() || semanticDigest.empty() || image.digest != identity ||
+        if (identity.empty() || semanticDigest.empty() || image.digest.empty() ||
             checkpointBytes == 0 ||
             checkpointBytes > std::numeric_limits<std::size_t>::max() - metadataBytes)
             return false;
         const std::size_t accountedBytes = checkpointBytes + metadataBytes;
         if (mCapacityEntries == 0 || accountedBytes > mCapacityBytes)
             return false;
+        if (!mPinnedIdentity.empty() && identity != mPinnedIdentity) {
+            const Entry* pinned = peek(mPinnedIdentity);
+            if (pinned == nullptr || mCapacityEntries < 2 ||
+                pinned->accountedBytes() > mCapacityBytes - accountedBytes)
+                return false;
+        }
 
         const auto existing = findWithoutAccounting(identity);
         if (existing != mEntries.end()) {
@@ -102,6 +109,26 @@ public:
                         return left.lastUseOrdinal < right.lastUseOrdinal;
                     return left.identity < right.identity;
                 });
+            if (!mPinnedIdentity.empty() && victim->identity == mPinnedIdentity) {
+                const auto unpinned = std::min_element(mEntries.begin(), mEntries.end(),
+                    [this](const Entry& left, const Entry& right) {
+                        const bool leftPinned = left.identity == mPinnedIdentity;
+                        const bool rightPinned = right.identity == mPinnedIdentity;
+                        if (leftPinned != rightPinned)
+                            return !leftPinned;
+                        if (left.lastUseOrdinal != right.lastUseOrdinal)
+                            return left.lastUseOrdinal < right.lastUseOrdinal;
+                        return left.identity < right.identity;
+                    });
+                if (unpinned == mEntries.end() || unpinned->identity == mPinnedIdentity)
+                    return false;
+                if (evictedIdentities != nullptr)
+                    evictedIdentities->push_back(unpinned->identity);
+                subtractResident(*unpinned);
+                mEntries.erase(unpinned);
+                ++mEvictions;
+                continue;
+            }
             if (evictedIdentities != nullptr)
                 evictedIdentities->push_back(victim->identity);
             subtractResident(*victim);
@@ -142,6 +169,17 @@ public:
         return found == mEntries.end() ? nullptr : &*found;
     }
 
+    [[nodiscard]] bool pin(const std::string_view identity) noexcept {
+        if (peek(identity) == nullptr)
+            return false;
+        mPinnedIdentity = identity;
+        return true;
+    }
+
+    void unpin() noexcept {
+        mPinnedIdentity.clear();
+    }
+
     [[nodiscard]] NativeCheckpointCacheStats stats() const noexcept {
         return {
             .capacityBytes = mCapacityBytes,
@@ -155,6 +193,7 @@ public:
             .evictions = mEvictions,
             .hits = mHits,
             .misses = mMisses,
+            .sourcePinned = !mPinnedIdentity.empty(),
         };
     }
 
@@ -196,6 +235,7 @@ private:
     std::uint64_t mEvictions = 0;
     std::uint64_t mHits = 0;
     std::uint64_t mMisses = 0;
+    std::string mPinnedIdentity;
     std::vector<Entry> mEntries;
 };
 

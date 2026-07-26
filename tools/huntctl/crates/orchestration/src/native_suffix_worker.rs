@@ -13,7 +13,8 @@ use dusklight_learning::native_frozen_policy_reinference::{
 };
 use dusklight_learning::native_frozen_policy_suffix_batch::NativeFrozenPolicySuffixBatch;
 use dusklight_search::suffix_batch::{
-    NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA, NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
+    NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA,
+    NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
 };
 use dusklight_worker_protocol::client::{BatchComplete, HelloResponse, WorkerClient};
 use dusklight_worker_protocol::transport::ProcessTransport;
@@ -708,8 +709,13 @@ fn validate_batch_identity(
     identity: &NativeSuffixWorkerIdentity,
 ) -> Result<(), NativeSuffixWorkerError> {
     validate_batch_shape(batch)?;
+    let direct_cached_source = batch
+        .checkpoint_cache
+        .as_ref()
+        .is_some_and(|cache| cache.source_identity.is_some());
     if batch.source_frame as u64 != identity.source_frame
-        || batch.source_boundary_fingerprint != identity.source_boundary_fingerprint
+        || (!direct_cached_source
+            && batch.source_boundary_fingerprint != identity.source_boundary_fingerprint)
         || batch.checkpoint_validation.kind != identity.checkpoint_validation_kind
         || batch.checkpoint_validation.ticks as u64 != identity.checkpoint_validation_ticks
     {
@@ -759,7 +765,9 @@ fn canonical_frozen_model(
 fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWorkerError> {
     if !matches!(
         batch.schema.as_str(),
-        NATIVE_SUFFIX_BATCH_SCHEMA | NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
+        NATIVE_SUFFIX_BATCH_SCHEMA
+            | NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
+            | NATIVE_CACHED_SUFFIX_BATCH_SCHEMA
     ) || batch.candidates.is_empty()
         || batch.source_boundary_fingerprint.len() != 32
         || !batch
@@ -770,6 +778,21 @@ fn validate_batch_shape(batch: &NativeSuffixBatch) -> Result<(), NativeSuffixWor
         || batch.maximum_ticks > MAXIMUM_PERSISTENT_BATCH_TICKS
         || batch.checkpoint_validation.kind != "recorded_replay_window"
         || batch.checkpoint_validation.ticks == 0
+        || (batch.schema == NATIVE_CACHED_SUFFIX_BATCH_SCHEMA
+            && batch.checkpoint_cache.as_ref().is_none_or(|cache| {
+                cache.capacity_bytes == 0
+                    || cache.capacity_bytes > 1024 * 1024 * 1024
+                    || cache.capacity_entries == 0
+                    || cache.capacity_entries > 16
+                    || cache.source_identity.is_some() != (cache.source_route_ticks != 0)
+                    || cache.source_identity.as_ref().is_some_and(|identity| {
+                        identity.len() != 32
+                            || !identity
+                                .bytes()
+                                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    })
+            }))
+        || (batch.schema != NATIVE_CACHED_SUFFIX_BATCH_SCHEMA && batch.checkpoint_cache.is_some())
         || (batch.schema == NATIVE_SUFFIX_BATCH_SCHEMA
             && batch
                 .candidates
@@ -1005,6 +1028,7 @@ mod tests {
             },
             maximum_ticks: 2,
             verify_state_hashes: false,
+            checkpoint_cache: None,
             candidates: vec![NativeSuffixCandidate {
                 id: "candidate-0".into(),
                 actions: vec![MacroAction::Neutral { frames: 2 }],

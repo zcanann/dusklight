@@ -9,7 +9,8 @@ use dusklight_learning::native_frozen_policy_suffix_batch::{
     NativePolicyActionAuthority,
 };
 use dusklight_search::suffix_batch::{
-    NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA, NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
+    NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA,
+    NATIVE_SUFFIX_BATCH_SCHEMA, NativeSuffixBatch,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -19,6 +20,7 @@ use std::fmt;
 
 pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6: &str = "dusklight-suffix-batch-result/v6";
 pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V7: &str = "dusklight-suffix-batch-result/v7";
+pub const NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V8: &str = "dusklight-suffix-batch-result/v8";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V2: &str = "dusklight-native-episode-shard/v2";
 pub const NATIVE_EPISODE_SHARD_SCHEMA_V3: &str = "dusklight-native-episode-shard/v3";
 pub const RAW_PAD_ACTION_SCHEMA_V2: &str = "dusklight-raw-pad-action/v2";
@@ -47,6 +49,8 @@ pub struct NativeSuffixBatchResult {
     pub policy_model: Option<Value>,
     pub checkpoint_bytes: u64,
     pub restore_identity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_cache: Option<Value>,
     pub capture_micros: u64,
     pub restore_micros: Vec<u64>,
     pub timing: NativeSuffixTimingResult,
@@ -123,7 +127,21 @@ pub struct NativeSuffixCandidateResult {
     pub predicate_evidence: NativePredicateEvidence,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consumed_pad_states: Option<Vec<RawPadState>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_checkpoint: Option<NativeRetainedCheckpointResult>,
     pub terminal_observation: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRetainedCheckpointResult {
+    pub restore_identity: String,
+    pub image_digest: String,
+    pub semantic_digest: String,
+    pub checkpoint_bytes: u64,
+    pub host_snapshot_bytes: u64,
+    pub capture_micros: u64,
+    pub route_ticks: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -185,6 +203,7 @@ pub struct ValidatedNativeSuffixCandidate {
     pub state_sequence_digest: Option<String>,
     pub terminal_boundary_fingerprint: String,
     pub behavior_sha256: Digest,
+    pub retained_checkpoint: Option<NativeRetainedCheckpointResult>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -204,14 +223,22 @@ impl NativeSuffixBatchResult {
     ) -> Result<ValidatedNativeSuffixBatch, NativeSuffixResultError> {
         if !matches!(
             request.schema.as_str(),
-            NATIVE_SUFFIX_BATCH_SCHEMA | NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
+            NATIVE_SUFFIX_BATCH_SCHEMA
+                | NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA
+                | NATIVE_CACHED_SUFFIX_BATCH_SCHEMA
         ) {
             return Err(result_error(
                 "unsupported residual suffix-batch request schema",
             ));
         }
+        let cached = request.schema == NATIVE_CACHED_SUFFIX_BATCH_SCHEMA;
+        let expected_result_schema = if cached {
+            NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V8
+        } else {
+            NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6
+        };
         let candidate_count = request.candidates.len() as u64;
-        if self.schema != NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V6
+        if self.schema != expected_result_schema
             || self.status != "passed"
             || self.error.is_some()
             || self.source_frame != request.source_frame as u64
@@ -237,6 +264,17 @@ impl NativeSuffixBatchResult {
             .as_deref()
             .filter(|value| lower_hex(value, 32))
             .ok_or_else(|| result_error("native suffix result lacks a checkpoint identity"))?;
+        if request
+            .checkpoint_cache
+            .as_ref()
+            .and_then(|cache| cache.source_identity.as_deref())
+            .is_some_and(|expected| expected != restore_identity)
+        {
+            return Err(result_error(
+                "native suffix result restored a different process-local checkpoint",
+            ));
+        }
+        validate_checkpoint_cache(self.checkpoint_cache.as_ref(), request)?;
         validate_source_boundary(&self.source_boundary, request)?;
         validate_checkpoint(&self.checkpoint_validation, request)?;
         validate_episode_shard(
@@ -254,11 +292,13 @@ impl NativeSuffixBatchResult {
                     "native suffix result candidates are reordered, duplicated, or detached",
                 ));
             }
-            candidates.push(actual.validate_common(
+            let validated = actual.validate_common(
                 request.maximum_ticks,
                 request.verify_state_hashes,
                 terminal,
-            )?);
+            )?;
+            validate_retained_checkpoint(actual, request, self.checkpoint_bytes)?;
+            candidates.push(validated);
             simulated_ticks = simulated_ticks
                 .checked_add(actual.ticks_executed)
                 .ok_or_else(|| result_error("native suffix simulated tick total overflowed"))?;
@@ -512,8 +552,124 @@ impl NativeSuffixCandidateResult {
             state_sequence_digest: state_sequence_digest.map(str::to_owned),
             terminal_boundary_fingerprint: self.terminal_boundary_fingerprint.clone(),
             behavior_sha256: behavior_digest(self)?,
+            retained_checkpoint: self.retained_checkpoint.clone(),
         })
     }
+}
+
+fn validate_checkpoint_cache(
+    actual: Option<&Value>,
+    request: &NativeSuffixBatch,
+) -> Result<(), NativeSuffixResultError> {
+    let Some(expected) = request.checkpoint_cache.as_ref() else {
+        if actual.is_some_and(|value| !value.is_null()) {
+            return Err(result_error(
+                "uncached suffix request returned checkpoint-cache authority",
+            ));
+        }
+        return Ok(());
+    };
+    let actual = actual
+        .filter(|value| value.is_object())
+        .ok_or_else(|| result_error("cached suffix result lacks cache accounting"))?;
+    let expected_source_kind = if expected.source_identity.is_some() {
+        "direct_process_local_restore"
+    } else {
+        "authenticated_root_restore"
+    };
+    if actual.get("source_kind").and_then(Value::as_str) != Some(expected_source_kind)
+        || actual.get("source_identity").and_then(Value::as_str)
+            != expected.source_identity.as_deref()
+        || actual.get("source_route_ticks").and_then(Value::as_u64)
+            != Some(expected.source_route_ticks as u64)
+        || actual.get("capacity_bytes").and_then(Value::as_u64)
+            != Some(expected.capacity_bytes as u64)
+        || actual.get("capacity_entries").and_then(Value::as_u64)
+            != Some(expected.capacity_entries as u64)
+        || actual
+            .get("resident_bytes")
+            .and_then(Value::as_u64)
+            .is_none()
+        || actual
+            .get("resident_checkpoint_bytes")
+            .and_then(Value::as_u64)
+            .is_none()
+        || actual
+            .get("resident_host_snapshot_bytes")
+            .and_then(Value::as_u64)
+            .is_none()
+        || actual
+            .get("resident_entries")
+            .and_then(Value::as_u64)
+            .is_none()
+        || actual.get("insertions").and_then(Value::as_u64).is_none()
+        || actual.get("evictions").and_then(Value::as_u64).is_none()
+        || actual.get("hits").and_then(Value::as_u64).is_none()
+        || actual.get("misses").and_then(Value::as_u64).is_none()
+        || actual.get("source_pinned").and_then(Value::as_bool)
+            != Some(expected.source_identity.is_some())
+        || actual.get("batch_capture_attempts").and_then(Value::as_u64)
+            != Some(if expected.retain_candidate_checkpoints {
+                request.candidates.len() as u64
+            } else {
+                0
+            })
+        || actual
+            .get("batch_capture_successes")
+            .and_then(Value::as_u64)
+            .is_none()
+        || actual
+            .get("batch_capture_micros")
+            .and_then(Value::as_u64)
+            .is_none()
+    {
+        return Err(result_error(
+            "native suffix checkpoint-cache report is incomplete or detached",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_retained_checkpoint(
+    candidate: &NativeSuffixCandidateResult,
+    request: &NativeSuffixBatch,
+    checkpoint_bytes: u64,
+) -> Result<(), NativeSuffixResultError> {
+    let Some(cache) = request.checkpoint_cache.as_ref() else {
+        if candidate.retained_checkpoint.is_some() {
+            return Err(result_error(
+                "uncached suffix candidate returned process-local checkpoint authority",
+            ));
+        }
+        return Ok(());
+    };
+    if !cache.retain_candidate_checkpoints {
+        if candidate.retained_checkpoint.is_some() {
+            return Err(result_error(
+                "suffix candidate retained a checkpoint contrary to its cache request",
+            ));
+        }
+        return Ok(());
+    }
+    let Some(retained) = candidate.retained_checkpoint.as_ref() else {
+        // A bounded cache may legitimately reject a captured image that does
+        // not fit while preserving the candidate result.
+        return Ok(());
+    };
+    if !lower_hex(&retained.restore_identity, 32)
+        || !lower_hex(&retained.image_digest, 32)
+        || !lower_hex(&retained.semantic_digest, 32)
+        || retained.checkpoint_bytes != checkpoint_bytes
+        || retained.host_snapshot_bytes == 0
+        || retained.capture_micros == 0
+        || retained.route_ticks
+            != (cache.source_route_ticks as u64).saturating_add(candidate.ticks_executed)
+    {
+        return Err(result_error(
+            "native retained checkpoint is incomplete or detached from its candidate",
+        ));
+    }
+    Ok(())
 }
 
 fn behavior_digest(
@@ -701,6 +857,7 @@ mod tests {
             },
             maximum_ticks: 2,
             verify_state_hashes,
+            checkpoint_cache: None,
             candidates: vec![NativeSuffixCandidate {
                 id: "candidate-0".into(),
                 actions: vec![MacroAction::Neutral { frames: 2 }],
@@ -750,6 +907,7 @@ mod tests {
             policy_model: None,
             checkpoint_bytes: 128,
             restore_identity: Some("6".repeat(32)),
+            checkpoint_cache: None,
             capture_micros: 1,
             restore_micros: vec![1],
             timing: NativeSuffixTimingResult {
@@ -807,6 +965,7 @@ mod tests {
                     }],
                 },
                 consumed_pad_states: success.then(|| vec![RawPadState::default(); ticks as usize]),
+                retained_checkpoint: None,
                 terminal_observation: Value::Object(Default::default()),
             }],
             error: None,
@@ -908,6 +1067,69 @@ mod tests {
             .unwrap();
         assert_eq!(success.simulated_ticks, 1);
         assert_eq!(success.candidates[0].first_hit_tick, Some(0));
+    }
+
+    #[test]
+    fn cached_result_binds_direct_source_and_retained_endpoint() {
+        let mut request = request(false);
+        request.schema = NATIVE_CACHED_SUFFIX_BATCH_SCHEMA.into();
+        request.checkpoint_cache = Some(
+            dusklight_search::suffix_batch::NativeCheckpointCacheRequest {
+                capacity_bytes: 671_088_640,
+                capacity_entries: 2,
+                source_identity: Some("a".repeat(32)),
+                source_route_ticks: 40,
+                retain_candidate_checkpoints: true,
+            },
+        );
+        let mut result = result(false, false);
+        result.schema = NATIVE_SUFFIX_BATCH_RESULT_SCHEMA_V8.into();
+        result.restore_identity = Some("a".repeat(32));
+        result.checkpoint_cache = Some(serde_json::json!({
+            "source_kind": "direct_process_local_restore",
+            "source_identity": "a".repeat(32),
+            "source_route_ticks": 40,
+            "capacity_bytes": 671_088_640_u64,
+            "capacity_entries": 2,
+            "resident_bytes": 256,
+            "resident_checkpoint_bytes": 240,
+            "resident_host_snapshot_bytes": 16,
+            "resident_entries": 2,
+            "insertions": 2,
+            "replacements": 0,
+            "evictions": 0,
+            "hits": 2,
+            "misses": 0,
+            "source_pinned": true,
+            "batch_capture_attempts": 1,
+            "batch_capture_successes": 1,
+            "batch_capture_micros": 1
+        }));
+        result.candidates[0].retained_checkpoint = Some(NativeRetainedCheckpointResult {
+            restore_identity: "b".repeat(32),
+            image_digest: "c".repeat(32),
+            semantic_digest: "d".repeat(32),
+            checkpoint_bytes: 128,
+            host_snapshot_bytes: 16,
+            capture_micros: 1,
+            route_ticks: 42,
+        });
+        let validated = result.validate_against(&request, &terminal()).unwrap();
+        assert_eq!(
+            validated.candidates[0]
+                .retained_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.restore_identity.as_str()),
+            Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+        );
+
+        let mut detached = result;
+        detached.candidates[0]
+            .retained_checkpoint
+            .as_mut()
+            .unwrap()
+            .route_ticks = 41;
+        assert!(detached.validate_against(&request, &terminal()).is_err());
     }
 
     #[test]

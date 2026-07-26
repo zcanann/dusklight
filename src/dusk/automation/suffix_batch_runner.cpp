@@ -212,6 +212,18 @@ bool SuffixBatchRunner::configure(SuffixBatchDefinition definition,
     }
     FrozenInferenceModel frozenPolicy;
     if (!loadFrozenPolicy(definition, frozenPolicy, error)) return false;
+    if (definition.checkpointCache.has_value()) {
+        if (definition.checkpointCache->sourceIdentity.has_value() ||
+            definition.checkpointCache->sourceRouteTicks != 0)
+        {
+            error = "initial suffix batch cannot name a process-local cached source";
+            return false;
+        }
+        mCheckpointCache =
+            std::make_unique<NativeCheckpointCache<CachedHostSnapshot>>(
+                definition.checkpointCache->capacityBytes,
+                definition.checkpointCache->capacityEntries);
+    }
     mEnabled = true;
     mDefinition = std::move(definition);
     mFrozenPolicyModel = std::move(frozenPolicy);
@@ -240,7 +252,6 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     if (!mEnabled || !mCompleted || mFailed || !mArtifactsWritten || !mValidationVerified ||
         mImage.entries.empty() || mEpisodeShard.active() || definition.candidates.empty() ||
         definition.maximumTicks == 0 || definition.sourceFrame != mDefinition.sourceFrame ||
-        definition.sourceBoundaryFingerprint != mDefinition.sourceBoundaryFingerprint ||
         definition.checkpointValidation != mDefinition.checkpointValidation ||
         definition.validationTicks != mDefinition.validationTicks || resultPath.empty())
     {
@@ -250,6 +261,61 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
 
     FrozenInferenceModel frozenPolicy;
     if (!loadFrozenPolicy(definition, frozenPolicy, error)) return false;
+    mCachedSourceIdentity.reset();
+    if (definition.checkpointCache.has_value()) {
+        const auto& policy = *definition.checkpointCache;
+        if (mCheckpointCache == nullptr) {
+            mCheckpointCache =
+                std::make_unique<NativeCheckpointCache<CachedHostSnapshot>>(
+                    policy.capacityBytes, policy.capacityEntries);
+        } else {
+            const NativeCheckpointCacheStats stats = mCheckpointCache->stats();
+            if (stats.capacityBytes != policy.capacityBytes ||
+                stats.capacityEntries != policy.capacityEntries)
+            {
+                error = "next suffix batch changed its process-local checkpoint cache bounds";
+                return false;
+            }
+        }
+        mCheckpointCache->unpin();
+        if (policy.sourceIdentity.has_value()) {
+            const auto* source = mCheckpointCache->find(*policy.sourceIdentity);
+            if (source == nullptr || source->semanticDigest.empty() ||
+                source->image.digest.empty() ||
+                source->metadata.routeTicks != policy.sourceRouteTicks ||
+                source->metadata.boundaryFingerprint !=
+                    definition.sourceBoundaryFingerprint ||
+                !mCheckpointCache->pin(*policy.sourceIdentity))
+            {
+                error = "requested process-local checkpoint is absent or invalid";
+                return false;
+            }
+            mCachedSourceIdentity = *policy.sourceIdentity;
+            mActualSourceBoundaryFingerprint = source->metadata.boundaryFingerprint;
+        } else if (policy.sourceRouteTicks != 0) {
+            error = "root suffix source cannot claim replayed route ticks";
+            return false;
+        } else if (definition.sourceBoundaryFingerprint !=
+                   mDefinition.sourceBoundaryFingerprint)
+        {
+            error = "root suffix source changed its authenticated boundary fingerprint";
+            return false;
+        } else {
+            mActualSourceBoundaryFingerprint = mDefinition.sourceBoundaryFingerprint;
+        }
+    } else if (mCheckpointCache != nullptr) {
+        mCheckpointCache->unpin();
+        if (definition.sourceBoundaryFingerprint != mDefinition.sourceBoundaryFingerprint) {
+            error = "uncached suffix source changed its authenticated boundary fingerprint";
+            return false;
+        }
+        mActualSourceBoundaryFingerprint = mDefinition.sourceBoundaryFingerprint;
+    } else if (definition.sourceBoundaryFingerprint !=
+               mDefinition.sourceBoundaryFingerprint)
+    {
+        error = "next suffix batch changed its authenticated source boundary fingerprint";
+        return false;
+    }
     mDefinition = std::move(definition);
     mFrozenPolicyModel = std::move(frozenPolicy);
     mResultPath = std::move(resultPath);
@@ -275,6 +341,9 @@ bool SuffixBatchRunner::configureNextBatch(SuffixBatchDefinition definition,
     mRestoreMicros.clear();
     mRestoreMicros.reserve(mDefinition.candidates.size());
     mConsumedCaptureFailed = false;
+    mCheckpointCacheCaptureMicros = 0;
+    mCheckpointCacheCaptureAttempts = 0;
+    mCheckpointCacheCaptureSuccesses = 0;
     mEpisodePreInputCaptured = false;
     mPolicyFeatureRowReady = false;
     mCandidateChosenPadReady = false;
@@ -435,7 +504,7 @@ bool SuffixBatchRunner::beginEpisodeShard(std::string& error) {
         .sourceFrame = mDefinition.sourceFrame,
         .maximumTicks = mDefinition.maximumTicks,
         .sourceBoundaryFingerprint = mDefinition.sourceBoundaryFingerprint,
-        .checkpointIdentity = mImage.digest,
+        .checkpointIdentity = activeSourceIdentity(),
         .objective = objective,
         .objectiveIdentity = xxh3_128_hex(objectiveIdentityMaterial),
         .buildRevision = std::string(build.revision),
@@ -495,11 +564,40 @@ LearningGoalObservation summarize_learning_goal(const MilestoneTracker& tracker)
     return result;
 }
 
+std::string SuffixBatchRunner::activeSourceIdentity() const {
+    return mCachedSourceIdentity.value_or(mImage.digest);
+}
+
+std::size_t SuffixBatchRunner::activeSourceRouteTicks() const {
+    if (!mDefinition.checkpointCache.has_value())
+        return 0;
+    return mDefinition.checkpointCache->sourceRouteTicks;
+}
+
 bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
     std::uint64_t& tapeFrame, std::uint64_t& preparedInputFrame, bool& tapeFrameApplied,
     std::string& error) {
+    const StateCheckpointImage* image = &mImage;
+    const CachedHostSnapshot* cachedHost = nullptr;
+    std::string_view expectedSemanticDigest = mSourceSemanticDigest;
+    if (mCachedSourceIdentity.has_value()) {
+        if (mCheckpointCache == nullptr) {
+            error = "cached suffix source has no process-local cache";
+            return false;
+        }
+        const auto* cached = mCheckpointCache->find(*mCachedSourceIdentity);
+        if (cached == nullptr || cached->identity != *mCachedSourceIdentity ||
+            cached->image.digest.empty() || cached->semanticDigest.empty())
+        {
+            error = "cached suffix source was detached or evicted";
+            return false;
+        }
+        image = &cached->image;
+        cachedHost = &cached->metadata;
+        expectedSemanticDigest = cached->semanticDigest;
+    }
     const auto start = std::chrono::steady_clock::now();
-    const StateCheckpointError checkpointError = mCheckpoint.restoreTrusted(mImage);
+    const StateCheckpointError checkpointError = mCheckpoint.restoreTrusted(*image);
     const auto end = std::chrono::steady_clock::now();
     mRestoreMicros.push_back(static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::microseconds>(end - start).count()));
@@ -507,17 +605,24 @@ bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
         error = state_checkpoint_error_message(checkpointError);
         return false;
     }
-    if (!input_tape_player().restoreState(mSource.tapePlayer) ||
-        !PADRestoreAutomationState(&mSource.pad))
+    const InputTapePlayerState& tapePlayer =
+        cachedHost == nullptr ? mSource.tapePlayer : cachedHost->tapePlayer;
+    const PADAutomationState& pad =
+        cachedHost == nullptr ? mSource.pad : cachedHost->pad;
+    if (!input_tape_player().restoreState(tapePlayer) ||
+        !PADRestoreAutomationState(&pad))
     {
         error = "suffix batch host state restore failed";
         return false;
     }
     milestone_tracker() = mSource.milestones;
-    simulationTick = mSource.simulationTick;
-    tapeFrame = mSource.tapeFrame;
-    preparedInputFrame = mSource.preparedInputFrame;
-    tapeFrameApplied = mSource.tapeFrameApplied;
+    simulationTick =
+        cachedHost == nullptr ? mSource.simulationTick : cachedHost->simulationTick;
+    tapeFrame = cachedHost == nullptr ? mSource.tapeFrame : cachedHost->tapeFrame;
+    preparedInputFrame = cachedHost == nullptr
+        ? mSource.preparedInputFrame : cachedHost->preparedInputFrame;
+    tapeFrameApplied = cachedHost == nullptr
+        ? mSource.tapeFrameApplied : cachedHost->tapeFrameApplied;
     std::string restoredSemanticDigest;
     const StateCheckpointError semanticError =
         mCheckpoint.currentSemanticDigest(restoredSemanticDigest);
@@ -525,10 +630,10 @@ bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
         error = state_checkpoint_error_message(semanticError);
         return false;
     }
-    if (restoredSemanticDigest != mSourceSemanticDigest) {
+    if (restoredSemanticDigest != expectedSemanticDigest) {
         error = "suffix checkpoint restore does not reproduce its source semantic identity; "
                 "expected " +
-                mSourceSemanticDigest + ", observed " + restoredSemanticDigest;
+                std::string(expectedSemanticDigest) + ", observed " + restoredSemanticDigest;
         return false;
     }
     mGoalTracker.reset();
@@ -538,6 +643,85 @@ bool SuffixBatchRunner::restoreSource(std::uint64_t& simulationTick,
     mStateTickDigests.clear();
     mConsumedCaptureFailed = false;
     mEpisodePreInputCaptured = false;
+    return true;
+}
+
+bool SuffixBatchRunner::retainCandidateCheckpoint(const std::uint64_t simulationTick,
+    const std::uint64_t tapeFrame, const std::uint64_t preparedInputFrame,
+    const bool tapeFrameApplied, RetainedCheckpointResult& result, std::string& error)
+{
+    result = {};
+    if (mCheckpointCache == nullptr || !mDefinition.checkpointCache.has_value() ||
+        !mDefinition.checkpointCache->retainCandidateCheckpoints)
+        return true;
+    ++mCheckpointCacheCaptureAttempts;
+    const auto started = ProfileClock::now();
+    StateCheckpointImage image;
+    StateCheckpointError checkpointError = mCheckpoint.capture(image);
+    if (checkpointError != StateCheckpointError::None) {
+        error = state_checkpoint_error_message(checkpointError);
+        return false;
+    }
+    std::string semanticDigest;
+    checkpointError = mCheckpoint.currentSemanticDigest(semanticDigest);
+    if (checkpointError != StateCheckpointError::None) {
+        error = state_checkpoint_error_message(checkpointError);
+        return false;
+    }
+    CachedHostSnapshot host{
+        .tapePlayer = input_tape_player().captureState(),
+        .simulationTick = simulationTick + 1,
+        .tapeFrame = tapeFrame,
+        .preparedInputFrame = preparedInputFrame,
+        .tapeFrameApplied = tapeFrameApplied,
+        .routeTicks = activeSourceRouteTicks() + mCandidateTick + 1,
+        .boundaryFingerprint = compute_milestone_boundary_fingerprint(
+            capture_milestone_observation(mSourceMilestoneStorage),
+            input_tape_player().tape().boot),
+    };
+    if (host.boundaryFingerprint.empty()) {
+        error = "cached suffix endpoint boundary fingerprint is unavailable";
+        return false;
+    }
+    if (!PADCaptureAutomationState(&host.pad)) {
+        error = "could not capture cached suffix endpoint PAD state";
+        return false;
+    }
+    std::string identityMaterial = "dusklight-native-restore-handle/v1";
+    identityMaterial.push_back('\0');
+    identityMaterial += activeSourceIdentity();
+    identityMaterial.push_back('\0');
+    identityMaterial += image.digest;
+    identityMaterial.push_back('\0');
+    identityMaterial += semanticDigest;
+    identityMaterial.push_back('\0');
+    identityMaterial += mDefinition.candidates[mCandidateIndex].id;
+    identityMaterial.push_back('\0');
+    identityMaterial += std::to_string(host.routeTicks);
+    identityMaterial.push_back('\0');
+    identityMaterial += std::to_string(host.simulationTick);
+    identityMaterial.push_back('\0');
+    identityMaterial += std::to_string(host.tapePlayer.nextFrame);
+    const std::string identity = xxh3_128_hex(identityMaterial);
+    const std::string imageDigest = image.digest;
+    const std::size_t checkpointBytes = state_checkpoint_image_payload_bytes(image);
+    const std::size_t hostSnapshotBytes =
+        sizeof(CachedHostSnapshot) + host.boundaryFingerprint.size();
+    const bool inserted = mCheckpointCache->insert(
+        identity, semanticDigest, std::move(image), std::move(host), hostSnapshotBytes);
+    const std::uint64_t captureMicros = elapsed_micros(started);
+    mCheckpointCacheCaptureMicros += captureMicros;
+    if (!inserted)
+        return true;
+    ++mCheckpointCacheCaptureSuccesses;
+    result = {
+        .identity = identity,
+        .imageDigest = imageDigest,
+        .semanticDigest = semanticDigest,
+        .checkpointBytes = checkpointBytes,
+        .hostSnapshotBytes = hostSnapshotBytes,
+        .captureMicros = captureMicros,
+    };
     return true;
 }
 
@@ -640,7 +824,7 @@ bool SuffixBatchRunner::captureEpisodePreInput(
                     .boundaryIndex = simulationTick,
                     .simulationTick = simulationTick,
                     .tapeFrame = static_cast<std::uint64_t>(
-                        mDefinition.sourceFrame + mCandidateTick),
+                        mDefinition.sourceFrame + activeSourceRouteTicks() + mCandidateTick),
                     .phase = GameplayTracePhase::PreInput,
                 },
                 LearningTraceChannels, gameplayTrace))
@@ -661,8 +845,14 @@ bool SuffixBatchRunner::captureEpisodePreInput(
     RawPadState previousInput{};
     if (mCandidateTick != 0) {
         previousInput = mConsumedPads.back();
-    } else if (mSource.pad.active[0]) {
-        previousInput = raw_pad_state_from_pad_status(mSource.pad.status[0]);
+    } else {
+        const PADAutomationState* sourcePad = &mSource.pad;
+        if (mCachedSourceIdentity.has_value() && mCheckpointCache != nullptr) {
+            if (const auto* cached = mCheckpointCache->peek(*mCachedSourceIdentity))
+                sourcePad = &cached->metadata.pad;
+        }
+        if (sourcePad->active[0])
+            previousInput = raw_pad_state_from_pad_status(sourcePad->status[0]);
     }
     if (mDefinition.candidates[mCandidateIndex].frozenPolicy) {
         const NativePolicyFeatureInput policyInput{
@@ -716,7 +906,8 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         .phase = LearningObservationPhase::PreInput,
         .boundaryIndex = simulationTick,
         .simulationTick = simulationTick,
-        .tapeFrame = static_cast<std::uint64_t>(mDefinition.sourceFrame + mCandidateTick),
+        .tapeFrame = static_cast<std::uint64_t>(
+            mDefinition.sourceFrame + activeSourceRouteTicks() + mCandidateTick),
         .remainingTicks = static_cast<std::uint32_t>(
             mDefinition.maximumTicks - mCandidateTick),
         .stateIdentity = compute_milestone_observation_fingerprint(
@@ -989,7 +1180,7 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
                     .boundaryIndex = simulationTick + 1,
                     .simulationTick = simulationTick,
                     .tapeFrame = static_cast<std::uint64_t>(
-                        mDefinition.sourceFrame + mCandidateTick),
+                        mDefinition.sourceFrame + activeSourceRouteTicks() + mCandidateTick),
                     .phase = GameplayTracePhase::PostSimulation,
                 },
                 LearningTraceChannels, gameplayTrace))
@@ -1012,7 +1203,8 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
                                          LearningTerminalReason::TickBudgetExhausted),
         .boundaryIndex = simulationTick + 1,
         .simulationTick = simulationTick,
-        .tapeFrame = static_cast<std::uint64_t>(mDefinition.sourceFrame + mCandidateTick),
+        .tapeFrame = static_cast<std::uint64_t>(
+            mDefinition.sourceFrame + activeSourceRouteTicks() + mCandidateTick),
         .remainingTicks = static_cast<std::uint32_t>(
             mDefinition.maximumTicks - (mCandidateTick + 1)),
         .stateIdentity = compute_milestone_observation_fingerprint(
@@ -1169,7 +1361,8 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
     RawPadState expectedPad{};
     if (candidate.tapePassthrough) {
         expectedPad =
-            input_tape_player().tape().frames[mDefinition.sourceFrame + mCandidateTick].pads[0];
+            input_tape_player().tape().frames[
+                mDefinition.sourceFrame + activeSourceRouteTicks() + mCandidateTick].pads[0];
     } else if (candidate.frozenPolicy || candidate.controllerProgram) {
         if (!mCandidateChosenPadReady) {
             error = "online candidate did not produce a PAD for the current tick";
@@ -1226,6 +1419,15 @@ bool SuffixBatchRunner::postSimulation(const std::uint64_t simulationTick,
         fail(error);
         return true;
     }
+    RetainedCheckpointResult retainedCheckpoint;
+    if (!retainCandidateCheckpoint(simulationTick, tapeFrame, preparedInputFrame,
+            tapeFrameApplied, retainedCheckpoint, error))
+    {
+        fail(error);
+        return true;
+    }
+    if (!retainedCheckpoint.identity.empty())
+        mResults.back().retainedCheckpoint = std::move(retainedCheckpoint);
     ++mCandidateIndex;
     if (mCandidateIndex == mDefinition.candidates.size()) {
         {
@@ -1266,6 +1468,17 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                 consumed.push_back(pad_json(pad));
         }
         const auto& terminal = result.terminal;
+        const nlohmann::json retainedCheckpoint = !result.retainedCheckpoint.has_value()
+            ? nlohmann::json(nullptr)
+            : nlohmann::json{
+                  {"restore_identity", result.retainedCheckpoint->identity},
+                  {"image_digest", result.retainedCheckpoint->imageDigest},
+                  {"semantic_digest", result.retainedCheckpoint->semanticDigest},
+                  {"checkpoint_bytes", result.retainedCheckpoint->checkpointBytes},
+                  {"host_snapshot_bytes", result.retainedCheckpoint->hostSnapshotBytes},
+                  {"capture_micros", result.retainedCheckpoint->captureMicros},
+                  {"route_ticks", activeSourceRouteTicks() + result.ticksExecuted},
+              };
         candidates.push_back({
             {"id", result.id},
             {"success", result.success},
@@ -1279,6 +1492,7 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
             {"terminal_boundary_fingerprint", result.terminalBoundaryFingerprint},
             {"predicate_evidence", nlohmann::json::parse(result.predicateEvidence)},
             {"consumed_pad_states", std::move(consumed)},
+            {"retained_checkpoint", retainedCheckpoint},
             {"terminal_observation", {
                 {"stage", terminal.stage}, {"room", terminal.room},
                 {"point", terminal.point},
@@ -1451,8 +1665,18 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
             }},
         }},
     };
+    const NativeCheckpointCacheStats cacheStats = mCheckpointCache == nullptr
+        ? NativeCheckpointCacheStats{}
+        : mCheckpointCache->stats();
+    std::string activeSourceSemanticDigest = mSourceSemanticDigest;
+    if (mCachedSourceIdentity.has_value() && mCheckpointCache != nullptr) {
+        if (const auto* source = mCheckpointCache->peek(*mCachedSourceIdentity))
+            activeSourceSemanticDigest = source->semanticDigest;
+    }
     nlohmann::json result{
-        {"schema", mDefinition.frozenPolicy.has_value() &&
+        {"schema", mDefinition.checkpointCache.has_value()
+                       ? "dusklight-suffix-batch-result/v8"
+                       : mDefinition.frozenPolicy.has_value() &&
                            mDefinition.frozenPolicy->rolloutExploration.has_value()
                        ? "dusklight-suffix-batch-result/v7"
                        : "dusklight-suffix-batch-result/v6"},
@@ -1519,9 +1743,9 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
                              "gameplay_ready_f_sp103"},
                 {"ticks", mDefinition.validationTicks},
                 {"verified", mValidationVerified},
-                {"source_semantic_digest", mSourceSemanticDigest.empty() ?
+                {"source_semantic_digest", activeSourceSemanticDigest.empty() ?
                                                nlohmann::json(nullptr) :
-                                               nlohmann::json(mSourceSemanticDigest)},
+                                               nlohmann::json(activeSourceSemanticDigest)},
                 {"fresh_sequence_digest", mValidationFreshSequenceDigest.empty() ?
                                               nlohmann::json(nullptr) :
                                               nlohmann::json(mValidationFreshSequenceDigest)},
@@ -1543,8 +1767,32 @@ bool SuffixBatchRunner::writeArtifacts(std::string& error) {
         {"completed_candidates", mResults.size()},
         {"verify_state_hashes", mDefinition.verifyStateHashes},
         {"checkpoint_bytes", mCheckpoint.byteCount()},
-        {"restore_identity", mImage.digest.empty() ? nlohmann::json(nullptr)
-                                                      : nlohmann::json(mImage.digest)},
+        {"restore_identity", activeSourceIdentity().empty()
+                ? nlohmann::json(nullptr) : nlohmann::json(activeSourceIdentity())},
+        {"checkpoint_cache", mDefinition.checkpointCache.has_value()
+            ? nlohmann::json{
+                  {"source_kind", mCachedSourceIdentity.has_value()
+                      ? "direct_process_local_restore" : "authenticated_root_restore"},
+                  {"source_identity", mCachedSourceIdentity.has_value()
+                      ? nlohmann::json(*mCachedSourceIdentity) : nlohmann::json(nullptr)},
+                  {"source_route_ticks", activeSourceRouteTicks()},
+                  {"capacity_bytes", cacheStats.capacityBytes},
+                  {"capacity_entries", cacheStats.capacityEntries},
+                  {"resident_bytes", cacheStats.residentBytes},
+                  {"resident_checkpoint_bytes", cacheStats.residentCheckpointBytes},
+                  {"resident_host_snapshot_bytes", cacheStats.residentMetadataBytes},
+                  {"resident_entries", cacheStats.residentEntries},
+                  {"insertions", cacheStats.insertions},
+                  {"replacements", cacheStats.replacements},
+                  {"evictions", cacheStats.evictions},
+                  {"hits", cacheStats.hits},
+                  {"misses", cacheStats.misses},
+                  {"source_pinned", cacheStats.sourcePinned},
+                  {"batch_capture_attempts", mCheckpointCacheCaptureAttempts},
+                  {"batch_capture_successes", mCheckpointCacheCaptureSuccesses},
+                  {"batch_capture_micros", mCheckpointCacheCaptureMicros},
+              }
+            : nlohmann::json(nullptr)},
         {"capture_micros", mCaptureMicros},
         {"restore_micros", mRestoreMicros},
         {"timing", timing},

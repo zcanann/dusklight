@@ -1,7 +1,7 @@
 //! Execute one selected static tactic against an authenticated persistent
 //! native checkpoint worker and recover its real option boundary.
 
-use crate::native_suffix_result::ValidatedNativeSuffixBatch;
+use crate::native_suffix_result::{NativeRetainedCheckpointResult, ValidatedNativeSuffixBatch};
 use crate::native_suffix_worker::{
     NativeSuffixWorkerError, NativeSuffixWorkerIdentity, NativeSuffixWorkerSession,
 };
@@ -34,7 +34,7 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::SelectedTactic;
 use dusklight_search::search::{MacroAction, SearchPadState};
 use dusklight_search::suffix_batch::{
-    NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA, NATIVE_SUFFIX_BATCH_SCHEMA, NativeCheckpointValidation,
+    NATIVE_CACHED_SUFFIX_BATCH_SCHEMA, NativeCheckpointCacheRequest, NativeCheckpointValidation,
     NativeSuffixBatch, NativeSuffixCandidate,
 };
 use serde::Serialize;
@@ -47,6 +47,8 @@ use std::path::{Path, PathBuf};
 
 pub const NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2: &str =
     "dusklight-native-tactic-worker-outcome/v2";
+const TACTIC_CHECKPOINT_CACHE_BYTES: usize = 640 * 1024 * 1024;
+const TACTIC_CHECKPOINT_CACHE_ENTRIES: usize = 2;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NativeTacticWorkerPaths {
@@ -60,6 +62,8 @@ pub struct NativeTacticWorkerOutcome {
     pub schema: String,
     pub source_checkpoint_sha256: Digest,
     pub checkpoint_identity: String,
+    #[serde(skip_serializing)]
+    pub retained_native_checkpoint: Option<NativeRetainedCheckpointResult>,
     pub episode_shard_sha256: Digest,
     pub selected: SelectedTactic,
     pub execution: OptionExecution,
@@ -1072,7 +1076,7 @@ fn tactic_batch(
         .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?,
     );
     Ok(NativeSuffixBatch {
-        schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
+        schema: NATIVE_CACHED_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: usize::try_from(identity.source_frame)
             .map_err(|_| NativeTacticWorkerError::InvalidDuration)?,
         source_boundary_fingerprint: identity.source_boundary_fingerprint.clone(),
@@ -1089,6 +1093,13 @@ fn tactic_batch(
         // simulation itself. Successful policies are state-hash verified by
         // the separate frozen-policy and cold-replay gates.
         verify_state_hashes: false,
+        checkpoint_cache: Some(NativeCheckpointCacheRequest {
+            capacity_bytes: TACTIC_CHECKPOINT_CACHE_BYTES,
+            capacity_entries: TACTIC_CHECKPOINT_CACHE_ENTRIES,
+            source_identity: None,
+            source_route_ticks: 0,
+            retain_candidate_checkpoints: true,
+        }),
         candidates: vec![NativeSuffixCandidate {
             id,
             actions,
@@ -1122,7 +1133,7 @@ fn tactic_controller_batch(
         .map_err(|error| NativeTacticWorkerError::Serialization(error.to_string()))?,
     );
     Ok(NativeSuffixBatch {
-        schema: NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA.into(),
+        schema: NATIVE_CACHED_SUFFIX_BATCH_SCHEMA.into(),
         source_frame: usize::try_from(identity.source_frame)
             .map_err(|_| NativeTacticWorkerError::InvalidDuration)?,
         source_boundary_fingerprint: identity.source_boundary_fingerprint.clone(),
@@ -1135,6 +1146,13 @@ fn tactic_controller_batch(
         // Keep reactive exploration on the same evidence boundary as static
         // tactic exploration. Exact per-tick proof belongs to promotion.
         verify_state_hashes: false,
+        checkpoint_cache: Some(NativeCheckpointCacheRequest {
+            capacity_bytes: TACTIC_CHECKPOINT_CACHE_BYTES,
+            capacity_entries: TACTIC_CHECKPOINT_CACHE_ENTRIES,
+            source_identity: None,
+            source_route_ticks: 0,
+            retain_candidate_checkpoints: true,
+        }),
         candidates: vec![NativeSuffixCandidate {
             id,
             actions: pad_runs(prefix_frames)?,
@@ -1303,10 +1321,23 @@ fn observe_outcome(
     {
         return Err(NativeTacticWorkerError::DetachedResult("next boundary"));
     }
+    let retained_native_checkpoint = validated.candidates[0].retained_checkpoint.clone();
+    if retained_native_checkpoint
+        .as_ref()
+        .is_some_and(|checkpoint| {
+            checkpoint.route_ticks
+                != route_tape.frames.len().saturating_sub(request.source_frame) as u64
+        })
+    {
+        return Err(NativeTacticWorkerError::DetachedResult(
+            "retained checkpoint route boundary",
+        ));
+    }
     Ok(NativeTacticWorkerOutcome {
         schema: NATIVE_TACTIC_WORKER_OUTCOME_SCHEMA_V2.into(),
         source_checkpoint_sha256: root_checkpoint_sha256,
         checkpoint_identity: validated.restore_identity,
+        retained_native_checkpoint,
         episode_shard_sha256: shard.content_sha256,
         selected: selected.clone(),
         execution,
@@ -1618,7 +1649,7 @@ mod tests {
         ];
         let batch = tactic_controller_batch(&identity, &selected, &prefix, &program).unwrap();
 
-        assert_eq!(batch.schema, NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA);
+        assert_eq!(batch.schema, NATIVE_CACHED_SUFFIX_BATCH_SCHEMA);
         assert_eq!(batch.maximum_ticks, 19);
         assert_eq!(batch.candidates.len(), 1);
         assert_eq!(
@@ -1865,7 +1896,7 @@ mod tests {
             },
         };
         let request = NativeSuffixBatch {
-            schema: NATIVE_SUFFIX_BATCH_SCHEMA.into(),
+            schema: dusklight_search::suffix_batch::NATIVE_SUFFIX_BATCH_SCHEMA.into(),
             source_frame: before.tape_frame as usize,
             source_boundary_fingerprint: "a".repeat(32),
             checkpoint_validation: NativeCheckpointValidation {
@@ -1874,6 +1905,7 @@ mod tests {
             },
             maximum_ticks: 1,
             verify_state_hashes: true,
+            checkpoint_cache: None,
             candidates: vec![NativeSuffixCandidate {
                 id: episode.id.clone(),
                 actions: pad_runs(&option_tape.frames).unwrap(),
@@ -1892,6 +1924,7 @@ mod tests {
                 state_sequence_digest: Some("b".repeat(64)),
                 terminal_boundary_fingerprint: "c".repeat(32),
                 behavior_sha256: Digest([7; 32]),
+                retained_checkpoint: None,
             }],
         };
         let route_prefix = InputTape {

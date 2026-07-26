@@ -7,6 +7,7 @@ use std::collections::HashSet;
 
 pub const NATIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v3";
 pub const NATIVE_REACTIVE_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v8";
+pub const NATIVE_CACHED_SUFFIX_BATCH_SCHEMA: &str = "dusklight-suffix-batch/v9";
 const MAXIMUM_CANDIDATES: usize = 16_384;
 const MAXIMUM_TICKS: usize = 4_096;
 const MAXIMUM_EXPANDED_TICKS: usize = 8 * 1_024 * 1_024;
@@ -57,7 +58,20 @@ pub struct NativeSuffixBatch {
     pub checkpoint_validation: NativeCheckpointValidation,
     pub maximum_ticks: usize,
     pub verify_state_hashes: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_cache: Option<NativeCheckpointCacheRequest>,
     pub candidates: Vec<NativeSuffixCandidate>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeCheckpointCacheRequest {
+    pub capacity_bytes: usize,
+    pub capacity_entries: usize,
+    #[serde(default)]
+    pub source_identity: Option<String>,
+    pub source_route_ticks: usize,
+    pub retain_candidate_checkpoints: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -111,6 +125,7 @@ pub fn propose_suffix_batch(
         },
         maximum_ticks,
         verify_state_hashes: false,
+        checkpoint_cache: None,
         candidates: Vec::with_capacity(candidate_budget),
     };
     let mut seen = HashSet::new();
@@ -853,6 +868,7 @@ pub fn propose_ranked_suffix_refinement(
         checkpoint_validation: parent.checkpoint_validation.clone(),
         maximum_ticks: parent.maximum_ticks,
         verify_state_hashes: false,
+        checkpoint_cache: None,
         candidates: Vec::with_capacity(candidate_budget),
     };
     let mut seen = HashSet::new();

@@ -4,6 +4,7 @@
 #include "dusk/automation/frozen_inference.hpp"
 #include "dusk/automation/learning_episode.hpp"
 #include "dusk/automation/milestones.hpp"
+#include "dusk/automation/native_checkpoint_cache.hpp"
 #include "dusk/automation/state_checkpoint.hpp"
 #include "dusk/automation/suffix_batch.hpp"
 #include "dusk/automation/native_policy_features.hpp"
@@ -14,6 +15,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -94,6 +96,26 @@ private:
         bool tapeFrameApplied = false;
     };
 
+    struct CachedHostSnapshot {
+        InputTapePlayerState tapePlayer;
+        PADAutomationState pad{};
+        std::uint64_t simulationTick = 0;
+        std::uint64_t tapeFrame = 0;
+        std::uint64_t preparedInputFrame = 0;
+        bool tapeFrameApplied = false;
+        std::size_t routeTicks = 0;
+        std::string boundaryFingerprint;
+    };
+
+    struct RetainedCheckpointResult {
+        std::string identity;
+        std::string imageDigest;
+        std::string semanticDigest;
+        std::size_t checkpointBytes = 0;
+        std::size_t hostSnapshotBytes = 0;
+        std::uint64_t captureMicros = 0;
+    };
+
     struct TerminalObservation {
         std::string stage;
         std::int8_t room = -1;
@@ -131,6 +153,7 @@ private:
         std::string predicateEvidence;
         TerminalObservation terminal;
         std::vector<RawPadState> successfulConsumedPads;
+        std::optional<RetainedCheckpointResult> retainedCheckpoint;
     };
 
     bool captureSource(std::uint64_t simulationTick, std::uint64_t tapeFrame,
@@ -149,6 +172,11 @@ private:
         std::string& error);
     bool finishCandidate(
         const MilestoneObservation& observation, bool success, std::string& error);
+    bool retainCandidateCheckpoint(std::uint64_t simulationTick, std::uint64_t tapeFrame,
+        std::uint64_t preparedInputFrame, bool tapeFrameApplied,
+        RetainedCheckpointResult& result, std::string& error);
+    [[nodiscard]] std::string activeSourceIdentity() const;
+    [[nodiscard]] std::size_t activeSourceRouteTicks() const;
     void resetBatchProfile(bool sourceCheckpointReused);
     void finishSimulationProfile();
     void finishBatchProfile();
@@ -205,6 +233,11 @@ private:
     StateCheckpoint mCheckpoint;
     StateCheckpointImage mImage;
     HostSnapshot mSource;
+    std::unique_ptr<NativeCheckpointCache<CachedHostSnapshot>> mCheckpointCache;
+    std::optional<std::string> mCachedSourceIdentity;
+    std::uint64_t mCheckpointCacheCaptureMicros = 0;
+    std::uint64_t mCheckpointCacheCaptureAttempts = 0;
+    std::uint64_t mCheckpointCacheCaptureSuccesses = 0;
     MilestoneTracker mGoalTracker;
     MilestoneObservationStorage mMilestoneStorage;
     MilestoneObservationStorage mSourceMilestoneStorage;

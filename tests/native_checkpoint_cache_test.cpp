@@ -66,7 +66,7 @@ void test_replacement_and_oversize_fail_closed() {
     REQUIRE(cache.peek("a")->semanticDigest == "sa2");
 
     REQUIRE(!cache.insert("huge", "sh", image("huge", 20), "host", 1));
-    REQUIRE(!cache.insert("detached", "sd", image("different", 1), "host", 1));
+    REQUIRE(!cache.insert("detached", "sd", image("", 1), "host", 1));
     REQUIRE(cache.peek("a") != nullptr);
     REQUIRE(cache.stats().residentEntries == 1);
 }
@@ -77,12 +77,26 @@ void test_misses_are_measured() {
     REQUIRE(cache.stats().misses == 1);
 }
 
+void test_pinned_source_cannot_be_evicted() {
+    NativeCheckpointCache<std::string> cache(20, 2);
+    REQUIRE(cache.insert("source", "ss", image("source", 8), "host", 2));
+    REQUIRE(cache.pin("source"));
+    REQUIRE(cache.stats().sourcePinned);
+    REQUIRE(cache.insert("candidate", "sc", image("candidate", 8), "host", 2));
+    REQUIRE(!cache.insert("other", "so", image("other", 12), "host", 3));
+    REQUIRE(cache.peek("source") != nullptr);
+    REQUIRE(cache.peek("candidate") != nullptr);
+    cache.unpin();
+    REQUIRE(!cache.stats().sourcePinned);
+}
+
 }  // namespace
 
 int main() {
     test_bounded_lru_and_accounting();
     test_replacement_and_oversize_fail_closed();
     test_misses_are_measured();
+    test_pinned_source_cannot_be_evicted();
     std::cout << "native checkpoint cache tests passed\n";
     return 0;
 }

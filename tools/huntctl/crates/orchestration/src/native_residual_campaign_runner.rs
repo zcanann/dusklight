@@ -593,6 +593,7 @@ fn native_batch(
         maximum_ticks: usize::try_from(optimization.budgets.exploration_horizon_ticks)
             .map_err(native_error)?,
         verify_state_hashes: execution.verify_state_hashes,
+        checkpoint_cache: None,
         candidates: native_candidates,
     })
 }
@@ -631,6 +632,7 @@ fn exact_replay_batch(
         maximum_ticks: usize::try_from(optimization.budgets.exploration_horizon_ticks)
             .map_err(native_error)?,
         verify_state_hashes: execution.verify_state_hashes,
+        checkpoint_cache: None,
         candidates: native_candidates,
     })
 }
@@ -1606,6 +1608,7 @@ fn incumbent_demonstration_batch(
         maximum_ticks: usize::try_from(optimization.budgets.exploration_horizon_ticks)
             .map_err(native_error)?,
         verify_state_hashes: execution.verify_state_hashes,
+        checkpoint_cache: None,
         candidates: vec![NativeSuffixCandidate {
             id: "incumbent-demonstration".into(),
             actions: imported.actions,

@@ -443,6 +443,16 @@ bool parse_suffix_batch(
         std::string_view{"verify_state_hashes"},
         std::string_view{"candidates"},
     };
+    constexpr std::array CachedRootKeys{
+        std::string_view{"schema"},
+        std::string_view{"source_frame"},
+        std::string_view{"source_boundary_fingerprint"},
+        std::string_view{"checkpoint_validation"},
+        std::string_view{"maximum_ticks"},
+        std::string_view{"verify_state_hashes"},
+        std::string_view{"checkpoint_cache"},
+        std::string_view{"candidates"},
+    };
     constexpr std::array FrozenRootKeys{
         std::string_view{"schema"},
         std::string_view{"demonstration_mode"},
@@ -465,13 +475,16 @@ bool parse_suffix_batch(
     const bool legacy = schema == LegacySuffixBatchSchema;
     const bool previous = schema == PreviousSuffixBatchSchema;
     const bool reactive = schema == ReactiveSuffixBatchSchema;
+    const bool cached = schema == CachedSuffixBatchSchema;
     const bool factorized = schema == FactorizedSuffixBatchSchema;
     const bool legacyFrozen = schema == FrozenPolicySuffixBatchSchemaV6;
     const bool exploratoryFrozen = schema == SuffixBatchSchema;
     const bool frozen = legacyFrozen || exploratoryFrozen;
-    if ((!legacy && !previous && !reactive && !factorized && !frozen) ||
+    if ((!legacy && !previous && !reactive && !cached && !factorized && !frozen) ||
         !(legacy ? has_exact_keys(root, LegacyRootKeys) :
-                   frozen ? has_exact_keys(root, FrozenRootKeys) : has_exact_keys(root, RootKeys)) ||
+                   frozen ? has_exact_keys(root, FrozenRootKeys) :
+                   cached ? has_exact_keys(root, CachedRootKeys) :
+                            has_exact_keys(root, RootKeys)) ||
         !valid_boundary_fingerprint(root["source_boundary_fingerprint"]) ||
         !root["verify_state_hashes"].is_boolean() || !root["candidates"].is_array())
     {
@@ -494,6 +507,36 @@ bool parse_suffix_batch(
         return false;
     }
     parsed.verifyStateHashes = root["verify_state_hashes"].get<bool>();
+    if (cached) {
+        constexpr std::array CacheKeys{
+            std::string_view{"capacity_bytes"},
+            std::string_view{"capacity_entries"},
+            std::string_view{"source_identity"},
+            std::string_view{"source_route_ticks"},
+            std::string_view{"retain_candidate_checkpoints"},
+        };
+        const json& cache = root["checkpoint_cache"];
+        SuffixCheckpointCachePolicy policy;
+        if (!has_exact_keys(cache, CacheKeys) ||
+            !read_integer(cache["capacity_bytes"], std::size_t{1},
+                SuffixBatchMaximumCheckpointCacheBytes, policy.capacityBytes) ||
+            !read_integer(cache["capacity_entries"], std::size_t{1},
+                SuffixBatchMaximumCheckpointCacheEntries, policy.capacityEntries) ||
+            !read_integer(cache["source_route_ticks"], std::size_t{0},
+                SuffixBatchMaximumExpandedTicks, policy.sourceRouteTicks) ||
+            !cache["retain_candidate_checkpoints"].is_boolean() ||
+            !(cache["source_identity"].is_null() ||
+                valid_boundary_fingerprint(cache["source_identity"])))
+        {
+            error = "suffix batch checkpoint cache policy is invalid";
+            return false;
+        }
+        if (cache["source_identity"].is_string())
+            policy.sourceIdentity = cache["source_identity"].get<std::string>();
+        policy.retainCandidateCheckpoints =
+            cache["retain_candidate_checkpoints"].get<bool>();
+        parsed.checkpointCache = std::move(policy);
+    }
     if (frozen) {
         if (!root["demonstration_mode"].is_string()) {
             error = "suffix batch demonstration mode is invalid";
@@ -539,7 +582,10 @@ bool parse_suffix_batch(
     for (std::size_t index = 0; index < candidates.size(); ++index) {
         SuffixBatchCandidate candidate;
         if (!parse_candidate(candidates[index], parsed.maximumTicks,
-                factorized || frozen, frozen, reactive, candidate, error)) {
+                factorized || frozen, frozen,
+                reactive || (cached && candidates[index].is_object() &&
+                    candidates[index].contains("controller_program_hex")),
+                candidate, error)) {
             error = "candidate " + std::to_string(index) + ": " + error;
             return false;
         }
