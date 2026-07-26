@@ -1,0 +1,85 @@
+{
+  "schema": "dusklight-tactic-route-shared-generational-learning-report/v1",
+  "date": "2026-07-26",
+  "implementation_commit": "107b40dd5d",
+  "claim": "The learned treatment now imports authenticated transition evidence across deterministic four-episode generations and uses fitted Q values in generation two. On the sealed eight-seed Ordon workload it improves terminal success from 4/8 to 5/8 at slightly lower native-tick cost without reducing end-to-end throughput, but its best retained route regresses from 130 to 147 ticks. This is evidence that learning is active and currently over-exploits the first successful tactic; it does not satisfy the learning-value or route-quality gates.",
+  "bindings": {
+    "optimization_request": "routes/Glitch Exhibition/intro/benchmarks/ordon-tactic-q-discovery-v1.request.json",
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "execution_binding": "build/campaigns/ordon-q125-selected-opt-execution-20260725/execution.json",
+    "source_boundary_index": 506,
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "terminal": "authenticated F_SP103 to F_SP104 load-zone commit"
+  },
+  "workload": {
+    "seeds": [
+      104729,
+      222001,
+      333001,
+      444001,
+      555001,
+      687733,
+      865079,
+      890413
+    ],
+    "workers": 4,
+    "decisions_per_seed": 1,
+    "learned_episodes_per_generation": 4,
+    "proposal_policy": "learned",
+    "execution_strategy": "native_controller",
+    "proposals_per_decision": 4,
+    "epsilon_per_million": 350000
+  },
+  "before": {
+    "kind": "independent empty model per seed",
+    "report": "build/campaigns/ordon-q125-surface-multires-learned-8x1-w4-prevalidated-debug-20260726/run/report.json",
+    "wall_micros": 49980143,
+    "total_native_ticks": 1529,
+    "successful_seeds": 4,
+    "failed_seeds": 4,
+    "best_successful_route_ticks": 130,
+    "proposal_count": 32,
+    "unique_proposal_tapes": 23,
+    "unique_proposal_actions": 23,
+    "unique_proposal_endpoints": 23,
+    "native_ticks_per_second_millionths": 28831450,
+    "useful_decisions_per_second_millionths": 140055
+  },
+  "after": {
+    "kind": "shared authenticated corpus across two deterministic generations",
+    "report": "build/campaigns/ordon-q125-shared-generation-learned-8x1-w4-107b40dd5d-20260726/run/report.json",
+    "wall_micros": 47425275,
+    "total_native_ticks": 1455,
+    "successful_seeds": 5,
+    "failed_seeds": 3,
+    "best_successful_route_ticks": 147,
+    "generated_training_rows": 32,
+    "globally_unique_training_rows": 23,
+    "proposal_count": 32,
+    "unique_proposal_tapes": 22,
+    "unique_proposal_actions": 22,
+    "unique_proposal_endpoints": 22,
+    "duplicate_training_transitions_within_episodes": 0,
+    "generation_two_imported_training_rows_per_seed": 13,
+    "native_ticks_per_second_millionths": 30089440,
+    "useful_decisions_per_second_millionths": 147600,
+    "native_simulation_micros": 14580620,
+    "evidence_projection_and_persistence_micros": 19893304
+  },
+  "observations": {
+    "learning_is_active": "All generation-two seeds imported 13 globally deduplicated transition rows. Their retained 147-tick terminal tactic carried a fitted mean Q of 98.58 and was selected as greedy or as the explicit greedy control beside an epsilon proposal.",
+    "reliability": "Shared learning adds one terminal success while charging 74 fewer native ticks.",
+    "coverage": "The final campaign evaluates 22 distinct tapes and endpoints in 32 proposals, essentially matching the independent treatment's 23 while preserving an exploit control.",
+    "route_quality": "Every learned generation-two success repeats the first generation's 147-tick terminal tactic. The independent treatment had discovered a 130-tick success, so the critic has not demonstrated cost-sensitive improvement.",
+    "throughput": "Passing live corpora between generations in memory keeps campaign wall below the independent run despite the model-sharing barrier. This is a 5.4 percent useful-decision throughput increase, not the P1 order-of-magnitude target.",
+    "time_to_improvement": null
+  },
+  "gates": {
+    "shared_generational_learning_operational": true,
+    "semantic_evidence_authenticated": true,
+    "p1_order_of_magnitude_throughput_met": false,
+    "p5_learning_beats_equal_budget_baselines": false,
+    "p6_sub_125_route_met": false
+  },
+  "next_engineering_target": "Use equal native-tick treatment cells and cost-sensitive successful-tactic exploration so later generations search below the best observed terminal cost instead of repeatedly exploiting the first terminal tactic."
+}
