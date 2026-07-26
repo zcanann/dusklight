@@ -115,7 +115,8 @@ const ROUTE_TACTIC_TICK_COST: f32 = 0.01;
 const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
 const NAVIGABLE_SURFACE_MINIMUM_UP_NORMAL: f32 = 0.5;
 const NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE: f32 = 512.0;
-const NAVIGABLE_SURFACE_ROUTE_TARGETS: usize = 4;
+const NAVIGABLE_SURFACE_ROUTE_TARGETS: usize = 8;
+const NAVIGABLE_SURFACE_ROUTE_RESOLUTIONS: [usize; 3] = [4, 6, 8];
 const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
 const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2: &str = "dusklight-native-tactic-route-performance/v2";
@@ -4662,12 +4663,12 @@ struct NavigableSurfaceEdge {
     shared_edge: [[f32; 3]; 2],
 }
 
-fn goal_surface_route(
+fn goal_surface_routes(
     source: [f32; 3],
     goal: [f32; 3],
     room: i8,
     inventory: &WorldInventory,
-) -> Result<Option<(String, Vec<[f32; 3]>)>, NativeTacticRouteRunError> {
+) -> Result<Option<Vec<(String, Vec<[f32; 3]>)>>, NativeTacticRouteRunError> {
     if inventory.collisions.is_empty() {
         return Ok(None);
     }
@@ -4696,16 +4697,19 @@ fn goal_surface_route(
             shared_edge: edge.shared_edge.map(|point| [point.x, point.y, point.z]),
         })
         .collect::<Vec<_>>();
-    let Some(route) = shortest_navigable_surface_route(&nodes, &edges, source, goal)? else {
+    let Some(routes) = shortest_navigable_surface_routes(&nodes, &edges, source, goal)? else {
         return Ok(None);
     };
     let mut hasher = Sha256::new();
     hasher.update(b"dusklight-goal-surface-route/v1");
     hasher.update(inventory_sha256.0);
     hasher.update(room.to_le_bytes());
-    for coordinate in &route {
-        for component in coordinate {
-            hasher.update(component.to_bits().to_le_bytes());
+    for route in &routes {
+        hasher.update((route.len() as u64).to_le_bytes());
+        for coordinate in route {
+            for component in coordinate {
+                hasher.update(component.to_bits().to_le_bytes());
+            }
         }
     }
     let digest = hasher.finalize();
@@ -4713,15 +4717,25 @@ fn goal_surface_route(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    Ok(Some((format!("surface-graph:{identity}"), route)))
+    Ok(Some(
+        routes
+            .into_iter()
+            .map(|route| {
+                (
+                    format!("surface-graph:{identity}:resolution.{:02}", route.len()),
+                    route,
+                )
+            })
+            .collect(),
+    ))
 }
 
-fn shortest_navigable_surface_route(
+fn shortest_navigable_surface_routes(
     nodes: &[NavigableSurfaceNode],
     edges: &[NavigableSurfaceEdge],
     source: [f32; 3],
     goal: [f32; 3],
-) -> Result<Option<Vec<[f32; 3]>>, NativeTacticRouteRunError> {
+) -> Result<Option<Vec<Vec<[f32; 3]>>>, NativeTacticRouteRunError> {
     if nodes.is_empty()
         || source
             .iter()
@@ -4831,22 +4845,28 @@ fn shortest_navigable_surface_route(
         .chain(portal_centers)
         .chain(std::iter::once(goal))
         .collect::<Vec<_>>();
-    let centerline = simplify_planar_surface_route(
-        &centerline,
-        NAVIGABLE_SURFACE_ROUTE_TARGETS.saturating_add(1),
-    );
-    let route = centerline.into_iter().skip(1).collect::<Vec<_>>();
-    if !route.is_empty() && route.len() <= NAVIGABLE_SURFACE_ROUTE_TARGETS {
-        Ok(Some(route))
-    } else {
+    let mut routes = NAVIGABLE_SURFACE_ROUTE_RESOLUTIONS
+        .iter()
+        .map(|target_count| {
+            simplify_planar_surface_route(&centerline, target_count.saturating_add(1))
+                .into_iter()
+                .skip(1)
+                .collect::<Vec<_>>()
+        })
+        .filter(|route| !route.is_empty() && route.len() <= NAVIGABLE_SURFACE_ROUTE_TARGETS)
+        .collect::<Vec<_>>();
+    routes.dedup();
+    if routes.is_empty() {
         Err(route_message(
             "surface route simplification exceeded its bounded target count",
         ))
+    } else {
+        Ok(Some(routes))
     }
 }
 
 fn simplify_planar_surface_route(path: &[[f32; 3]], maximum_points: usize) -> Vec<[f32; 3]> {
-    if path.len() <= maximum_points || maximum_points < 2 {
+    if path.len() <= 2 || maximum_points < 2 {
         return path.to_vec();
     }
     let mut retained = BTreeSet::from([0_usize, path.len() - 1]);
@@ -4919,7 +4939,7 @@ fn goal_route_targets(
             "goal routes require finite source and target coordinates",
         ));
     }
-    let surface_route = goal_surface_route(source, goal, room, inventory)?;
+    let surface_routes = goal_surface_routes(source, goal, room, inventory)?;
     let paths = inventory
         .paths
         .iter()
@@ -4927,7 +4947,7 @@ fn goal_route_targets(
         .map(|path| ((path.source_sha256, path.record_index), path))
         .collect::<BTreeMap<_, _>>();
     if paths.is_empty() {
-        return fallback_goal_routes(source, goal, surface_route);
+        return fallback_goal_routes(source, goal, surface_routes);
     }
     let points = inventory
         .path_points
@@ -5032,7 +5052,7 @@ fn goal_route_targets(
     });
     candidates.truncate(5);
     if candidates.is_empty() {
-        return fallback_goal_routes(source, goal, surface_route);
+        return fallback_goal_routes(source, goal, surface_routes);
     }
 
     let mut route_sequences = candidates
@@ -5043,11 +5063,13 @@ fn goal_route_targets(
         .iter()
         .map(|candidate| candidate.identity.clone())
         .collect::<Vec<_>>();
-    if let Some((identity, route)) = surface_route
-        && !route_sequences.iter().any(|candidate| candidate == &route)
-    {
-        route_sequences.insert(0, route);
-        authored_route_ids.insert(0, identity);
+    if let Some(surface_routes) = surface_routes {
+        for (identity, route) in surface_routes.into_iter().rev() {
+            if !route_sequences.iter().any(|candidate| candidate == &route) {
+                route_sequences.insert(0, route);
+                authored_route_ids.insert(0, identity);
+            }
+        }
         route_sequences.truncate(5);
         authored_route_ids.truncate(5);
     }
@@ -5067,25 +5089,30 @@ fn goal_route_targets(
 fn fallback_goal_routes(
     source: [f32; 3],
     goal: [f32; 3],
-    surface_route: Option<(String, Vec<[f32; 3]>)>,
+    surface_routes: Option<Vec<(String, Vec<[f32; 3]>)>>,
 ) -> Result<(Vec<[f32; 3]>, Vec<Vec<[f32; 3]>>, Vec<String>), NativeTacticRouteRunError> {
     let (mut targets, mut routes) = goal_corridor_targets(source, goal)?;
     let mut route_ids = Vec::new();
-    if let Some((identity, route)) = surface_route {
-        for coordinate in &route {
-            if targets.len() == MAX_GOAL_SEEK_TARGETS {
-                break;
-            }
-            if !targets
-                .iter()
-                .any(|target| target.map(f32::to_bits) == coordinate.map(f32::to_bits))
-            {
-                targets.push(*coordinate);
+    if let Some(surface_routes) = surface_routes {
+        for (_, route) in &surface_routes {
+            for coordinate in route {
+                if targets.len() == MAX_GOAL_SEEK_TARGETS {
+                    break;
+                }
+                if !targets
+                    .iter()
+                    .any(|target| target.map(f32::to_bits) == coordinate.map(f32::to_bits))
+                {
+                    targets.push(*coordinate);
+                }
             }
         }
-        routes.insert(0, route);
+        for (identity, route) in surface_routes.into_iter().rev() {
+            routes.insert(0, route);
+            route_ids.insert(0, identity);
+        }
         routes.truncate(5);
-        route_ids.push(identity);
+        route_ids.truncate(5);
     }
     Ok((targets, routes, route_ids))
 }
@@ -6363,14 +6390,14 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let route =
-            shortest_navigable_surface_route(&nodes, &edges, [0.0, 10.0, 0.0], [400.0, 10.0, 0.0])
+        let routes =
+            shortest_navigable_surface_routes(&nodes, &edges, [0.0, 10.0, 0.0], [400.0, 10.0, 0.0])
                 .unwrap()
-                .expect("connected ground surfaces must produce a route");
+                .expect("connected ground surfaces must produce routes");
 
-        assert_eq!(route, vec![[400.0, 10.0, 0.0]]);
+        assert_eq!(routes, vec![vec![[400.0, 10.0, 0.0]]]);
         assert!(
-            shortest_navigable_surface_route(
+            shortest_navigable_surface_routes(
                 &nodes,
                 &edges[..2],
                 [0.0, 10.0, 0.0],
@@ -6412,7 +6439,7 @@ mod tests {
         let (targets, routes, ids) = fallback_goal_routes(
             source,
             goal,
-            Some(("surface-graph:test".into(), surface.clone())),
+            Some(vec![("surface-graph:test".into(), surface.clone())]),
         )
         .unwrap();
 

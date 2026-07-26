@@ -5,7 +5,8 @@ use crate::tactic_asset::{
     TacticAssetCatalog, TacticAssetError, TacticAssetSource, TacticCatalogEntry,
 };
 use dusklight_control::controller_program::{
-    ControllerProgram, Layer, MAX_LAYERS, Operation, StickBlend,
+    ControllerProgram, Layer, MAX_LAYERS, MAX_SEEK_COORDINATE_SEQUENCE_POINTS, Operation,
+    StickBlend,
 };
 use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::roll_option::RollOptionPlan;
@@ -200,9 +201,9 @@ pub fn goal_conditioned_route_tactic_catalog(
                 "goal seek route sequence is invalid".into(),
             ));
         }
-        push(
-            &mut entries,
-            format!("goal.seek.route.{index:02}"),
+        let sequence_layers =
+            coordinate_sequence_layers(coordinates, route_sequence_maximum_ticks)?;
+        let route_source = if coordinates.len() <= MAX_SEEK_COORDINATE_SEQUENCE_POINTS {
             TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
                 GenericTactic::SeekCoordinateSequence {
                     coordinates_f32_bits: coordinates
@@ -222,24 +223,21 @@ pub fn goal_conditioned_route_tactic_catalog(
                     magnitude: 127,
                 },
                 route_sequence_maximum_ticks,
-            )),
+            ))
+        } else {
+            TacticAssetSource::ReactiveController(ControllerProgram {
+                duration_frames: route_sequence_maximum_ticks,
+                layers: sequence_layers.clone(),
+            })
+        };
+        push(
+            &mut entries,
+            format!("goal.seek.route.{index:02}"),
+            route_source,
         )?;
         for period in GOAL_ROUTE_ROLL_PERIODS {
             for phase in [0, period / 2] {
-                let mut layers = vec![Layer {
-                    start_frame: 0,
-                    duration_frames: route_sequence_maximum_ticks,
-                    operation: Operation::SeekCoordinateSequence {
-                        blend: StickBlend::Replace,
-                        coordinates_xz: coordinates
-                            .iter()
-                            .map(|coordinate| [coordinate[0], coordinate[2]])
-                            .collect(),
-                        intermediate_stop_radius: INTERMEDIATE_GOAL_SEEK_TOLERANCE,
-                        final_stop_radius: 0.0,
-                        magnitude: 127,
-                    },
-                }];
+                let mut layers = sequence_layers.clone();
                 let mut pulse = phase;
                 while pulse < route_sequence_maximum_ticks && layers.len() < MAX_LAYERS {
                     layers.push(Layer {
@@ -305,6 +303,50 @@ pub fn goal_conditioned_route_tactic_catalog(
         )?;
     }
     TacticAssetCatalog::new(entries)
+}
+
+fn coordinate_sequence_layers(
+    coordinates: &[[f32; 3]],
+    duration_frames: u32,
+) -> Result<Vec<Layer>, TacticAssetError> {
+    if coordinates.is_empty() || duration_frames == 0 {
+        return Err(TacticAssetError::InvalidAsset(
+            "coordinate sequence composition is empty".into(),
+        ));
+    }
+    let chunk_count = coordinates
+        .len()
+        .div_ceil(MAX_SEEK_COORDINATE_SEQUENCE_POINTS);
+    if chunk_count > MAX_LAYERS || duration_frames < chunk_count as u32 {
+        return Err(TacticAssetError::InvalidAsset(
+            "coordinate sequence composition exceeds the controller bounds".into(),
+        ));
+    }
+    let chunk_size = coordinates.len().div_ceil(chunk_count);
+    let mut layers = Vec::with_capacity(chunk_count);
+    for (chunk_index, chunk) in coordinates.chunks(chunk_size).enumerate() {
+        let start_frame = duration_frames * chunk_index as u32 / chunk_count as u32;
+        let end_frame = duration_frames * (chunk_index as u32 + 1) / chunk_count as u32;
+        layers.push(Layer {
+            start_frame,
+            duration_frames: end_frame - start_frame,
+            operation: Operation::SeekCoordinateSequence {
+                blend: StickBlend::Replace,
+                coordinates_xz: chunk
+                    .iter()
+                    .map(|coordinate| [coordinate[0], coordinate[2]])
+                    .collect(),
+                intermediate_stop_radius: INTERMEDIATE_GOAL_SEEK_TOLERANCE,
+                final_stop_radius: if chunk_index + 1 == chunk_count {
+                    0.0
+                } else {
+                    INTERMEDIATE_GOAL_SEEK_TOLERANCE
+                },
+                magnitude: 127,
+            },
+        });
+    }
+    Ok(layers)
 }
 
 fn push(
@@ -466,6 +508,60 @@ mod tests {
                 && f32::from_bits(*tolerance_f32_bits) == INTERMEDIATE_GOAL_SEEK_TOLERANCE
                 && minimum_ticks == maximum_ticks
         ));
+    }
+
+    #[test]
+    fn long_goal_routes_are_composed_inside_the_existing_controller_wire_limit() {
+        let route = (0..8)
+            .map(|index| [index as f32 * 100.0, 10.0, index as f32 * -200.0])
+            .collect::<Vec<_>>();
+        let catalog =
+            goal_conditioned_route_tactic_catalog(&[route[7]], &[route], 160, 160).unwrap();
+
+        for option_id in [
+            "goal.seek.route.00",
+            "goal.seek.route.00.roll.period.20.phase.00",
+        ] {
+            let TacticAssetSource::ReactiveController(program) =
+                catalog.entry(option_id).unwrap().source()
+            else {
+                panic!("long routes must be one composed native controller program");
+            };
+            let sequence_layers = program
+                .layers
+                .iter()
+                .filter(|layer| matches!(layer.operation, Operation::SeekCoordinateSequence { .. }))
+                .collect::<Vec<_>>();
+            assert_eq!(sequence_layers.len(), 2);
+            assert_eq!(
+                sequence_layers
+                    .iter()
+                    .map(|layer| (layer.start_frame, layer.duration_frames))
+                    .collect::<Vec<_>>(),
+                vec![(0, 80), (80, 80)]
+            );
+            assert!(sequence_layers.iter().all(|layer| {
+                matches!(
+                    &layer.operation,
+                    Operation::SeekCoordinateSequence { coordinates_xz, .. }
+                        if coordinates_xz.len() == 4
+                )
+            }));
+            assert!(matches!(
+                sequence_layers[0].operation,
+                Operation::SeekCoordinateSequence {
+                    final_stop_radius: INTERMEDIATE_GOAL_SEEK_TOLERANCE,
+                    ..
+                }
+            ));
+            assert!(matches!(
+                sequence_layers[1].operation,
+                Operation::SeekCoordinateSequence {
+                    final_stop_radius: 0.0,
+                    ..
+                }
+            ));
+        }
     }
 
     #[test]
