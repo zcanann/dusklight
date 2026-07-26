@@ -997,7 +997,10 @@ fn execute_reactive_controller_native<W: PersistentTacticBatchWorker>(
         if !same_pad(native_step.chosen_pad, frame.pads[0])
             || !same_pad(native_step.consumed_pad, frame.pads[0])
         {
-            return Err(NativeTacticWorkerError::PadMismatch);
+            return Err(NativeTacticWorkerError::Observation(format!(
+                "native reactive controller PAD mismatch at local tick {index}: chosen {:?}, consumed {:?}, replayed {:?}",
+                native_step.chosen_pad, native_step.consumed_pad, frame.pads[0]
+            )));
         }
         if realized.end.is_some() && index + 1 != option_steps.len() {
             return Err(NativeTacticWorkerError::DetachedResult(

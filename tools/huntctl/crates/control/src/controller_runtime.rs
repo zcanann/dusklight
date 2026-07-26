@@ -74,9 +74,16 @@ pub struct ControllerRuntimeStep {
 #[derive(Clone, Debug)]
 pub struct ControllerProgramStepper {
     program: ControllerProgram,
+    coordinate_sequences: Vec<CoordinateSequenceState>,
     next_frame: u32,
     previous_boundary: Option<(u64, u64, u64)>,
     stopped: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct CoordinateSequenceState {
+    coordinate_index: usize,
+    previous_local_frame: Option<u32>,
 }
 
 impl ControllerProgramStepper {
@@ -85,6 +92,7 @@ impl ControllerProgramStepper {
             .validate()
             .map_err(|error| ControllerRuntimeError::InvalidProgram(error.to_string()))?;
         Ok(Self {
+            coordinate_sequences: vec![CoordinateSequenceState::default(); program.layers.len()],
             program,
             next_frame: 0,
             previous_boundary: None,
@@ -159,8 +167,13 @@ impl ControllerProgramStepper {
                     substick_limit,
                 } => clamp = Some((*main_limit, *substick_limit)),
                 operation => {
-                    let evaluated =
-                        evaluate_stick(operation, local, layer.duration_frames, observation)?;
+                    let evaluated = evaluate_stick(
+                        operation,
+                        local,
+                        layer.duration_frames,
+                        observation,
+                        &mut self.coordinate_sequences[index],
+                    )?;
                     append_unique(&mut query.queried_fields, &evaluated.queried_fields);
                     if let Some(stable_id) = evaluated.selected_actor_stable_id {
                         query.selected_actor_stable_ids.push(stable_id);
@@ -260,6 +273,7 @@ fn evaluate_stick(
     local_frame: u32,
     duration: u32,
     observation: &ControllerRuntimeObservation,
+    coordinate_sequence: &mut CoordinateSequenceState,
 ) -> Result<EvaluatedStick, ControllerRuntimeError> {
     use ControllerObservationField as Field;
     let mut fields = Vec::new();
@@ -350,13 +364,29 @@ fn evaluate_stick(
             ..
         } => {
             fields.extend([Field::PlayerPosition, Field::CameraYaw]);
-            let target_index = forward_coordinate_index_xz(
-                [
-                    observation.player_position[0],
-                    observation.player_position[2],
-                ],
-                coordinates_xz,
-            );
+            let player = [
+                observation.player_position[0],
+                observation.player_position[2],
+            ];
+            if local_frame == 0
+                || coordinate_sequence.previous_local_frame.is_none()
+                || coordinate_sequence
+                    .previous_local_frame
+                    .is_some_and(|previous| previous + 1 != local_frame)
+            {
+                coordinate_sequence.coordinate_index =
+                    forward_coordinate_index_xz(player, coordinates_xz);
+            }
+            coordinate_sequence.previous_local_frame = Some(local_frame);
+            while coordinate_sequence.coordinate_index + 1 < coordinates_xz.len() {
+                let target = coordinates_xz[coordinate_sequence.coordinate_index];
+                if (player[0] - target[0]).hypot(player[1] - target[1]) > *intermediate_stop_radius
+                {
+                    break;
+                }
+                coordinate_sequence.coordinate_index += 1;
+            }
+            let target_index = coordinate_sequence.coordinate_index;
             let target = coordinates_xz[target_index];
             seek(
                 observation,
@@ -868,5 +898,42 @@ mod tests {
             Some(ControllerRuntimeEnd::TargetLost { layer_index: 0 })
         );
         assert_eq!(lost.query.target_lost_layer, Some(0));
+    }
+
+    #[test]
+    fn coordinate_sequence_advances_immediately_and_never_backtracks() {
+        let program = ControllerProgram {
+            duration_frames: 3,
+            layers: vec![crate::controller_program::Layer {
+                start_frame: 0,
+                duration_frames: 3,
+                operation: Operation::SeekCoordinateSequence {
+                    blend: StickBlend::Replace,
+                    coordinates_xz: vec![[0.0, 0.0], [100.0, 0.0], [200.0, 0.0]],
+                    intermediate_stop_radius: 10.0,
+                    final_stop_radius: 0.0,
+                    magnitude: 127,
+                },
+            }],
+        };
+        let mut stepper = ControllerProgramStepper::new(program).unwrap();
+        let mut observed = observation();
+
+        let first = stepper.step(&observed).unwrap().frame.unwrap();
+        assert_eq!(first.pads[0].stick_x, -127);
+
+        observed.boundary_index += 1;
+        observed.simulation_tick += 1;
+        observed.tape_frame += 1;
+        observed.player_position[0] = 100.0;
+        let second = stepper.step(&observed).unwrap().frame.unwrap();
+        assert_eq!(second.pads[0].stick_x, -127);
+
+        observed.boundary_index += 1;
+        observed.simulation_tick += 1;
+        observed.tape_frame += 1;
+        observed.player_position[0] = 50.0;
+        let third = stepper.step(&observed).unwrap().frame.unwrap();
+        assert_eq!(third.pads[0].stick_x, -127);
     }
 }
