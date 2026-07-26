@@ -399,7 +399,21 @@ pub fn ensure_terminal_cost_refinement(
     // to the nearest few values traps refinement in whichever cadence/phase
     // basin happened to produce the first terminal route.
     let lane = (acquisition_partition % maximum_proposals as u64) as usize;
-    let refinement_index = if lane == 0 || candidates.len() == 1 {
+    let refinement_index = if lane == 0 {
+        candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(index, candidate)| {
+                local_parameter_value(ranking, candidate).map(|value| (index, value))
+            })
+            .max_by(|left, right| {
+                left.1
+                    .total_cmp(&right.1)
+                    .then_with(|| right.0.cmp(&left.0))
+            })
+            .map(|(index, _)| index)
+            .unwrap_or(0)
+    } else if candidates.len() == 1 {
         0
     } else {
         lane.saturating_mul(candidates.len() - 1)
@@ -826,6 +840,106 @@ fn parameter_distance(left: &OptionParameter, right: &OptionParameter) -> u128 {
             }
         }
         (left, right) => u128::from(left != right),
+    }
+}
+
+/// Predict an unseen parameterization from fitted values in the same exact
+/// structural family. This is deliberately acquisition-only: descriptors
+/// from another controller base or with another typed parameter schema remain
+/// unsupported and never receive an invented critic value.
+fn local_parameter_value(
+    ranking: &LiveTacticRanking,
+    candidate: &OptionActionDescriptor,
+) -> Option<f64> {
+    let keys = tunable_parameter_keys(candidate);
+    let family = ranking
+        .values
+        .ranked
+        .iter()
+        .filter(|value| {
+            same_refinement_family(candidate, &value.descriptor)
+                && tunable_parameter_keys(&value.descriptor) == keys
+        })
+        .collect::<Vec<_>>();
+    if family.len() < 2 {
+        return None;
+    }
+    let family_choices = ranking
+        .choices
+        .iter()
+        .filter(|choice| {
+            same_refinement_family(candidate, &choice.descriptor)
+                && tunable_parameter_keys(&choice.descriptor) == keys
+        })
+        .map(|choice| &choice.descriptor)
+        .collect::<Vec<_>>();
+    let scales = keys
+        .iter()
+        .filter_map(|key| {
+            let values = family_choices
+                .iter()
+                .filter_map(|descriptor| descriptor.parameters.get(*key))
+                .filter_map(numeric_parameter)
+                .collect::<Vec<_>>();
+            let minimum = values.iter().copied().min_by(f64::total_cmp)?;
+            let maximum = values.iter().copied().max_by(f64::total_cmp)?;
+            let range = maximum - minimum;
+            (range > f64::EPSILON && range.is_finite()).then_some((*key, range))
+        })
+        .collect::<Vec<_>>();
+    if scales.is_empty() {
+        return None;
+    }
+    let mut neighbors = family
+        .into_iter()
+        .filter_map(|value| {
+            let distance = normalized_parameter_distance(candidate, &value.descriptor, &scales)?;
+            (distance > 0.0 && distance.is_finite() && value.mean_q.is_finite())
+                .then_some((distance, value.mean_q))
+        })
+        .collect::<Vec<_>>();
+    if neighbors.len() < 2 {
+        return None;
+    }
+    neighbors.sort_by(|left, right| left.0.total_cmp(&right.0));
+    neighbors.truncate(4);
+    let (weighted_value, total_weight) =
+        neighbors
+            .into_iter()
+            .fold((0.0_f64, 0.0_f64), |(value, weight), (distance, q)| {
+                let neighbor_weight = 1.0 / distance.max(1.0e-6);
+                (value + neighbor_weight * q, weight + neighbor_weight)
+            });
+    (total_weight > 0.0)
+        .then_some(weighted_value / total_weight)
+        .filter(|value| value.is_finite())
+}
+
+fn normalized_parameter_distance(
+    left: &OptionActionDescriptor,
+    right: &OptionActionDescriptor,
+    scales: &[(&str, f64)],
+) -> Option<f64> {
+    scales.iter().try_fold(0.0_f64, |distance, (key, scale)| {
+        let left = numeric_parameter(left.parameters.get(*key)?)?;
+        let right = numeric_parameter(right.parameters.get(*key)?)?;
+        let delta = (left - right) / scale;
+        Some(delta.mul_add(delta, distance))
+    })
+}
+
+fn numeric_parameter(parameter: &OptionParameter) -> Option<f64> {
+    match parameter {
+        OptionParameter::Bool(value) => Some(f64::from(u8::from(*value))),
+        OptionParameter::Signed(value) => Some(*value as f64),
+        OptionParameter::Unsigned(value) => Some(*value as f64),
+        OptionParameter::F32Bits(bits) => {
+            let value = f32::from_bits(*bits);
+            value.is_finite().then_some(f64::from(value))
+        }
+        OptionParameter::Vec3F32Bits(_) | OptionParameter::Text(_) | OptionParameter::Digest(_) => {
+            None
+        }
     }
 }
 
@@ -1410,6 +1524,67 @@ mod tests {
                 rolling_route(24).option_id.clone()
             ])
         );
+
+        let period_21 = rolling_route(21);
+        let period_23 = rolling_route(23);
+        let period_30 = rolling_route(30);
+        let supported_24 = rolling_route(24);
+        let learned_ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([39; 32]),
+            action_universe_sha256: Digest([40; 32]),
+            choices: [
+                period_20.clone(),
+                incumbent.clone(),
+                supported_24.clone(),
+                period_21.clone(),
+                period_23.clone(),
+                period_30.clone(),
+            ]
+            .into_iter()
+            .map(choice)
+            .collect(),
+            values: AvailableOptionRanking {
+                ranked: vec![
+                    RankedOption {
+                        action_id: 1,
+                        descriptor: incumbent.clone(),
+                        mean_q: 99.0,
+                        ensemble_variance: 0.0,
+                    },
+                    RankedOption {
+                        action_id: 2,
+                        descriptor: supported_24,
+                        mean_q: 98.5,
+                        ensemble_variance: 0.0,
+                    },
+                    RankedOption {
+                        action_id: 0,
+                        descriptor: period_20.clone(),
+                        mean_q: 98.0,
+                        ensemble_variance: 0.0,
+                    },
+                ],
+                unsupported: vec![period_21.clone(), period_23.clone(), period_30.clone()],
+            },
+        };
+        let mut learned_proposals = vec![SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: learned_ranking.learner_snapshot_sha256,
+            decision_index: 0,
+            descriptor: incumbent.clone(),
+            reason: TacticSelectionReason::Greedy,
+            exploration_draw: 0,
+        }];
+        ensure_terminal_cost_refinement(
+            &learned_ranking,
+            &[period_21, period_23.clone(), period_30],
+            Some(&incumbent),
+            0,
+            4,
+            &mut learned_proposals,
+        )
+        .unwrap();
+        assert_eq!(learned_proposals[1].descriptor, period_23);
 
         let wide_candidates = (12..=32)
             .filter(|period| *period != 22)
