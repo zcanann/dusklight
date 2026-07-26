@@ -807,6 +807,20 @@ impl TacticAssetAdapter for ControllerProgram {
             "duration_ticks".into(),
             OptionParameter::Unsigned(u64::from(self.duration_frames)),
         );
+        if let Some((mask, period_ticks, phase_tick)) = periodic_button_overlay(self) {
+            parameters.insert(
+                "button_pulse_mask".into(),
+                OptionParameter::Unsigned(u64::from(mask)),
+            );
+            parameters.insert(
+                "button_pulse_period_ticks".into(),
+                OptionParameter::Unsigned(u64::from(period_ticks)),
+            );
+            parameters.insert(
+                "button_pulse_phase_tick".into(),
+                OptionParameter::Unsigned(u64::from(phase_tick)),
+            );
+        }
         checked(TacticAssetDescription {
             schema: TACTIC_ASSET_ADAPTER_SCHEMA_V1.into(),
             kind: TacticAssetKind::ReactiveController,
@@ -899,6 +913,33 @@ impl TacticAssetAdapter for ControllerProgram {
         exact.validate_against(&description)?;
         Ok(Some(exact))
     }
+}
+
+/// Describe the common controller composition of a movement layer plus one
+/// evenly spaced button pulse. Exposing these values as typed option
+/// parameters lets acquisition compare nearby controller variants without
+/// parsing option IDs or treating the opaque program digest as geometry.
+fn periodic_button_overlay(program: &ControllerProgram) -> Option<(u16, u32, u32)> {
+    let pulses = program
+        .layers
+        .iter()
+        .filter_map(|layer| match layer.operation {
+            Operation::Buttons { mask } if layer.duration_frames == 1 => {
+                Some((layer.start_frame, mask))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if pulses.len() < 2
+        || pulses.iter().any(|(_, mask)| *mask != pulses[0].1)
+        || pulses
+            .windows(2)
+            .any(|pair| pair[1].0.saturating_sub(pair[0].0) != pulses[1].0 - pulses[0].0)
+    {
+        return None;
+    }
+    let period_ticks = pulses[1].0 - pulses[0].0;
+    (period_ticks > 0).then_some((pulses[0].1, period_ticks, pulses[0].0))
 }
 
 fn checked(

@@ -45,6 +45,9 @@ pub enum TacticSelectionReason {
     BatchUncertainty,
     BatchValue,
     BatchCoverage,
+    /// Re-evaluate an untried nearby parameterization of a terminal action so
+    /// route cost can improve after the first successful completion.
+    TerminalCostRefinement,
     RandomBaseline,
     StructuredBaseline,
     /// Compatibility label used by older checkpoints and callers that inject
@@ -339,6 +342,78 @@ pub fn choose_tactic_batch_for_policy(
     }
 }
 
+/// Reserve one learned-policy batch slot for local improvement after this
+/// state cell has produced a terminal action.
+///
+/// The incumbent remains in the batch through the ordinary greedy lane. This
+/// function inserts the closest untried, applicable descriptor in the same
+/// structural family immediately after that control, displacing only the last
+/// acquisition proposal when the batch is full.
+pub fn ensure_terminal_cost_refinement(
+    ranking: &LiveTacticRanking,
+    state_untried: &[OptionActionDescriptor],
+    terminal_incumbent: Option<&OptionActionDescriptor>,
+    maximum_proposals: usize,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticExplorationError> {
+    let Some(incumbent) = terminal_incumbent else {
+        return Ok(());
+    };
+    if maximum_proposals <= 1
+        || proposals.is_empty()
+        || proposals.len() > maximum_proposals
+        || ranking.learner_snapshot_sha256 == Digest::ZERO
+    {
+        return if proposals.len() <= maximum_proposals && !proposals.is_empty() {
+            Ok(())
+        } else {
+            Err(TacticExplorationError::InvalidInput)
+        };
+    }
+    let mut candidates = ranking
+        .choices
+        .iter()
+        .filter(|choice| choice.applicable)
+        .map(|choice| &choice.descriptor)
+        .filter(|descriptor| {
+            state_untried.contains(descriptor)
+                && !proposals
+                    .iter()
+                    .any(|proposal| proposal.descriptor == **descriptor)
+                && same_refinement_family(incumbent, descriptor)
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        refinement_distance(incumbent, left)
+            .cmp(&refinement_distance(incumbent, right))
+            .then_with(|| left.option_id.cmp(&right.option_id))
+    });
+    let Some(descriptor) = candidates.first().copied().cloned() else {
+        return Ok(());
+    };
+    let proposal = SelectedTactic {
+        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+        learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+        decision_index: proposals[0].decision_index,
+        descriptor,
+        reason: TacticSelectionReason::TerminalCostRefinement,
+        exploration_draw: proposals[0].exploration_draw,
+    };
+    // Keep the primary and, when epsilon led, the explicit greedy control at
+    // the front. The refinement lane follows those controls and therefore
+    // cannot be discarded by a later tail-replacement diversity constraint.
+    let insertion_index = usize::from(
+        proposals.len() > 1
+            && ranking.values.ranked.first().is_some_and(|greedy| {
+                proposals[1].descriptor == greedy.descriptor
+                    && proposals[0].descriptor != greedy.descriptor
+            }),
+    ) + 1;
+    proposals.insert(insertion_index.min(proposals.len()), proposal);
+    proposals.truncate(maximum_proposals);
+    Ok(())
+}
+
 fn choose_random_valid_batch(
     ranking: &LiveTacticRanking,
     decision_index: u64,
@@ -557,6 +632,65 @@ fn is_route_sequence(descriptor: &OptionActionDescriptor) -> bool {
         // button overlays such as rolling, so they must remain in the same
         // exploration class as their native coordinate-sequence counterparts.
         || descriptor.option_id.starts_with("goal.seek.route.")
+}
+
+fn same_refinement_family(
+    incumbent: &OptionActionDescriptor,
+    candidate: &OptionActionDescriptor,
+) -> bool {
+    if is_route_sequence(incumbent) || is_route_sequence(candidate) {
+        return is_route_sequence(incumbent) && is_route_sequence(candidate);
+    }
+    incumbent.option_type == candidate.option_type
+        && tunable_parameter_keys(incumbent) == tunable_parameter_keys(candidate)
+}
+
+fn tunable_parameter_keys(descriptor: &OptionActionDescriptor) -> Vec<&str> {
+    descriptor
+        .parameters
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !matches!(*key, "program_sha256" | "duration_ticks"))
+        .collect()
+}
+
+fn refinement_distance(
+    incumbent: &OptionActionDescriptor,
+    candidate: &OptionActionDescriptor,
+) -> u128 {
+    let mut distance = 0_u128;
+    let keys = tunable_parameter_keys(incumbent);
+    for key in keys {
+        let Some(left) = incumbent.parameters.get(key) else {
+            continue;
+        };
+        let Some(right) = candidate.parameters.get(key) else {
+            return u128::MAX;
+        };
+        distance = distance.saturating_add(parameter_distance(left, right));
+    }
+    distance
+}
+
+fn parameter_distance(left: &OptionParameter, right: &OptionParameter) -> u128 {
+    match (left, right) {
+        (OptionParameter::Unsigned(left), OptionParameter::Unsigned(right)) => {
+            u128::from(left.abs_diff(*right))
+        }
+        (OptionParameter::Signed(left), OptionParameter::Signed(right)) => {
+            u128::from(left.abs_diff(*right))
+        }
+        (OptionParameter::F32Bits(left), OptionParameter::F32Bits(right)) => {
+            let left = f32::from_bits(*left);
+            let right = f32::from_bits(*right);
+            if left.is_finite() && right.is_finite() {
+                ((left - right).abs() * 1_000_000.0).round() as u128
+            } else {
+                u128::MAX
+            }
+        }
+        (left, right) => u128::from(left != right),
+    }
 }
 
 fn deterministic_index(seed: u64, decision_index: u64, state: Digest, len: usize) -> usize {
@@ -960,6 +1094,91 @@ mod tests {
         let prioritized = prioritized_unsupported(&unsupported, false);
 
         assert_eq!(prioritized, vec![&rolling_route, &route]);
+    }
+
+    #[test]
+    fn terminal_cost_refinement_preserves_control_and_selects_nearest_untried_variant() {
+        fn rolling_route(period: u64) -> OptionActionDescriptor {
+            let mut route = descriptor(
+                &format!("goal.seek.route.00.roll.period.{period:02}.phase.00"),
+                OptionType::Custom("reactive_controller".into()),
+            );
+            route.parameters.insert(
+                "program_sha256".into(),
+                OptionParameter::Digest(Digest([period as u8; 32])),
+            );
+            route
+                .parameters
+                .insert("duration_ticks".into(), OptionParameter::Unsigned(160));
+            route
+                .parameters
+                .insert("button_pulse_mask".into(), OptionParameter::Unsigned(8));
+            route.parameters.insert(
+                "button_pulse_period_ticks".into(),
+                OptionParameter::Unsigned(period),
+            );
+            route.parameters.insert(
+                "button_pulse_phase_tick".into(),
+                OptionParameter::Unsigned(0),
+            );
+            route
+        }
+
+        let incumbent = rolling_route(22);
+        let period_20 = rolling_route(20);
+        let period_24 = rolling_route(24);
+        let escape = descriptor("interact", OptionType::Interact);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([31; 32]),
+            action_universe_sha256: Digest([32; 32]),
+            choices: vec![
+                choice(incumbent.clone()),
+                choice(period_20.clone()),
+                choice(period_24.clone()),
+                choice(escape.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: incumbent.clone(),
+                    mean_q: 98.5,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: vec![period_20.clone(), period_24.clone(), escape.clone()],
+            },
+        };
+        let mut proposals = choose_tactic_batch_with_state_untried(
+            &ranking,
+            4,
+            TacticExplorationConfig {
+                seed: 7,
+                epsilon_per_million: 0,
+            },
+            &[period_20.clone(), period_24, escape],
+            1,
+        )
+        .unwrap();
+        let mut coverage = proposals[0].clone();
+        coverage.descriptor = descriptor("interact", OptionType::Interact);
+        coverage.reason = TacticSelectionReason::BatchCoverage;
+        proposals.push(coverage);
+
+        ensure_terminal_cost_refinement(
+            &ranking,
+            &[period_20.clone(), rolling_route(24)],
+            Some(&incumbent),
+            3,
+            &mut proposals,
+        )
+        .unwrap();
+
+        assert_eq!(proposals.len(), 3);
+        assert_eq!(proposals[0].descriptor, incumbent);
+        assert_eq!(proposals[1].descriptor, period_20);
+        assert_eq!(
+            proposals[1].reason,
+            TacticSelectionReason::TerminalCostRefinement
+        );
     }
 
     #[test]

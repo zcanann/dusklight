@@ -374,6 +374,7 @@ fn stick_heading(index: usize, magnitude: i8) -> [i8; 2] {
 mod tests {
     use super::*;
     use crate::tactic_asset::PreparedTacticExecution;
+    use dusklight_control::option_execution::OptionParameter;
     use std::collections::BTreeSet;
 
     #[test]
@@ -462,6 +463,22 @@ mod tests {
         let TacticAssetSource::ReactiveController(program) = rolling.source() else {
             panic!("rolling goal route must be one native controller program");
         };
+        assert_eq!(
+            rolling
+                .description()
+                .option
+                .parameters
+                .get("button_pulse_period_ticks"),
+            Some(&OptionParameter::Unsigned(20))
+        );
+        assert_eq!(
+            rolling
+                .description()
+                .option
+                .parameters
+                .get("button_pulse_phase_tick"),
+            Some(&OptionParameter::Unsigned(0))
+        );
         assert!(matches!(
             program.layers[0].operation,
             Operation::SeekCoordinateSequence { .. }

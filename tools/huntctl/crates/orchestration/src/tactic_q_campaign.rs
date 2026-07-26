@@ -33,6 +33,7 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
     TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
+    ensure_terminal_cost_refinement,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -1447,6 +1448,15 @@ impl TacticQCampaign {
             .into_iter()
             .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
             .collect::<Vec<_>>();
+        let terminal_incumbent = self
+            .training_replay
+            .iter()
+            .filter(|transition| {
+                transition.value_sample.terminal
+                    && tactic_state_descriptor(&transition.before, false) == current_cell
+            })
+            .min_by_key(|transition| transition.value_sample.duration_ticks)
+            .map(|transition| transition.value_sample.action.clone());
         let mut proposals = choose_tactic_batch_for_policy(
             &ranking,
             self.decision_index,
@@ -1455,6 +1465,15 @@ impl TacticQCampaign {
             maximum_proposals,
             policy,
         )?;
+        if policy == TacticProposalPolicy::Learned {
+            ensure_terminal_cost_refinement(
+                &ranking,
+                &state_untried,
+                terminal_incumbent.as_ref(),
+                maximum_proposals,
+                &mut proposals,
+            )?;
+        }
         if policy != TacticProposalPolicy::RandomValid {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
         }
