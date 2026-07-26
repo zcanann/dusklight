@@ -103,6 +103,7 @@ const NATIVE_TACTIC_DECISION_SEGMENT_COMPRESSION_LEVEL: i32 = 3;
 const NATIVE_TACTIC_DECISION_COMPACTION_RECORDS: u64 = 256;
 const NATIVE_TACTIC_DECISION_JOURNAL_MAGIC: &[u8; 8] = b"DSKTQJ01";
 const NATIVE_TACTIC_DECISION_JOURNAL_VERSION: u16 = 2;
+const LOAD_TRIGGER_TARGET_INTERIOR_CLEARANCE: f32 = 64.0;
 const NATIVE_TACTIC_DECISION_JOURNAL_HEADER_SIZE: usize = 8 + 2 + 2;
 const NATIVE_TACTIC_DECISION_RECORD_HEADER_SIZE: usize = 4 + 32;
 const MAXIMUM_TACTIC_DECISION_RECORD_BYTES: usize = 16 * 1024 * 1024;
@@ -4644,7 +4645,9 @@ fn goal_conditioned_tactic_context(
     execution: &NativeResidualExecutionBinding,
     initial_facts: &FactSnapshot,
 ) -> Result<GoalConditionedTacticContext, NativeTacticRouteRunError> {
-    let (target, inventory) = resolve_goal_transition_target(root, optimization, execution)?;
+    let source_coordinate = initial_facts.player.position_f32_bits.map(f32::from_bits);
+    let (target, inventory) =
+        resolve_goal_transition_target(root, optimization, execution, source_coordinate)?;
     if initial_facts.world.stage != target.source_stage
         || initial_facts.world.room != target.source_room
     {
@@ -4652,7 +4655,6 @@ fn goal_conditioned_tactic_context(
             "native source observation differs from the objective's source world",
         ));
     }
-    let source_coordinate = initial_facts.player.position_f32_bits.map(f32::from_bits);
     let (tactic_targets, route_sequences, authored_route_ids) = goal_route_targets(
         source_coordinate,
         target.coordinate,
@@ -5384,6 +5386,7 @@ fn resolve_goal_transition_target(
     root: &Path,
     optimization: &OptimizationRequest,
     execution: &NativeResidualExecutionBinding,
+    source_coordinate: [f32; 3],
 ) -> Result<(GoalTransitionTarget, WorldInventory), NativeTacticRouteRunError> {
     let program_bytes =
         fs::read(root.join(&execution.milestone_program.path)).map_err(route_error)?;
@@ -5446,8 +5449,7 @@ fn resolve_goal_transition_target(
         ));
     }
 
-    let mut sum = [0.0_f64; 3];
-    let mut points = 0_u64;
+    let mut triangles = Vec::new();
     for collision in &inventory.collisions {
         if !collision_ids.contains(collision.prism.authored.stable_id.as_str()) {
             continue;
@@ -5456,21 +5458,21 @@ fn resolve_goal_transition_target(
         else {
             continue;
         };
-        for point in triangle {
-            sum[0] += f64::from(point.x);
-            sum[1] += f64::from(point.y);
-            sum[2] += f64::from(point.z);
-            points += 1;
-        }
+        triangles.push(triangle.map(|point| [point.x, point.y, point.z]));
     }
-    if points == 0 {
+    if triangles.is_empty() {
         return Err(route_message(
             "goal load triggers have no reconstructed target surface",
         ));
     }
-    let coordinate = sum.map(|axis| (axis / points as f64) as f32);
+    let coordinate = nearest_interior_load_trigger_target(
+        source_coordinate,
+        &triangles,
+        LOAD_TRIGGER_TARGET_INTERIOR_CLEARANCE,
+    )
+    .ok_or_else(|| route_message("goal load trigger target selection failed"))?;
     if coordinate.iter().any(|value| !value.is_finite()) {
-        return Err(route_message("goal target centroid is non-finite"));
+        return Err(route_message("goal target coordinate is non-finite"));
     }
     Ok((
         GoalTransitionTarget {
@@ -5485,6 +5487,95 @@ fn resolve_goal_transition_target(
         },
         inventory,
     ))
+}
+
+fn nearest_interior_load_trigger_target(
+    source: [f32; 3],
+    triangles: &[[[f32; 3]; 3]],
+    clearance: f32,
+) -> Option<[f32; 3]> {
+    if source.iter().any(|value| !value.is_finite()) || !clearance.is_finite() || clearance < 0.0 {
+        return None;
+    }
+    triangles
+        .iter()
+        .filter(|triangle| triangle.iter().flatten().all(|value| value.is_finite()))
+        .filter_map(|triangle| {
+            let boundary = closest_planar_point_on_triangle(source, *triangle)?;
+            let centroid = [
+                (triangle[0][0] + triangle[1][0] + triangle[2][0]) / 3.0,
+                (triangle[0][1] + triangle[1][1] + triangle[2][1]) / 3.0,
+                (triangle[0][2] + triangle[1][2] + triangle[2][2]) / 3.0,
+            ];
+            let interior_distance = planar_distance(boundary, centroid);
+            let fraction = if interior_distance <= f32::EPSILON {
+                0.0
+            } else {
+                (clearance / interior_distance).min(1.0)
+            };
+            let interior = [
+                boundary[0] + (centroid[0] - boundary[0]) * fraction,
+                boundary[1] + (centroid[1] - boundary[1]) * fraction,
+                boundary[2] + (centroid[2] - boundary[2]) * fraction,
+            ];
+            Some((interior, planar_distance(source, interior)))
+        })
+        .min_by(|left, right| {
+            left.1
+                .total_cmp(&right.1)
+                .then_with(|| left.0.map(f32::to_bits).cmp(&right.0.map(f32::to_bits)))
+        })
+        .map(|(coordinate, _)| coordinate)
+}
+
+fn closest_planar_point_on_triangle(point: [f32; 3], triangle: [[f32; 3]; 3]) -> Option<[f32; 3]> {
+    let ax = triangle[0][0];
+    let az = triangle[0][2];
+    let bx = triangle[1][0];
+    let bz = triangle[1][2];
+    let cx = triangle[2][0];
+    let cz = triangle[2][2];
+    let denominator = (bz - cz).mul_add(ax - cx, (cx - bx) * (az - cz));
+    if denominator.abs() > f32::EPSILON {
+        let first = ((bz - cz).mul_add(point[0] - cx, (cx - bx) * (point[2] - cz))) / denominator;
+        let second = ((cz - az).mul_add(point[0] - cx, (ax - cx) * (point[2] - cz))) / denominator;
+        let third = 1.0 - first - second;
+        if first >= 0.0 && second >= 0.0 && third >= 0.0 {
+            return Some([
+                point[0],
+                first.mul_add(
+                    triangle[0][1],
+                    second.mul_add(triangle[1][1], third * triangle[2][1]),
+                ),
+                point[2],
+            ]);
+        }
+    }
+    [(0, 1), (1, 2), (2, 0)]
+        .into_iter()
+        .map(|(start, end)| closest_planar_point_on_segment(point, triangle[start], triangle[end]))
+        .min_by(|left, right| {
+            planar_distance(point, *left)
+                .total_cmp(&planar_distance(point, *right))
+                .then_with(|| left.map(f32::to_bits).cmp(&right.map(f32::to_bits)))
+        })
+}
+
+fn closest_planar_point_on_segment(point: [f32; 3], start: [f32; 3], end: [f32; 3]) -> [f32; 3] {
+    let dx = end[0] - start[0];
+    let dz = end[2] - start[2];
+    let length_squared = dx.mul_add(dx, dz * dz);
+    let fraction = if length_squared <= f32::EPSILON {
+        0.0
+    } else {
+        ((point[0] - start[0]).mul_add(dx, (point[2] - start[2]) * dz) / length_squared)
+            .clamp(0.0, 1.0)
+    };
+    [
+        start[0] + dx * fraction,
+        start[1] + (end[1] - start[1]) * fraction,
+        start[2] + dz * fraction,
+    ]
 }
 
 fn exact_symbol_literal(
@@ -6747,6 +6838,42 @@ mod tests {
         .expect("both corridors connect the source and goal");
 
         assert_eq!(routes[0], vec![nodes[4].coordinate]);
+    }
+
+    #[test]
+    fn load_trigger_target_is_inside_the_nearest_real_surface() {
+        let near = [[0.0, 10.0, 0.0], [300.0, 10.0, 0.0], [0.0, 10.0, 300.0]];
+        let far = [
+            [1_000.0, 20.0, 0.0],
+            [1_300.0, 20.0, 0.0],
+            [1_000.0, 20.0, 300.0],
+        ];
+
+        let target =
+            nearest_interior_load_trigger_target([-100.0, 0.0, -100.0], &[far, near], 60.0)
+                .expect("a reconstructed trigger surface produces a target");
+
+        let expected = 60.0 / 2.0_f32.sqrt();
+        assert!((target[0] - expected).abs() < 0.001);
+        assert_eq!(target[1], 10.0);
+        assert!((target[2] - expected).abs() < 0.001);
+        assert!(
+            nearest_interior_load_trigger_target([f32::NAN, 0.0, 0.0], &[near], 60.0).is_none()
+        );
+    }
+
+    #[test]
+    fn planar_trigger_projection_handles_points_inside_and_outside() {
+        let triangle = [[0.0, 10.0, 0.0], [100.0, 20.0, 0.0], [0.0, 30.0, 100.0]];
+
+        assert_eq!(
+            closest_planar_point_on_triangle([25.0, 0.0, 25.0], triangle),
+            Some([25.0, 17.5, 25.0])
+        );
+        assert_eq!(
+            closest_planar_point_on_triangle([-20.0, 0.0, -30.0], triangle),
+            Some([0.0, 10.0, 0.0])
+        );
     }
 
     #[test]
