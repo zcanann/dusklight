@@ -52,9 +52,6 @@ Acceptance:
 
 ## P2 - Make retained states computationally real
 
-- [ ] Batch competing proposals at a frontier so one restore and prefix replay
-      are amortized across many alternatives even when that frontier is not
-      cached.
 - [ ] Measure restore cost, replayed-prefix ticks, cache hit rate, memory, and
       useful transitions produced per restore.
 - [ ] Reject detached, mismatched, or semantically invalid checkpoints without

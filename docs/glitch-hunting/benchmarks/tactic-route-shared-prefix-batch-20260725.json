@@ -1,0 +1,79 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-shared-prefix-batch/v1",
+  "date": "2026-07-25",
+  "claim": "When a logical tactic frontier has no reusable native checkpoint, the scheduler replays its authenticated prefix exactly once on one persistent worker, retains that endpoint, and evaluates the complete competing proposal batch from the same process-local checkpoint before admitting other seed work to that worker.",
+  "implementation": {
+    "commit": "31bef3ef069e9a219aecf9f5893e70fb145473b1",
+    "request_schema": "dusklight-suffix-batch/v9",
+    "result_schema": "dusklight-suffix-batch-result/v8",
+    "report_schema": "dusklight-native-tactic-route-report/v8",
+    "checkpoint_serialization": "none; the batch owns one opaque process-local restore identity while logical state remains in the binary tactic journal and checkpoint store",
+    "scheduling": "a non-root frontier and all of its competing proposals form one worker job; root-frontier proposals remain independently scheduled because they have no replay prefix to amortize",
+    "concurrent_seed_scope": "different seed coordinators may run concurrently, but a frontier materialization and its entire proposal batch execute atomically on their selected worker",
+    "reactive_scope": "a reactive proposal still issues one direct suffix request per observed step, but every step restores the shared frontier directly and never replays the 40-tick prefix"
+  },
+  "validation": {
+    "cargo_check_huntctl": "passed",
+    "cargo_test_native_tactic_worker": {
+      "passed": 6,
+      "failed": 0
+    },
+    "cargo_test_native_tactic_route_runner": {
+      "passed": 20,
+      "failed": 0
+    },
+    "cargo_test_orchestration": {
+      "passed": 127,
+      "failed": 2,
+      "unrelated_failures": [
+        "residual_horizon_tightening fixture digest",
+        "residual_reverse_curriculum fixture digest"
+      ]
+    }
+  },
+  "native_smoke": {
+    "output": "build/campaigns/tactic-route-shared-prefix-smoke-20260725",
+    "execution_content_sha256": "799f52c24a184b7619866b526ccf9402612b2a833744fabef7dd98a093183644",
+    "execution_file_sha256": "f37e1d7c155186e808351c63fb753e3a86a42ced928eb9381bf09417e1759812",
+    "game_binary_sha256": "a6cbc123b96a9a5a1d1b5efdfe55855ee63cf307cf94bb6363c2df3c6ab2b5df",
+    "huntctl_binary_sha256": "451e86f0cd071d3189cce3928488617732f156637217c44577698bda0b78092e",
+    "report_sha256": "e876c2ac14ecb93bee7460641b972bb82a776dbe90564a6ec39382e87942f957",
+    "seeds": [
+      104729,
+      130363
+    ],
+    "workers": 4,
+    "decisions": 3,
+    "successful_seeds": 2,
+    "native_ticks": 218,
+    "wall_micros": 131560249,
+    "shared_frontier": {
+      "seed": 130363,
+      "decision": 1,
+      "source_frame": 620,
+      "prefix_ticks": 40,
+      "materialization_request_sha256": "2554bc8a591f423a831b123afa7dad0afe6f461044bbef24e59fae0b02b5539b",
+      "materialization_result_sha256": "58f4fd7d2d2c4456aec9a9b6872e194723ce8d79bcac6c10f23ced8dbf0382",
+      "materialization_episode_shard_sha256": "50a4f4cb4261d3803ad85ff120c8a186c989d0886f354396d7a2933277298753",
+      "materialization_source_kind": "authenticated_root_restore",
+      "materialization_restore_micros": 16925,
+      "retained_restore_identity": "9df8801935e603c54ecd7cc4d52e363c",
+      "retained_route_ticks": 40,
+      "retained_capture_micros": 317769,
+      "checkpoint_bytes": 294721424,
+      "resident_entries": 2,
+      "resident_bytes": 589443328,
+      "logical_proposals": 4,
+      "native_proposal_requests": 43,
+      "distinct_proposal_source_identities": 1,
+      "proposal_source_route_ticks": 40,
+      "proposal_source_kind": "direct_process_local_restore",
+      "proposal_restore_micros_total": 751653,
+      "proposal_000_request_sha256": "e365dd6f02bf327f2d3d3d33397d789b6202d05883e26384fa82034ef19c7604",
+      "proposal_001_request_sha256": "3dc719a0c2b97869c5475943524b756f62e18ed3115fe9aee02f796840b70393",
+      "proposal_002_request_sha256": "50465210afc87e26d791fc687619e55d31c163ca4b7276f3a569aac65b9348e2",
+      "proposal_003_final_step_request_sha256": "f562c5461829a75ee808e863f37fdfa9364345cfc6f4938286865e86a5e68b72"
+    }
+  },
+  "scope": "This closes shared-prefix proposal batching for uncached non-root frontiers. Explicit restore, prefix-replay, cache-hit, memory, and useful-transitions-per-restore report fields remain P2 work."
+}
