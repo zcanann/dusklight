@@ -34,6 +34,11 @@ pub enum TacticSelectionReason {
     Greedy,
     Epsilon,
     UnsupportedBootstrap,
+    BatchUncertainty,
+    BatchValue,
+    BatchCoverage,
+    /// Compatibility label used by older checkpoints and callers that inject
+    /// a required composition after acquisition ranking.
     BatchDiversity,
 }
 
@@ -159,10 +164,11 @@ pub fn choose_tactic_with_state_untried(
 /// from the same learner boundary.
 ///
 /// The first result is exactly the single-action epsilon-greedy choice. Extra
-/// proposals are selected independently of catalog insertion order: a seeded
-/// rotation first covers option types not represented in the batch and only
-/// then fills any remaining capacity. This gives the caller behavioral
-/// diversity without changing the seeded primary policy.
+/// slots are independent acquisition lanes: ensemble uncertainty, predicted
+/// value, and state-local coverage. Each lane falls back to coverage when the
+/// fitted critic has no remaining supported action. This keeps unsupported
+/// instances explicit while making the native batch use the critic instead of
+/// merely rotating through catalog insertion order.
 pub fn choose_tactic_batch_with_state_untried(
     ranking: &LiveTacticRanking,
     decision_index: u64,
@@ -195,38 +201,127 @@ pub fn choose_tactic_batch_with_state_untried(
     candidates.rotate_left(rotation);
 
     let mut represented_types = vec![primary.descriptor.option_type.clone()];
-    for require_new_type in [true, false] {
-        for descriptor in &candidates {
-            if result.len() >= maximum_proposals {
-                return Ok(result);
-            }
-            if result
-                .iter()
-                .any(|selected| selected.descriptor == *descriptor)
-            {
-                continue;
-            }
-            let type_is_represented = represented_types.contains(&descriptor.option_type);
-            if require_new_type != !type_is_represented {
-                continue;
-            }
-            represented_types.push(descriptor.option_type.clone());
-            result.push(SelectedTactic {
-                schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
-                learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+    let acquisition_lanes = [
+        BatchAcquisitionLane::Uncertainty,
+        BatchAcquisitionLane::Value,
+        BatchAcquisitionLane::Coverage,
+    ];
+    let mut lane_index = 0;
+    while result.len() < maximum_proposals && !candidates.is_empty() {
+        let lane = acquisition_lanes[lane_index % acquisition_lanes.len()];
+        lane_index += 1;
+        let (selected_index, selected_lane) = if let Some(index) = select_batch_candidate(
+            &candidates,
+            ranking,
+            state_untried,
+            &represented_types,
+            lane,
+        ) {
+            (index, lane)
+        } else {
+            (
+                select_batch_candidate(
+                    &candidates,
+                    ranking,
+                    state_untried,
+                    &represented_types,
+                    BatchAcquisitionLane::Coverage,
+                )
+                .expect("nonempty candidate pool has a coverage selection"),
+                BatchAcquisitionLane::Coverage,
+            )
+        };
+        let descriptor = candidates.remove(selected_index);
+        represented_types.push(descriptor.option_type.clone());
+        result.push(SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+            decision_index,
+            descriptor,
+            reason: selected_lane.reason(),
+            exploration_draw: (deterministic_draw(
+                config.seed,
                 decision_index,
-                descriptor: descriptor.clone(),
-                reason: TacticSelectionReason::BatchDiversity,
-                exploration_draw: (deterministic_draw(
-                    config.seed,
-                    decision_index,
-                    ranking.learner_snapshot_sha256,
-                    3,
-                ) % u64::from(EPSILON_SCALE)) as u32,
-            });
-        }
+                ranking.learner_snapshot_sha256,
+                3 + (lane_index % 250) as u8,
+            ) % u64::from(EPSILON_SCALE)) as u32,
+        });
     }
     Ok(result)
+}
+
+#[derive(Clone, Copy)]
+enum BatchAcquisitionLane {
+    Uncertainty,
+    Value,
+    Coverage,
+}
+
+impl BatchAcquisitionLane {
+    fn reason(self) -> TacticSelectionReason {
+        match self {
+            Self::Uncertainty => TacticSelectionReason::BatchUncertainty,
+            Self::Value => TacticSelectionReason::BatchValue,
+            Self::Coverage => TacticSelectionReason::BatchCoverage,
+        }
+    }
+}
+
+fn select_batch_candidate(
+    candidates: &[OptionActionDescriptor],
+    ranking: &LiveTacticRanking,
+    state_untried: &[OptionActionDescriptor],
+    represented_types: &[OptionType],
+    lane: BatchAcquisitionLane,
+) -> Option<usize> {
+    candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, descriptor)| {
+            let estimate = ranking
+                .values
+                .ranked
+                .iter()
+                .find(|ranked| ranked.descriptor == *descriptor);
+            if !matches!(lane, BatchAcquisitionLane::Coverage) && estimate.is_none() {
+                return None;
+            }
+            let untried = state_untried.contains(descriptor);
+            let unsupported = ranking.values.unsupported.contains(descriptor);
+            let novel_type = !represented_types.contains(&descriptor.option_type);
+            let mean_q = estimate.map_or(f64::NEG_INFINITY, |ranked| ranked.mean_q);
+            let uncertainty = estimate.map_or(f64::NEG_INFINITY, |ranked| ranked.ensemble_variance);
+            Some((
+                index,
+                match lane {
+                    BatchAcquisitionLane::Uncertainty => {
+                        (uncertainty, mean_q, untried, novel_type, unsupported)
+                    }
+                    BatchAcquisitionLane::Value => {
+                        (mean_q, uncertainty, untried, novel_type, unsupported)
+                    }
+                    BatchAcquisitionLane::Coverage => (
+                        f64::from(u8::from(untried)),
+                        f64::from(u8::from(unsupported)),
+                        novel_type,
+                        unsupported,
+                        untried,
+                    ),
+                },
+                descriptor.option_id.as_str(),
+            ))
+        })
+        .max_by(|left, right| {
+            left.1
+                .0
+                .total_cmp(&right.1.0)
+                .then_with(|| left.1.1.total_cmp(&right.1.1))
+                .then_with(|| left.1.2.cmp(&right.1.2))
+                .then_with(|| left.1.3.cmp(&right.1.3))
+                .then_with(|| left.1.4.cmp(&right.1.4))
+                .then_with(|| right.2.cmp(left.2))
+        })
+        .map(|(index, _, _)| index)
 }
 
 fn prioritized_unsupported(
@@ -779,11 +874,71 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first[0], primary);
         assert_eq!(first.len(), 3);
-        assert_eq!(first[1].reason, TacticSelectionReason::BatchDiversity);
-        assert_eq!(first[2].reason, TacticSelectionReason::BatchDiversity);
+        assert_eq!(first[1].reason, TacticSelectionReason::BatchCoverage);
+        assert_eq!(first[2].reason, TacticSelectionReason::BatchCoverage);
         assert!(first[1].descriptor.option_type != OptionType::Move);
         assert!(first[2].descriptor.option_type != OptionType::Move);
         assert!(first[1].descriptor.option_type != first[2].descriptor.option_type);
+    }
+
+    #[test]
+    fn proposal_batch_has_separate_uncertainty_value_and_coverage_lanes() {
+        let greedy = descriptor("greedy", OptionType::Move);
+        let uncertain = descriptor("uncertain", OptionType::Bezier);
+        let valuable = descriptor("valuable", OptionType::Roll);
+        let fresh = descriptor("fresh", OptionType::Interact);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([15; 32]),
+            action_universe_sha256: Digest([16; 32]),
+            choices: vec![
+                choice(fresh.clone()),
+                choice(valuable.clone()),
+                choice(greedy.clone()),
+                choice(uncertain.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![
+                    RankedOption {
+                        action_id: 0,
+                        descriptor: greedy.clone(),
+                        mean_q: 9.0,
+                        ensemble_variance: 0.1,
+                    },
+                    RankedOption {
+                        action_id: 1,
+                        descriptor: valuable.clone(),
+                        mean_q: 7.0,
+                        ensemble_variance: 0.2,
+                    },
+                    RankedOption {
+                        action_id: 2,
+                        descriptor: uncertain.clone(),
+                        mean_q: 1.0,
+                        ensemble_variance: 8.0,
+                    },
+                ],
+                unsupported: vec![fresh.clone()],
+            },
+        };
+        let batch = choose_tactic_batch_with_state_untried(
+            &ranking,
+            0,
+            TacticExplorationConfig {
+                seed: 19,
+                epsilon_per_million: 0,
+            },
+            std::slice::from_ref(&fresh),
+            4,
+        )
+        .unwrap();
+
+        assert_eq!(batch[0].descriptor, greedy);
+        assert_eq!(batch[1].descriptor, uncertain);
+        assert_eq!(batch[1].reason, TacticSelectionReason::BatchUncertainty);
+        assert_eq!(batch[2].descriptor, valuable);
+        assert_eq!(batch[2].reason, TacticSelectionReason::BatchValue);
+        assert_eq!(batch[3].descriptor, fresh);
+        assert_eq!(batch[3].reason, TacticSelectionReason::BatchCoverage);
     }
 
     #[test]
