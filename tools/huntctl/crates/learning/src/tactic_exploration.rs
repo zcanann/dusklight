@@ -393,13 +393,19 @@ pub fn ensure_terminal_cost_refinement(
     if candidates.is_empty() {
         return Ok(());
     }
-    // Workers in one learned generation share the same replay boundary. Use
-    // the orchestrator's stable acquisition partition to cover a small
-    // nearest-neighbor window instead of spending every worker on an
-    // identical deterministic replay. The window stays local and bounded by
-    // the native proposal batch width.
-    let refinement_window = candidates.len().min(maximum_proposals);
-    let refinement_index = (acquisition_partition % refinement_window as u64) as usize;
+    // Workers in one learned generation share the same replay boundary. Keep
+    // one local improvement lane, but spread the remaining partitions across
+    // the full untried parameter-distance ordering. Restricting every worker
+    // to the nearest few values traps refinement in whichever cadence/phase
+    // basin happened to produce the first terminal route.
+    let lane = (acquisition_partition % maximum_proposals as u64) as usize;
+    let refinement_index = if lane == 0 || candidates.len() == 1 {
+        0
+    } else {
+        lane.saturating_mul(candidates.len() - 1)
+            .div_ceil(maximum_proposals - 1)
+            .min(candidates.len() - 1)
+    };
     let descriptor = candidates[refinement_index].clone();
     let proposal = SelectedTactic {
         schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
@@ -1404,6 +1410,51 @@ mod tests {
                 rolling_route(24).option_id.clone()
             ])
         );
+
+        let wide_candidates = (12..=32)
+            .filter(|period| *period != 22)
+            .map(rolling_route)
+            .collect::<Vec<_>>();
+        let wide_ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([41; 32]),
+            action_universe_sha256: Digest([42; 32]),
+            choices: std::iter::once(choice(incumbent.clone()))
+                .chain(wide_candidates.iter().cloned().map(choice))
+                .collect(),
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: incumbent.clone(),
+                    mean_q: 98.5,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: wide_candidates.clone(),
+            },
+        };
+        let spread = (0..4)
+            .map(|partition| {
+                let mut proposals = vec![SelectedTactic {
+                    schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                    learner_snapshot_sha256: wide_ranking.learner_snapshot_sha256,
+                    decision_index: 0,
+                    descriptor: incumbent.clone(),
+                    reason: TacticSelectionReason::Greedy,
+                    exploration_draw: 0,
+                }];
+                ensure_terminal_cost_refinement(
+                    &wide_ranking,
+                    &wide_candidates,
+                    Some(&incumbent),
+                    partition,
+                    4,
+                    &mut proposals,
+                )
+                .unwrap();
+                proposals[1].descriptor.option_id.clone()
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(spread.len(), 4);
+        assert!(spread.contains("goal.seek.route.00.roll.period.32.phase.00"));
     }
 
     #[test]
