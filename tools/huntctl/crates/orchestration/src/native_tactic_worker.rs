@@ -190,7 +190,7 @@ pub fn materialize_tactic_frontier<W: PersistentTacticBatchWorker>(
         },
         maximum_ticks: replay_frames.len(),
         verify_state_hashes: false,
-        checkpoint_cache: Some(tactic_checkpoint_cache_request(None)),
+        checkpoint_cache: Some(tactic_checkpoint_cache_request(None, true)),
         candidates: vec![NativeSuffixCandidate {
             id: hex_digest(
                 route
@@ -282,6 +282,31 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
     paths: &NativeTacticWorkerPaths,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
+    execute_selected_tactic_with_checkpoint_retention(
+        worker,
+        selected,
+        catalog,
+        blueprints,
+        before,
+        route_prefix,
+        checkpoint_source,
+        paths,
+        true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn execute_selected_tactic_with_checkpoint_retention<W: PersistentTacticBatchWorker>(
+    worker: &mut W,
+    selected: &SelectedTactic,
+    catalog: &TacticAssetCatalog,
+    blueprints: &[TacticBlueprint],
+    before: &FactSnapshot,
+    route_prefix: &InputTape,
+    checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    paths: &NativeTacticWorkerPaths,
+    retain_candidate_checkpoint: bool,
+) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     let root_checkpoint_sha256 = tactic_root_checkpoint_sha256(worker.identity())?;
     before
         .validate()
@@ -345,6 +370,7 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
             source_frame,
             replayed_prefix_ticks,
             checkpoint_source,
+            retain_candidate_checkpoint,
             prepared,
         ),
         PreparedNativeExecution::NativeGeneric {
@@ -361,6 +387,7 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
             source_frame,
             replayed_prefix_ticks,
             checkpoint_source,
+            retain_candidate_checkpoint,
             stepper,
             duration,
             termination,
@@ -380,6 +407,7 @@ pub fn execute_selected_tactic<W: PersistentTacticBatchWorker>(
             source_frame,
             replayed_prefix_ticks,
             checkpoint_source,
+            retain_candidate_checkpoint,
             stepper,
             duration,
             termination,
@@ -399,6 +427,7 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    retain_candidate_checkpoint: bool,
     prepared: PreparedNativeTactic,
 ) -> Result<NativeTacticWorkerOutcome, NativeTacticWorkerError> {
     let mut candidate_tape = InputTape {
@@ -415,6 +444,7 @@ fn execute_static_tactic<W: PersistentTacticBatchWorker>(
         selected,
         &candidate_tape,
         checkpoint_source,
+        retain_candidate_checkpoint,
     )?;
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
@@ -443,6 +473,7 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    retain_candidate_checkpoint: bool,
     mut stepper: NativeGenericTacticStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
@@ -458,6 +489,7 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             source_frame,
             candidate_prefix_ticks,
             checkpoint_source,
+            retain_candidate_checkpoint,
             stepper,
             duration,
             termination,
@@ -494,6 +526,7 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             selected,
             &candidate_tape,
             checkpoint_source,
+            retain_candidate_checkpoint,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
         write_new_json(&iteration_paths.request, &request)?;
@@ -653,6 +686,7 @@ fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    retain_candidate_checkpoint: bool,
     mut stepper: NativeGenericTacticStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
@@ -668,6 +702,7 @@ fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
         &prefix_frames,
         &program,
         checkpoint_source,
+        retain_candidate_checkpoint,
     )?;
     write_new_json(&paths.request, &request)?;
     let validated = worker.run_tactic_batch(&paths.request, &paths.result)?;
@@ -780,6 +815,7 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
     source_frame: usize,
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    retain_candidate_checkpoint: bool,
     mut stepper: ControllerProgramStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
@@ -856,6 +892,7 @@ fn execute_reactive_controller<W: PersistentTacticBatchWorker>(
             selected,
             &candidate_tape,
             checkpoint_source,
+            retain_candidate_checkpoint,
         )?;
         let iteration_paths = iteration_paths(paths, selected.decision_index, local_tick);
         write_new_json(&iteration_paths.request, &request)?;
@@ -1255,6 +1292,7 @@ fn tactic_batch(
     selected: &SelectedTactic,
     tape: &InputTape,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    retain_candidate_checkpoint: bool,
 ) -> Result<NativeSuffixBatch, NativeTacticWorkerError> {
     if tape.frames.is_empty() || tape.frames.len() > 4_096 {
         return Err(NativeTacticWorkerError::InvalidDuration);
@@ -1289,7 +1327,10 @@ fn tactic_batch(
         // simulation itself. Successful policies are state-hash verified by
         // the separate frozen-policy and cold-replay gates.
         verify_state_hashes: false,
-        checkpoint_cache: Some(tactic_checkpoint_cache_request(checkpoint_source)),
+        checkpoint_cache: Some(tactic_checkpoint_cache_request(
+            checkpoint_source,
+            retain_candidate_checkpoint,
+        )),
         candidates: vec![NativeSuffixCandidate {
             id,
             actions,
@@ -1304,6 +1345,7 @@ fn tactic_controller_batch(
     prefix_frames: &[InputFrame],
     program: &ControllerProgram,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    retain_candidate_checkpoint: bool,
 ) -> Result<NativeSuffixBatch, NativeTacticWorkerError> {
     let program_bytes = program
         .encode()
@@ -1340,7 +1382,10 @@ fn tactic_controller_batch(
         // Keep reactive exploration on the same evidence boundary as static
         // tactic exploration. Exact per-tick proof belongs to promotion.
         verify_state_hashes: false,
-        checkpoint_cache: Some(tactic_checkpoint_cache_request(checkpoint_source)),
+        checkpoint_cache: Some(tactic_checkpoint_cache_request(
+            checkpoint_source,
+            retain_candidate_checkpoint,
+        )),
         candidates: vec![NativeSuffixCandidate {
             id,
             actions: pad_runs(prefix_frames)?,
@@ -1351,13 +1396,14 @@ fn tactic_controller_batch(
 
 fn tactic_checkpoint_cache_request(
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
+    retain_candidate_checkpoint: bool,
 ) -> NativeCheckpointCacheRequest {
     NativeCheckpointCacheRequest {
         capacity_bytes: TACTIC_CHECKPOINT_CACHE_BYTES,
         capacity_entries: TACTIC_CHECKPOINT_CACHE_ENTRIES,
         source_identity: checkpoint_source.map(|source| source.restore_identity.clone()),
         source_route_ticks: checkpoint_source.map_or(0, |source| source.route_ticks),
-        retain_candidate_checkpoints: true,
+        retain_candidate_checkpoints: retain_candidate_checkpoint,
     }
 }
 
@@ -1774,7 +1820,7 @@ mod tests {
                 definition_sha256: Digest([9; 32]),
             },
         };
-        let batch = tactic_batch(&identity, &selected, &prepared.option_tape, None).unwrap();
+        let batch = tactic_batch(&identity, &selected, &prepared.option_tape, None, true).unwrap();
         assert_eq!(batch.maximum_ticks, 3);
         assert_eq!(batch.candidates.len(), 1);
         assert_eq!(
@@ -1800,6 +1846,7 @@ mod tests {
             &selected,
             &prepared.option_tape,
             Some(&checkpoint_source),
+            true,
         )
         .unwrap();
         let cache = restored
@@ -1815,6 +1862,21 @@ mod tests {
         );
         assert_eq!(cache.source_route_ticks, 40);
         assert!(cache.retain_candidate_checkpoints);
+
+        let evaluation_only = tactic_batch(
+            &identity,
+            &selected,
+            &prepared.option_tape,
+            Some(&checkpoint_source),
+            false,
+        )
+        .unwrap();
+        assert!(
+            !evaluation_only
+                .checkpoint_cache
+                .expect("evaluation batches still declare their cache policy")
+                .retain_candidate_checkpoints
+        );
         assert!(
             candidate_prefix_frames(
                 &InputTape {
@@ -1912,7 +1974,8 @@ mod tests {
             };
             3
         ];
-        let batch = tactic_controller_batch(&identity, &selected, &prefix, &program, None).unwrap();
+        let batch =
+            tactic_controller_batch(&identity, &selected, &prefix, &program, None, true).unwrap();
 
         assert_eq!(batch.schema, NATIVE_CACHED_SUFFIX_BATCH_SCHEMA);
         assert_eq!(batch.maximum_ticks, 19);

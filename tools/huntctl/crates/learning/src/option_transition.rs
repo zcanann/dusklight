@@ -33,6 +33,20 @@ pub struct OptionTransitionSample {
 }
 
 impl OptionTransitionSample {
+    pub fn replay_identity_sha256(&self) -> Result<Digest, OptionTransitionError> {
+        self.validate()?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"dusklight-option-transition-replay-identity/v1");
+        hasher.update(self.feature_schema_sha256.0);
+        hasher.update(
+            self.value_sample
+                .replay_identity_sha256()
+                .map_err(|error| OptionTransitionError::InvalidOwned(error.to_string()))?
+                .0,
+        );
+        Ok(Digest(hasher.finalize().into()))
+    }
+
     /// Build one semi-Markov replay row from the same facts, tape, and
     /// execution record observed at the native tactic boundary.
     #[allow(clippy::too_many_arguments)]
@@ -232,6 +246,7 @@ fn emitted_pad_digest(execution: &OptionExecution) -> Result<Digest, OptionTrans
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OptionTransitionError {
     Invalid(&'static str),
+    InvalidOwned(String),
     Facts(String),
     Execution(String),
     Features(String),
@@ -242,6 +257,9 @@ impl fmt::Display for OptionTransitionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Invalid(message) => write!(formatter, "invalid option transition: {message}"),
+            Self::InvalidOwned(message) => {
+                write!(formatter, "invalid option transition: {message}")
+            }
             Self::Facts(message) => write!(formatter, "option transition facts failed: {message}"),
             Self::Execution(message) => {
                 write!(formatter, "option transition execution failed: {message}")

@@ -43,6 +43,101 @@ impl OptionActionDescriptor {
         }
         Ok(())
     }
+
+    /// Stable binary identity for an executable option descriptor.
+    ///
+    /// This deliberately hashes typed fields directly rather than making
+    /// learner identity depend on JSON, CBOR, or a storage layout.
+    pub fn content_sha256(&self) -> Result<Digest, OptionValueError> {
+        self.validate()?;
+        let mut hasher = Sha256::new();
+        hasher.update(b"dusklight-option-action-descriptor/v1");
+        hash_text(&mut hasher, &self.option_id);
+        hash_option_type(&mut hasher, &self.option_type);
+        hasher.update((self.parameters.len() as u64).to_le_bytes());
+        for (name, parameter) in &self.parameters {
+            hash_text(&mut hasher, name);
+            hash_option_parameter(&mut hasher, parameter);
+        }
+        Ok(Digest(hasher.finalize().into()))
+    }
+}
+
+fn hash_text(hasher: &mut Sha256, value: &str) {
+    hasher.update((value.len() as u64).to_le_bytes());
+    hasher.update(value.as_bytes());
+}
+
+fn hash_option_type(hasher: &mut Sha256, value: &OptionType) {
+    let tag: u8 = match value {
+        OptionType::Move => 0,
+        OptionType::Turn => 1,
+        OptionType::Brake => 2,
+        OptionType::Neutral => 3,
+        OptionType::Align => 4,
+        OptionType::MaintainHeading => 5,
+        OptionType::MaintainDistance => 6,
+        OptionType::Roll => 7,
+        OptionType::JumpAttack => 8,
+        OptionType::Attack => 9,
+        OptionType::Shield => 10,
+        OptionType::Target => 11,
+        OptionType::Interact => 12,
+        OptionType::ItemUse => 13,
+        OptionType::Transform => 14,
+        OptionType::Crawl => 15,
+        OptionType::Climb => 16,
+        OptionType::Swim => 17,
+        OptionType::Mount => 18,
+        OptionType::Boomerang => 19,
+        OptionType::Clawshot => 20,
+        OptionType::Spinner => 21,
+        OptionType::Waypoint => 22,
+        OptionType::Rail => 23,
+        OptionType::Spline => 24,
+        OptionType::Bezier => 25,
+        OptionType::SeekActor => 26,
+        OptionType::MaintainOffset => 27,
+        OptionType::Custom(_) => 28,
+    };
+    hasher.update([tag]);
+    if let OptionType::Custom(name) = value {
+        hash_text(hasher, name);
+    }
+}
+
+fn hash_option_parameter(hasher: &mut Sha256, value: &OptionParameter) {
+    match value {
+        OptionParameter::Bool(value) => {
+            hasher.update([0, u8::from(*value)]);
+        }
+        OptionParameter::Signed(value) => {
+            hasher.update([1]);
+            hasher.update(value.to_le_bytes());
+        }
+        OptionParameter::Unsigned(value) => {
+            hasher.update([2]);
+            hasher.update(value.to_le_bytes());
+        }
+        OptionParameter::F32Bits(value) => {
+            hasher.update([3]);
+            hasher.update(value.to_le_bytes());
+        }
+        OptionParameter::Vec3F32Bits(value) => {
+            hasher.update([4]);
+            for component in value {
+                hasher.update(component.to_le_bytes());
+            }
+        }
+        OptionParameter::Text(value) => {
+            hasher.update([5]);
+            hash_text(hasher, value);
+        }
+        OptionParameter::Digest(value) => {
+            hasher.update([6]);
+            hasher.update(value.0);
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -61,6 +156,49 @@ pub struct OptionValueSample {
     pub realized_tape_range: TapeRange,
     /// Digest of the exact raw tape emitted by this realized option.
     pub realized_tape_sha256: Digest,
+}
+
+impl OptionValueSample {
+    /// Identity of one Q-training row, independent of its enclosing replay
+    /// file or checkpoint layout.
+    pub fn replay_identity_sha256(&self) -> Result<Digest, OptionValueError> {
+        self.action.validate()?;
+        if self.state.is_empty()
+            || self.state.len() != self.next_state.len()
+            || self
+                .state
+                .iter()
+                .chain(&self.next_state)
+                .any(|value| !value.is_finite())
+            || !self.reward.is_finite()
+            || self.duration_ticks == 0
+        {
+            return Err(OptionValueError::Invalid(
+                "option replay identity input is invalid",
+            ));
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"dusklight-option-replay-row/v1");
+        hasher.update(self.action.content_sha256()?.0);
+        hasher.update((self.state.len() as u64).to_le_bytes());
+        for value in &self.state {
+            hasher.update(value.to_bits().to_le_bytes());
+        }
+        hasher.update(self.duration_ticks.to_le_bytes());
+        hasher.update(self.reward.to_bits().to_le_bytes());
+        for value in &self.next_state {
+            hasher.update(value.to_bits().to_le_bytes());
+        }
+        hasher.update([u8::from(self.terminal)]);
+        hasher.update(self.before_state_sha256.0);
+        hasher.update(self.after_state_sha256.0);
+        hasher.update(self.source_checkpoint_sha256.0);
+        hasher.update(self.next_checkpoint_sha256.0);
+        hasher.update(self.realized_tape_range.start_frame.to_le_bytes());
+        hasher.update(self.realized_tape_range.end_frame_exclusive.to_le_bytes());
+        hasher.update(self.realized_tape_sha256.0);
+        Ok(Digest(hasher.finalize().into()))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

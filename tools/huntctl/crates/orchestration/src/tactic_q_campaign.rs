@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 
 pub const TACTIC_Q_CAMPAIGN_SCHEMA_V1: &str = "dusklight-tactic-q-campaign/v1";
 pub const TACTIC_Q_CHECKPOINT_SCHEMA_V2: &str = "dusklight-tactic-q-checkpoint/v2";
+pub const TACTIC_Q_CHECKPOINT_SCHEMA_V3: &str = "dusklight-tactic-q-checkpoint/v3";
 pub const TACTIC_Q_CHECKPOINT_EXTENSION: &str = "dtqz";
 pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
     "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
@@ -108,6 +109,12 @@ pub struct TacticQCampaignCheckpoint {
     pub replay: Vec<OptionTransitionSample>,
     pub replay_routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub training_replay: Vec<OptionTransitionSample>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub training_replay_routes: Vec<InputTape>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub training_episode_groups: Vec<u64>,
     pub model_config: OptionValueConfig,
     pub exploration: TacticExplorationConfig,
 }
@@ -298,6 +305,10 @@ pub struct TacticQCampaign {
     pub replay: Vec<OptionTransitionSample>,
     pub replay_routes: Vec<InputTape>,
     pub episode_groups: Vec<u64>,
+    training_replay: Vec<OptionTransitionSample>,
+    training_replay_routes: Vec<InputTape>,
+    training_episode_groups: Vec<u64>,
+    training_identities: BTreeSet<Digest>,
     model_config: OptionValueConfig,
     exploration: TacticExplorationConfig,
     model: Option<OptionValueModel>,
@@ -361,6 +372,10 @@ impl TacticQCampaign {
             replay: Vec::new(),
             replay_routes: Vec::new(),
             episode_groups: Vec::new(),
+            training_replay: Vec::new(),
+            training_replay_routes: Vec::new(),
+            training_episode_groups: Vec::new(),
+            training_identities: BTreeSet::new(),
             model_config,
             exploration,
             model: None,
@@ -371,6 +386,10 @@ impl TacticQCampaign {
 
     pub fn model(&self) -> Option<&OptionValueModel> {
         self.model.as_ref()
+    }
+
+    pub fn training_replay_len(&self) -> usize {
+        self.training_replay.len()
     }
 
     pub fn visited_state_count(&self) -> usize {
@@ -878,7 +897,7 @@ impl TacticQCampaign {
 
     pub fn checkpoint(&self) -> Result<TacticQCampaignCheckpoint, TacticQCampaignError> {
         let mut checkpoint = TacticQCampaignCheckpoint {
-            schema: TACTIC_Q_CHECKPOINT_SCHEMA_V2.into(),
+            schema: TACTIC_Q_CHECKPOINT_SCHEMA_V3.into(),
             content_sha256: Digest::ZERO,
             feature_schema_sha256: self.feature_schema_sha256,
             objective_sha256: self.objective_sha256,
@@ -890,6 +909,9 @@ impl TacticQCampaign {
             replay: self.replay.clone(),
             replay_routes: self.replay_routes.clone(),
             episode_groups: self.episode_groups.clone(),
+            training_replay: self.training_replay.clone(),
+            training_replay_routes: self.training_replay_routes.clone(),
+            training_episode_groups: self.training_episode_groups.clone(),
             model_config: self.model_config.clone(),
             exploration: self.exploration,
         };
@@ -917,11 +939,11 @@ impl TacticQCampaign {
             self.feature_schema_sha256,
             self.objective_sha256,
             first.value_sample.state.len(),
-            self.replay
+            self.training_replay
                 .iter()
                 .map(|transition| transition.value_sample.clone())
                 .collect(),
-            self.episode_groups.clone(),
+            self.training_episode_groups.clone(),
         )?;
         let action_universe_sha256 = Digest(
             Sha256::digest(
@@ -995,20 +1017,25 @@ impl TacticQCampaign {
         )
     }
 
-    pub fn resume(checkpoint: TacticQCampaignCheckpoint) -> Result<Self, TacticQCampaignError> {
+    pub fn resume(mut checkpoint: TacticQCampaignCheckpoint) -> Result<Self, TacticQCampaignError> {
         validate_checkpoint(&checkpoint)?;
+        if checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V2 {
+            checkpoint.training_replay = checkpoint.replay.clone();
+            checkpoint.training_replay_routes = checkpoint.replay_routes.clone();
+            checkpoint.training_episode_groups = checkpoint.episode_groups.clone();
+        }
         let model = replay_model(
             checkpoint.feature_schema_sha256,
             checkpoint.objective_sha256,
-            &checkpoint.replay,
-            &checkpoint.episode_groups,
+            &checkpoint.training_replay,
+            &checkpoint.training_episode_groups,
             &checkpoint.model_config,
         )?;
         let mut visited_states = BTreeSet::from([tactic_state_descriptor(
             &checkpoint.current.snapshot,
             checkpoint.current.snapshot.terminal.reached == Some(true),
         )]);
-        for transition in &checkpoint.replay {
+        for transition in &checkpoint.training_replay {
             visited_states.insert(tactic_state_descriptor(
                 &transition.before,
                 transition.before.terminal.reached == Some(true),
@@ -1020,6 +1047,11 @@ impl TacticQCampaign {
         }
         let hindsight = HindsightOptionReplay::new(checkpoint.feature_schema_sha256)
             .map_err(TacticQCampaignError::Hindsight)?;
+        let training_identities = checkpoint
+            .training_replay
+            .iter()
+            .map(OptionTransitionSample::replay_identity_sha256)
+            .collect::<Result<BTreeSet<_>, _>>()?;
         Ok(Self {
             schema: TACTIC_Q_CAMPAIGN_SCHEMA_V1.into(),
             feature_schema_sha256: checkpoint.feature_schema_sha256,
@@ -1032,6 +1064,10 @@ impl TacticQCampaign {
             replay: checkpoint.replay,
             replay_routes: checkpoint.replay_routes,
             episode_groups: checkpoint.episode_groups,
+            training_replay: checkpoint.training_replay,
+            training_replay_routes: checkpoint.training_replay_routes,
+            training_episode_groups: checkpoint.training_episode_groups,
+            training_identities,
             model_config: checkpoint.model_config,
             exploration: checkpoint.exploration,
             model,
@@ -1335,6 +1371,66 @@ impl TacticQCampaign {
         })
     }
 
+    /// Admit every native-evaluated alternative into the deduplicated training
+    /// replay without changing the executable retained path. The subsequent
+    /// winner admission performs the scheduled critic refit over this complete
+    /// batch.
+    pub fn admit_evaluated_replay(
+        &mut self,
+        evaluated: &[EvaluatedRewardedTacticOutcome],
+    ) -> Result<usize, TacticQCampaignError> {
+        if evaluated.is_empty() {
+            return Err(TacticQCampaignError::InvalidState(
+                "evaluated tactic replay batch is empty",
+            ));
+        }
+        let source_checkpoint_sha256 =
+            route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
+        let mut training_replay = self.training_replay.clone();
+        let mut training_replay_routes = self.training_replay_routes.clone();
+        let mut training_episode_groups = self.training_episode_groups.clone();
+        let mut identities = self.training_identities.clone();
+        let mut admitted = 0;
+        for evaluated in evaluated {
+            evaluated.transition.validate()?;
+            if evaluated.outcome.selected.decision_index != self.decision_index
+                || evaluated.outcome.selected.learner_snapshot_sha256
+                    != self.current.snapshot_sha256
+                || evaluated.outcome.source_checkpoint_sha256 != self.root_checkpoint_sha256
+                || evaluated.transition.before_state_sha256 != self.current.snapshot_sha256
+                || evaluated.transition.source_checkpoint_sha256 != source_checkpoint_sha256
+                || evaluated.transition.after_state_sha256
+                    != evaluated
+                        .outcome
+                        .next_facts
+                        .content_sha256()
+                        .map_err(|error| TacticQCampaignError::Features(error.to_string()))?
+                || evaluated.transition.next_checkpoint_sha256
+                    != route_checkpoint(self.root_checkpoint_sha256, &evaluated.outcome.route_tape)?
+                || evaluated.transition.value_sample.action != evaluated.outcome.selected.descriptor
+                || evaluated.transition.value_sample.reward.to_bits()
+                    != evaluated.reward.training_reward.to_bits()
+                || !extends(&self.route_tape, &evaluated.outcome.route_tape)
+            {
+                return Err(TacticQCampaignError::InvalidState(
+                    "evaluated tactic replay is detached from its shared frontier",
+                ));
+            }
+            let identity = evaluated.transition.replay_identity_sha256()?;
+            if identities.insert(identity) {
+                training_replay.push(evaluated.transition.clone());
+                training_replay_routes.push(evaluated.outcome.route_tape.clone());
+                training_episode_groups.push(self.episode_group);
+                admitted += 1;
+            }
+        }
+        self.training_replay = training_replay;
+        self.training_replay_routes = training_replay_routes;
+        self.training_episode_groups = training_episode_groups;
+        self.training_identities = identities;
+        Ok(admitted)
+    }
+
     /// Execute and retain one native tactic boundary, then rebuild the Q model
     /// from every replay row accumulated so far.
     #[allow(clippy::too_many_arguments)]
@@ -1548,17 +1644,26 @@ impl TacticQCampaign {
         replay_routes.push(outcome.route_tape.clone());
         let mut episode_groups = self.episode_groups.clone();
         episode_groups.push(self.episode_group);
+        let mut training_replay = self.training_replay.clone();
+        let mut training_replay_routes = self.training_replay_routes.clone();
+        let mut training_episode_groups = self.training_episode_groups.clone();
+        let mut training_identities = self.training_identities.clone();
+        if training_identities.insert(transition.replay_identity_sha256()?) {
+            training_replay.push(transition.clone());
+            training_replay_routes.push(outcome.route_tape.clone());
+            training_episode_groups.push(self.episode_group);
+        }
         let model = if refit_model {
             let feature_width = transition.value_sample.state.len();
             let batch = OptionValueBatch::new(
                 self.feature_schema_sha256,
                 self.objective_sha256,
                 feature_width,
-                replay
+                training_replay
                     .iter()
                     .map(|sample| sample.value_sample.clone())
                     .collect(),
-                episode_groups.clone(),
+                training_episode_groups.clone(),
             )?;
             Some(OptionValueModel::fit_batch(&batch, &self.model_config)?)
         } else {
@@ -1574,6 +1679,10 @@ impl TacticQCampaign {
         self.replay = replay;
         self.replay_routes = replay_routes;
         self.episode_groups = episode_groups;
+        self.training_replay = training_replay;
+        self.training_replay_routes = training_replay_routes;
+        self.training_episode_groups = training_episode_groups;
+        self.training_identities = training_identities;
         if let Some(model) = model {
             self.model = Some(model);
         }
@@ -1709,7 +1818,9 @@ pub(crate) fn validate_checkpoint(
         .route_tape
         .validate()
         .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
-    if checkpoint.schema != TACTIC_Q_CHECKPOINT_SCHEMA_V2
+    let legacy = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V2;
+    let current = checkpoint.schema == TACTIC_Q_CHECKPOINT_SCHEMA_V3;
+    if (!legacy && !current)
         || checkpoint.content_sha256 == Digest::ZERO
         || checkpoint.content_sha256 != checkpoint_digest(checkpoint)?
         || checkpoint.feature_schema_sha256 == Digest::ZERO
@@ -1719,6 +1830,14 @@ pub(crate) fn validate_checkpoint(
         || checkpoint.replay.len() != checkpoint.episode_groups.len()
         || checkpoint.replay.len() != checkpoint.replay_routes.len()
         || checkpoint.decision_index != checkpoint.replay.len() as u64
+        || (legacy
+            && (!checkpoint.training_replay.is_empty()
+                || !checkpoint.training_replay_routes.is_empty()
+                || !checkpoint.training_episode_groups.is_empty()))
+        || (current
+            && (checkpoint.training_replay.len() != checkpoint.training_replay_routes.len()
+                || checkpoint.training_replay.len() != checkpoint.training_episode_groups.len()
+                || checkpoint.training_replay.len() < checkpoint.replay.len()))
         || checkpoint.current.snapshot.tape_frame != checkpoint.route_tape.frames.len() as u64
     {
         return Err(TacticQCampaignError::InvalidState(
@@ -1781,11 +1900,64 @@ pub(crate) fn validate_checkpoint(
             "campaign checkpoint current state is not the replay endpoint",
         ));
     }
+    let (training_replay, training_routes, training_groups) = if legacy {
+        (
+            &checkpoint.replay,
+            &checkpoint.replay_routes,
+            &checkpoint.episode_groups,
+        )
+    } else {
+        (
+            &checkpoint.training_replay,
+            &checkpoint.training_replay_routes,
+            &checkpoint.training_episode_groups,
+        )
+    };
+    let mut training_identities = BTreeSet::new();
+    for ((transition, route), _) in training_replay
+        .iter()
+        .zip(training_routes)
+        .zip(training_groups)
+    {
+        transition.validate()?;
+        transition
+            .execution
+            .validate_against_tape(route)
+            .map_err(|error| TacticQCampaignError::Tape(error.to_string()))?;
+        let start = usize::try_from(transition.execution.realized_tape_range.start_frame)
+            .map_err(|_| TacticQCampaignError::InvalidState("training tape range overflows"))?;
+        let end = usize::try_from(transition.execution.realized_tape_range.end_frame_exclusive)
+            .map_err(|_| TacticQCampaignError::InvalidState("training tape range overflows"))?;
+        if transition.feature_schema_sha256 != checkpoint.feature_schema_sha256
+            || end > route.frames.len()
+            || transition.source_checkpoint_sha256
+                != route_checkpoint(
+                    checkpoint.root_checkpoint_sha256,
+                    &tape_prefix(route, start),
+                )?
+            || transition.next_checkpoint_sha256
+                != route_checkpoint(checkpoint.root_checkpoint_sha256, &tape_prefix(route, end))?
+            || !training_identities.insert(transition.replay_identity_sha256()?)
+        {
+            return Err(TacticQCampaignError::InvalidState(
+                "campaign training replay is detached or duplicated",
+            ));
+        }
+    }
+    if checkpoint.replay.iter().any(|transition| {
+        transition
+            .replay_identity_sha256()
+            .map_or(true, |identity| !training_identities.contains(&identity))
+    }) {
+        return Err(TacticQCampaignError::InvalidState(
+            "retained replay is absent from training replay",
+        ));
+    }
     replay_model(
         checkpoint.feature_schema_sha256,
         checkpoint.objective_sha256,
-        &checkpoint.replay,
-        &checkpoint.episode_groups,
+        training_replay,
+        training_groups,
         &checkpoint.model_config,
     )?;
     Ok(())
@@ -2349,6 +2521,13 @@ mod tests {
             .unwrap();
         assert_eq!(campaign.decision_index, 0);
         assert!(campaign.replay.is_empty());
+        assert_eq!(
+            campaign
+                .admit_evaluated_replay(&[evaluated.clone(), evaluated.clone()])
+                .unwrap(),
+            1
+        );
+        assert_eq!(campaign.training_replay_len(), 1);
         let retained = campaign
             .retain_and_refit_rewarded(
                 decision,
@@ -2374,6 +2553,7 @@ mod tests {
         assert!(retained.reward.terminal_objective_unchanged);
         assert!(!retained.reward.promotion_authority);
         assert_eq!(campaign.replay.len(), 1);
+        assert_eq!(campaign.training_replay_len(), 1);
         assert_eq!(campaign.episode_groups, vec![11]);
         assert!(campaign.model().is_some());
         assert_eq!(campaign.current.snapshot.tape_frame, before.tape_frame + 1);
@@ -2384,8 +2564,11 @@ mod tests {
         assert_eq!(campaign.visited_state_count(), 1);
 
         let checkpoint = campaign.checkpoint().unwrap();
+        assert_eq!(checkpoint.schema, TACTIC_Q_CHECKPOINT_SCHEMA_V3);
+        assert_eq!(checkpoint.training_replay.len(), 1);
         let restored = TacticQCampaign::resume(checkpoint.clone()).unwrap();
         assert_eq!(restored.decision_index, campaign.decision_index);
+        assert_eq!(restored.training_replay_len(), 1);
         assert_eq!(restored.route_tape, campaign.route_tape);
         assert_eq!(restored.replay, campaign.replay);
         assert_eq!(restored.replay_routes, campaign.replay_routes);

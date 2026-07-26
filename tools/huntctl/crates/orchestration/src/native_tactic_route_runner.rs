@@ -7,8 +7,9 @@ use crate::native_suffix_worker::{
 };
 use crate::native_tactic_worker::{
     NativeTacticCheckpointSource, NativeTacticWorkerError, NativeTacticWorkerOutcome,
-    NativeTacticWorkerPaths, PersistentTacticBatchWorker, execute_selected_tactic,
-    materialize_tactic_frontier, tactic_root_checkpoint_sha256,
+    NativeTacticWorkerPaths, PersistentTacticBatchWorker,
+    execute_selected_tactic_with_checkpoint_retention, materialize_tactic_frontier,
+    tactic_root_checkpoint_sha256,
 };
 use crate::optimization_request::OptimizationRequest;
 use crate::tactic_macro_store::{
@@ -147,6 +148,8 @@ pub struct NativeTacticRouteReport {
     pub total_native_ticks: u64,
     pub total_decisions: u64,
     pub useful_decisions: u64,
+    pub training_replay_rows: u64,
+    pub duplicate_training_transitions: u64,
     pub frontier_availability: NativeTacticFrontierAvailability,
     pub native_restore_accounting: NativeTacticRestoreAccounting,
     pub tactic_macro_discovery: NativeTacticMacroDiscoveryReport,
@@ -346,6 +349,10 @@ pub struct NativeTacticSeedResult {
     pub episodes: u64,
     pub native_ticks: u64,
     pub replay_rows: usize,
+    #[serde(default)]
+    pub training_replay_rows: usize,
+    #[serde(default)]
+    pub duplicate_training_transitions: u64,
     pub visited_states: usize,
     #[serde(default)]
     pub useful_decisions: u64,
@@ -376,6 +383,12 @@ pub struct NativeTacticDecisionTrace {
     pub goal_distance_before: f32,
     pub goal_distance_after: f32,
     pub terminal: bool,
+    #[serde(default)]
+    pub newly_admitted_training_rows: u64,
+    #[serde(default)]
+    pub duplicate_training_transitions: u64,
+    #[serde(default)]
+    pub training_replay_rows: u64,
     #[serde(default)]
     pub branch_acquisition: Option<TacticFrontierAcquisition>,
     pub frontier_cells: usize,
@@ -473,6 +486,12 @@ struct NativeTacticDecisionRecord {
     goal_distance_before: f32,
     goal_distance_after: f32,
     terminal: bool,
+    #[serde(default)]
+    newly_admitted_training_rows: u64,
+    #[serde(default)]
+    duplicate_training_transitions: u64,
+    #[serde(default)]
+    training_replay_rows: u64,
     #[serde(default)]
     branch_acquisition: Option<TacticFrontierAcquisition>,
     frontier_cells: usize,
@@ -777,6 +796,14 @@ pub fn run_native_tactic_route(
             .saturating_add(tactic_macro_discovery.validation_native_ticks),
         total_decisions: seed_results.iter().map(|seed| seed.decisions).sum(),
         useful_decisions,
+        training_replay_rows: seed_results
+            .iter()
+            .map(|seed| seed.training_replay_rows as u64)
+            .sum(),
+        duplicate_training_transitions: seed_results
+            .iter()
+            .map(|seed| seed.duplicate_training_transitions)
+            .sum(),
         frontier_availability,
         native_restore_accounting,
         tactic_macro_discovery,
@@ -2092,7 +2119,7 @@ fn run_tactic_proposal_worker(
             }
             let execution_started = Instant::now();
             let native_before = timed_worker.native_elapsed;
-            let outcome = execute_selected_tactic(
+            let outcome = execute_selected_tactic_with_checkpoint_retention(
                 &mut timed_worker,
                 &proposal.selected,
                 &job.proposal_catalog,
@@ -2104,6 +2131,7 @@ fn run_tactic_proposal_worker(
                     request: proposal_root.join("request.json"),
                     result: proposal_root.join("result.json"),
                 },
+                false,
             )
             .map_err(route_error);
             let native_elapsed = timed_worker.native_elapsed.saturating_sub(native_before);
@@ -2601,6 +2629,11 @@ fn run_seed(
             ))
         });
         let model_started = Instant::now();
+        let newly_admitted_training_rows = campaign.admit_evaluated_replay(&evaluated)? as u64;
+        let duplicate_training_transitions = evaluated
+            .len()
+            .saturating_sub(newly_admitted_training_rows as usize)
+            as u64;
         let next_proposals = parameterized_catalog_for_state(
             seed,
             campaign
@@ -2750,6 +2783,9 @@ fn run_seed(
             goal_distance_before: before_features[encoder.goal_distance_feature()],
             goal_distance_after: after_features[encoder.goal_distance_feature()],
             terminal: step.step.transition.value_sample.terminal,
+            newly_admitted_training_rows,
+            duplicate_training_transitions,
+            training_replay_rows: campaign.training_replay_len() as u64,
             branch_acquisition: branch_acquisition.take(),
             frontier_cells,
             logical_frontier_records: frontier_cells.saturating_add(1),
@@ -2894,6 +2930,10 @@ fn run_seed(
         episodes: episode + 1,
         native_ticks,
         replay_rows: campaign.replay.len(),
+        training_replay_rows: campaign.training_replay_len(),
+        duplicate_training_transitions: native_restore_accounting
+            .proposal_transitions
+            .saturating_sub(campaign.training_replay_len() as u64),
         visited_states: campaign.visited_state_count(),
         useful_decisions,
         native_restore_accounting,
@@ -3584,6 +3624,9 @@ fn decision_record(
         goal_distance_before: trace.goal_distance_before,
         goal_distance_after: trace.goal_distance_after,
         terminal: trace.terminal,
+        newly_admitted_training_rows: trace.newly_admitted_training_rows,
+        duplicate_training_transitions: trace.duplicate_training_transitions,
+        training_replay_rows: trace.training_replay_rows,
         branch_acquisition: trace.branch_acquisition.clone(),
         frontier_cells: trace.frontier_cells,
         logical_frontier_records: trace.logical_frontier_records,
@@ -3675,6 +3718,9 @@ fn project_tactic_decision_record(
         goal_distance_before: record.goal_distance_before,
         goal_distance_after: record.goal_distance_after,
         terminal: record.terminal,
+        newly_admitted_training_rows: record.newly_admitted_training_rows,
+        duplicate_training_transitions: record.duplicate_training_transitions,
+        training_replay_rows: record.training_replay_rows,
         branch_acquisition: record.branch_acquisition,
         frontier_cells: record.frontier_cells,
         logical_frontier_records: record.logical_frontier_records,
@@ -5425,6 +5471,8 @@ mod tests {
             episodes: 2,
             native_ticks: 30,
             replay_rows: 4,
+            training_replay_rows: 12,
+            duplicate_training_transitions: 4,
             visited_states: 3,
             useful_decisions: 2,
             native_restore_accounting: NativeTacticRestoreAccounting::default(),
