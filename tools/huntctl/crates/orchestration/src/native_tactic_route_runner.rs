@@ -912,6 +912,14 @@ struct TacticMacroMeasuredOutcome {
     ticks: u32,
 }
 
+#[derive(Default)]
+struct TacticMacroValidationAccounting {
+    native_ticks: u64,
+    native_simulation_micros: u64,
+    preparation_micros: u64,
+    restore: NativeTacticRestoreAccounting,
+}
+
 fn validate_and_store_tactic_macros(
     config: &NativeTacticRouteRunConfig<'_>,
     pool: &NativeTacticProposalPool,
@@ -932,10 +940,8 @@ fn validate_and_store_tactic_macros(
     )?;
     let maximum_ticks =
         goal_tactic_maximum_ticks(config.optimization.budgets.exploration_horizon_ticks)?;
-    let mut validation_native_ticks = 0_u64;
-    let mut validation_native_simulation_micros = 0_u64;
-    let mut validation_preparation_micros = 0_u64;
-    let mut validation_restore_accounting = NativeTacticRestoreAccounting::default();
+    let mut accounting = TacticMacroValidationAccounting::default();
+    let mut primitive_baselines = BTreeMap::<(u64, Digest, u64), TacticMacroMeasuredOutcome>::new();
     let mut validation_state_count = 0_u64;
     let mut comparison_count = 0_u64;
     for candidate in candidates {
@@ -966,10 +972,61 @@ fn validate_and_store_tactic_macros(
                 maximum_ticks,
                 None,
             )?;
-            let mut entries = base.catalog.entries().to_vec();
-            entries.push(candidate.catalog_entry().map_err(route_error)?);
-            let catalog = Arc::new(TacticAssetCatalog::new(entries).map_err(route_error)?);
-            let proposals = catalog
+            let baseline_identity = (frontier.seed, frontier.state_sha256, comparison_index);
+            let primitive_outcome = if let Some(baseline) =
+                primitive_baselines.get(&baseline_identity).copied()
+            {
+                baseline
+            } else {
+                let primitive_catalog = Arc::new(base.catalog.clone());
+                let primitive_proposals = primitive_catalog
+                    .option_descriptors()
+                    .cloned()
+                    .map(|descriptor| SelectedTactic {
+                        schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                        learner_snapshot_sha256: frontier.state_sha256,
+                        decision_index: comparison_index,
+                        descriptor,
+                        reason: TacticSelectionReason::BatchDiversity,
+                        exploration_draw: 0,
+                    })
+                    .collect::<Vec<_>>();
+                let baseline_root = config
+                    .output_root
+                    .join("tactic-macro-validation")
+                    .join("primitive-baselines")
+                    .join(format!(
+                        "seed-{}-{}-{comparison_index:02}",
+                        frontier.seed, frontier.state_sha256
+                    ));
+                let outcomes = evaluate_tactic_macro_validation_batch(
+                    pool,
+                    primitive_catalog,
+                    Arc::new(base.blueprints),
+                    &primitive_proposals,
+                    frontier,
+                    encoder,
+                    &baseline_root,
+                    &mut accounting,
+                )?;
+                let baseline = outcomes
+                    .into_iter()
+                    .map(|(_, outcome)| outcome)
+                    .reduce(|best, contender| {
+                        if tactic_macro_outcome_is_better(contender, best) {
+                            contender
+                        } else {
+                            best
+                        }
+                    })
+                    .ok_or_else(|| route_message("macro validation has no primitive comparison"))?;
+                primitive_baselines.insert(baseline_identity, baseline);
+                baseline
+            };
+            let candidate_entry = candidate.catalog_entry().map_err(route_error)?;
+            let candidate_catalog =
+                Arc::new(TacticAssetCatalog::new(vec![candidate_entry]).map_err(route_error)?);
+            let candidate_proposals = candidate_catalog
                 .option_descriptors()
                 .cloned()
                 .map(|descriptor| SelectedTactic {
@@ -989,63 +1046,26 @@ fn validate_and_store_tactic_macros(
                     "seed-{}-comparison-{comparison_index:02}",
                     frontier.seed
                 ));
-            fs::create_dir_all(&validation_root).map_err(route_error)?;
-            let batch_started = Instant::now();
-            let work = pool.execute_batch(
-                &proposals,
-                catalog,
-                Arc::new(base.blueprints),
-                &frontier.snapshot,
-                &frontier.route_tape,
-                None,
+            let outcomes = evaluate_tactic_macro_validation_batch(
+                pool,
+                candidate_catalog,
+                Arc::new(Vec::new()),
+                &candidate_proposals,
+                frontier,
+                encoder,
                 &validation_root,
+                &mut accounting,
             )?;
-            mined.report.validation_wall_micros = mined
-                .report
-                .validation_wall_micros
-                .saturating_add(elapsed_micros(batch_started.elapsed()));
-            let before_distance = encoder.encode(&frontier.snapshot).map_err(route_error)?
-                [encoder.goal_distance_feature()];
-            let mut candidate_outcome = None;
-            let mut primitive_outcomes = Vec::new();
-            for evaluated in work {
-                validation_native_simulation_micros = validation_native_simulation_micros
-                    .saturating_add(elapsed_micros(evaluated.native_elapsed));
-                validation_preparation_micros = validation_preparation_micros
-                    .saturating_add(elapsed_micros(evaluated.preparation_elapsed));
-                validation_restore_accounting.merge(&evaluated.restore_accounting);
-                let ticks = evaluated.outcome.execution.duration.realized_ticks;
-                validation_native_ticks = validation_native_ticks.saturating_add(u64::from(ticks));
-                let after_distance = encoder
-                    .encode(&evaluated.outcome.next_facts)
-                    .map_err(route_error)?[encoder.goal_distance_feature()];
-                let measured = TacticMacroMeasuredOutcome {
-                    terminal: evaluated.outcome.terminal,
-                    progress: before_distance - after_distance,
-                    ticks,
-                };
-                if evaluated.outcome.selected.descriptor.option_id == candidate.option_id {
-                    if candidate_outcome.replace(measured).is_some() {
-                        return Err(route_message(
-                            "macro validation executed the candidate more than once",
-                        ));
-                    }
-                } else {
-                    primitive_outcomes.push(measured);
-                }
+            let [(option_id, candidate_outcome)] = outcomes.as_slice() else {
+                return Err(route_message(
+                    "macro validation candidate batch did not produce one outcome",
+                ));
+            };
+            if option_id != &candidate.option_id {
+                return Err(route_message(
+                    "macro validation candidate outcome identity is detached",
+                ));
             }
-            let candidate_outcome = candidate_outcome
-                .ok_or_else(|| route_message("macro validation did not execute its candidate"))?;
-            let primitive_outcome = primitive_outcomes
-                .into_iter()
-                .reduce(|best, contender| {
-                    if tactic_macro_outcome_is_better(contender, best) {
-                        contender
-                    } else {
-                        best
-                    }
-                })
-                .ok_or_else(|| route_message("macro validation has no primitive comparison"))?;
             mined
                 .registry
                 .observe(
@@ -1101,14 +1121,63 @@ fn validate_and_store_tactic_macros(
     mined.report.demoted_count = demoted_count;
     mined.report.validation_state_count = validation_state_count;
     mined.report.comparison_count = comparison_count;
-    mined.report.validation_native_ticks = validation_native_ticks;
+    mined.report.validation_native_ticks = accounting.native_ticks;
     mined.report.validation_wall_micros = elapsed_micros(started.elapsed());
-    mined.report.validation_native_simulation_micros = validation_native_simulation_micros;
-    mined.report.validation_preparation_micros = validation_preparation_micros;
-    mined.report.validation_restore_accounting = validation_restore_accounting;
+    mined.report.validation_native_simulation_micros = accounting.native_simulation_micros;
+    mined.report.validation_preparation_micros = accounting.preparation_micros;
+    mined.report.validation_restore_accounting = accounting.restore;
     mined.report.registry_path = path_text(&validated_path);
     mined.report.registry_sha256 = registry_sha256;
     Ok(mined.report)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_tactic_macro_validation_batch(
+    pool: &NativeTacticProposalPool,
+    catalog: Arc<TacticAssetCatalog>,
+    blueprints: Arc<Vec<TacticBlueprint>>,
+    proposals: &[SelectedTactic],
+    frontier: &TacticMacroValidationFrontier,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    output_root: &Path,
+    accounting: &mut TacticMacroValidationAccounting,
+) -> Result<Vec<(String, TacticMacroMeasuredOutcome)>, NativeTacticRouteRunError> {
+    fs::create_dir_all(output_root).map_err(route_error)?;
+    let work = pool.execute_batch(
+        proposals,
+        catalog,
+        blueprints,
+        &frontier.snapshot,
+        &frontier.route_tape,
+        None,
+        output_root,
+    )?;
+    let before_distance =
+        encoder.encode(&frontier.snapshot).map_err(route_error)?[encoder.goal_distance_feature()];
+    work.into_iter()
+        .map(|evaluated| {
+            accounting.native_simulation_micros = accounting
+                .native_simulation_micros
+                .saturating_add(elapsed_micros(evaluated.native_elapsed));
+            accounting.preparation_micros = accounting
+                .preparation_micros
+                .saturating_add(elapsed_micros(evaluated.preparation_elapsed));
+            accounting.restore.merge(&evaluated.restore_accounting);
+            let ticks = evaluated.outcome.execution.duration.realized_ticks;
+            accounting.native_ticks = accounting.native_ticks.saturating_add(u64::from(ticks));
+            let after_distance = encoder
+                .encode(&evaluated.outcome.next_facts)
+                .map_err(route_error)?[encoder.goal_distance_feature()];
+            Ok((
+                evaluated.outcome.selected.descriptor.option_id,
+                TacticMacroMeasuredOutcome {
+                    terminal: evaluated.outcome.terminal,
+                    progress: before_distance - after_distance,
+                    ticks,
+                },
+            ))
+        })
+        .collect()
 }
 
 fn collect_tactic_macro_validation_frontiers(
