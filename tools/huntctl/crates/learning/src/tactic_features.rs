@@ -14,10 +14,19 @@ use std::error::Error;
 use std::f32::consts::PI;
 use std::fmt;
 
-pub const TACTIC_FEATURE_SCHEMA_V1: &str = "dusklight-tactic-features/v1";
-pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V1: &str =
-    "dusklight-goal-conditioned-tactic-features/v1";
-const GOAL_FEATURE_NAMES: &[&str] = &["goal_dx", "goal_dy", "goal_dz", "goal_planar_distance"];
+pub const TACTIC_FEATURE_SCHEMA_V2: &str = "dusklight-tactic-features/v2";
+pub const GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V2: &str =
+    "dusklight-goal-conditioned-tactic-features/v2";
+const GOAL_FEATURE_NAMES: &[&str] = &[
+    "goal_dx",
+    "goal_dy",
+    "goal_dz",
+    "goal_planar_distance",
+    "goal_history_progress",
+    "goal_history_progress_per_tick",
+    "goal_trajectory_alignment",
+    "goal_closing_speed",
+];
 
 const FEATURE_NAMES: &[&str] = &[
     "stage_hash",
@@ -39,6 +48,8 @@ const FEATURE_NAMES: &[&str] = &[
     "player_mode",
     "player_contacts_available",
     "player_contacts",
+    "collision_correction_available",
+    "collision_correction_magnitude",
     "player_x",
     "player_y",
     "player_z",
@@ -99,6 +110,15 @@ const FEATURE_NAMES: &[&str] = &[
     "history_dz",
     "history_procedure_changed",
     "history_event_changed",
+    "trajectory_available",
+    "trajectory_elapsed_ticks",
+    "trajectory_planar_path_length",
+    "trajectory_planar_displacement",
+    "trajectory_straightness",
+    "trajectory_mean_planar_speed",
+    "trajectory_commanded_fraction",
+    "trajectory_stalled_command_fraction",
+    "trajectory_speed_retention",
     "recent_option_available",
     "recent_option_ticks",
     "condition_true_count",
@@ -129,7 +149,7 @@ impl TacticFeatureEncoder {
         let feature_names = FEATURE_NAMES.iter().map(|name| (*name).into()).collect();
         let schema_sha256 = feature_schema_digest(FEATURE_NAMES);
         Self {
-            schema: TACTIC_FEATURE_SCHEMA_V1.into(),
+            schema: TACTIC_FEATURE_SCHEMA_V2.into(),
             schema_sha256,
             feature_names,
         }
@@ -141,7 +161,7 @@ impl TacticFeatureEncoder {
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
         facts.validate().map_err(TacticFeatureError::Facts)?;
-        if self.schema != TACTIC_FEATURE_SCHEMA_V1
+        if self.schema != TACTIC_FEATURE_SCHEMA_V2
             || self.schema_sha256 != feature_schema_digest(FEATURE_NAMES)
             || self.feature_names.len() != FEATURE_NAMES.len()
             || self
@@ -166,6 +186,13 @@ impl TacticFeatureEncoder {
         push_optional_u16(&mut output, facts.player.procedure);
         push_optional_u32(&mut output, facts.player.mode_flags);
         push_optional_u8(&mut output, facts.player.contacts);
+        match facts.player.collision_correction_f32_bits {
+            Some(bits) => {
+                let correction = finite_vec2(bits)?;
+                output.extend([1.0, correction[0].hypot(correction[1])]);
+            }
+            None => output.extend([0.0, 0.0]),
+        }
         output.extend(player_position);
         match facts.player.velocity_f32_bits {
             Some(bits) => {
@@ -220,6 +247,7 @@ impl TacticFeatureEncoder {
         encode_bank(&mut output, &facts.flag_banks.dungeon);
         encode_bank(&mut output, &facts.flag_banks.switch);
         encode_history(&mut output, facts, player_position)?;
+        output.extend(trajectory_summary(facts, player_position)?);
         match &facts.recent_option {
             Some(option) => output.extend([1.0, option.realized_ticks as f32]),
             None => output.extend([0.0, 0.0]),
@@ -266,7 +294,7 @@ impl GoalConditionedTacticFeatureEncoder {
         let mut feature_names = base.feature_names.clone();
         feature_names.extend(GOAL_FEATURE_NAMES.iter().map(|name| (*name).into()));
         Ok(Self {
-            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V1.into(),
+            schema: GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V2.into(),
             schema_sha256: goal_conditioned_feature_schema_digest(base.schema_sha256),
             feature_names,
             target_coordinate_f32_bits: target.map(f32::to_bits),
@@ -279,11 +307,11 @@ impl GoalConditionedTacticFeatureEncoder {
     }
 
     pub fn goal_distance_feature(&self) -> usize {
-        self.feature_names.len() - 1
+        self.base.feature_width() + 3
     }
 
     pub fn encode(&self, facts: &FactSnapshot) -> Result<Vec<f32>, TacticFeatureError> {
-        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V1
+        if self.schema != GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V2
             || self.schema_sha256 != goal_conditioned_feature_schema_digest(self.base.schema_sha256)
             || self.feature_names.len() != self.base.feature_width() + GOAL_FEATURE_NAMES.len()
         {
@@ -303,6 +331,7 @@ impl GoalConditionedTacticFeatureEncoder {
         let planar_distance = delta[0].hypot(delta[2]);
         output.extend(delta);
         output.push(planar_distance);
+        output.extend(goal_trajectory_summary(facts, player, target)?);
         if output.len() != self.feature_width() || output.iter().any(|value| !value.is_finite()) {
             return Err(TacticFeatureError::InvalidOutput);
         }
@@ -310,9 +339,148 @@ impl GoalConditionedTacticFeatureEncoder {
     }
 }
 
+fn trajectory_summary(
+    facts: &FactSnapshot,
+    player: [f32; 3],
+) -> Result<[f32; 9], TacticFeatureError> {
+    let Some(oldest) = facts.recent_history.first() else {
+        return Ok([0.0; 9]);
+    };
+    if facts
+        .recent_history
+        .iter()
+        .any(|row| row.stage != facts.world.stage || row.room != facts.world.room)
+    {
+        return Ok([0.0; 9]);
+    }
+    let mut prior_position = finite_vec3(oldest.player_position_f32_bits)?;
+    let mut prior_tick = oldest.simulation_tick;
+    let mut path_length = 0.0_f32;
+    let mut commanded_steps = 0_u32;
+    let mut stalled_command_steps = 0_u32;
+    let mut observed_steps = 0_u32;
+    for row in facts.recent_history.iter().skip(1) {
+        let position = finite_vec3(row.player_position_f32_bits)?;
+        let elapsed = row.simulation_tick.saturating_sub(prior_tick).max(1) as f32;
+        let distance = planar_distance(prior_position, position);
+        let speed = distance / elapsed;
+        let commanded = commanded_motion(row.previous_pad);
+        path_length += distance;
+        observed_steps += 1;
+        commanded_steps += u32::from(commanded);
+        stalled_command_steps += u32::from(commanded && speed < 1.0);
+        prior_position = position;
+        prior_tick = row.simulation_tick;
+    }
+    let elapsed = facts.simulation_tick.saturating_sub(prior_tick).max(1) as f32;
+    let distance = planar_distance(prior_position, player);
+    let speed = distance / elapsed;
+    let commanded = facts.player.previous_pad.is_some_and(commanded_motion);
+    path_length += distance;
+    observed_steps += 1;
+    commanded_steps += u32::from(commanded);
+    stalled_command_steps += u32::from(commanded && speed < 1.0);
+    let last_speed = speed;
+
+    let oldest_position = finite_vec3(oldest.player_position_f32_bits)?;
+    let window_ticks = facts
+        .simulation_tick
+        .saturating_sub(oldest.simulation_tick)
+        .max(1) as f32;
+    let displacement = planar_distance(oldest_position, player);
+    let mean_speed = path_length / window_ticks;
+    Ok([
+        1.0,
+        window_ticks,
+        path_length,
+        displacement,
+        if path_length > f32::EPSILON {
+            (displacement / path_length).clamp(0.0, 1.0)
+        } else {
+            0.0
+        },
+        mean_speed,
+        commanded_steps as f32 / observed_steps as f32,
+        if commanded_steps == 0 {
+            0.0
+        } else {
+            stalled_command_steps as f32 / commanded_steps as f32
+        },
+        if mean_speed > f32::EPSILON {
+            (last_speed / mean_speed).clamp(0.0, 4.0)
+        } else {
+            0.0
+        },
+    ])
+}
+
+fn goal_trajectory_summary(
+    facts: &FactSnapshot,
+    player: [f32; 3],
+    target: [f32; 3],
+) -> Result<[f32; 4], TacticFeatureError> {
+    let Some(oldest) = facts.recent_history.first() else {
+        return Ok([0.0; 4]);
+    };
+    if facts
+        .recent_history
+        .iter()
+        .any(|row| row.stage != facts.world.stage || row.room != facts.world.room)
+    {
+        return Ok([0.0; 4]);
+    }
+    let oldest_position = finite_vec3(oldest.player_position_f32_bits)?;
+    let old_distance = planar_distance(oldest_position, target);
+    let current_distance = planar_distance(player, target);
+    let progress = old_distance - current_distance;
+    let elapsed = facts
+        .simulation_tick
+        .saturating_sub(oldest.simulation_tick)
+        .max(1) as f32;
+    let displacement = [
+        player[0] - oldest_position[0],
+        player[2] - oldest_position[2],
+    ];
+    let goal_delta = [
+        target[0] - oldest_position[0],
+        target[2] - oldest_position[2],
+    ];
+    let displacement_length = displacement[0].hypot(displacement[1]);
+    let goal_length = goal_delta[0].hypot(goal_delta[1]);
+    let alignment = if displacement_length > f32::EPSILON && goal_length > f32::EPSILON {
+        ((displacement[0] * goal_delta[0] + displacement[1] * goal_delta[1])
+            / (displacement_length * goal_length))
+            .clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let closing_speed = facts
+        .player
+        .velocity_f32_bits
+        .map(finite_vec3)
+        .transpose()?
+        .map_or(0.0, |velocity| {
+            if current_distance > f32::EPSILON {
+                (velocity[0] * (target[0] - player[0]) + velocity[2] * (target[2] - player[2]))
+                    / current_distance
+            } else {
+                0.0
+            }
+        });
+    Ok([progress, progress / elapsed, alignment, closing_speed])
+}
+
+fn commanded_motion(pad: crate::fact_snapshot::PadFactSnapshot) -> bool {
+    f32::from(pad.stick_x).hypot(f32::from(pad.stick_y)) >= 32.0
+}
+
+fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f32 {
+    (right[0] - left[0]).hypot(right[2] - left[2])
+}
+
 fn goal_conditioned_feature_schema_digest(base: Digest) -> Digest {
     let bytes = serde_json::to_vec(&(
-        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V1,
+        GOAL_CONDITIONED_TACTIC_FEATURE_SCHEMA_V2,
         base,
         GOAL_FEATURE_NAMES,
     ))
@@ -569,6 +737,10 @@ fn finite_f32(bits: u32) -> Result<f32, TacticFeatureError> {
     }
 }
 
+fn finite_vec2(bits: [u32; 2]) -> Result<[f32; 2], TacticFeatureError> {
+    Ok([finite_f32(bits[0])?, finite_f32(bits[1])?])
+}
+
 fn symbol_feature(value: &str) -> f32 {
     let digest = Sha256::digest(value.as_bytes());
     let bucket = u32::from_le_bytes(digest[..4].try_into().unwrap());
@@ -577,7 +749,7 @@ fn symbol_feature(value: &str) -> f32 {
 
 fn feature_schema_digest(names: &[&str]) -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(TACTIC_FEATURE_SCHEMA_V1.as_bytes());
+    hasher.update(TACTIC_FEATURE_SCHEMA_V2.as_bytes());
     for name in names {
         hasher.update((name.len() as u64).to_le_bytes());
         hasher.update(name.as_bytes());
@@ -681,7 +853,7 @@ mod tests {
 
         assert_eq!(
             encoded.len(),
-            TacticFeatureEncoder::new().feature_width() + 4
+            TacticFeatureEncoder::new().feature_width() + GOAL_FEATURE_NAMES.len()
         );
         assert_eq!(
             encoded[encoder.goal_distance_feature()].to_bits(),
@@ -692,5 +864,63 @@ mod tests {
             TacticFeatureEncoder::new().schema_sha256
         );
         assert!(GoalConditionedTacticFeatureEncoder::new([f32::NAN, 0.0, 0.0]).is_err());
+    }
+
+    #[test]
+    fn trajectory_features_summarize_recent_native_motion() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let mut facts = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        let mut commanded_pad = facts.player.previous_pad.unwrap();
+        commanded_pad.stick_x = 127;
+        commanded_pad.stick_y = 0;
+        facts.boundary_index = 4;
+        facts.simulation_tick = 4;
+        facts.tape_frame = 4;
+        facts.player.position_f32_bits = [30.0_f32.to_bits(), 0.0_f32.to_bits(), 0.0_f32.to_bits()];
+        facts.player.previous_pad = Some(commanded_pad);
+        facts.recent_history = [0.0_f32, 10.0, 20.0]
+            .into_iter()
+            .enumerate()
+            .map(|(index, x)| crate::fact_snapshot::HistoryFactSnapshot {
+                boundary_index: index as u64 + 1,
+                simulation_tick: index as u64 + 1,
+                tape_frame: index as u64 + 1,
+                stage: facts.world.stage.clone(),
+                room: facts.world.room,
+                player_position_f32_bits: [x.to_bits(), 0.0_f32.to_bits(), 0.0_f32.to_bits()],
+                player_procedure: facts.player.procedure.unwrap(),
+                event_running: facts.event.as_ref().is_some_and(|event| event.running),
+                previous_pad: commanded_pad,
+            })
+            .collect();
+        let encoder = TacticFeatureEncoder::new();
+        let encoded = encoder.encode(&facts).unwrap();
+        let feature = |name: &str| {
+            let index = encoder
+                .feature_names
+                .iter()
+                .position(|candidate| candidate == name)
+                .unwrap();
+            encoded[index]
+        };
+
+        assert_eq!(feature("trajectory_available"), 1.0);
+        assert_eq!(feature("trajectory_elapsed_ticks"), 3.0);
+        assert_eq!(feature("trajectory_planar_path_length"), 30.0);
+        assert_eq!(feature("trajectory_planar_displacement"), 30.0);
+        assert_eq!(feature("trajectory_straightness"), 1.0);
+        assert_eq!(feature("trajectory_mean_planar_speed"), 10.0);
+        assert_eq!(feature("trajectory_commanded_fraction"), 1.0);
+        assert_eq!(feature("trajectory_stalled_command_fraction"), 0.0);
+        assert_eq!(feature("trajectory_speed_retention"), 1.0);
     }
 }
