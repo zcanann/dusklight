@@ -286,8 +286,14 @@ fn command_tape_run(args: &[String]) -> Result<(), Box<dyn Error>> {
     if decoded.tape.frames.is_empty() {
         return Err("tape run requires at least one input frame".into());
     }
+    // The logical budget is a watchdog, not the tape's semantic duration.
+    // Leave one boundary for `--exit-after-tape` to observe exhaustion after
+    // the final input frame; an equal budget races that normal exit and makes
+    // an exact nonterminal replay report budget exhaustion.
     let logical_tick_budget = u64::try_from(decoded.tape.frames.len())
-        .map_err(|_| "tape run input length does not fit u64")?;
+        .map_err(|_| "tape run input length does not fit u64")?
+        .checked_add(1)
+        .ok_or("tape run logical tick budget overflows")?;
     fs::create_dir_all(&state_root)?;
     let card_root = TemporaryCardRoot::create(&state_root)?;
     let renderer_cache = state_root
