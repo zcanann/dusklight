@@ -809,10 +809,14 @@ impl OptionTrajectoryFactSnapshot {
             commanded_motion_ticks += u32::from(commanded);
             commanded_stall_ticks += u32::from(commanded && distance < 1.0);
             wall_contact_ticks += u32::from(
-                step.post_simulation
-                    .player_collision_solver
-                    .as_ref()
-                    .is_some_and(|solver| solver.wall_circles.iter().any(|wall| wall.flags != 0)),
+                step.post_simulation.player_contacts & (1 << 1) != 0
+                    || step
+                        .post_simulation
+                        .player_collision_solver
+                        .as_ref()
+                        .is_some_and(|solver| {
+                            solver.wall_circles.iter().any(|wall| wall.flags != 0)
+                        }),
             );
             let before_velocity = planar_velocity(step.pre_input.player_velocity);
             let after_velocity = planar_velocity(step.post_simulation.player_velocity);
@@ -1196,6 +1200,8 @@ mod tests {
         first.post_simulation.player_position = [10.0, 0.0, 0.0];
         first.post_simulation.player_velocity = [10.0, 0.0, 0.0];
         first.post_simulation.collision_correction = None;
+        first.post_simulation.player_contacts = 0;
+        first.post_simulation.player_collision_solver = None;
         let mut second = template;
         second.consumed_pad.stick_x = 127;
         second.pre_input.player_position = [10.0, 0.0, 0.0];
@@ -1203,6 +1209,8 @@ mod tests {
         second.post_simulation.player_position = [20.0, 0.0, 0.0];
         second.post_simulation.player_velocity = [10.0, 0.0, 0.0];
         second.post_simulation.collision_correction = None;
+        second.post_simulation.player_contacts = 0;
+        second.post_simulation.player_collision_solver = None;
 
         let straight =
             OptionTrajectoryFactSnapshot::from_native_steps(&[first.clone(), second.clone()])
@@ -1219,8 +1227,10 @@ mod tests {
         second.post_simulation.player_position = [10.0, 0.0, 0.0];
         second.post_simulation.player_velocity = [0.0, 0.0, 0.0];
         second.post_simulation.collision_correction = Some([2.0, 0.0]);
+        second.post_simulation.player_contacts = 1 << 1;
         let bumped = OptionTrajectoryFactSnapshot::from_native_steps(&[first, second]).unwrap();
         assert_eq!(bumped.commanded_stall_ticks, 1);
+        assert_eq!(bumped.wall_contact_ticks, 1);
         assert_eq!(bumped.collision_correction_ticks, 1);
         assert_eq!(f32::from_bits(bumped.mean_planar_speed_f32_bits), 5.0);
         assert_eq!(

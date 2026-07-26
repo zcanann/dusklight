@@ -113,6 +113,10 @@ fn golden_v28() -> &'static [u8] {
     include_bytes!("../../../../../tests/fixtures/automation/native_episode_v28.dseps")
 }
 
+fn golden_v29() -> &'static [u8] {
+    include_bytes!("../../../../../tests/fixtures/automation/native_episode_v29.dseps")
+}
+
 #[test]
 fn authored_objective_identity_binds_program_and_definition() {
     assert_eq!(
@@ -1669,6 +1673,50 @@ fn decodes_v28_return_restart_write_trace_with_legacy_missingness() {
             NativeChannelStatus::NotSampled
         );
         assert_eq!(observation.return_restart_write_trace, None);
+    }
+}
+
+#[test]
+fn decodes_v29_compact_tactic_rows_and_full_terminal_rows() {
+    let shard = NativeEpisodeShard::decode(golden_v29()).unwrap();
+    assert_eq!(
+        shard.metadata.observation_schema,
+        LEARNING_OBSERVATION_SCHEMA_V29
+    );
+    assert_eq!(shard.episodes.len(), 2);
+
+    let omitted = &shard.episodes[0].steps[0].pre_input;
+    assert!(omitted.actors_truncated);
+    assert_eq!(omitted.actor_observed_count, 257);
+    assert!(omitted.actors.is_empty());
+    assert_eq!(
+        omitted.player_collision_solver_status,
+        NativeChannelStatus::NotSampled
+    );
+    assert_eq!(omitted.player_collision_solver, None);
+    assert_eq!(omitted.player_action_status, NativeChannelStatus::Present);
+    assert!(omitted.player_action.is_some());
+
+    let retained = &shard.episodes[1].steps[0].pre_input;
+    assert!(!retained.actors_truncated);
+    assert_eq!(retained.actor_observed_count, 257);
+    assert_eq!(retained.actors.len(), 257);
+    assert!(
+        retained
+            .actors
+            .windows(2)
+            .all(|actors| actors[0].runtime_generation < actors[1].runtime_generation)
+    );
+
+    for episode in &shard.episodes {
+        let terminal = &episode.steps[0].post_simulation;
+        assert!(!terminal.actors_truncated);
+        assert_eq!(terminal.actors.len(), 257);
+        assert_eq!(
+            terminal.return_restart_write_trace_status,
+            NativeChannelStatus::Present
+        );
+        assert_eq!(terminal.goal.reached, episode.success);
     }
 }
 

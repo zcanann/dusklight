@@ -795,6 +795,7 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         .tapeFrame = 440,
         .remainingTicks = 4,
         .stateIdentity = "11111111111111111111111111111111",
+        .detail = LearningObservationDetail::Tactic,
         .gameplayTrace = &fixture.gameplayTrace,
         .collisionPlanes = fixture.collisionPlanes,
         .playerForm = fixture.playerForm,
@@ -829,7 +830,10 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
     fixture.observation.playerPositionX = -1.0F;
     begin_learning_episode(successEpisode);
     fixture.setTraceBoundary(GameplayTracePhase::PreInput, 10, 10, 440);
-    REQUIRE(append_learning_observation(successEpisode, fixture.observation, pre, error));
+    LearningObservationContext successPre = pre;
+    successPre.tacticActorsRequired = true;
+    REQUIRE(
+        append_learning_observation(successEpisode, fixture.observation, successPre, error));
     append_learning_action(successEpisode, pad, pad);
     fixture.observation.playerPositionX = 0.0F;
     LearningObservationContext successPost = post;
@@ -853,7 +857,7 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
     }
     const LearningEpisodeShardMetadata metadata{
         .sourceFrame = 440,
-        .maximumTicks = 1,
+        .maximumTicks = 4,
         .sourceBoundaryFingerprint = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         .checkpointIdentity = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         .objective = "exit-f-sp103-to-f-sp104",
@@ -875,16 +879,16 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
     REQUIRE(error.find("metadata is incomplete") != std::string::npos);
     REQUIRE(writer.begin(path, metadata, error));
     REQUIRE(!writer.append(
-        {.id = "invalid-success", .success = true, .ticksExecuted = 1, .remainingTicks = 0},
+        {.id = "invalid-success", .success = true, .ticksExecuted = 1, .remainingTicks = 3},
         successEpisode, error));
     REQUIRE(error.find("block is invalid") != std::string::npos);
     REQUIRE(writer.append(
-        {.id = "failure-0", .ticksExecuted = 1, .remainingTicks = 0}, episode, error));
+        {.id = "failure-0", .ticksExecuted = 1, .remainingTicks = 3}, episode, error));
     REQUIRE(writer.append({.id = "success-0",
                               .success = true,
                               .ticksExecuted = 1,
                               .firstHitTick = 0,
-                              .remainingTicks = 0},
+                              .remainingTicks = 3},
         successEpisode, error));
     REQUIRE(writer.finish(error));
     REQUIRE(writer.episodeCount() == 2);
@@ -912,7 +916,7 @@ void test_episode_and_shard_are_compact_and_self_delimiting(
         LearningEpisodeShardWriter replacement;
         REQUIRE(replacement.begin(path, metadata, error));
         REQUIRE(replacement.append(
-            {.id = "replacement", .ticksExecuted = 1, .remainingTicks = 0}, episode, error));
+            {.id = "replacement", .ticksExecuted = 1, .remainingTicks = 3}, episode, error));
         REQUIRE(replacement.finish(error));
         REQUIRE(read_little<std::uint32_t>(read_file(path), 16) == 1);
         std::filesystem::remove(path);
@@ -952,8 +956,43 @@ void test_actor_population_is_not_limited_by_controller_capacity() {
             .stateIdentity = "11111111111111111111111111111111",
         },
         error));
-    REQUIRE(read_little<std::uint16_t>(bytes, 28) == actors.size());
-    REQUIRE(read_little<std::uint32_t>(bytes, 34) == actors.size());
+    REQUIRE(bytes.at(24) == static_cast<std::uint8_t>(LearningObservationDetail::Full));
+    REQUIRE(read_little<std::uint16_t>(bytes, 29) == actors.size());
+    REQUIRE(read_little<std::uint32_t>(bytes, 35) == actors.size());
+}
+
+void test_tactic_detail_omits_unneeded_full_channels() {
+    ObservationFixture fixture;
+    fixture.setTraceBoundary(GameplayTracePhase::PreInput, 0, 0, 0);
+    std::string error;
+    const LearningObservationContext full{
+        .stateIdentity = "11111111111111111111111111111111",
+        .gameplayTrace = &fixture.gameplayTrace,
+        .collisionPlanes = fixture.collisionPlanes,
+        .playerForm = fixture.playerForm,
+    };
+    std::vector<std::uint8_t> fullBytes;
+    begin_learning_episode(fullBytes);
+    REQUIRE(append_learning_observation(fullBytes, fixture.observation, full, error));
+
+    LearningObservationContext compact = full;
+    compact.detail = LearningObservationDetail::Tactic;
+    std::vector<std::uint8_t> compactBytes;
+    begin_learning_episode(compactBytes);
+    REQUIRE(append_learning_observation(compactBytes, fixture.observation, compact, error));
+    REQUIRE(
+        compactBytes.at(24) == static_cast<std::uint8_t>(LearningObservationDetail::Tactic));
+    REQUIRE(read_little<std::uint16_t>(compactBytes, 27) == 0);
+    REQUIRE(read_little<std::uint32_t>(compactBytes, 31) == 1);
+    REQUIRE(compactBytes.size() * 10 < fullBytes.size());
+
+    compact.tacticActorsRequired = true;
+    std::vector<std::uint8_t> actorBytes;
+    begin_learning_episode(actorBytes);
+    REQUIRE(append_learning_observation(actorBytes, fixture.observation, compact, error));
+    REQUIRE(read_little<std::uint16_t>(actorBytes, 27) == 1);
+    REQUIRE(actorBytes.size() > compactBytes.size());
+    REQUIRE(actorBytes.size() * 10 < fullBytes.size());
 }
 
 void test_duplicate_actor_identity_fails_closed() {
@@ -1459,6 +1498,7 @@ int main(const int argc, char** argv) {
         argc == 2 ? std::optional(std::filesystem::path(argv[1])) : std::nullopt);
     test_inconsistent_actor_completeness_fails_closed();
     test_actor_population_is_not_limited_by_controller_capacity();
+    test_tactic_detail_omits_unneeded_full_channels();
     test_duplicate_actor_identity_fails_closed();
     test_temporary_event_register_bank_is_required();
     test_player_resources_presence_matches_player_presence();

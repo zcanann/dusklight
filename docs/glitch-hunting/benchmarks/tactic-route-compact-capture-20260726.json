@@ -1,0 +1,70 @@
+{
+  "schema": "dusklight-tactic-route-compact-capture-report/v1",
+  "date": "2026-07-26",
+  "claim": "Version 29 tactic episodes retain compact phase-correct controller observations on interior native-controller boundaries and one full terminal observation. On an exact one-seed Ordon A/B, this preserves the selected route and all learning outcomes while reducing proposal corpus encoding by 47.3x and proposal-batch wall time by 4.65x. Complete seed wall time improves by 2.25x; this milestone alone does not satisfy the P1 10x end-to-end acceptance gate.",
+  "bindings": {
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "source_boundary_index": 506,
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "seed": 1,
+    "workers": 1,
+    "decisions": 1,
+    "proposals": 4
+  },
+  "semantic_equivalence": {
+    "successful": true,
+    "native_ticks": 243,
+    "selected_route_ticks": 158,
+    "selected_first_hit_tick": 157,
+    "route_tape_sha256": "9391b7fb9d46d454a61936efa4e1e690c242e37eee962e2dc889319df695ba29",
+    "terminal_state_sha256": "960e65cdb7dc1b862835e52c013d4855035a9c9e7bd2e64b4c4d47ed69608748",
+    "training_reward": 98.06367
+  },
+  "before": {
+    "report": "build/campaigns/ordon-q125-motion-signal-reuse-smoke-20260726/run/report.json",
+    "execution_binding_sha256": "acc1c5cc2282f175129126696201da25382d4a79eb9cedff00da0550fa0e7b20",
+    "observation_schema": "dusklight-learning-observation/v28",
+    "seed_wall_micros": 3465333,
+    "tactic_execution_micros": 2583562,
+    "native_simulation_micros": 2140736,
+    "restore_micros": 75692,
+    "tactic_preparation_and_fact_extraction_micros": 283679,
+    "model_update_micros": 220285,
+    "evidence_projection_and_persistence_micros": 609850,
+    "retained_candidate_artifact_micros": 231930,
+    "proposal_batch_wall_micros": 2056500,
+    "proposal_corpus_encoding_micros": 264212,
+    "proposal_uncompressed_bytes": 11087235,
+    "proposal_compressed_bytes": 153803
+  },
+  "after": {
+    "report": "build/campaigns/ordon-q125-compact-tactic-smoke-20260726/run/report.json",
+    "execution_binding_sha256": "8ad17601d9447cc08fe0462166c8f6462a2a060c44a3bc97f6d7266918346dc3",
+    "observation_schema": "dusklight-learning-observation/v29",
+    "seed_wall_micros": 1542478,
+    "tactic_execution_micros": 726561,
+    "native_simulation_micros": 508286,
+    "restore_micros": 66873,
+    "tactic_preparation_and_fact_extraction_micros": 73761,
+    "model_update_micros": 211392,
+    "evidence_projection_and_persistence_micros": 554561,
+    "retained_candidate_artifact_micros": 220182,
+    "proposal_batch_wall_micros": 441777,
+    "proposal_corpus_encoding_micros": 5591,
+    "proposal_uncompressed_bytes": 875509,
+    "proposal_compressed_bytes": 43179
+  },
+  "ratios": {
+    "seed_wall_speedup": 2.2466,
+    "proposal_batch_wall_speedup": 4.6550,
+    "proposal_corpus_encoding_speedup": 47.2567,
+    "proposal_uncompressed_byte_reduction_fraction": 0.9210,
+    "proposal_compressed_byte_reduction_fraction": 0.7193
+  },
+  "scope": {
+    "p1_order_of_magnitude_met": false,
+    "p5_learning_value_met": false,
+    "p6_sub_125_met": false,
+    "next_bottleneck": "Evidence projection and persistence is now 35.9 percent of seed wall time; the remaining P1 work must reduce retained-artifact and persistence overhead and verify multi-worker scaling."
+  }
+}

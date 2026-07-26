@@ -65,6 +65,12 @@ constexpr std::uint64_t LearningTraceChannels =
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerBackgroundCollision) |
     gameplay_trace_channel_bit(GameplayTraceChannel::PlayerCollisionSurfaces);
 
+bool controller_requires_actor_set(const InputControllerProgram& controller) {
+    return std::ranges::any_of(controller.layers(), [](const InputControllerLayer& layer) {
+        return layer.kind == InputControllerLayerKind::SeekActor;
+    });
+}
+
 bool is_lower_hex(const std::string_view value, const std::size_t width) {
     return value.size() == width && std::ranges::all_of(value, [](const char byte) {
         return (byte >= '0' && byte <= '9') || (byte >= 'a' && byte <= 'f');
@@ -908,6 +914,7 @@ bool SuffixBatchRunner::captureEpisodePreInput(
             return false;
         mPolicyFeatureRowReady = true;
     }
+    const SuffixBatchCandidate& candidate = mDefinition.candidates[mCandidateIndex];
     const LearningObservationContext context{
         .phase = LearningObservationPhase::PreInput,
         .boundaryIndex = simulationTick,
@@ -924,6 +931,10 @@ bool SuffixBatchRunner::captureEpisodePreInput(
         .collisionCorrectionPresent = collision.present,
         .collisionCorrectionX = collision.x,
         .collisionCorrectionZ = collision.z,
+        .detail = candidate.controllerProgram ? LearningObservationDetail::Tactic :
+                                                LearningObservationDetail::Full,
+        .tacticActorsRequired =
+            candidate.controllerProgram && controller_requires_actor_set(candidate.controller),
         .gameplayTrace = &gameplayTrace,
         .collisionPlanes = collisionPlanes,
         .playerForm = playerForm,
@@ -1204,6 +1215,7 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
         collisionPlanes = capture_gameplay_collision_planes();
         playerForm = capture_gameplay_player_form();
     }
+    const SuffixBatchCandidate& candidate = mDefinition.candidates[mCandidateIndex];
     const LearningObservationContext context{
         .phase = LearningObservationPhase::PostSimulation,
         .terminalReason = !terminal ? LearningTerminalReason::None :
@@ -1223,6 +1235,10 @@ bool SuffixBatchRunner::appendEpisodePostSimulation(const MilestoneObservation& 
         .collisionCorrectionPresent = collision.present,
         .collisionCorrectionX = collision.x,
         .collisionCorrectionZ = collision.z,
+        .detail = candidate.controllerProgram && !terminal ? LearningObservationDetail::Tactic :
+                                                            LearningObservationDetail::Full,
+        .tacticActorsRequired =
+            candidate.controllerProgram && controller_requires_actor_set(candidate.controller),
         .gameplayTrace = &gameplayTrace,
         .collisionPlanes = collisionPlanes,
         .playerForm = playerForm,

@@ -1209,6 +1209,106 @@ std::array<std::uint8_t, 16> xxh128(const std::span<const std::uint8_t> value) {
     return output;
 }
 
+bool append_tactic_observation(std::vector<std::uint8_t>& output,
+    const MilestoneObservation& observation, const LearningObservationContext& context,
+    const std::array<std::uint8_t, 16>& stateIdentity, std::string& error) {
+    const bool includeActors = context.tacticActorsRequired;
+    const std::size_t actorCount = includeActors ? observation.actors.size() : 0;
+    if (actorCount > std::numeric_limits<std::uint16_t>::max())
+        return false;
+
+    std::uint16_t flags = 0;
+    flags |= observation.playerPresent ? 1u << 0 : 0;
+    flags |= observation.playerIsLink ? 1u << 1 : 0;
+    flags |= context.cameraPresent ? 1u << 2 : 0;
+    flags |= context.collisionCorrectionPresent ? 1u << 3 : 0;
+    flags |= context.playerForm.present ? 1u << 4 : 0;
+    flags |= context.playerForm.wolf ? 1u << 5 : 0;
+    flags |= includeActors ? 0 : 1u << 6;
+
+    append_integer(output, static_cast<std::uint8_t>(context.phase));
+    append_integer(output, static_cast<std::uint8_t>(context.terminalReason));
+    append_integer(output, static_cast<std::uint16_t>(actorCount));
+    append_integer(output, flags);
+    append_integer(output, observation.actorObservedCount);
+    append_integer(output, context.remainingTicks);
+    append_integer(output, context.boundaryIndex);
+    append_integer(output, context.simulationTick);
+    append_integer(output, context.tapeFrame);
+    output.insert(output.end(), stateIdentity.begin(), stateIdentity.end());
+    append_fixed_name(output, observation.stageName);
+    append_integer(output, observation.room);
+    append_integer(output, observation.layer);
+    append_integer(output, observation.point);
+    append_integer(output, observation.playerProcessId);
+    append_integer(output, observation.playerActorName);
+    append_integer(output, observation.playerProcId);
+    for (const float value : {observation.playerPositionX, observation.playerPositionY,
+             observation.playerPositionZ, observation.playerVelocityX, observation.playerVelocityY,
+             observation.playerVelocityZ, observation.playerForwardSpeed})
+    {
+        if (!append_float(output, observation.playerPresent ? value : 0.0F, error))
+            return false;
+    }
+    for (const std::int16_t value :
+        {observation.playerCurrentAngleX, observation.playerCurrentAngleY,
+            observation.playerCurrentAngleZ, observation.playerShapeAngleX,
+            observation.playerShapeAngleY, observation.playerShapeAngleZ})
+        append_integer(output, observation.playerPresent ? value : std::int16_t{0});
+    append_integer(output, observation.playerModeFlags);
+    append_integer(output, observation.playerDamageWaitTimer);
+    append_integer(output, observation.playerIceDamageWaitTimer);
+    append_integer(output, observation.playerSwordChangeWaitTimer);
+    append_integer(output, observation.playerDoStatus);
+    std::uint8_t contacts = 0;
+    contacts |= observation.playerGroundContact ? 1u << 0 : 0;
+    contacts |= observation.playerWallContact ? 1u << 1 : 0;
+    contacts |= observation.playerRoofContact ? 1u << 2 : 0;
+    contacts |= observation.playerWaterContact ? 1u << 3 : 0;
+    contacts |= observation.playerWaterIn ? 1u << 4 : 0;
+    append_integer(output, contacts);
+    append_integer<std::uint8_t>(output, 0);
+    if (!append_float(output, context.cameraPresent ? context.cameraYawRadians : 0.0F, error) ||
+        !append_float(output,
+            context.collisionCorrectionPresent ? context.collisionCorrectionX : 0.0F, error) ||
+        !append_float(output,
+            context.collisionCorrectionPresent ? context.collisionCorrectionZ : 0.0F, error))
+        return false;
+    append_raw_pad(output, context.previousInput);
+
+    const GameplayTraceSample emptyTrace{};
+    const GameplayTraceSample& trace =
+        context.gameplayTrace == nullptr ? emptyTrace : *context.gameplayTrace;
+    append_integer(output, static_cast<std::uint8_t>(trace.playerActionStatus));
+    append_integer<std::uint8_t>(output, 0);
+    const GameplayTracePlayerActionSample& action = trace.playerAction;
+    for (const GameplayTraceAnimationLane& lane : action.underAnimations) {
+        append_integer(output, lane.resourceId);
+        if (!append_float(output, lane.frame, error))
+            return false;
+    }
+    for (const GameplayTraceAnimationLane& lane : action.upperAnimations) {
+        append_integer(output, lane.resourceId);
+        if (!append_float(output, lane.frame, error))
+            return false;
+    }
+
+    if (includeActors) {
+        for (const MilestoneObservation::Actor& actor : observation.actors) {
+            append_integer(output, actor.runtimeGeneration);
+            append_integer(output, actor.actorName);
+            append_integer(output, actor.setId);
+            append_integer(output, actor.homeRoom);
+            append_integer(output, actor.currentRoom);
+            if (!append_float(output, actor.positionX, error) ||
+                !append_float(output, actor.positionY, error) ||
+                !append_float(output, actor.positionZ, error))
+                return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 bool append_learning_observation(std::vector<std::uint8_t>& output,
@@ -1429,6 +1529,13 @@ bool append_learning_observation(std::vector<std::uint8_t>& output,
     std::array<std::uint8_t, 16> stateIdentity{};
     if (!decode_hex_128(context.stateIdentity, stateIdentity)) {
         error = "learning observation state identity is not XXH3-128 hex";
+        return false;
+    }
+    append_integer(output, static_cast<std::uint8_t>(context.detail));
+    if (context.detail == LearningObservationDetail::Tactic)
+        return append_tactic_observation(output, observation, context, stateIdentity, error);
+    if (context.detail != LearningObservationDetail::Full) {
+        error = "learning observation has an invalid detail profile";
         return false;
     }
 

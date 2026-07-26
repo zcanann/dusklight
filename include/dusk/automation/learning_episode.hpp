@@ -18,10 +18,10 @@ namespace dusk::automation {
 
 inline constexpr std::uint16_t LearningEpisodeShardVersion = 2;
 inline constexpr std::uint16_t LearningEpisodePolicyShardVersion = 3;
-inline constexpr std::uint16_t LearningObservationVersion = 28;
+inline constexpr std::uint16_t LearningObservationVersion = 29;
 inline constexpr std::uint16_t LearningActionVersion = 2;
 inline constexpr std::uint32_t LearningEpisodeMaximumTicks = 4096;
-inline constexpr std::string_view LearningObservationSchema = "dusklight-learning-observation/v28";
+inline constexpr std::string_view LearningObservationSchema = "dusklight-learning-observation/v29";
 inline constexpr std::string_view LearningActionSchema = "dusklight-raw-pad-action/v2";
 inline constexpr std::string_view LearningEpisodeShardSchema = "dusklight-native-episode-shard/v2";
 inline constexpr std::string_view LearningEpisodePolicyShardSchema =
@@ -39,6 +39,11 @@ enum class LearningTerminalReason : std::uint8_t {
     // any final unsuccessful option step, including an observation-driven
     // controller ending before the enclosing maximum-tick horizon.
     TickBudgetExhausted = 2,
+};
+
+enum class LearningObservationDetail : std::uint8_t {
+    Full = 0,
+    Tactic = 1,
 };
 
 enum class LearningActorSelectionRule : std::uint8_t {
@@ -74,6 +79,10 @@ struct LearningObservationContext {
     bool collisionCorrectionPresent = false;
     float collisionCorrectionX = 0.0F;
     float collisionCorrectionZ = 0.0F;
+    LearningObservationDetail detail = LearningObservationDetail::Full;
+    // Actor-independent tactics omit the large, unchanged actor set. The
+    // compact row records that omission instead of claiming completeness.
+    bool tacticActorsRequired = false;
     // Pointer-free observer copy, consumed synchronously by append_learning_observation.
     const GameplayTraceSample* gameplayTrace = nullptr;
     GameplayCollisionPlanesObservation collisionPlanes;
