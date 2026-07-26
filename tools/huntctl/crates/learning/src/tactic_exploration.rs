@@ -509,6 +509,13 @@ fn prioritized_unsupported(
 
 fn is_route_sequence(descriptor: &OptionActionDescriptor) -> bool {
     descriptor.parameters.contains_key("coordinates")
+        // Layered route compositions use the generic reactive-controller
+        // adapter, whose descriptor intentionally exposes only the canonical
+        // program identity and duration. The goal-conditioned catalog keeps
+        // every route-derived action under this stable namespace, including
+        // button overlays such as rolling, so they must remain in the same
+        // exploration class as their native coordinate-sequence counterparts.
+        || descriptor.option_id.starts_with("goal.seek.route.")
 }
 
 fn deterministic_index(seed: u64, decision_index: u64, state: Digest, len: usize) -> usize {
@@ -883,6 +890,31 @@ mod tests {
         let unsupported = [coordinate, route.clone()];
         let prioritized = prioritized_unsupported(&unsupported, false);
         assert_eq!(prioritized, vec![&route]);
+    }
+
+    #[test]
+    fn layered_goal_route_compositions_remain_in_route_exploration() {
+        let mut route = descriptor(
+            "goal.seek.route.00",
+            OptionType::Custom("seek_coordinate_sequence".into()),
+        );
+        route
+            .parameters
+            .insert("coordinates".into(), OptionParameter::Text("[]".into()));
+        let rolling_route = descriptor(
+            "goal.seek.route.00.roll.period.20.phase.00",
+            OptionType::Custom("reactive_controller".into()),
+        );
+        let mut coordinate = descriptor("coordinate", OptionType::Move);
+        coordinate.parameters.insert(
+            "coordinate".into(),
+            OptionParameter::Vec3F32Bits([0.0_f32.to_bits(); 3]),
+        );
+        let unsupported = [coordinate, rolling_route.clone(), route.clone()];
+
+        let prioritized = prioritized_unsupported(&unsupported, false);
+
+        assert_eq!(prioritized, vec![&rolling_route, &route]);
     }
 
     #[test]
