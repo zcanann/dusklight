@@ -1,0 +1,71 @@
+{
+  "schema": "dusklight-benchmark/tactic-route-parameterized-families/v1",
+  "date": "2026-07-25",
+  "claim": "The native tactic-route learner no longer selects from the fixed 136-entry categorical action grid. At every retained state it deterministically generates a bounded ephemeral catalog of parameterized tactic-family instances, ranks exact descriptors under one stable family schema, and executes the selected instances through the existing typed tactic runtime.",
+  "implementation": {
+    "family_generator_commit": "d3172baa6b",
+    "native_integration_commit": "ca8870ea03",
+    "family_schema": "dusklight-parameterized-tactic-families/v1",
+    "family_schema_sha256": "4ca0a9db238717a1993db5e68d7a6ce3bc0a720d65aa2f5a549f85f458b5a9c8",
+    "families": [
+      "seek-target",
+      "relative-heading",
+      "short-curve",
+      "roll",
+      "interact",
+      "neutral"
+    ],
+    "instance_identity": "family slug plus a content digest of the exact typed executor description",
+    "proposal_inputs": [
+      "campaign seed",
+      "decision index",
+      "authenticated state digest",
+      "player position",
+      "camera yaw",
+      "goal coordinate",
+      "bounded maximum duration"
+    ],
+    "operational_serialization": "existing binary tactic decision journal, content-addressed checkpoint store, input tape, and native episode shards; JSON is used only for this readable report"
+  },
+  "validation": {
+    "cargo_test_tactic_q_campaign": {
+      "passed": 4,
+      "failed": 0
+    },
+    "cargo_test_native_tactic_route_runner": {
+      "passed": 21,
+      "failed": 0
+    },
+    "cargo_check_huntctl": "passed",
+    "native_smoke": {
+      "output": "build/campaigns/tactic-route-parameterized-smoke-20260725",
+      "report_schema": "dusklight-native-tactic-route-report/v9",
+      "report_sha256": "b31e201581334391b96a42852db0267a4884955ab8fb3fed5e129b5558b45fdb",
+      "huntctl_binary_sha256": "7e6d06fba9c7c80585b292ffb0af3974911c80fe51a988f84d8d326885130b0a",
+      "execution_content_sha256": "799f52c24a184b7619866b526ccf9402612b2a833744fabef7dd98a093183644",
+      "seed": 130363,
+      "workers": 4,
+      "decisions": 1,
+      "native_ticks": 35,
+      "wall_micros": 51133746,
+      "proposal_transitions": 4,
+      "useful_transitions": 4,
+      "proposal_option_ids": [
+        "family/interact/f5c167c7b993de7f95c7",
+        "family/seek-target/e63011b2416c98f641f6",
+        "family/short-curve/02cf9067db2f1edad7cf",
+        "family/neutral/e0587ef60d9dfe8dddf8"
+      ],
+      "realized_ticks": [
+        2,
+        14,
+        15,
+        4
+      ],
+      "retained_option_id": "family/seek-target/e63011b2416c98f641f6",
+      "retained_realized_ticks": 14,
+      "terminal_observed": true
+    }
+  },
+  "scope": "This proves state-conditioned generation and native execution of previously unlisted parameter instances. The terminal observation is integration evidence only, not a sub-125 route claim. Bounded multi-family composition, outcome-conditioned proposal adaptation, held-out-goal validation, and exact tape retention for every rejected proposal remain unfinished."
+}

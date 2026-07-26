@@ -52,11 +52,9 @@ Acceptance:
 
 ## P3 - Replace the fixed action grid with tactic proposals
 
-- [ ] Treat the existing controller operations as executable tactic families,
-      not 136 permanently enumerated categorical choices.
-- [ ] Let proposals parameterize heading, stick magnitude, duration, curve,
-      roll timing, target, interaction timing, and bounded composition where
-      applicable.
+- [ ] Add bounded composition of generated controller-operation families;
+      heading, stick magnitude, duration, curve, roll timing, target, and
+      interaction timing are already parameterized.
 - [ ] Preserve applicability and safety constraints in the executor so a
       proposer cannot emit invalid or unbounded programs.
 - [ ] Generate multiple diverse parameter proposals from each retained state
