@@ -67,7 +67,11 @@ Acceptance:
 ## P6 - Beat the authenticated Ordon incumbent
 
 - [ ] Run the integrated system from the exact `to_ordon_spring_q125` source
-      boundary with no route-specific preferred-action script.
+      boundary with no route-specific preferred-action script. For this
+      benchmark that means optimization request
+      `ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c`,
+      segment `to_ordon_spring_q125`, source boundary index `506`, and native
+      source fingerprint `4786d70e77b31416d02864783434c7dc`.
 - [ ] Search until it produces a candidate whose first authenticated terminal
       hit is strictly earlier than tick 125.
 - [ ] Minimize the complete successful controller tape without changing the
@@ -84,5 +88,9 @@ Acceptance:
 - A machine-generated route reaches the authenticated Ordon terminal in fewer
   than 125 ticks.
 - The route reproduces exactly from cold boot.
+- A report from any other optimization request or source boundary is
+  ineligible even when it uses the same terminal predicate. First-hit cost is
+  measured relative to boundary `506`; a later residual checkpoint cannot be
+  compared with the incumbent.
 
 Anything short of both conditions is progress evidence, not success.
