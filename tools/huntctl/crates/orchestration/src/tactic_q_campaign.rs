@@ -2014,6 +2014,7 @@ mod tests {
                 .map(f32::from_bits),
             goal_coordinate: [100.0, 20.0, -50.0],
             maximum_ticks: 40,
+            feedback: None,
         })
         .unwrap();
         let batch = campaign

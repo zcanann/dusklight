@@ -13,6 +13,7 @@ use crate::tactic_blueprint::{TacticBlueprint, TacticBlueprintNode};
 use dusklight_control::controller_program::ControllerProgram;
 use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::roll_option::RollOptionPlan;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
@@ -56,6 +57,17 @@ pub struct ParameterizedTacticProposalContext {
     pub camera_yaw_radians: Option<f32>,
     pub goal_coordinate: [f32; 3],
     pub maximum_ticks: u32,
+    pub feedback: Option<ParameterizedTacticFeedback>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParameterizedTacticFeedback {
+    pub previous_reward: f32,
+    pub goal_progress: f32,
+    pub ensemble_uncertainty: Option<f32>,
+    pub endpoint_novel: bool,
+    pub terminal: bool,
 }
 
 impl ParameterizedTacticProposalContext {
@@ -71,6 +83,14 @@ impl ParameterizedTacticProposalContext {
             || self
                 .camera_yaw_radians
                 .is_some_and(|value| !value.is_finite())
+            || self.feedback.is_some_and(|feedback| {
+                !feedback.previous_reward.is_finite()
+                    || !feedback.goal_progress.is_finite()
+                    || feedback
+                        .ensemble_uncertainty
+                        .is_some_and(|value| !value.is_finite() || value < 0.0)
+                    || feedback.terminal
+            })
         {
             return Err(TacticAssetError::InvalidAsset(
                 "parameterized tactic proposal context is invalid".into(),
@@ -114,11 +134,25 @@ pub fn propose_parameterized_tactics(
     let family_schema_sha256 = parameterized_tactic_family_schema_sha256();
     let draw = proposal_draw(context);
     let goal_heading = goal_relative_heading(context);
-    let angular_jitter = ((draw % 21) as i32 - 10) as f32 * PI / 180.0;
+    let feedback = context.feedback;
+    let uncertainty = feedback
+        .and_then(|feedback| feedback.ensemble_uncertainty)
+        .unwrap_or(0.0)
+        .sqrt()
+        .clamp(0.0, 1.0);
+    let progressing = feedback.is_some_and(|feedback| feedback.goal_progress > 0.0);
+    let repeated_endpoint = feedback.is_some_and(|feedback| !feedback.endpoint_novel);
+    let jitter_degrees = 5.0 + 20.0 * uncertainty;
+    let centered_draw = (draw % 2_001) as f32 / 1_000.0 - 1.0;
+    let angular_jitter = centered_draw * jitter_degrees * PI / 180.0;
     let central_heading = normalize_angle(goal_heading + angular_jitter);
     let mut entries = BTreeMap::<String, TacticCatalogEntry>::new();
 
-    let seek_durations = [context.maximum_ticks.min(16), context.maximum_ticks.min(40)];
+    let seek_durations = if progressing {
+        [context.maximum_ticks.min(20), context.maximum_ticks.min(40)]
+    } else {
+        [context.maximum_ticks.min(8), context.maximum_ticks.min(16)]
+    };
     for (index, duration) in seek_durations.into_iter().enumerate() {
         let magnitude = if (draw.rotate_left(index as u32) & 1) == 0 {
             96
@@ -140,7 +174,11 @@ pub fn propose_parameterized_tactics(
         )?;
     }
 
-    let heading_offsets = [-PI / 3.0, -PI / 9.0, PI / 9.0, PI / 3.0];
+    let heading_offsets = if repeated_endpoint || !progressing {
+        [-PI / 2.0, -PI / 4.0, PI / 4.0, PI / 2.0]
+    } else {
+        [-PI / 3.0, -PI / 9.0, PI / 9.0, PI / 3.0]
+    };
     let durations = [4_u32, 8, 12, 16];
     for (index, offset) in heading_offsets.into_iter().enumerate() {
         let magnitude = if ((draw >> index) & 1) == 0 { 80 } else { 127 };
@@ -161,8 +199,13 @@ pub fn propose_parameterized_tactics(
 
     for clockwise in [false, true] {
         let start = stick(central_heading, 127);
+        let bend_angle = if repeated_endpoint || !progressing {
+            PI / 3.0
+        } else {
+            PI / 5.0
+        };
         let bend = stick(
-            normalize_angle(central_heading + if clockwise { PI / 5.0 } else { -PI / 5.0 }),
+            normalize_angle(central_heading + if clockwise { bend_angle } else { -bend_angle }),
             127,
         );
         insert(
@@ -329,6 +372,24 @@ fn proposal_draw(context: ParameterizedTacticProposalContext) -> u64 {
             .map(u32::to_le_bytes)
             .concat(),
     );
+    if let Some(feedback) = context.feedback {
+        hasher.update([1]);
+        hasher.update(feedback.previous_reward.to_bits().to_le_bytes());
+        hasher.update(feedback.goal_progress.to_bits().to_le_bytes());
+        hasher.update(
+            feedback
+                .ensemble_uncertainty
+                .map(f32::to_bits)
+                .unwrap_or_default()
+                .to_le_bytes(),
+        );
+        hasher.update([
+            u8::from(feedback.endpoint_novel),
+            u8::from(feedback.terminal),
+        ]);
+    } else {
+        hasher.update([0]);
+    }
     u64::from_le_bytes(hasher.finalize()[..8].try_into().unwrap())
 }
 
@@ -365,6 +426,7 @@ mod tests {
             camera_yaw_radians: Some(0.25),
             goal_coordinate: [90.0, 25.0, -40.0],
             maximum_ticks: 40,
+            feedback: None,
         }
     }
 
@@ -473,5 +535,30 @@ mod tests {
         invalid = context(1, 0);
         invalid.maximum_ticks = MAX_PARAMETERIZED_TACTIC_TICKS + 1;
         assert!(propose_parameterized_tactics(invalid).is_err());
+    }
+
+    #[test]
+    fn measured_outcome_and_uncertainty_change_the_next_parameter_instances() {
+        let baseline = propose_parameterized_tactics(context(29, 5)).unwrap();
+        let mut adapted_context = context(29, 5);
+        adapted_context.feedback = Some(ParameterizedTacticFeedback {
+            previous_reward: -0.25,
+            goal_progress: -12.0,
+            ensemble_uncertainty: Some(0.81),
+            endpoint_novel: false,
+            terminal: false,
+        });
+        let adapted = propose_parameterized_tactics(adapted_context).unwrap();
+        let ids = |proposals: &ParameterizedTacticProposalCatalog| {
+            proposals
+                .catalog
+                .entries()
+                .iter()
+                .map(|entry| entry.option_id().to_owned())
+                .collect::<BTreeSet<_>>()
+        };
+
+        assert_ne!(ids(&baseline), ids(&adapted));
+        assert_eq!(baseline.family_schema_sha256, adapted.family_schema_sha256);
     }
 }

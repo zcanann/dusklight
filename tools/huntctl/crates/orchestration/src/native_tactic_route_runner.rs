@@ -28,8 +28,9 @@ use dusklight_learning::fqi::FqiConfig;
 use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::option_values::OptionValueConfig;
 use dusklight_learning::parameterized_tactic_proposals::{
-    ParameterizedTacticProposalCatalog, ParameterizedTacticProposalContext,
-    parameterized_tactic_family_schema_sha256, propose_parameterized_tactics,
+    ParameterizedTacticFeedback, ParameterizedTacticProposalCatalog,
+    ParameterizedTacticProposalContext, parameterized_tactic_family_schema_sha256,
+    propose_parameterized_tactics,
 };
 use dusklight_learning::reward_shaping::{
     POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V1,
@@ -334,6 +335,8 @@ pub struct NativeTacticDecisionTrace {
     pub measurements: Vec<NativeTacticMeasurementTrace>,
     pub applicable_tactics: Vec<NativeTacticValueTrace>,
     #[serde(default)]
+    pub proposal_feedback: Option<ParameterizedTacticFeedback>,
+    #[serde(default)]
     pub proposal_batch: Vec<NativeTacticProposalTrace>,
 }
 
@@ -425,6 +428,8 @@ struct NativeTacticDecisionRecord {
     root_checkpoint_sha256: Digest,
     root_tape: StoredContentRef,
     transition: StoredContentRef,
+    #[serde(default)]
+    proposal_feedback: Option<ParameterizedTacticFeedback>,
     #[serde(default)]
     proposal_batch: Vec<NativeTacticProposalRecord>,
 }
@@ -787,6 +792,7 @@ fn parameterized_catalog_for_state(
     state: &FactSnapshot,
     encoder: &GoalConditionedTacticFeatureEncoder,
     maximum_ticks: u32,
+    feedback: Option<ParameterizedTacticFeedback>,
 ) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
     propose_parameterized_tactics(ParameterizedTacticProposalContext {
         seed,
@@ -796,8 +802,59 @@ fn parameterized_catalog_for_state(
         camera_yaw_radians: state.player.camera_yaw_radians_f32_bits.map(f32::from_bits),
         goal_coordinate: encoder.target_coordinate_f32_bits.map(f32::from_bits),
         maximum_ticks,
+        feedback,
     })
     .map_err(route_error)
+}
+
+fn parameterized_feedback_for_state(
+    campaign: &TacticQCampaign,
+    state: &FactSnapshot,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+) -> Result<Option<ParameterizedTacticFeedback>, NativeTacticRouteRunError> {
+    let state_sha256 = state.content_sha256().map_err(route_error)?;
+    let Some(previous) = campaign
+        .replay
+        .iter()
+        .rev()
+        .find(|transition| transition.after_state_sha256 == state_sha256)
+    else {
+        return Ok(None);
+    };
+    let goal = encoder.target_coordinate_f32_bits.map(f32::from_bits);
+    let before = previous.before.player.position_f32_bits.map(f32::from_bits);
+    let after = previous.after.player.position_f32_bits.map(f32::from_bits);
+    let ensemble_uncertainty = campaign
+        .model()
+        .and_then(|model| {
+            let features = encoder.encode(state).ok()?;
+            let ranking = model
+                .rank_available_options(
+                    &features,
+                    std::slice::from_ref(&previous.value_sample.action),
+                )
+                .ok()?;
+            ranking
+                .ranked
+                .first()
+                .map(|ranked| ranked.ensemble_variance)
+        })
+        .and_then(|variance| {
+            let variance = variance as f32;
+            (variance.is_finite() && variance >= 0.0).then_some(variance)
+        });
+    let prior_occurrences = campaign
+        .replay
+        .iter()
+        .filter(|transition| transition.after_state_sha256 == state_sha256)
+        .count();
+    Ok(Some(ParameterizedTacticFeedback {
+        previous_reward: previous.value_sample.reward,
+        goal_progress: planar_distance(before, goal) - planar_distance(after, goal),
+        ensemble_uncertainty,
+        endpoint_novel: prior_occurrences == 1,
+        terminal: previous.value_sample.terminal,
+    }))
 }
 
 struct TimedTacticWorker<'a, W> {
@@ -1342,6 +1399,7 @@ fn run_seed(
                 initial_facts,
                 encoder,
                 maximum_tactic_ticks,
+                None,
             )?;
             let current = LearnerState::build(
                 initial_facts.clone(),
@@ -1446,6 +1504,7 @@ fn run_seed(
                 &selected_branch.state,
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
             )?;
             campaign
                 .restore_branch(
@@ -1470,18 +1529,21 @@ fn run_seed(
         // Restoring a branch can change the selected tactic. Recheck until the
         // preview fits; the periodic root sample guarantees convergence because
         // every catalog entry is itself bounded by the exploration horizon.
-        let (proposal_batch, proposal_catalog, proposal_blueprints) = loop {
+        let (proposal_batch, proposal_catalog, proposal_blueprints, proposal_feedback) = loop {
             let suffix_ticks = campaign
                 .route_tape
                 .frames
                 .len()
                 .saturating_sub(source_frame as usize) as u64;
+            let proposal_feedback =
+                parameterized_feedback_for_state(&campaign, &campaign.current.snapshot, encoder)?;
             let proposals = parameterized_catalog_for_state(
                 seed,
                 campaign.decision_index,
                 &campaign.current.snapshot,
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                proposal_feedback,
             )?;
             let proposal_catalog = Arc::new(proposals.catalog);
             let proposal_blueprints = Arc::new(proposals.blueprints);
@@ -1525,7 +1587,12 @@ fn run_seed(
                             )
                         })
                 });
-                break (preview, proposal_catalog, proposal_blueprints);
+                break (
+                    preview,
+                    proposal_catalog,
+                    proposal_blueprints,
+                    proposal_feedback,
+                );
             }
             let branch_started = Instant::now();
             episode = episode
@@ -1552,6 +1619,7 @@ fn run_seed(
                 &selected_branch.state,
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
             )?;
             campaign
                 .restore_branch(
@@ -1658,6 +1726,7 @@ fn run_seed(
             &winning_outcome.next_facts,
             encoder,
             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+            None,
         )?;
         let step = campaign
             .retain_and_refit_rewarded(
@@ -1807,6 +1876,7 @@ fn run_seed(
             after: tactic_state_trace(&step.step.transition.after)?,
             measurements: Vec::new(),
             applicable_tactics: Vec::new(),
+            proposal_feedback,
             proposal_batch: proposal_traces,
         };
         if decision_trace_is_useful(&decision_trace) {
@@ -2637,6 +2707,7 @@ fn decision_record(
         root_checkpoint_sha256,
         root_tape,
         transition,
+        proposal_feedback: trace.proposal_feedback,
         proposal_batch,
     }
 }
@@ -2727,6 +2798,7 @@ fn project_tactic_decision_record(
         after: tactic_state_trace(&transition.after)?,
         measurements: Vec::new(),
         applicable_tactics: Vec::new(),
+        proposal_feedback: record.proposal_feedback,
         proposal_batch,
     })
 }
