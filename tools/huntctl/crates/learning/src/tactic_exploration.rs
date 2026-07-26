@@ -13,6 +13,14 @@ pub const TACTIC_EXPLORATION_SCHEMA_V1: &str = "dusklight-tactic-exploration/v1"
 pub const EPSILON_SCALE: u32 = 1_000_000;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TacticProposalPolicy {
+    Learned,
+    RandomValid,
+    StructuredNonLearning,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TacticExplorationConfig {
     pub seed: u64,
@@ -37,6 +45,8 @@ pub enum TacticSelectionReason {
     BatchUncertainty,
     BatchValue,
     BatchCoverage,
+    RandomBaseline,
+    StructuredBaseline,
     /// Compatibility label used by older checkpoints and callers that inject
     /// a required composition after acquisition ranking.
     BatchDiversity,
@@ -248,6 +258,119 @@ pub fn choose_tactic_batch_with_state_untried(
         });
     }
     Ok(result)
+}
+
+/// Build one proposal batch for either the learned policy or an explicitly
+/// non-learning baseline. All policies consume the same live applicability
+/// mask and return distinct executable descriptors.
+pub fn choose_tactic_batch_for_policy(
+    ranking: &LiveTacticRanking,
+    decision_index: u64,
+    config: TacticExplorationConfig,
+    state_untried: &[OptionActionDescriptor],
+    maximum_proposals: usize,
+    policy: TacticProposalPolicy,
+) -> Result<Vec<SelectedTactic>, TacticExplorationError> {
+    match policy {
+        TacticProposalPolicy::Learned => choose_tactic_batch_with_state_untried(
+            ranking,
+            decision_index,
+            config,
+            state_untried,
+            maximum_proposals,
+        ),
+        TacticProposalPolicy::StructuredNonLearning => {
+            let mut baseline = ranking.clone();
+            baseline.values.ranked.clear();
+            baseline.values.unsupported = baseline
+                .choices
+                .iter()
+                .map(|choice| choice.descriptor.clone())
+                .collect();
+            let mut selected = choose_tactic_batch_with_state_untried(
+                &baseline,
+                decision_index,
+                TacticExplorationConfig {
+                    epsilon_per_million: 0,
+                    ..config
+                },
+                state_untried,
+                maximum_proposals,
+            )?;
+            for proposal in &mut selected {
+                proposal.reason = TacticSelectionReason::StructuredBaseline;
+            }
+            Ok(selected)
+        }
+        TacticProposalPolicy::RandomValid => {
+            choose_random_valid_batch(ranking, decision_index, config, maximum_proposals)
+        }
+    }
+}
+
+fn choose_random_valid_batch(
+    ranking: &LiveTacticRanking,
+    decision_index: u64,
+    config: TacticExplorationConfig,
+    maximum_proposals: usize,
+) -> Result<Vec<SelectedTactic>, TacticExplorationError> {
+    if maximum_proposals == 0
+        || config.epsilon_per_million > EPSILON_SCALE
+        || ranking.learner_snapshot_sha256 == Digest::ZERO
+        || ranking.choices.is_empty()
+    {
+        return Err(TacticExplorationError::InvalidInput);
+    }
+    let mut descriptors = ranking
+        .choices
+        .iter()
+        .map(|choice| choice.descriptor.clone())
+        .collect::<Vec<_>>();
+    descriptors.sort_by(|left, right| {
+        random_baseline_key(
+            config.seed,
+            decision_index,
+            ranking.learner_snapshot_sha256,
+            &left.option_id,
+        )
+        .cmp(&random_baseline_key(
+            config.seed,
+            decision_index,
+            ranking.learner_snapshot_sha256,
+            &right.option_id,
+        ))
+        .then_with(|| left.option_id.cmp(&right.option_id))
+    });
+    Ok(descriptors
+        .into_iter()
+        .take(maximum_proposals)
+        .enumerate()
+        .map(|(index, descriptor)| SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+            decision_index,
+            descriptor,
+            reason: TacticSelectionReason::RandomBaseline,
+            exploration_draw: (random_baseline_key(
+                config.seed,
+                decision_index,
+                ranking.learner_snapshot_sha256,
+                &format!("draw/{index}"),
+            ) % u64::from(EPSILON_SCALE)) as u32,
+        })
+        .collect())
+}
+
+fn random_baseline_key(seed: u64, decision_index: u64, state: Digest, option_id: &str) -> u64 {
+    let mut hasher = Sha256::new();
+    hasher.update(b"dusklight-random-valid-tactic-baseline/v1");
+    hasher.update(seed.to_le_bytes());
+    hasher.update(decision_index.to_le_bytes());
+    hasher.update(state.0);
+    hasher.update((option_id.len() as u64).to_le_bytes());
+    hasher.update(option_id.as_bytes());
+    let digest = hasher.finalize();
+    u64::from_le_bytes(digest[..8].try_into().unwrap())
 }
 
 #[derive(Clone, Copy)]
@@ -972,5 +1095,94 @@ mod tests {
             choose_tactic_batch_with_state_untried(&ranking, 0, config, &[], usize::MAX).unwrap();
         assert_eq!(batch.len(), 2);
         assert_ne!(batch[0].descriptor, batch[1].descriptor);
+    }
+
+    #[test]
+    fn equal_budget_baselines_ignore_learned_values_and_remain_seeded() {
+        let choices = [
+            descriptor("move", OptionType::Move),
+            descriptor("roll", OptionType::Roll),
+            descriptor("wait", OptionType::Neutral),
+            descriptor("interact", OptionType::Interact),
+        ];
+        let mut ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([21; 32]),
+            action_universe_sha256: Digest([22; 32]),
+            choices: choices.iter().cloned().map(choice).collect(),
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: choices[0].clone(),
+                    mean_q: 100.0,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: choices[1..].to_vec(),
+            },
+        };
+        let config = TacticExplorationConfig {
+            seed: 104_729,
+            epsilon_per_million: 350_000,
+        };
+        let random = choose_tactic_batch_for_policy(
+            &ranking,
+            7,
+            config,
+            &choices,
+            3,
+            TacticProposalPolicy::RandomValid,
+        )
+        .unwrap();
+        let structured = choose_tactic_batch_for_policy(
+            &ranking,
+            7,
+            config,
+            &choices,
+            3,
+            TacticProposalPolicy::StructuredNonLearning,
+        )
+        .unwrap();
+        ranking.values.ranked[0].mean_q = -100.0;
+        assert_eq!(
+            random,
+            choose_tactic_batch_for_policy(
+                &ranking,
+                7,
+                config,
+                &choices,
+                3,
+                TacticProposalPolicy::RandomValid,
+            )
+            .unwrap()
+        );
+        assert_eq!(
+            structured,
+            choose_tactic_batch_for_policy(
+                &ranking,
+                7,
+                config,
+                &choices,
+                3,
+                TacticProposalPolicy::StructuredNonLearning,
+            )
+            .unwrap()
+        );
+        assert!(
+            random
+                .iter()
+                .all(|proposal| proposal.reason == TacticSelectionReason::RandomBaseline)
+        );
+        assert!(
+            structured
+                .iter()
+                .all(|proposal| { proposal.reason == TacticSelectionReason::StructuredBaseline })
+        );
+        assert_eq!(
+            random
+                .iter()
+                .map(|proposal| proposal.descriptor.option_id.as_str())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            3
+        );
     }
 }

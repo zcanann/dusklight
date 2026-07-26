@@ -52,16 +52,6 @@ Acceptance:
 
 ## P5 - Couple search and learning around useful trials
 
-- [ ] Use the value/Q model to rank batches of state-conditioned tactic
-      proposals and frontier states rather than blocking on one epsilon-greedy
-      categorical action at a time.
-- [ ] Preserve a diverse frontier across progress, novelty, uncertainty, route
-      cost, and terminal evidence so one choke state cannot absorb the campaign.
-- [ ] Prioritize transitions that reduce uncertainty or cross poorly covered
-      state boundaries, including the shared Ordon choke observed by failed
-      seeds.
-- [ ] Train from the deduplicated replay store and measure model-update cost
-      separately from simulation and persistence.
 - [ ] Compare the learned ranking against random valid proposals and
       non-learning structured search under identical native-tick budgets.
 - [ ] Publish failures, coverage, candidate diversity, and time to improvement;

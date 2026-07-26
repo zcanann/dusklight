@@ -1,11 +1,14 @@
 //! Workbench projection and launch boundary for tactic-level route learning.
 
 use super::*;
+use dusklight_learning::tactic_exploration::TacticProposalPolicy;
 use dusklight_orchestration::native_tactic_route_runner::{
     NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V4,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V5, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V6,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V7, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8,
     NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12,
+    NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13, NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14,
     NativeTacticDecisionTrace, NativeTacticRouteRunConfig, has_tactic_decision_journal,
     materialize_tactic_decision_route, project_tactic_decision_graph, read_tactic_decision_journal,
     run_native_tactic_route,
@@ -204,6 +207,10 @@ pub(super) fn tactic_route_learning_projection(
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V8
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V9
                             || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13
+                            || schema == NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14
                 ) && report
                     .get("optimization_request_sha256")
                     .and_then(Value::as_str)
@@ -388,6 +395,7 @@ fn launch_tactic_route_learning(
                 execution: &execution,
                 output_root: &output,
                 exploration_seeds: &seeds,
+                proposal_policy: TacticProposalPolicy::Learned,
                 decisions_per_seed: TACTIC_ROUTE_DECISIONS_PER_SEED,
                 branch_every_decisions: TACTIC_ROUTE_BRANCH_EVERY_DECISIONS,
                 refit_every_decisions: TACTIC_ROUTE_REFIT_EVERY_DECISIONS,

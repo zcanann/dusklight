@@ -31,8 +31,8 @@ use dusklight_learning::tactic_blueprint::{
     ApplicableTacticChoices, ConcreteTacticChoiceKind, TacticBlueprint,
 };
 use dusklight_learning::tactic_exploration::{
-    SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticSelectionReason,
-    choose_tactic_batch_with_state_untried,
+    SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
+    TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -402,7 +402,18 @@ impl TacticQCampaign {
 
     pub fn frontier_archive(&self) -> Result<BehaviorArchive, TacticQCampaignError> {
         let mut archive = BehaviorArchive::default();
-        for (index, (transition, route)) in self.replay.iter().zip(&self.replay_routes).enumerate()
+        // Every evaluated proposal is attached to an authenticated route from
+        // the campaign root, even though only one winner advances the current
+        // executable path. Preserve those alternatives as branchable frontier
+        // evidence instead of collapsing exploration to the winner lineage.
+        // BehaviorArchive keeps one short elite per semantic state cell and
+        // selects cells by novelty, so repeated choke outcomes cannot crowd
+        // out distinct progress, terminal, or low-cost endpoints.
+        for (index, (transition, route)) in self
+            .training_replay
+            .iter()
+            .zip(&self.training_replay_routes)
+            .enumerate()
         {
             archive
                 .consider_tactic_endpoint(
@@ -1229,6 +1240,29 @@ impl TacticQCampaign {
         E: fmt::Display,
         F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
     {
+        self.decide_parameterized_batch_with_policy(
+            proposal_catalog,
+            proposal_blueprints,
+            family_schema_sha256,
+            encode,
+            maximum_proposals,
+            TacticProposalPolicy::Learned,
+        )
+    }
+
+    pub fn decide_parameterized_batch_with_policy<E, F>(
+        &self,
+        proposal_catalog: &TacticAssetCatalog,
+        proposal_blueprints: &[TacticBlueprint],
+        family_schema_sha256: Digest,
+        encode: &F,
+        maximum_proposals: usize,
+        policy: TacticProposalPolicy,
+    ) -> Result<TacticQProposalBatch, TacticQCampaignError>
+    where
+        E: fmt::Display,
+        F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+    {
         self.current.validate()?;
         if family_schema_sha256 == Digest::ZERO || maximum_proposals == 0 {
             return Err(TacticQCampaignError::InvalidState(
@@ -1302,14 +1336,17 @@ impl TacticQCampaign {
             .into_iter()
             .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
             .collect::<Vec<_>>();
-        let mut proposals = choose_tactic_batch_with_state_untried(
+        let mut proposals = choose_tactic_batch_for_policy(
             &ranking,
             self.decision_index,
             self.exploration,
             &state_untried,
             maximum_proposals,
+            policy,
         )?;
-        ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
+        if policy != TacticProposalPolicy::RandomValid {
+            ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
+        }
         Ok(TacticQProposalBatch { ranking, proposals })
     }
 

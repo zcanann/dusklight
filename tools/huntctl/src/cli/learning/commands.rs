@@ -53,6 +53,7 @@ use huntctl::learning::native_goal_trajectory::{
 use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
+use huntctl::learning::tactic_exploration::TacticProposalPolicy;
 use huntctl::learning::tactic_frozen_policy::TacticFrozenPolicy;
 use huntctl::learning::trainable_set_encoder::TrainableSetConfig;
 use huntctl::low_data_baselines::{
@@ -800,12 +801,25 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
             }
             seeds.sort_unstable();
             seeds.dedup();
+            let proposal_policy_argument = option(learn_args, "--proposal-policy");
+            let proposal_policy = match proposal_policy_argument.as_deref().unwrap_or("learned") {
+                "learned" => TacticProposalPolicy::Learned,
+                "random-valid" => TacticProposalPolicy::RandomValid,
+                "structured-non-learning" => TacticProposalPolicy::StructuredNonLearning,
+                value => {
+                    return Err(format!(
+                        "unknown tactic proposal policy {value:?}; expected learned, random-valid, or structured-non-learning"
+                    )
+                    .into());
+                }
+            };
             let report = run_native_tactic_route(&NativeTacticRouteRunConfig {
                 repository_root: &repository_root,
                 optimization: &request,
                 execution: &execution,
                 output_root: &output,
                 exploration_seeds: &seeds,
+                proposal_policy,
                 decisions_per_seed: u64_option(learn_args, "--decisions-per-seed", 256)?,
                 branch_every_decisions: u64_option(learn_args, "--branch-every", 8)?,
                 refit_every_decisions: u64_option(learn_args, "--refit-every", 4)?,
@@ -828,6 +842,7 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "report": output.join("report.json"),
                     "successful_seeds": report.successful_seeds,
                     "exploration_seeds": report.exploration_seeds,
+                    "proposal_policy": report.proposal_policy,
                     "total_decisions": report.total_decisions,
                     "total_native_ticks": report.total_native_ticks,
                     "demonstration_transitions": report.demonstration_transitions,

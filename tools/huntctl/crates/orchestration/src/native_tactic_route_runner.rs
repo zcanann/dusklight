@@ -43,7 +43,8 @@ use dusklight_learning::reward_shaping::{
 use dusklight_learning::tactic_asset::TacticAssetCatalog;
 use dusklight_learning::tactic_blueprint::TacticBlueprint;
 use dusklight_learning::tactic_exploration::{
-    SelectedTactic, TACTIC_EXPLORATION_SCHEMA_V1, TacticExplorationConfig, TacticSelectionReason,
+    SelectedTactic, TACTIC_EXPLORATION_SCHEMA_V1, TacticExplorationConfig, TacticProposalPolicy,
+    TacticSelectionReason,
 };
 use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use dusklight_learning::tactic_macro_promotion::{
@@ -84,6 +85,7 @@ pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V10: &str = "dusklight-native-tactic
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V11: &str = "dusklight-native-tactic-route-report/v11";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V12: &str = "dusklight-native-tactic-route-report/v12";
 pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13: &str = "dusklight-native-tactic-route-report/v13";
+pub const NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14: &str = "dusklight-native-tactic-route-report/v14";
 pub const NATIVE_TACTIC_DECISION_SUMMARY_SCHEMA_V1: &str =
     "dusklight-native-tactic-decision-summary/v1";
 pub const NATIVE_TACTIC_DECISION_JOURNAL_FILE: &str = "decisions.dtqj";
@@ -119,6 +121,7 @@ pub struct NativeTacticRouteRunConfig<'a> {
     pub execution: &'a NativeResidualExecutionBinding,
     pub output_root: &'a Path,
     pub exploration_seeds: &'a [u64],
+    pub proposal_policy: TacticProposalPolicy,
     pub decisions_per_seed: u64,
     pub branch_every_decisions: u64,
     pub refit_every_decisions: u64,
@@ -141,6 +144,7 @@ pub struct NativeTacticRouteReport {
     pub reward_spec: TacticRewardSpec,
     pub demonstration_transitions: u64,
     pub exploration_seeds: Vec<u64>,
+    pub proposal_policy: TacticProposalPolicy,
     pub workers: usize,
     pub decisions_per_seed: u64,
     pub refit_every_decisions: u64,
@@ -775,7 +779,7 @@ pub fn run_native_tactic_route(
             },
         );
     let report = NativeTacticRouteReport {
-        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V13.into(),
+        schema: NATIVE_TACTIC_ROUTE_REPORT_SCHEMA_V14.into(),
         optimization_request_sha256: config.optimization.content_sha256,
         execution_binding_sha256: config.execution.content_sha256,
         objective_sha256: config.optimization.terminal_predicate.definition_sha256,
@@ -785,6 +789,7 @@ pub fn run_native_tactic_route(
         reward_spec,
         demonstration_transitions: 0,
         exploration_seeds: config.exploration_seeds.to_vec(),
+        proposal_policy: config.proposal_policy,
         workers: worker_count,
         decisions_per_seed: config.decisions_per_seed,
         refit_every_decisions: config.refit_every_decisions,
@@ -1730,25 +1735,6 @@ fn parameterized_feedback_for_state(
     let goal = encoder.target_coordinate_f32_bits.map(f32::from_bits);
     let before = previous.before.player.position_f32_bits.map(f32::from_bits);
     let after = previous.after.player.position_f32_bits.map(f32::from_bits);
-    let ensemble_uncertainty = campaign
-        .model()
-        .and_then(|model| {
-            let features = encoder.encode(state).ok()?;
-            let ranking = model
-                .rank_available_options(
-                    &features,
-                    std::slice::from_ref(&previous.value_sample.action),
-                )
-                .ok()?;
-            ranking
-                .ranked
-                .first()
-                .map(|ranked| ranked.ensemble_variance)
-        })
-        .and_then(|variance| {
-            let variance = variance as f32;
-            (variance.is_finite() && variance >= 0.0).then_some(variance)
-        });
     let prior_occurrences = campaign
         .replay
         .iter()
@@ -1757,7 +1743,10 @@ fn parameterized_feedback_for_state(
     Ok(Some(ParameterizedTacticFeedback {
         previous_reward: previous.value_sample.reward,
         goal_progress: planar_distance(before, goal) - planar_distance(after, goal),
-        ensemble_uncertainty,
+        // Keep candidate generation policy-neutral. The learned policy uses
+        // critic uncertainty when it ranks this shared valid catalog; random
+        // and structured baselines must see the same action candidates.
+        ensemble_uncertainty: None,
         endpoint_novel: prior_occurrences == 1,
         terminal: previous.value_sample.terminal,
     }))
@@ -2396,15 +2385,24 @@ fn run_seed(
                 source_frame.saturating_add(horizon.saturating_sub(maximum_tactic_ticks)),
             )
             .map_err(route_error)?;
-            let [root, frontier] = campaign
-                .sample_root_and_ranked_frontier(
+            let [root, frontier] = match config.proposal_policy {
+                TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
                     &encode,
-                )
-                .map_err(route_error)?;
+                ),
+                TacticProposalPolicy::RandomValid | TacticProposalPolicy::StructuredNonLearning => {
+                    campaign.sample_root_and_frontier(
+                        seed,
+                        frontier_sampling_round(episode),
+                        &[],
+                        maximum_frontier_frames,
+                    )
+                }
+            }
+            .map_err(route_error)?;
             let prefer_root = episode % 4 == 0;
             let selected_branch = if prefer_root { &root } else { &frontier };
             branch_acquisition = selected_branch.acquisition.clone();
@@ -2459,12 +2457,13 @@ fn run_seed(
             let proposal_blueprints = Arc::new(proposals.blueprints);
             let selection_started = Instant::now();
             let mut preview = campaign
-                .decide_parameterized_batch(
+                .decide_parameterized_batch_with_policy(
                     &proposal_catalog,
                     &proposal_blueprints,
                     parameterized_tactic_family_schema_sha256(),
                     &encode,
                     TACTIC_PROPOSALS_PER_DECISION,
+                    config.proposal_policy,
                 )
                 .map_err(route_error)?;
             timing.tactic_selection_micros = timing
@@ -2513,15 +2512,24 @@ fn run_seed(
                     .saturating_add(horizon.saturating_sub(u64::from(selected_maximum_ticks))),
             )
             .map_err(route_error)?;
-            let [root, frontier] = campaign
-                .sample_root_and_ranked_frontier(
+            let [root, frontier] = match config.proposal_policy {
+                TacticProposalPolicy::Learned => campaign.sample_root_and_ranked_frontier(
                     seed,
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
                     &encode,
-                )
-                .map_err(route_error)?;
+                ),
+                TacticProposalPolicy::RandomValid | TacticProposalPolicy::StructuredNonLearning => {
+                    campaign.sample_root_and_frontier(
+                        seed,
+                        frontier_sampling_round(episode),
+                        &[],
+                        maximum_frontier_frames,
+                    )
+                }
+            }
+            .map_err(route_error)?;
             let prefer_root = episode % 4 == 0;
             let selected_branch = if prefer_root { &root } else { &frontier };
             branch_acquisition = selected_branch.acquisition.clone();
