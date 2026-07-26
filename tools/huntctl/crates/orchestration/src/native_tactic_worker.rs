@@ -21,7 +21,7 @@ use dusklight_evidence::native_episode_shard::{
     NativeEpisode, NativeEpisodeShard, NativeLearningObservation, NativeObservationPhase,
     NativeRawPad,
 };
-use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot};
+use dusklight_learning::fact_snapshot::{FactPhase, FactSnapshot, OptionTrajectoryFactSnapshot};
 use dusklight_learning::learner_state::tactic_intrinsically_applicable;
 use dusklight_learning::native_generic_tactic::{
     GenericTactic, NativeGenericTacticStepper, NativeTacticObservation, NativeTacticQueryRecord,
@@ -1852,9 +1852,17 @@ fn observe_outcome(
         .tape_frame
         .checked_add(1)
         .ok_or(NativeTacticWorkerError::DetachedResult("next boundary"))?;
-    let next_facts =
-        FactSnapshot::from_native_learning(&next_boundary, &prior, Some(&execution), Vec::new())
+    let option_trajectory =
+        OptionTrajectoryFactSnapshot::from_native_steps(&episode.steps[candidate_prefix_ticks..])
             .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
+    let next_facts = FactSnapshot::from_native_learning_with_option_trajectory(
+        &next_boundary,
+        &prior,
+        Some(&execution),
+        Some(option_trajectory),
+        Vec::new(),
+    )
+    .map_err(|error| NativeTacticWorkerError::Facts(error.to_string()))?;
     if next_facts.tape_frame != end_frame_exclusive
         || next_facts.simulation_tick
             != before.simulation_tick + u64::try_from(realized_ticks).unwrap()

@@ -41,8 +41,8 @@ use dusklight_learning::parameterized_tactic_proposals::{
     propose_parameterized_tactics,
 };
 use dusklight_learning::reward_shaping::{
-    POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V1,
-    TacticRewardBreakdown, TacticRewardSpec,
+    POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V2,
+    TacticMotionCostSpec, TacticRewardBreakdown, TacticRewardSpec,
 };
 use dusklight_learning::tactic_asset::TacticAssetCatalog;
 use dusklight_learning::tactic_blueprint::TacticBlueprint;
@@ -5740,7 +5740,7 @@ fn route_tactic_reward_spec(
 
 fn route_tactic_base_reward_spec() -> TacticRewardSpec {
     TacticRewardSpec {
-        schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
+        schema: TACTIC_REWARD_SPEC_SCHEMA_V2.into(),
         terminal_reward: 100.0,
         // Terminal evidence remains overwhelmingly dominant, while every
         // simulated controller tick has a small explicit cost. This makes the
@@ -5750,6 +5750,16 @@ fn route_tactic_base_reward_spec() -> TacticRewardSpec {
         novelty_reward: ROUTE_TACTIC_NOVELTY_REWARD,
         per_tick_discount: 1.0,
         potential: None,
+        motion_cost: Some(TacticMotionCostSpec {
+            // One commanded tick spent stationary costs one additional tick.
+            // The remaining physical symptoms are weaker corroborating costs;
+            // they disambiguate sliding/impact from a deliberate curved route.
+            inefficient_path_unit_cost: ROUTE_TACTIC_TICK_COST * 0.025,
+            stalled_command_tick_cost: ROUTE_TACTIC_TICK_COST,
+            wall_contact_tick_cost: ROUTE_TACTIC_TICK_COST * 0.25,
+            momentum_loss_unit_cost: ROUTE_TACTIC_TICK_COST * 0.025,
+            collision_correction_unit_cost: ROUTE_TACTIC_TICK_COST * 0.025,
+        }),
     }
 }
 
@@ -5884,10 +5894,22 @@ fn proposal_outcome_is_better(
     candidate: &EvaluatedRewardedTacticOutcome,
     incumbent: &EvaluatedRewardedTacticOutcome,
 ) -> bool {
-    candidate
-        .outcome
-        .terminal
-        .cmp(&incumbent.outcome.terminal)
+    let terminal_order = candidate.outcome.terminal.cmp(&incumbent.outcome.terminal);
+    let route_cost_order = if candidate.outcome.terminal && incumbent.outcome.terminal {
+        // Both candidates start at the same retained prefix. Once native
+        // evidence says both are feasible, exact first-hit cost outranks every
+        // acquisition-only shaping component.
+        incumbent
+            .outcome
+            .execution
+            .duration
+            .realized_ticks
+            .cmp(&candidate.outcome.execution.duration.realized_ticks)
+    } else {
+        std::cmp::Ordering::Equal
+    };
+    terminal_order
+        .then(route_cost_order)
         .then_with(|| {
             candidate
                 .reward
@@ -6520,6 +6542,12 @@ mod tests {
         assert!(values.fitted_q.discount < 1.0);
         assert!(reward.novelty_reward > 0.0);
         assert!(reward.terminal_reward > reward.novelty_reward);
+        let motion = reward
+            .motion_cost
+            .expect("route learning prices motion loss");
+        assert_eq!(motion.stalled_command_tick_cost, ROUTE_TACTIC_TICK_COST);
+        assert!(motion.wall_contact_tick_cost > 0.0);
+        assert!(motion.momentum_loss_unit_cost > 0.0);
     }
 
     #[test]

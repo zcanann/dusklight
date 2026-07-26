@@ -5,6 +5,7 @@
 //! or alter the deterministic leaderboard objective.
 
 use crate::artifact::Digest;
+use crate::fact_snapshot::OptionTrajectoryFactSnapshot;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashSet;
@@ -14,6 +15,7 @@ use std::fmt;
 pub const POTENTIAL_SHAPING_SCHEMA_V1: &str = "dusklight-potential-shaping/v1";
 pub const REWARD_REPORT_SCHEMA_V1: &str = "dusklight-reward-components/v1";
 pub const TACTIC_REWARD_SPEC_SCHEMA_V1: &str = "dusklight-tactic-reward-spec/v1";
+pub const TACTIC_REWARD_SPEC_SCHEMA_V2: &str = "dusklight-tactic-reward-spec/v2";
 const MAX_TERMS: usize = 64;
 const MAX_ORDERED_VALUES: usize = 64;
 const MAX_NAME_BYTES: usize = 64;
@@ -217,17 +219,50 @@ pub struct TacticRewardSpec {
     pub per_tick_discount: f32,
     #[serde(default)]
     pub potential: Option<PotentialShapingSpec>,
+    /// Optional path-dependent acquisition cost. It can train and rank
+    /// proposals but never supplies terminal or promotion authority.
+    #[serde(default)]
+    pub motion_cost: Option<TacticMotionCostSpec>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticMotionCostSpec {
+    pub inefficient_path_unit_cost: f32,
+    pub stalled_command_tick_cost: f32,
+    pub wall_contact_tick_cost: f32,
+    pub momentum_loss_unit_cost: f32,
+    pub collision_correction_unit_cost: f32,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TacticMotionCostBreakdown {
+    pub planar_path_length: f32,
+    pub planar_displacement: f32,
+    pub inefficient_path_length: f32,
+    pub stalled_command_ticks: u32,
+    pub wall_contact_ticks: u32,
+    pub commanded_momentum_loss: f32,
+    pub collision_correction_total: f32,
+    pub inefficient_path_component: f32,
+    pub stalled_command_component: f32,
+    pub wall_contact_component: f32,
+    pub momentum_loss_component: f32,
+    pub collision_correction_component: f32,
+    pub total_cost_component: f32,
 }
 
 impl Default for TacticRewardSpec {
     fn default() -> Self {
         Self {
-            schema: TACTIC_REWARD_SPEC_SCHEMA_V1.into(),
+            schema: TACTIC_REWARD_SPEC_SCHEMA_V2.into(),
             terminal_reward: 1.0,
             tick_cost: 0.001,
             novelty_reward: 0.01,
             per_tick_discount: 0.995,
             potential: None,
+            motion_cost: None,
         }
     }
 }
@@ -240,6 +275,8 @@ pub struct TacticRewardBreakdown {
     pub terminal_component: f32,
     pub tick_cost_component: f32,
     pub novelty_component: f32,
+    #[serde(default)]
+    pub motion_cost: Option<TacticMotionCostBreakdown>,
     pub base_reward: f32,
     pub potential: Option<RewardBreakdown>,
     pub training_reward: f32,
@@ -257,8 +294,35 @@ impl TacticRewardSpec {
         terminal_observed: bool,
         endpoint_novel: bool,
     ) -> Result<TacticRewardBreakdown, ShapingError> {
-        if self.schema != TACTIC_REWARD_SPEC_SCHEMA_V1 {
+        self.evaluate_with_motion(
+            feature_schema,
+            state,
+            next_state,
+            duration_ticks,
+            terminal_observed,
+            endpoint_novel,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn evaluate_with_motion(
+        &self,
+        feature_schema: Digest,
+        state: &[f32],
+        next_state: &[f32],
+        duration_ticks: u32,
+        terminal_observed: bool,
+        endpoint_novel: bool,
+        trajectory: Option<OptionTrajectoryFactSnapshot>,
+    ) -> Result<TacticRewardBreakdown, ShapingError> {
+        if self.schema != TACTIC_REWARD_SPEC_SCHEMA_V1
+            && self.schema != TACTIC_REWARD_SPEC_SCHEMA_V2
+        {
             return Err(ShapingError::InvalidSchema(self.schema.clone()));
+        }
+        if self.schema == TACTIC_REWARD_SPEC_SCHEMA_V1 && self.motion_cost.is_some() {
+            return Err(ShapingError::InvalidCampaignReward);
         }
         validate_finite(self.terminal_reward, "terminal_reward")?;
         validate_finite(self.tick_cost, "tick_cost")?;
@@ -303,8 +367,17 @@ impl TacticRewardSpec {
         } else {
             0.0
         };
-        let base_reward_f64 =
-            f64::from(terminal_component) + tick_cost_component_f64 + f64::from(novelty_component);
+        let motion_cost = self
+            .motion_cost
+            .map(|spec| spec.evaluate(trajectory, duration_ticks))
+            .transpose()?;
+        let motion_cost_component = motion_cost
+            .as_ref()
+            .map_or(0.0, |motion| motion.total_cost_component);
+        let base_reward_f64 = f64::from(terminal_component)
+            + tick_cost_component_f64
+            + f64::from(novelty_component)
+            + f64::from(motion_cost_component);
         let base_reward = base_reward_f64 as f32;
         if !base_reward_f64.is_finite()
             || !base_reward.is_finite()
@@ -343,11 +416,97 @@ impl TacticRewardSpec {
             terminal_component,
             tick_cost_component,
             novelty_component,
+            motion_cost,
             base_reward,
             potential,
             training_reward,
             terminal_objective_unchanged: true,
             promotion_authority: false,
+        })
+    }
+}
+
+impl TacticMotionCostSpec {
+    fn evaluate(
+        self,
+        trajectory: Option<OptionTrajectoryFactSnapshot>,
+        duration_ticks: u32,
+    ) -> Result<TacticMotionCostBreakdown, ShapingError> {
+        for (name, value) in [
+            (
+                "inefficient_path_unit_cost",
+                self.inefficient_path_unit_cost,
+            ),
+            ("stalled_command_tick_cost", self.stalled_command_tick_cost),
+            ("wall_contact_tick_cost", self.wall_contact_tick_cost),
+            ("momentum_loss_unit_cost", self.momentum_loss_unit_cost),
+            (
+                "collision_correction_unit_cost",
+                self.collision_correction_unit_cost,
+            ),
+        ] {
+            validate_finite(value, name)?;
+            if value < 0.0 {
+                return Err(ShapingError::InvalidCampaignReward);
+            }
+        }
+        let trajectory = trajectory.ok_or(ShapingError::MissingMotionEvidence)?;
+        if !trajectory.is_valid(duration_ticks) {
+            return Err(ShapingError::InvalidCampaignReward);
+        }
+        let planar_path_length = f32::from_bits(trajectory.planar_path_length_f32_bits);
+        let planar_displacement = f32::from_bits(trajectory.planar_displacement_f32_bits);
+        let commanded_momentum_loss = f32::from_bits(trajectory.commanded_momentum_loss_f32_bits);
+        let collision_correction_total =
+            f32::from_bits(trajectory.collision_correction_total_f32_bits);
+        for (name, value) in [
+            ("planar_path_length", planar_path_length),
+            ("planar_displacement", planar_displacement),
+            ("commanded_momentum_loss", commanded_momentum_loss),
+            ("collision_correction_total", collision_correction_total),
+        ] {
+            validate_finite(value, name)?;
+            if value < 0.0 {
+                return Err(ShapingError::InvalidCampaignReward);
+            }
+        }
+        let inefficient_path_length = (planar_path_length - planar_displacement).max(0.0);
+        let inefficient_path_component = -self.inefficient_path_unit_cost * inefficient_path_length;
+        let stalled_command_component =
+            -self.stalled_command_tick_cost * trajectory.commanded_stall_ticks as f32;
+        let wall_contact_component =
+            -self.wall_contact_tick_cost * trajectory.wall_contact_ticks as f32;
+        let momentum_loss_component = -self.momentum_loss_unit_cost * commanded_momentum_loss;
+        let collision_correction_component =
+            -self.collision_correction_unit_cost * collision_correction_total;
+        let total_f64 = [
+            inefficient_path_component,
+            stalled_command_component,
+            wall_contact_component,
+            momentum_loss_component,
+            collision_correction_component,
+        ]
+        .into_iter()
+        .map(f64::from)
+        .sum::<f64>();
+        let total_cost_component = total_f64 as f32;
+        if !total_f64.is_finite() || !total_cost_component.is_finite() {
+            return Err(ShapingError::NonFiniteResult("motion_cost".into()));
+        }
+        Ok(TacticMotionCostBreakdown {
+            planar_path_length,
+            planar_displacement,
+            inefficient_path_length,
+            stalled_command_ticks: trajectory.commanded_stall_ticks,
+            wall_contact_ticks: trajectory.wall_contact_ticks,
+            commanded_momentum_loss,
+            collision_correction_total,
+            inefficient_path_component,
+            stalled_command_component,
+            wall_contact_component,
+            momentum_loss_component,
+            collision_correction_component,
+            total_cost_component,
         })
     }
 }
@@ -557,6 +716,7 @@ pub enum ShapingError {
         expected: Digest,
         actual: Digest,
     },
+    MissingMotionEvidence,
     InvalidCampaignReward,
     ZeroDuration,
     InvalidDiscount(f32),
@@ -624,8 +784,11 @@ impl fmt::Display for ShapingError {
                 formatter,
                 "shaping feature schema {actual} differs from configured schema {expected}"
             ),
-            Self::InvalidCampaignReward => formatter
-                .write_str("tactic tick cost and novelty reward must be finite and non-negative"),
+            Self::MissingMotionEvidence => formatter
+                .write_str("tactic motion cost requires complete option trajectory evidence"),
+            Self::InvalidCampaignReward => formatter.write_str(
+                "tactic reward costs and novelty reward must be finite and non-negative",
+            ),
             Self::ZeroDuration => {
                 formatter.write_str("shaping transition duration must be nonzero")
             }
@@ -667,6 +830,7 @@ mod tests {
                     unavailable_value: None,
                 }],
             }),
+            motion_cost: None,
         }
         .evaluate(feature_schema, &[0.0], &[4.0], 2, false, true)
         .unwrap();
@@ -699,6 +863,62 @@ mod tests {
             .unwrap_err(),
             ShapingError::InvalidCampaignReward
         ));
+    }
+
+    #[test]
+    fn motion_cost_makes_stalls_impacts_and_detours_visible_to_training() {
+        let spec = TacticRewardSpec {
+            schema: TACTIC_REWARD_SPEC_SCHEMA_V2.into(),
+            tick_cost: 0.01,
+            novelty_reward: 0.0,
+            potential: None,
+            motion_cost: Some(TacticMotionCostSpec {
+                inefficient_path_unit_cost: 0.1,
+                stalled_command_tick_cost: 0.2,
+                wall_contact_tick_cost: 0.3,
+                momentum_loss_unit_cost: 0.4,
+                collision_correction_unit_cost: 0.5,
+            }),
+            ..TacticRewardSpec::default()
+        };
+        let trajectory = OptionTrajectoryFactSnapshot {
+            observed_ticks: 10,
+            commanded_motion_ticks: 10,
+            commanded_stall_ticks: 2,
+            wall_contact_ticks: 1,
+            collision_correction_ticks: 1,
+            world_transition_ticks: 0,
+            planar_path_length_f32_bits: 30.0_f32.to_bits(),
+            planar_displacement_f32_bits: 20.0_f32.to_bits(),
+            mean_planar_speed_f32_bits: 3.0_f32.to_bits(),
+            final_planar_velocity_f32_bits: 4.0_f32.to_bits(),
+            maximum_planar_velocity_f32_bits: 8.0_f32.to_bits(),
+            commanded_momentum_loss_f32_bits: 2.0_f32.to_bits(),
+            collision_correction_total_f32_bits: 1.0_f32.to_bits(),
+        };
+        let reward = spec
+            .evaluate_with_motion(
+                Digest([1; 32]),
+                &[0.0],
+                &[0.0],
+                10,
+                false,
+                false,
+                Some(trajectory),
+            )
+            .unwrap();
+        let motion = reward.motion_cost.unwrap();
+
+        assert!((reward.tick_cost_component + 0.1).abs() < 1.0e-6);
+        assert_eq!(motion.inefficient_path_component, -1.0);
+        assert!((motion.stalled_command_component + 0.4).abs() < 1.0e-6);
+        assert!((motion.wall_contact_component + 0.3).abs() < 1.0e-6);
+        assert!((motion.momentum_loss_component + 0.8).abs() < 1.0e-6);
+        assert_eq!(motion.collision_correction_component, -0.5);
+        assert!((motion.total_cost_component + 3.0).abs() < 1.0e-6);
+        assert!((reward.training_reward + 3.1).abs() < 1.0e-6);
+        assert!(reward.terminal_objective_unchanged);
+        assert!(!reward.promotion_authority);
     }
 
     fn spec() -> PotentialShapingSpec {

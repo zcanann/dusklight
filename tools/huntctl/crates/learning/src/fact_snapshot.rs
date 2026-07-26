@@ -9,7 +9,7 @@ use crate::native_generic_tactic::{NativeTacticActionLane, NativeTacticObservati
 use dusklight_automation_contracts::actor_identity::PlacedActorSelector;
 use dusklight_control::option_execution::{OptionCondition, OptionEndReason, OptionExecution};
 use dusklight_evidence::native_episode_shard::{
-    NativeActorObservation, NativeActorSelectionRule, NativeChannelStatus,
+    NativeActorObservation, NativeActorSelectionRule, NativeChannelStatus, NativeEpisodeStep,
     NativeLearningObservation, NativeObservationPhase, NativeRawPad, NativeTerminalReason,
 };
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,7 @@ use std::error::Error;
 use std::fmt;
 
 pub const FACT_SNAPSHOT_SCHEMA_V1: &str = "dusklight-fact-snapshot/v1";
+pub const FACT_SNAPSHOT_SCHEMA_V2: &str = "dusklight-fact-snapshot/v2";
 pub const MAX_FACT_HISTORY: usize = 8;
 pub const MAX_FACT_ACTORS: usize = 4_096;
 pub const MAX_CONDITION_EVALUATIONS: usize = 256;
@@ -241,6 +242,28 @@ pub struct RecentOptionFactSnapshot {
     pub realized_ticks: u32,
     pub tape_start: u64,
     pub tape_end_exclusive: u64,
+    /// Motion accumulated over the complete realized option. This is
+    /// transition evidence, not terminal authority. Older snapshots omit it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trajectory: Option<OptionTrajectoryFactSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OptionTrajectoryFactSnapshot {
+    pub observed_ticks: u32,
+    pub commanded_motion_ticks: u32,
+    pub commanded_stall_ticks: u32,
+    pub wall_contact_ticks: u32,
+    pub collision_correction_ticks: u32,
+    pub world_transition_ticks: u32,
+    pub planar_path_length_f32_bits: u32,
+    pub planar_displacement_f32_bits: u32,
+    pub mean_planar_speed_f32_bits: u32,
+    pub final_planar_velocity_f32_bits: u32,
+    pub maximum_planar_velocity_f32_bits: u32,
+    pub commanded_momentum_loss_f32_bits: u32,
+    pub collision_correction_total_f32_bits: u32,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -334,9 +357,28 @@ impl FactSnapshot {
         recent_option: Option<&OptionExecution>,
         conditions: Vec<ConditionFactSnapshot>,
     ) -> Result<Self, FactSnapshotError> {
+        Self::from_native_learning_with_option_trajectory(
+            observation,
+            prior,
+            recent_option,
+            None,
+            conditions,
+        )
+    }
+
+    pub fn from_native_learning_with_option_trajectory(
+        observation: &NativeLearningObservation,
+        prior: &[NativeLearningObservation],
+        recent_option: Option<&OptionExecution>,
+        option_trajectory: Option<OptionTrajectoryFactSnapshot>,
+        conditions: Vec<ConditionFactSnapshot>,
+    ) -> Result<Self, FactSnapshotError> {
         validate_native_learning(observation)?;
         if prior.len() > MAX_FACT_HISTORY || conditions.len() > MAX_CONDITION_EVALUATIONS {
             return Err(FactSnapshotError::Capacity);
+        }
+        if option_trajectory.is_some() && recent_option.is_none() {
+            return Err(FactSnapshotError::InvalidSnapshot);
         }
         let recent_history = prior
             .iter()
@@ -362,7 +404,7 @@ impl FactSnapshot {
             .transpose()?
             .unwrap_or_default();
         let snapshot = Self {
-            schema: FACT_SNAPSHOT_SCHEMA_V1.into(),
+            schema: FACT_SNAPSHOT_SCHEMA_V2.into(),
             source: FactObservationSource::NativeLearning,
             phase: match observation.phase {
                 NativeObservationPhase::PreInput => FactPhase::PreInput,
@@ -460,7 +502,10 @@ impl FactSnapshot {
                     .map(|_| observation.switch_flag_room),
             },
             recent_history,
-            recent_option: recent_option.map(recent_option_fact),
+            recent_option: recent_option.map(|execution| RecentOptionFactSnapshot {
+                trajectory: option_trajectory,
+                ..recent_option_fact(execution)
+            }),
             conditions,
         };
         snapshot.validate()?;
@@ -481,7 +526,7 @@ impl FactSnapshot {
             return Err(FactSnapshotError::Capacity);
         }
         let snapshot = Self {
-            schema: FACT_SNAPSHOT_SCHEMA_V1.into(),
+            schema: FACT_SNAPSHOT_SCHEMA_V2.into(),
             source: FactObservationSource::NativeTactic,
             phase: FactPhase::TacticBoundary,
             boundary_index: observation.boundary_index,
@@ -569,13 +614,23 @@ impl FactSnapshot {
     }
 
     pub fn validate(&self) -> Result<(), FactSnapshotError> {
-        if self.schema != FACT_SNAPSHOT_SCHEMA_V1
-            || self.world.stage.is_empty()
+        if !matches!(
+            self.schema.as_str(),
+            FACT_SNAPSHOT_SCHEMA_V1 | FACT_SNAPSHOT_SCHEMA_V2
+        ) || self.world.stage.is_empty()
             || self.world.stage.len() > 64
             || self.actors.len() > MAX_FACT_ACTORS
             || self.recent_history.len() > MAX_FACT_HISTORY
             || self.conditions.len() > MAX_CONDITION_EVALUATIONS
             || !self.actors_complete
+        {
+            return Err(FactSnapshotError::InvalidSnapshot);
+        }
+        if self.schema == FACT_SNAPSHOT_SCHEMA_V1
+            && self
+                .recent_option
+                .as_ref()
+                .is_some_and(|option| option.trajectory.is_some())
         {
             return Err(FactSnapshotError::InvalidSnapshot);
         }
@@ -589,7 +644,10 @@ impl FactSnapshot {
                 || option.realized_ticks == 0
                 || option.tape_end_exclusive <= option.tape_start
                 || option.tape_end_exclusive - option.tape_start
-                    != u64::from(option.realized_ticks))
+                    != u64::from(option.realized_ticks)
+                || option
+                    .trajectory
+                    .is_some_and(|trajectory| !trajectory.is_valid(option.realized_ticks)))
         {
             return Err(FactSnapshotError::InvalidSnapshot);
         }
@@ -705,6 +763,155 @@ fn recent_option_fact(execution: &OptionExecution) -> RecentOptionFactSnapshot {
         realized_ticks: execution.duration.realized_ticks,
         tape_start: execution.realized_tape_range.start_frame,
         tape_end_exclusive: execution.realized_tape_range.end_frame_exclusive,
+        trajectory: None,
+    }
+}
+
+impl OptionTrajectoryFactSnapshot {
+    pub fn from_native_steps(steps: &[NativeEpisodeStep]) -> Result<Self, FactSnapshotError> {
+        let observed_ticks = u32::try_from(steps.len()).map_err(|_| FactSnapshotError::Capacity)?;
+        if observed_ticks == 0 {
+            return Err(FactSnapshotError::InvalidSnapshot);
+        }
+        let first = &steps[0].pre_input;
+        let last = &steps[steps.len() - 1].post_simulation;
+        let same_world = steps.iter().all(|step| {
+            step.pre_input.stage == first.stage
+                && step.pre_input.room == first.room
+                && step.post_simulation.stage == first.stage
+                && step.post_simulation.room == first.room
+        });
+        let mut planar_path_length = 0.0_f64;
+        let mut commanded_motion_ticks = 0_u32;
+        let mut commanded_stall_ticks = 0_u32;
+        let mut wall_contact_ticks = 0_u32;
+        let mut collision_correction_ticks = 0_u32;
+        let mut world_transition_ticks = 0_u32;
+        let mut maximum_planar_velocity = planar_velocity(first.player_velocity);
+        let mut commanded_momentum_loss = 0.0_f64;
+        let mut collision_correction_total = 0.0_f64;
+        for step in steps {
+            validate_motion_observation(&step.pre_input)?;
+            validate_motion_observation(&step.post_simulation)?;
+            let stayed_in_world = step.pre_input.stage == step.post_simulation.stage
+                && step.pre_input.room == step.post_simulation.room;
+            world_transition_ticks += u32::from(!stayed_in_world);
+            let distance = if stayed_in_world {
+                planar_distance(
+                    step.pre_input.player_position,
+                    step.post_simulation.player_position,
+                )
+            } else {
+                0.0
+            };
+            planar_path_length += distance;
+            let commanded = commanded_motion(step.consumed_pad);
+            commanded_motion_ticks += u32::from(commanded);
+            commanded_stall_ticks += u32::from(commanded && distance < 1.0);
+            wall_contact_ticks += u32::from(
+                step.post_simulation
+                    .player_collision_solver
+                    .as_ref()
+                    .is_some_and(|solver| solver.wall_circles.iter().any(|wall| wall.flags != 0)),
+            );
+            let before_velocity = planar_velocity(step.pre_input.player_velocity);
+            let after_velocity = planar_velocity(step.post_simulation.player_velocity);
+            maximum_planar_velocity = maximum_planar_velocity.max(after_velocity);
+            if commanded {
+                commanded_momentum_loss += (before_velocity - after_velocity).max(0.0);
+            }
+            if let Some(correction) = step.post_simulation.collision_correction {
+                let magnitude = f64::from(correction[0]).hypot(f64::from(correction[1]));
+                collision_correction_ticks += u32::from(magnitude > 0.0);
+                collision_correction_total += magnitude;
+            }
+        }
+        let planar_displacement = if same_world {
+            planar_distance(first.player_position, last.player_position)
+        } else {
+            0.0
+        };
+        let mean_planar_speed = planar_path_length / f64::from(observed_ticks);
+        let summary = Self {
+            observed_ticks,
+            commanded_motion_ticks,
+            commanded_stall_ticks,
+            wall_contact_ticks,
+            collision_correction_ticks,
+            world_transition_ticks,
+            planar_path_length_f32_bits: finite_f64_bits(planar_path_length)?,
+            planar_displacement_f32_bits: finite_f64_bits(planar_displacement)?,
+            mean_planar_speed_f32_bits: finite_f64_bits(mean_planar_speed)?,
+            final_planar_velocity_f32_bits: finite_f64_bits(planar_velocity(last.player_velocity))?,
+            maximum_planar_velocity_f32_bits: finite_f64_bits(maximum_planar_velocity)?,
+            commanded_momentum_loss_f32_bits: finite_f64_bits(commanded_momentum_loss)?,
+            collision_correction_total_f32_bits: finite_f64_bits(collision_correction_total)?,
+        };
+        if summary.is_valid(observed_ticks) {
+            Ok(summary)
+        } else {
+            Err(FactSnapshotError::InvalidSnapshot)
+        }
+    }
+
+    pub(crate) fn is_valid(self, realized_ticks: u32) -> bool {
+        let values = [
+            self.planar_path_length_f32_bits,
+            self.planar_displacement_f32_bits,
+            self.mean_planar_speed_f32_bits,
+            self.final_planar_velocity_f32_bits,
+            self.maximum_planar_velocity_f32_bits,
+            self.commanded_momentum_loss_f32_bits,
+            self.collision_correction_total_f32_bits,
+        ]
+        .map(f32::from_bits);
+        let tolerance = |value: f32| 8.0 * f32::EPSILON * value.max(1.0);
+        self.observed_ticks == realized_ticks
+            && self.commanded_motion_ticks <= self.observed_ticks
+            && self.commanded_stall_ticks <= self.commanded_motion_ticks
+            && self.wall_contact_ticks <= self.observed_ticks
+            && self.collision_correction_ticks <= self.observed_ticks
+            && self.world_transition_ticks <= self.observed_ticks
+            && values
+                .iter()
+                .all(|value| value.is_finite() && *value >= 0.0)
+            && values[1] <= values[0] + tolerance(values[0])
+            && values[3] <= values[4] + tolerance(values[4])
+            && (values[2] - values[0] / self.observed_ticks as f32).abs() <= tolerance(values[2])
+            && (self.commanded_motion_ticks != 0 || values[5] == 0.0)
+            && (self.world_transition_ticks == 0 || values[1] == 0.0)
+    }
+}
+
+fn validate_motion_observation(
+    observation: &NativeLearningObservation,
+) -> Result<(), FactSnapshotError> {
+    bits3(observation.player_position)?;
+    bits3(observation.player_velocity)?;
+    if let Some(correction) = observation.collision_correction {
+        bits2(correction)?;
+    }
+    Ok(())
+}
+
+fn commanded_motion(pad: NativeRawPad) -> bool {
+    f32::from(pad.stick_x).hypot(f32::from(pad.stick_y)) >= 32.0
+}
+
+fn planar_distance(left: [f32; 3], right: [f32; 3]) -> f64 {
+    f64::from(right[0] - left[0]).hypot(f64::from(right[2] - left[2]))
+}
+
+fn planar_velocity(velocity: [f32; 3]) -> f64 {
+    f64::from(velocity[0]).hypot(f64::from(velocity[2]))
+}
+
+fn finite_f64_bits(value: f64) -> Result<u32, FactSnapshotError> {
+    let narrowed = value as f32;
+    if value.is_finite() && narrowed.is_finite() && narrowed >= 0.0 {
+        Ok(narrowed.to_bits())
+    } else {
+        Err(FactSnapshotError::NonFinite)
     }
 }
 
@@ -973,5 +1180,79 @@ mod tests {
                 .map(|actor| (actor.runtime_generation, actor.position_f32_bits))
                 .collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn complete_option_trajectory_retains_stalls_and_momentum_loss() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let template = shard.episodes[0].steps[0].clone();
+        let mut first = template.clone();
+        first.consumed_pad.stick_x = 127;
+        first.pre_input.player_position = [0.0, 0.0, 0.0];
+        first.pre_input.player_velocity = [0.0, 0.0, 0.0];
+        first.post_simulation.player_position = [10.0, 0.0, 0.0];
+        first.post_simulation.player_velocity = [10.0, 0.0, 0.0];
+        first.post_simulation.collision_correction = None;
+        let mut second = template;
+        second.consumed_pad.stick_x = 127;
+        second.pre_input.player_position = [10.0, 0.0, 0.0];
+        second.pre_input.player_velocity = [10.0, 0.0, 0.0];
+        second.post_simulation.player_position = [20.0, 0.0, 0.0];
+        second.post_simulation.player_velocity = [10.0, 0.0, 0.0];
+        second.post_simulation.collision_correction = None;
+
+        let straight =
+            OptionTrajectoryFactSnapshot::from_native_steps(&[first.clone(), second.clone()])
+                .unwrap();
+        assert_eq!(straight.observed_ticks, 2);
+        assert_eq!(straight.commanded_stall_ticks, 0);
+        assert_eq!(f32::from_bits(straight.planar_path_length_f32_bits), 20.0);
+        assert_eq!(f32::from_bits(straight.planar_displacement_f32_bits), 20.0);
+        assert_eq!(
+            f32::from_bits(straight.commanded_momentum_loss_f32_bits),
+            0.0
+        );
+
+        second.post_simulation.player_position = [10.0, 0.0, 0.0];
+        second.post_simulation.player_velocity = [0.0, 0.0, 0.0];
+        second.post_simulation.collision_correction = Some([2.0, 0.0]);
+        let bumped = OptionTrajectoryFactSnapshot::from_native_steps(&[first, second]).unwrap();
+        assert_eq!(bumped.commanded_stall_ticks, 1);
+        assert_eq!(bumped.collision_correction_ticks, 1);
+        assert_eq!(f32::from_bits(bumped.mean_planar_speed_f32_bits), 5.0);
+        assert_eq!(
+            f32::from_bits(bumped.commanded_momentum_loss_f32_bits),
+            10.0
+        );
+        assert_eq!(
+            f32::from_bits(bumped.collision_correction_total_f32_bits),
+            2.0
+        );
+        let mut tampered = bumped;
+        tampered.mean_planar_speed_f32_bits = 99.0_f32.to_bits();
+        assert!(!tampered.is_valid(2));
+    }
+
+    #[test]
+    fn legacy_fact_snapshot_without_option_trajectory_still_decodes() {
+        let shard = NativeEpisodeShard::decode(include_bytes!(
+            "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
+        ))
+        .unwrap();
+        let mut snapshot = FactSnapshot::from_native_learning(
+            &shard.episodes[0].steps[0].pre_input,
+            &[],
+            None,
+            Vec::new(),
+        )
+        .unwrap();
+        snapshot.schema = FACT_SNAPSHOT_SCHEMA_V1.into();
+        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        let decoded: FactSnapshot = serde_json::from_slice(&bytes).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded.schema, FACT_SNAPSHOT_SCHEMA_V1);
     }
 }

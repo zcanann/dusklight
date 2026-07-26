@@ -10,7 +10,7 @@ use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::InputTape;
 use dusklight_control::option_execution::OptionExecution;
 use dusklight_learning::fact_registry::FactRegistry;
-use dusklight_learning::fact_snapshot::FactSnapshot;
+use dusklight_learning::fact_snapshot::{FACT_SNAPSHOT_SCHEMA_V2, FactSnapshot};
 use dusklight_learning::hindsight::{
     HindsightError, HindsightOptionReplay, RelabeledHindsightOption,
 };
@@ -1537,13 +1537,18 @@ impl TacticQCampaign {
         let next_state = encode(&outcome.next_facts)
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
         let endpoint = tactic_state_descriptor(&outcome.next_facts, outcome.terminal);
-        let reward = reward_spec.evaluate(
+        let reward = reward_spec.evaluate_with_motion(
             self.feature_schema_sha256,
             &state,
             &next_state,
             outcome.execution.duration.realized_ticks,
             outcome.terminal,
             !self.visited_states.contains(&endpoint),
+            outcome
+                .next_facts
+                .recent_option
+                .as_ref()
+                .and_then(|option| option.trajectory),
         )?;
         let source_checkpoint_sha256 =
             route_checkpoint(self.root_checkpoint_sha256, &self.route_tape)?;
@@ -1744,13 +1749,18 @@ impl TacticQCampaign {
         let next_state = encode(&outcome.next_facts)
             .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
         let endpoint = tactic_state_descriptor(&outcome.next_facts, outcome.terminal);
-        let reward = reward_spec.evaluate(
+        let reward = reward_spec.evaluate_with_motion(
             self.feature_schema_sha256,
             &state,
             &next_state,
             outcome.execution.duration.realized_ticks,
             outcome.terminal,
             !self.visited_states.contains(&endpoint),
+            outcome
+                .next_facts
+                .recent_option
+                .as_ref()
+                .and_then(|option| option.trajectory),
         )?;
         let training_reward = reward.training_reward;
         let refit_model = refit_model || outcome.terminal;
@@ -1995,6 +2005,7 @@ fn semantic_state_digest(snapshot: &FactSnapshot) -> Result<Digest, TacticQCampa
     // Everything else remains visible so actor, flag, event, kinematic, and
     // derived-condition progress all break a cycle.
     let mut normalized = snapshot.clone();
+    normalized.schema = FACT_SNAPSHOT_SCHEMA_V2.into();
     normalized.boundary_index = 0;
     normalized.simulation_tick = 0;
     normalized.tape_frame = 0;
@@ -2758,6 +2769,7 @@ mod tests {
                     unavailable_value: None,
                 }],
             }),
+            motion_cost: None,
         };
         let evaluated = campaign
             .evaluate_rewarded_outcome(outcome.clone(), &encode, &reward_spec)
