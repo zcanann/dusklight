@@ -4655,6 +4655,13 @@ struct NavigableSurfaceNode {
     coordinate: [f32; 3],
 }
 
+#[derive(Clone, Debug)]
+struct NavigableSurfaceEdge {
+    left_collision_id: String,
+    right_collision_id: String,
+    shared_edge: [[f32; 3]; 2],
+}
+
 fn goal_surface_route(
     source: [f32; 3],
     goal: [f32; 3],
@@ -4683,11 +4690,10 @@ fn goal_surface_route(
         .edges
         .iter()
         .filter(|edge| edge.room == room)
-        .map(|edge| {
-            (
-                edge.left_collision_id.as_str(),
-                edge.right_collision_id.as_str(),
-            )
+        .map(|edge| NavigableSurfaceEdge {
+            left_collision_id: edge.left_collision_id.clone(),
+            right_collision_id: edge.right_collision_id.clone(),
+            shared_edge: edge.shared_edge.map(|point| [point.x, point.y, point.z]),
         })
         .collect::<Vec<_>>();
     let Some(route) = shortest_navigable_surface_route(&nodes, &edges, source, goal)? else {
@@ -4712,7 +4718,7 @@ fn goal_surface_route(
 
 fn shortest_navigable_surface_route(
     nodes: &[NavigableSurfaceNode],
-    edges: &[(&str, &str)],
+    edges: &[NavigableSurfaceEdge],
     source: [f32; 3],
     goal: [f32; 3],
 ) -> Result<Option<Vec<[f32; 3]>>, NativeTacticRouteRunError> {
@@ -4758,30 +4764,36 @@ fn shortest_navigable_surface_route(
         .map(|(index, node)| (node.collision_id.as_str(), index))
         .collect::<BTreeMap<_, _>>();
     let mut adjacency = vec![Vec::new(); nodes.len()];
-    for (left, right) in edges {
-        let (Some(&left), Some(&right)) = (indices.get(left), indices.get(right)) else {
+    for (edge_index, edge) in edges.iter().enumerate() {
+        let (Some(&left), Some(&right)) = (
+            indices.get(edge.left_collision_id.as_str()),
+            indices.get(edge.right_collision_id.as_str()),
+        ) else {
             continue;
         };
-        adjacency[left].push(right);
-        adjacency[right].push(left);
+        adjacency[left].push((right, edge_index));
+        adjacency[right].push((left, edge_index));
     }
     for neighbors in &mut adjacency {
         neighbors.sort_unstable_by(|left, right| {
-            nodes[*left].collision_id.cmp(&nodes[*right].collision_id)
+            nodes[left.0]
+                .collision_id
+                .cmp(&nodes[right.0].collision_id)
+                .then_with(|| left.1.cmp(&right.1))
         });
         neighbors.dedup();
     }
 
     let mut previous = vec![None; nodes.len()];
-    previous[source_index] = Some(source_index);
+    previous[source_index] = Some((source_index, usize::MAX));
     let mut pending = VecDeque::from([source_index]);
     while let Some(current) = pending.pop_front() {
         if current == goal_index {
             break;
         }
-        for &neighbor in &adjacency[current] {
+        for &(neighbor, edge_index) in &adjacency[current] {
             if previous[neighbor].is_none() {
-                previous[neighbor] = Some(current);
+                previous[neighbor] = Some((current, edge_index));
                 pending.push_back(neighbor);
             }
         }
@@ -4790,53 +4802,99 @@ fn shortest_navigable_surface_route(
         return Ok(None);
     }
     let mut path = vec![goal_index];
+    let mut path_edges = Vec::new();
     while *path
         .last()
         .ok_or_else(|| route_message("surface route reconstruction is empty"))?
         != source_index
     {
         let current = *path.last().expect("surface route is nonempty");
-        path.push(
-            previous[current]
-                .ok_or_else(|| route_message("surface route predecessor is absent"))?,
-        );
+        let (predecessor, edge_index) = previous[current]
+            .ok_or_else(|| route_message("surface route predecessor is absent"))?;
+        path.push(predecessor);
+        path_edges.push(edge_index);
     }
     path.reverse();
-    let coordinates = path
-        .into_iter()
-        .map(|index| nodes[index].coordinate)
+    path_edges.reverse();
+    let portal_centers = path_edges
+        .iter()
+        .map(|edge_index| {
+            let edge = edges[*edge_index].shared_edge;
+            [
+                (edge[0][0] + edge[1][0]) * 0.5,
+                (edge[0][1] + edge[1][1]) * 0.5,
+                (edge[0][2] + edge[1][2]) * 0.5,
+            ]
+        })
         .collect::<Vec<_>>();
-    Ok(sample_navigable_surface_route(&coordinates, goal))
+    let centerline = std::iter::once(source)
+        .chain(portal_centers)
+        .chain(std::iter::once(goal))
+        .collect::<Vec<_>>();
+    let centerline = simplify_planar_surface_route(
+        &centerline,
+        NAVIGABLE_SURFACE_ROUTE_TARGETS.saturating_add(1),
+    );
+    let route = centerline.into_iter().skip(1).collect::<Vec<_>>();
+    if !route.is_empty() && route.len() <= NAVIGABLE_SURFACE_ROUTE_TARGETS {
+        Ok(Some(route))
+    } else {
+        Err(route_message(
+            "surface route simplification exceeded its bounded target count",
+        ))
+    }
 }
 
-fn sample_navigable_surface_route(path: &[[f32; 3]], goal: [f32; 3]) -> Option<Vec<[f32; 3]>> {
-    if path.len() < 2 {
-        return None;
+fn simplify_planar_surface_route(path: &[[f32; 3]], maximum_points: usize) -> Vec<[f32; 3]> {
+    if path.len() <= maximum_points || maximum_points < 2 {
+        return path.to_vec();
     }
-    let mut cumulative = vec![0.0_f32; path.len()];
-    for index in 1..path.len() {
-        cumulative[index] = cumulative[index - 1] + planar_distance(path[index - 1], path[index]);
-    }
-    let total = *cumulative.last()?;
-    if !total.is_finite() || total <= 0.0 {
-        return None;
-    }
-    let mut route = Vec::with_capacity(NAVIGABLE_SURFACE_ROUTE_TARGETS);
-    for fraction in [0.25_f32, 0.5, 0.75] {
-        let threshold = total * fraction;
-        let index = cumulative
-            .iter()
-            .position(|distance| *distance >= threshold)
-            .unwrap_or(path.len() - 1);
-        let coordinate = path[index];
-        if route.last() != Some(&coordinate) {
-            route.push(coordinate);
+    let mut retained = BTreeSet::from([0_usize, path.len() - 1]);
+    while retained.len() < maximum_points {
+        let indices = retained.iter().copied().collect::<Vec<_>>();
+        let mut best = None::<(f32, usize)>;
+        for pair in indices.windows(2) {
+            for index in pair[0] + 1..pair[1] {
+                let error = planar_point_segment_distance_squared(
+                    path[index],
+                    path[pair[0]],
+                    path[pair[1]],
+                );
+                if best.is_none_or(|(best_error, best_index)| {
+                    error
+                        .total_cmp(&best_error)
+                        .then_with(|| best_index.cmp(&index))
+                        .is_gt()
+                }) {
+                    best = Some((error, index));
+                }
+            }
         }
+        let Some((error, index)) = best else {
+            break;
+        };
+        if error <= f32::EPSILON {
+            break;
+        }
+        retained.insert(index);
     }
-    if route.last() != Some(&goal) {
-        route.push(goal);
+    retained.into_iter().map(|index| path[index]).collect()
+}
+
+fn planar_point_segment_distance_squared(point: [f32; 3], start: [f32; 3], end: [f32; 3]) -> f32 {
+    let dx = end[0] - start[0];
+    let dz = end[2] - start[2];
+    let length_squared = dx.mul_add(dx, dz * dz);
+    if length_squared <= f32::EPSILON {
+        let px = point[0] - start[0];
+        let pz = point[2] - start[2];
+        return px.mul_add(px, pz * pz);
     }
-    (route.len() >= 2 && route.len() <= NAVIGABLE_SURFACE_ROUTE_TARGETS).then_some(route)
+    let projection = (((point[0] - start[0]) * dx + (point[2] - start[2]) * dz) / length_squared)
+        .clamp(0.0, 1.0);
+    let px = point[0] - start[0] - projection * dx;
+    let pz = point[2] - start[2] - projection * dz;
+    px.mul_add(px, pz * pz)
 }
 
 #[derive(Clone)]
@@ -6287,34 +6345,30 @@ mod tests {
     }
 
     #[test]
-    fn navigable_surface_route_follows_ground_adjacency_and_samples_four_targets() {
+    fn navigable_surface_route_follows_ground_adjacency_with_bounded_sampling() {
         let nodes = (0..=4)
             .map(|index| NavigableSurfaceNode {
                 collision_id: format!("surface-{index}"),
                 coordinate: [index as f32 * 100.0, 10.0, 0.0],
             })
             .collect::<Vec<_>>();
-        let edges = [
-            ("surface-0", "surface-1"),
-            ("surface-1", "surface-2"),
-            ("surface-2", "surface-3"),
-            ("surface-3", "surface-4"),
-        ];
+        let edges = (0..4)
+            .map(|index| NavigableSurfaceEdge {
+                left_collision_id: format!("surface-{index}"),
+                right_collision_id: format!("surface-{}", index + 1),
+                shared_edge: [
+                    [index as f32 * 100.0 + 50.0, 10.0, -50.0],
+                    [index as f32 * 100.0 + 50.0, 10.0, 50.0],
+                ],
+            })
+            .collect::<Vec<_>>();
 
         let route =
             shortest_navigable_surface_route(&nodes, &edges, [0.0, 10.0, 0.0], [400.0, 10.0, 0.0])
                 .unwrap()
                 .expect("connected ground surfaces must produce a route");
 
-        assert_eq!(
-            route,
-            vec![
-                [100.0, 10.0, 0.0],
-                [200.0, 10.0, 0.0],
-                [300.0, 10.0, 0.0],
-                [400.0, 10.0, 0.0],
-            ]
-        );
+        assert_eq!(route, vec![[400.0, 10.0, 0.0]]);
         assert!(
             shortest_navigable_surface_route(
                 &nodes,
@@ -6325,6 +6379,24 @@ mod tests {
             .unwrap()
             .is_none()
         );
+    }
+
+    #[test]
+    fn surface_route_simplification_spends_targets_on_actual_turns() {
+        let path = [
+            [0.0, 10.0, 0.0],
+            [100.0, 10.0, 0.0],
+            [200.0, 10.0, 100.0],
+            [300.0, 10.0, 100.0],
+            [400.0, 10.0, 0.0],
+        ];
+
+        let simplified = simplify_planar_surface_route(&path, 3);
+
+        assert_eq!(simplified.len(), 3);
+        assert_eq!(simplified[0], path[0]);
+        assert_eq!(simplified[2], path[4]);
+        assert_eq!(simplified[1][2], 100.0);
     }
 
     #[test]
