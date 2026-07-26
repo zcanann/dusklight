@@ -3,7 +3,8 @@
 use crate::native_residual_campaign::NativeResidualExecutionBinding;
 use crate::native_suffix_result::{NativeTerminalBinding, ValidatedNativeSuffixBatch};
 use crate::native_suffix_worker::{
-    NativeSuffixWorkerError, NativeSuffixWorkerLaunch, NativeSuffixWorkerSession,
+    NativeSuffixPrevalidatedFileIdentities, NativeSuffixWorkerError, NativeSuffixWorkerLaunch,
+    NativeSuffixWorkerSession,
 };
 use crate::native_tactic_worker::{
     NativeGenericExecutionStrategy, NativeTacticCheckpointSource, NativeTacticWorkerError,
@@ -1673,7 +1674,14 @@ fn launch_tactic_route_worker(
         initial_result: initial_root.join("result.json"),
         initial_winner_tape: None,
     };
-    let (worker, initial) = NativeSuffixWorkerSession::launch(&launch).map_err(route_error)?;
+    let (worker, initial) = NativeSuffixWorkerSession::launch_with_prevalidated_files(
+        &launch,
+        NativeSuffixPrevalidatedFileIdentities {
+            executable_sha256: config.execution.executable.sha256,
+            game_data_sha256: config.execution.game_data.sha256,
+        },
+    )
+    .map_err(route_error)?;
     let facts = initial_facts(&initial)?;
     let root_checkpoint_sha256 =
         tactic_root_checkpoint_sha256(worker.identity()).map_err(route_error)?;

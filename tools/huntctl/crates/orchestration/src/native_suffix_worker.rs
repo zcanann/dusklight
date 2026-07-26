@@ -61,6 +61,15 @@ pub struct NativeFrozenPolicyWorkerLaunch {
     pub initial_result: PathBuf,
 }
 
+/// Content identities already authenticated by the enclosing sealed execution
+/// binding. Passing these avoids re-reading immutable executable and game-data
+/// files once per concurrently launched worker.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeSuffixPrevalidatedFileIdentities {
+    pub executable_sha256: Digest,
+    pub game_data_sha256: Digest,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeSuffixWorkerIdentity {
@@ -116,7 +125,21 @@ impl NativeSuffixWorkerSession {
     pub fn launch(
         config: &NativeSuffixWorkerLaunch,
     ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
-        let prepared = prepare_launch(config)?;
+        Self::launch_prevalidated(config, None)
+    }
+
+    pub fn launch_with_prevalidated_files(
+        config: &NativeSuffixWorkerLaunch,
+        identities: NativeSuffixPrevalidatedFileIdentities,
+    ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
+        Self::launch_prevalidated(config, Some(identities))
+    }
+
+    fn launch_prevalidated(
+        config: &NativeSuffixWorkerLaunch,
+        identities: Option<NativeSuffixPrevalidatedFileIdentities>,
+    ) -> Result<(Self, ValidatedNativeSuffixBatch), NativeSuffixWorkerError> {
+        let prepared = prepare_launch(config, identities)?;
         let transport = ProcessTransport::spawn_in(
             &prepared.executable,
             &prepared.args,
@@ -259,6 +282,7 @@ impl NativeSuffixWorkerSession {
 
 fn prepare_launch(
     config: &NativeSuffixWorkerLaunch,
+    identities: Option<NativeSuffixPrevalidatedFileIdentities>,
 ) -> Result<PreparedLaunch, NativeSuffixWorkerError> {
     if config.world_context_sha256 == Digest::ZERO
         || config.card_fixture_sha256 == Digest::ZERO
@@ -354,9 +378,22 @@ fn prepare_launch(
         ))
     })?;
 
-    let game_data_sha256 = sha256_file(&game_data)?;
+    let (executable_sha256, game_data_sha256) = match identities {
+        Some(identities)
+            if identities.executable_sha256 != Digest::ZERO
+                && identities.game_data_sha256 != Digest::ZERO =>
+        {
+            (identities.executable_sha256, identities.game_data_sha256)
+        }
+        Some(_) => {
+            return Err(worker_message(
+                "prevalidated native suffix file identities are incomplete",
+            ));
+        }
+        None => (sha256_file(&executable)?, sha256_file(&game_data)?),
+    };
     let identity = NativeSuffixWorkerIdentity {
-        executable_sha256: sha256_file(&executable)?,
+        executable_sha256,
         game_data_sha256,
         input_tape_sha256: sha256(&tape_bytes),
         milestone_program_sha256: sha256(&program_bytes),
@@ -1105,7 +1142,7 @@ mod tests {
     #[test]
     fn launch_preflight_binds_every_persistent_source_identity() {
         let (_root, launch) = fixture();
-        let prepared = prepare_launch(&launch).unwrap();
+        let prepared = prepare_launch(&launch, None).unwrap();
 
         assert_eq!(prepared.identity.source_frame, 1);
         assert_eq!(prepared.identity.maximum_ticks, 2);
@@ -1132,9 +1169,39 @@ mod tests {
     }
 
     #[test]
+    fn launch_reuses_enclosing_execution_file_identities() {
+        let (_root, launch) = fixture();
+        let identities = NativeSuffixPrevalidatedFileIdentities {
+            executable_sha256: Digest([0xaa; 32]),
+            game_data_sha256: Digest([0xbb; 32]),
+        };
+
+        let prepared = prepare_launch(&launch, Some(identities)).unwrap();
+
+        assert_eq!(
+            prepared.identity.executable_sha256,
+            identities.executable_sha256
+        );
+        assert_eq!(
+            prepared.identity.game_data_sha256,
+            identities.game_data_sha256
+        );
+        assert!(
+            prepare_launch(
+                &launch,
+                Some(NativeSuffixPrevalidatedFileIdentities {
+                    executable_sha256: Digest::ZERO,
+                    game_data_sha256: identities.game_data_sha256,
+                }),
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
     fn persistent_source_accepts_a_different_bounded_tactic_horizon() {
         let (_root, launch) = fixture();
-        let prepared = prepare_launch(&launch).unwrap();
+        let prepared = prepare_launch(&launch, None).unwrap();
         let mut next = prepared.batch;
         next.maximum_ticks = 1;
         validate_batch_identity(&next, &prepared.identity).unwrap();
@@ -1147,7 +1214,7 @@ mod tests {
     fn launch_preflight_rejects_terminal_and_horizon_drift() {
         let (_root, mut launch) = fixture();
         launch.terminal.definition_sha256 = Digest([9; 32]);
-        assert!(prepare_launch(&launch).is_err());
+        assert!(prepare_launch(&launch, None).is_err());
 
         let (_root, mut launch) = fixture();
         let mut batch: NativeSuffixBatch =
@@ -1158,10 +1225,10 @@ mod tests {
             serde_json::to_vec_pretty(&batch).unwrap(),
         )
         .unwrap();
-        assert!(prepare_launch(&launch).is_err());
+        assert!(prepare_launch(&launch, None).is_err());
 
         launch.world_context_sha256 = Digest::ZERO;
-        assert!(prepare_launch(&launch).is_err());
+        assert!(prepare_launch(&launch, None).is_err());
     }
 
     #[test]
