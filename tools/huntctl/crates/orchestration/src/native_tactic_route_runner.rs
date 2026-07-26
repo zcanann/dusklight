@@ -121,6 +121,7 @@ const NAVIGABLE_SURFACE_MINIMUM_UP_NORMAL: f32 = 0.5;
 const NAVIGABLE_SURFACE_MAXIMUM_ATTACHMENT_DISTANCE: f32 = 512.0;
 const NAVIGABLE_SURFACE_ROUTE_TARGETS: usize = 8;
 const NAVIGABLE_SURFACE_ROUTE_RESOLUTIONS: [usize; 3] = [4, 6, 8];
+const NAVIGABLE_SURFACE_PORTAL_CLEARANCE: f32 = 24.0;
 const MAX_RESUME_JSON_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_ROUTE_ATTEMPTS: usize = 10_000;
 const TACTIC_ROUTE_PERFORMANCE_SCHEMA_V2: &str = "dusklight-native-tactic-route-performance/v2";
@@ -4918,16 +4919,27 @@ fn shortest_navigable_surface_routes(
         .chain(portal_centers)
         .chain(std::iter::once(goal))
         .collect::<Vec<_>>();
-    let mut routes = NAVIGABLE_SURFACE_ROUTE_RESOLUTIONS
-        .iter()
-        .map(|target_count| {
-            simplify_planar_surface_route(&centerline, target_count.saturating_add(1))
-                .into_iter()
-                .skip(1)
-                .collect::<Vec<_>>()
-        })
-        .filter(|route| !route.is_empty() && route.len() <= NAVIGABLE_SURFACE_ROUTE_TARGETS)
-        .collect::<Vec<_>>();
+    let mut routes = vec![funnel_surface_route(
+        nodes,
+        &path,
+        edges,
+        &path_edges,
+        source,
+        goal,
+        NAVIGABLE_SURFACE_PORTAL_CLEARANCE,
+    )?];
+    routes.extend(
+        NAVIGABLE_SURFACE_ROUTE_RESOLUTIONS
+            .iter()
+            .map(|target_count| {
+                simplify_planar_surface_route(&centerline, target_count.saturating_add(1))
+                    .into_iter()
+                    .skip(1)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|route| !route.is_empty() && route.len() <= NAVIGABLE_SURFACE_ROUTE_TARGETS),
+    );
+    routes.retain(|route| !route.is_empty() && route.len() <= NAVIGABLE_SURFACE_ROUTE_TARGETS);
     routes.dedup();
     if routes.is_empty() {
         Err(route_message(
@@ -4935,6 +4947,129 @@ fn shortest_navigable_surface_routes(
         ))
     } else {
         Ok(Some(routes))
+    }
+}
+
+fn funnel_surface_route(
+    nodes: &[NavigableSurfaceNode],
+    path: &[usize],
+    edges: &[NavigableSurfaceEdge],
+    path_edges: &[usize],
+    source: [f32; 3],
+    goal: [f32; 3],
+    clearance: f32,
+) -> Result<Vec<[f32; 3]>, NativeTacticRouteRunError> {
+    if path.len() != path_edges.len().saturating_add(1)
+        || path.iter().any(|index| *index >= nodes.len())
+        || path_edges.iter().any(|index| *index >= edges.len())
+        || !clearance.is_finite()
+        || clearance < 0.0
+    {
+        return Err(route_message("surface funnel inputs are invalid"));
+    }
+    let mut portals = Vec::with_capacity(path_edges.len().saturating_add(2));
+    portals.push((source, source));
+    for (step, edge_index) in path_edges.iter().copied().enumerate() {
+        let edge = edges[edge_index].shared_edge;
+        let from = nodes[path[step]].coordinate;
+        let to = nodes[path[step + 1]].coordinate;
+        let first_area = planar_signed_area(from, to, edge[0]);
+        let second_area = planar_signed_area(from, to, edge[1]);
+        // The funnel predicate below follows the controller's X/Z winding,
+        // where the smaller signed area is the left portal bound.
+        let (left, right) = if first_area <= second_area {
+            (edge[0], edge[1])
+        } else {
+            (edge[1], edge[0])
+        };
+        portals.push(inset_portal(left, right, clearance));
+    }
+    portals.push((goal, goal));
+
+    let mut route = Vec::new();
+    let mut apex = portals[0].0;
+    let mut left = portals[0].0;
+    let mut right = portals[0].1;
+    let mut left_index = 0;
+    let mut right_index = 0;
+    let mut index = 1;
+    while index < portals.len() {
+        let (next_left, next_right) = portals[index];
+        if planar_signed_area(apex, right, next_right) <= 0.0 {
+            if same_planar_point(apex, right) || planar_signed_area(apex, left, next_right) > 0.0 {
+                right = next_right;
+                right_index = index;
+            } else {
+                push_distinct_planar(&mut route, left);
+                apex = left;
+                let restart_index = left_index;
+                left = apex;
+                right = apex;
+                left_index = restart_index;
+                right_index = restart_index;
+                index = restart_index.saturating_add(1);
+                continue;
+            }
+        }
+        if planar_signed_area(apex, left, next_left) >= 0.0 {
+            if same_planar_point(apex, left) || planar_signed_area(apex, right, next_left) < 0.0 {
+                left = next_left;
+                left_index = index;
+            } else {
+                push_distinct_planar(&mut route, right);
+                apex = right;
+                let restart_index = right_index;
+                left = apex;
+                right = apex;
+                left_index = restart_index;
+                right_index = restart_index;
+                index = restart_index.saturating_add(1);
+                continue;
+            }
+        }
+        index += 1;
+    }
+    push_distinct_planar(&mut route, goal);
+    Ok(route)
+}
+
+fn inset_portal(left: [f32; 3], right: [f32; 3], clearance: f32) -> ([f32; 3], [f32; 3]) {
+    let dx = right[0] - left[0];
+    let dy = right[1] - left[1];
+    let dz = right[2] - left[2];
+    let planar_length = dx.hypot(dz);
+    if planar_length <= f32::EPSILON {
+        return (left, right);
+    }
+    let fraction = (clearance / planar_length).clamp(0.0, 0.25);
+    (
+        [
+            left[0] + dx * fraction,
+            left[1] + dy * fraction,
+            left[2] + dz * fraction,
+        ],
+        [
+            right[0] - dx * fraction,
+            right[1] - dy * fraction,
+            right[2] - dz * fraction,
+        ],
+    )
+}
+
+fn planar_signed_area(left: [f32; 3], right: [f32; 3], point: [f32; 3]) -> f32 {
+    (right[0] - left[0]) * (point[2] - left[2]) - (right[2] - left[2]) * (point[0] - left[0])
+}
+
+fn same_planar_point(left: [f32; 3], right: [f32; 3]) -> bool {
+    (left[0] - right[0]).abs() <= f32::EPSILON && (left[2] - right[2]).abs() <= f32::EPSILON
+}
+
+fn push_distinct_planar(route: &mut Vec<[f32; 3]>, point: [f32; 3]) {
+    if route
+        .last()
+        .is_none_or(|previous| !same_planar_point(*previous, point))
+    {
+        route.push(point);
     }
 }
 
@@ -6512,6 +6647,58 @@ mod tests {
             .unwrap()
             .is_none()
         );
+    }
+
+    #[test]
+    fn surface_funnel_string_pulls_portals_instead_of_chasing_their_centers() {
+        let nodes = vec![
+            NavigableSurfaceNode {
+                collision_id: "a".into(),
+                coordinate: [0.0, 10.0, 0.0],
+            },
+            NavigableSurfaceNode {
+                collision_id: "b".into(),
+                coordinate: [100.0, 10.0, 0.0],
+            },
+            NavigableSurfaceNode {
+                collision_id: "c".into(),
+                coordinate: [200.0, 10.0, 100.0],
+            },
+            NavigableSurfaceNode {
+                collision_id: "d".into(),
+                coordinate: [300.0, 10.0, 0.0],
+            },
+        ];
+        let edges = vec![
+            NavigableSurfaceEdge {
+                left_collision_id: "a".into(),
+                right_collision_id: "b".into(),
+                shared_edge: [[100.0, 10.0, -100.0], [100.0, 10.0, 100.0]],
+            },
+            NavigableSurfaceEdge {
+                left_collision_id: "b".into(),
+                right_collision_id: "c".into(),
+                shared_edge: [[200.0, 10.0, 50.0], [200.0, 10.0, 150.0]],
+            },
+            NavigableSurfaceEdge {
+                left_collision_id: "c".into(),
+                right_collision_id: "d".into(),
+                shared_edge: [[300.0, 10.0, -100.0], [300.0, 10.0, 100.0]],
+            },
+        ];
+
+        let route = funnel_surface_route(
+            &nodes,
+            &[0, 1, 2, 3],
+            &edges,
+            &[0, 1, 2],
+            [0.0, 10.0, 0.0],
+            [400.0, 10.0, 0.0],
+            0.0,
+        )
+        .unwrap();
+
+        assert_eq!(route, vec![[200.0, 10.0, 50.0], [400.0, 10.0, 0.0]]);
     }
 
     #[test]
