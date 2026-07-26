@@ -294,7 +294,11 @@ impl TacticRewardSpec {
         };
         let tick_cost_component_f64 = -f64::from(self.tick_cost) * f64::from(duration_ticks);
         let tick_cost_component = tick_cost_component_f64 as f32;
-        let novelty_component = if endpoint_novel {
+        // Novelty is an acquisition signal for nonterminal state discovery.
+        // Once exact simulation has reached the objective, adding endpoint
+        // novelty would change shortest-route ordering whenever the bonus
+        // exceeds the tick-cost difference between two successful routes.
+        let novelty_component = if endpoint_novel && !terminal_observed {
             self.novelty_reward
         } else {
             0.0
@@ -677,10 +681,12 @@ mod tests {
         assert!(!reward.promotion_authority);
 
         let terminal = TacticRewardSpec::default()
-            .evaluate(feature_schema, &[0.0], &[1.0], 1, true, false)
+            .evaluate(feature_schema, &[0.0], &[1.0], 1, true, true)
             .unwrap();
         assert_eq!(terminal.terminal_component, 1.0);
-        assert!(!terminal.endpoint_novel);
+        assert!(terminal.endpoint_novel);
+        assert_eq!(terminal.novelty_component, 0.0);
+        assert_eq!(terminal.base_reward, 0.999);
         assert!(terminal.terminal_objective_unchanged);
         assert!(!terminal.promotion_authority);
 
