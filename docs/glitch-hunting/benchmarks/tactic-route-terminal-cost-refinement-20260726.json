@@ -1,0 +1,85 @@
+{
+  "schema": "dusklight-tactic-route-terminal-cost-refinement-report/v1",
+  "date": "2026-07-26",
+  "claim": "A generic terminal-cost refinement lane fixes the learned policy's first-terminal collapse. Generation one finds a 147-tick terminal route. After the shared replay refit, all four generation-two seeds compare the 147-tick incumbent with the nearest untried parameterization of the same controller path, discover the 130-tick terminal route, and retain it. This proves later learned generations improve route cost, but does not satisfy the full learned-treatment gate because 130 only ties the best equal-budget structured baseline and does not beat the authenticated 125-tick incumbent.",
+  "implementation": {
+    "terminal_refinement_commit": "d424f801ca",
+    "controller_path_identity_commit": "b05b351a43",
+    "method": "Preserve the exploit control and reserve one learned batch lane for the closest state-local untried action in the best terminal action's structural family. Reactive controllers expose typed button pulse period, phase, and mask parameters plus a digest of the button-free base controller. Refinement holds the base controller identity fixed and varies only typed overlay parameters."
+  },
+  "bindings": {
+    "optimization_request": "routes/Glitch Exhibition/intro/benchmarks/ordon-tactic-q-discovery-v1.request.json",
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "execution_binding": "build/campaigns/ordon-q125-selected-opt-execution-c204905a52-20260726/execution.json",
+    "execution_binding_sha256": "acc1c5cc2282f175129126696201da25382d4a79eb9cedff00da0550fa0e7b20",
+    "source_boundary_index": 506,
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "terminal": "authenticated F_SP103 to F_SP104 load-zone commit"
+  },
+  "workload": {
+    "report": "build/campaigns/ordon-q125-learned-terminal-refinement-b05b351a43-20260726/run/report.json",
+    "seeds": [
+      104729,
+      222001,
+      333001,
+      444001,
+      555001,
+      687733,
+      865079,
+      890413
+    ],
+    "workers": 4,
+    "decisions_per_seed": 1,
+    "learned_episodes_per_generation": 4,
+    "proposals_per_decision": 4,
+    "execution_strategy": "native_controller",
+    "epsilon_per_million": 350000
+  },
+  "result": {
+    "generation_one": {
+      "seeds": 4,
+      "proposal_native_ticks": 747,
+      "successful_decisions": 1,
+      "best_terminal_route_ticks": 147
+    },
+    "generation_two": {
+      "seeds": 4,
+      "proposal_native_ticks": 1164,
+      "successful_decisions": 4,
+      "best_terminal_route_ticks": 130,
+      "terminal_refinement_repetitions": 4,
+      "terminal_refinement_successes": 4
+    },
+    "first_cost_improvement": {
+      "cumulative_proposal_native_ticks": 1036,
+      "from_route_ticks": 147,
+      "to_route_ticks": 130,
+      "selected_option_id": "goal.seek.route.00.roll.period.20.phase.00"
+    },
+    "proposal_native_ticks": 1911,
+    "post_run_macro_validation_ticks": 28,
+    "total_native_ticks": 1939,
+    "wall_micros": 20815088,
+    "native_simulation_micros": 18080816,
+    "preparation_and_fact_extraction_micros": 372865,
+    "persistence_micros": 9341708,
+    "restore_requests": 38,
+    "restore_micros": 1007510,
+    "evaluated_proposals": 32,
+    "useful_transitions": 17,
+    "shared_training_replay_rows": 20,
+    "duplicate_training_transitions": 0
+  },
+  "negative_control": {
+    "report": "build/campaigns/ordon-q125-learned-terminal-refinement-d424f801ca-20260726/run/report.json",
+    "finding": "Without a base-controller identity parameter, the refinement lane varied both path geometry and roll timing and selected route sequence 01. This run did not improve 147. The fail-closed comparison motivated the button-free controller digest used by the corrected treatment."
+  },
+  "gate_status": {
+    "later_generation_cost_improvement": true,
+    "better_than_random_valid_best_cost": true,
+    "better_than_structured_non_learning_best_cost": false,
+    "sub_incumbent_terminal_found": false,
+    "p5_accepted": false,
+    "p6_accepted": false
+  }
+}

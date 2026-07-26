@@ -62,7 +62,7 @@ spending remaining capacity on state-local untried actions.
       non-learning structured search under identical native-tick budgets.
 - [x] Publish failures, coverage, candidate diversity, and time to improvement;
       do not substitute terminal success rate for route optimization.
-- [ ] Demonstrate that later learned generations improve terminal route cost
+- [x] Demonstrate that later learned generations improve terminal route cost
       rather than collapsing onto the first successful tactic.
 
 Acceptance:
