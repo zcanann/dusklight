@@ -393,6 +393,16 @@ fn compare_outcomes(
 ) -> std::cmp::Ordering {
     left.terminal
         .total_cmp(&right.terminal)
+        .then_with(|| {
+            if left.terminal >= 0.5 && right.terminal >= 0.5 {
+                // Once both outcomes predict the authenticated predicate,
+                // native input cost is authoritative. Shaping and motion
+                // quality may break only equal-cost terminal predictions.
+                right.duration_ticks.total_cmp(&left.duration_ticks)
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
         .then_with(|| left.reward.total_cmp(&right.reward))
         .then_with(|| {
             left.goal_progress_per_tick
@@ -941,6 +951,29 @@ mod tests {
         assert!((encoded_heading[48] - 1.0).abs() < 1.0e-6);
         assert!(encoded_heading[49].abs() < 1.0e-6);
         assert!((encoded_heading[50] - std::f32::consts::FRAC_PI_2).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn faster_terminal_prediction_outranks_shaping_quality() {
+        let faster = GeneralizedTacticOutcome {
+            terminal: 1.0,
+            reward: 50.0,
+            duration_ticks: 100.0,
+            path_efficiency: 0.7,
+            ..GeneralizedTacticOutcome::default()
+        };
+        let slower_but_cleaner = GeneralizedTacticOutcome {
+            terminal: 1.0,
+            reward: 99.0,
+            duration_ticks: 110.0,
+            path_efficiency: 1.0,
+            ..GeneralizedTacticOutcome::default()
+        };
+
+        assert_eq!(
+            compare_outcomes(&faster, &slower_but_cleaner),
+            std::cmp::Ordering::Greater
+        );
     }
 
     #[test]
