@@ -551,6 +551,12 @@ struct NativeTacticDecisionRecord {
     visited_states: usize,
     root_checkpoint_sha256: Digest,
     root_tape: StoredContentRef,
+    /// Exact route at this decision's source boundary. Cross-seed replay can
+    /// restore a root-derived frontier whose parent edge is not in this seed's
+    /// local journal; this content-addressed anchor keeps that valid branch
+    /// independently materializable. Legacy journals reconstruct local chains.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_route_tape: Option<StoredContentRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     transition: Option<StoredContentRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2533,6 +2539,8 @@ fn run_seed(
     let encode = |facts: &FactSnapshot| encoder.encode(facts);
     let checkpoint_root = seed_root.join("checkpoints");
     let checkpoint_content_root = tactic_content_store_path(&seed_root);
+    let decision_content_store =
+        TacticQContentStore::initialize(&checkpoint_content_root).map_err(route_error)?;
     let mut rolling_checkpoint = None;
     // Process-local handles intentionally do not survive campaign resume.
     let mut cached_frontier: Option<CachedTacticFrontier> = None;
@@ -2759,6 +2767,9 @@ fn run_seed(
         let execution_started = Instant::now();
         let source_snapshot = campaign.current.snapshot.clone();
         let source_route_tape = campaign.route_tape.clone();
+        let source_route_tape_ref = decision_content_store
+            .store_tape(&source_route_tape)
+            .map_err(route_error)?;
         let source_snapshot_sha256 = source_snapshot.content_sha256().map_err(route_error)?;
         let usable_cached_frontier = cached_frontier.as_ref().filter(|frontier| {
             pool.direct_restore_enabled
@@ -3018,6 +3029,7 @@ fn run_seed(
                 campaign.episode_group,
                 campaign.root_checkpoint_sha256,
                 root_tape_ref,
+                Some(source_route_tape_ref),
                 None,
                 Some(transition),
                 proposal_records,
@@ -3754,6 +3766,15 @@ fn load_tactic_journal_replay(
             }
         })
         .collect::<Result<Vec<Vec<_>>, NativeTacticRouteRunError>>()?;
+    let source_route_tapes = records
+        .iter()
+        .map(|record| {
+            record
+                .source_route_tape
+                .map(|reference| store.load_tape(reference).map_err(route_error))
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let first_transition = transitions
         .first()
         .ok_or_else(|| route_message("tactic decision journal has no root transition"))?;
@@ -3789,9 +3810,11 @@ fn load_tactic_journal_replay(
                 index,
                 transition,
                 &root_tape,
+                first_record.root_checkpoint_sha256,
                 root_identity,
                 &parents,
                 &proposal_transitions,
+                source_route_tapes[index].as_ref(),
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -3825,10 +3848,29 @@ fn materialize_journal_route(
     target_decision_index: usize,
     target: &dusklight_learning::option_transition::OptionTransitionSample,
     root_tape: &InputTape,
+    root_checkpoint_sha256: Digest,
     root_identity: (Digest, Digest),
     parents: &BTreeMap<(Digest, Digest), (usize, usize)>,
     proposal_transitions: &[Vec<dusklight_learning::option_transition::OptionTransitionSample>],
+    source_route_tape: Option<&InputTape>,
 ) -> Result<InputTape, NativeTacticRouteRunError> {
+    if let Some(source_route_tape) = source_route_tape {
+        source_route_tape.validate().map_err(route_error)?;
+        if source_route_tape.frames.len() as u64 != target.execution.realized_tape_range.start_frame
+            || route_checkpoint(root_checkpoint_sha256, source_route_tape).map_err(route_error)?
+                != target.source_checkpoint_sha256
+        {
+            return Err(route_message(
+                "tactic decision source-route anchor is detached",
+            ));
+        }
+        let mut route = source_route_tape.clone();
+        route
+            .frames
+            .extend(target.execution.emitted_raw_actions.clone());
+        route.validate().map_err(route_error)?;
+        return Ok(route);
+    }
     let mut cursor = (target.source_checkpoint_sha256, target.before_state_sha256);
     let mut fragments = vec![target.execution.emitted_raw_actions.clone()];
     while cursor != root_identity {
@@ -3863,6 +3905,7 @@ fn decision_record(
     episode_group: u64,
     root_checkpoint_sha256: Digest,
     root_tape: StoredContentRef,
+    source_route_tape: Option<StoredContentRef>,
     transition: Option<StoredContentRef>,
     inline_transition: Option<OptionTransitionSample>,
     proposal_batch: Vec<NativeTacticProposalRecord>,
@@ -3891,6 +3934,7 @@ fn decision_record(
         visited_states: trace.visited_states,
         root_checkpoint_sha256,
         root_tape,
+        source_route_tape,
         transition,
         inline_transition,
         proposal_feedback: trace.proposal_feedback,
@@ -6194,6 +6238,7 @@ mod tests {
             2,
             Digest([3; 32]),
             root_tape,
+            None,
             Some(transition),
             None,
             Vec::new(),
@@ -6416,6 +6461,7 @@ mod tests {
             2,
             root_checkpoint_sha256,
             root_ref,
+            Some(root_ref),
             None,
             Some(transition.clone()),
             vec![NativeTacticProposalRecord {
@@ -6535,15 +6581,48 @@ mod tests {
             1,
             &child_transition,
             &root_tape,
+            root_checkpoint_sha256,
             (
                 transition.source_checkpoint_sha256,
                 transition.before_state_sha256,
             ),
             &parents,
             &proposal_transitions,
+            None,
         )
         .unwrap();
         assert_eq!(branched_route, child_route);
+        let anchored_route = materialize_journal_route(
+            1,
+            &child_transition,
+            &root_tape,
+            root_checkpoint_sha256,
+            (
+                transition.source_checkpoint_sha256,
+                transition.before_state_sha256,
+            ),
+            &BTreeMap::new(),
+            &[],
+            Some(&alternate_route),
+        )
+        .unwrap();
+        assert_eq!(anchored_route, child_route);
+        assert!(
+            materialize_journal_route(
+                1,
+                &child_transition,
+                &root_tape,
+                root_checkpoint_sha256,
+                (
+                    transition.source_checkpoint_sha256,
+                    transition.before_state_sha256,
+                ),
+                &BTreeMap::new(),
+                &[],
+                Some(&root_tape),
+            )
+            .is_err()
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
