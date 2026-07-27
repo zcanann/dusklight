@@ -86,9 +86,6 @@ pub fn discover_replay_macros(
     let mut buckets = BTreeMap::<Digest, MacroBucket>::new();
     for observation in observations {
         validate_observation(observation)?;
-        if !observation.terminal && observation.reward <= 0.0 && observation.goal_progress <= 0.0 {
-            continue;
-        }
         for width in [4_usize, 8, 16, 32, 64] {
             if width > observation.tape.frames.len() || width > MAX_DISCOVERED_MACRO_TICKS {
                 continue;
@@ -106,7 +103,6 @@ pub fn discover_replay_macros(
                     .or_insert_with(|| MacroBucket {
                         tape,
                         sources: BTreeMap::new(),
-                        total_progress: 0.0,
                         terminal_sources: 0,
                     });
                 if bucket
@@ -122,7 +118,6 @@ pub fn discover_replay_macros(
                     )
                     .is_none()
                 {
-                    bucket.total_progress += observation.goal_progress;
                     bucket.terminal_sources += usize::from(observation.terminal);
                 }
             }
@@ -133,9 +128,9 @@ pub fn discover_replay_macros(
         .filter(|(_, bucket)| bucket.sources.len() >= MIN_DISCOVERY_OCCURRENCES)
         .map(|(candidate_sha256, bucket)| {
             (
-                bucket.tape.frames.len(),
                 bucket.terminal_sources,
-                bucket.total_progress,
+                bucket.sources.len(),
+                bucket.tape.frames.len(),
                 DiscoveredMacroCandidate {
                     candidate_sha256,
                     option_id: format!("promoted/{}", short_digest(candidate_sha256)),
@@ -150,7 +145,7 @@ pub fn discover_replay_macros(
             .0
             .cmp(&left.0)
             .then_with(|| right.1.cmp(&left.1))
-            .then_with(|| right.2.total_cmp(&left.2))
+            .then_with(|| right.2.cmp(&left.2))
             .then_with(|| left.3.candidate_sha256.cmp(&right.3.candidate_sha256))
     });
     candidates.truncate(MAX_DISCOVERED_MACROS);
@@ -354,26 +349,20 @@ fn aggregate_improves(evidence: &[MacroComparisonEvidence]) -> bool {
     if candidate_terminals != primitive_terminals {
         return candidate_terminals > primitive_terminals;
     }
-    if candidate_terminals == evidence.len() {
-        let candidate_ticks = evidence
-            .iter()
-            .map(|comparison| u64::from(comparison.candidate_ticks))
-            .sum::<u64>();
-        let primitive_ticks = evidence
-            .iter()
-            .map(|comparison| u64::from(comparison.primitive_ticks))
-            .sum::<u64>();
-        return candidate_ticks < primitive_ticks;
+    if candidate_terminals == 0 {
+        // Auxiliary progress is useful training signal but cannot promote a
+        // policy action in the absence of authenticated terminal evidence.
+        return false;
     }
-    let candidate_rate = evidence
+    let candidate_ticks = evidence
         .iter()
-        .map(|comparison| comparison.candidate_progress / comparison.candidate_ticks as f32)
-        .sum::<f32>();
-    let primitive_rate = evidence
+        .map(|comparison| u64::from(comparison.candidate_ticks))
+        .sum::<u64>();
+    let primitive_ticks = evidence
         .iter()
-        .map(|comparison| comparison.primitive_progress / comparison.primitive_ticks as f32)
-        .sum::<f32>();
-    candidate_rate > primitive_rate + f32::EPSILON
+        .map(|comparison| u64::from(comparison.primitive_ticks))
+        .sum::<u64>();
+    candidate_ticks < primitive_ticks
 }
 
 fn validate_observation(observation: &MacroDiscoveryObservation) -> Result<(), &'static str> {
@@ -453,7 +442,6 @@ fn short_digest(digest: Digest) -> String {
 struct MacroBucket {
     tape: InputTape,
     sources: BTreeMap<Digest, MacroSourceProvenance>,
-    total_progress: f32,
     terminal_sources: usize,
 }
 
@@ -479,14 +467,14 @@ mod tests {
             transition_sha256: Digest([transition; 32]),
             option_id: format!("family/move/{transition}"),
             tape: tape(80, 8),
-            reward: 1.0,
-            goal_progress: 16.0,
+            reward: -0.08,
+            goal_progress: -16.0,
             terminal: false,
         }
     }
 
     #[test]
-    fn recurring_high_value_binary_fragments_become_exact_tape_candidates() {
+    fn recurring_binary_fragments_become_value_neutral_exact_candidates() {
         let candidates =
             discover_replay_macros(&[observation(11, 1, 3), observation(13, 2, 4)]).unwrap();
         assert!(!candidates.is_empty());
@@ -540,29 +528,59 @@ mod tests {
             .clone();
         let mut registry = TacticMacroPromotionRegistry::default();
         registry.propose(candidate.clone()).unwrap();
-        let evidence = |seed, state, candidate_progress| {
+        let evidence = |seed, state| {
             MacroComparisonEvidence::new(
                 candidate.candidate_sha256,
                 seed,
                 Digest([state; 32]),
-                false,
-                candidate_progress,
-                8,
-                false,
+                true,
+                -100.0,
+                7,
+                true,
                 8.0,
                 8,
             )
             .unwrap()
         };
         assert_eq!(
-            registry.observe(evidence(11, 1, 12.0)).unwrap(),
+            registry.observe(evidence(11, 1)).unwrap(),
             MacroPromotionStatus::Proposed
         );
         assert_eq!(
-            registry.observe(evidence(13, 2, 12.0)).unwrap(),
+            registry.observe(evidence(13, 2)).unwrap(),
             MacroPromotionStatus::Promoted
         );
         assert_eq!(registry.promoted().count(), 1);
+    }
+
+    #[test]
+    fn auxiliary_progress_alone_cannot_promote_a_macro() {
+        let candidate = discover_replay_macros(&[observation(11, 1, 3), observation(13, 2, 4)])
+            .unwrap()[0]
+            .clone();
+        let mut registry = TacticMacroPromotionRegistry::default();
+        registry.propose(candidate.clone()).unwrap();
+        for (seed, state) in [(11, 1), (13, 2)] {
+            assert_eq!(
+                registry
+                    .observe(
+                        MacroComparisonEvidence::new(
+                            candidate.candidate_sha256,
+                            seed,
+                            Digest([state; 32]),
+                            false,
+                            1_000.0,
+                            4,
+                            false,
+                            -1_000.0,
+                            40,
+                        )
+                        .unwrap(),
+                    )
+                    .unwrap(),
+                MacroPromotionStatus::Proposed
+            );
+        }
     }
 
     #[test]

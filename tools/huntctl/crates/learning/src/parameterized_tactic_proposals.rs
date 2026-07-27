@@ -127,25 +127,16 @@ pub fn propose_parameterized_tactics(
     let family_schema_sha256 = parameterized_tactic_family_schema_sha256();
     let draw = proposal_draw(context);
     let goal_heading = goal_relative_heading(context);
-    let feedback = context.feedback;
-    let uncertainty = feedback
-        .and_then(|feedback| feedback.ensemble_uncertainty)
-        .unwrap_or(0.0)
-        .sqrt()
-        .clamp(0.0, 1.0);
-    let progressing = feedback.is_some_and(|feedback| feedback.goal_progress > 0.0);
-    let repeated_endpoint = feedback.is_some_and(|feedback| !feedback.endpoint_novel);
-    let jitter_degrees = 5.0 + 20.0 * uncertainty;
+    // Candidate coverage is independent of observed reward, goal progress,
+    // novelty, and auxiliary prediction heads. Those signals remain available
+    // to learned models, but cannot hand-author the next action set.
+    let jitter_degrees = 5.0;
     let centered_draw = (draw % 2_001) as f32 / 1_000.0 - 1.0;
     let angular_jitter = centered_draw * jitter_degrees * PI / 180.0;
     let central_heading = normalize_angle(goal_heading + angular_jitter);
     let mut entries = BTreeMap::<String, TacticCatalogEntry>::new();
 
-    let seek_durations = if progressing {
-        [context.maximum_ticks.min(20), context.maximum_ticks.min(40)]
-    } else {
-        [context.maximum_ticks.min(8), context.maximum_ticks.min(16)]
-    };
+    let seek_durations = [4_u32, 8, 16, 40].map(|ticks| ticks.min(context.maximum_ticks));
     for (index, duration) in seek_durations.into_iter().enumerate() {
         let magnitude = if (draw.rotate_left(index as u32) & 1) == 0 {
             96
@@ -167,20 +158,37 @@ pub fn propose_parameterized_tactics(
         )?;
     }
 
-    let heading_offsets = if repeated_endpoint || !progressing {
-        [-PI / 2.0, -PI / 4.0, PI / 4.0, PI / 2.0]
-    } else {
-        [-PI / 3.0, -PI / 9.0, PI / 9.0, PI / 3.0]
-    };
+    // One exact goal-relative heading plus a complete direction lattice keeps
+    // straight movement available without assigning it utility. Noncentral
+    // bins retain seeded continuous jitter for off-grid exploration.
+    let heading_offsets = [
+        0.0,
+        -PI / 4.0,
+        PI / 4.0,
+        -PI / 2.0,
+        PI / 2.0,
+        -3.0 * PI / 4.0,
+        3.0 * PI / 4.0,
+        PI,
+    ];
     let durations = [4_u32, 8, 12, 16];
     for (index, offset) in heading_offsets.into_iter().enumerate() {
-        let magnitude = if ((draw >> index) & 1) == 0 { 80 } else { 127 };
+        let magnitude = if index == 0 || ((draw >> index) & 1) != 0 {
+            127
+        } else {
+            80
+        };
+        let heading = if index == 0 {
+            goal_heading
+        } else {
+            normalize_angle(central_heading + offset)
+        };
         insert(
             &mut entries,
             ParameterizedTacticFamily::RelativeHeading,
             TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
                 GenericTactic::MaintainRelativeHeading {
-                    heading_radians_f32_bits: normalize_angle(central_heading + offset).to_bits(),
+                    heading_radians_f32_bits: heading.to_bits(),
                     magnitude,
                 },
                 durations[(index + (draw as usize & 3)) % durations.len()]
@@ -192,11 +200,7 @@ pub fn propose_parameterized_tactics(
 
     for clockwise in [false, true] {
         let start = stick(central_heading, 127);
-        let bend_angle = if repeated_endpoint || !progressing {
-            PI / 3.0
-        } else {
-            PI / 5.0
-        };
+        let bend_angle = PI / 4.0;
         let bend = stick(
             normalize_angle(central_heading + if clockwise { bend_angle } else { -bend_angle }),
             127,
@@ -288,24 +292,6 @@ fn proposal_draw(context: ParameterizedTacticProposalContext) -> u64 {
             .map(u32::to_le_bytes)
             .concat(),
     );
-    if let Some(feedback) = context.feedback {
-        hasher.update([1]);
-        hasher.update(feedback.previous_reward.to_bits().to_le_bytes());
-        hasher.update(feedback.goal_progress.to_bits().to_le_bytes());
-        hasher.update(
-            feedback
-                .ensemble_uncertainty
-                .map(f32::to_bits)
-                .unwrap_or_default()
-                .to_le_bytes(),
-        );
-        hasher.update([
-            u8::from(feedback.endpoint_novel),
-            u8::from(feedback.terminal),
-        ]);
-    } else {
-        hasher.update([0]);
-    }
     u64::from_le_bytes(hasher.finalize()[..8].try_into().unwrap())
 }
 
@@ -375,7 +361,9 @@ mod tests {
 
     #[test]
     fn proposals_cover_parameters_instead_of_blessed_grid_ids() {
-        let proposals = propose_parameterized_tactics(context(19, 4)).unwrap();
+        let proposal_context = context(19, 4);
+        let expected_straight_heading = goal_relative_heading(proposal_context);
+        let proposals = propose_parameterized_tactics(proposal_context).unwrap();
         let descriptors = proposals.catalog.option_descriptors().collect::<Vec<_>>();
         let types = descriptors
             .iter()
@@ -404,6 +392,18 @@ mod tests {
                 .parameters
                 .get("heading_radians")
                 .is_some_and(|parameter| matches!(parameter, OptionParameter::F32Bits(_)))
+        }));
+        assert!(descriptors.iter().any(|descriptor| {
+            matches!(
+                (
+                    descriptor.parameters.get("heading_radians"),
+                    descriptor.parameters.get("magnitude")
+                ),
+                (
+                    Some(OptionParameter::F32Bits(heading)),
+                    Some(OptionParameter::Unsigned(127))
+                ) if *heading == expected_straight_heading.to_bits()
+            )
         }));
         assert!(descriptors.iter().all(|descriptor| {
             descriptor.option_id.starts_with("family/")
@@ -445,7 +445,7 @@ mod tests {
     }
 
     #[test]
-    fn measured_outcome_and_uncertainty_change_the_next_parameter_instances() {
+    fn measured_outcome_and_auxiliary_signals_do_not_author_parameter_instances() {
         let baseline = propose_parameterized_tactics(context(29, 5)).unwrap();
         let mut adapted_context = context(29, 5);
         adapted_context.feedback = Some(ParameterizedTacticFeedback {
@@ -465,7 +465,7 @@ mod tests {
                 .collect::<BTreeSet<_>>()
         };
 
-        assert_ne!(ids(&baseline), ids(&adapted));
+        assert_eq!(ids(&baseline), ids(&adapted));
         assert_eq!(baseline.family_schema_sha256, adapted.family_schema_sha256);
     }
 }

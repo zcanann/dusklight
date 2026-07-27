@@ -1071,12 +1071,11 @@ fn mine_and_store_tactic_macros(
                     goal_progress: record.goal_distance_before - proposal.trace.goal_distance_after,
                     terminal: proposal.trace.terminal,
                 };
-                if observation.tape.frames.len() <= MAX_DISCOVERED_MACRO_TICKS
-                    && (observation.terminal
-                        || observation.reward > 0.0
-                        || observation.goal_progress > 0.0)
-                {
-                    high_value_observation_count = high_value_observation_count.saturating_add(1);
+                if observation.tape.frames.len() <= MAX_DISCOVERED_MACRO_TICKS {
+                    if observation.terminal || observation.reward > 0.0 {
+                        high_value_observation_count =
+                            high_value_observation_count.saturating_add(1);
+                    }
                     observations.push(observation);
                     if observations.len() >= MAX_DISCOVERY_OBSERVATIONS.saturating_mul(2) {
                         retain_bounded_macro_observations(&mut observations);
@@ -1188,7 +1187,6 @@ fn mine_connected_tactic_macro_compositions(
         for start in 0..replay.transitions.len() {
             let mut frames = Vec::new();
             let mut sources = Vec::new();
-            let mut high_value = false;
             for end in start..replay.transitions.len() {
                 if end > start {
                     let prior = &replay.transitions[end - 1];
@@ -1209,9 +1207,6 @@ fn mine_connected_tactic_macro_compositions(
                 }
                 frames.extend_from_slice(&transition.execution.emitted_raw_actions);
                 let record = &replay.records[end];
-                high_value |= record.terminal
-                    || record.reward > 0.0
-                    || record.goal_distance_after < record.goal_distance_before;
                 sources.push(MacroSourceProvenance {
                     seed,
                     frontier_state_sha256: transition.before_state_sha256,
@@ -1221,7 +1216,7 @@ fn mine_connected_tactic_macro_compositions(
                     )?,
                     option_id: transition.value_sample.action.option_id.clone(),
                 });
-                if sources.len() >= 2 && high_value {
+                if sources.len() >= 2 {
                     candidates.push(
                         replay_macro_candidate(
                             InputTape {
@@ -1807,11 +1802,6 @@ fn tactic_macro_outcome_is_better(
     candidate
         .terminal
         .cmp(&incumbent.terminal)
-        .then_with(|| {
-            (candidate.progress / candidate.ticks as f32)
-                .total_cmp(&(incumbent.progress / incumbent.ticks as f32))
-        })
-        .then_with(|| candidate.progress.total_cmp(&incumbent.progress))
         .then_with(|| incumbent.ticks.cmp(&candidate.ticks))
         .is_gt()
 }
@@ -6692,7 +6682,7 @@ mod tests {
     }
 
     #[test]
-    fn macro_primitive_baseline_keeps_a_terminal_proposal() {
+    fn macro_primitive_baseline_uses_only_terminal_and_tick_utility() {
         let terminal = TacticMacroMeasuredOutcome {
             terminal: true,
             progress: 0.1,
@@ -6706,6 +6696,15 @@ mod tests {
 
         assert!(tactic_macro_outcome_is_better(terminal, fast_progress));
         assert!(!tactic_macro_outcome_is_better(fast_progress, terminal));
+        let short_regression = TacticMacroMeasuredOutcome {
+            terminal: false,
+            progress: -100.0,
+            ticks: 3,
+        };
+        assert!(tactic_macro_outcome_is_better(
+            short_regression,
+            fast_progress
+        ));
     }
 
     #[test]
