@@ -922,6 +922,9 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     .map(|value| value.parse())
                     .transpose()?
                     .unwrap_or(350_000),
+                demonstration_chunk_ticks: option(learn_args, "--demonstration-chunk-ticks")
+                    .map(|value| value.parse())
+                    .transpose()?,
                 workers: usize_option(
                     learn_args,
                     "--workers",

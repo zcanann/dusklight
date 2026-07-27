@@ -36,7 +36,7 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
     TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
-    ensure_generalized_value_acquisition,
+    ensure_generalized_value_acquisition, retain_generalized_value_acquisition,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -1513,6 +1513,9 @@ impl TacticQCampaign {
                 maximum_proposals,
                 &mut proposals,
             )?;
+            if acquisition_partition == 0 {
+                retain_generalized_value_acquisition(&mut proposals)?;
+            }
         }
         Ok(TacticQProposalBatch { ranking, proposals })
     }

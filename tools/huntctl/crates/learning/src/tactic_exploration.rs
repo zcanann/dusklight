@@ -800,6 +800,25 @@ pub fn ensure_generalized_value_acquisition(
     Ok(())
 }
 
+/// Make the shared model's acquisition authoritative for one deterministic
+/// policy lane while preserving the prior exact/coverage choice as a native
+/// control in the same batch.
+pub fn retain_generalized_value_acquisition(
+    proposals: &mut [SelectedTactic],
+) -> Result<(), TacticExplorationError> {
+    if proposals.is_empty() {
+        return Err(TacticExplorationError::InvalidInput);
+    }
+    let Some(index) = proposals
+        .iter()
+        .position(|proposal| proposal.reason == TacticSelectionReason::GeneralizedValue)
+    else {
+        return Ok(());
+    };
+    proposals.swap(0, index);
+    Ok(())
+}
+
 fn choose_random_valid_batch(
     ranking: &LiveTacticRanking,
     decision_index: u64,
@@ -2614,6 +2633,40 @@ mod tests {
         assert_eq!(proposals[0].reason, TacticSelectionReason::Greedy);
         assert_eq!(proposals[1].descriptor, held_out_roll);
         assert_eq!(proposals[1].reason, TacticSelectionReason::GeneralizedValue);
+    }
+
+    #[test]
+    fn generalized_value_can_become_primary_without_dropping_its_control() {
+        let control = descriptor("known/control", OptionType::Move);
+        let predicted = descriptor("unseen/predicted", OptionType::Roll);
+        let mut proposals = vec![
+            SelectedTactic {
+                schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                learner_snapshot_sha256: Digest([31; 32]),
+                decision_index: 7,
+                descriptor: control.clone(),
+                reason: TacticSelectionReason::UnsupportedBootstrap,
+                exploration_draw: 0,
+            },
+            SelectedTactic {
+                schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                learner_snapshot_sha256: Digest([31; 32]),
+                decision_index: 7,
+                descriptor: predicted.clone(),
+                reason: TacticSelectionReason::GeneralizedValue,
+                exploration_draw: 0,
+            },
+        ];
+
+        retain_generalized_value_acquisition(&mut proposals).unwrap();
+
+        assert_eq!(proposals[0].descriptor, predicted);
+        assert_eq!(proposals[0].reason, TacticSelectionReason::GeneralizedValue);
+        assert_eq!(proposals[1].descriptor, control);
+        assert_eq!(
+            proposals[1].reason,
+            TacticSelectionReason::UnsupportedBootstrap
+        );
     }
 
     #[test]

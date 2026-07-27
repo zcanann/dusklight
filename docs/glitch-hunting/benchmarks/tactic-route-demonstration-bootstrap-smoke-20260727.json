@@ -1,0 +1,90 @@
+{
+  "schema": "dusklight-tactic-route-demonstration-bootstrap-smoke/v1",
+  "date": "2026-07-27",
+  "claim": "Optional authenticated process-tape experience can seed shared tactic-value learning without adding recorded chunks to the live policy catalog. The first learned lane retained a generated atomic movement tactic selected by shared value while preserving the prior unsupported action as a same-boundary native control. This smoke run is plumbing evidence only: the retained generated tactic was nonterminal and did not improve goal distance.",
+  "bindings": {
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "execution_binding_sha256": "f1507d2d54ac539b3f4b85ca44076ce6365b58b049b475a2a72f155508d7e3e1",
+    "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+    "source_boundary_index": 506,
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "report": "build/campaigns/ordon-q125-demonstration-retained-smoke-v3-20260727/report.json",
+    "report_schema": "dusklight-native-tactic-route-report/v18"
+  },
+  "configuration": {
+    "seed": 104729,
+    "workers": 1,
+    "decisions_per_seed": 1,
+    "proposals_per_decision": 4,
+    "epsilon_per_million": 0,
+    "demonstration_chunk_ticks": 8,
+    "proposal_policy": "learned",
+    "execution_strategy": "native_controller"
+  },
+  "demonstration": {
+    "transition_count": 16,
+    "first_hit_tick": 125,
+    "native_input_ticks": 126,
+    "first_hit_convention": "The authenticated terminal first fires on zero-based relative tick 125 after consuming controller inputs 0 through 125.",
+    "corpus": "build/campaigns/ordon-q125-demonstration-retained-smoke-v3-20260727/demonstration-training.dtqc",
+    "corpus_sha256": "b941c60901957b991a255adbe16be65e593b05c16b1d53e2b25017e382ca5c08",
+    "demonstrated_route_tape_sha256": "7c2118d729f234b34ca9e73dcdf2aec9e3c1a9512e7f4ae75847ace4bd2b77f5",
+    "storage": "Versioned binary tactic-Q training corpus with content-addressed route objects; JSON is used only for the human-readable lineage/performance report.",
+    "reward": "Each row contains authenticated terminal reward minus native input cost only. The resumable validator rejects any other reward, a non-final terminal row, broken sequential checkpoint lineage, or a route that differs from the sealed process tape."
+  },
+  "policy_isolation": {
+    "recorded_chunks_in_live_catalog": 0,
+    "imported_training_rows_before_decision": 16,
+    "generated_training_rows_after_decision": 4,
+    "shared_training_rows": 20,
+    "retained_option_id": "family/relative-heading/6fcc73571bd6c155ef83",
+    "retained_selection_reason": "generalized_value",
+    "retained_realized_ticks": 16,
+    "retained_terminal": false,
+    "goal_distance_before": 3016.264,
+    "goal_distance_after": 3019.772,
+    "same_boundary_control": {
+      "option_id": "goal.seek.route.04",
+      "selection_reason": "unsupported_bootstrap",
+      "realized_ticks": 40,
+      "terminal": false,
+      "goal_distance_after": 2577.4768
+    }
+  },
+  "performance": {
+    "total_native_ticks": 226,
+    "demonstration_wall_micros": 6187448,
+    "demonstration_native_simulation_micros": 3843419,
+    "demonstration_preparation_micros": 1063007,
+    "campaign_wall_micros": 32625159,
+    "campaign_native_simulation_micros": 4067151,
+    "campaign_preparation_micros": 1078595,
+    "campaign_tactic_execution_micros": 6563623,
+    "campaign_evidence_projection_and_persistence_micros": 557028,
+    "native_requests": 35,
+    "authenticated_root_restore_requests": 20,
+    "direct_process_local_restore_requests": 15,
+    "prefix_materializations": 15,
+    "replayed_prefix_ticks": 960,
+    "cache_hits": 30,
+    "cache_misses": 0,
+    "peak_resident_bytes": 589395700
+  },
+  "verification": {
+    "learning_suite": "369 passed",
+    "focused_demonstration_chunk_tests": "2 passed",
+    "focused_generalized_retention_tests": "3 passed",
+    "focused_parameterized_campaign_test": "1 passed",
+    "full_orchestration_suite": "155 passed; 2 unrelated file-validation tests failed because the external card fixture was absent or digest-mismatched",
+    "workbench_suite": "91 passed"
+  },
+  "acceptance": {
+    "authenticated_terminal_bootstrap_complete": true,
+    "binary_operational_corpus_complete": true,
+    "recorded_policy_action_leakage_absent": true,
+    "shared_value_controls_a_generated_policy_lane": true,
+    "held_out_generalization_proven": false,
+    "sub_125_terminal_route_complete": false,
+    "p6_complete": false
+  }
+}

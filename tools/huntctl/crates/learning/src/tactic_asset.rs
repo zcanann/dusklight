@@ -663,7 +663,7 @@ fn recorded_tape_realization(
     insert_recorded_controller_summary(&mut parameters, tape);
     let execution = OptionExecution::capture(
         option_id.into(),
-        OptionType::Custom("recorded_tape".into()),
+        recorded_tape_option_type(tape),
         parameters,
         duration,
         duration,
@@ -681,6 +681,26 @@ fn recorded_tape_realization(
         tape: tape.clone(),
         execution,
     })
+}
+
+fn recorded_tape_option_type(tape: &InputTape) -> OptionType {
+    let movement = tape
+        .frames
+        .iter()
+        .any(|frame| frame.pads[0].stick_x != 0 || frame.pads[0].stick_y != 0);
+    let button_mask = tape
+        .frames
+        .iter()
+        .fold(0_u16, |mask, frame| mask | frame.pads[0].buttons);
+    if button_mask & 0x0100 != 0 {
+        OptionType::Roll
+    } else if movement {
+        OptionType::Move
+    } else if button_mask == 0 {
+        OptionType::Neutral
+    } else {
+        OptionType::Custom("recorded_tape".into())
+    }
 }
 
 /// Describe raw controller behavior without exposing the recording identity to
@@ -737,6 +757,10 @@ fn insert_recorded_controller_summary(
     parameters.insert(
         "command_stick_magnitude".into(),
         OptionParameter::Unsigned(mean_magnitude),
+    );
+    parameters.insert(
+        "command_has_movement".into(),
+        OptionParameter::Bool(previous_heading.is_some()),
     );
     parameters.insert(
         "command_internal_turn_radians".into(),
@@ -1810,6 +1834,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(entry.description().kind, TacticAssetKind::RecordedTape);
+        assert_eq!(entry.description().option.option_type, OptionType::Roll);
         assert_eq!(entry.description().duration.maximum_ticks, 3);
         assert_eq!(
             entry
@@ -1911,6 +1936,53 @@ mod tests {
                 - std::f32::consts::FRAC_PI_2)
                 .abs()
                 < 1.0e-6
+        );
+    }
+
+    #[test]
+    fn recorded_tape_uses_the_same_atomic_type_basis_as_live_tactics() {
+        let tape = |stick_y, buttons| {
+            let mut frame = InputFrame::default();
+            frame.owned_ports = 1;
+            frame.pads[0].stick_y = stick_y;
+            frame.pads[0].buttons = buttons;
+            InputTape {
+                frames: vec![frame],
+                ..InputTape::default()
+            }
+        };
+
+        assert_eq!(
+            tape(127, 0)
+                .describe("recorded/move")
+                .unwrap()
+                .option
+                .option_type,
+            OptionType::Move
+        );
+        assert_eq!(
+            tape(0, 0)
+                .describe("recorded/neutral")
+                .unwrap()
+                .option
+                .option_type,
+            OptionType::Neutral
+        );
+        assert_eq!(
+            tape(127, 0x0100)
+                .describe("recorded/roll")
+                .unwrap()
+                .option
+                .option_type,
+            OptionType::Roll
+        );
+        assert_eq!(
+            tape(0, 0x0200)
+                .describe("recorded/prompt")
+                .unwrap()
+                .option
+                .option_type,
+            OptionType::Custom("recorded_tape".into())
         );
     }
 
