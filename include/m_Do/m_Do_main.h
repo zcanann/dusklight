@@ -1,8 +1,8 @@
 #ifndef M_DO_M_DO_MAIN_H
 #define M_DO_M_DO_MAIN_H
 
-#include "JSystem/JKernel/JKRExpHeap.h"
 #include <os.h>
+#include "JSystem/JKernel/JKRExpHeap.h"
 
 class JKRExpHeap;
 
@@ -16,6 +16,9 @@ s32 LOAD_COPYDATE(void*);
 // state at the beginning of this input tick, so a reactive controller can
 // never replace the tape's final frame.
 void mDoAutomationInputTick(bool tapeWasPlaying);
+// True when headless automation selected the simulation-only renderer path.
+// Callers must still limit suppression to automation-owned ticks.
+bool mDoAutomationSkipRendererSubmission();
 #endif
 
 extern OSThread mainThread;

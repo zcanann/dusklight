@@ -41,15 +41,6 @@ must not define privileged actions, observations, state, or terminals.
   orchestration, and persistence time. Do not hide overhead outside the
   measured boundary.
 
-## P1 - Use the simulator's available throughput
-
-Acceptance:
-
-- A multi-worker tactic-route campaign demonstrably uses the requested workers.
-- End-to-end learning throughput improves by at least an order of magnitude on
-  the sealed Ordon workload without changing its semantic results.
-- Worker scaling is measured rather than inferred from raw simulator tests.
-
 ## P5 - Couple search and learning around useful trials
 
 A learned treatment must share authenticated replay across fixed-size episode

@@ -100,6 +100,9 @@ bool initialize() noexcept {
 }
 
 void shutdown() noexcept {
+    if (!sInitialized) {
+        return;
+    }
     unregister_mod_texture_provider();
     unregister_icon_texture_provider();
     sDocumentStack.clear();
@@ -162,7 +165,7 @@ const char* connection_state_icon(SDL_JoystickConnectionState state) noexcept {
 }
 
 void handle_event(const SDL_Event& event) noexcept {
-    if (!aurora::rmlui::is_initialized()) {
+    if (!sInitialized || !aurora::rmlui::is_initialized()) {
         return;
     }
 
@@ -300,7 +303,7 @@ Document* top_document() noexcept {
 }
 
 void update() noexcept {
-    if (!aurora::rmlui::is_initialized()) {
+    if (!sInitialized || !aurora::rmlui::is_initialized()) {
         return;
     }
 

@@ -11,6 +11,7 @@
 #include "d/d_error_msg.h"
 #include "d/d_lib.h"
 #include "d/d_particle.h"
+#include "dusk/automation/suffix_batch_runner.hpp"
 #include "f_ap/f_ap_game.h"
 #include "f_pc/f_pc_creator.h"
 #include "f_pc/f_pc_deletor.h"
@@ -20,7 +21,7 @@
 #include "f_pc/f_pc_pause.h"
 #include "f_pc/f_pc_priority.h"
 #include "m_Do/m_Do_controller_pad.h"
-#include "dusk/automation/suffix_batch_runner.hpp"
+#include "m_Do/m_Do_main.h"
 
 #include "tracy/Tracy.hpp"
 
@@ -58,6 +59,13 @@ void fpcM_Management(fpcM_ManagementFunc i_preExecuteFn, fpcM_ManagementFunc i_p
 
         bool dvdErrRet = dDvdErrorMsg_c::execute();
         if (!dvdErrRet) {
+            auto& suffixBatch = dusk::automation::suffix_batch_runner();
+#ifdef TARGET_PC
+            const bool suppressRendererSubmission =
+                mDoAutomationSkipRendererSubmission() && suffixBatch.executingCandidate();
+#else
+            constexpr bool suppressRendererSubmission = false;
+#endif
             if (l_dvdError) {
                 dLib_time_c::startTime();
                 Z2GetSoundMgr()->pauseAllGameSound(false);
@@ -69,9 +77,10 @@ void fpcM_Management(fpcM_ManagementFunc i_preExecuteFn, fpcM_ManagementFunc i_p
             if (!dusk::frame_interp::is_enabled())
 #endif
             {
-                auto& suffixBatch = dusk::automation::suffix_batch_runner();
                 suffixBatch.beginCpuRendererSubmissionProfile();
-                cAPIGph_Painter();
+                if (!suppressRendererSubmission) {
+                    cAPIGph_Painter();
+                }
                 suffixBatch.endCpuRendererSubmissionProfile();
             }
 
@@ -98,9 +107,9 @@ void fpcM_Management(fpcM_ManagementFunc i_preExecuteFn, fpcM_ManagementFunc i_p
             }
 
             if (!fapGm_HIO_c::isCaptureScreen() || fapGm_HIO_c::getCaptureScreenDivH() != 1) {
-                auto& suffixBatch = dusk::automation::suffix_batch_runner();
                 suffixBatch.beginCpuDrawTraversalProfile();
-                fpcDw_Handler((fpcDw_HandlerFuncFunc)fpcM_DrawIterater, (fpcDw_HandlerFunc)fpcM_Draw);
+                fpcDw_Handler(
+                    (fpcDw_HandlerFuncFunc)fpcM_DrawIterater, (fpcDw_HandlerFunc)fpcM_Draw);
                 suffixBatch.endCpuDrawTraversalProfile();
             }
 
@@ -135,10 +144,10 @@ void fpcM_Init() {
     fpcLn_Create();
 }
 
-base_process_class* fpcM_FastCreate(s16 i_procname, FastCreateReqFunc i_createReqFunc,
-                                    void* i_createData, void* i_append) {
-    return fpcFCtRq_Request(fpcLy_CurrentLayer(), i_procname, (fstCreateFunc)i_createReqFunc,
-                            i_createData, i_append);
+base_process_class* fpcM_FastCreate(
+    s16 i_procname, FastCreateReqFunc i_createReqFunc, void* i_createData, void* i_append) {
+    return fpcFCtRq_Request(
+        fpcLy_CurrentLayer(), i_procname, (fstCreateFunc)i_createReqFunc, i_createData, i_append);
 }
 
 int fpcM_IsPause(void* i_proc, u8 i_flag) {
