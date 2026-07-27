@@ -17,10 +17,11 @@ use crate::tactic_macro_store::{
     TACTIC_MACRO_REGISTRY_EXTENSION, read_tactic_macro_registry, write_tactic_macro_registry,
 };
 use crate::tactic_q_campaign::{
-    TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics, TacticCampaignGraphProjection,
-    TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode,
-    TacticFrontierAcquisition, TacticQCampaign, TacticQCampaignError, TacticQDecision,
-    TacticQTrainingCorpus, has_no_progress_loop, route_checkpoint,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TACTIC_Q_MODEL_ONLY_EPISODE_GROUP, TacticCampaignDiagnostics,
+    TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
+    TacticCampaignGraphProjectionNode, TacticFrontierAcquisition, TacticQCampaign,
+    TacticQCampaignError, TacticQDecision, TacticQTrainingCorpus, has_no_progress_loop,
+    route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
@@ -101,7 +102,6 @@ const NATIVE_TACTIC_DEMONSTRATION_CORPUS_FILE: &str = "demonstration-training.dt
 const NATIVE_TACTIC_DEMONSTRATION_REPORT_FILE: &str = "demonstration-report.json";
 const NATIVE_TACTIC_DEMONSTRATION_REPORT_SCHEMA_V1: &str =
     "dusklight-native-tactic-demonstration-report/v1";
-const NATIVE_TACTIC_DEMONSTRATION_EPISODE_GROUP: u64 = u64::MAX;
 const NATIVE_TACTIC_DECISION_SEGMENTS_DIRECTORY: &str = "decision-journal";
 const NATIVE_TACTIC_DECISION_SEGMENT_MAGIC: &[u8; 8] = b"DSKTQJC1";
 const NATIVE_TACTIC_DECISION_SEGMENT_VERSION: u16 = 1;
@@ -2489,7 +2489,7 @@ fn load_or_capture_demonstration(
         route = outcome.route_tape;
         transitions.push(transition);
         routes.push(route.clone());
-        episode_groups.push(NATIVE_TACTIC_DEMONSTRATION_EPISODE_GROUP);
+        episode_groups.push(TACTIC_Q_MODEL_ONLY_EPISODE_GROUP);
         if outcome.terminal {
             first_hit_tick = outcome_first_hit_tick;
             restore_accounting.useful_transitions =
@@ -2590,7 +2590,7 @@ fn demonstration_corpus_is_attached(
         || corpus
             .episode_groups
             .iter()
-            .any(|group| *group != NATIVE_TACTIC_DEMONSTRATION_EPISODE_GROUP)
+            .any(|group| *group != TACTIC_Q_MODEL_ONLY_EPISODE_GROUP)
     {
         return false;
     }

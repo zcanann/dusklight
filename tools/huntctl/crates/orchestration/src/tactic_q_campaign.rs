@@ -57,6 +57,9 @@ pub const TACTIC_Q_CHECKPOINT_SERIALIZATION_BENCHMARK_SCHEMA_V1: &str =
     "dusklight-tactic-q-checkpoint-serialization-benchmark/v1";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V1: &str = "dusklight-tactic-q-final-result/v1";
 pub const TACTIC_Q_FINAL_RESULT_SCHEMA_V2: &str = "dusklight-tactic-q-final-result/v2";
+/// Episode group reserved for critic evidence that must never become an
+/// executable frontier (for example, an optional human demonstration).
+pub const TACTIC_Q_MODEL_ONLY_EPISODE_GROUP: u64 = u64::MAX;
 const ROUTE_CHECKPOINT_SCHEMA_V1: &[u8] = b"dusklight-route-checkpoint/v1";
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -548,12 +551,21 @@ impl TacticQCampaign {
         // BehaviorArchive keeps one short elite per semantic state cell and
         // selects cells by novelty, so repeated choke outcomes cannot crowd
         // out distinct progress, terminal, or low-cost endpoints.
-        for (index, (transition, route)) in self
+        for (index, ((transition, route), episode_group)) in self
             .training_replay
             .iter()
             .zip(&self.training_replay_routes)
+            .zip(&self.training_episode_groups)
             .enumerate()
         {
+            // Model-only evidence teaches return without granting the policy a
+            // route to replay. Terminal endpoints are leaves; refinement must
+            // branch from their source state, never execute beyond the goal.
+            if *episode_group == TACTIC_Q_MODEL_ONLY_EPISODE_GROUP
+                || transition.value_sample.terminal
+            {
+                continue;
+            }
             archive
                 .consider_tactic_endpoint(
                     self.root_checkpoint_sha256,
@@ -1476,10 +1488,7 @@ impl TacticQCampaign {
             .filter(|transition| tactic_state_descriptor(&transition.before, false) == current_cell)
             .map(|transition| transition.value_sample.action.option_id.as_str())
             .collect::<BTreeSet<_>>();
-        let state_untried = descriptors
-            .into_iter()
-            .filter(|descriptor| !tried_here.contains(descriptor.option_id.as_str()))
-            .collect::<Vec<_>>();
+        let state_untried = applicable_untried_descriptors(&ranking.choices, &tried_here);
         let mut proposals = choose_tactic_batch_for_policy(
             &ranking,
             self.decision_index,
@@ -1513,9 +1522,18 @@ impl TacticQCampaign {
                 maximum_proposals,
                 &mut proposals,
             )?;
-            if acquisition_partition == 0 {
-                retain_generalized_value_acquisition(&mut proposals)?;
-            }
+            retain_generalized_value_acquisition(&mut proposals)?;
+        }
+        if proposals.iter().any(|proposal| {
+            !ranking.choices.iter().any(|choice| {
+                choice.applicable
+                    && choice.choice_id == proposal.descriptor.option_id
+                    && choice.descriptor == proposal.descriptor
+            })
+        }) {
+            return Err(TacticQCampaignError::InvalidState(
+                "parameterized proposal batch contains an inapplicable tactic".into(),
+            ));
         }
         Ok(TacticQProposalBatch { ranking, proposals })
     }
@@ -1915,6 +1933,19 @@ impl TacticQCampaign {
             transition,
         })
     }
+}
+
+fn applicable_untried_descriptors(
+    choices: &[LearnerActionMaskEntry],
+    tried_here: &BTreeSet<&str>,
+) -> Vec<OptionActionDescriptor> {
+    choices
+        .iter()
+        .filter(|choice| {
+            choice.applicable && !tried_here.contains(choice.descriptor.option_id.as_str())
+        })
+        .map(|choice| choice.descriptor.clone())
+        .collect()
 }
 
 fn seeded_frontier_index(seed: u64, round: u64, choice_count: usize) -> usize {
@@ -2670,6 +2701,23 @@ mod tests {
         assert!(batch.proposals.iter().any(|proposal| {
             proposal.descriptor.option_type == dusklight_control::option_execution::OptionType::Roll
         }));
+
+        let mut choices = batch.ranking.choices.clone();
+        let excluded = choices[0].descriptor.clone();
+        choices[0].applicable = false;
+        let tried = choices[1].descriptor.option_id.as_str();
+        let untried = applicable_untried_descriptors(&choices, &BTreeSet::from([tried]));
+        assert!(!untried.contains(&excluded));
+        assert!(
+            !untried
+                .iter()
+                .any(|descriptor| descriptor.option_id == tried)
+        );
+        assert!(untried.iter().all(|descriptor| {
+            choices
+                .iter()
+                .any(|choice| choice.applicable && choice.descriptor == *descriptor)
+        }));
     }
 
     #[test]
@@ -3045,6 +3093,14 @@ mod tests {
         );
         assert!(acquisition.best_mean_q.is_some());
         assert!(acquisition.maximum_ensemble_variance.is_some());
+        let mut model_only = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
+        model_only
+            .training_episode_groups
+            .fill(TACTIC_Q_MODEL_ONLY_EPISODE_GROUP);
+        assert_eq!(model_only.frontier_archive().unwrap().tactic_len(), 0);
+        let mut terminal_leaf = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
+        terminal_leaf.training_replay[0].value_sample.terminal = true;
+        assert_eq!(terminal_leaf.frontier_archive().unwrap().tactic_len(), 0);
         let mut forged_native_frontier = frontier_branch.clone();
         forged_native_frontier.restorable_native_checkpoint =
             Some(RestorableNativeTacticCheckpoint {

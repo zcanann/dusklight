@@ -91,9 +91,15 @@ pub fn choose_tactic_with_state_untried(
     {
         return Err(TacticExplorationError::InvalidInput);
     }
+    let catalog = ranking
+        .choices
+        .iter()
+        .map(|entry| &entry.descriptor)
+        .collect::<Vec<_>>();
     let available = ranking
         .choices
         .iter()
+        .filter(|entry| entry.applicable)
         .map(|entry| &entry.descriptor)
         .collect::<Vec<_>>();
     let mut reported = ranking
@@ -104,8 +110,8 @@ pub fn choose_tactic_with_state_untried(
         .chain(ranking.values.unsupported.iter())
         .collect::<Vec<_>>();
     reported.sort_by(|left, right| left.option_id.cmp(&right.option_id));
-    if reported.len() != available.len()
-        || available
+    if reported.len() != catalog.len()
+        || catalog
             .iter()
             .any(|descriptor| reported.iter().filter(|value| *value == descriptor).count() != 1)
         || state_untried.iter().enumerate().any(|(index, descriptor)| {
@@ -114,15 +120,31 @@ pub fn choose_tactic_with_state_untried(
     {
         return Err(TacticExplorationError::DetachedRanking);
     }
+    if available.is_empty() {
+        return Err(TacticExplorationError::NoApplicableTactic);
+    }
+    let ranked = ranking
+        .values
+        .ranked
+        .iter()
+        .filter(|entry| available.contains(&&entry.descriptor))
+        .collect::<Vec<_>>();
+    let unsupported = ranking
+        .values
+        .unsupported
+        .iter()
+        .filter(|descriptor| available.contains(descriptor))
+        .cloned()
+        .collect::<Vec<_>>();
 
     let exploration_draw =
         stratified_exploration_draw(config.seed, decision_index, config.epsilon_per_million);
-    let bootstrap_unsupported = ranking.values.ranked.is_empty()
-        || (ranking.values.ranked[0].mean_q <= 0.0
-            && !ranking.values.unsupported.is_empty()
+    let bootstrap_unsupported = ranked.is_empty()
+        || (ranked[0].mean_q <= 0.0
+            && !unsupported.is_empty()
             && exploration_draw >= config.epsilon_per_million);
     let (descriptor, reason) = if bootstrap_unsupported {
-        let unsupported = canonical_candidates(&ranking.values.unsupported);
+        let unsupported = canonical_candidates(&unsupported);
         let index = deterministic_index(
             config.seed,
             decision_index,
@@ -142,10 +164,10 @@ pub fn choose_tactic_with_state_untried(
         // meaning to controller IDs, route namespaces, or action families.
         let exploratory = if !state_untried.is_empty() {
             canonical_candidates(state_untried)
-        } else if ranking.values.unsupported.is_empty() {
+        } else if unsupported.is_empty() {
             available
         } else {
-            canonical_candidates(&ranking.values.unsupported)
+            canonical_candidates(&unsupported)
         };
         let index = deterministic_index(
             config.seed,
@@ -155,10 +177,7 @@ pub fn choose_tactic_with_state_untried(
         );
         (exploratory[index].clone(), TacticSelectionReason::Epsilon)
     } else {
-        (
-            ranking.values.ranked[0].descriptor.clone(),
-            TacticSelectionReason::Greedy,
-        )
+        (ranked[0].descriptor.clone(), TacticSelectionReason::Greedy)
     };
     Ok(SelectedTactic {
         schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
@@ -197,7 +216,12 @@ pub fn choose_tactic_batch_with_state_untried(
     }
     let primary = choose_tactic_with_state_untried(ranking, decision_index, config, state_untried)?;
     let mut result = vec![primary.clone()];
-    if maximum_proposals == 1 || ranking.choices.len() == 1 {
+    let applicable_count = ranking
+        .choices
+        .iter()
+        .filter(|choice| choice.applicable)
+        .count();
+    if maximum_proposals == 1 || applicable_count == 1 {
         return Ok(result);
     }
     // Epsilon controls which proposal leads the batch, not whether a measured
@@ -205,8 +229,12 @@ pub fn choose_tactic_batch_with_state_untried(
     // critic has support, then spend every remaining slot on acquisition.
     // This makes exploration outcomes directly comparable with the current
     // best action at the same native frontier.
-    if let Some(greedy) = ranking.values.ranked.first()
-        && greedy.descriptor != primary.descriptor
+    if let Some(greedy) = ranking.values.ranked.iter().find(|greedy| {
+        ranking
+            .choices
+            .iter()
+            .any(|choice| choice.applicable && choice.descriptor == greedy.descriptor)
+    }) && greedy.descriptor != primary.descriptor
         && result.len() < maximum_proposals
     {
         result.push(SelectedTactic {
@@ -225,6 +253,7 @@ pub fn choose_tactic_batch_with_state_untried(
     let mut candidates = ranking
         .choices
         .iter()
+        .filter(|choice| choice.applicable)
         .map(|choice| choice.descriptor.clone())
         .filter(|descriptor| {
             !result
@@ -800,8 +829,8 @@ pub fn ensure_generalized_value_acquisition(
     Ok(())
 }
 
-/// Make the shared model's acquisition authoritative for one deterministic
-/// policy lane while preserving the prior exact/coverage choice as a native
+/// Make the shared model's partitioned acquisition authoritative for the
+/// learned policy while preserving the prior exact/coverage choice as a native
 /// control in the same batch.
 pub fn retain_generalized_value_acquisition(
     proposals: &mut [SelectedTactic],
@@ -2604,6 +2633,61 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].descriptor, available);
+    }
+
+    #[test]
+    fn learned_and_structured_batches_obey_the_live_applicability_mask() {
+        let available = descriptor("available", OptionType::Move);
+        let unavailable = descriptor("unavailable", OptionType::Roll);
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([25; 32]),
+            action_universe_sha256: Digest([26; 32]),
+            choices: vec![
+                choice(available.clone()),
+                LearnerActionMaskEntry {
+                    applicable: false,
+                    ..choice(unavailable.clone())
+                },
+            ],
+            values: AvailableOptionRanking {
+                ranked: vec![
+                    RankedOption {
+                        action_id: 1,
+                        descriptor: unavailable,
+                        mean_q: 100.0,
+                        ensemble_variance: 0.0,
+                    },
+                    RankedOption {
+                        action_id: 0,
+                        descriptor: available.clone(),
+                        mean_q: 1.0,
+                        ensemble_variance: 0.0,
+                    },
+                ],
+                unsupported: Vec::new(),
+            },
+        };
+        let config = TacticExplorationConfig {
+            seed: 104_729,
+            epsilon_per_million: 0,
+        };
+
+        for policy in [
+            TacticProposalPolicy::Learned,
+            TacticProposalPolicy::StructuredNonLearning,
+        ] {
+            let selected = choose_tactic_batch_for_policy(
+                &ranking,
+                0,
+                config,
+                std::slice::from_ref(&available),
+                4,
+                policy,
+            )
+            .unwrap();
+            assert_eq!(selected.len(), 1);
+            assert_eq!(selected[0].descriptor, available);
+        }
     }
 
     #[test]
