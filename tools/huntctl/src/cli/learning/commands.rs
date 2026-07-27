@@ -54,6 +54,7 @@ use huntctl::learning::native_replay_corpus::{
     NATIVE_REPLAY_CORPUS_SCHEMA_V1, NativeReplayCorpus, ReplayEpisodeSource, ReplayExperienceRole,
 };
 use huntctl::learning::tactic_exploration::TacticProposalPolicy;
+use huntctl::learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use huntctl::learning::tactic_frozen_policy::TacticFrozenPolicy;
 use huntctl::learning::trainable_set_encoder::TrainableSetConfig;
 use huntctl::low_data_baselines::{
@@ -819,9 +820,11 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                 .iter()
                 .map(|path| TacticQTrainingCorpus::read(path))
                 .collect::<Result<Vec<_>, _>>()?;
+            let goal_distance_feature =
+                GoalConditionedTacticFeatureEncoder::new([0.0; 3])?.goal_distance_feature();
             let report = prove_generalized_tactic_held_out_value(
                 &corpora,
-                usize_option(learn_args, "--goal-distance-feature", 102)?,
+                usize_option(learn_args, "--goal-distance-feature", goal_distance_feature)?,
             )?;
             let output = required_path(learn_args, "--output")?;
             if output.exists() {

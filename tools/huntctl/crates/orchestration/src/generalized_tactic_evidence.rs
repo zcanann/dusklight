@@ -157,7 +157,7 @@ pub fn prove_generalized_tactic_held_out_value(
     let encoder = GoalConditionedTacticFeatureEncoder::new([0.0; 3])
         .map_err(|error| evidence_message(error.to_string()))?;
     if encoder.schema_sha256 != first.feature_schema_sha256
-        || goal_distance_feature >= encoder.feature_width()
+        || goal_distance_feature != encoder.goal_distance_feature()
     {
         return Err(evidence_message(
             "held-out corpus feature identity or goal-distance index is unsupported",
@@ -830,5 +830,25 @@ mod tests {
 
         control.objective_pair_accuracy = Some(0.9);
         assert!(!better_than_control(&authentic, &control));
+    }
+
+    #[test]
+    fn proof_rejects_a_non_goal_feature_as_goal_distance() {
+        let encoder = GoalConditionedTacticFeatureEncoder::new([0.0; 3]).unwrap();
+        let corpus = TacticQTrainingCorpus {
+            feature_schema_sha256: encoder.schema_sha256,
+            objective_sha256: Digest([1; 32]),
+            root_checkpoint_sha256: Digest([2; 32]),
+            transitions: Vec::new(),
+            routes: Vec::new(),
+            episode_groups: Vec::new(),
+        };
+        let error = prove_generalized_tactic_held_out_value(
+            &vec![corpus; 5],
+            encoder.goal_distance_feature() - 1,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("goal-distance index"));
     }
 }
