@@ -22,7 +22,7 @@ const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
 const STATE_NEIGHBORS: usize = 16;
 const EXACT_STATE_DISTANCE_EPSILON: f32 = 1.0e-8;
-const RETURN_COMPARISON_RESOLUTION: f64 = 1.0e-4;
+const MINIMUM_RETURN_COMPARISON_RESOLUTION: f64 = 1.0e-4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeneralizedTacticContext {
@@ -257,6 +257,7 @@ pub struct GeneralizedTacticEstimate {
     pub descriptor: OptionActionDescriptor,
     pub outcome: GeneralizedTacticOutcome,
     pub nearest_distance: f32,
+    pub terminal_support_distance: Option<f32>,
     pub neighbors: usize,
 }
 
@@ -273,6 +274,7 @@ pub struct GeneralizedTacticValueModel {
     state_range: Vec<f32>,
     action_min: [f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
     action_range: [f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
+    return_comparison_resolution: f64,
     samples: Vec<EncodedSample>,
 }
 
@@ -295,7 +297,9 @@ impl GeneralizedTacticValueModel {
                 })
             })
             .collect::<Result<Vec<_>, GeneralizedTacticValueError>>()?;
-        Self::fit(&samples)
+        let mut model = Self::fit(&samples)?;
+        model.return_comparison_resolution = observed_return_resolution(transitions);
+        Ok(model)
     }
 
     /// Fits a shared semi-Markov action-value model.
@@ -392,7 +396,9 @@ impl GeneralizedTacticValueModel {
             sample.outcome.terminal = f32::from(terminal_supported.contains(&index));
             sample.outcome.duration_ticks = first_hit_ticks[index].unwrap_or(0) as f32;
         }
-        Self::fit(&samples)
+        let mut model = Self::fit(&samples)?;
+        model.return_comparison_resolution = observed_return_resolution(transitions);
+        Ok(model)
     }
 
     pub fn fit(
@@ -434,6 +440,7 @@ impl GeneralizedTacticValueModel {
             state_range,
             action_min,
             action_range,
+            return_comparison_resolution: MINIMUM_RETURN_COMPARISON_RESOLUTION,
             samples: encoded,
         })
     }
@@ -492,6 +499,24 @@ impl GeneralizedTacticValueModel {
         neighbors.sort_by(|left, right| left.0.total_cmp(&right.0));
         neighbors.truncate(NEIGHBORS.min(neighbors.len()));
         let nearest_distance = neighbors[0].0;
+        let terminal_support_distance = self
+            .samples
+            .iter()
+            .filter(|sample| sample.outcome.terminal > 0.0)
+            .map(|sample| {
+                normalized_distance(
+                    state_features,
+                    &sample.state,
+                    &self.state_min,
+                    &self.state_range,
+                ) + normalized_distance(
+                    &action,
+                    &sample.action,
+                    &self.action_min,
+                    &self.action_range,
+                ) * 2.0
+            })
+            .min_by(f32::total_cmp);
         let mut outcome = GeneralizedTacticOutcome::default();
         let mut total_weight = 0.0_f32;
         let mut terminal_weight = 0.0_f32;
@@ -517,6 +542,7 @@ impl GeneralizedTacticValueModel {
             descriptor: descriptor.clone(),
             outcome,
             nearest_distance,
+            terminal_support_distance,
             neighbors: neighbors.len(),
         })
     }
@@ -532,12 +558,25 @@ impl GeneralizedTacticValueModel {
             .map(|descriptor| self.predict(state_features, context, descriptor))
             .collect::<Result<Vec<_>, _>>()?;
         estimates.sort_by(|left, right| {
-            compare_generalized_tactic_outcomes(&right.outcome, &left.outcome)
-                .then_with(|| left.nearest_distance.total_cmp(&right.nearest_distance))
-                .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
+            compare_generalized_tactic_estimates(left, right, self.return_comparison_resolution)
         });
         Ok(estimates)
     }
+}
+
+fn observed_return_resolution(transitions: &[OptionTransitionSample]) -> f64 {
+    transitions
+        .iter()
+        .filter(|transition| !transition.value_sample.terminal)
+        .filter_map(|transition| {
+            let duration = f64::from(transition.value_sample.duration_ticks);
+            let per_tick = f64::from(transition.value_sample.reward).abs() / duration;
+            (per_tick.is_finite() && per_tick > MINIMUM_RETURN_COMPARISON_RESOLUTION)
+                .then_some(per_tick)
+        })
+        .min_by(f64::total_cmp)
+        .unwrap_or(MINIMUM_RETURN_COMPARISON_RESOLUTION)
+        .max(MINIMUM_RETURN_COMPARISON_RESOLUTION)
 }
 
 fn fitted_q_backup_limit(minimum_iterations: usize, transition_count: usize) -> usize {
@@ -638,11 +677,48 @@ pub fn compare_generalized_tactic_outcomes(
     left: &GeneralizedTacticOutcome,
     right: &GeneralizedTacticOutcome,
 ) -> std::cmp::Ordering {
+    compare_generalized_tactic_outcomes_with_resolution(
+        left,
+        right,
+        MINIMUM_RETURN_COMPARISON_RESOLUTION,
+    )
+}
+
+fn compare_generalized_tactic_outcomes_with_resolution(
+    left: &GeneralizedTacticOutcome,
+    right: &GeneralizedTacticOutcome,
+    resolution: f64,
+) -> std::cmp::Ordering {
     // `reward` is the learned objective return: authenticated terminal value
     // minus native input cost, including bootstrapped future value. Every other
     // outcome head is auxiliary evidence and cannot define policy utility.
-    let bucket = |reward: f32| (f64::from(reward) / RETURN_COMPARISON_RESOLUTION).round();
+    let bucket = |reward: f32| (f64::from(reward) / resolution).round();
     bucket(left.reward).total_cmp(&bucket(right.reward))
+}
+
+fn compare_generalized_tactic_estimates(
+    left: &GeneralizedTacticEstimate,
+    right: &GeneralizedTacticEstimate,
+    return_resolution: f64,
+) -> std::cmp::Ordering {
+    compare_generalized_tactic_outcomes_with_resolution(
+        &right.outcome,
+        &left.outcome,
+        return_resolution,
+    )
+    .then_with(|| {
+        match (
+            left.terminal_support_distance,
+            right.terminal_support_distance,
+        ) {
+            (Some(left), Some(right)) => left.total_cmp(&right),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    })
+    .then_with(|| left.nearest_distance.total_cmp(&right.nearest_distance))
+    .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
 }
 
 pub fn generalized_tactic_action_factors(
@@ -1458,6 +1534,35 @@ mod tests {
         );
         assert_eq!(
             compare_generalized_tactic_outcomes(&one_tick_gain, &reference),
+            std::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn objective_tick_ties_prefer_authenticated_terminal_action_support() {
+        let estimate =
+            |id: &str, reward: f32, nearest_distance: f32, terminal_support_distance: f32| {
+                GeneralizedTacticEstimate {
+                    descriptor: action(id, 100.0, 100.0, 0.0, None, 100.0),
+                    outcome: GeneralizedTacticOutcome {
+                        reward,
+                        ..GeneralizedTacticOutcome::default()
+                    },
+                    nearest_distance,
+                    terminal_support_distance: Some(terminal_support_distance),
+                    neighbors: NEIGHBORS,
+                }
+            };
+        let supported = estimate("supported", 98.739, 0.5, 0.01);
+        let censored_interpolation = estimate("censored", 98.741, 0.0, 0.5);
+        let one_tick_faster = estimate("faster", 98.749, 0.5, 0.75);
+
+        assert_eq!(
+            compare_generalized_tactic_estimates(&supported, &censored_interpolation, 0.01,),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_generalized_tactic_estimates(&supported, &one_tick_faster, 0.01),
             std::cmp::Ordering::Greater
         );
     }
