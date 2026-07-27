@@ -11,15 +11,14 @@ use crate::tactic_asset::{
 };
 use crate::tactic_blueprint::TacticBlueprint;
 use dusklight_control::controller_program::ControllerProgram;
-use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
 use dusklight_control::roll_option::RollOptionPlan;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::f32::consts::{PI, TAU};
 
-pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V1: &str =
-    "dusklight-parameterized-tactic-families/v1";
+pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V2: &str =
+    "dusklight-parameterized-tactic-families/v2";
 pub const MAX_PARAMETERIZED_PROPOSALS: usize = 32;
 const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
 
@@ -29,7 +28,6 @@ pub enum ParameterizedTacticFamily {
     RelativeHeading,
     ShortCurve,
     Roll,
-    Interact,
     Neutral,
 }
 
@@ -40,7 +38,6 @@ impl ParameterizedTacticFamily {
             Self::RelativeHeading => "relative-heading",
             Self::ShortCurve => "short-curve",
             Self::Roll => "roll",
-            Self::Interact => "interact",
             Self::Neutral => "neutral",
         }
     }
@@ -107,7 +104,7 @@ pub struct ParameterizedTacticProposalCatalog {
 
 pub fn parameterized_tactic_family_schema_sha256() -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V1.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V2.as_bytes());
     hasher.update((MAX_PARAMETERIZED_PROPOSALS as u64).to_le_bytes());
     hasher.update(MAX_PARAMETERIZED_TACTIC_TICKS.to_le_bytes());
     for family in [
@@ -115,7 +112,6 @@ pub fn parameterized_tactic_family_schema_sha256() -> Digest {
         ParameterizedTacticFamily::RelativeHeading,
         ParameterizedTacticFamily::ShortCurve,
         ParameterizedTacticFamily::Roll,
-        ParameterizedTacticFamily::Interact,
         ParameterizedTacticFamily::Neutral,
     ] {
         hasher.update(family.slug().as_bytes());
@@ -228,18 +224,6 @@ pub fn propose_parameterized_tactics(
         )?;
     }
 
-    for (press_frames, recovery_frames) in [(1_u32, 1_u32), (2, 4)] {
-        insert(
-            &mut entries,
-            ParameterizedTacticFamily::Interact,
-            TacticAssetSource::GameTactic(GameTacticPlan::new(GameTactic::Interact {
-                press_frames,
-                recovery_frames,
-            })),
-            context.maximum_ticks,
-        )?;
-    }
-
     insert(
         &mut entries,
         ParameterizedTacticFamily::Neutral,
@@ -274,7 +258,7 @@ fn insert(
 ) -> Result<(), TacticAssetError> {
     let canonical = source.canonical_bytes()?;
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V1.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V2.as_bytes());
     hasher.update(family.slug().as_bytes());
     hasher.update((canonical.len() as u64).to_le_bytes());
     hasher.update(canonical);
@@ -293,7 +277,7 @@ fn insert(
 
 fn proposal_draw(context: ParameterizedTacticProposalContext) -> u64 {
     let mut hasher = Sha256::new();
-    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V1.as_bytes());
+    hasher.update(PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V2.as_bytes());
     hasher.update(context.seed.to_le_bytes());
     hasher.update(context.decision_index.to_le_bytes());
     hasher.update(context.state_sha256.0);
@@ -401,7 +385,7 @@ mod tests {
         assert!(types.contains(&OptionType::MaintainHeading));
         assert!(types.contains(&OptionType::Move));
         assert!(types.contains(&OptionType::Roll));
-        assert!(types.contains(&OptionType::Interact));
+        assert!(!types.contains(&OptionType::Interact));
         assert!(
             proposals
                 .catalog
