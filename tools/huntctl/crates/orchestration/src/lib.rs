@@ -4,6 +4,7 @@
 
 mod anchored_search;
 mod campaign_replay;
+pub mod generalized_tactic_evidence;
 pub mod harness;
 pub mod learning_value_comparison;
 pub mod learning_value_evidence;

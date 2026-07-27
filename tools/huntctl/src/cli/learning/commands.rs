@@ -88,6 +88,7 @@ use huntctl::offline_rl::{
     movement_feature_schema_digest_v1,
 };
 use huntctl::reward_shaping::{PotentialShapingSpec, REWARD_REPORT_SCHEMA_V1};
+use huntctl::search_evaluator::generalized_tactic_evidence::prove_generalized_tactic_held_out_value;
 use huntctl::search_evaluator::native_residual_campaign::NativeResidualExecutionBinding;
 use huntctl::search_evaluator::native_tactic_policy_runner::{
     NativeTacticPolicyRunConfig, run_native_tactic_policy,
@@ -97,7 +98,7 @@ use huntctl::search_evaluator::native_tactic_route_runner::{
 };
 use huntctl::search_evaluator::native_tactic_worker::NativeGenericExecutionStrategy;
 use huntctl::search_evaluator::optimization_request::OptimizationRequest;
-use huntctl::search_evaluator::tactic_q_campaign::TacticQCampaign;
+use huntctl::search_evaluator::tactic_q_campaign::{TacticQCampaign, TacticQTrainingCorpus};
 use huntctl::tape::InputTape;
 use huntctl::trace_diff::SiblingTraceDiff;
 use huntctl::transition_corpus::TransitionCorpus;
@@ -774,6 +775,85 @@ pub fn command_learn(args: &[String]) -> Result<(), Box<dyn Error>> {
                     "realized_tape_sha256": report.realized_tape_sha256,
                 }))?
             );
+            Ok(())
+        }
+        Some("prove-generalized-tactics") => {
+            let learn_args = &args[1..];
+            let direct_inputs = repeated_option(learn_args, "--input")
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            let campaign_root = option(learn_args, "--campaign-root").map(PathBuf::from);
+            if !direct_inputs.is_empty() && campaign_root.is_some() {
+                return Err(
+                    "generalized tactic evidence accepts --input or --campaign-root, not both"
+                        .into(),
+                );
+            }
+            let inputs = if let Some(campaign_root) = campaign_root {
+                let mut seed_roots = fs::read_dir(&campaign_root)?
+                    .map(|entry| entry.map(|entry| entry.path()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                seed_roots.retain(|path| {
+                    path.is_dir()
+                        && path
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| name.starts_with("seed-"))
+                });
+                seed_roots.sort();
+                seed_roots
+                    .into_iter()
+                    .map(|root| root.join("generated-training.dtqc"))
+                    .collect()
+            } else {
+                direct_inputs
+            };
+            if inputs.is_empty() || inputs.len() > MAX_LEARN_INPUT_CORPORA {
+                return Err(format!(
+                    "learn prove-generalized-tactics requires 1..={MAX_LEARN_INPUT_CORPORA} corpora"
+                )
+                .into());
+            }
+            let corpora = inputs
+                .iter()
+                .map(|path| TacticQTrainingCorpus::read(path))
+                .collect::<Result<Vec<_>, _>>()?;
+            let report = prove_generalized_tactic_held_out_value(
+                &corpora,
+                usize_option(learn_args, "--goal-distance-feature", 102)?,
+            )?;
+            let output = required_path(learn_args, "--output")?;
+            if output.exists() {
+                return Err(format!(
+                    "generalized tactic evidence output already exists: {}",
+                    output.display()
+                )
+                .into());
+            }
+            if let Some(parent) = output
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                fs::create_dir_all(parent)?;
+            }
+            let mut bytes = serde_json::to_vec_pretty(&report)?;
+            bytes.push(b'\n');
+            fs::write(&output, bytes)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "schema": report.schema,
+                    "output": output,
+                    "input_corpora": report.input_corpora,
+                    "unique_native_transitions": report.unique_native_transitions,
+                    "unique_controller_instances": report.unique_controller_instances,
+                    "passed": report.passed,
+                }))?
+            );
+            if !report.passed {
+                return Err("held-out generalized tactic comparisons did not all pass".into());
+            }
             Ok(())
         }
         Some("tactic-route") => {

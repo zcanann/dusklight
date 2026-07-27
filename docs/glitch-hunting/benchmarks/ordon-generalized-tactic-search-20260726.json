@@ -1,0 +1,61 @@
+{
+  "schema": "dusklight-ordon-generalized-tactic-search-evidence/v1",
+  "status": "progress_only",
+  "acceptance": {
+    "incumbent_first_terminal_tick": 125,
+    "required_first_terminal_tick_exclusive": 125,
+    "best_observed_first_terminal_tick": 131,
+    "passed": false
+  },
+  "source": {
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "segment_id": "to_ordon_spring_q125",
+    "boundary_index": 506,
+    "expected_native_source_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "actual_native_source_fingerprint": "4786d70e77b31416d02864783434c7dc"
+  },
+  "campaign": {
+    "artifact": "build/campaigns/ordon-q125-generalized-value-coverage-release-256x1-w12-v6-20260726/run/report.json",
+    "report_schema": "dusklight-native-tactic-route-report/v17",
+    "workers": 12,
+    "seeds": 256,
+    "decisions_per_seed": 1,
+    "successful_seeds": 249,
+    "total_decisions": 256,
+    "useful_decisions": 256,
+    "total_native_ticks": 90554,
+    "authenticated_training_rows": 855,
+    "deduplicated_shared_training_rows": 653,
+    "route_specific_preferred_action_script": false,
+    "best": {
+      "first_terminal_tick": 131,
+      "option_id": "goal.seek.route.01.roll.period.23.phase.00",
+      "emitted_tape_sha256": "25fee77454cf1e437df15f99a054f82b40e7476502af3eed904e0bc0dbe2c6e3"
+    }
+  },
+  "timing": {
+    "wall_micros": 301032479,
+    "native_simulation_micros": 1039242270,
+    "native_restore_micros": 119836538,
+    "tactic_selection_micros": 23745114,
+    "tactic_execution_micros": 511363187,
+    "tactic_preparation_and_fact_extraction_micros": 16490183,
+    "model_update_micros": 12085982,
+    "evidence_projection_and_persistence_micros": 96286867,
+    "native_ticks_per_wall_second": 297.409768
+  },
+  "held_out_generalization": {
+    "artifact": "docs/glitch-hunting/benchmarks/ordon-generalized-tactic-held-out-20260726.json",
+    "input_binary_corpora": 256,
+    "authenticated_native_transitions": 855,
+    "unique_native_transitions": 653,
+    "unique_controller_instances": 647,
+    "training_rows_after_each_pair_exclusion": 651,
+    "exact_controller_instances_excluded_per_comparison": 2,
+    "rolling_over_non_rolling": true,
+    "straight_velocity_preserving_over_needless_turning": true,
+    "clean_motion_over_wall_momentum_loss": true,
+    "passed": true
+  },
+  "conclusion": "The shared model generalizes the requested motion preferences to exact held-out controller instances and runs from the eligible source. The 131-tick best is six ticks slower than the incumbent and is not benchmark success."
+}

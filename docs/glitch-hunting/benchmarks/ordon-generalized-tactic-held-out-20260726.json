@@ -1,0 +1,291 @@
+{
+  "schema": "dusklight-generalized-tactic-held-out-evidence/v1",
+  "feature_schema_sha256": "21befee39ad8679a5f00cb78d2cf00c3fabdf567dfcdc37c15ac14e68276c7b7",
+  "objective_sha256": "631b025f41e16251e47f340fb0030fab07be15433204d2fdef8eb08915b11e57",
+  "root_checkpoint_sha256": "6a280c4fcb1317f10ca68c5ddd4762be057d462ffb64f90044a026588a86096c",
+  "goal_distance_feature": 102,
+  "input_corpora": 256,
+  "authenticated_native_transitions": 855,
+  "unique_native_transitions": 653,
+  "unique_controller_instances": 647,
+  "exact_controller_instances_excluded_per_comparison": 2,
+  "comparisons": [
+    {
+      "category": "rolling_vs_non_rolling",
+      "favorable": {
+        "option_id": "goal.seek.route.01.roll.period.23.phase.00",
+        "action_sha256": "3073b6c340c5e9062a7b3ea46dbda2900e6406ce43d0df5c17ad47a00d6d3deb",
+        "before_state_sha256": "ed922d58e34efee27805d23eb370fef41cf6eba00ee0cbf8c917ca8d2f6b921f",
+        "factors": {
+          "planned_path_length": 3634.8281,
+          "planned_displacement": 3016.264,
+          "planned_path_efficiency": 0.82982296,
+          "planned_turn_radians": 1.4247961,
+          "stick_magnitude": 1.0,
+          "waypoint_switch_radius": 96.0,
+          "button_active_fraction": 0.04375,
+          "button_pulse_count": 7.0,
+          "button_mean_interval_ticks": 23.0,
+          "button_phase_fraction": 0.0,
+          "button_mask": 256,
+          "rolling": true
+        },
+        "actual": {
+          "terminal": 1.0,
+          "reward": 98.51883,
+          "duration_ticks": 131.0,
+          "goal_progress_per_tick": 22.66449,
+          "path_efficiency": 0.83124804,
+          "speed_retention": 0.95603657,
+          "stalled_command_fraction": 0.0,
+          "wall_contact_fraction": 0.007633588,
+          "momentum_loss_per_tick": 0.4564181,
+          "collision_correction_per_tick": 0.033870142
+        },
+        "predicted": {
+          "terminal": 1.0,
+          "reward": 98.51127,
+          "duration_ticks": 131.62445,
+          "goal_progress_per_tick": 22.53025,
+          "path_efficiency": 0.8316677,
+          "speed_retention": 0.9581353,
+          "stalled_command_fraction": 0.0009411893,
+          "wall_contact_fraction": 0.009500237,
+          "momentum_loss_per_tick": 0.4515326,
+          "collision_correction_per_tick": 0.038728174
+        }
+      },
+      "comparison": {
+        "option_id": "goal.seek.route.01",
+        "action_sha256": "7fec03598e3611ff228b08abb03128d8f767063de06faac17624cd206c74fa77",
+        "before_state_sha256": "ed922d58e34efee27805d23eb370fef41cf6eba00ee0cbf8c917ca8d2f6b921f",
+        "factors": {
+          "planned_path_length": 3634.8281,
+          "planned_displacement": 3016.264,
+          "planned_path_efficiency": 0.82982296,
+          "planned_turn_radians": 1.4247961,
+          "stick_magnitude": 1.0,
+          "waypoint_switch_radius": 0.0,
+          "button_active_fraction": 0.0,
+          "button_pulse_count": 0.0,
+          "button_mean_interval_ticks": 0.0,
+          "button_phase_fraction": 0.0,
+          "button_mask": 0,
+          "rolling": false
+        },
+        "actual": {
+          "terminal": 0.0,
+          "reward": 2.6259925,
+          "duration_ticks": 160.0,
+          "goal_progress_per_tick": 16.365648,
+          "path_efficiency": 0.8537864,
+          "speed_retention": 0.9755337,
+          "stalled_command_fraction": 0.0125,
+          "wall_contact_fraction": 0.03125,
+          "momentum_loss_per_tick": 0.18125334,
+          "collision_correction_per_tick": 0.14145778
+        },
+        "predicted": {
+          "terminal": 0.066955335,
+          "reward": 7.516538,
+          "duration_ticks": 158.56252,
+          "goal_progress_per_tick": 11.619583,
+          "path_efficiency": 0.9108194,
+          "speed_retention": 0.65413517,
+          "stalled_command_fraction": 0.03412143,
+          "wall_contact_fraction": 0.33170974,
+          "momentum_loss_per_tick": 0.30032703,
+          "collision_correction_per_tick": 1.3378338
+        }
+      },
+      "training_transitions_after_exclusion": 651,
+      "predicted_first_option_id": "goal.seek.route.01.roll.period.23.phase.00",
+      "passed": true
+    },
+    {
+      "category": "straight_vs_needless_turning",
+      "favorable": {
+        "option_id": "goal.seek.route.00.roll.period.29.phase.14",
+        "action_sha256": "0f63bb254cb4bf44995e3df61fb918316e141d33f95ce4288b2e3e0abc7d8a37",
+        "before_state_sha256": "ed922d58e34efee27805d23eb370fef41cf6eba00ee0cbf8c917ca8d2f6b921f",
+        "factors": {
+          "planned_path_length": 3575.2224,
+          "planned_displacement": 3016.264,
+          "planned_path_efficiency": 0.8436577,
+          "planned_turn_radians": 1.3885422,
+          "stick_magnitude": 1.0,
+          "waypoint_switch_radius": 96.0,
+          "button_active_fraction": 0.0375,
+          "button_pulse_count": 6.0,
+          "button_mean_interval_ticks": 29.0,
+          "button_phase_fraction": 0.4827586,
+          "button_mask": 256,
+          "rolling": true
+        },
+        "actual": {
+          "terminal": 0.0,
+          "reward": 1.2756516,
+          "duration_ticks": 160.0,
+          "goal_progress_per_tick": 12.448396,
+          "path_efficiency": 0.9137429,
+          "speed_retention": 0.9957512,
+          "stalled_command_fraction": 0.21875,
+          "wall_contact_fraction": 0.1,
+          "momentum_loss_per_tick": 0.52094185,
+          "collision_correction_per_tick": 0.22930583
+        },
+        "predicted": {
+          "terminal": 0.0,
+          "reward": 0.9717253,
+          "duration_ticks": 88.70571,
+          "goal_progress_per_tick": 14.5202,
+          "path_efficiency": 0.93246764,
+          "speed_retention": 0.6738777,
+          "stalled_command_fraction": 0.06853658,
+          "wall_contact_fraction": 0.07030089,
+          "momentum_loss_per_tick": 0.5242193,
+          "collision_correction_per_tick": 0.9765982
+        }
+      },
+      "comparison": {
+        "option_id": "goal.seek.route.02.roll.period.16.phase.08",
+        "action_sha256": "5c5ef91d5e31c57ea12af13b64981c30383fe210279af86bd2df2d1c1a17a58e",
+        "before_state_sha256": "ed922d58e34efee27805d23eb370fef41cf6eba00ee0cbf8c917ca8d2f6b921f",
+        "factors": {
+          "planned_path_length": 3609.8535,
+          "planned_displacement": 3016.264,
+          "planned_path_efficiency": 0.8355641,
+          "planned_turn_radians": 1.29452,
+          "stick_magnitude": 1.0,
+          "waypoint_switch_radius": 96.0,
+          "button_active_fraction": 0.0625,
+          "button_pulse_count": 10.0,
+          "button_mean_interval_ticks": 16.0,
+          "button_phase_fraction": 0.5,
+          "button_mask": 256,
+          "rolling": true
+        },
+        "actual": {
+          "terminal": 0.0,
+          "reward": -1.6358299,
+          "duration_ticks": 160.0,
+          "goal_progress_per_tick": 3.5537064,
+          "path_efficiency": 0.5435826,
+          "speed_retention": 0.0,
+          "stalled_command_fraction": 0.46875,
+          "wall_contact_fraction": 0.04375,
+          "momentum_loss_per_tick": 0.6144561,
+          "collision_correction_per_tick": 0.85197955
+        },
+        "predicted": {
+          "terminal": 0.0,
+          "reward": -1.279218,
+          "duration_ticks": 160.00002,
+          "goal_progress_per_tick": 4.753375,
+          "path_efficiency": 0.62444764,
+          "speed_retention": 0.2171999,
+          "stalled_command_fraction": 0.45257017,
+          "wall_contact_fraction": 0.064865686,
+          "momentum_loss_per_tick": 0.60497147,
+          "collision_correction_per_tick": 0.9555301
+        }
+      },
+      "training_transitions_after_exclusion": 651,
+      "predicted_first_option_id": "goal.seek.route.00.roll.period.29.phase.14",
+      "passed": true
+    },
+    {
+      "category": "clean_motion_vs_wall_momentum_loss",
+      "favorable": {
+        "option_id": "goal.seek.route.01.roll.period.12.phase.00",
+        "action_sha256": "8320f750f6cd4baa18de4ceae510ca3b22f1dbdc3f841e7b26428ce6eef589d2",
+        "before_state_sha256": "ed922d58e34efee27805d23eb370fef41cf6eba00ee0cbf8c917ca8d2f6b921f",
+        "factors": {
+          "planned_path_length": 3634.8281,
+          "planned_displacement": 3016.264,
+          "planned_path_efficiency": 0.82982296,
+          "planned_turn_radians": 1.4247961,
+          "stick_magnitude": 1.0,
+          "waypoint_switch_radius": 96.0,
+          "button_active_fraction": 0.0875,
+          "button_pulse_count": 14.0,
+          "button_mean_interval_ticks": 12.0,
+          "button_phase_fraction": 0.0,
+          "button_mask": 256,
+          "rolling": true
+        },
+        "actual": {
+          "terminal": 1.0,
+          "reward": 98.50059,
+          "duration_ticks": 133.0,
+          "goal_progress_per_tick": 22.25097,
+          "path_efficiency": 0.83224887,
+          "speed_retention": 0.96500796,
+          "stalled_command_fraction": 0.0,
+          "wall_contact_fraction": 0.007518797,
+          "momentum_loss_per_tick": 0.43976247,
+          "collision_correction_per_tick": 0.034236114
+        },
+        "predicted": {
+          "terminal": 1.0,
+          "reward": 98.49964,
+          "duration_ticks": 133.0,
+          "goal_progress_per_tick": 22.24564,
+          "path_efficiency": 0.83201057,
+          "speed_retention": 0.965516,
+          "stalled_command_fraction": 0.0,
+          "wall_contact_fraction": 0.008482774,
+          "momentum_loss_per_tick": 0.44039276,
+          "collision_correction_per_tick": 0.045425393
+        }
+      },
+      "comparison": {
+        "option_id": "goal.seek.route.01.roll.period.23.phase.00.radius.512",
+        "action_sha256": "4464f9cad01ad3b9d1482aa9d05b0089d918c5f74b65b3cfd509774a07ca9164",
+        "before_state_sha256": "ed922d58e34efee27805d23eb370fef41cf6eba00ee0cbf8c917ca8d2f6b921f",
+        "factors": {
+          "planned_path_length": 3634.8281,
+          "planned_displacement": 3016.264,
+          "planned_path_efficiency": 0.82982296,
+          "planned_turn_radians": 1.4247961,
+          "stick_magnitude": 1.0,
+          "waypoint_switch_radius": 512.0,
+          "button_active_fraction": 0.04375,
+          "button_pulse_count": 7.0,
+          "button_mean_interval_ticks": 23.0,
+          "button_phase_fraction": 0.0,
+          "button_mask": 256,
+          "rolling": true
+        },
+        "actual": {
+          "terminal": 0.0,
+          "reward": 0.3609679,
+          "duration_ticks": 160.0,
+          "goal_progress_per_tick": 9.740627,
+          "path_efficiency": 0.888602,
+          "speed_retention": 0.0,
+          "stalled_command_fraction": 0.26875,
+          "wall_contact_fraction": 0.20625,
+          "momentum_loss_per_tick": 0.65159166,
+          "collision_correction_per_tick": 1.6847553
+        },
+        "predicted": {
+          "terminal": 0.71138513,
+          "reward": 70.356224,
+          "duration_ticks": 146.72589,
+          "goal_progress_per_tick": 18.812876,
+          "path_efficiency": 0.8403163,
+          "speed_retention": 0.84188324,
+          "stalled_command_fraction": 0.0541153,
+          "wall_contact_fraction": 0.19283476,
+          "momentum_loss_per_tick": 0.44611785,
+          "collision_correction_per_tick": 1.3127686
+        }
+      },
+      "training_transitions_after_exclusion": 651,
+      "predicted_first_option_id": "goal.seek.route.01.roll.period.12.phase.00",
+      "passed": true
+    }
+  ],
+  "passed": true
+}

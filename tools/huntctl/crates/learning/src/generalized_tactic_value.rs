@@ -10,6 +10,7 @@ use crate::fact_snapshot::{FactSnapshot, OptionTrajectoryFactSnapshot};
 use crate::option_transition::OptionTransitionSample;
 use crate::option_values::OptionActionDescriptor;
 use dusklight_control::option_execution::{OptionParameter, OptionType};
+use serde::Serialize;
 use std::error::Error;
 use std::fmt;
 
@@ -97,7 +98,7 @@ impl GeneralizedTacticContext {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct GeneralizedTacticOutcome {
     pub terminal: f32,
     pub reward: f32,
@@ -112,7 +113,7 @@ pub struct GeneralizedTacticOutcome {
 }
 
 impl GeneralizedTacticOutcome {
-    fn from_transition(
+    pub fn from_transition(
         transition: &OptionTransitionSample,
         goal_distance_feature: usize,
     ) -> Result<Self, GeneralizedTacticValueError> {
@@ -219,6 +220,22 @@ impl GeneralizedTacticOutcome {
         self.momentum_loss_per_tick *= scale;
         self.collision_correction_per_tick *= scale;
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct GeneralizedTacticActionFactors {
+    pub planned_path_length: f32,
+    pub planned_displacement: f32,
+    pub planned_path_efficiency: f32,
+    pub planned_turn_radians: f32,
+    pub stick_magnitude: f32,
+    pub waypoint_switch_radius: f32,
+    pub button_active_fraction: f32,
+    pub button_pulse_count: f32,
+    pub button_mean_interval_ticks: f32,
+    pub button_phase_fraction: f32,
+    pub button_mask: u16,
+    pub rolling: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -379,7 +396,7 @@ impl GeneralizedTacticValueModel {
             .map(|descriptor| self.predict(state_features, context, descriptor))
             .collect::<Result<Vec<_>, _>>()?;
         estimates.sort_by(|left, right| {
-            compare_outcomes(&right.outcome, &left.outcome)
+            compare_generalized_tactic_outcomes(&right.outcome, &left.outcome)
                 .then_with(|| left.nearest_distance.total_cmp(&right.nearest_distance))
                 .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
         });
@@ -387,7 +404,7 @@ impl GeneralizedTacticValueModel {
     }
 }
 
-fn compare_outcomes(
+pub fn compare_generalized_tactic_outcomes(
     left: &GeneralizedTacticOutcome,
     right: &GeneralizedTacticOutcome,
 ) -> std::cmp::Ordering {
@@ -431,6 +448,30 @@ fn compare_outcomes(
                 .total_cmp(&left.collision_correction_per_tick)
         })
         .then_with(|| right.duration_ticks.total_cmp(&left.duration_ticks))
+}
+
+pub fn generalized_tactic_action_factors(
+    context: &GeneralizedTacticContext,
+    descriptor: &OptionActionDescriptor,
+) -> Result<GeneralizedTacticActionFactors, GeneralizedTacticValueError> {
+    let encoded = encode_action(context, descriptor)?;
+    let button_mask = (0..16).fold(0_u16, |mask, bit| {
+        mask | (u16::from(encoded[55 + bit] >= 0.5) << bit)
+    });
+    Ok(GeneralizedTacticActionFactors {
+        planned_path_length: encoded[40],
+        planned_displacement: encoded[41],
+        planned_path_efficiency: encoded[42],
+        planned_turn_radians: encoded[43],
+        stick_magnitude: encoded[45],
+        waypoint_switch_radius: encoded[46],
+        button_active_fraction: encoded[51],
+        button_pulse_count: encoded[52],
+        button_mean_interval_ticks: encoded[53],
+        button_phase_fraction: encoded[54],
+        button_mask,
+        rolling: button_mask & 0x0100 != 0 || descriptor.option_type == OptionType::Roll,
+    })
 }
 
 fn encode_action(
@@ -971,7 +1012,7 @@ mod tests {
         };
 
         assert_eq!(
-            compare_outcomes(&faster, &slower_but_cleaner),
+            compare_generalized_tactic_outcomes(&faster, &slower_but_cleaner),
             std::cmp::Ordering::Greater
         );
     }

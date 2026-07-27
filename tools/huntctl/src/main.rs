@@ -323,6 +323,9 @@ fn print_usage() {
         "  huntctl learn execute-tactic-policy --request OPTIMIZATION.json --execution EXECUTION.json --policy POLICY.json --output build/DIR [--maximum-decisions N] [--repository-root DIR]"
     );
     eprintln!(
+        "  huntctl learn prove-generalized-tactics (--campaign-root DIR | --input CORPUS.dtqc [--input MORE.dtqc]) --output REPORT.json [--goal-distance-feature N]"
+    );
+    eprintln!(
         "  huntctl learn tactic-route --request OPTIMIZATION.json --execution EXECUTION.json --output build/DIR [--seed N]... [--proposal-policy learned|random-valid|structured-non-learning] [--execution-strategy native-controller|progressive-audit] [--workers N] [--decisions-per-seed N] [--branch-every N] [--refit-every N] [--epsilon-per-million N] [--resume] [--repository-root DIR]"
     );
     eprintln!(
