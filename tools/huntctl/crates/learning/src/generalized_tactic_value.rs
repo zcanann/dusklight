@@ -22,6 +22,7 @@ const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
 const STATE_NEIGHBORS: usize = 16;
 const EXACT_STATE_DISTANCE_EPSILON: f32 = 1.0e-8;
+const RETURN_COMPARISON_EPSILON: f32 = 1.0e-4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeneralizedTacticContext {
@@ -640,7 +641,11 @@ pub fn compare_generalized_tactic_outcomes(
     // `reward` is the learned objective return: authenticated terminal value
     // minus native input cost, including bootstrapped future value. Every other
     // outcome head is auxiliary evidence and cannot define policy utility.
-    left.reward.total_cmp(&right.reward)
+    if (left.reward - right.reward).abs() <= RETURN_COMPARISON_EPSILON {
+        std::cmp::Ordering::Equal
+    } else {
+        left.reward.total_cmp(&right.reward)
+    }
 }
 
 pub fn generalized_tactic_action_factors(
@@ -1432,6 +1437,31 @@ mod tests {
         assert_eq!(
             compare_generalized_tactic_outcomes(&slowing_impact, &clean),
             std::cmp::Ordering::Equal
+        );
+    }
+
+    #[test]
+    fn subresolution_return_noise_defers_to_action_support_distance() {
+        let reference = GeneralizedTacticOutcome {
+            reward: 98.74,
+            ..GeneralizedTacticOutcome::default()
+        };
+        let interpolation_noise = GeneralizedTacticOutcome {
+            reward: reference.reward + RETURN_COMPARISON_EPSILON / 2.0,
+            ..reference
+        };
+        let one_tick_gain = GeneralizedTacticOutcome {
+            reward: reference.reward + 0.01,
+            ..reference
+        };
+
+        assert_eq!(
+            compare_generalized_tactic_outcomes(&interpolation_noise, &reference),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_generalized_tactic_outcomes(&one_tick_gain, &reference),
+            std::cmp::Ordering::Greater
         );
     }
 
