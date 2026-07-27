@@ -13,7 +13,7 @@ use dusklight_control::option_execution::{OptionParameter, OptionType};
 use std::error::Error;
 use std::fmt;
 
-pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 67;
+pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
 const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
 const NEIGHBORS: usize = 8;
 
@@ -26,6 +26,8 @@ pub struct GeneralizedTacticContext {
     pub forward_speed: f32,
     pub yaw_sin: f32,
     pub yaw_cos: f32,
+    pub camera_yaw_sin: f32,
+    pub camera_yaw_cos: f32,
     pub contacts: f32,
     pub collision_correction: f32,
 }
@@ -50,6 +52,7 @@ impl GeneralizedTacticContext {
             .player
             .current_angle
             .map(|angle| f32::from(angle[1]) * std::f32::consts::PI / 32768.0);
+        let camera_yaw = facts.player.camera_yaw_radians_f32_bits.map(f32::from_bits);
         let collision_correction = facts
             .player
             .collision_correction_f32_bits
@@ -66,6 +69,8 @@ impl GeneralizedTacticContext {
             forward_speed,
             yaw_sin: yaw.map(f32::sin).unwrap_or(0.0),
             yaw_cos: yaw.map(f32::cos).unwrap_or(0.0),
+            camera_yaw_sin: camera_yaw.map(f32::sin).unwrap_or(0.0),
+            camera_yaw_cos: camera_yaw.map(f32::cos).unwrap_or(0.0),
             contacts: f32::from(facts.player.contacts.unwrap_or(0)),
             collision_correction,
         };
@@ -75,7 +80,7 @@ impl GeneralizedTacticContext {
         Ok(context)
     }
 
-    fn values(self) -> [f32; 9] {
+    fn values(self) -> [f32; 11] {
         [
             self.player_x,
             self.player_z,
@@ -84,6 +89,8 @@ impl GeneralizedTacticContext {
             self.forward_speed,
             self.yaw_sin,
             self.yaw_cos,
+            self.camera_yaw_sin,
+            self.camera_yaw_cos,
             self.contacts,
             self.collision_correction,
         ]
@@ -429,11 +436,13 @@ fn encode_action(
     let duration = unsigned(descriptor, &["duration_ticks", "maximum_ticks"]).unwrap_or(1);
     values[cursor] = (duration as f32).ln_1p();
     cursor += 1;
+    let coordinate_plan = coordinate_plan(descriptor);
     let first = pair(
         descriptor,
         "command_target_first_x",
         "command_target_first_z",
-    );
+    )
+    .or_else(|| coordinate_plan.first().copied());
     values[cursor] = f32::from(first.is_some());
     cursor += 1;
     if let Some([x, z]) = first {
@@ -448,7 +457,8 @@ fn encode_action(
         descriptor,
         "command_target_second_x",
         "command_target_second_z",
-    );
+    )
+    .or_else(|| coordinate_plan.get(1).copied());
     values[cursor] = f32::from(second.is_some());
     cursor += 1;
     if let Some([x, z]) = second {
@@ -456,7 +466,8 @@ fn encode_action(
         values[cursor + 1] = z - context.player_z;
     }
     cursor += 2;
-    let last = pair(descriptor, "command_target_last_x", "command_target_last_z");
+    let last = pair(descriptor, "command_target_last_x", "command_target_last_z")
+        .or_else(|| coordinate_plan.last().copied());
     if let Some([x, z]) = last {
         let dx = x - context.player_x;
         let dz = z - context.player_z;
@@ -468,7 +479,12 @@ fn encode_action(
     let first_distance = first.map_or(0.0, |[x, z]| {
         (x - context.player_x).hypot(z - context.player_z)
     });
-    let internal_path = float(descriptor, "command_internal_path_length").unwrap_or(0.0);
+    let internal_path = float(descriptor, "command_internal_path_length").unwrap_or_else(|| {
+        coordinate_plan
+            .windows(2)
+            .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
+            .sum()
+    });
     let planned_path = first_distance + internal_path;
     let planned_displacement = last.map_or(first_distance, |[x, z]| {
         (x - context.player_x).hypot(z - context.player_z)
@@ -480,15 +496,33 @@ fn encode_action(
     } else {
         0.0
     };
-    values[cursor + 3] = float(descriptor, "command_internal_turn_radians").unwrap_or(0.0)
+    values[cursor + 3] = float(descriptor, "command_internal_turn_radians")
+        .unwrap_or_else(|| plan_turn_radians(&coordinate_plan))
         + initial_turn(context, first, second);
     cursor += 4;
-    values[cursor] =
-        unsigned(descriptor, &["command_target_point_count", "target_count"]).unwrap_or(0) as f32;
-    values[cursor + 1] =
-        unsigned(descriptor, &["command_stick_magnitude", "magnitude"]).unwrap_or(0) as f32 / 127.0;
+    values[cursor] = unsigned(descriptor, &["command_target_point_count", "target_count"])
+        .unwrap_or(coordinate_plan.len() as u64) as f32;
+    values[cursor + 1] = unsigned(
+        descriptor,
+        &["command_stick_magnitude", "magnitude", "movement_magnitude"],
+    )
+    .unwrap_or(0) as f32
+        / 127.0;
     values[cursor + 2] = float(descriptor, "waypoint_switch_radius").unwrap_or(0.0);
     cursor += 3;
+    let relative_heading = ["heading_radians", "movement_heading"]
+        .iter()
+        .find_map(|name| float(descriptor, name));
+    values[cursor] = f32::from(relative_heading.is_some());
+    if let Some(relative_heading) = relative_heading {
+        let current_yaw = context.yaw_sin.atan2(context.yaw_cos);
+        let camera_yaw = context.camera_yaw_sin.atan2(context.camera_yaw_cos);
+        let desired_yaw = camera_yaw + relative_heading;
+        values[cursor + 1] = desired_yaw.sin();
+        values[cursor + 2] = desired_yaw.cos();
+        values[cursor + 3] = angle_delta(desired_yaw, current_yaw).abs();
+    }
+    cursor += 4;
     let mask = unsigned(
         descriptor,
         &["command_button_mask", "button_pulse_mask", "button_mask"],
@@ -606,6 +640,54 @@ fn unsigned(descriptor: &OptionActionDescriptor, names: &[&str]) -> Option<u64> 
 
 fn pair(descriptor: &OptionActionDescriptor, x: &str, z: &str) -> Option<[f32; 2]> {
     Some([float(descriptor, x)?, float(descriptor, z)?])
+}
+
+fn coordinate_plan(descriptor: &OptionActionDescriptor) -> Vec<[f32; 2]> {
+    if let Some(OptionParameter::Vec3F32Bits(coordinate)) = descriptor.parameters.get("coordinate")
+    {
+        let point = [f32::from_bits(coordinate[0]), f32::from_bits(coordinate[2])];
+        return point
+            .iter()
+            .all(|value| value.is_finite())
+            .then_some(vec![point])
+            .unwrap_or_default();
+    }
+    let Some(OptionParameter::Text(encoded)) = descriptor.parameters.get("coordinates") else {
+        return Vec::new();
+    };
+    serde_json::from_str::<Vec<[u32; 3]>>(encoded)
+        .ok()
+        .map(|coordinates| {
+            coordinates
+                .into_iter()
+                .map(|coordinate| [f32::from_bits(coordinate[0]), f32::from_bits(coordinate[2])])
+                .collect::<Vec<_>>()
+        })
+        .filter(|coordinates| {
+            !coordinates.is_empty()
+                && coordinates
+                    .iter()
+                    .flatten()
+                    .all(|coordinate| coordinate.is_finite())
+        })
+        .unwrap_or_default()
+}
+
+fn plan_turn_radians(coordinates: &[[f32; 2]]) -> f32 {
+    coordinates
+        .windows(3)
+        .map(|points| {
+            let left = [points[1][0] - points[0][0], points[1][1] - points[0][1]];
+            let right = [points[2][0] - points[1][0], points[2][1] - points[1][1]];
+            let cross = left[0] * right[1] - left[1] * right[0];
+            let dot = left[0] * right[0] + left[1] * right[1];
+            cross.atan2(dot).abs()
+        })
+        .sum()
+}
+
+fn angle_delta(left: f32, right: f32) -> f32 {
+    (left - right + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 fn feature_ranges<'a>(rows: impl Iterator<Item = &'a [f32]>, width: usize) -> (Vec<f32>, Vec<f32>) {
@@ -813,6 +895,52 @@ mod tests {
             encode_action(&GeneralizedTacticContext::default(), &left).unwrap(),
             encode_action(&GeneralizedTacticContext::default(), &right).unwrap()
         );
+    }
+
+    #[test]
+    fn typed_native_targets_magnitude_and_heading_are_state_relative() {
+        let context = GeneralizedTacticContext {
+            player_x: 10.0,
+            player_z: 20.0,
+            yaw_cos: 1.0,
+            camera_yaw_cos: 1.0,
+            ..GeneralizedTacticContext::default()
+        };
+        let target = OptionActionDescriptor {
+            option_id: "native-target".into(),
+            option_type: OptionType::Move,
+            parameters: BTreeMap::from([
+                ("maximum_ticks".into(), OptionParameter::Unsigned(10)),
+                (
+                    "coordinate".into(),
+                    OptionParameter::Vec3F32Bits([30.0_f32, 0.0, 20.0_f32].map(f32::to_bits)),
+                ),
+                ("magnitude".into(), OptionParameter::Unsigned(100)),
+            ]),
+        };
+        let encoded_target = encode_action(&context, &target).unwrap();
+        assert_eq!(encoded_target[30], 1.0);
+        assert_eq!(&encoded_target[31..34], &[20.0, 0.0, 20.0]);
+        assert_eq!(encoded_target[44], 1.0);
+        assert_eq!(encoded_target[45], 100.0 / 127.0);
+
+        let heading = OptionActionDescriptor {
+            option_id: "native-heading".into(),
+            option_type: OptionType::MaintainHeading,
+            parameters: BTreeMap::from([
+                ("maximum_ticks".into(), OptionParameter::Unsigned(10)),
+                (
+                    "heading_radians".into(),
+                    OptionParameter::F32Bits(std::f32::consts::FRAC_PI_2.to_bits()),
+                ),
+                ("magnitude".into(), OptionParameter::Unsigned(127)),
+            ]),
+        };
+        let encoded_heading = encode_action(&context, &heading).unwrap();
+        assert_eq!(encoded_heading[47], 1.0);
+        assert!((encoded_heading[48] - 1.0).abs() < 1.0e-6);
+        assert!(encoded_heading[49].abs() < 1.0e-6);
+        assert!((encoded_heading[50] - std::f32::consts::FRAC_PI_2).abs() < 1.0e-6);
     }
 
     #[test]
