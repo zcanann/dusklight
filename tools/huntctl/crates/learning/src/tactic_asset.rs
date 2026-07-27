@@ -660,6 +660,7 @@ fn recorded_tape_realization(
         "duration_ticks".into(),
         OptionParameter::Unsigned(u64::from(duration)),
     );
+    insert_recorded_controller_summary(&mut parameters, tape);
     let execution = OptionExecution::capture(
         option_id.into(),
         OptionType::Custom("recorded_tape".into()),
@@ -680,6 +681,108 @@ fn recorded_tape_realization(
         tape: tape.clone(),
         execution,
     })
+}
+
+/// Describe raw controller behavior without exposing the recording identity to
+/// the learner. Recorded chunks are optional experience, not policy actions;
+/// these factors let their authenticated returns train the same action
+/// dimensions used by generated movement and prompted-button tactics.
+fn insert_recorded_controller_summary(
+    parameters: &mut BTreeMap<String, OptionParameter>,
+    tape: &InputTape,
+) {
+    let duration = tape.frames.len().max(1);
+    let pads = tape.frames.iter().map(|frame| frame.pads[0]);
+
+    let mut magnitude_total = 0.0_f32;
+    let mut heading_vector = [0.0_f32; 2];
+    let mut previous_heading = None::<f32>;
+    let mut internal_turn_radians = 0.0_f32;
+    let mut button_mask = 0_u16;
+    let mut button_active_ticks = 0_usize;
+    let mut previous_buttons = 0_u16;
+    let mut pulse_ticks = Vec::new();
+
+    for (tick, pad) in pads.enumerate() {
+        let x = f32::from(pad.stick_x);
+        let y = f32::from(pad.stick_y);
+        let magnitude = x.hypot(y).min(127.0);
+        magnitude_total += magnitude;
+        if magnitude > f32::EPSILON {
+            // Native camera-relative movement uses x=-sin(heading),
+            // y=cos(heading), matching GenericTactic::MaintainRelativeHeading.
+            let heading = (-x).atan2(y);
+            heading_vector[0] += heading.sin() * magnitude;
+            heading_vector[1] += heading.cos() * magnitude;
+            if let Some(previous) = previous_heading {
+                internal_turn_radians += ((heading - previous + std::f32::consts::PI)
+                    .rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI)
+                    .abs();
+            }
+            previous_heading = Some(heading);
+        }
+
+        button_mask |= pad.buttons;
+        button_active_ticks += usize::from(pad.buttons != 0);
+        if pad.buttons & !previous_buttons != 0 {
+            pulse_ticks.push(tick);
+        }
+        previous_buttons = pad.buttons;
+    }
+
+    let mean_magnitude = (magnitude_total / duration as f32)
+        .round()
+        .clamp(0.0, 127.0) as u64;
+    parameters.insert(
+        "command_stick_magnitude".into(),
+        OptionParameter::Unsigned(mean_magnitude),
+    );
+    parameters.insert(
+        "command_internal_turn_radians".into(),
+        OptionParameter::F32Bits(internal_turn_radians.to_bits()),
+    );
+    if heading_vector != [0.0, 0.0] {
+        parameters.insert(
+            "movement_heading".into(),
+            OptionParameter::F32Bits(heading_vector[0].atan2(heading_vector[1]).to_bits()),
+        );
+    }
+
+    parameters.insert(
+        "command_button_mask".into(),
+        OptionParameter::Unsigned(u64::from(button_mask)),
+    );
+    parameters.insert(
+        "command_button_active_fraction".into(),
+        OptionParameter::F32Bits(
+            (button_active_ticks as f32 / duration as f32)
+                .clamp(0.0, 1.0)
+                .to_bits(),
+        ),
+    );
+    parameters.insert(
+        "command_button_pulse_count".into(),
+        OptionParameter::Unsigned(pulse_ticks.len() as u64),
+    );
+    if let Some(first_tick) = pulse_ticks.first() {
+        parameters.insert(
+            "button_pulse_phase_tick".into(),
+            OptionParameter::Unsigned(*first_tick as u64),
+        );
+    }
+    if pulse_ticks.len() >= 2 {
+        let total_interval = pulse_ticks
+            .windows(2)
+            .map(|pair| pair[1] - pair[0])
+            .sum::<usize>();
+        parameters.insert(
+            "command_button_mean_interval_ticks".into(),
+            OptionParameter::F32Bits(
+                (total_interval as f32 / (pulse_ticks.len() - 1) as f32).to_bits(),
+            ),
+        );
+    }
 }
 
 impl TacticAssetAdapter for RollOptionPlan {
@@ -1716,6 +1819,40 @@ mod tests {
                 .get("input_tape_sha256"),
             Some(&OptionParameter::Digest(digest(&tape.encode().unwrap())))
         );
+        assert_eq!(
+            entry
+                .description()
+                .option
+                .parameters
+                .get("command_stick_magnitude"),
+            Some(&OptionParameter::Unsigned(49))
+        );
+        assert_eq!(
+            entry
+                .description()
+                .option
+                .parameters
+                .get("command_button_mask"),
+            Some(&OptionParameter::Unsigned(0x0100))
+        );
+        assert_eq!(
+            entry
+                .description()
+                .option
+                .parameters
+                .get("command_button_pulse_count"),
+            Some(&OptionParameter::Unsigned(1))
+        );
+        assert!(
+            (parameter_f32(entry.description(), "command_button_active_fraction") - 2.0 / 3.0)
+                .abs()
+                < 1.0e-6
+        );
+        assert!(
+            (parameter_f32(entry.description(), "movement_heading") + std::f32::consts::FRAC_PI_2)
+                .abs()
+                < 1.0e-6
+        );
         let catalog = TacticAssetCatalog::new(vec![entry]).unwrap();
         let PreparedTacticExecution::Static(realized) =
             catalog.prepare_execution("promoted/example").unwrap()
@@ -1727,6 +1864,54 @@ mod tests {
         realized
             .validate_against(catalog.entry("promoted/example").unwrap().description())
             .unwrap();
+    }
+
+    #[test]
+    fn recorded_tape_summary_captures_turns_and_button_cadence() {
+        let frame = |stick_x, stick_y, buttons| {
+            let mut frame = InputFrame::default();
+            frame.owned_ports = 1;
+            frame.pads[0].stick_x = stick_x;
+            frame.pads[0].stick_y = stick_y;
+            frame.pads[0].buttons = buttons;
+            frame
+        };
+        let tape = InputTape {
+            frames: vec![
+                frame(0, 127, 0x0100),
+                frame(-127, 0, 0),
+                frame(-127, 0, 0x0100),
+            ],
+            ..InputTape::default()
+        };
+
+        let description = tape.describe("recorded/turn-and-pulse").unwrap();
+
+        assert_eq!(
+            description.option.parameters.get("command_stick_magnitude"),
+            Some(&OptionParameter::Unsigned(127))
+        );
+        assert_eq!(
+            description
+                .option
+                .parameters
+                .get("command_button_pulse_count"),
+            Some(&OptionParameter::Unsigned(2))
+        );
+        assert_eq!(
+            description.option.parameters.get("button_pulse_phase_tick"),
+            Some(&OptionParameter::Unsigned(0))
+        );
+        assert_eq!(
+            parameter_f32(&description, "command_button_mean_interval_ticks"),
+            2.0
+        );
+        assert!(
+            (parameter_f32(&description, "command_internal_turn_radians")
+                - std::f32::consts::FRAC_PI_2)
+                .abs()
+                < 1.0e-6
+        );
     }
 
     #[test]

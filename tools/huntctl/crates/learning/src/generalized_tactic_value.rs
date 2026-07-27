@@ -895,6 +895,8 @@ impl Error for GeneralizedTacticValueError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tactic_asset::TacticAssetAdapter;
+    use dusklight_control::tape::{InputFrame, InputTape};
     use std::collections::BTreeMap;
 
     fn action(
@@ -989,6 +991,33 @@ mod tests {
         right.parameters.insert(
             "controller_sha256".into(),
             OptionParameter::Digest(crate::artifact::Digest([2; 32])),
+        );
+        assert_eq!(
+            encode_action(&GeneralizedTacticContext::default(), &left).unwrap(),
+            encode_action(&GeneralizedTacticContext::default(), &right).unwrap()
+        );
+    }
+
+    #[test]
+    fn recorded_tape_identity_is_not_a_model_feature() {
+        let mut frame = InputFrame::default();
+        frame.owned_ports = 1;
+        frame.pads[0].stick_y = 127;
+        frame.pads[0].buttons = 0x0100;
+        let left = InputTape {
+            frames: vec![frame.clone(), InputFrame::default()],
+            ..InputTape::default()
+        };
+        let right = InputTape {
+            tick_rate_numerator: 60,
+            frames: vec![frame, InputFrame::default()],
+            ..InputTape::default()
+        };
+        let left = left.describe("recorded-left").unwrap().option;
+        let right = right.describe("recorded-right").unwrap().option;
+        assert_ne!(
+            left.parameters.get("input_tape_sha256"),
+            right.parameters.get("input_tape_sha256")
         );
         assert_eq!(
             encode_action(&GeneralizedTacticContext::default(), &left).unwrap(),
