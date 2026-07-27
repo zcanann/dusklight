@@ -31,6 +31,7 @@ pub mod factorized_policy_suffix_batch;
 pub mod fqi;
 pub mod frozen_inference;
 mod gated_recurrent;
+pub mod generalized_tactic_value;
 pub mod goal_conditioning;
 pub mod graph_representation;
 pub mod hindsight;

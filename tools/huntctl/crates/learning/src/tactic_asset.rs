@@ -807,6 +807,7 @@ impl TacticAssetAdapter for ControllerProgram {
             "duration_ticks".into(),
             OptionParameter::Unsigned(u64::from(self.duration_frames)),
         );
+        insert_controller_command_summary(&mut parameters, self);
         if let Some((mask, period_ticks, phase_tick)) = periodic_button_overlay(self) {
             let mut base_program = self.clone();
             base_program
@@ -949,6 +950,126 @@ impl TacticAssetAdapter for ControllerProgram {
         exact.validate_against(&description)?;
         Ok(Some(exact))
     }
+}
+
+/// Expose generic executable-command factors for cross-action learning.
+///
+/// Opaque program digests remain evidence identities. These typed summaries
+/// are deliberately independent of option IDs and route names so a learner can
+/// share observations about direction changes, magnitude, targeting, and
+/// button use with controller instances it has never executed.
+fn insert_controller_command_summary(
+    parameters: &mut BTreeMap<String, OptionParameter>,
+    program: &ControllerProgram,
+) {
+    let button_layers = program
+        .layers
+        .iter()
+        .filter_map(|layer| match layer.operation {
+            Operation::Buttons { mask } => Some((layer.start_frame, layer.duration_frames, mask)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !button_layers.is_empty() {
+        let mask = button_layers
+            .iter()
+            .fold(0_u16, |combined, (_, _, mask)| combined | *mask);
+        let active_ticks = button_layers.iter().fold(0_u64, |total, (_, duration, _)| {
+            total.saturating_add(u64::from(*duration))
+        });
+        parameters.insert(
+            "command_button_mask".into(),
+            OptionParameter::Unsigned(u64::from(mask)),
+        );
+        parameters.insert(
+            "command_button_pulse_count".into(),
+            OptionParameter::Unsigned(button_layers.len() as u64),
+        );
+        parameters.insert(
+            "command_button_active_fraction".into(),
+            OptionParameter::F32Bits(
+                (active_ticks as f32 / program.duration_frames as f32)
+                    .clamp(0.0, 1.0)
+                    .to_bits(),
+            ),
+        );
+        if button_layers.len() >= 2 {
+            let interval_total = button_layers.windows(2).fold(0_u64, |total, pair| {
+                total.saturating_add(u64::from(pair[1].0.saturating_sub(pair[0].0)))
+            });
+            parameters.insert(
+                "command_button_mean_interval_ticks".into(),
+                OptionParameter::F32Bits(
+                    (interval_total as f32 / (button_layers.len() - 1) as f32).to_bits(),
+                ),
+            );
+        }
+    }
+
+    let coordinate_plan = program
+        .layers
+        .iter()
+        .filter_map(|layer| match &layer.operation {
+            Operation::SeekCoordinateSequence {
+                coordinates_xz,
+                magnitude,
+                ..
+            } if !coordinates_xz.is_empty() => {
+                Some((layer.duration_frames, coordinates_xz, *magnitude))
+            }
+            _ => None,
+        })
+        .max_by_key(|(duration, coordinates, _)| (*duration, coordinates.len()));
+    let Some((_, coordinates, magnitude)) = coordinate_plan else {
+        return;
+    };
+    let first = coordinates[0];
+    let second = coordinates.get(1).copied();
+    let last = coordinates[coordinates.len() - 1];
+    let internal_path_length = coordinates
+        .windows(2)
+        .map(|pair| (pair[1][0] - pair[0][0]).hypot(pair[1][1] - pair[0][1]))
+        .sum::<f32>();
+    let internal_displacement = (last[0] - first[0]).hypot(last[1] - first[1]);
+    let internal_turn_radians = coordinates
+        .windows(3)
+        .map(|points| {
+            let left = [points[1][0] - points[0][0], points[1][1] - points[0][1]];
+            let right = [points[2][0] - points[1][0], points[2][1] - points[1][1]];
+            let cross = left[0] * right[1] - left[1] * right[0];
+            let dot = left[0] * right[0] + left[1] * right[1];
+            cross.atan2(dot).abs()
+        })
+        .sum::<f32>();
+    for (name, value) in [
+        ("command_target_first_x", first[0]),
+        ("command_target_first_z", first[1]),
+        ("command_target_last_x", last[0]),
+        ("command_target_last_z", last[1]),
+        ("command_internal_path_length", internal_path_length),
+        ("command_internal_displacement", internal_displacement),
+        ("command_internal_turn_radians", internal_turn_radians),
+    ] {
+        parameters.insert(name.into(), OptionParameter::F32Bits(value.to_bits()));
+    }
+    if let Some(second) = second {
+        parameters.insert(
+            "command_target_second_x".into(),
+            OptionParameter::F32Bits(second[0].to_bits()),
+        );
+        parameters.insert(
+            "command_target_second_z".into(),
+            OptionParameter::F32Bits(second[1].to_bits()),
+        );
+    }
+    parameters.insert(
+        "command_target_point_count".into(),
+        OptionParameter::Unsigned(coordinates.len() as u64),
+    );
+    parameters.insert(
+        "command_stick_magnitude".into(),
+        OptionParameter::Unsigned(u64::from(magnitude)),
+    );
 }
 
 /// Describe the common controller composition of a movement layer plus one
@@ -1171,10 +1292,84 @@ impl Error for TacticAssetError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dusklight_control::controller_program::ControllerProgram;
+    use dusklight_control::controller_program::{ControllerProgram, Layer, StickBlend};
     use dusklight_control::game_tactic::{GameTactic, GameTacticPlan};
     use dusklight_control::motion_path::{MotionPathPlan, SamplePhase, StickPath, StickPoint};
     use dusklight_control::roll_option::{RollOptionPlan, RollSpacing};
+
+    fn parameter_f32(description: &TacticAssetDescription, name: &str) -> f32 {
+        match description.option.parameters.get(name).unwrap() {
+            OptionParameter::F32Bits(bits) => f32::from_bits(*bits),
+            parameter => panic!("{name} was not an f32 parameter: {parameter:?}"),
+        }
+    }
+
+    #[test]
+    fn reactive_controller_describes_generic_motion_and_button_factors() {
+        let controller = ControllerProgram {
+            duration_frames: 12,
+            layers: vec![
+                Layer {
+                    start_frame: 0,
+                    duration_frames: 12,
+                    operation: Operation::SeekCoordinateSequence {
+                        blend: StickBlend::Replace,
+                        coordinates_xz: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]],
+                        intermediate_stop_radius: 1.0,
+                        final_stop_radius: 0.0,
+                        magnitude: 127,
+                    },
+                },
+                Layer {
+                    start_frame: 1,
+                    duration_frames: 1,
+                    operation: Operation::Buttons { mask: 0x0100 },
+                },
+                Layer {
+                    start_frame: 5,
+                    duration_frames: 1,
+                    operation: Operation::Buttons { mask: 0x0100 },
+                },
+            ],
+        };
+
+        let description = controller.describe("opaque-controller-id").unwrap();
+
+        assert_eq!(
+            description.option.parameters.get("command_button_mask"),
+            Some(&OptionParameter::Unsigned(0x0100))
+        );
+        assert_eq!(
+            description
+                .option
+                .parameters
+                .get("command_target_point_count"),
+            Some(&OptionParameter::Unsigned(3))
+        );
+        assert_eq!(
+            description.option.parameters.get("command_stick_magnitude"),
+            Some(&OptionParameter::Unsigned(127))
+        );
+        assert_eq!(
+            parameter_f32(&description, "command_internal_path_length"),
+            20.0
+        );
+        assert!(
+            (parameter_f32(&description, "command_internal_displacement") - 10.0_f32.hypot(10.0))
+                .abs()
+                < 1.0e-5
+        );
+        assert!(
+            (parameter_f32(&description, "command_internal_turn_radians")
+                - std::f32::consts::FRAC_PI_2)
+                .abs()
+                < 1.0e-5
+        );
+        assert_eq!(
+            parameter_f32(&description, "command_button_mean_interval_ticks"),
+            4.0
+        );
+    }
 
     #[test]
     fn existing_plan_types_share_one_adapter_without_changing_realization() {

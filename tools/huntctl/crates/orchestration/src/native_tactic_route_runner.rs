@@ -2688,6 +2688,7 @@ fn run_seed(
                     // farther through a shrinking candidate list.
                     (seed_index % LEARNED_EPISODES_PER_GENERATION) as u64,
                     config.proposal_policy,
+                    Some(encoder.goal_distance_feature()),
                 )
                 .map_err(route_error)?;
             timing.tactic_selection_micros = timing

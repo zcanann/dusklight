@@ -11,6 +11,9 @@ use dusklight_automation_contracts::tape::InputTape;
 use dusklight_control::option_execution::OptionExecution;
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::{FACT_SNAPSHOT_SCHEMA_V2, FactSnapshot};
+use dusklight_learning::generalized_tactic_value::{
+    GeneralizedTacticContext, GeneralizedTacticValueError, GeneralizedTacticValueModel,
+};
 use dusklight_learning::hindsight::{
     HindsightError, HindsightOptionReplay, RelabeledHindsightOption,
 };
@@ -33,8 +36,8 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
     TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
-    ensure_route_composition_refinement, ensure_route_family_partition,
-    ensure_terminal_cost_refinement,
+    ensure_generalized_value_acquisition, ensure_route_composition_refinement,
+    ensure_route_family_partition, ensure_terminal_cost_refinement,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -1386,6 +1389,7 @@ impl TacticQCampaign {
             maximum_proposals,
             0,
             TacticProposalPolicy::Learned,
+            None,
         )
     }
 
@@ -1398,6 +1402,7 @@ impl TacticQCampaign {
         maximum_proposals: usize,
         acquisition_partition: u64,
         policy: TacticProposalPolicy,
+        goal_distance_feature: Option<usize>,
     ) -> Result<TacticQProposalBatch, TacticQCampaignError>
     where
         E: fmt::Display,
@@ -1512,6 +1517,26 @@ impl TacticQCampaign {
         }
         if policy != TacticProposalPolicy::RandomValid {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
+        }
+        if policy == TacticProposalPolicy::Learned
+            && self.training_replay.len() >= 2
+            && let Some(goal_distance_feature) = goal_distance_feature
+        {
+            let model = GeneralizedTacticValueModel::fit_transitions(
+                &self.training_replay,
+                goal_distance_feature,
+            )?;
+            let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
+            let ranked_unseen = model
+                .rank(&features, &context, &state_untried)?
+                .into_iter()
+                .map(|estimate| estimate.descriptor)
+                .collect::<Vec<_>>();
+            ensure_generalized_value_acquisition(
+                &ranked_unseen,
+                maximum_proposals,
+                &mut proposals,
+            )?;
         }
         Ok(TacticQProposalBatch { ranking, proposals })
     }
@@ -2415,6 +2440,7 @@ pub enum TacticQCampaignError {
     Hindsight(HindsightError),
     FrozenPolicy(TacticFrozenPolicyError),
     Native(NativeTacticWorkerError),
+    GeneralizedValue(GeneralizedTacticValueError),
 }
 
 impl fmt::Display for TacticQCampaignError {
@@ -2439,6 +2465,9 @@ impl fmt::Display for TacticQCampaignError {
             Self::Hindsight(error) => write!(formatter, "tactic-Q hindsight failed: {error}"),
             Self::FrozenPolicy(error) => write!(formatter, "tactic-Q freeze failed: {error}"),
             Self::Native(error) => write!(formatter, "tactic-Q native execution failed: {error}"),
+            Self::GeneralizedValue(error) => {
+                write!(formatter, "tactic-Q generalized value failed: {error}")
+            }
         }
     }
 }
@@ -2455,6 +2484,7 @@ impl Error for TacticQCampaignError {
             Self::Hindsight(error) => Some(error),
             Self::FrozenPolicy(error) => Some(error),
             Self::Native(error) => Some(error),
+            Self::GeneralizedValue(error) => Some(error),
             _ => None,
         }
     }
@@ -2499,6 +2529,12 @@ impl From<ShapingError> for TacticQCampaignError {
 impl From<NativeTacticWorkerError> for TacticQCampaignError {
     fn from(value: NativeTacticWorkerError) -> Self {
         Self::Native(value)
+    }
+}
+
+impl From<GeneralizedTacticValueError> for TacticQCampaignError {
+    fn from(value: GeneralizedTacticValueError) -> Self {
+        Self::GeneralizedValue(value)
     }
 }
 

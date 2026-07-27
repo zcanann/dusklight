@@ -46,6 +46,10 @@ pub enum TacticSelectionReason {
     BatchUncertainty,
     BatchValue,
     BatchCoverage,
+    /// Acquire an unseen controller because a shared state-action outcome
+    /// model predicts that its executable factors transfer productive motion
+    /// from nearby authenticated outcomes.
+    GeneralizedValue,
     /// Re-evaluate an untried nearby parameterization of a terminal action so
     /// route cost can improve after the first successful completion.
     TerminalCostRefinement,
@@ -751,6 +755,39 @@ pub fn ensure_route_composition_refinement(
             }),
     ) + 1;
     proposals.insert(insertion_index.min(proposals.len()), composition);
+    proposals.truncate(maximum_proposals);
+    Ok(())
+}
+
+/// Reserve one acquisition slot for the highest-ranked unseen controller from
+/// a shared state-action outcome model.
+///
+/// The caller supplies descriptors in predicted-outcome order. This selector
+/// deliberately knows nothing about controller IDs, route families, or
+/// hand-authored tactic semantics.
+pub fn ensure_generalized_value_acquisition(
+    ranked_unseen: &[OptionActionDescriptor],
+    maximum_proposals: usize,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticExplorationError> {
+    if maximum_proposals <= 1 || proposals.is_empty() || proposals.len() > maximum_proposals {
+        return if !proposals.is_empty() && proposals.len() <= maximum_proposals {
+            Ok(())
+        } else {
+            Err(TacticExplorationError::InvalidInput)
+        };
+    }
+    let Some(descriptor) = ranked_unseen.iter().find(|descriptor| {
+        !proposals
+            .iter()
+            .any(|proposal| proposal.descriptor == **descriptor)
+    }) else {
+        return Ok(());
+    };
+    let mut acquisition = proposals[0].clone();
+    acquisition.descriptor = descriptor.clone();
+    acquisition.reason = TacticSelectionReason::GeneralizedValue;
+    proposals.insert(1, acquisition);
     proposals.truncate(maximum_proposals);
     Ok(())
 }
@@ -2542,5 +2579,33 @@ mod tests {
 
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].descriptor, available);
+    }
+
+    #[test]
+    fn generalized_value_reserves_an_unseen_acquisition_without_displacing_control() {
+        let control = descriptor("known/control", OptionType::Move);
+        let duplicate = control.clone();
+        let held_out_roll = descriptor("unseen/roll", OptionType::Roll);
+        let fallback = descriptor("unseen/fallback", OptionType::Move);
+        let mut proposals = vec![SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: Digest([31; 32]),
+            decision_index: 7,
+            descriptor: control.clone(),
+            reason: TacticSelectionReason::Greedy,
+            exploration_draw: 0,
+        }];
+
+        ensure_generalized_value_acquisition(
+            &[duplicate, held_out_roll.clone(), fallback],
+            2,
+            &mut proposals,
+        )
+        .unwrap();
+
+        assert_eq!(proposals[0].descriptor, control);
+        assert_eq!(proposals[0].reason, TacticSelectionReason::Greedy);
+        assert_eq!(proposals[1].descriptor, held_out_roll);
+        assert_eq!(proposals[1].reason, TacticSelectionReason::GeneralizedValue);
     }
 }
