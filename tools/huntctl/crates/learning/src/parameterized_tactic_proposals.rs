@@ -19,7 +19,7 @@ use std::f32::consts::{PI, TAU};
 
 pub const PARAMETERIZED_TACTIC_FAMILY_SCHEMA_V2: &str =
     "dusklight-parameterized-tactic-families/v2";
-pub const MAX_PARAMETERIZED_PROPOSALS: usize = 32;
+pub const MAX_PARAMETERIZED_PROPOSALS: usize = 48;
 const MAX_PARAMETERIZED_TACTIC_TICKS: u32 = 4_096;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -171,7 +171,7 @@ pub fn propose_parameterized_tactics(
         3.0 * PI / 4.0,
         PI,
     ];
-    let durations = [4_u32, 8, 12, 16];
+    let durations = [4_u32, 12];
     for (index, offset) in heading_offsets.iter().copied().enumerate() {
         let magnitude = if index == 0 || ((draw >> index) & 1) != 0 {
             127
@@ -183,19 +183,20 @@ pub fn propose_parameterized_tactics(
         } else {
             normalize_angle(central_heading + offset)
         };
-        insert(
-            &mut entries,
-            ParameterizedTacticFamily::RelativeHeading,
-            TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
-                GenericTactic::MaintainRelativeHeading {
-                    heading_radians_f32_bits: heading.to_bits(),
-                    magnitude,
-                },
-                durations[(index + (draw as usize & 3)) % durations.len()]
-                    .min(context.maximum_ticks),
-            )),
-            context.maximum_ticks,
-        )?;
+        for duration in durations {
+            insert(
+                &mut entries,
+                ParameterizedTacticFamily::RelativeHeading,
+                TacticAssetSource::NativeGenericTactic(NativeGenericTacticPlan::new(
+                    GenericTactic::MaintainRelativeHeading {
+                        heading_radians_f32_bits: heading.to_bits(),
+                        magnitude,
+                    },
+                    duration.min(context.maximum_ticks),
+                )),
+                context.maximum_ticks,
+            )?;
+        }
     }
 
     for clockwise in [false, true] {
@@ -429,6 +430,32 @@ mod tests {
                 && !descriptor.option_id.starts_with("move.heading.")
                 && !descriptor.option_id.starts_with("roll.direction.")
         }));
+        let mut heading_durations = BTreeMap::<u32, BTreeSet<u64>>::new();
+        for descriptor in descriptors
+            .iter()
+            .filter(|descriptor| descriptor.option_type == OptionType::MaintainHeading)
+        {
+            let Some(OptionParameter::F32Bits(heading)) =
+                descriptor.parameters.get("heading_radians")
+            else {
+                panic!("maintained heading has no typed heading");
+            };
+            let Some(OptionParameter::Unsigned(duration)) =
+                descriptor.parameters.get("maximum_ticks")
+            else {
+                panic!("maintained heading has no typed duration");
+            };
+            heading_durations
+                .entry(*heading)
+                .or_default()
+                .insert(*duration);
+        }
+        assert_eq!(heading_durations.len(), 8);
+        assert!(
+            heading_durations
+                .values()
+                .all(|durations| durations == &BTreeSet::from([4, 12]))
+        );
         assert!(proposals.blueprints.is_empty());
     }
 
