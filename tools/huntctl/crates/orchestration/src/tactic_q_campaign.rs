@@ -2265,8 +2265,8 @@ fn replay_model(
     };
     let exact_actions = replay
         .iter()
-        .map(|transition| transition.value_sample.action.option_id.as_str())
-        .collect::<BTreeSet<_>>();
+        .map(|transition| transition.value_sample.action.content_sha256())
+        .collect::<Result<BTreeSet<_>, OptionValueError>>()?;
     if exact_actions.len() > MAX_OPTION_ACTIONS {
         return Ok(None);
     }
