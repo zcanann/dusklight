@@ -3148,7 +3148,7 @@ fn run_seed(
                 }
             }
             .map_err(route_error)?;
-            let prefer_root = episode % 4 == 0;
+            let prefer_root = periodic_root_refresh_due(seed_index, episode);
             let selected_branch = if prefer_root { &root } else { &frontier };
             branch_acquisition = selected_branch.acquisition.clone();
             let branch_proposals = parameterized_catalog_for_state(
@@ -3292,7 +3292,7 @@ fn run_seed(
                 }
             }
             .map_err(route_error)?;
-            let prefer_root = episode % 4 == 0;
+            let prefer_root = periodic_root_refresh_due(seed_index, episode);
             let selected_branch = if prefer_root { &root } else { &frontier };
             branch_acquisition = selected_branch.acquisition.clone();
             let branch_proposals = parameterized_catalog_for_state(
@@ -6557,6 +6557,16 @@ fn generalized_acquisition_partition(seed_index: usize) -> u64 {
     }
 }
 
+fn periodic_root_refresh_due(seed_index: usize, episode: u64) -> bool {
+    // Preserve one root refresh per four branch rounds for every seed without
+    // synchronizing the entire worker pool onto the root in the same
+    // generation. Staggering by lane leaves most workers free to expand newly
+    // discovered frontiers while another lane refreshes root connectivity.
+    episode.saturating_add((seed_index % LEARNED_EPISODES_PER_GENERATION) as u64)
+        % LEARNED_EPISODES_PER_GENERATION as u64
+        == 0
+}
+
 fn selected_tactic_fits_horizon(
     suffix_ticks: u64,
     selected_maximum_ticks: u32,
@@ -6693,6 +6703,22 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9]
         );
+    }
+
+    #[test]
+    fn periodic_root_refreshes_are_staggered_across_parallel_lanes() {
+        for episode in 1..=8 {
+            let refreshed = (0..LEARNED_EPISODES_PER_GENERATION)
+                .filter(|seed_index| periodic_root_refresh_due(*seed_index, episode))
+                .collect::<Vec<_>>();
+            assert_eq!(refreshed.len(), 1);
+        }
+        for seed_index in 0..LEARNED_EPISODES_PER_GENERATION {
+            let refreshes = (1..=8)
+                .filter(|episode| periodic_root_refresh_due(seed_index, *episode))
+                .count();
+            assert_eq!(refreshes, 2);
+        }
     }
 
     #[test]
