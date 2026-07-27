@@ -1,28 +1,33 @@
-//! Leave-controller-out evidence for the shared tactic outcome model.
+//! Native held-out evidence for shared tactic value prediction.
 //!
-//! The input corpora are authenticated native transition envelopes. Each
-//! comparison removes every occurrence of both exact action descriptors,
-//! refits the shared model, and asks it to rank the unseen pair from their
-//! common source state.
+//! The proof never names a desirable action. It derives terminal reachability,
+//! first-hit cost, and objective return from authenticated native transition
+//! graphs, then checks predictions on unseen episode groups. Exact controller
+//! descriptors and a contiguous state region receive independent holdouts.
+//! Shuffled-return and objective-blind controls prevent auxiliary measurements
+//! or an authored action ordering from satisfying the gate.
 
 use crate::tactic_q_campaign::TacticQTrainingCorpus;
 use dusklight_learning::artifact::Digest;
 use dusklight_learning::generalized_tactic_value::{
-    GeneralizedTacticActionFactors, GeneralizedTacticContext, GeneralizedTacticOutcome,
-    GeneralizedTacticValueModel, compare_generalized_tactic_outcomes,
-    generalized_tactic_action_factors,
+    GeneralizedTacticContext, GeneralizedTacticOutcome, GeneralizedTacticTrainingSample,
+    GeneralizedTacticValueModel,
 };
 use dusklight_learning::option_transition::OptionTransitionSample;
-use dusklight_learning::option_values::OptionActionDescriptor;
+use dusklight_learning::tactic_features::GoalConditionedTacticFeatureEncoder;
 use serde::Serialize;
-use sha2::{Digest as ShaDigest, Sha256};
-use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
-pub const GENERALIZED_TACTIC_HELD_OUT_EVIDENCE_SCHEMA_V1: &str =
-    "dusklight-generalized-tactic-held-out-evidence/v1";
+pub const GENERALIZED_TACTIC_HELD_OUT_EVIDENCE_SCHEMA_V2: &str =
+    "dusklight-generalized-tactic-held-out-evidence/v2";
+
+const TERMINAL_REWARD: f32 = 100.0;
+const NATIVE_TICK_COST: f32 = 0.01;
+const MINIMUM_EVALUATION_ROWS: usize = 8;
+const MAXIMUM_BACKUP_ITERATIONS: usize = 512;
+const METRIC_EPSILON: f32 = 1.0e-6;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -36,41 +41,95 @@ pub struct GeneralizedTacticHeldOutEvidence {
     pub authenticated_native_transitions: u64,
     pub unique_native_transitions: u64,
     pub unique_controller_instances: u64,
-    pub exact_controller_instances_excluded_per_comparison: u64,
-    pub comparisons: Vec<GeneralizedTacticHeldOutComparison>,
+    pub episode_groups: u64,
+    pub objective: GeneralizedTacticEvidenceObjective,
+    pub ablated_feature_names: Vec<String>,
+    pub holdouts: Vec<GeneralizedTacticHoldoutEvidence>,
     pub passed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct GeneralizedTacticHeldOutComparison {
-    pub category: String,
-    pub favorable: GeneralizedTacticHeldOutAction,
-    pub comparison: GeneralizedTacticHeldOutAction,
-    pub training_transitions_after_exclusion: u64,
-    pub predicted_first_option_id: String,
+pub struct GeneralizedTacticEvidenceObjective {
+    pub terminal_reward: f32,
+    pub native_tick_cost: f32,
+    pub source: String,
+    pub auxiliary_signals_affect_policy_utility: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneralizedTacticHoldoutEvidence {
+    pub kind: String,
+    pub training_episode_groups: u64,
+    pub evaluation_episode_groups: u64,
+    pub training_transitions: u64,
+    pub evaluation_transitions: u64,
+    pub exact_controller_instances_excluded: u64,
+    pub state_region: Option<GeneralizedTacticStateRegion>,
+    pub authentic: GeneralizedTacticPredictionMetrics,
+    pub typed_signal_ablation: GeneralizedTacticPredictionMetrics,
+    pub shuffled_return_control: GeneralizedTacticPredictionMetrics,
+    pub auxiliary_only_control: GeneralizedTacticPredictionMetrics,
+    pub authentic_beats_shuffled_return: bool,
+    pub authentic_beats_auxiliary_only: bool,
+    pub typed_signals_improve_prediction: bool,
     pub passed: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct GeneralizedTacticHeldOutAction {
-    pub option_id: String,
-    pub action_sha256: Digest,
-    pub before_state_sha256: Digest,
-    pub factors: GeneralizedTacticActionFactors,
-    pub actual: GeneralizedTacticOutcome,
-    pub predicted: GeneralizedTacticOutcome,
+pub struct GeneralizedTacticStateRegion {
+    pub feature_index: usize,
+    pub lower_inclusive: f32,
+    pub upper_inclusive: f32,
+    pub ordering: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneralizedTacticPredictionMetrics {
+    pub samples: u64,
+    pub terminal_positive: u64,
+    pub terminal_negative: u64,
+    pub terminal_brier_score: f32,
+    pub first_hit_tick_mae: Option<f32>,
+    pub objective_return_mae: f32,
+    pub objective_pair_accuracy: Option<f32>,
+    pub mean_nearest_neighbor_distance: f32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct EpisodeKey {
+    corpus: usize,
+    group: u64,
 }
 
 #[derive(Clone)]
-struct HeldOutAction {
+struct NativeRow {
+    episode: EpisodeKey,
     action_sha256: Digest,
     transition: OptionTransitionSample,
-    context: GeneralizedTacticContext,
-    factors: GeneralizedTacticActionFactors,
-    actual: GeneralizedTacticOutcome,
-    geometry_sha256: Digest,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ObjectiveTarget {
+    terminal_probability: f32,
+    first_hit_ticks: Option<f32>,
+    objective_return: f32,
+}
+
+#[derive(Clone)]
+struct LabeledRow {
+    row: NativeRow,
+    target: ObjectiveTarget,
+}
+
+#[derive(Clone, Copy)]
+enum LabelTreatment {
+    Authentic,
+    Shuffled,
+    AuxiliaryOnly,
 }
 
 pub fn prove_generalized_tactic_held_out_value(
@@ -80,6 +139,11 @@ pub fn prove_generalized_tactic_held_out_value(
     let first = corpora
         .first()
         .ok_or_else(|| evidence_message("held-out evidence requires native training corpora"))?;
+    if corpora.len() < 5 {
+        return Err(evidence_message(
+            "held-out evidence requires at least five independent native corpora",
+        ));
+    }
     if corpora.iter().any(|corpus| {
         corpus.feature_schema_sha256 != first.feature_schema_sha256
             || corpus.objective_sha256 != first.objective_sha256
@@ -89,348 +153,625 @@ pub fn prove_generalized_tactic_held_out_value(
             "held-out corpora do not share feature, objective, and root checkpoint identities",
         ));
     }
+
+    let encoder = GoalConditionedTacticFeatureEncoder::new([0.0; 3])
+        .map_err(|error| evidence_message(error.to_string()))?;
+    if encoder.schema_sha256 != first.feature_schema_sha256
+        || goal_distance_feature >= encoder.feature_width()
+    {
+        return Err(evidence_message(
+            "held-out corpus feature identity or goal-distance index is unsupported",
+        ));
+    }
+    let ablated_indices = typed_signal_ablation_indices(&encoder.feature_names);
+    let ablated_feature_names = ablated_indices
+        .iter()
+        .map(|index| encoder.feature_names[*index].clone())
+        .collect::<Vec<_>>();
+    if ablated_indices.is_empty() {
+        return Err(evidence_message(
+            "typed-signal ablation selected no features",
+        ));
+    }
+
     let authenticated_native_transitions = corpora
         .iter()
         .map(|corpus| corpus.transitions.len() as u64)
         .sum();
-    let mut unique = BTreeMap::<Digest, OptionTransitionSample>::new();
-    for corpus in corpora {
-        if corpus.transitions.len() != corpus.routes.len()
-            || corpus.transitions.len() != corpus.episode_groups.len()
-        {
-            return Err(evidence_message("held-out corpus shape is detached"));
-        }
-        for transition in &corpus.transitions {
-            transition
-                .validate()
-                .map_err(|error| evidence_message(error.to_string()))?;
-            unique
-                .entry(
-                    transition
-                        .replay_identity_sha256()
-                        .map_err(|error| evidence_message(error.to_string()))?,
-                )
-                .or_insert_with(|| transition.clone());
-        }
-    }
-    let transitions = unique.into_values().collect::<Vec<_>>();
-    if transitions.len() < 4 {
+    let rows = flatten_unique_native_rows(corpora)?;
+    if rows.len() < MINIMUM_EVALUATION_ROWS * 3 {
         return Err(evidence_message(
-            "held-out evidence requires at least four unique native transitions",
+            "held-out evidence requires at least 24 unique native transitions",
+        ));
+    }
+    if rows
+        .iter()
+        .any(|row| row.transition.value_sample.state.len() != encoder.feature_width())
+    {
+        return Err(evidence_message(
+            "held-out transition feature width does not match the authenticated schema",
         ));
     }
 
-    let mut representatives = BTreeMap::<Digest, HeldOutAction>::new();
-    for transition in &transitions {
-        let action_sha256 = transition
-            .value_sample
-            .action
-            .content_sha256()
-            .map_err(|error| evidence_message(error.to_string()))?;
-        let context = GeneralizedTacticContext::from_facts(&transition.before)
-            .map_err(|error| evidence_message(error.to_string()))?;
-        let factors = generalized_tactic_action_factors(&context, &transition.value_sample.action)
-            .map_err(|error| evidence_message(error.to_string()))?;
-        let actual = GeneralizedTacticOutcome::from_transition(transition, goal_distance_feature)
-            .map_err(|error| evidence_message(error.to_string()))?;
-        let candidate = HeldOutAction {
-            action_sha256,
-            transition: transition.clone(),
-            context,
-            factors,
-            actual,
-            geometry_sha256: action_geometry_sha256(&transition.value_sample.action)?,
-        };
-        match representatives.get(&action_sha256) {
-            Some(existing)
-                if compare_generalized_tactic_outcomes(&existing.actual, &candidate.actual)
-                    != Ordering::Less => {}
-            _ => {
-                representatives.insert(action_sha256, candidate);
-            }
-        }
+    let all_controllers = rows
+        .iter()
+        .map(|row| row.action_sha256)
+        .collect::<BTreeSet<_>>();
+    let all_episodes = rows.iter().map(|row| row.episode).collect::<BTreeSet<_>>();
+    let (episode_training, episode_evaluation): (Vec<_>, Vec<_>) = rows
+        .into_iter()
+        .partition(|row| row.episode.corpus % 5 != 4);
+    if episode_training.is_empty() || episode_evaluation.is_empty() {
+        return Err(evidence_message(
+            "deterministic episode-group split produced an empty partition",
+        ));
     }
-    let actions = representatives.into_values().collect::<Vec<_>>();
-    let pairs = [
-        rolling_pair(&actions)?,
-        straight_pair(&actions)?,
-        collision_pair(&actions)?,
-    ];
-    let mut comparisons = Vec::with_capacity(pairs.len());
-    for (category, favorable, comparison) in pairs {
-        comparisons.push(evaluate_pair(
-            category,
-            favorable,
-            comparison,
-            &transitions,
-            goal_distance_feature,
-        )?);
-    }
-    let passed = comparisons.len() == 3 && comparisons.iter().all(|comparison| comparison.passed);
+
+    let controller_holdout = controller_holdout(
+        &episode_training,
+        &episode_evaluation,
+        goal_distance_feature,
+        &ablated_indices,
+    )?;
+    let state_holdout = contiguous_state_holdout(
+        &episode_training,
+        &episode_evaluation,
+        goal_distance_feature,
+        &ablated_indices,
+    )?;
+    let holdouts = vec![controller_holdout, state_holdout];
+    let passed = holdouts.iter().all(|holdout| holdout.passed);
+
     Ok(GeneralizedTacticHeldOutEvidence {
-        schema: GENERALIZED_TACTIC_HELD_OUT_EVIDENCE_SCHEMA_V1.into(),
+        schema: GENERALIZED_TACTIC_HELD_OUT_EVIDENCE_SCHEMA_V2.into(),
         feature_schema_sha256: first.feature_schema_sha256,
         objective_sha256: first.objective_sha256,
         root_checkpoint_sha256: first.root_checkpoint_sha256,
         goal_distance_feature,
         input_corpora: corpora.len() as u64,
         authenticated_native_transitions,
-        unique_native_transitions: transitions.len() as u64,
-        unique_controller_instances: actions.len() as u64,
-        exact_controller_instances_excluded_per_comparison: 2,
-        comparisons,
+        unique_native_transitions: episode_training.len() as u64 + episode_evaluation.len() as u64,
+        unique_controller_instances: all_controllers.len() as u64,
+        episode_groups: all_episodes.len() as u64,
+        objective: GeneralizedTacticEvidenceObjective {
+            terminal_reward: TERMINAL_REWARD,
+            native_tick_cost: NATIVE_TICK_COST,
+            source: "authenticated_terminal_minus_native_input_ticks".into(),
+            auxiliary_signals_affect_policy_utility: false,
+        },
+        ablated_feature_names,
+        holdouts,
         passed,
     })
 }
 
-fn rolling_pair(
-    actions: &[HeldOutAction],
-) -> Result<(&'static str, &HeldOutAction, &HeldOutAction), GeneralizedTacticEvidenceError> {
-    let mut candidates = Vec::new();
-    for favorable in actions.iter().filter(|action| action.factors.rolling) {
-        for comparison in actions.iter().filter(|action| !action.factors.rolling) {
-            let distance = factor_distance(favorable, comparison);
-            if comparable_source(favorable, comparison)
-                && (favorable.geometry_sha256 == comparison.geometry_sha256 || distance <= 0.75)
-                && compare_generalized_tactic_outcomes(&favorable.actual, &comparison.actual)
-                    == Ordering::Greater
-            {
-                candidates.push((distance, favorable, comparison));
-            }
+fn flatten_unique_native_rows(
+    corpora: &[TacticQTrainingCorpus],
+) -> Result<Vec<NativeRow>, GeneralizedTacticEvidenceError> {
+    let mut unique = BTreeMap::<Digest, NativeRow>::new();
+    for (corpus_index, corpus) in corpora.iter().enumerate() {
+        if corpus.transitions.len() != corpus.routes.len()
+            || corpus.transitions.len() != corpus.episode_groups.len()
+        {
+            return Err(evidence_message("held-out corpus shape is detached"));
         }
-    }
-    candidates.sort_by(|left, right| {
-        left.0
-            .total_cmp(&right.0)
-            .then_with(|| right.1.actual.terminal.total_cmp(&left.1.actual.terminal))
-            .then_with(|| {
-                left.1
-                    .actual
-                    .duration_ticks
-                    .total_cmp(&right.1.actual.duration_ticks)
-            })
-            .then_with(|| {
-                left.1
-                    .transition
-                    .value_sample
-                    .action
-                    .option_id
-                    .cmp(&right.1.transition.value_sample.action.option_id)
-            })
-    });
-    candidates
-        .into_iter()
-        .next()
-        .map(|(_, favorable, comparison)| ("rolling_vs_non_rolling", favorable, comparison))
-        .ok_or_else(|| {
-            evidence_message(
-                "native corpora contain no outcome-superior comparable rolling/non-rolling pair",
-            )
-        })
-}
-
-fn straight_pair(
-    actions: &[HeldOutAction],
-) -> Result<(&'static str, &HeldOutAction, &HeldOutAction), GeneralizedTacticEvidenceError> {
-    let mut candidates = Vec::new();
-    for favorable in actions {
-        for comparison in actions {
-            let efficiency_gain = favorable.factors.planned_path_efficiency
-                - comparison.factors.planned_path_efficiency;
-            let turn_reduction =
-                comparison.factors.planned_turn_radians - favorable.factors.planned_turn_radians;
-            if favorable.action_sha256 != comparison.action_sha256
-                && comparable_source(favorable, comparison)
-                && favorable.factors.rolling == comparison.factors.rolling
-                && favorable.factors.planned_path_length > 0.0
-                && comparison.factors.planned_path_length > 0.0
-                && (efficiency_gain >= 0.002 || turn_reduction >= 0.05)
-                && favorable.actual.path_efficiency >= comparison.actual.path_efficiency + 0.05
-                && favorable.actual.speed_retention + 0.05 >= comparison.actual.speed_retention
-                && compare_generalized_tactic_outcomes(&favorable.actual, &comparison.actual)
-                    == Ordering::Greater
-            {
-                candidates.push((
-                    (favorable.actual.path_efficiency - comparison.actual.path_efficiency)
-                        + (favorable.actual.speed_retention - comparison.actual.speed_retention)
-                            .max(0.0),
-                    favorable,
-                    comparison,
-                ));
-            }
-        }
-    }
-    candidates.sort_by(|left, right| {
-        right.0.total_cmp(&left.0).then_with(|| {
-            left.1
-                .transition
+        for (transition, episode_group) in corpus.transitions.iter().zip(&corpus.episode_groups) {
+            transition
+                .validate()
+                .map_err(|error| evidence_message(error.to_string()))?;
+            let replay_sha256 = transition
+                .replay_identity_sha256()
+                .map_err(|error| evidence_message(error.to_string()))?;
+            let action_sha256 = transition
                 .value_sample
                 .action
-                .option_id
-                .cmp(&right.1.transition.value_sample.action.option_id)
-        })
-    });
-    candidates
-        .into_iter()
-        .next()
-        .map(|(_, favorable, comparison)| ("straight_vs_needless_turning", favorable, comparison))
-        .ok_or_else(|| {
-            evidence_message("native corpora contain no productive straight/turning pair")
-        })
-}
-
-fn collision_pair(
-    actions: &[HeldOutAction],
-) -> Result<(&'static str, &HeldOutAction, &HeldOutAction), GeneralizedTacticEvidenceError> {
-    let mut candidates = Vec::new();
-    for favorable in actions {
-        for comparison in actions {
-            if favorable.action_sha256 != comparison.action_sha256
-                && comparable_source(favorable, comparison)
-                && favorable.factors.rolling == comparison.factors.rolling
-                && favorable.actual.wall_contact_fraction <= 0.02
-                && comparison.actual.wall_contact_fraction
-                    >= favorable.actual.wall_contact_fraction + 0.15
-                && comparison.actual.momentum_loss_per_tick
-                    > favorable.actual.momentum_loss_per_tick
-                && compare_generalized_tactic_outcomes(&favorable.actual, &comparison.actual)
-                    == Ordering::Greater
-            {
-                candidates.push((
-                    factor_distance(favorable, comparison),
-                    favorable,
-                    comparison,
-                ));
-            }
+                .content_sha256()
+                .map_err(|error| evidence_message(error.to_string()))?;
+            unique.entry(replay_sha256).or_insert_with(|| NativeRow {
+                episode: EpisodeKey {
+                    corpus: corpus_index,
+                    group: *episode_group,
+                },
+                action_sha256,
+                transition: transition.clone(),
+            });
         }
     }
-    candidates.sort_by(|left, right| {
-        left.0.total_cmp(&right.0).then_with(|| {
-            left.1
-                .transition
-                .value_sample
-                .action
-                .option_id
-                .cmp(&right.1.transition.value_sample.action.option_id)
-        })
-    });
-    candidates
-        .into_iter()
-        .next()
-        .map(|(_, favorable, comparison)| {
-            ("clean_motion_vs_wall_momentum_loss", favorable, comparison)
-        })
-        .ok_or_else(|| evidence_message("native corpora contain no clean/wall-impact pair"))
+    Ok(unique.into_values().collect())
 }
 
-fn evaluate_pair(
-    category: &str,
-    favorable: &HeldOutAction,
-    comparison: &HeldOutAction,
-    transitions: &[OptionTransitionSample],
+fn controller_holdout(
+    episode_training: &[NativeRow],
+    episode_evaluation: &[NativeRow],
     goal_distance_feature: usize,
-) -> Result<GeneralizedTacticHeldOutComparison, GeneralizedTacticEvidenceError> {
-    let excluded = BTreeSet::from([favorable.action_sha256, comparison.action_sha256]);
-    let training = transitions
+    ablated_indices: &[usize],
+) -> Result<GeneralizedTacticHoldoutEvidence, GeneralizedTacticEvidenceError> {
+    let held_out_controllers = episode_evaluation
         .iter()
-        .filter_map(|transition| {
-            let digest = transition.value_sample.action.content_sha256().ok()?;
-            (!excluded.contains(&digest)).then_some(transition.clone())
+        .map(|row| row.action_sha256)
+        .collect::<BTreeSet<_>>();
+    let training = episode_training
+        .iter()
+        .filter(|row| !held_out_controllers.contains(&row.action_sha256))
+        .cloned()
+        .collect::<Vec<_>>();
+    evaluate_holdout(
+        "exact_controller_instances",
+        training,
+        episode_evaluation.to_vec(),
+        held_out_controllers.len(),
+        None,
+        goal_distance_feature,
+        ablated_indices,
+    )
+}
+
+fn contiguous_state_holdout(
+    episode_training: &[NativeRow],
+    episode_evaluation: &[NativeRow],
+    goal_distance_feature: usize,
+    ablated_indices: &[usize],
+) -> Result<GeneralizedTacticHoldoutEvidence, GeneralizedTacticEvidenceError> {
+    let mut distances = episode_training
+        .iter()
+        .chain(episode_evaluation)
+        .map(|row| row.transition.value_sample.state[goal_distance_feature])
+        .collect::<Vec<_>>();
+    distances.sort_by(f32::total_cmp);
+    distances.dedup_by(|left, right| left.to_bits() == right.to_bits());
+    if distances.len() < 5 {
+        return Err(evidence_message(
+            "native episodes do not span enough distinct states for a contiguous-region holdout",
+        ));
+    }
+    let lower = distances[distances.len() * 2 / 5];
+    let upper = distances[distances.len() * 3 / 5];
+    if lower >= upper {
+        return Err(evidence_message(
+            "contiguous state-region holdout has zero width",
+        ));
+    }
+    let outside = |row: &&NativeRow| {
+        let distance = row.transition.value_sample.state[goal_distance_feature];
+        distance < lower || distance > upper
+    };
+    let inside = |row: &&NativeRow| {
+        let distance = row.transition.value_sample.state[goal_distance_feature];
+        distance >= lower && distance <= upper
+    };
+    let training = episode_training
+        .iter()
+        .filter(outside)
+        .cloned()
+        .collect::<Vec<_>>();
+    let evaluation = episode_evaluation
+        .iter()
+        .filter(inside)
+        .cloned()
+        .collect::<Vec<_>>();
+    evaluate_holdout(
+        "contiguous_goal_distance_region",
+        training,
+        evaluation,
+        0,
+        Some(GeneralizedTacticStateRegion {
+            feature_index: goal_distance_feature,
+            lower_inclusive: lower,
+            upper_inclusive: upper,
+            ordering: "ascending_goal_planar_distance_middle_quintile".into(),
+        }),
+        goal_distance_feature,
+        ablated_indices,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_holdout(
+    kind: &str,
+    training: Vec<NativeRow>,
+    evaluation: Vec<NativeRow>,
+    exact_controller_instances_excluded: usize,
+    state_region: Option<GeneralizedTacticStateRegion>,
+    goal_distance_feature: usize,
+    ablated_indices: &[usize],
+) -> Result<GeneralizedTacticHoldoutEvidence, GeneralizedTacticEvidenceError> {
+    if training.len() < MINIMUM_EVALUATION_ROWS || evaluation.len() < MINIMUM_EVALUATION_ROWS {
+        return Err(evidence_message(format!(
+            "{kind} holdout requires at least {MINIMUM_EVALUATION_ROWS} training and evaluation transitions"
+        )));
+    }
+    let training = objective_targets(training)?;
+    let evaluation = objective_targets(evaluation)?;
+    let positives = evaluation
+        .iter()
+        .filter(|row| row.target.terminal_probability == 1.0)
+        .count();
+    if positives == 0 || positives == evaluation.len() {
+        return Err(evidence_message(format!(
+            "{kind} holdout requires both terminal-reaching and censored native outcomes"
+        )));
+    }
+
+    let authentic_model = fit_evidence_model(
+        &training,
+        goal_distance_feature,
+        &[],
+        LabelTreatment::Authentic,
+    )?;
+    let ablated_model = fit_evidence_model(
+        &training,
+        goal_distance_feature,
+        ablated_indices,
+        LabelTreatment::Authentic,
+    )?;
+    let shuffled_model = fit_evidence_model(
+        &training,
+        goal_distance_feature,
+        &[],
+        LabelTreatment::Shuffled,
+    )?;
+    let auxiliary_only_model = fit_evidence_model(
+        &training,
+        goal_distance_feature,
+        &[],
+        LabelTreatment::AuxiliaryOnly,
+    )?;
+
+    let authentic = prediction_metrics(&authentic_model, &evaluation, &[])?;
+    let typed_signal_ablation = prediction_metrics(&ablated_model, &evaluation, ablated_indices)?;
+    let shuffled_return_control = prediction_metrics(&shuffled_model, &evaluation, &[])?;
+    let auxiliary_only_control = prediction_metrics(&auxiliary_only_model, &evaluation, &[])?;
+
+    let authentic_beats_shuffled_return = better_than_control(&authentic, &shuffled_return_control);
+    let authentic_beats_auxiliary_only = better_than_control(&authentic, &auxiliary_only_control);
+    let typed_signals_improve_prediction =
+        improves_any_prediction(&authentic, &typed_signal_ablation);
+    let passed = authentic_beats_shuffled_return
+        && authentic_beats_auxiliary_only
+        && typed_signals_improve_prediction;
+
+    Ok(GeneralizedTacticHoldoutEvidence {
+        kind: kind.into(),
+        training_episode_groups: training
+            .iter()
+            .map(|row| row.row.episode)
+            .collect::<BTreeSet<_>>()
+            .len() as u64,
+        evaluation_episode_groups: evaluation
+            .iter()
+            .map(|row| row.row.episode)
+            .collect::<BTreeSet<_>>()
+            .len() as u64,
+        training_transitions: training.len() as u64,
+        evaluation_transitions: evaluation.len() as u64,
+        exact_controller_instances_excluded: exact_controller_instances_excluded as u64,
+        state_region,
+        authentic,
+        typed_signal_ablation,
+        shuffled_return_control,
+        auxiliary_only_control,
+        authentic_beats_shuffled_return,
+        authentic_beats_auxiliary_only,
+        typed_signals_improve_prediction,
+        passed,
+    })
+}
+
+fn objective_targets(
+    rows: Vec<NativeRow>,
+) -> Result<Vec<LabeledRow>, GeneralizedTacticEvidenceError> {
+    let mut outgoing = BTreeMap::<(EpisodeKey, Digest), Vec<usize>>::new();
+    for (index, row) in rows.iter().enumerate() {
+        outgoing
+            .entry((row.episode, row.transition.before_state_sha256))
+            .or_default()
+            .push(index);
+    }
+    let immediate = rows
+        .iter()
+        .map(|row| {
+            let ticks = row.transition.value_sample.duration_ticks as f32;
+            -NATIVE_TICK_COST * ticks
+                + if row.transition.value_sample.terminal {
+                    TERMINAL_REWARD
+                } else {
+                    0.0
+                }
         })
         .collect::<Vec<_>>();
-    let model = GeneralizedTacticValueModel::fit_transitions(&training, goal_distance_feature)
-        .map_err(|error| evidence_message(error.to_string()))?;
-    let descriptors = [
-        favorable.transition.value_sample.action.clone(),
-        comparison.transition.value_sample.action.clone(),
-    ];
-    let ranked = model
-        .rank(
-            &favorable.transition.value_sample.state,
-            &favorable.context,
-            &descriptors,
-        )
-        .map_err(|error| evidence_message(error.to_string()))?;
-    let predicted = |digest: Digest| {
-        ranked.iter().find_map(|estimate| {
-            estimate
-                .descriptor
-                .content_sha256()
-                .ok()
-                .filter(|actual| *actual == digest)
-                .map(|_| estimate.outcome)
+    let mut objective = immediate.clone();
+    let mut terminal = rows
+        .iter()
+        .map(|row| f32::from(row.transition.value_sample.terminal))
+        .collect::<Vec<_>>();
+    let mut first_hit_ticks = rows
+        .iter()
+        .map(|row| {
+            row.transition
+                .value_sample
+                .terminal
+                .then_some(row.transition.value_sample.duration_ticks as f32)
         })
-    };
-    let favorable_prediction = predicted(favorable.action_sha256)
-        .ok_or_else(|| evidence_message("favorable held-out prediction is absent"))?;
-    let comparison_prediction = predicted(comparison.action_sha256)
-        .ok_or_else(|| evidence_message("comparison held-out prediction is absent"))?;
-    let predicted_first_option_id = ranked
-        .first()
-        .ok_or_else(|| evidence_message("held-out ranking is empty"))?
-        .descriptor
-        .option_id
-        .clone();
-    let passed = ranked
-        .first()
-        .and_then(|estimate| estimate.descriptor.content_sha256().ok())
-        == Some(favorable.action_sha256);
-    Ok(GeneralizedTacticHeldOutComparison {
-        category: category.into(),
-        favorable: report_action(favorable, favorable_prediction),
-        comparison: report_action(comparison, comparison_prediction),
-        training_transitions_after_exclusion: training.len() as u64,
-        predicted_first_option_id,
-        passed,
+        .collect::<Vec<_>>();
+
+    for _ in 0..rows.len().min(MAXIMUM_BACKUP_ITERATIONS).max(1) {
+        let prior_objective = objective.clone();
+        let prior_terminal = terminal.clone();
+        let prior_ticks = first_hit_ticks.clone();
+        let mut changed = false;
+        for (index, row) in rows.iter().enumerate() {
+            if row.transition.value_sample.terminal {
+                continue;
+            }
+            let successor = outgoing
+                .get(&(row.episode, row.transition.after_state_sha256))
+                .and_then(|indices| {
+                    indices.iter().copied().max_by(|left, right| {
+                        prior_objective[*left].total_cmp(&prior_objective[*right])
+                    })
+                });
+            let (next_objective, next_terminal, next_ticks) = successor
+                .map(|next| {
+                    (
+                        prior_objective[next],
+                        prior_terminal[next],
+                        prior_ticks[next],
+                    )
+                })
+                .unwrap_or((0.0, 0.0, None));
+            let value = immediate[index] + next_objective;
+            let ticks =
+                next_ticks.map(|ticks| ticks + row.transition.value_sample.duration_ticks as f32);
+            changed |= (objective[index] - value).abs() > METRIC_EPSILON
+                || (terminal[index] - next_terminal).abs() > METRIC_EPSILON
+                || first_hit_ticks[index] != ticks;
+            objective[index] = value;
+            terminal[index] = next_terminal;
+            first_hit_ticks[index] = ticks;
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    if objective.iter().any(|value| !value.is_finite()) {
+        return Err(evidence_message(
+            "native objective backup produced a non-finite return",
+        ));
+    }
+    Ok(rows
+        .into_iter()
+        .zip(objective)
+        .zip(terminal)
+        .zip(first_hit_ticks)
+        .map(
+            |(((row, objective_return), terminal_probability), first_hit_ticks)| LabeledRow {
+                row,
+                target: ObjectiveTarget {
+                    terminal_probability,
+                    first_hit_ticks,
+                    objective_return,
+                },
+            },
+        )
+        .collect())
+}
+
+fn fit_evidence_model(
+    rows: &[LabeledRow],
+    goal_distance_feature: usize,
+    ablated_indices: &[usize],
+    treatment: LabelTreatment,
+) -> Result<GeneralizedTacticValueModel, GeneralizedTacticEvidenceError> {
+    let mut targets = rows.iter().map(|row| row.target).collect::<Vec<_>>();
+    match treatment {
+        LabelTreatment::Authentic => {}
+        LabelTreatment::Shuffled => {
+            let rotation = (targets.len() / 2).max(1);
+            targets.rotate_left(rotation);
+        }
+        LabelTreatment::AuxiliaryOnly => {
+            let count = targets.len() as f32;
+            let mean_terminal = targets
+                .iter()
+                .map(|target| target.terminal_probability)
+                .sum::<f32>()
+                / count;
+            let mean_return = targets
+                .iter()
+                .map(|target| target.objective_return)
+                .sum::<f32>()
+                / count;
+            let positive_ticks = targets
+                .iter()
+                .filter_map(|target| target.first_hit_ticks)
+                .collect::<Vec<_>>();
+            let mean_ticks = (!positive_ticks.is_empty())
+                .then(|| positive_ticks.iter().sum::<f32>() / positive_ticks.len() as f32);
+            targets.fill(ObjectiveTarget {
+                terminal_probability: mean_terminal,
+                first_hit_ticks: mean_ticks,
+                objective_return: mean_return,
+            });
+        }
+    }
+    let samples = rows
+        .iter()
+        .zip(targets)
+        .map(|(row, target)| {
+            let mut state_features = row.row.transition.value_sample.state.clone();
+            ablate_state(&mut state_features, ablated_indices);
+            let mut context = GeneralizedTacticContext::from_facts(&row.row.transition.before)
+                .map_err(|error| evidence_message(error.to_string()))?;
+            ablate_context(&mut context, ablated_indices);
+            let mut outcome = GeneralizedTacticOutcome::from_transition(
+                &row.row.transition,
+                goal_distance_feature,
+            )
+            .map_err(|error| evidence_message(error.to_string()))?;
+            outcome.terminal = target.terminal_probability;
+            outcome.reward = target.objective_return;
+            outcome.duration_ticks = target.first_hit_ticks.unwrap_or(0.0);
+            Ok(GeneralizedTacticTrainingSample {
+                state_features,
+                context,
+                action: row.row.transition.value_sample.action.clone(),
+                outcome,
+            })
+        })
+        .collect::<Result<Vec<_>, GeneralizedTacticEvidenceError>>()?;
+    GeneralizedTacticValueModel::fit(&samples).map_err(|error| evidence_message(error.to_string()))
+}
+
+fn prediction_metrics(
+    model: &GeneralizedTacticValueModel,
+    rows: &[LabeledRow],
+    ablated_indices: &[usize],
+) -> Result<GeneralizedTacticPredictionMetrics, GeneralizedTacticEvidenceError> {
+    let mut predictions = Vec::with_capacity(rows.len());
+    let mut brier = 0.0_f32;
+    let mut first_hit_error = 0.0_f32;
+    let mut first_hit_count = 0_u64;
+    let mut return_error = 0.0_f32;
+    let mut neighbor_distance = 0.0_f32;
+    for row in rows {
+        let mut state = row.row.transition.value_sample.state.clone();
+        ablate_state(&mut state, ablated_indices);
+        let mut context = GeneralizedTacticContext::from_facts(&row.row.transition.before)
+            .map_err(|error| evidence_message(error.to_string()))?;
+        ablate_context(&mut context, ablated_indices);
+        let prediction = model
+            .predict(&state, &context, &row.row.transition.value_sample.action)
+            .map_err(|error| evidence_message(error.to_string()))?;
+        let predicted_terminal = prediction.outcome.terminal.clamp(0.0, 1.0);
+        brier += (predicted_terminal - row.target.terminal_probability).powi(2);
+        return_error += (prediction.outcome.reward - row.target.objective_return).abs();
+        if let Some(actual_ticks) = row.target.first_hit_ticks {
+            first_hit_error += (prediction.outcome.duration_ticks - actual_ticks).abs();
+            first_hit_count += 1;
+        }
+        neighbor_distance += prediction.nearest_distance;
+        predictions.push(prediction.outcome.reward);
+    }
+    let count = rows.len() as f32;
+    let terminal_positive = rows
+        .iter()
+        .filter(|row| row.target.terminal_probability == 1.0)
+        .count() as u64;
+    Ok(GeneralizedTacticPredictionMetrics {
+        samples: rows.len() as u64,
+        terminal_positive,
+        terminal_negative: rows.len() as u64 - terminal_positive,
+        terminal_brier_score: brier / count,
+        first_hit_tick_mae: (first_hit_count > 0)
+            .then_some(first_hit_error / first_hit_count as f32),
+        objective_return_mae: return_error / count,
+        objective_pair_accuracy: objective_pair_accuracy(rows, &predictions),
+        mean_nearest_neighbor_distance: neighbor_distance / count,
     })
 }
 
-fn report_action(
-    action: &HeldOutAction,
-    predicted: GeneralizedTacticOutcome,
-) -> GeneralizedTacticHeldOutAction {
-    GeneralizedTacticHeldOutAction {
-        option_id: action.transition.value_sample.action.option_id.clone(),
-        action_sha256: action.action_sha256,
-        before_state_sha256: action.transition.before_state_sha256,
-        factors: action.factors,
-        actual: action.actual,
-        predicted,
+fn objective_pair_accuracy(rows: &[LabeledRow], predictions: &[f32]) -> Option<f32> {
+    let mut correct = 0.0_f32;
+    let mut compared = 0_u64;
+    'outer: for left in 0..rows.len() {
+        for right in (left + 1)..rows.len() {
+            let actual = rows[left]
+                .target
+                .objective_return
+                .total_cmp(&rows[right].target.objective_return);
+            if actual == std::cmp::Ordering::Equal {
+                continue;
+            }
+            let predicted = predictions[left].total_cmp(&predictions[right]);
+            correct += if actual == predicted {
+                1.0
+            } else if predicted == std::cmp::Ordering::Equal {
+                0.5
+            } else {
+                0.0
+            };
+            compared += 1;
+            if compared == 50_000 {
+                break 'outer;
+            }
+        }
+    }
+    (compared > 0).then_some(correct / compared as f32)
+}
+
+fn better_than_control(
+    authentic: &GeneralizedTacticPredictionMetrics,
+    control: &GeneralizedTacticPredictionMetrics,
+) -> bool {
+    let lower_error = authentic.objective_return_mae + METRIC_EPSILON
+        < control.objective_return_mae
+        && authentic.terminal_brier_score + METRIC_EPSILON < control.terminal_brier_score;
+    let pair_better = match (
+        authentic.objective_pair_accuracy,
+        control.objective_pair_accuracy,
+    ) {
+        (Some(authentic), Some(control)) => authentic > control + METRIC_EPSILON,
+        _ => false,
+    };
+    lower_error && pair_better
+}
+
+fn improves_any_prediction(
+    authentic: &GeneralizedTacticPredictionMetrics,
+    ablated: &GeneralizedTacticPredictionMetrics,
+) -> bool {
+    authentic.objective_return_mae + METRIC_EPSILON < ablated.objective_return_mae
+        || authentic.terminal_brier_score + METRIC_EPSILON < ablated.terminal_brier_score
+        || matches!(
+            (authentic.first_hit_tick_mae, ablated.first_hit_tick_mae),
+            (Some(full), Some(reduced)) if full + METRIC_EPSILON < reduced
+        )
+}
+
+fn typed_signal_ablation_indices(feature_names: &[String]) -> Vec<usize> {
+    feature_names
+        .iter()
+        .enumerate()
+        .filter_map(|(index, name)| {
+            (name.starts_with("history_")
+                || name.starts_with("trajectory_")
+                || name.starts_with("recent_option_")
+                || name.starts_with("velocity_")
+                || name.starts_with("forward_speed")
+                || name.starts_with("player_contacts")
+                || name.starts_with("collision_correction")
+                || name.starts_with("player_procedure")
+                || name.starts_with("player_mode")
+                || name.starts_with("yaw_")
+                || name.starts_with("camera_yaw_")
+                || name.starts_with("goal_history_")
+                || name.starts_with("goal_trajectory_")
+                || name == "goal_closing_speed")
+                .then_some(index)
+        })
+        .collect()
+}
+
+fn ablate_state(state: &mut [f32], indices: &[usize]) {
+    for index in indices {
+        state[*index] = 0.0;
     }
 }
 
-fn comparable_source(left: &HeldOutAction, right: &HeldOutAction) -> bool {
-    left.transition.before_state_sha256 == right.transition.before_state_sha256
-        && left.transition.value_sample.state == right.transition.value_sample.state
-}
-
-fn factor_distance(left: &HeldOutAction, right: &HeldOutAction) -> f32 {
-    let relative =
-        |left: f32, right: f32| (left - right).abs() / left.abs().max(right.abs()).max(1.0);
-    relative(
-        left.factors.planned_path_length,
-        right.factors.planned_path_length,
-    ) + relative(
-        left.factors.planned_displacement,
-        right.factors.planned_displacement,
-    ) + (left.factors.planned_path_efficiency - right.factors.planned_path_efficiency).abs()
-        + (left.factors.planned_turn_radians - right.factors.planned_turn_radians).abs()
-        + (left.factors.stick_magnitude - right.factors.stick_magnitude).abs()
-}
-
-fn action_geometry_sha256(
-    action: &OptionActionDescriptor,
-) -> Result<Digest, GeneralizedTacticEvidenceError> {
-    let mut geometry = action.clone();
-    geometry.option_id.clear();
-    geometry.parameters.retain(|name, _| {
-        !name.contains("button")
-            && name != "controller_sha256"
-            && name != "controller_program_sha256"
-    });
-    let bytes =
-        serde_cbor::to_vec(&geometry).map_err(|error| evidence_message(error.to_string()))?;
-    Ok(Digest(Sha256::digest(bytes).into()))
+fn ablate_context(context: &mut GeneralizedTacticContext, indices: &[usize]) {
+    if indices.is_empty() {
+        return;
+    }
+    context.velocity_x = 0.0;
+    context.velocity_z = 0.0;
+    context.forward_speed = 0.0;
+    context.yaw_sin = 0.0;
+    context.yaw_cos = 0.0;
+    context.camera_yaw_sin = 0.0;
+    context.camera_yaw_cos = 0.0;
+    context.contacts = 0.0;
+    context.collision_correction = 0.0;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -451,52 +792,43 @@ fn evidence_message(message: impl Into<String>) -> GeneralizedTacticEvidenceErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dusklight_control::option_execution::{OptionParameter, OptionType};
 
-    fn controller(option_id: &str, button_mask: Option<u64>) -> OptionActionDescriptor {
-        let mut parameters = BTreeMap::from([
-            (
-                "command_target_first_x".into(),
-                OptionParameter::F32Bits(10.0_f32.to_bits()),
-            ),
-            (
-                "command_target_last_x".into(),
-                OptionParameter::F32Bits(100.0_f32.to_bits()),
-            ),
-            (
-                "controller_program_sha256".into(),
-                OptionParameter::Text("controller-identity".into()),
-            ),
-        ]);
-        if let Some(button_mask) = button_mask {
-            parameters.insert(
-                "command_button_mask".into(),
-                OptionParameter::Unsigned(button_mask),
-            );
-            parameters.insert(
-                "button_pulse_period_ticks".into(),
-                OptionParameter::Unsigned(23),
-            );
-        }
-        OptionActionDescriptor {
-            option_id: option_id.into(),
-            option_type: OptionType::Custom("reactive_controller".into()),
-            parameters,
-        }
+    #[test]
+    fn typed_signal_ablation_keeps_position_and_goal_distance() {
+        let encoder = GoalConditionedTacticFeatureEncoder::new([1.0, 2.0, 3.0]).unwrap();
+        let indices = typed_signal_ablation_indices(&encoder.feature_names);
+        let names = indices
+            .iter()
+            .map(|index| encoder.feature_names[*index].as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(names.contains("trajectory_straightness"));
+        assert!(names.contains("recent_option_momentum_loss_per_tick"));
+        assert!(names.contains("player_procedure"));
+        assert!(names.contains("goal_closing_speed"));
+        assert!(!names.contains("player_x"));
+        assert!(!names.contains("goal_planar_distance"));
     }
 
     #[test]
-    fn geometry_identity_ignores_evidence_and_button_schedule_identity() {
-        let plain = controller("plain", None);
-        let rolling = controller("rolling", Some(0x0100));
+    fn controls_must_improve_errors_and_pair_ordering() {
+        let authentic = GeneralizedTacticPredictionMetrics {
+            samples: 10,
+            terminal_positive: 5,
+            terminal_negative: 5,
+            terminal_brier_score: 0.1,
+            first_hit_tick_mae: Some(2.0),
+            objective_return_mae: 3.0,
+            objective_pair_accuracy: Some(0.8),
+            mean_nearest_neighbor_distance: 0.1,
+        };
+        let mut control = authentic.clone();
+        control.terminal_brier_score = 0.2;
+        control.objective_return_mae = 4.0;
+        control.objective_pair_accuracy = Some(0.6);
+        assert!(better_than_control(&authentic, &control));
 
-        assert_ne!(
-            plain.content_sha256().unwrap(),
-            rolling.content_sha256().unwrap()
-        );
-        assert_eq!(
-            action_geometry_sha256(&plain).unwrap(),
-            action_geometry_sha256(&rolling).unwrap()
-        );
+        control.objective_pair_accuracy = Some(0.9);
+        assert!(!better_than_control(&authentic, &control));
     }
 }
