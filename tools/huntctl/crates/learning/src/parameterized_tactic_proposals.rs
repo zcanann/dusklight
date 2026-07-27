@@ -172,7 +172,7 @@ pub fn propose_parameterized_tactics(
         PI,
     ];
     let durations = [4_u32, 8, 12, 16];
-    for (index, offset) in heading_offsets.into_iter().enumerate() {
+    for (index, offset) in heading_offsets.iter().copied().enumerate() {
         let magnitude = if index == 0 || ((draw >> index) & 1) != 0 {
             127
         } else {
@@ -218,18 +218,33 @@ pub fn propose_parameterized_tactics(
         )?;
     }
 
-    for recovery_frames in [3_u32, 7] {
-        // RollOptionPlan's camera-relative +90 semantic emits positive raw
-        // stick X, while world-heading controllers use the game's -sin X
-        // convention. Negate the world-relative heading so roll, seek, curve,
-        // and maintained-heading instances all command the same direction.
-        let direction_degrees = (-central_heading * 180.0 / PI).round().clamp(-180.0, 180.0) as i16;
-        insert(
-            &mut entries,
-            ParameterizedTacticFamily::Roll,
-            TacticAssetSource::Roll(RollOptionPlan::new(direction_degrees, 127, recovery_frames)),
-            context.maximum_ticks,
-        )?;
+    // Roll is an atomic prompted action layered over directional movement.
+    // Expose the same generic direction lattice as ordinary movement so the
+    // learner can decide both whether and where to roll. This is state-local
+    // applicability, not a pre-authored cadence or route composition.
+    for (index, offset) in heading_offsets.iter().copied().enumerate() {
+        let heading = if index == 0 {
+            goal_heading
+        } else {
+            normalize_angle(central_heading + offset)
+        };
+        for recovery_frames in [3_u32, 7] {
+            // RollOptionPlan's camera-relative +90 semantic emits positive raw
+            // stick X, while world-heading controllers use the game's -sin X
+            // convention. Negate the world-relative heading so roll, seek,
+            // curve, and maintained-heading instances command one direction.
+            let direction_degrees = (-heading * 180.0 / PI).round().clamp(-180.0, 180.0) as i16;
+            insert(
+                &mut entries,
+                ParameterizedTacticFamily::Roll,
+                TacticAssetSource::Roll(RollOptionPlan::new(
+                    direction_degrees,
+                    127,
+                    recovery_frames,
+                )),
+                context.maximum_ticks,
+            )?;
+        }
     }
 
     insert(
@@ -489,9 +504,11 @@ mod tests {
             .map(|descriptor| descriptor.parameters.get("direction_degrees").cloned())
             .collect::<Vec<_>>();
 
-        assert!(!roll_directions.is_empty());
-        assert!(roll_directions.iter().all(|direction| {
-            matches!(direction, Some(OptionParameter::Signed(degrees)) if *degrees < 0)
-        }));
+        assert_eq!(roll_directions.len(), 16);
+        assert!(
+            roll_directions
+                .iter()
+                .any(|direction| matches!(direction, Some(OptionParameter::Signed(-90))))
+        );
     }
 }
