@@ -432,11 +432,9 @@ pub fn compare_generalized_tactic_outcomes(
                 .stalled_command_fraction
                 .total_cmp(&left.stalled_command_fraction)
         })
-        .then_with(|| {
-            right
-                .wall_contact_fraction
-                .total_cmp(&left.wall_contact_fraction)
-        })
+        // Contact is geometry context, not a cost by itself. A shallow wall
+        // clip may preserve full speed; penalize only its measured effects
+        // below (momentum loss and collision correction).
         .then_with(|| {
             right
                 .momentum_loss_per_tick
@@ -1014,6 +1012,35 @@ mod tests {
         assert_eq!(
             compare_generalized_tactic_outcomes(&faster, &slower_but_cleaner),
             std::cmp::Ordering::Greater
+        );
+    }
+
+    #[test]
+    fn wall_contact_is_neutral_without_measured_motion_loss() {
+        let clean = GeneralizedTacticOutcome {
+            goal_progress_per_tick: 20.0,
+            path_efficiency: 0.98,
+            speed_retention: 0.95,
+            duration_ticks: 100.0,
+            ..GeneralizedTacticOutcome::default()
+        };
+        let benign_clip = GeneralizedTacticOutcome {
+            wall_contact_fraction: 0.5,
+            ..clean
+        };
+        let slowing_impact = GeneralizedTacticOutcome {
+            momentum_loss_per_tick: 1.0,
+            collision_correction_per_tick: 0.5,
+            ..benign_clip
+        };
+
+        assert_eq!(
+            compare_generalized_tactic_outcomes(&benign_clip, &clean),
+            std::cmp::Ordering::Equal
+        );
+        assert_eq!(
+            compare_generalized_tactic_outcomes(&slowing_impact, &clean),
+            std::cmp::Ordering::Less
         );
     }
 
