@@ -562,7 +562,6 @@ fn execute_native_generic_tactic<W: PersistentTacticBatchWorker>(
             candidate_prefix_ticks,
             checkpoint_source,
             retain_candidate_checkpoint,
-            stepper,
             duration,
             termination,
             program,
@@ -799,7 +798,6 @@ fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
     candidate_prefix_ticks: usize,
     checkpoint_source: Option<&NativeTacticCheckpointSource>,
     retain_candidate_checkpoint: bool,
-    mut stepper: NativeGenericTacticStepper,
     duration: TacticDurationBounds,
     termination: OptionCondition,
     program: ControllerProgram,
@@ -844,26 +842,50 @@ fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
     };
     let mut queries = Vec::with_capacity(duration.maximum_ticks as usize);
     let option_steps = &episode.steps[candidate_prefix_ticks..];
+    // The serialized DUSKCTRL program is the executable action sent to the
+    // native worker. Replay that same contract here instead of independently
+    // regenerating PAD values through NativeGenericTacticStepper. The latter
+    // remains the progressive-audit executor; using it to audit a compiled
+    // program duplicated trigonometry and rounding, so rare valid controllers
+    // could differ by one stick unit and be rejected after native execution.
+    let mut controller_stepper = ControllerProgramStepper::new(program)
+        .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
+    let mut observation = controller_observation_from_facts(before)?;
     let mut stepper_end = None;
     for (index, native_step) in option_steps.iter().enumerate() {
-        let observation = NativeTacticObservation::from_native(&native_step.pre_input)
+        let realized = controller_stepper
+            .step(&observation)
             .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
-        let realized = stepper
-            .step(observation)
-            .map_err(|error| NativeTacticWorkerError::Observation(error.to_string()))?;
-        if !same_pad(native_step.chosen_pad, realized.frame.pads[0])
-            || !same_pad(native_step.consumed_pad, realized.frame.pads[0])
-        {
-            return Err(NativeTacticWorkerError::PadMismatch);
+        if matches!(realized.end, Some(ControllerRuntimeEnd::TargetLost { .. })) {
+            return Err(NativeTacticWorkerError::DetachedResult(
+                "native generic controller lost an undeclared target",
+            ));
         }
-        if realized.end_reason.is_some() && index + 1 != option_steps.len() {
+        let frame = realized.frame.ok_or_else(|| {
+            NativeTacticWorkerError::Observation(
+                "native generic controller returned neither PAD nor stopping condition".into(),
+            )
+        })?;
+        if !same_pad(native_step.chosen_pad, frame.pads[0])
+            || !same_pad(native_step.consumed_pad, frame.pads[0])
+        {
+            return Err(NativeTacticWorkerError::Observation(format!(
+                "native generic controller PAD mismatch at local tick {index}: chosen {:?}, consumed {:?}, replayed {:?}",
+                native_step.chosen_pad, native_step.consumed_pad, frame.pads[0]
+            )));
+        }
+        if realized.end.is_some() && index + 1 != option_steps.len() {
             return Err(NativeTacticWorkerError::DetachedResult(
                 "native controller continued after the tactic stopped",
             ));
         }
-        stepper_end = realized.end_reason;
-        option_tape.frames.push(realized.frame);
+        stepper_end = realized.end;
+        option_tape.frames.push(frame);
         queries.push(realized.query);
+        if index + 1 != option_steps.len() {
+            observation =
+                controller_observation_from_post_simulation(&native_step.post_simulation)?;
+        }
     }
 
     let (end_reason, cancellation_conditions) = if episode.success {
@@ -875,9 +897,17 @@ fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
         )
     } else {
         (
-            stepper_end.ok_or(NativeTacticWorkerError::DetachedResult(
+            match stepper_end.ok_or(NativeTacticWorkerError::DetachedResult(
                 "native controller stopped before its bounded tactic",
-            ))?,
+            ))? {
+                ControllerRuntimeEnd::TargetReached { .. } => OptionEndReason::Terminated,
+                ControllerRuntimeEnd::MaximumDuration => OptionEndReason::MaximumDuration,
+                ControllerRuntimeEnd::TargetLost { .. } => {
+                    return Err(NativeTacticWorkerError::DetachedResult(
+                        "native generic controller lost an undeclared target",
+                    ));
+                }
+            },
             Vec::new(),
         )
     };
@@ -913,7 +943,7 @@ fn execute_native_generic_controller<W: PersistentTacticBatchWorker>(
         Some(loaded_episode),
         queries
             .into_iter()
-            .map(TacticRuntimeQuery::NativeGeneric)
+            .map(TacticRuntimeQuery::ReactiveController)
             .collect(),
     )
 }
