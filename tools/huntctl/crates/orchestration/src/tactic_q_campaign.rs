@@ -206,6 +206,8 @@ pub struct TacticFrontierAcquisition {
     pub reward: f32,
     pub best_mean_q: Option<f64>,
     pub maximum_ensemble_variance: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generalized_nearest_distance: Option<f32>,
     pub novelty_rank: u64,
     pub replayed_prefix_ticks: u64,
 }
@@ -847,21 +849,26 @@ impl TacticQCampaign {
     /// Return the authenticated root plus one learned frontier acquisition.
     ///
     /// Coverage is the first ordering key so an already expanded choke cannot
-    /// absorb the campaign. Within the least-expanded tier, terminal evidence,
-    /// observed reward, critic uncertainty, critic value, archive novelty, and
-    /// route cost determine the next branch. All values are projections over
-    /// retained native transitions; none grants restore or terminal authority.
-    pub fn sample_root_and_ranked_frontier<E, F>(
+    /// absorb the campaign. Within the least-expanded tier, shared predicted
+    /// future return over the actions executable at the endpoint determines
+    /// exploitation; model distance and exact-critic variance provide generic
+    /// acquisition signals. The last edge's immediate cost is evidence only,
+    /// not a myopic frontier-ordering rule.
+    pub fn sample_root_and_ranked_frontier<E, AE, F, A>(
         &self,
         seed: u64,
         round: u64,
         reference: &[TacticEndpointDescriptor],
         maximum_route_frames: usize,
+        goal_distance_feature: usize,
         encode: &F,
+        applicable_actions: &A,
     ) -> Result<[TacticCampaignBranch; 2], TacticQCampaignError>
     where
         E: fmt::Display,
+        AE: fmt::Display,
         F: Fn(&FactSnapshot) -> Result<Vec<f32>, E>,
+        A: Fn(&FactSnapshot) -> Result<Vec<OptionActionDescriptor>, AE>,
     {
         let [root, _] =
             self.sample_root_and_frontier(seed, round, reference, maximum_route_frames)?;
@@ -879,6 +886,16 @@ impl TacticQCampaign {
         }
         let tie_offset = seeded_frontier_index(seed, round, choices.len());
         let choice_count = choices.len();
+        let generalized_model = (self.training_replay.len() >= 2)
+            .then(|| {
+                GeneralizedTacticValueModel::fit_fitted_q_transitions(
+                    &self.training_replay,
+                    goal_distance_feature,
+                    self.model_config.fitted_q.iterations,
+                    self.model_config.fitted_q.discount,
+                )
+            })
+            .transpose()?;
         let mut ranked = choices
             .into_iter()
             .enumerate()
@@ -890,21 +907,49 @@ impl TacticQCampaign {
                         "frontier encoding is empty or non-finite".into(),
                     ));
                 }
-                let estimates = self
-                    .model
-                    .as_ref()
-                    .map(|model| model.rank_options(&features))
-                    .transpose()?;
-                let best_mean_q = estimates
-                    .as_ref()
-                    .and_then(|values| values.first())
-                    .map(|value| value.mean_q);
-                let maximum_ensemble_variance = estimates.as_ref().and_then(|values| {
-                    values
-                        .iter()
-                        .map(|value| value.ensemble_variance)
-                        .max_by(f64::total_cmp)
-                });
+                let applicable = applicable_actions(&entry.transition.after)
+                    .map_err(|error| TacticQCampaignError::Features(error.to_string()))?;
+                if applicable.is_empty() {
+                    return Err(TacticQCampaignError::InvalidState(
+                        "frontier has no applicable executable actions".into(),
+                    ));
+                }
+                let (best_mean_q, maximum_ensemble_variance, generalized_nearest_distance) =
+                    if let Some(model) = generalized_model.as_ref() {
+                        let context =
+                            GeneralizedTacticContext::from_facts(&entry.transition.after)?;
+                        let estimates = model.rank(&features, &context, &applicable)?;
+                        (
+                            estimates
+                                .first()
+                                .map(|value| f64::from(value.outcome.reward)),
+                            None,
+                            estimates
+                                .iter()
+                                .map(|value| value.nearest_distance)
+                                .max_by(f32::total_cmp),
+                        )
+                    } else {
+                        let estimates = self
+                            .model
+                            .as_ref()
+                            .map(|model| model.rank_available_options(&features, &applicable))
+                            .transpose()?;
+                        (
+                            estimates
+                                .as_ref()
+                                .and_then(|values| values.ranked.first())
+                                .map(|value| value.mean_q),
+                            estimates.as_ref().and_then(|values| {
+                                values
+                                    .ranked
+                                    .iter()
+                                    .map(|value| value.ensemble_variance)
+                                    .max_by(f64::total_cmp)
+                            }),
+                            None,
+                        )
+                    };
                 let expansion_count = self
                     .replay
                     .iter()
@@ -927,6 +972,7 @@ impl TacticQCampaign {
                     reward: entry.transition.value_sample.reward,
                     best_mean_q,
                     maximum_ensemble_variance,
+                    generalized_nearest_distance,
                     novelty_rank: novelty_rank as u64,
                     replayed_prefix_ticks,
                 };
@@ -935,25 +981,9 @@ impl TacticQCampaign {
             })
             .collect::<Result<Vec<_>, TacticQCampaignError>>()?;
         ranked.sort_by(|left, right| {
-            left.1
-                .expansion_count
-                .cmp(&right.1.expansion_count)
-                .then_with(|| right.1.terminal.cmp(&left.1.terminal))
-                .then_with(|| right.1.reward.total_cmp(&left.1.reward))
-                .then_with(|| {
-                    option_f64(right.1.maximum_ensemble_variance)
-                        .total_cmp(&option_f64(left.1.maximum_ensemble_variance))
-                })
-                .then_with(|| {
-                    option_f64(right.1.best_mean_q).total_cmp(&option_f64(left.1.best_mean_q))
-                })
+            compare_frontier_acquisition(&left.1, &right.1)
                 .then_with(|| left.2.cmp(&right.2))
                 .then_with(|| left.1.novelty_rank.cmp(&right.1.novelty_rank))
-                .then_with(|| {
-                    left.1
-                        .replayed_prefix_ticks
-                        .cmp(&right.1.replayed_prefix_ticks)
-                })
                 .then_with(|| left.0.descriptor.cmp(&right.0.descriptor))
         });
         let (selected, acquisition, _) = ranked
@@ -1969,6 +1999,26 @@ fn option_f64(value: Option<f64>) -> f64 {
     value.unwrap_or(f64::NEG_INFINITY)
 }
 
+fn compare_frontier_acquisition(
+    left: &TacticFrontierAcquisition,
+    right: &TacticFrontierAcquisition,
+) -> std::cmp::Ordering {
+    left.expansion_count
+        .cmp(&right.expansion_count)
+        .then_with(|| right.terminal.cmp(&left.terminal))
+        .then_with(|| option_f64(right.best_mean_q).total_cmp(&option_f64(left.best_mean_q)))
+        .then_with(|| {
+            option_f64(right.generalized_nearest_distance.map(f64::from)).total_cmp(&option_f64(
+                left.generalized_nearest_distance.map(f64::from),
+            ))
+        })
+        .then_with(|| {
+            option_f64(right.maximum_ensemble_variance)
+                .total_cmp(&option_f64(left.maximum_ensemble_variance))
+        })
+        .then_with(|| left.replayed_prefix_ticks.cmp(&right.replayed_prefix_ticks))
+}
+
 fn ensure_blueprint_proposal(
     ranking: &LiveTacticRanking,
     maximum_proposals: usize,
@@ -2558,6 +2608,31 @@ mod tests {
     }
 
     #[test]
+    fn frontier_learning_value_precedes_the_last_edges_immediate_cost() {
+        let valuable = TacticFrontierAcquisition {
+            expansion_count: 0,
+            terminal: false,
+            reward: -0.4,
+            best_mean_q: Some(10.0),
+            maximum_ensemble_variance: None,
+            generalized_nearest_distance: Some(0.1),
+            novelty_rank: 1,
+            replayed_prefix_ticks: 40,
+        };
+        let cheap_dead_end = TacticFrontierAcquisition {
+            reward: -0.04,
+            best_mean_q: Some(1.0),
+            replayed_prefix_ticks: 4,
+            ..valuable.clone()
+        };
+
+        assert_eq!(
+            compare_frontier_acquisition(&valuable, &cheap_dead_end),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
     fn novelty_identity_ignores_bookkeeping_and_micro_motion_but_not_new_cells() {
         let shard = NativeEpisodeShard::decode(include_bytes!(
             "../../../../../tests/fixtures/automation/native_episode_v28.dseps"
@@ -3088,7 +3163,17 @@ mod tests {
         assert_eq!(root_branch.logical_frontier.replayed_prefix_ticks, 0);
         assert!(frontier_branch.logical_frontier.replayed_prefix_ticks > 0);
         let [ranked_root, ranked_frontier] = restored
-            .sample_root_and_ranked_frontier(5, 0, &[], usize::MAX, &encode)
+            .sample_root_and_ranked_frontier(
+                5,
+                0,
+                &[],
+                usize::MAX,
+                0,
+                &encode,
+                &|_: &FactSnapshot| {
+                    Ok::<_, &'static str>(catalog.option_descriptors().cloned().collect())
+                },
+            )
             .unwrap();
         assert!(ranked_root.acquisition.is_none());
         let acquisition = ranked_frontier.acquisition.as_ref().unwrap();
@@ -3098,7 +3183,10 @@ mod tests {
             ranked_frontier.logical_frontier.replayed_prefix_ticks
         );
         assert!(acquisition.best_mean_q.is_some());
-        assert!(acquisition.maximum_ensemble_variance.is_some());
+        assert!(
+            acquisition.maximum_ensemble_variance.is_some()
+                || acquisition.generalized_nearest_distance.is_some()
+        );
         let mut model_only = TacticQCampaign::resume(restored.checkpoint().unwrap()).unwrap();
         model_only
             .training_episode_groups

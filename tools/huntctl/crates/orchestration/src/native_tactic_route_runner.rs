@@ -34,7 +34,7 @@ use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
 use dusklight_learning::learner_state::LearnerState;
 use dusklight_learning::option_transition::OptionTransitionSample;
-use dusklight_learning::option_values::OptionValueConfig;
+use dusklight_learning::option_values::{OptionActionDescriptor, OptionValueConfig};
 use dusklight_learning::parameterized_tactic_proposals::{
     ParameterizedTacticFeedback, ParameterizedTacticProposalCatalog,
     ParameterizedTacticProposalContext, parameterized_tactic_family_schema_sha256,
@@ -1959,6 +1959,50 @@ fn parameterized_catalog_for_state(
     Ok(proposals)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn applicable_parameterized_descriptors_for_state(
+    campaign: &TacticQCampaign,
+    registry: &FactRegistry,
+    seed: u64,
+    decision_index: u64,
+    state: &FactSnapshot,
+    encoder: &GoalConditionedTacticFeatureEncoder,
+    maximum_ticks: u32,
+    goal_route_catalog: &TacticAssetCatalog,
+    action_schema_sha256: Digest,
+) -> Result<Vec<OptionActionDescriptor>, NativeTacticRouteRunError> {
+    let proposals = parameterized_catalog_for_state(
+        seed,
+        decision_index,
+        state,
+        encoder,
+        maximum_ticks,
+        parameterized_feedback_for_state(campaign, state, encoder)?,
+        goal_route_catalog,
+        action_schema_sha256,
+    )?;
+    let learner = LearnerState::build(
+        state.clone(),
+        registry,
+        &proposals.catalog,
+        &proposals.blueprints,
+        |_| true,
+    )
+    .map_err(route_error)?;
+    let descriptors = learner
+        .action_mask
+        .into_iter()
+        .filter(|choice| choice.applicable)
+        .map(|choice| choice.descriptor)
+        .collect::<Vec<_>>();
+    if descriptors.is_empty() {
+        return Err(route_message(
+            "frontier proposal catalog has no applicable executable tactics",
+        ));
+    }
+    Ok(descriptors)
+}
+
 fn parameterized_feedback_for_state(
     campaign: &TacticQCampaign,
     state: &FactSnapshot,
@@ -3080,7 +3124,21 @@ fn run_seed(
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
+                    encoder.goal_distance_feature(),
                     &encode,
+                    &|state| {
+                        applicable_parameterized_descriptors_for_state(
+                            &campaign,
+                            registry,
+                            seed,
+                            campaign.decision_index,
+                            state,
+                            encoder,
+                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                            goal_route_catalog,
+                            action_schema_sha256,
+                        )
+                    },
                 ),
                 TacticProposalPolicy::RandomValid | TacticProposalPolicy::StructuredNonLearning => {
                     campaign.sample_root_and_frontier(
@@ -3213,7 +3271,21 @@ fn run_seed(
                     frontier_sampling_round(episode),
                     &[],
                     maximum_frontier_frames,
+                    encoder.goal_distance_feature(),
                     &encode,
+                    &|state| {
+                        applicable_parameterized_descriptors_for_state(
+                            &campaign,
+                            registry,
+                            seed,
+                            campaign.decision_index,
+                            state,
+                            encoder,
+                            u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
+                            goal_route_catalog,
+                            action_schema_sha256,
+                        )
+                    },
                 ),
                 TacticProposalPolicy::RandomValid | TacticProposalPolicy::StructuredNonLearning => {
                     campaign.sample_root_and_frontier(
