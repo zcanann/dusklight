@@ -788,15 +788,17 @@ pub fn ensure_route_composition_refinement(
 
 const MAX_GENERALIZED_VALUE_ACQUISITION_RANKS: usize = 128;
 
-/// Reserve one acquisition slot for a partitioned, high-ranked unseen
+/// Reserve one policy slot for a partitioned, high-ranked applicable
 /// controller from a shared state-action outcome model.
 ///
 /// The caller supplies descriptors in predicted-outcome order. This selector
 /// deliberately knows nothing about controller IDs, route families, or
 /// hand-authored tactic semantics. Parallel workers partition the top-ranked
-/// window instead of all evaluating rank zero from the same shared model.
+/// window instead of all evaluating rank zero from the same shared model. A
+/// supported action remains eligible: learning would not be an exploit-capable
+/// policy if evidence that an action worked made that action ineligible.
 pub fn ensure_generalized_value_acquisition(
-    ranked_unseen: &[OptionActionDescriptor],
+    ranked_applicable: &[OptionActionDescriptor],
     acquisition_partition: u64,
     maximum_proposals: usize,
     proposals: &mut Vec<SelectedTactic>,
@@ -808,19 +810,21 @@ pub fn ensure_generalized_value_acquisition(
             Err(TacticExplorationError::InvalidInput)
         };
     }
-    let candidates = ranked_unseen
+    let candidates = ranked_applicable
         .iter()
-        .filter(|descriptor| {
-            !proposals
-                .iter()
-                .any(|proposal| &proposal.descriptor == *descriptor)
-        })
         .take(MAX_GENERALIZED_VALUE_ACQUISITION_RANKS)
         .collect::<Vec<_>>();
     if candidates.is_empty() {
         return Ok(());
     }
     let descriptor = candidates[(acquisition_partition % candidates.len() as u64) as usize];
+    if let Some(existing) = proposals
+        .iter_mut()
+        .find(|proposal| proposal.descriptor == *descriptor)
+    {
+        existing.reason = TacticSelectionReason::GeneralizedValue;
+        return Ok(());
+    }
     let mut acquisition = proposals[0].clone();
     acquisition.descriptor = (*descriptor).clone();
     acquisition.reason = TacticSelectionReason::GeneralizedValue;
@@ -2691,7 +2695,7 @@ mod tests {
     }
 
     #[test]
-    fn generalized_value_reserves_an_unseen_acquisition_without_displacing_control() {
+    fn generalized_value_can_confirm_a_supported_control_or_add_an_applicable_peer() {
         let control = descriptor("known/control", OptionType::Move);
         let duplicate = control.clone();
         let held_out_roll = descriptor("unseen/roll", OptionType::Roll);
@@ -2708,6 +2712,19 @@ mod tests {
         ensure_generalized_value_acquisition(
             &[duplicate, held_out_roll.clone(), fallback],
             0,
+            2,
+            &mut proposals,
+        )
+        .unwrap();
+
+        assert_eq!(proposals[0].descriptor, control);
+        assert_eq!(proposals[0].reason, TacticSelectionReason::GeneralizedValue);
+        assert_eq!(proposals.len(), 1);
+
+        proposals[0].reason = TacticSelectionReason::Greedy;
+        ensure_generalized_value_acquisition(
+            &[control.clone(), held_out_roll.clone()],
+            1,
             2,
             &mut proposals,
         )

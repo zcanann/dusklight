@@ -1511,13 +1511,19 @@ impl TacticQCampaign {
                 self.model_config.fitted_q.discount,
             )?;
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
-            let ranked_unseen = model
-                .rank(&features, &context, &state_untried)?
+            let applicable_descriptors = ranking
+                .choices
+                .iter()
+                .filter(|choice| choice.applicable)
+                .map(|choice| choice.descriptor.clone())
+                .collect::<Vec<_>>();
+            let ranked_applicable = model
+                .rank(&features, &context, &applicable_descriptors)?
                 .into_iter()
                 .map(|estimate| estimate.descriptor)
                 .collect::<Vec<_>>();
             ensure_generalized_value_acquisition(
-                &ranked_unseen,
+                &ranked_applicable,
                 acquisition_partition,
                 maximum_proposals,
                 &mut proposals,
