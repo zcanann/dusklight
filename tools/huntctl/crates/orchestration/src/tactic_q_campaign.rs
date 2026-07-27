@@ -25,8 +25,8 @@ use dusklight_learning::live_tactic_catalog::{
 };
 use dusklight_learning::option_transition::{OptionTransitionError, OptionTransitionSample};
 use dusklight_learning::option_values::{
-    AvailableOptionRanking, OptionActionDescriptor, OptionValueBatch, OptionValueConfig,
-    OptionValueError, OptionValueModel,
+    AvailableOptionRanking, MAX_OPTION_ACTIONS, OptionActionDescriptor, OptionValueBatch,
+    OptionValueConfig, OptionValueError, OptionValueModel,
 };
 use dusklight_learning::reward_shaping::{ShapingError, TacticRewardBreakdown, TacticRewardSpec};
 use dusklight_learning::tactic_asset::{TacticAssetCatalog, TacticAssetDescription};
@@ -1897,19 +1897,14 @@ impl TacticQCampaign {
             training_replay_routes.push(outcome.route_tape.clone());
             training_episode_groups.push(self.episode_group);
         }
-        let model = if refit_model {
-            let feature_width = transition.value_sample.state.len();
-            let batch = OptionValueBatch::new(
+        let model_update = if refit_model {
+            Some(replay_model(
                 self.feature_schema_sha256,
                 self.objective_sha256,
-                feature_width,
-                training_replay
-                    .iter()
-                    .map(|sample| sample.value_sample.clone())
-                    .collect(),
-                training_episode_groups.clone(),
-            )?;
-            Some(OptionValueModel::fit_batch(&batch, &self.model_config)?)
+                &training_replay,
+                &training_episode_groups,
+                &self.model_config,
+            )?)
         } else {
             None
         };
@@ -1927,8 +1922,12 @@ impl TacticQCampaign {
         self.training_replay_routes = training_replay_routes;
         self.training_episode_groups = training_episode_groups;
         self.training_identities = training_identities;
-        if let Some(model) = model {
-            self.model = Some(model);
+        if let Some(model) = model_update {
+            // Exact-descriptor FQI is a small-data control, not the scalable
+            // action representation. Clear it once a dynamic controller
+            // universe exceeds its categorical capacity; the shared
+            // state-action outcome model continues to consume every row.
+            self.model = model;
         }
         self.decision_index =
             self.decision_index
@@ -2264,6 +2263,13 @@ fn replay_model(
     let Some(first) = replay.first() else {
         return Ok(None);
     };
+    let exact_actions = replay
+        .iter()
+        .map(|transition| transition.value_sample.action.option_id.as_str())
+        .collect::<BTreeSet<_>>();
+    if exact_actions.len() > MAX_OPTION_ACTIONS {
+        return Ok(None);
+    }
     let batch = OptionValueBatch::new(
         feature_schema_sha256,
         objective_sha256,
