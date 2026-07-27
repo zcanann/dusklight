@@ -43,25 +43,38 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P6 - Beat the authenticated Ordon incumbent
 
-- [x] Replace exact-descriptor option memorization with a state-action value or
-      outcome model that shares evidence across executable controller factors.
-      At minimum, the model input must represent commanded stick magnitude and
-      direction changes, duration, button identity/duty/cadence, and typed
-      targeting relative to the current state. Controller hashes and option IDs
-      remain evidence identities, not model features.
-- [x] Train that shared model from authenticated native outcomes, including
-      terminal progress, realized ticks, path efficiency, velocity retention,
-      commanded stalls, wall contact, momentum loss, and collision correction.
-      Do not replace the terminal predicate with coordinates or let shaping
-      outrank a faster authenticated terminal hit.
-- [x] Prove held-out action generalization before resuming the acceptance
-      search: exclude exact controller instances from training and show that
-      the learner ranks productive rolling above otherwise comparable
-      non-rolling motion, straighter velocity-preserving motion above needless
-      turning, and measured wall-impact/momentum-loss outcomes below clean
-      motion. A catalog acquisition script choosing those instances is not
-      acceptable evidence.
-- [x] Run the integrated system from the exact `to_ordon_spring_q125` source
+- [ ] Remove authored intermediate preferences from action selection. The only
+      policy utility is authenticated terminal success and native input cost.
+      Rolling, straightness, progress, contact, collision correction, velocity,
+      and momentum loss must not appear as standalone rewards, lexicographic
+      action-ordering rules, or route-specific acquisition scripts.
+- [ ] Learn shared state-action value from authenticated native returns rather
+      than exact-descriptor memorization. Model inputs must represent executable
+      controller factors, including stick magnitude and direction changes,
+      duration, button identity/duty/cadence, typed targets relative to current
+      state, and available trajectory/history observations. Controller hashes
+      and option IDs remain evidence identities, not model features.
+- [ ] Make atomic tactics available through a generic typed applicability set
+      at each learner decision. Implement `roll` as the first vertical slice:
+      expose it whenever native state says it is executable, alongside movement,
+      and learn whether to use it from return. The same interface must admit
+      future prompted/contextual actions such as jump, mount, lift, or interact
+      without implementing those actions in this milestone. Do not pre-author
+      periodic roll phases inside a complete route controller. Discover and
+      promote repeated action sequences as macros only after native evidence
+      shows that the composition is useful.
+- [ ] Surface intermediate measurements as observations and auxiliary
+      prediction targets only. Prove by ablation that trajectory history,
+      velocity, contact, correction, roll state, and other typed signals improve
+      held-out terminal/time prediction or sample efficiency without directly
+      changing policy utility.
+- [ ] Prove learned generalization on authenticated native episodes before
+      resuming the acceptance search. Hold out exact controller instances and
+      contiguous trajectory/state regions; compare predicted terminal
+      probability and first-hit cost with native outcomes. Include shuffled-
+      return and auxiliary-signal-only negative controls so a hard-coded action
+      ordering cannot pass.
+- [ ] Run the integrated system from the exact `to_ordon_spring_q125` source
       boundary with no route-specific preferred-action script. For this
       benchmark that means optimization request
       `ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c`,

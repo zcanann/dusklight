@@ -1,6 +1,7 @@
 use crate::artifact::Digest;
 use crate::fact_snapshot::{FactSnapshot, FactTerminalReason};
 use crate::fqi::FqiConfig;
+use crate::generalized_tactic_value::{GeneralizedTacticContext, GeneralizedTacticValueModel};
 use crate::native_generic_tactic::{
     GenericTactic, NATIVE_GENERIC_TACTIC_SCHEMA_V1, NativeGenericTacticCandidate,
     NativeGenericTacticPlan, NativeTacticObservation, select_and_execute_generic,
@@ -396,6 +397,33 @@ fn composed_delayed_reward_fixture_learns_the_required_tactic_chain() {
                 .find(|ranked| ranked.descriptor.option_id == "decoy")
                 .unwrap()
                 .mean_q
+    );
+    let shared = GeneralizedTacticValueModel::fit_fitted_q_transitions(
+        &[prime.clone(), finish.clone(), decoy.clone()],
+        0,
+        20,
+        1.0,
+    )
+    .unwrap();
+    let shared_start = shared
+        .rank(
+            &[0.0],
+            &GeneralizedTacticContext::from_facts(&prime.before).unwrap(),
+            &[
+                prime.value_sample.action.clone(),
+                decoy.value_sample.action.clone(),
+            ],
+        )
+        .unwrap();
+    assert_eq!(shared_start[0].descriptor.option_id, "prime");
+    assert!(
+        shared_start[0].outcome.reward
+            > shared_start
+                .iter()
+                .find(|estimate| estimate.descriptor.option_id == "decoy")
+                .unwrap()
+                .outcome
+                .reward
     );
     let primed_ranking = model
         .rank_available_options(&[1.0], std::slice::from_ref(&finish.value_sample.action))

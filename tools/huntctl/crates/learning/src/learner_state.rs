@@ -589,6 +589,22 @@ mod tests {
         )
         .unwrap();
         let catalog = default_route_tactic_catalog().unwrap();
+        let live_state = LearnerState::build(
+            snapshot.clone(),
+            &FactRegistry::canonical(),
+            &catalog,
+            &[],
+            |_| true,
+        )
+        .unwrap();
+        assert!(
+            live_state
+                .action_mask
+                .iter()
+                .find(|entry| entry.choice_id == "roll.direction.00.recovery.03")
+                .unwrap()
+                .applicable
+        );
 
         let mut terminal = snapshot.clone();
         terminal.terminal.reached = Some(true);
@@ -619,6 +635,14 @@ mod tests {
                 .action_mask
                 .iter()
                 .find(|entry| entry.choice_id == "interact.short")
+                .unwrap()
+                .applicable
+        );
+        assert!(
+            !missing_context_state
+                .action_mask
+                .iter()
+                .find(|entry| entry.choice_id == "roll.direction.00.recovery.03")
                 .unwrap()
                 .applicable
         );

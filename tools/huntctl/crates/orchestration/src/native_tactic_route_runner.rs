@@ -17,20 +17,16 @@ use crate::tactic_macro_store::{
     TACTIC_MACRO_REGISTRY_EXTENSION, read_tactic_macro_registry, write_tactic_macro_registry,
 };
 use crate::tactic_q_campaign::{
-    EvaluatedRewardedTacticOutcome, TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics,
-    TacticCampaignGraphProjection, TacticCampaignGraphProjectionEdge,
-    TacticCampaignGraphProjectionNode, TacticFrontierAcquisition, TacticQCampaign,
-    TacticQCampaignError, TacticQDecision, TacticQTrainingCorpus, has_no_progress_loop,
-    route_checkpoint,
+    TACTIC_Q_CHECKPOINT_EXTENSION, TacticCampaignDiagnostics, TacticCampaignGraphProjection,
+    TacticCampaignGraphProjectionEdge, TacticCampaignGraphProjectionNode,
+    TacticFrontierAcquisition, TacticQCampaign, TacticQCampaignError, TacticQDecision,
+    TacticQTrainingCorpus, has_no_progress_loop, route_checkpoint,
 };
 use crate::tactic_q_checkpoint_store::{StoredContentRef, TacticQContentStore};
 use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
-use dusklight_learning::default_tactic_catalog::{
-    MAX_GOAL_SEEK_TARGETS, goal_route_crossover_variants, goal_route_roll_phase_variants,
-    goal_route_waypoint_switch_variants,
-};
+use dusklight_learning::default_tactic_catalog::MAX_GOAL_SEEK_TARGETS;
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
 use dusklight_learning::fqi::FqiConfig;
@@ -43,8 +39,7 @@ use dusklight_learning::parameterized_tactic_proposals::{
     propose_parameterized_tactics,
 };
 use dusklight_learning::reward_shaping::{
-    POTENTIAL_SHAPING_SCHEMA_V1, PotentialShapingSpec, PotentialTerm, TACTIC_REWARD_SPEC_SCHEMA_V2,
-    TacticMotionCostSpec, TacticRewardBreakdown, TacticRewardSpec,
+    TACTIC_REWARD_SPEC_SCHEMA_V2, TacticRewardBreakdown, TacticRewardSpec,
 };
 use dusklight_learning::tactic_asset::TacticAssetCatalog;
 use dusklight_learning::tactic_blueprint::TacticBlueprint;
@@ -124,7 +119,6 @@ const MAX_ROUTE_SEEDS: usize = 256;
 const MAX_ROUTE_WORKERS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
-const ROUTE_TACTIC_NOVELTY_REWARD: f32 = 0.05;
 const ROUTE_TACTIC_TICK_COST: f32 = 0.01;
 const TACTIC_PROPOSALS_PER_DECISION: usize = 4;
 const LEARNED_EPISODES_PER_GENERATION: usize = 4;
@@ -704,18 +698,10 @@ pub fn run_native_tactic_route(
         config.execution,
         &initial_facts,
     )?;
-    let goal_route_catalog = TacticAssetCatalog::new(
-        goal_catalog
-            .entries()
-            .iter()
-            .filter(|entry| entry.option_id().starts_with("goal.seek.route."))
-            .cloned()
-            .collect(),
-    )
-    .map_err(route_error)?;
+    let goal_route_catalog = movement_only_goal_route_catalog(&goal_catalog)?;
     let action_schema_sha256 = goal_route_action_schema_sha256(&goal_route_catalog);
     let root_checkpoint_sha256 = worker_root_checkpoints[0];
-    let reward_spec = route_tactic_reward_spec(&encoder, &initial_facts)?;
+    let reward_spec = route_tactic_reward_spec();
     let root_source_frame = usize::try_from(initial_facts.tape_frame)
         .map_err(|_| route_message("native tactic source frame exceeds platform limits"))?;
 
@@ -1862,7 +1848,6 @@ fn parameterized_catalog_for_state(
     encoder: &GoalConditionedTacticFeatureEncoder,
     maximum_ticks: u32,
     feedback: Option<ParameterizedTacticFeedback>,
-    terminal_incumbent: Option<&dusklight_learning::option_values::OptionActionDescriptor>,
     goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
 ) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
@@ -1879,21 +1864,6 @@ fn parameterized_catalog_for_state(
     .map_err(route_error)?;
     let mut entries = proposals.catalog.entries().to_vec();
     entries.extend_from_slice(goal_route_catalog.entries());
-    if let Some(incumbent) = terminal_incumbent {
-        entries.extend(
-            goal_route_crossover_variants(goal_route_catalog, incumbent).map_err(route_error)?,
-        );
-        if !incumbent.option_id.contains(".crossover.") {
-            entries.extend(
-                goal_route_roll_phase_variants(goal_route_catalog, incumbent)
-                    .map_err(route_error)?,
-            );
-            entries.extend(
-                goal_route_waypoint_switch_variants(goal_route_catalog, incumbent)
-                    .map_err(route_error)?,
-            );
-        }
-    }
     proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
     proposals.family_schema_sha256 = action_schema_sha256;
     Ok(proposals)
@@ -2500,7 +2470,6 @@ fn run_seed(
             encoder,
             maximum_tactic_ticks,
             None,
-            None,
             goal_route_catalog,
             action_schema_sha256,
         )?;
@@ -2625,7 +2594,6 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
-                campaign.current_terminal_incumbent().as_ref(),
                 goal_route_catalog,
                 action_schema_sha256,
             )?;
@@ -2667,7 +2635,6 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 proposal_feedback,
-                campaign.current_terminal_incumbent().as_ref(),
                 goal_route_catalog,
                 action_schema_sha256,
             )?;
@@ -2760,7 +2727,6 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
-                campaign.current_terminal_incumbent().as_ref(),
                 goal_route_catalog,
                 action_schema_sha256,
             )?;
@@ -2841,13 +2807,10 @@ fn run_seed(
         timing.tactic_preparation_and_fact_extraction_micros = timing
             .tactic_preparation_and_fact_extraction_micros
             .saturating_add(elapsed_micros(preparation_elapsed));
-        let winner_index = (1..evaluated.len()).fold(0, |winner, candidate| {
-            if proposal_outcome_is_better(&evaluated[candidate], &evaluated[winner]) {
-                candidate
-            } else {
-                winner
-            }
-        });
+        // The policy-selected proposal is authoritative. Sibling proposals are
+        // native training evidence, not an outcome-peeking beam search that
+        // replaces the learner's action after observing handcrafted signals.
+        let winner_index = 0;
         let winning_outcome = evaluated[winner_index].outcome.clone();
         let expected_transition = evaluated[winner_index].transition.clone();
         let decision = TacticQDecision {
@@ -2875,7 +2838,6 @@ fn run_seed(
             encoder,
             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
             None,
-            campaign.current_terminal_incumbent().as_ref(),
             goal_route_catalog,
             action_schema_sha256,
         )?;
@@ -4691,6 +4653,23 @@ fn goal_route_action_schema_sha256(goal_route_catalog: &TacticAssetCatalog) -> D
     Digest(hasher.finalize().into())
 }
 
+fn movement_only_goal_route_catalog(
+    goal_catalog: &TacticAssetCatalog,
+) -> Result<TacticAssetCatalog, NativeTacticRouteRunError> {
+    TacticAssetCatalog::new(
+        goal_catalog
+            .entries()
+            .iter()
+            .filter(|entry| {
+                entry.option_id().starts_with("goal.seek.route.")
+                    && !entry.option_id().contains(".roll.")
+            })
+            .cloned()
+            .collect(),
+    )
+    .map_err(route_error)
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct NativeTacticGoalTargetReport {
@@ -5787,40 +5766,11 @@ fn goal_tactic_maximum_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunEr
 }
 
 fn goal_route_sequence_maximum_ticks(horizon: u64) -> Result<u32, NativeTacticRouteRunError> {
-    let horizon = u32::try_from(horizon).map_err(route_error)?;
-    if horizon == 0 {
-        return Err(route_message(
-            "goal route sequence requires a nonzero horizon",
-        ));
-    }
-    Ok((horizon / 4).clamp(1, 160))
+    goal_tactic_maximum_ticks(horizon)
 }
 
-fn route_tactic_reward_spec(
-    encoder: &GoalConditionedTacticFeatureEncoder,
-    initial_facts: &FactSnapshot,
-) -> Result<TacticRewardSpec, NativeTacticRouteRunError> {
-    let initial_features = encoder.encode(initial_facts).map_err(route_error)?;
-    let start_distance = initial_features[encoder.goal_distance_feature()];
-    if !start_distance.is_finite() || start_distance <= 0.0 {
-        return Err(route_message(
-            "goal-conditioned source distance must be finite and positive",
-        ));
-    }
-    let mut reward = route_tactic_base_reward_spec();
-    reward.potential = Some(PotentialShapingSpec {
-        schema: POTENTIAL_SHAPING_SCHEMA_V1.into(),
-        feature_schema: encoder.schema_sha256,
-        terms: vec![PotentialTerm::CorridorProgress {
-            name: "goal_planar_distance".into(),
-            feature: encoder.goal_distance_feature(),
-            start: start_distance,
-            end: 0.0,
-            weight: 5.0,
-            unavailable_value: None,
-        }],
-    });
-    Ok(reward)
+fn route_tactic_reward_spec() -> TacticRewardSpec {
+    route_tactic_base_reward_spec()
 }
 
 fn route_tactic_base_reward_spec() -> TacticRewardSpec {
@@ -5832,19 +5782,10 @@ fn route_tactic_base_reward_spec() -> TacticRewardSpec {
         // learned value function prefer a shorter terminal route without
         // making necessary collision-avoidance detours worse than failure.
         tick_cost: ROUTE_TACTIC_TICK_COST,
-        novelty_reward: ROUTE_TACTIC_NOVELTY_REWARD,
+        novelty_reward: 0.0,
         per_tick_discount: 1.0,
         potential: None,
-        motion_cost: Some(TacticMotionCostSpec {
-            // One commanded tick spent stationary costs one additional tick.
-            // The remaining physical symptoms are weaker corroborating costs;
-            // they disambiguate sliding/impact from a deliberate curved route.
-            inefficient_path_unit_cost: ROUTE_TACTIC_TICK_COST * 0.025,
-            stalled_command_tick_cost: ROUTE_TACTIC_TICK_COST,
-            wall_contact_tick_cost: ROUTE_TACTIC_TICK_COST * 0.25,
-            momentum_loss_unit_cost: ROUTE_TACTIC_TICK_COST * 0.025,
-            collision_correction_unit_cost: ROUTE_TACTIC_TICK_COST * 0.025,
-        }),
+        motion_cost: None,
     }
 }
 
@@ -5990,43 +5931,6 @@ fn selected_tactic_fits_horizon(
     horizon: u64,
 ) -> bool {
     suffix_ticks.saturating_add(u64::from(selected_maximum_ticks)) <= horizon
-}
-
-fn proposal_outcome_is_better(
-    candidate: &EvaluatedRewardedTacticOutcome,
-    incumbent: &EvaluatedRewardedTacticOutcome,
-) -> bool {
-    let terminal_order = candidate.outcome.terminal.cmp(&incumbent.outcome.terminal);
-    let route_cost_order = if candidate.outcome.terminal && incumbent.outcome.terminal {
-        // Both candidates start at the same retained prefix. Once native
-        // evidence says both are feasible, exact first-hit cost outranks every
-        // acquisition-only shaping component.
-        incumbent
-            .outcome
-            .execution
-            .duration
-            .realized_ticks
-            .cmp(&candidate.outcome.execution.duration.realized_ticks)
-    } else {
-        std::cmp::Ordering::Equal
-    };
-    terminal_order
-        .then(route_cost_order)
-        .then_with(|| {
-            candidate
-                .reward
-                .training_reward
-                .total_cmp(&incumbent.reward.training_reward)
-        })
-        .then_with(|| {
-            incumbent
-                .outcome
-                .execution
-                .duration
-                .realized_ticks
-                .cmp(&candidate.outcome.execution.duration.realized_ticks)
-        })
-        .is_gt()
 }
 
 pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<(), NativeTacticRouteRunError> {
@@ -6644,7 +6548,7 @@ mod tests {
     }
 
     #[test]
-    fn route_reward_keeps_terminal_dominant_and_charges_every_tick() {
+    fn route_reward_contains_only_terminal_success_and_native_tick_cost() {
         let reward = route_tactic_base_reward_spec();
         let values = route_option_value_config(42);
 
@@ -6654,14 +6558,9 @@ mod tests {
         assert_eq!(values.fitted_q.discount, ROUTE_TACTIC_VALUE_DISCOUNT);
         assert!(values.fitted_q.discount > 0.995);
         assert!(values.fitted_q.discount < 1.0);
-        assert!(reward.novelty_reward > 0.0);
-        assert!(reward.terminal_reward > reward.novelty_reward);
-        let motion = reward
-            .motion_cost
-            .expect("route learning prices motion loss");
-        assert_eq!(motion.stalled_command_tick_cost, ROUTE_TACTIC_TICK_COST);
-        assert!(motion.wall_contact_tick_cost > 0.0);
-        assert!(motion.momentum_loss_unit_cost > 0.0);
+        assert_eq!(reward.novelty_reward, 0.0);
+        assert!(reward.potential.is_none());
+        assert!(reward.motion_cost.is_none());
     }
 
     #[test]
@@ -6922,8 +6821,30 @@ mod tests {
         assert_eq!(goal_tactic_maximum_ticks(1_000).unwrap(), 40);
         assert!(goal_tactic_maximum_ticks(0).is_err());
         assert_eq!(goal_route_sequence_maximum_ticks(160).unwrap(), 40);
-        assert_eq!(goal_route_sequence_maximum_ticks(1_000).unwrap(), 160);
+        assert_eq!(goal_route_sequence_maximum_ticks(1_000).unwrap(), 40);
         assert!(goal_route_sequence_maximum_ticks(0).is_err());
+    }
+
+    #[test]
+    fn route_navigation_does_not_pre_author_roll_schedules() {
+        let catalog =
+            dusklight_learning::default_tactic_catalog::goal_conditioned_route_tactic_catalog(
+                &[[100.0, 0.0, -100.0]],
+                &[vec![[0.0, 0.0, 0.0], [100.0, 0.0, -100.0]]],
+                40,
+                40,
+            )
+            .unwrap();
+        let movement = movement_only_goal_route_catalog(&catalog).unwrap();
+
+        assert!(!movement.entries().is_empty());
+        assert!(
+            movement
+                .entries()
+                .iter()
+                .all(|entry| entry.option_id().starts_with("goal.seek.route.")
+                    && !entry.option_id().contains(".roll."))
+        );
     }
 
     #[test]

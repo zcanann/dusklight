@@ -11,6 +11,7 @@ use crate::option_transition::OptionTransitionSample;
 use crate::option_values::OptionActionDescriptor;
 use dusklight_control::option_execution::{OptionParameter, OptionType};
 use serde::Serialize;
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 
@@ -292,6 +293,85 @@ impl GeneralizedTacticValueModel {
         Self::fit(&samples)
     }
 
+    /// Fits a shared semi-Markov action-value model.
+    ///
+    /// Bellman backups use only the authenticated scalar reward and observed
+    /// successor actions. Auxiliary trajectory outcomes are retained for
+    /// inspection, but cannot enter the objective return or action ordering.
+    pub fn fit_fitted_q_transitions(
+        transitions: &[OptionTransitionSample],
+        goal_distance_feature: usize,
+        iterations: usize,
+        per_tick_discount: f32,
+    ) -> Result<Self, GeneralizedTacticValueError> {
+        if iterations == 0
+            || iterations > 128
+            || !per_tick_discount.is_finite()
+            || !(0.0..=1.0).contains(&per_tick_discount)
+            || per_tick_discount == 0.0
+        {
+            return Err(GeneralizedTacticValueError::InvalidConfig);
+        }
+        let mut samples = transitions
+            .iter()
+            .map(|transition| {
+                Ok(GeneralizedTacticTrainingSample {
+                    state_features: transition.value_sample.state.clone(),
+                    context: GeneralizedTacticContext::from_facts(&transition.before)?,
+                    action: transition.value_sample.action.clone(),
+                    outcome: GeneralizedTacticOutcome::from_transition(
+                        transition,
+                        goal_distance_feature,
+                    )?,
+                })
+            })
+            .collect::<Result<Vec<_>, GeneralizedTacticValueError>>()?;
+        let mut outgoing = BTreeMap::<_, Vec<usize>>::new();
+        for (index, transition) in transitions.iter().enumerate() {
+            outgoing
+                .entry(transition.before_state_sha256)
+                .or_default()
+                .push(index);
+        }
+        let immediate = transitions
+            .iter()
+            .map(|transition| transition.value_sample.reward)
+            .collect::<Vec<_>>();
+        let mut values = immediate.clone();
+        for _ in 0..iterations {
+            let prior = values.clone();
+            for (index, transition) in transitions.iter().enumerate() {
+                values[index] = if transition.value_sample.terminal {
+                    immediate[index]
+                } else if let Some(next_actions) = outgoing.get(&transition.after_state_sha256) {
+                    let next_value = next_actions
+                        .iter()
+                        .map(|next| prior[*next])
+                        .max_by(f32::total_cmp)
+                        .ok_or(GeneralizedTacticValueError::InvalidTransition(
+                            "successor action set is empty".into(),
+                        ))?;
+                    let duration =
+                        i32::try_from(transition.value_sample.duration_ticks).map_err(|_| {
+                            GeneralizedTacticValueError::InvalidTransition(
+                                "action duration exceeds fitted-Q discount bounds".into(),
+                            )
+                        })?;
+                    immediate[index] + per_tick_discount.powi(duration) * next_value
+                } else {
+                    immediate[index]
+                };
+                if !values[index].is_finite() {
+                    return Err(GeneralizedTacticValueError::NonFinite);
+                }
+            }
+        }
+        for (sample, value) in samples.iter_mut().zip(values) {
+            sample.outcome.reward = value;
+        }
+        Self::fit(&samples)
+    }
+
     pub fn fit(
         samples: &[GeneralizedTacticTrainingSample],
     ) -> Result<Self, GeneralizedTacticValueError> {
@@ -408,44 +488,10 @@ pub fn compare_generalized_tactic_outcomes(
     left: &GeneralizedTacticOutcome,
     right: &GeneralizedTacticOutcome,
 ) -> std::cmp::Ordering {
-    left.terminal
-        .total_cmp(&right.terminal)
-        .then_with(|| {
-            if left.terminal >= 0.5 && right.terminal >= 0.5 {
-                // Once both outcomes predict the authenticated predicate,
-                // native input cost is authoritative. Shaping and motion
-                // quality may break only equal-cost terminal predictions.
-                right.duration_ticks.total_cmp(&left.duration_ticks)
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        })
-        .then_with(|| left.reward.total_cmp(&right.reward))
-        .then_with(|| {
-            left.goal_progress_per_tick
-                .total_cmp(&right.goal_progress_per_tick)
-        })
-        .then_with(|| left.path_efficiency.total_cmp(&right.path_efficiency))
-        .then_with(|| left.speed_retention.total_cmp(&right.speed_retention))
-        .then_with(|| {
-            right
-                .stalled_command_fraction
-                .total_cmp(&left.stalled_command_fraction)
-        })
-        // Contact is geometry context, not a cost by itself. A shallow wall
-        // clip may preserve full speed; penalize only its measured effects
-        // below (momentum loss and collision correction).
-        .then_with(|| {
-            right
-                .momentum_loss_per_tick
-                .total_cmp(&left.momentum_loss_per_tick)
-        })
-        .then_with(|| {
-            right
-                .collision_correction_per_tick
-                .total_cmp(&left.collision_correction_per_tick)
-        })
-        .then_with(|| right.duration_ticks.total_cmp(&left.duration_ticks))
+    // `reward` is the learned objective return: authenticated terminal value
+    // minus native input cost, including bootstrapped future value. Every other
+    // outcome head is auxiliary evidence and cannot define policy utility.
+    left.reward.total_cmp(&right.reward)
 }
 
 pub fn generalized_tactic_action_factors(
@@ -815,6 +861,7 @@ fn normalized_distance(left: &[f32], right: &[f32], minimum: &[f32], range: &[f3
 pub enum GeneralizedTacticValueError {
     SampleCount,
     FeatureWidth,
+    InvalidConfig,
     NonFinite,
     InvalidFacts(String),
     InvalidAction(String),
@@ -827,6 +874,9 @@ impl fmt::Display for GeneralizedTacticValueError {
             Self::SampleCount => formatter.write_str("generalized tactic sample count is invalid"),
             Self::FeatureWidth => {
                 formatter.write_str("generalized tactic feature shape is invalid")
+            }
+            Self::InvalidConfig => {
+                formatter.write_str("generalized tactic fitted-Q configuration is invalid")
             }
             Self::NonFinite => formatter.write_str("generalized tactic value is non-finite"),
             Self::InvalidFacts(message) => write!(formatter, "generalized tactic facts: {message}"),
@@ -993,17 +1043,17 @@ mod tests {
     }
 
     #[test]
-    fn faster_terminal_prediction_outranks_shaping_quality() {
+    fn learned_objective_return_is_the_only_action_ordering() {
         let faster = GeneralizedTacticOutcome {
             terminal: 1.0,
-            reward: 50.0,
+            reward: 99.0,
             duration_ticks: 100.0,
             path_efficiency: 0.7,
             ..GeneralizedTacticOutcome::default()
         };
         let slower_but_cleaner = GeneralizedTacticOutcome {
             terminal: 1.0,
-            reward: 99.0,
+            reward: 98.0,
             duration_ticks: 110.0,
             path_efficiency: 1.0,
             ..GeneralizedTacticOutcome::default()
@@ -1016,7 +1066,7 @@ mod tests {
     }
 
     #[test]
-    fn wall_contact_is_neutral_without_measured_motion_loss() {
+    fn auxiliary_motion_predictions_do_not_define_action_utility() {
         let clean = GeneralizedTacticOutcome {
             goal_progress_per_tick: 20.0,
             path_efficiency: 0.98,
@@ -1029,6 +1079,10 @@ mod tests {
             ..clean
         };
         let slowing_impact = GeneralizedTacticOutcome {
+            goal_progress_per_tick: 1.0,
+            path_efficiency: 0.1,
+            speed_retention: 0.1,
+            stalled_command_fraction: 0.8,
             momentum_loss_per_tick: 1.0,
             collision_correction_per_tick: 0.5,
             ..benign_clip
@@ -1040,7 +1094,7 @@ mod tests {
         );
         assert_eq!(
             compare_generalized_tactic_outcomes(&slowing_impact, &clean),
-            std::cmp::Ordering::Less
+            std::cmp::Ordering::Equal
         );
     }
 

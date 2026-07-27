@@ -121,6 +121,10 @@ const FEATURE_NAMES: &[&str] = &[
     "trajectory_speed_retention",
     "recent_option_available",
     "recent_option_ticks",
+    "recent_option_trajectory_available",
+    "recent_option_wall_contact_fraction",
+    "recent_option_momentum_loss_per_tick",
+    "recent_option_collision_correction_per_tick",
     "condition_true_count",
     "condition_false_count",
     "condition_unknown_count",
@@ -249,8 +253,22 @@ impl TacticFeatureEncoder {
         encode_history(&mut output, facts, player_position)?;
         output.extend(trajectory_summary(facts, player_position)?);
         match &facts.recent_option {
-            Some(option) => output.extend([1.0, option.realized_ticks as f32]),
-            None => output.extend([0.0, 0.0]),
+            Some(option) => {
+                output.extend([1.0, option.realized_ticks as f32]);
+                match option.trajectory {
+                    Some(trajectory) => {
+                        let ticks = trajectory.observed_ticks.max(1) as f32;
+                        output.extend([
+                            1.0,
+                            trajectory.wall_contact_ticks as f32 / ticks,
+                            finite_f32(trajectory.commanded_momentum_loss_f32_bits)? / ticks,
+                            finite_f32(trajectory.collision_correction_total_f32_bits)? / ticks,
+                        ]);
+                    }
+                    None => output.extend([0.0; 4]),
+                }
+            }
+            None => output.extend([0.0; 6]),
         }
         let mut condition_counts = [0_u32; 3];
         for condition in &facts.conditions {

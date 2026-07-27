@@ -1495,9 +1495,11 @@ impl TacticQCampaign {
             && self.training_replay.len() >= 2
             && let Some(goal_distance_feature) = goal_distance_feature
         {
-            let model = GeneralizedTacticValueModel::fit_transitions(
+            let model = GeneralizedTacticValueModel::fit_fitted_q_transitions(
                 &self.training_replay,
                 goal_distance_feature,
+                self.model_config.fitted_q.iterations,
+                self.model_config.fitted_q.discount,
             )?;
             let context = GeneralizedTacticContext::from_facts(&self.current.snapshot)?;
             let ranked_unseen = model
@@ -1513,41 +1515,6 @@ impl TacticQCampaign {
             )?;
         }
         Ok(TacticQProposalBatch { ranking, proposals })
-    }
-
-    /// Best authenticated terminal action observed from the current coarse
-    /// learner cell. Callers may use its typed parameters to instantiate a
-    /// bounded local action neighborhood before the next decision.
-    pub fn current_terminal_incumbent(&self) -> Option<OptionActionDescriptor> {
-        let current_cell = tactic_state_descriptor(&self.current.snapshot, false);
-        self.training_replay
-            .iter()
-            .filter(|transition| {
-                transition.value_sample.terminal
-                    && tactic_state_descriptor(&transition.before, false) == current_cell
-            })
-            .min_by(|left, right| {
-                left.value_sample
-                    .duration_ticks
-                    .cmp(&right.value_sample.duration_ticks)
-                    // A composition must improve terminal cost before it
-                    // displaces an equally fast simpler control and narrows
-                    // the state-local acquisition neighborhood.
-                    .then_with(|| {
-                        left.value_sample
-                            .action
-                            .option_id
-                            .contains(".crossover.")
-                            .cmp(&right.value_sample.action.option_id.contains(".crossover."))
-                    })
-                    .then_with(|| {
-                        left.value_sample
-                            .action
-                            .option_id
-                            .cmp(&right.value_sample.action.option_id)
-                    })
-            })
-            .map(|transition| transition.value_sample.action.clone())
     }
 
     /// Score and capture a native proposal without mutating the retained
@@ -2679,19 +2646,17 @@ mod tests {
             parameterized_tactic_family_schema_sha256()
         );
         assert!(batch.proposals.len() > 4);
-        assert!(batch.proposals.iter().all(|proposal| {
-            proposal.descriptor.option_id.starts_with("family/")
-                || proposal.descriptor.option_id.starts_with("blueprint/")
-        }));
+        assert!(
+            batch
+                .proposals
+                .iter()
+                .all(|proposal| { proposal.descriptor.option_id.starts_with("family/") })
+        );
         assert!(batch.proposals.iter().all(|proposal| {
             proposals
                 .catalog
                 .prepare_execution(&proposal.descriptor.option_id)
                 .is_ok()
-                || proposals.blueprints.iter().any(|blueprint| {
-                    format!("blueprint/{}", blueprint.asset_id) == proposal.descriptor.option_id
-                        && blueprint.compile_static(&proposals.catalog).is_ok()
-                })
         }));
         assert!(
             batch
@@ -2699,12 +2664,9 @@ mod tests {
                 .iter()
                 .all(|proposal| proposal.descriptor.option_id != "shield")
         );
-        assert!(
-            batch
-                .proposals
-                .iter()
-                .any(|proposal| proposal.descriptor.option_id.starts_with("blueprint/"))
-        );
+        assert!(batch.proposals.iter().any(|proposal| {
+            proposal.descriptor.option_type == dusklight_control::option_execution::OptionType::Roll
+        }));
     }
 
     #[test]
