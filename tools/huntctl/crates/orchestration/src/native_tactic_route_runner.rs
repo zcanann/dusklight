@@ -737,18 +737,16 @@ pub fn run_native_tactic_route(
             "native worker pool does not share the requested source boundary",
         ));
     }
-    let GoalConditionedTacticRuntime {
-        catalog: goal_catalog,
+    let GoalConditionedTacticContext {
         encoder,
         report: goal_target,
-    } = goal_conditioned_tactic_runtime(
+    } = atomic_goal_conditioned_tactic_context(
         &root,
         config.optimization,
         config.execution,
         &initial_facts,
     )?;
-    let goal_route_catalog = movement_only_goal_route_catalog(&goal_catalog)?;
-    let action_schema_sha256 = goal_route_action_schema_sha256(&goal_route_catalog);
+    let action_schema_sha256 = parameterized_policy_action_schema_sha256();
     let root_checkpoint_sha256 = worker_root_checkpoints[0];
     let reward_spec = route_tactic_reward_spec();
     let root_source_frame = usize::try_from(initial_facts.tape_frame)
@@ -814,7 +812,6 @@ pub fn run_native_tactic_route(
                                 let reward_spec = &reward_spec;
                                 let initial_facts = &initial_facts;
                                 let route_prefix = &route_prefix;
-                                let goal_route_catalog = &goal_route_catalog;
                                 generation_scope.spawn(move || {
                                     run_seed_coordinator(
                                         config,
@@ -824,7 +821,6 @@ pub fn run_native_tactic_route(
                                         reward_spec,
                                         initial_facts,
                                         route_prefix,
-                                        goal_route_catalog,
                                         action_schema_sha256,
                                         root_checkpoint_sha256,
                                         root_tape_ref,
@@ -1774,20 +1770,26 @@ fn insert_tactic_macro_validation_frontier(
     let route_sha256 =
         Digest(Sha256::digest(frontier.route_tape.encode().map_err(route_error)?).into());
     let identity = (frontier.seed, frontier.state_sha256, route_sha256);
-    match frontiers.get(&identity) {
+    match frontiers.get_mut(&identity) {
         Some(existing)
             if existing.snapshot != frontier.snapshot
-                || existing.route_tape != frontier.route_tape
-                || existing.primitive_baseline.terminal != frontier.primitive_baseline.terminal
-                || existing.primitive_baseline.progress.to_bits()
-                    != frontier.primitive_baseline.progress.to_bits()
-                || existing.primitive_baseline.ticks != frontier.primitive_baseline.ticks =>
+                || existing.route_tape != frontier.route_tape =>
         {
             Err(route_message(
                 "macro validation frontier identity has conflicting replay evidence",
             ))
         }
-        Some(_) => Ok(()),
+        Some(existing) => {
+            // Revisited frontiers can evaluate different primitive batches.
+            // Merge their strongest authenticated terminal/tick baseline
+            // instead of treating ordinary exploration as identity corruption.
+            let candidate = frontier.primitive_baseline;
+            let incumbent = existing.primitive_baseline;
+            if tactic_macro_outcome_is_better(candidate, incumbent) {
+                existing.primitive_baseline = candidate;
+            }
+            Ok(())
+        }
         None => {
             frontiers.insert(identity, frontier);
             Ok(())
@@ -1859,7 +1861,6 @@ fn run_seed_coordinator(
     reward_spec: &TacticRewardSpec,
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
-    goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
@@ -1891,7 +1892,6 @@ fn run_seed_coordinator(
             reward_spec,
             initial_facts,
             route_prefix,
-            goal_route_catalog,
             action_schema_sha256,
             root_checkpoint_sha256,
             root_tape_ref,
@@ -1928,7 +1928,6 @@ fn parameterized_catalog_for_state(
     encoder: &GoalConditionedTacticFeatureEncoder,
     maximum_ticks: u32,
     feedback: Option<ParameterizedTacticFeedback>,
-    goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
 ) -> Result<ParameterizedTacticProposalCatalog, NativeTacticRouteRunError> {
     let mut proposals = propose_parameterized_tactics(ParameterizedTacticProposalContext {
@@ -1942,11 +1941,25 @@ fn parameterized_catalog_for_state(
         feedback,
     })
     .map_err(route_error)?;
-    let mut entries = proposals.catalog.entries().to_vec();
-    entries.extend_from_slice(goal_route_catalog.entries());
-    proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
+    validate_parameterized_policy_catalog(&proposals.catalog)?;
     proposals.family_schema_sha256 = action_schema_sha256;
     Ok(proposals)
+}
+
+fn validate_parameterized_policy_catalog(
+    catalog: &TacticAssetCatalog,
+) -> Result<(), NativeTacticRouteRunError> {
+    if let Some(entry) = catalog
+        .entries()
+        .iter()
+        .find(|entry| !entry.option_id().starts_with("family/"))
+    {
+        return Err(route_message(format!(
+            "parameterized policy catalog contains non-atomic authored action {:?}",
+            entry.option_id()
+        )));
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1958,7 +1971,6 @@ fn applicable_parameterized_descriptors_for_state(
     state: &FactSnapshot,
     encoder: &GoalConditionedTacticFeatureEncoder,
     maximum_ticks: u32,
-    goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
 ) -> Result<Vec<OptionActionDescriptor>, NativeTacticRouteRunError> {
     let proposals = parameterized_catalog_for_state(
@@ -1968,7 +1980,6 @@ fn applicable_parameterized_descriptors_for_state(
         encoder,
         maximum_ticks,
         parameterized_feedback_for_state(campaign, state, encoder)?,
-        goal_route_catalog,
         action_schema_sha256,
     )?;
     let learner = LearnerState::build(
@@ -2957,7 +2968,6 @@ fn run_seed(
     reward_spec: &TacticRewardSpec,
     initial_facts: &FactSnapshot,
     route_prefix: &InputTape,
-    goal_route_catalog: &TacticAssetCatalog,
     action_schema_sha256: Digest,
     root_checkpoint_sha256: Digest,
     root_tape_ref: StoredContentRef,
@@ -3010,7 +3020,6 @@ fn run_seed(
             encoder,
             maximum_tactic_ticks,
             None,
-            goal_route_catalog,
             action_schema_sha256,
         )?;
         let current = LearnerState::build(
@@ -3125,7 +3134,6 @@ fn run_seed(
                             state,
                             encoder,
                             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
-                            goal_route_catalog,
                             action_schema_sha256,
                         )
                     },
@@ -3150,7 +3158,6 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
-                goal_route_catalog,
                 action_schema_sha256,
             )?;
             campaign
@@ -3191,7 +3198,6 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 proposal_feedback,
-                goal_route_catalog,
                 action_schema_sha256,
             )?;
             let proposal_catalog = Arc::new(proposals.catalog);
@@ -3272,7 +3278,6 @@ fn run_seed(
                             state,
                             encoder,
                             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
-                            goal_route_catalog,
                             action_schema_sha256,
                         )
                     },
@@ -3297,7 +3302,6 @@ fn run_seed(
                 encoder,
                 u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
                 parameterized_feedback_for_state(&campaign, &selected_branch.state, encoder)?,
-                goal_route_catalog,
                 action_schema_sha256,
             )?;
             campaign
@@ -3412,7 +3416,6 @@ fn run_seed(
             encoder,
             u32::try_from(maximum_tactic_ticks).map_err(route_error)?,
             None,
-            goal_route_catalog,
             action_schema_sha256,
         )?;
         let step = campaign
@@ -5256,29 +5259,11 @@ pub(crate) struct GoalConditionedTacticContext {
     pub report: NativeTacticGoalTargetReport,
 }
 
-fn goal_route_action_schema_sha256(goal_route_catalog: &TacticAssetCatalog) -> Digest {
+fn parameterized_policy_action_schema_sha256() -> Digest {
     let mut hasher = Sha256::new();
-    hasher.update(b"dusklight-goal-conditioned-parameterized-action-schema/v1");
+    hasher.update(b"dusklight-parameterized-policy-action-schema/v2");
     hasher.update(parameterized_tactic_family_schema_sha256().0);
-    hasher.update(goal_route_catalog.action_schema_sha256().0);
     Digest(hasher.finalize().into())
-}
-
-fn movement_only_goal_route_catalog(
-    goal_catalog: &TacticAssetCatalog,
-) -> Result<TacticAssetCatalog, NativeTacticRouteRunError> {
-    TacticAssetCatalog::new(
-        goal_catalog
-            .entries()
-            .iter()
-            .filter(|entry| {
-                entry.option_id().starts_with("goal.seek.route.")
-                    && !entry.option_id().contains(".roll.")
-            })
-            .cloned()
-            .collect(),
-    )
-    .map_err(route_error)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -5384,6 +5369,35 @@ fn goal_conditioned_tactic_context(
             tactic_targets,
             route_sequences,
             authored_route_ids,
+        ),
+    })
+}
+
+fn atomic_goal_conditioned_tactic_context(
+    root: &Path,
+    optimization: &OptimizationRequest,
+    execution: &NativeResidualExecutionBinding,
+    initial_facts: &FactSnapshot,
+) -> Result<GoalConditionedTacticContext, NativeTacticRouteRunError> {
+    let source_coordinate = initial_facts.player.position_f32_bits.map(f32::from_bits);
+    let (target, _) =
+        resolve_goal_transition_target(root, optimization, execution, source_coordinate)?;
+    if initial_facts.world.stage != target.source_stage
+        || initial_facts.world.room != target.source_room
+    {
+        return Err(route_message(
+            "native source observation differs from the objective's source world",
+        ));
+    }
+    let encoder =
+        GoalConditionedTacticFeatureEncoder::new(target.coordinate).map_err(route_error)?;
+    Ok(GoalConditionedTacticContext {
+        encoder,
+        report: target.report(
+            source_coordinate,
+            vec![target.coordinate],
+            Vec::new(),
+            Vec::new(),
         ),
     })
 }
@@ -6766,17 +6780,23 @@ mod tests {
                 seed: 7,
                 state_sha256,
                 snapshot,
-                route_tape: neutral_route,
+                route_tape: neutral_route.clone(),
                 primitive_baseline: TacticMacroMeasuredOutcome {
                     terminal: false,
-                    progress: 1.0,
-                    ticks: 4,
+                    progress: -100.0,
+                    ticks: 3,
                 },
             },
         )
         .unwrap();
 
         assert_eq!(frontiers.len(), 2);
+        let merged = frontiers
+            .values()
+            .find(|frontier| frontier.route_tape == neutral_route)
+            .unwrap();
+        assert_eq!(merged.primitive_baseline.ticks, 3);
+        assert_eq!(merged.primitive_baseline.progress, -100.0);
     }
 
     fn journal_trace(decision_index: u64) -> NativeTacticDecisionTrace {
@@ -7539,8 +7559,21 @@ mod tests {
     }
 
     #[test]
-    fn route_navigation_does_not_pre_author_roll_schedules() {
-        let catalog =
+    fn live_parameterized_policy_rejects_authored_route_actions() {
+        let generic = propose_parameterized_tactics(ParameterizedTacticProposalContext {
+            seed: 11,
+            decision_index: 3,
+            state_sha256: Digest([7; 32]),
+            player_position: [0.0, 0.0, 0.0],
+            camera_yaw_radians: Some(0.0),
+            goal_coordinate: [100.0, 0.0, -100.0],
+            maximum_ticks: 40,
+            feedback: None,
+        })
+        .unwrap();
+        validate_parameterized_policy_catalog(&generic.catalog).unwrap();
+
+        let authored =
             dusklight_learning::default_tactic_catalog::goal_conditioned_route_tactic_catalog(
                 &[[100.0, 0.0, -100.0]],
                 &[vec![[0.0, 0.0, 0.0], [100.0, 0.0, -100.0]]],
@@ -7548,15 +7581,11 @@ mod tests {
                 40,
             )
             .unwrap();
-        let movement = movement_only_goal_route_catalog(&catalog).unwrap();
-
-        assert!(!movement.entries().is_empty());
         assert!(
-            movement
-                .entries()
-                .iter()
-                .all(|entry| entry.option_id().starts_with("goal.seek.route.")
-                    && !entry.option_id().contains(".roll."))
+            validate_parameterized_policy_catalog(&authored)
+                .unwrap_err()
+                .to_string()
+                .contains("non-atomic authored action")
         );
     }
 

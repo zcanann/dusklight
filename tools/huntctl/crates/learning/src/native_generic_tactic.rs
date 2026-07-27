@@ -1358,7 +1358,19 @@ fn direction_pad(angle: f32, magnitude: u8) -> RawPadState {
 }
 
 fn main_heading(relative_error: f32, magnitude: u8) -> RawPadState {
-    direction_pad(wrap_angle(relative_error), magnitude)
+    let angle = wrap_angle(relative_error);
+    RawPadState {
+        // The game's main-stick X axis is opposite mathematical positive
+        // sine. Keep heading controllers identical to seek_pad and to the
+        // recorded-controller factor convention.
+        stick_x: (-angle.sin() * f32::from(magnitude))
+            .round()
+            .clamp(-128.0, 127.0) as i8,
+        stick_y: (angle.cos() * f32::from(magnitude))
+            .round()
+            .clamp(-128.0, 127.0) as i8,
+        ..RawPadState::default()
+    }
 }
 
 fn yaw_radians(yaw: i16) -> f32 {
@@ -1615,6 +1627,23 @@ mod tests {
             .execution
             .validate_against_tape(&result.tape)
             .unwrap();
+    }
+
+    #[test]
+    fn maintained_heading_uses_the_same_main_stick_axis_as_world_seek() {
+        let plan = NativeGenericTacticPlan::new(
+            GenericTactic::MaintainRelativeHeading {
+                heading_radians_f32_bits: std::f32::consts::FRAC_PI_2.to_bits(),
+                magnitude: 100,
+            },
+            1,
+        );
+        let (frames, _, reason) = realize(&plan, &[observation(0, [0.0; 3])]).unwrap();
+
+        assert_eq!(reason, OptionEndReason::MaximumDuration);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].pads[0].stick_x, -100);
+        assert_eq!(frames[0].pads[0].stick_y, 0);
     }
 
     #[test]

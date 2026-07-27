@@ -6,18 +6,21 @@
 //! evidence from similar actions instead of becoming an unrelated categorical
 //! arm. Option IDs and content digests are deliberately excluded from features.
 
+use crate::artifact::Digest;
 use crate::fact_snapshot::{FactSnapshot, OptionTrajectoryFactSnapshot};
 use crate::option_transition::OptionTransitionSample;
 use crate::option_values::OptionActionDescriptor;
 use dusklight_control::option_execution::{OptionParameter, OptionType};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
 pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
 const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
+const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
+const STATE_NEIGHBORS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeneralizedTacticContext {
@@ -298,6 +301,9 @@ impl GeneralizedTacticValueModel {
     /// Bellman backups use only the authenticated scalar reward and observed
     /// successor actions. Auxiliary trajectory outcomes are retained for
     /// inspection, but cannot enter the objective return or action ordering.
+    /// Nonterminal leaves are censored observations, not failed terminal
+    /// episodes: when authenticated terminal support exists, they must not
+    /// inject an invented zero continuation value into the policy fit.
     pub fn fit_fitted_q_transitions(
         transitions: &[OptionTransitionSample],
         goal_distance_feature: usize,
@@ -305,7 +311,7 @@ impl GeneralizedTacticValueModel {
         per_tick_discount: f32,
     ) -> Result<Self, GeneralizedTacticValueError> {
         if iterations == 0
-            || iterations > 128
+            || iterations > MAX_FITTED_Q_BACKUP_ITERATIONS
             || !per_tick_discount.is_finite()
             || !(0.0..=1.0).contains(&per_tick_discount)
             || per_tick_discount == 0.0
@@ -338,8 +344,10 @@ impl GeneralizedTacticValueModel {
             .map(|transition| transition.value_sample.reward)
             .collect::<Vec<_>>();
         let mut values = immediate.clone();
-        for _ in 0..iterations {
+        let backup_limit = fitted_q_backup_limit(iterations, transitions.len());
+        for iteration in 0..backup_limit {
             let prior = values.clone();
+            let mut changed = false;
             for (index, transition) in transitions.iter().enumerate() {
                 values[index] = if transition.value_sample.terminal {
                     immediate[index]
@@ -364,10 +372,22 @@ impl GeneralizedTacticValueModel {
                 if !values[index].is_finite() {
                     return Err(GeneralizedTacticValueError::NonFinite);
                 }
+                changed |= (values[index] - prior[index]).abs() > 1.0e-6;
+            }
+            if iteration + 1 >= iterations && !changed {
+                break;
             }
         }
         for (sample, value) in samples.iter_mut().zip(values) {
             sample.outcome.reward = value;
+        }
+        let terminal_supported = terminal_supported_transition_indices(transitions);
+        if terminal_supported.len() >= 2 {
+            samples = samples
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, sample)| terminal_supported.contains(&index).then_some(sample))
+                .collect();
         }
         Self::fit(&samples)
     }
@@ -427,21 +447,34 @@ impl GeneralizedTacticValueModel {
             return Err(GeneralizedTacticValueError::FeatureWidth);
         }
         let action = encode_action(context, descriptor)?;
-        let mut neighbors = self
+        let mut state_neighbors = self
             .samples
             .iter()
             .map(|sample| {
                 (
-                    joint_distance(
+                    normalized_distance(
                         state_features,
                         &sample.state,
                         &self.state_min,
                         &self.state_range,
-                        &action,
-                        &sample.action,
-                        &self.action_min,
-                        &self.action_range,
                     ),
+                    sample,
+                )
+            })
+            .collect::<Vec<_>>();
+        state_neighbors.sort_by(|left, right| left.0.total_cmp(&right.0));
+        state_neighbors.truncate(STATE_NEIGHBORS.min(state_neighbors.len()));
+        let mut neighbors = state_neighbors
+            .into_iter()
+            .map(|(state_distance, sample)| {
+                (
+                    state_distance
+                        + normalized_distance(
+                            &action,
+                            &sample.action,
+                            &self.action_min,
+                            &self.action_range,
+                        ) * 2.0,
                     sample,
                 )
             })
@@ -481,6 +514,45 @@ impl GeneralizedTacticValueModel {
                 .then_with(|| left.descriptor.option_id.cmp(&right.descriptor.option_id))
         });
         Ok(estimates)
+    }
+}
+
+fn fitted_q_backup_limit(minimum_iterations: usize, transition_count: usize) -> usize {
+    transition_count
+        .max(minimum_iterations)
+        .min(MAX_FITTED_Q_BACKUP_ITERATIONS)
+}
+
+fn terminal_supported_transition_indices(
+    transitions: &[OptionTransitionSample],
+) -> BTreeSet<usize> {
+    let edges = transitions
+        .iter()
+        .map(|transition| {
+            (
+                transition.before_state_sha256,
+                transition.after_state_sha256,
+                transition.value_sample.terminal,
+            )
+        })
+        .collect::<Vec<_>>();
+    terminal_supported_edge_indices(&edges)
+}
+
+fn terminal_supported_edge_indices(edges: &[(Digest, Digest, bool)]) -> BTreeSet<usize> {
+    let mut supported_states = BTreeSet::new();
+    let mut supported_edges = BTreeSet::new();
+    loop {
+        let mut changed = false;
+        for (index, (before, after, terminal)) in edges.iter().copied().enumerate() {
+            if terminal || supported_states.contains(&after) {
+                changed |= supported_edges.insert(index);
+                changed |= supported_states.insert(before);
+            }
+        }
+        if !changed {
+            return supported_edges;
+        }
     }
 }
 
@@ -528,7 +600,11 @@ fn encode_action(
     let mut values = [0.0_f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH];
     values[option_type_index(&descriptor.option_type)] = 1.0;
     let mut cursor = 29;
-    let duration = unsigned(descriptor, &["duration_ticks", "maximum_ticks"]).unwrap_or(1);
+    let duration = unsigned(descriptor, &["duration_ticks", "maximum_ticks"])
+        .or_else(|| {
+            unsigned(descriptor, &["recovery_frames"]).and_then(|frames| frames.checked_add(1))
+        })
+        .unwrap_or(1);
     values[cursor] = (duration as f32).ln_1p();
     cursor += 1;
     let coordinate_plan = coordinate_plan(descriptor);
@@ -607,7 +683,11 @@ fn encode_action(
     cursor += 3;
     let relative_heading = ["heading_radians", "movement_heading"]
         .iter()
-        .find_map(|name| float(descriptor, name));
+        .find_map(|name| float(descriptor, name))
+        .or_else(|| {
+            float(descriptor, "direction_degrees")
+                .map(|degrees| degrees * std::f32::consts::PI / 180.0)
+        });
     values[cursor] = f32::from(relative_heading.is_some());
     if let Some(relative_heading) = relative_heading {
         let current_yaw = context.yaw_sin.atan2(context.yaw_cos);
@@ -677,13 +757,19 @@ fn initial_turn(
 
 fn option_type_index(option_type: &OptionType) -> usize {
     match option_type {
-        OptionType::Move => 0,
+        OptionType::Move
+        | OptionType::Align
+        | OptionType::MaintainHeading
+        | OptionType::MaintainDistance
+        | OptionType::Waypoint
+        | OptionType::Rail
+        | OptionType::Spline
+        | OptionType::Bezier
+        | OptionType::SeekActor
+        | OptionType::MaintainOffset => 0,
         OptionType::Turn => 1,
         OptionType::Brake => 2,
         OptionType::Neutral => 3,
-        OptionType::Align => 4,
-        OptionType::MaintainHeading => 5,
-        OptionType::MaintainDistance => 6,
         OptionType::Roll => 7,
         OptionType::JumpAttack => 8,
         OptionType::Attack => 9,
@@ -699,12 +785,6 @@ fn option_type_index(option_type: &OptionType) -> usize {
         OptionType::Boomerang => 19,
         OptionType::Clawshot => 20,
         OptionType::Spinner => 21,
-        OptionType::Waypoint => 22,
-        OptionType::Rail => 23,
-        OptionType::Spline => 24,
-        OptionType::Bezier => 25,
-        OptionType::SeekActor => 26,
-        OptionType::MaintainOffset => 27,
         OptionType::Custom(_) => 28,
     }
 }
@@ -818,22 +898,6 @@ fn action_feature_ranges(
     }
     let range = std::array::from_fn(|index| (maximum[index] - minimum[index]).max(1.0e-6));
     (minimum, range)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn joint_distance(
-    left_state: &[f32],
-    right_state: &[f32],
-    state_min: &[f32],
-    state_range: &[f32],
-    left_action: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
-    right_action: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
-    action_min: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
-    action_range: &[f32; GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH],
-) -> f32 {
-    let state = normalized_distance(left_state, right_state, state_min, state_range);
-    let action = normalized_distance(left_action, right_action, action_min, action_range);
-    state + action * 2.0
 }
 
 fn normalized_distance(left: &[f32], right: &[f32], minimum: &[f32], range: &[f32]) -> f32 {
@@ -981,6 +1045,68 @@ mod tests {
     }
 
     #[test]
+    fn terminal_support_excludes_censored_and_cyclic_components() {
+        let digest = |byte| Digest([byte; 32]);
+        let edges = [
+            (digest(1), digest(2), false),
+            (digest(2), digest(3), true),
+            (digest(1), digest(4), false),
+            (digest(4), digest(5), false),
+            (digest(6), digest(2), false),
+            (digest(7), digest(8), false),
+            (digest(8), digest(7), false),
+        ];
+
+        assert_eq!(
+            terminal_supported_edge_indices(&edges),
+            BTreeSet::from([0, 1, 4])
+        );
+    }
+
+    #[test]
+    fn fitted_q_can_propagate_beyond_the_configured_minimum() {
+        assert_eq!(fitted_q_backup_limit(12, 32), 32);
+        assert_eq!(fitted_q_backup_limit(32, 4), 32);
+        assert_eq!(fitted_q_backup_limit(12, 1_000), 512);
+    }
+
+    #[test]
+    fn action_similarity_cannot_pull_value_from_a_remote_state_region() {
+        let mut samples = Vec::new();
+        for index in 0..STATE_NEIGHBORS {
+            samples.push(GeneralizedTacticTrainingSample {
+                state_features: vec![0.0, 0.0],
+                context: GeneralizedTacticContext::default(),
+                action: action(&format!("near-{index}"), 500.0, 10.0, 2.5, Some(7), -100.0),
+                outcome: GeneralizedTacticOutcome {
+                    reward: 1.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            });
+        }
+        let target = action("target", 100.0, 100.0, 0.0, None, 100.0);
+        for index in 0..STATE_NEIGHBORS {
+            let mut remote = target.clone();
+            remote.option_id = format!("remote-{index}");
+            samples.push(GeneralizedTacticTrainingSample {
+                state_features: vec![100.0, 100.0],
+                context: GeneralizedTacticContext::default(),
+                action: remote,
+                outcome: GeneralizedTacticOutcome {
+                    reward: 100.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            });
+        }
+
+        let prediction = GeneralizedTacticValueModel::fit(&samples)
+            .unwrap()
+            .predict(&[0.0, 0.0], &GeneralizedTacticContext::default(), &target)
+            .unwrap();
+        assert_eq!(prediction.outcome.reward, 1.0);
+    }
+
+    #[test]
     fn action_identity_is_not_a_model_feature() {
         let mut left = action("left", 100.0, 100.0, 0.0, Some(20), 10.0);
         let mut right = action("right", 100.0, 100.0, 0.0, Some(20), 10.0);
@@ -1065,10 +1191,30 @@ mod tests {
             ]),
         };
         let encoded_heading = encode_action(&context, &heading).unwrap();
+        assert_eq!(encoded_heading[0], 1.0);
+        assert_eq!(encoded_heading[5], 0.0);
         assert_eq!(encoded_heading[47], 1.0);
         assert!((encoded_heading[48] - 1.0).abs() < 1.0e-6);
         assert!(encoded_heading[49].abs() < 1.0e-6);
         assert!((encoded_heading[50] - std::f32::consts::FRAC_PI_2).abs() < 1.0e-6);
+
+        let roll = OptionActionDescriptor {
+            option_id: "native-roll".into(),
+            option_type: OptionType::Roll,
+            parameters: BTreeMap::from([
+                ("direction_degrees".into(), OptionParameter::Signed(-90)),
+                ("magnitude".into(), OptionParameter::Unsigned(127)),
+                ("recovery_frames".into(), OptionParameter::Unsigned(3)),
+            ]),
+        };
+        let encoded_roll = encode_action(&context, &roll).unwrap();
+        assert!((encoded_roll[29] - 4.0_f32.ln_1p()).abs() < 1.0e-6);
+        assert_eq!(encoded_roll[47], 1.0);
+        assert!((encoded_roll[48] + 1.0).abs() < 1.0e-6);
+        assert!(encoded_roll[49].abs() < 1.0e-6);
+        assert_eq!(encoded_roll[45], 1.0);
+        assert!((encoded_roll[51] - 0.25).abs() < 1.0e-6);
+        assert_eq!(encoded_roll[55 + 8], 1.0);
     }
 
     #[test]
