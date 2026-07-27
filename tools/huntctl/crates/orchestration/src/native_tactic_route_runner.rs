@@ -2754,7 +2754,8 @@ fn run_seed(
         };
 
         let decision_index = campaign.decision_index;
-        let refit_model = tactic_model_refit_due(
+        let refit_model = tactic_model_refit_required(
+            campaign.model().is_some(),
             decision_index
                 .checked_add(1)
                 .ok_or_else(|| route_message("decision index overflowed"))?,
@@ -4615,6 +4616,10 @@ fn tactic_checkpoint_due(decision_index: u64, interval: u64, terminal: bool) -> 
 
 fn tactic_model_refit_due(decision_count: u64, interval: u64) -> bool {
     decision_count == 1 || decision_count % interval == 0
+}
+
+fn tactic_model_refit_required(model_available: bool, decision_count: u64, interval: u64) -> bool {
+    !model_available || tactic_model_refit_due(decision_count, interval)
 }
 
 fn advance_rolling_checkpoint(
@@ -6854,6 +6859,8 @@ mod tests {
         assert!(!tactic_model_refit_due(3, 4));
         assert!(tactic_model_refit_due(4, 4));
         assert!(tactic_model_refit_due(8, 4));
+        assert!(tactic_model_refit_required(false, 2, 4));
+        assert!(!tactic_model_refit_required(true, 2, 4));
     }
 
     #[test]
