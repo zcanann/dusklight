@@ -219,7 +219,11 @@ pub fn propose_parameterized_tactics(
     }
 
     for recovery_frames in [3_u32, 7] {
-        let direction_degrees = (central_heading * 180.0 / PI).round().clamp(-180.0, 180.0) as i16;
+        // RollOptionPlan's camera-relative +90 semantic emits positive raw
+        // stick X, while world-heading controllers use the game's -sin X
+        // convention. Negate the world-relative heading so roll, seek, curve,
+        // and maintained-heading instances all command the same direction.
+        let direction_degrees = (-central_heading * 180.0 / PI).round().clamp(-180.0, 180.0) as i16;
         insert(
             &mut entries,
             ParameterizedTacticFamily::Roll,
@@ -308,7 +312,7 @@ fn normalize_angle(angle: f32) -> f32 {
 
 fn stick(angle: f32, magnitude: i8) -> [i8; 2] {
     [
-        (angle.sin() * f32::from(magnitude)).round() as i8,
+        (-angle.sin() * f32::from(magnitude)).round() as i8,
         (angle.cos() * f32::from(magnitude)).round() as i8,
     ]
 }
@@ -467,5 +471,27 @@ mod tests {
 
         assert_eq!(ids(&baseline), ids(&adapted));
         assert_eq!(baseline.family_schema_sha256, adapted.family_schema_sha256);
+    }
+
+    #[test]
+    fn world_heading_uses_one_main_stick_x_convention_across_atomic_families() {
+        assert_eq!(stick(PI / 2.0, 100), [-100, 0]);
+
+        let mut proposal_context = context(31, 2);
+        proposal_context.player_position = [0.0; 3];
+        proposal_context.camera_yaw_radians = Some(0.0);
+        proposal_context.goal_coordinate = [100.0, 0.0, 0.0];
+        let proposals = propose_parameterized_tactics(proposal_context).unwrap();
+        let roll_directions = proposals
+            .catalog
+            .option_descriptors()
+            .filter(|descriptor| descriptor.option_type == OptionType::Roll)
+            .map(|descriptor| descriptor.parameters.get("direction_degrees").cloned())
+            .collect::<Vec<_>>();
+
+        assert!(!roll_directions.is_empty());
+        assert!(roll_directions.iter().all(|direction| {
+            matches!(direction, Some(OptionParameter::Signed(degrees)) if *degrees < 0)
+        }));
     }
 }

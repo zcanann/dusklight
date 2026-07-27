@@ -755,7 +755,10 @@ fn encode_action(
         .find_map(|name| float(descriptor, name))
         .or_else(|| {
             float(descriptor, "direction_degrees")
-                .map(|degrees| degrees * std::f32::consts::PI / 180.0)
+                // RollOptionPlan defines positive degrees in raw-pad space,
+                // whose X axis is opposite the world-heading convention used
+                // by seek and maintained-heading controllers.
+                .map(|degrees| -degrees * std::f32::consts::PI / 180.0)
         });
     values[cursor] = f32::from(relative_heading.is_some());
     if let Some(relative_heading) = relative_heading {
@@ -1325,7 +1328,7 @@ mod tests {
         let encoded_roll = encode_action(&context, &roll).unwrap();
         assert!((encoded_roll[29] - 4.0_f32.ln_1p()).abs() < 1.0e-6);
         assert_eq!(encoded_roll[47], 1.0);
-        assert!((encoded_roll[48] + 1.0).abs() < 1.0e-6);
+        assert!((encoded_roll[48] - 1.0).abs() < 1.0e-6);
         assert!(encoded_roll[49].abs() < 1.0e-6);
         assert_eq!(encoded_roll[45], 1.0);
         assert!((encoded_roll[51] - 0.25).abs() < 1.0e-6);
