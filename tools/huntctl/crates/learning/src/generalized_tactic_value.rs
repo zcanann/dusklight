@@ -22,7 +22,7 @@ const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
 const STATE_NEIGHBORS: usize = 16;
 const EXACT_STATE_DISTANCE_EPSILON: f32 = 1.0e-8;
-const RETURN_COMPARISON_EPSILON: f32 = 1.0e-4;
+const RETURN_COMPARISON_RESOLUTION: f64 = 1.0e-4;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeneralizedTacticContext {
@@ -641,11 +641,8 @@ pub fn compare_generalized_tactic_outcomes(
     // `reward` is the learned objective return: authenticated terminal value
     // minus native input cost, including bootstrapped future value. Every other
     // outcome head is auxiliary evidence and cannot define policy utility.
-    if (left.reward - right.reward).abs() <= RETURN_COMPARISON_EPSILON {
-        std::cmp::Ordering::Equal
-    } else {
-        left.reward.total_cmp(&right.reward)
-    }
+    let bucket = |reward: f32| (f64::from(reward) / RETURN_COMPARISON_RESOLUTION).round();
+    bucket(left.reward).total_cmp(&bucket(right.reward))
 }
 
 pub fn generalized_tactic_action_factors(
@@ -1443,11 +1440,11 @@ mod tests {
     #[test]
     fn subresolution_return_noise_defers_to_action_support_distance() {
         let reference = GeneralizedTacticOutcome {
-            reward: 98.74,
+            reward: 98.739_967,
             ..GeneralizedTacticOutcome::default()
         };
         let interpolation_noise = GeneralizedTacticOutcome {
-            reward: reference.reward + RETURN_COMPARISON_EPSILON / 2.0,
+            reward: 98.739_983,
             ..reference
         };
         let one_tick_gain = GeneralizedTacticOutcome {
@@ -1463,6 +1460,34 @@ mod tests {
             compare_generalized_tactic_outcomes(&one_tick_gain, &reference),
             std::cmp::Ordering::Greater
         );
+    }
+
+    #[test]
+    fn calibrated_return_comparison_is_transitive() {
+        let outcomes = [
+            98.739_90, 98.739_94, 98.739_967, 98.739_983, 98.740_02, 98.749_97,
+        ]
+        .map(|reward| GeneralizedTacticOutcome {
+            reward,
+            ..GeneralizedTacticOutcome::default()
+        });
+
+        for left in &outcomes {
+            for middle in &outcomes {
+                for right in &outcomes {
+                    let left_middle = compare_generalized_tactic_outcomes(left, middle);
+                    let middle_right = compare_generalized_tactic_outcomes(middle, right);
+                    if left_middle != std::cmp::Ordering::Greater
+                        && middle_right != std::cmp::Ordering::Greater
+                    {
+                        assert_ne!(
+                            compare_generalized_tactic_outcomes(left, right),
+                            std::cmp::Ordering::Greater
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
