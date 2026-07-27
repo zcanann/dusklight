@@ -848,12 +848,14 @@ impl TacticQCampaign {
 
     /// Return the authenticated root plus one learned frontier acquisition.
     ///
-    /// Coverage is the first ordering key so an already expanded choke cannot
-    /// absorb the campaign. Within the least-expanded tier, shared predicted
-    /// future return over the actions executable at the endpoint determines
-    /// exploitation; model distance and exact-critic variance provide generic
-    /// acquisition signals. The last edge's immediate cost is evidence only,
-    /// not a myopic frontier-ordering rule.
+    /// Authenticated terminal state and shared predicted future return over the
+    /// actions executable at the endpoint determine exploitation. Expansion
+    /// count, model distance, and exact-critic variance then preserve generic
+    /// exploration pressure. Keeping coverage behind learned return is
+    /// important because every batch adds several fresh siblings: a hard
+    /// least-expanded tier otherwise prevents the learner from revisiting and
+    /// deepening a valuable frontier. The last edge's immediate cost is
+    /// evidence only, not a myopic frontier-ordering rule.
     pub fn sample_root_and_ranked_frontier<E, AE, F, A>(
         &self,
         seed: u64,
@@ -2003,10 +2005,11 @@ fn compare_frontier_acquisition(
     left: &TacticFrontierAcquisition,
     right: &TacticFrontierAcquisition,
 ) -> std::cmp::Ordering {
-    left.expansion_count
-        .cmp(&right.expansion_count)
-        .then_with(|| right.terminal.cmp(&left.terminal))
+    right
+        .terminal
+        .cmp(&left.terminal)
         .then_with(|| option_f64(right.best_mean_q).total_cmp(&option_f64(left.best_mean_q)))
+        .then_with(|| left.expansion_count.cmp(&right.expansion_count))
         .then_with(|| {
             option_f64(right.generalized_nearest_distance.map(f64::from)).total_cmp(&option_f64(
                 left.generalized_nearest_distance.map(f64::from),
@@ -2628,6 +2631,30 @@ mod tests {
 
         assert_eq!(
             compare_frontier_acquisition(&valuable, &cheap_dead_end),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn frontier_learning_value_precedes_coverage_count() {
+        let valuable = TacticFrontierAcquisition {
+            expansion_count: 3,
+            terminal: false,
+            reward: -0.4,
+            best_mean_q: Some(10.0),
+            maximum_ensemble_variance: None,
+            generalized_nearest_distance: Some(0.1),
+            novelty_rank: 1,
+            replayed_prefix_ticks: 40,
+        };
+        let fresh_dead_end = TacticFrontierAcquisition {
+            expansion_count: 0,
+            best_mean_q: Some(1.0),
+            ..valuable.clone()
+        };
+
+        assert_eq!(
+            compare_frontier_acquisition(&valuable, &fresh_dead_end),
             std::cmp::Ordering::Less
         );
     }
