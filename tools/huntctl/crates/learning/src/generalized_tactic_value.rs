@@ -20,7 +20,8 @@ pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
 const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
 const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
-const STATE_NEIGHBORS: usize = 8;
+const STATE_NEIGHBORS: usize = 16;
+const EXACT_STATE_DISTANCE_EPSILON: f32 = 1.0e-8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeneralizedTacticContext {
@@ -464,7 +465,14 @@ impl GeneralizedTacticValueModel {
             })
             .collect::<Vec<_>>();
         state_neighbors.sort_by(|left, right| left.0.total_cmp(&right.0));
-        state_neighbors.truncate(STATE_NEIGHBORS.min(state_neighbors.len()));
+        if state_neighbors
+            .first()
+            .is_some_and(|(distance, _)| *distance <= EXACT_STATE_DISTANCE_EPSILON)
+        {
+            state_neighbors.retain(|(distance, _)| *distance <= EXACT_STATE_DISTANCE_EPSILON);
+        } else {
+            state_neighbors.truncate(STATE_NEIGHBORS.min(state_neighbors.len()));
+        }
         let mut neighbors = state_neighbors
             .into_iter()
             .map(|(state_distance, sample)| {
