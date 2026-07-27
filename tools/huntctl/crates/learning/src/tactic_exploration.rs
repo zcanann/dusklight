@@ -757,14 +757,18 @@ pub fn ensure_route_composition_refinement(
     Ok(())
 }
 
-/// Reserve one acquisition slot for the highest-ranked unseen controller from
-/// a shared state-action outcome model.
+const MAX_GENERALIZED_VALUE_ACQUISITION_RANKS: usize = 128;
+
+/// Reserve one acquisition slot for a partitioned, high-ranked unseen
+/// controller from a shared state-action outcome model.
 ///
 /// The caller supplies descriptors in predicted-outcome order. This selector
 /// deliberately knows nothing about controller IDs, route families, or
-/// hand-authored tactic semantics.
+/// hand-authored tactic semantics. Parallel workers partition the top-ranked
+/// window instead of all evaluating rank zero from the same shared model.
 pub fn ensure_generalized_value_acquisition(
     ranked_unseen: &[OptionActionDescriptor],
+    acquisition_partition: u64,
     maximum_proposals: usize,
     proposals: &mut Vec<SelectedTactic>,
 ) -> Result<(), TacticExplorationError> {
@@ -775,15 +779,21 @@ pub fn ensure_generalized_value_acquisition(
             Err(TacticExplorationError::InvalidInput)
         };
     }
-    let Some(descriptor) = ranked_unseen.iter().find(|descriptor| {
-        !proposals
-            .iter()
-            .any(|proposal| proposal.descriptor == **descriptor)
-    }) else {
+    let candidates = ranked_unseen
+        .iter()
+        .filter(|descriptor| {
+            !proposals
+                .iter()
+                .any(|proposal| &proposal.descriptor == *descriptor)
+        })
+        .take(MAX_GENERALIZED_VALUE_ACQUISITION_RANKS)
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
         return Ok(());
-    };
+    }
+    let descriptor = candidates[(acquisition_partition % candidates.len() as u64) as usize];
     let mut acquisition = proposals[0].clone();
-    acquisition.descriptor = descriptor.clone();
+    acquisition.descriptor = (*descriptor).clone();
     acquisition.reason = TacticSelectionReason::GeneralizedValue;
     proposals.insert(1, acquisition);
     proposals.truncate(maximum_proposals);
@@ -2594,6 +2604,7 @@ mod tests {
 
         ensure_generalized_value_acquisition(
             &[duplicate, held_out_roll.clone(), fallback],
+            0,
             2,
             &mut proposals,
         )
@@ -2603,6 +2614,33 @@ mod tests {
         assert_eq!(proposals[0].reason, TacticSelectionReason::Greedy);
         assert_eq!(proposals[1].descriptor, held_out_roll);
         assert_eq!(proposals[1].reason, TacticSelectionReason::GeneralizedValue);
+    }
+
+    #[test]
+    fn generalized_value_partitions_ranked_acquisition_across_workers() {
+        let control = descriptor("known/control", OptionType::Move);
+        let ranked = (0..140)
+            .map(|index| descriptor(&format!("unseen/{index:03}"), OptionType::Move))
+            .collect::<Vec<_>>();
+        let proposal = || SelectedTactic {
+            schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+            learner_snapshot_sha256: Digest([31; 32]),
+            decision_index: 7,
+            descriptor: control.clone(),
+            reason: TacticSelectionReason::Greedy,
+            exploration_draw: 0,
+        };
+
+        let mut first = vec![proposal()];
+        ensure_generalized_value_acquisition(&ranked, 0, 2, &mut first).unwrap();
+        let mut last = vec![proposal()];
+        ensure_generalized_value_acquisition(&ranked, 127, 2, &mut last).unwrap();
+        let mut wrapped = vec![proposal()];
+        ensure_generalized_value_acquisition(&ranked, 128, 2, &mut wrapped).unwrap();
+
+        assert_eq!(first[1].descriptor, ranked[0]);
+        assert_eq!(last[1].descriptor, ranked[127]);
+        assert_eq!(wrapped[1].descriptor, ranked[0]);
     }
 
     #[test]

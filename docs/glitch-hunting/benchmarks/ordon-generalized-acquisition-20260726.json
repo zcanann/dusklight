@@ -1,0 +1,81 @@
+{
+  "schema": "dusklight-ordon-generalized-acquisition-evidence/v1",
+  "status": "progress_only",
+  "source": {
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "segment_id": "to_ordon_spring_q125",
+    "boundary_index": 506,
+    "native_source_fingerprint": "4786d70e77b31416d02864783434c7dc"
+  },
+  "change": {
+    "route_specific_preferred_action_script": false,
+    "crossover_catalog_limit_before": 54,
+    "crossover_catalog_limit_after": 128,
+    "complete_neighboring_cadence_geometry_products_retained": true,
+    "learned_episodes_per_generation": 4,
+    "generalized_acquisition": {
+      "lane_zero": "best predicted unseen controller in every generation",
+      "other_lanes": "consecutive predicted ranks swept across generations",
+      "rank_window": 128
+    }
+  },
+  "equal_budget_diagnostic": {
+    "artifact": "build/campaigns/ordon-q125-generalized-partitioned-acquisition-release-128x1-w12-v3-20260726/run/report.json",
+    "seeds": 128,
+    "workers": 12,
+    "native_ticks": 42750,
+    "wall_micros": 131569625,
+    "unique_evaluated_controllers": 393,
+    "best_first_terminal_tick": 133,
+    "finding": "Ranks 1 through 96 were insufficient to surface the productive base cadence. This run is diagnostic and not acceptance evidence."
+  },
+  "complete_rank_window": {
+    "artifact": "build/campaigns/ordon-q125-generalized-partitioned-acquisition-release-256x1-w12-v4-20260726/run/report.json",
+    "seeds": 256,
+    "workers": 12,
+    "decisions": 256,
+    "successful_seeds": 180,
+    "native_ticks": 82505,
+    "wall_micros": 326101786,
+    "native_simulation_micros": 984068504,
+    "tactic_selection_micros": 33453784,
+    "preparation_and_fact_extraction_micros": 13955690,
+    "model_update_micros": 14176071,
+    "evidence_projection_and_persistence_micros": 129071576,
+    "shared_training_rows": 806,
+    "unique_evaluated_controllers": 786,
+    "best": {
+      "first_terminal_tick": 127,
+      "seed_index": 193,
+      "seed": 82900387,
+      "selection_reason": "generalized_value",
+      "option_id": "goal.seek.route.04.crossover.01.split.01.blend.010.roll.period.20.phase.00.radius.384",
+      "emitted_tape_sha256": "7eb923c1828513bc48e2f4eaab72e826d9343903130a9e52b1906c4eadd78ea8"
+    },
+    "learned_progression": [
+      {
+        "first_terminal_tick": 131,
+        "option_id": "goal.seek.route.01.roll.period.23.phase.00"
+      },
+      {
+        "first_terminal_tick": 129,
+        "option_id": "goal.seek.route.04.crossover.01.split.01.roll.period.20.phase.00.radius.096"
+      },
+      {
+        "first_terminal_tick": 128,
+        "option_id": "goal.seek.route.04.crossover.01.split.01.roll.period.20.phase.00.radius.256"
+      },
+      {
+        "first_terminal_tick": 127,
+        "option_id": "goal.seek.route.04.crossover.01.split.01.blend.010.roll.period.20.phase.00.radius.384"
+      }
+    ]
+  },
+  "acceptance": {
+    "incumbent_first_terminal_tick": 125,
+    "required_first_terminal_tick_exclusive": 125,
+    "observed_best_first_terminal_tick": 127,
+    "passed": false
+  },
+  "conclusion": "Generic shared-model acquisition now reaches and refines the productive crossover basin without controller-ID preferences. The remaining two-tick gap requires a richer geometry or timing neighborhood; additional repetitions of this same finite catalog are not justified."
+}

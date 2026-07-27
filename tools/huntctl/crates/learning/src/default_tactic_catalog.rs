@@ -25,7 +25,12 @@ const MAX_GOAL_ROUTE_ROLL_PERIOD: u32 = 32;
 const GOAL_ROUTE_WAYPOINT_SWITCH_RADII: [u32; 16] = [
     32, 48, 64, 80, 112, 128, 144, 160, 192, 224, 256, 320, 384, 448, 512, 640,
 ];
-const MAX_GOAL_ROUTE_CROSSOVER_VARIANTS: usize = 54;
+// Five cadence values times 24 structural candidates is 120. The common
+// bounded product therefore retains every discrete cadence/geometry pair; a
+// smaller cap silently dropped the final cadence slices before the learner
+// could rank them. The remaining eight slots begin the lookahead neighborhood
+// while the complete state-local catalog stays below its global bound.
+const MAX_GOAL_ROUTE_CROSSOVER_VARIANTS: usize = 128;
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -562,7 +567,7 @@ pub fn goal_route_waypoint_switch_variants(
 /// World route extraction produces several complete path hypotheses, but a
 /// useful route can enter on one path and leave on another. Keep this bounded
 /// and state-local: only equal-length, single-layer coordinate sequences are
-/// crossed, and at most fifty-four joint geometry/cadence/lookahead actions
+/// crossed, and at most 128 joint geometry/cadence/lookahead actions
 /// are materialized.
 pub fn goal_route_crossover_variants(
     catalog: &TacticAssetCatalog,
@@ -1371,7 +1376,7 @@ mod tests {
 
         let variants = goal_route_crossover_variants(&catalog, incumbent).unwrap();
 
-        assert_eq!(variants.len(), MAX_GOAL_ROUTE_CROSSOVER_VARIANTS);
+        assert!(variants.len() <= MAX_GOAL_ROUTE_CROSSOVER_VARIANTS);
         assert!(variants.iter().any(|entry| {
             entry.option_id()
                 == "goal.seek.route.01.crossover.00.split.01.roll.period.17.phase.00.radius.096"
@@ -1441,7 +1446,7 @@ mod tests {
         ));
         let local_refinements =
             goal_route_crossover_variants(&catalog, &blended.description().option).unwrap();
-        assert_eq!(local_refinements.len(), MAX_GOAL_ROUTE_CROSSOVER_VARIANTS);
+        assert!(local_refinements.len() <= MAX_GOAL_ROUTE_CROSSOVER_VARIANTS);
         for blend in [40, 45, 50, 55, 60] {
             assert!(local_refinements.iter().any(|entry| {
                 entry.option_id()
@@ -1462,6 +1467,43 @@ mod tests {
                 .get("button_pulse_period_ticks")
                 == Some(&OptionParameter::Unsigned(20))
         }));
+    }
+
+    #[test]
+    fn crossover_catalog_retains_the_complete_five_cadence_neighborhood() {
+        let routes = (0..5)
+            .map(|route| {
+                (0..4)
+                    .map(|point| {
+                        [
+                            point as f32 * 100.0 + route as f32 * 10.0,
+                            10.0,
+                            -(point as f32 * 100.0) - route as f32 * 5.0,
+                        ]
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        let catalog =
+            goal_conditioned_route_tactic_catalog(&[[300.0, 10.0, -300.0]], &routes, 160, 160)
+                .unwrap();
+        let incumbent = &catalog
+            .entry("goal.seek.route.01.roll.period.23.phase.00")
+            .unwrap()
+            .description()
+            .option;
+
+        let variants = goal_route_crossover_variants(&catalog, incumbent).unwrap();
+
+        assert_eq!(variants.len(), MAX_GOAL_ROUTE_CROSSOVER_VARIANTS);
+        for period in [20, 21, 22, 23, 24] {
+            assert!(variants.iter().any(|entry| {
+                entry.option_id()
+                    == format!(
+                        "goal.seek.route.04.crossover.01.split.01.roll.period.{period:02}.phase.00.radius.096"
+                    )
+            }));
+        }
     }
 
     #[test]

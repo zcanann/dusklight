@@ -1386,6 +1386,7 @@ impl TacticQCampaign {
             family_schema_sha256,
             encode,
             maximum_proposals,
+            0,
             TacticProposalPolicy::Learned,
             None,
         )
@@ -1398,6 +1399,7 @@ impl TacticQCampaign {
         family_schema_sha256: Digest,
         encode: &F,
         maximum_proposals: usize,
+        acquisition_partition: u64,
         policy: TacticProposalPolicy,
         goal_distance_feature: Option<usize>,
     ) -> Result<TacticQProposalBatch, TacticQCampaignError>
@@ -1505,6 +1507,7 @@ impl TacticQCampaign {
                 .collect::<Vec<_>>();
             ensure_generalized_value_acquisition(
                 &ranked_unseen,
+                acquisition_partition,
                 maximum_proposals,
                 &mut proposals,
             )?;

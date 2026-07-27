@@ -2681,6 +2681,7 @@ fn run_seed(
                     action_schema_sha256,
                     &encode,
                     TACTIC_PROPOSALS_PER_DECISION,
+                    generalized_acquisition_partition(seed_index),
                     config.proposal_policy,
                     Some(encoder.goal_distance_feature()),
                 )
@@ -5966,6 +5967,23 @@ fn seed_group(seed_index: usize, episode: u64) -> Result<u64, NativeTacticRouteR
         .ok_or_else(|| route_message("episode group overflowed"))
 }
 
+fn generalized_acquisition_partition(seed_index: usize) -> u64 {
+    let generation = seed_index / LEARNED_EPISODES_PER_GENERATION;
+    let lane = seed_index % LEARNED_EPISODES_PER_GENERATION;
+    if lane == 0 {
+        // Every shared-model generation retains its best predicted unseen
+        // controller instead of turning all parallel workers into exploration.
+        0
+    } else {
+        // The remaining workers sweep consecutive ranks across generations.
+        // The selector applies its own finite-window modulo after filtering
+        // already-proposed actions.
+        generation
+            .saturating_mul(LEARNED_EPISODES_PER_GENERATION - 1)
+            .saturating_add(lane) as u64
+    }
+}
+
 fn selected_tactic_fits_horizon(
     suffix_ticks: u64,
     selected_maximum_ticks: u32,
@@ -6081,6 +6099,16 @@ impl From<TacticQCampaignError> for NativeTacticRouteRunError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn generalized_acquisition_keeps_exploit_and_sweeps_parallel_ranks() {
+        assert_eq!(
+            (0..12)
+                .map(generalized_acquisition_partition)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 0, 4, 5, 6, 0, 7, 8, 9]
+        );
+    }
 
     #[test]
     fn macro_primitive_baseline_keeps_a_terminal_proposal() {
