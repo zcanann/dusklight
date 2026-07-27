@@ -43,6 +43,24 @@ must not define privileged actions, observations, state, or terminals.
 
 ## P6 - Beat the authenticated Ordon incumbent
 
+- [ ] Replace exact-descriptor option memorization with a state-action value or
+      outcome model that shares evidence across executable controller factors.
+      At minimum, the model input must represent commanded stick magnitude and
+      direction changes, duration, button identity/duty/cadence, and typed
+      targeting relative to the current state. Controller hashes and option IDs
+      remain evidence identities, not model features.
+- [ ] Train that shared model from authenticated native outcomes, including
+      terminal progress, realized ticks, path efficiency, velocity retention,
+      commanded stalls, wall contact, momentum loss, and collision correction.
+      Do not replace the terminal predicate with coordinates or let shaping
+      outrank a faster authenticated terminal hit.
+- [ ] Prove held-out action generalization before resuming the acceptance
+      search: exclude exact controller instances from training and show that
+      the learner ranks productive rolling above otherwise comparable
+      non-rolling motion, straighter velocity-preserving motion above needless
+      turning, and measured wall-impact/momentum-loss outcomes below clean
+      motion. A catalog acquisition script choosing those instances is not
+      acceptable evidence.
 - [ ] Run the integrated system from the exact `to_ordon_spring_q125` source
       boundary with no route-specific preferred-action script. For this
       benchmark that means optimization request

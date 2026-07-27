@@ -1,0 +1,101 @@
+{
+  "schema": "dusklight-tactic-route-composition-generalization-report/v1",
+  "date": "2026-07-26",
+  "claim": "Generic route crossover, joint cadence/lookahead search, and waypoint interpolation improve the learned Ordon route from 131 to 127 authenticated ticks. Exhaustive local refinements in the measured basin do not beat 127. This is progress evidence, not P6 success. The limiting learner still assigns fitted-Q actions by exact OptionActionDescriptor identity, so unseen controller compositions are unsupported and cannot inherit evidence that rolling, straight velocity-preserving motion, or collision-free motion was valuable.",
+  "bindings": {
+    "optimization_request": "routes/Glitch Exhibition/intro/benchmarks/ordon-tactic-q-discovery-v1.request.json",
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "execution_binding": "build/campaigns/ordon-q125-headless-candidate-no-gx-execution-20260726/execution.json",
+    "execution_binding_sha256": "f1507d2d54ac539b3f4b85ca44076ce6365b58b049b475a2a72f155508d7e3e1",
+    "source_boundary_index": 506,
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "terminal": "authenticated F_SP103 to F_SP104 load-zone commit"
+  },
+  "live_signals": {
+    "state_features": [
+      "trajectory_straightness",
+      "trajectory_mean_planar_speed",
+      "trajectory_stalled_command_fraction",
+      "trajectory_speed_retention",
+      "goal_history_progress_per_tick",
+      "goal_trajectory_alignment",
+      "goal_closing_speed",
+      "velocity",
+      "forward_speed",
+      "collision_correction_magnitude"
+    ],
+    "reward_costs": {
+      "tick_cost": 0.01,
+      "inefficient_path_unit_cost": 0.00025,
+      "stalled_command_tick_cost": 0.01,
+      "wall_contact_tick_cost": 0.0025,
+      "momentum_loss_unit_cost": 0.00025,
+      "collision_correction_unit_cost": 0.00025
+    },
+    "terminal_ordering": "Authenticated terminal success and exact first-hit ticks outrank shaping when comparing two terminal proposals."
+  },
+  "experiments": [
+    {
+      "treatment": "adjacent cadence coverage",
+      "report": "build/campaigns/ordon-q125-adjacent-cadence-32x1-w6-20260726/run/report.json",
+      "finding": "The route-01 period-20 control was explicitly evaluated and failed within the 160-tick tactic horizon; cadence-only refinement did not improve 131."
+    },
+    {
+      "treatment": "hard route crossover",
+      "report": "build/campaigns/ordon-q125-joint-crossover-cadence-debug-v2-32x1-w6-20260726/run/report.json",
+      "best_ticks": 129,
+      "best_option": "goal.seek.route.04.crossover.01.split.01.roll.period.20.phase.00.radius.096",
+      "finding": "A generic prefix/suffix composition improved the exact terminal cost by two ticks."
+    },
+    {
+      "treatment": "crossover lookahead",
+      "report": "build/campaigns/ordon-q125-parsimonious-crossover-lookahead-debug-32x1-w6-20260726/run/report.json",
+      "best_ticks": 128,
+      "best_option": "goal.seek.route.04.crossover.01.split.01.roll.period.20.phase.00.radius.160",
+      "finding": "Increasing waypoint lookahead improved the hard crossover by one tick."
+    },
+    {
+      "treatment": "deduplicated interpolation with extended learning horizon",
+      "report": "build/campaigns/ordon-q125-deduplicated-interpolation-debug-64x1-w6-v2-20260726/run/report.json",
+      "best_ticks": 127,
+      "best_option": "goal.seek.route.04.crossover.01.split.01.blend.025.roll.period.20.phase.00.radius.320",
+      "total_native_ticks": 24002,
+      "wall_micros": 200392442,
+      "native_simulation_micros": 41715439,
+      "evidence_projection_and_persistence_micros": 187368736,
+      "finding": "A 25-percent interpolated splice at lookahead 320 improved the route to 127. The former 32-seed cap was too short for a late generation discovery to receive subsequent refinement."
+    },
+    {
+      "treatment": "ranked composition and local geometry refinement",
+      "report": "build/campaigns/ordon-q125-ranked-composition-refinement-debug-64x1-w6-20260726/run/report.json",
+      "best_ticks": 127,
+      "best_option": "goal.seek.route.04.crossover.01.split.01.blend.025.roll.period.20.phase.00.radius.320",
+      "tested_equal_best_examples": [
+        "goal.seek.route.04.crossover.01.split.01.blend.010.roll.period.20.phase.00.radius.384",
+        "goal.seek.route.04.crossover.01.split.01.blend.020.roll.period.20.phase.00.radius.320"
+      ],
+      "total_native_ticks": 21540,
+      "wall_micros": 191887150,
+      "native_simulation_micros": 36466894,
+      "evidence_projection_and_persistence_micros": 176587944,
+      "shared_training_replay_rows": 194,
+      "finding": "Ordered generational acquisition finds the useful composition earlier and tests nearby geometry broadly, but the measured basin plateaus at 127."
+    }
+  ],
+  "architectural_limit": {
+    "model": "OptionValueModel maps each canonical OptionActionDescriptor to a distinct fitted-Q action index.",
+    "unseen_action_behavior": "A descriptor absent from replay is returned as unsupported and receives no inferred Q value.",
+    "consequence": "Outcome signals can score an executed controller, but they do not generalize rolling, straightness, velocity retention, or collision response to a new cadence, waypoint sequence, or composition.",
+    "required_next_step": "Use a state-action critic or authenticated outcome model over generic executable controller factors, and prove held-out controller ranking before another acceptance search."
+  },
+  "throughput_limit": {
+    "finding": "The 64-seed ranked run spent 36.47 seconds in native simulation and 176.59 aggregate seconds in evidence projection/persistence. Shared-replay projection grows with later generations and is now a larger optimization target than game simulation for this workload."
+  },
+  "gate_status": {
+    "machine_generated_terminal_route": true,
+    "best_first_hit_ticks": 127,
+    "strictly_better_than_125": false,
+    "cold_replay_proof_required": false,
+    "p6_accepted": false
+  }
+}

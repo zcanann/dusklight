@@ -423,8 +423,12 @@ pub fn ensure_terminal_cost_refinement(
     let local_parameter_axes =
         single_parameter_axis_candidates(incumbent, &candidates, &same_period);
     let refinement_index = if split_parameter_axes && lane == 0 {
-        best_local_parameter_candidate(ranking, &candidates, &other_period)
-            .unwrap_or(other_period[0])
+        // Integer controller cadences are resonant rather than smooth: one
+        // period can miss a terminal while its immediate neighbor succeeds.
+        // Always advance one lane through the nearest untried cadence instead
+        // of allowing a fitted local response to skip it. The remaining lanes
+        // still provide learned, phase/radius, and wide-interval acquisition.
+        other_period[0]
     } else if split_parameter_axes && lane == 1 {
         let axis = local_parameter_axes
             .get(
@@ -446,12 +450,9 @@ pub fn ensure_terminal_cost_refinement(
             .min(other_period.len() - 1);
         other_period[index]
     } else if lane == 0 {
-        best_local_parameter_candidate(
-            ranking,
-            &candidates,
-            &(0..candidates.len()).collect::<Vec<_>>(),
-        )
-        .unwrap_or(0)
+        // The same discrete-coverage guarantee applies when cadence is the
+        // only remaining axis.
+        0
     } else if candidates.len() == 1 {
         0
     } else {
@@ -623,6 +624,133 @@ pub fn ensure_route_family_partition(
     acquisition.descriptor = descriptor;
     acquisition.reason = TacticSelectionReason::BatchCoverage;
     proposals.insert(1, acquisition);
+    proposals.truncate(maximum_proposals);
+    Ok(())
+}
+
+/// Reserve one learned acquisition slot for a bounded composition of the
+/// current terminal route with another compatible route hypothesis.
+///
+/// Crossovers are materialized state-locally by the route catalog. This
+/// selector makes the composition executable promptly instead of relying on a
+/// large unsupported catalog lottery.
+pub fn ensure_route_composition_refinement(
+    ranking: &LiveTacticRanking,
+    state_untried: &[OptionActionDescriptor],
+    terminal_incumbent: Option<&OptionActionDescriptor>,
+    acquisition_partition: u64,
+    maximum_proposals: usize,
+    proposals: &mut Vec<SelectedTactic>,
+) -> Result<(), TacticExplorationError> {
+    let Some(incumbent) = terminal_incumbent else {
+        return Ok(());
+    };
+    let Some(incumbent_family) = route_family_id(&incumbent.option_id) else {
+        return Ok(());
+    };
+    if maximum_proposals <= 1 || proposals.is_empty() || proposals.len() > maximum_proposals {
+        return if !proposals.is_empty() && proposals.len() <= maximum_proposals {
+            Ok(())
+        } else {
+            Err(TacticExplorationError::InvalidInput)
+        };
+    }
+    let incumbent_route = incumbent_family
+        .strip_prefix("goal.seek.route.")
+        .expect("route family prefix");
+    let crossover_suffix = format!(".crossover.{incumbent_route}.");
+    let mut candidates = ranking
+        .choices
+        .iter()
+        .filter(|choice| choice.applicable)
+        .map(|choice| &choice.descriptor)
+        .filter(|descriptor| {
+            descriptor.option_id.contains(".crossover.")
+                && (descriptor
+                    .option_id
+                    .starts_with(&format!("{incumbent_family}.crossover."))
+                    || descriptor.option_id.contains(&crossover_suffix))
+                && state_untried.contains(descriptor)
+                && !proposals
+                    .iter()
+                    .any(|proposal| proposal.descriptor == **descriptor)
+        })
+        .collect::<Vec<_>>();
+    // Crossovers couple discrete geometry, cadence, and lookahead axes. A base
+    // route spreads coverage across the faster cadences first. Once a
+    // crossover itself wins, keep its exact geometry and cadence fixed while
+    // trying lookahead variants before returning to other compositions.
+    if incumbent.option_id.contains(".crossover.") {
+        let incumbent_structure = incumbent
+            .option_id
+            .split_once(".roll.period.")
+            .map(|(structure, _)| structure)
+            .unwrap_or(&incumbent.option_id);
+        let incumbent_period = incumbent.parameters.get("button_pulse_period_ticks");
+        candidates.sort_by(|left, right| {
+            let left_structure = left
+                .option_id
+                .split_once(".roll.period.")
+                .map(|(structure, _)| structure)
+                .unwrap_or(&left.option_id);
+            let right_structure = right
+                .option_id
+                .split_once(".roll.period.")
+                .map(|(structure, _)| structure)
+                .unwrap_or(&right.option_id);
+            let left_exact = left_structure == incumbent_structure;
+            let right_exact = right_structure == incumbent_structure;
+            let left_same_period =
+                left.parameters.get("button_pulse_period_ticks") == incumbent_period;
+            let right_same_period =
+                right.parameters.get("button_pulse_period_ticks") == incumbent_period;
+            right_same_period
+                .cmp(&left_same_period)
+                // Interpolated siblings are the new structural information;
+                // the exact hard crossover already has a measured incumbent.
+                .then_with(|| left_exact.cmp(&right_exact))
+                .then_with(|| left.option_id.cmp(&right.option_id))
+        });
+    } else {
+        candidates.sort_by(|left, right| {
+            let period = |descriptor: &OptionActionDescriptor| {
+                descriptor
+                    .parameters
+                    .get("button_pulse_period_ticks")
+                    .and_then(|parameter| match parameter {
+                        OptionParameter::Unsigned(period) => Some(*period),
+                        _ => None,
+                    })
+                    .unwrap_or(u64::MAX)
+            };
+            // The incumbent already proves its terminal suffix. Prefer
+            // replacing the approach prefix while preserving that suffix
+            // before replacing the successful exit with an unsupported peer.
+            // Within that structural priority, try faster cadence and stable
+            // option order.
+            let left_preserves_terminal_suffix = left.option_id.contains(&crossover_suffix);
+            let right_preserves_terminal_suffix = right.option_id.contains(&crossover_suffix);
+            right_preserves_terminal_suffix
+                .cmp(&left_preserves_terminal_suffix)
+                .then_with(|| period(left).cmp(&period(right)))
+                .then_with(|| left.option_id.cmp(&right.option_id))
+        });
+    }
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    let descriptor = candidates[(acquisition_partition % candidates.len() as u64) as usize].clone();
+    let mut composition = proposals[0].clone();
+    composition.descriptor = descriptor;
+    composition.reason = TacticSelectionReason::BatchDiversity;
+    let insertion_index = usize::from(
+        proposals.len() > 1
+            && ranking.values.ranked.first().is_some_and(|greedy| {
+                proposals[1].descriptor == greedy.descriptor
+                    && proposals[0].descriptor != greedy.descriptor
+            }),
+    ) + 1;
+    proposals.insert(insertion_index.min(proposals.len()), composition);
     proposals.truncate(maximum_proposals);
     Ok(())
 }
@@ -1493,6 +1621,77 @@ mod tests {
     }
 
     #[test]
+    fn terminal_route_compositions_receive_a_dedicated_acquisition_lane() {
+        let incumbent = descriptor(
+            "goal.seek.route.01.roll.period.23.phase.00",
+            OptionType::Custom("reactive_controller".into()),
+        );
+        let forward = descriptor(
+            "goal.seek.route.01.crossover.04.split.01.roll.period.23.phase.00.radius.096",
+            OptionType::Custom("reactive_controller".into()),
+        );
+        let reverse = descriptor(
+            "goal.seek.route.04.crossover.01.split.01.roll.period.23.phase.00.radius.096",
+            OptionType::Custom("reactive_controller".into()),
+        );
+        let unrelated = descriptor(
+            "goal.seek.route.02.crossover.03.split.01.roll.period.23.phase.00.radius.096",
+            OptionType::Custom("reactive_controller".into()),
+        );
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([27; 32]),
+            action_universe_sha256: Digest([28; 32]),
+            choices: [
+                incumbent.clone(),
+                forward.clone(),
+                reverse.clone(),
+                unrelated.clone(),
+            ]
+            .into_iter()
+            .map(choice)
+            .collect(),
+            values: AvailableOptionRanking {
+                ranked: vec![RankedOption {
+                    action_id: 0,
+                    descriptor: incumbent.clone(),
+                    mean_q: 98.5,
+                    ensemble_variance: 0.0,
+                }],
+                unsupported: vec![forward.clone(), reverse.clone(), unrelated.clone()],
+            },
+        };
+        let untried = vec![forward.clone(), reverse.clone(), unrelated];
+        let selected = (0..2)
+            .map(|partition| {
+                let mut proposals = vec![SelectedTactic {
+                    schema: TACTIC_EXPLORATION_SCHEMA_V1.into(),
+                    learner_snapshot_sha256: ranking.learner_snapshot_sha256,
+                    decision_index: 0,
+                    descriptor: incumbent.clone(),
+                    reason: TacticSelectionReason::Greedy,
+                    exploration_draw: 0,
+                }];
+                ensure_route_composition_refinement(
+                    &ranking,
+                    &untried,
+                    Some(&incumbent),
+                    partition,
+                    4,
+                    &mut proposals,
+                )
+                .unwrap();
+                assert_eq!(proposals[0].descriptor, incumbent);
+                assert_eq!(proposals[1].reason, TacticSelectionReason::BatchDiversity);
+                proposals[1].descriptor.option_id.clone()
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            selected,
+            BTreeSet::from([forward.option_id, reverse.option_id])
+        );
+    }
+
+    #[test]
     fn terminal_cost_refinement_preserves_control_and_selects_nearest_untried_variant() {
         fn rolling_route(period: u64) -> OptionActionDescriptor {
             let mut route = descriptor(
@@ -1683,14 +1882,14 @@ mod tests {
         }];
         ensure_terminal_cost_refinement(
             &learned_ranking,
-            &[period_21, period_23.clone(), period_30],
+            &[period_21.clone(), period_23.clone(), period_30],
             Some(&incumbent),
             0,
             4,
             &mut learned_proposals,
         )
         .unwrap();
-        assert_eq!(learned_proposals[1].descriptor, period_23);
+        assert_eq!(learned_proposals[1].descriptor, period_21);
 
         let wide_candidates = (12..=32)
             .filter(|period| *period != 22)

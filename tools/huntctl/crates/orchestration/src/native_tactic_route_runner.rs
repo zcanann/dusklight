@@ -28,7 +28,8 @@ use dusklight_automation_contracts::artifact::Digest;
 use dusklight_automation_contracts::tape::{InputFrame, InputTape, RawPadState};
 use dusklight_evidence::native_episode_shard::NativeEpisodeShard;
 use dusklight_learning::default_tactic_catalog::{
-    MAX_GOAL_SEEK_TARGETS, goal_route_roll_phase_variants, goal_route_waypoint_switch_variants,
+    MAX_GOAL_SEEK_TARGETS, goal_route_crossover_variants, goal_route_roll_phase_variants,
+    goal_route_waypoint_switch_variants,
 };
 use dusklight_learning::fact_registry::FactRegistry;
 use dusklight_learning::fact_snapshot::FactSnapshot;
@@ -114,7 +115,12 @@ const MAXIMUM_TACTIC_DECISION_RECORD_BYTES: usize = 16 * 1024 * 1024;
 const MAXIMUM_TACTIC_DECISION_SEGMENT_BYTES: usize = 256 * 1024 * 1024;
 const MAXIMUM_TACTIC_DECISION_SEGMENTS: usize =
     (MAX_ROUTE_DECISIONS as usize).div_ceil(NATIVE_TACTIC_DECISION_COMPACTION_RECORDS as usize) + 1;
-const MAX_ROUTE_SEEDS: usize = 32;
+// A terminal-reaching proposal ends its seed immediately, so short benchmark
+// routes may receive only one learned acquisition per seed. Keep enough
+// bounded root restarts for discoveries near the end of a parallel dispatch
+// window to feed back into later proposals instead of silently capping the
+// effective learning horizon at thirty-two decisions.
+const MAX_ROUTE_SEEDS: usize = 256;
 const MAX_ROUTE_WORKERS: usize = 32;
 const MAX_ROUTE_DECISIONS: u64 = 100_000;
 const ROUTE_TACTIC_VALUE_DISCOUNT: f32 = 0.999;
@@ -1875,12 +1881,18 @@ fn parameterized_catalog_for_state(
     entries.extend_from_slice(goal_route_catalog.entries());
     if let Some(incumbent) = terminal_incumbent {
         entries.extend(
-            goal_route_roll_phase_variants(goal_route_catalog, incumbent).map_err(route_error)?,
+            goal_route_crossover_variants(goal_route_catalog, incumbent).map_err(route_error)?,
         );
-        entries.extend(
-            goal_route_waypoint_switch_variants(goal_route_catalog, incumbent)
-                .map_err(route_error)?,
-        );
+        if !incumbent.option_id.contains(".crossover.") {
+            entries.extend(
+                goal_route_roll_phase_variants(goal_route_catalog, incumbent)
+                    .map_err(route_error)?,
+            );
+            entries.extend(
+                goal_route_waypoint_switch_variants(goal_route_catalog, incumbent)
+                    .map_err(route_error)?,
+            );
+        }
     }
     proposals.catalog = TacticAssetCatalog::new(entries).map_err(route_error)?;
     proposals.family_schema_sha256 = action_schema_sha256;
@@ -2669,7 +2681,12 @@ fn run_seed(
                     action_schema_sha256,
                     &encode,
                     TACTIC_PROPOSALS_PER_DECISION,
-                    seed_index as u64,
+                    // Shared replay removes the preceding generation's tried
+                    // actions before this catalog is ranked. Partition within
+                    // the current generation so each four-seed wave consumes
+                    // the next four ranked acquisitions instead of skipping
+                    // farther through a shrinking candidate list.
+                    (seed_index % LEARNED_EPISODES_PER_GENERATION) as u64,
                     config.proposal_policy,
                 )
                 .map_err(route_error)?;

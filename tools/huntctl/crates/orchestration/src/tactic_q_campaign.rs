@@ -33,7 +33,8 @@ use dusklight_learning::tactic_blueprint::{
 use dusklight_learning::tactic_exploration::{
     SelectedTactic, TacticExplorationConfig, TacticExplorationError, TacticProposalPolicy,
     TacticSelectionReason, choose_tactic_batch_for_policy, choose_tactic_batch_with_state_untried,
-    ensure_route_family_partition, ensure_terminal_cost_refinement,
+    ensure_route_composition_refinement, ensure_route_family_partition,
+    ensure_terminal_cost_refinement,
 };
 use dusklight_learning::tactic_frozen_policy::{TacticFrozenPolicy, TacticFrozenPolicyError};
 use dusklight_proposals::behavior_archive::{
@@ -1500,6 +1501,14 @@ impl TacticQCampaign {
                 maximum_proposals,
                 &mut proposals,
             )?;
+            ensure_route_composition_refinement(
+                &ranking,
+                &state_untried,
+                terminal_incumbent.as_ref(),
+                acquisition_partition,
+                maximum_proposals,
+                &mut proposals,
+            )?;
         }
         if policy != TacticProposalPolicy::RandomValid {
             ensure_blueprint_proposal(&ranking, maximum_proposals, &mut proposals)?;
@@ -1518,7 +1527,27 @@ impl TacticQCampaign {
                 transition.value_sample.terminal
                     && tactic_state_descriptor(&transition.before, false) == current_cell
             })
-            .min_by_key(|transition| transition.value_sample.duration_ticks)
+            .min_by(|left, right| {
+                left.value_sample
+                    .duration_ticks
+                    .cmp(&right.value_sample.duration_ticks)
+                    // A composition must improve terminal cost before it
+                    // displaces an equally fast simpler control and narrows
+                    // the state-local acquisition neighborhood.
+                    .then_with(|| {
+                        left.value_sample
+                            .action
+                            .option_id
+                            .contains(".crossover.")
+                            .cmp(&right.value_sample.action.option_id.contains(".crossover."))
+                    })
+                    .then_with(|| {
+                        left.value_sample
+                            .action
+                            .option_id
+                            .cmp(&right.value_sample.action.option_id)
+                    })
+            })
             .map(|transition| transition.value_sample.action.clone())
     }
 
