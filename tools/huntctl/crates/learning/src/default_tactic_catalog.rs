@@ -25,12 +25,11 @@ const MAX_GOAL_ROUTE_ROLL_PERIOD: u32 = 32;
 const GOAL_ROUTE_WAYPOINT_SWITCH_RADII: [u32; 16] = [
     32, 48, 64, 80, 112, 128, 144, 160, 192, 224, 256, 320, 384, 448, 512, 640,
 ];
-// Five cadence values times 24 structural candidates is 120. The common
-// bounded product therefore retains every discrete cadence/geometry pair; a
-// smaller cap silently dropped the final cadence slices before the learner
-// could rank them. The remaining eight slots begin the lookahead neighborhood
-// while the complete state-local catalog stays below its global bound.
-const MAX_GOAL_ROUTE_CROSSOVER_VARIANTS: usize = 128;
+// Five cadence values times 24 structural candidates is 120. Composed
+// incumbents additionally expose every phase of their winning cadence before
+// continuing geometry refinement. The cap retains both bounded domains while
+// the complete state-local catalog stays below its global bound.
+const MAX_GOAL_ROUTE_CROSSOVER_VARIANTS: usize = 160;
 
 /// Builds the finite catalog offered to a fresh route learner.
 ///
@@ -711,6 +710,68 @@ pub fn goal_route_crossover_variants(
     }
     peers.sort_by(|left, right| left.0.cmp(&right.0));
 
+    let mut variants = Vec::new();
+    if let Some((incumbent_peer, split)) = incumbent_crossover.as_ref() {
+        if let Some((_, peer_coordinates)) = peers
+            .iter()
+            .find(|(peer_route_id, _)| peer_route_id == incumbent_peer)
+        {
+            let mut coordinates = source_coordinates[..*split].to_vec();
+            coordinates.extend_from_slice(&peer_coordinates[*split..]);
+            if let Some(blend_percent) = incumbent_blend {
+                let weight = blend_percent as f32 / 100.0;
+                let index = split - 1;
+                coordinates[index] = [
+                    source_coordinates[index][0] * (1.0 - weight)
+                        + peer_coordinates[index][0] * weight,
+                    source_coordinates[index][1] * (1.0 - weight)
+                        + peer_coordinates[index][1] * weight,
+                ];
+            }
+            for candidate_phase in 0..incumbent_period {
+                if candidate_phase == phase {
+                    continue;
+                }
+                let mut layers = vec![Layer {
+                    start_frame: 0,
+                    duration_frames: source_program.duration_frames,
+                    operation: Operation::SeekCoordinateSequence {
+                        blend: StickBlend::Replace,
+                        coordinates_xz: coordinates.clone(),
+                        intermediate_stop_radius: radius,
+                        final_stop_radius: 0.0,
+                        magnitude: 127,
+                    },
+                }];
+                let mut pulse = candidate_phase;
+                while pulse < source_program.duration_frames && layers.len() < MAX_LAYERS {
+                    layers.push(Layer {
+                        start_frame: pulse,
+                        duration_frames: 1,
+                        operation: Operation::Buttons { mask },
+                    });
+                    pulse = pulse.saturating_add(incumbent_period);
+                }
+                if pulse < source_program.duration_frames {
+                    continue;
+                }
+                let blend_id = incumbent_blend
+                    .map(|blend| format!(".blend.{blend:03}"))
+                    .unwrap_or_default();
+                variants.push(TacticCatalogEntry::new(
+                    format!(
+                        "goal.seek.route.{source_route_id}.crossover.{incumbent_peer}.split.{split:02}{blend_id}.roll.period.{incumbent_period:02}.phase.{candidate_phase:02}.radius.{:03}",
+                        radius.round() as u32
+                    ),
+                    TacticAssetSource::ReactiveController(ControllerProgram {
+                        duration_frames: source_program.duration_frames,
+                        layers,
+                    }),
+                )?);
+            }
+        }
+    }
+
     // Couple every crossover geometry to a small cadence neighborhood.
     // Faster pulses receive the deeper side of the asymmetric neighborhood
     // because the terminal objective minimizes ticks; one slower neighbor
@@ -771,7 +832,6 @@ pub fn goal_route_crossover_variants(
         );
         parameters
     };
-    let mut variants = Vec::new();
     'parameters: for (period, lookahead) in joint_parameters {
         for (peer_route_id, peer_coordinates) in &peers {
             for split in 1..source_coordinates.len() {
@@ -871,11 +931,19 @@ pub fn goal_route_crossover_variants(
                         let blend_id = blend_percent
                             .map(|blend| format!(".blend.{blend:03}"))
                             .unwrap_or_default();
+                        let option_id = format!(
+                            "goal.seek.route.{prefix_id}.crossover.{suffix_id}.split.{split:02}{blend_id}.roll.period.{period:02}.phase.{phase:02}.radius.{:03}",
+                            lookahead.round() as u32
+                        );
+                        if option_id == incumbent.option_id
+                            || variants
+                                .iter()
+                                .any(|variant| variant.option_id() == option_id)
+                        {
+                            continue;
+                        }
                         variants.push(TacticCatalogEntry::new(
-                            format!(
-                                "goal.seek.route.{prefix_id}.crossover.{suffix_id}.split.{split:02}{blend_id}.roll.period.{period:02}.phase.{phase:02}.radius.{:03}",
-                                lookahead.round() as u32
-                            ),
+                            option_id,
                             TacticAssetSource::ReactiveController(ControllerProgram {
                                 duration_frames: source_program.duration_frames,
                                 layers,
@@ -1447,7 +1515,7 @@ mod tests {
         let local_refinements =
             goal_route_crossover_variants(&catalog, &blended.description().option).unwrap();
         assert!(local_refinements.len() <= MAX_GOAL_ROUTE_CROSSOVER_VARIANTS);
-        for blend in [40, 45, 50, 55, 60] {
+        for blend in [40, 45, 55, 60] {
             assert!(local_refinements.iter().any(|entry| {
                 entry.option_id()
                     == format!(
@@ -1458,6 +1526,10 @@ mod tests {
         assert!(local_refinements.iter().any(|entry| {
             entry.option_id()
                 == "goal.seek.route.00.crossover.01.split.01.blend.050.roll.period.20.phase.00.radius.640"
+        }));
+        assert!(local_refinements.iter().any(|entry| {
+            entry.option_id()
+                == "goal.seek.route.00.crossover.01.split.01.blend.050.roll.period.20.phase.19.radius.096"
         }));
         assert!(local_refinements.iter().all(|entry| {
             entry
