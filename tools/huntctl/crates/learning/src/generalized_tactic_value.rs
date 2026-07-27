@@ -20,7 +20,7 @@ pub const GENERALIZED_TACTIC_ACTION_FEATURE_WIDTH: usize = 71;
 const MAX_GENERALIZED_TACTIC_SAMPLES: usize = 100_000;
 const MAX_FITTED_Q_BACKUP_ITERATIONS: usize = 512;
 const NEIGHBORS: usize = 8;
-const STATE_NEIGHBORS: usize = 16;
+const STATE_NEIGHBORS: usize = 8;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GeneralizedTacticContext {
@@ -1174,6 +1174,42 @@ mod tests {
         let prediction = GeneralizedTacticValueModel::fit(&samples)
             .unwrap()
             .predict(&[0.0, 0.0], &GeneralizedTacticContext::default(), &target)
+            .unwrap();
+        assert_eq!(prediction.outcome.reward, 1.0);
+    }
+
+    #[test]
+    fn later_action_similarity_cannot_override_exact_local_state_evidence() {
+        let target = action("target", 100.0, 100.0, 0.0, None, 100.0);
+        let mut samples = Vec::new();
+        for index in 0..STATE_NEIGHBORS {
+            samples.push(GeneralizedTacticTrainingSample {
+                state_features: vec![0.0],
+                context: GeneralizedTacticContext::default(),
+                action: action(&format!("local-{index}"), 500.0, 10.0, 2.5, Some(7), -100.0),
+                outcome: GeneralizedTacticOutcome {
+                    reward: 1.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            });
+        }
+        for index in 0..STATE_NEIGHBORS {
+            let mut later = target.clone();
+            later.option_id = format!("later-{index}");
+            samples.push(GeneralizedTacticTrainingSample {
+                state_features: vec![0.25],
+                context: GeneralizedTacticContext::default(),
+                action: later,
+                outcome: GeneralizedTacticOutcome {
+                    reward: 100.0,
+                    ..GeneralizedTacticOutcome::default()
+                },
+            });
+        }
+
+        let prediction = GeneralizedTacticValueModel::fit(&samples)
+            .unwrap()
+            .predict(&[0.0], &GeneralizedTacticContext::default(), &target)
             .unwrap();
         assert_eq!(prediction.outcome.reward, 1.0);
     }
