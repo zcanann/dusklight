@@ -145,14 +145,14 @@ pub fn choose_tactic_with_state_untried(
             && exploration_draw >= config.epsilon_per_million);
     let (descriptor, reason) = if bootstrap_unsupported {
         let unsupported = canonical_candidates(&unsupported);
-        let index = deterministic_index(
-            config.seed,
-            decision_index,
-            ranking.learner_snapshot_sha256,
-            unsupported.len(),
-        );
         (
-            unsupported[index].clone(),
+            deterministic_factorized_candidate(
+                &unsupported,
+                config.seed,
+                decision_index,
+                ranking.learner_snapshot_sha256,
+            )
+            .clone(),
             TacticSelectionReason::UnsupportedBootstrap,
         )
     } else if exploration_draw < config.epsilon_per_million {
@@ -162,20 +162,29 @@ pub fn choose_tactic_with_state_untried(
         // back to globally unsupported choices and then the full live catalog.
         // Coverage is canonical and seeded, without assigning privileged
         // meaning to controller IDs, route namespaces, or action families.
+        //
+        // Sample the typed action class before its concrete parameterization.
+        // Otherwise adding more variants of one factorized action silently
+        // increases that action's exploration prior.
         let exploratory = if !state_untried.is_empty() {
             canonical_candidates(state_untried)
         } else if unsupported.is_empty() {
+            let mut available = available.clone();
+            available.sort_by(|left, right| left.option_id.cmp(&right.option_id));
             available
         } else {
             canonical_candidates(&unsupported)
         };
-        let index = deterministic_index(
-            config.seed,
-            decision_index,
-            ranking.learner_snapshot_sha256,
-            exploratory.len(),
-        );
-        (exploratory[index].clone(), TacticSelectionReason::Epsilon)
+        (
+            deterministic_factorized_candidate(
+                &exploratory,
+                config.seed,
+                decision_index,
+                ranking.learner_snapshot_sha256,
+            )
+            .clone(),
+            TacticSelectionReason::Epsilon,
+        )
     } else {
         (ranked[0].descriptor.clone(), TacticSelectionReason::Greedy)
     };
@@ -187,6 +196,31 @@ pub fn choose_tactic_with_state_untried(
         reason,
         exploration_draw,
     })
+}
+
+fn deterministic_factorized_candidate<'a>(
+    descriptors: &[&'a OptionActionDescriptor],
+    seed: u64,
+    decision_index: u64,
+    state: Digest,
+) -> &'a OptionActionDescriptor {
+    let mut groups = Vec::<(OptionType, Vec<&OptionActionDescriptor>)>::new();
+    for descriptor in descriptors {
+        if let Some((_, members)) = groups
+            .iter_mut()
+            .find(|(option_type, _)| option_type == &descriptor.option_type)
+        {
+            members.push(*descriptor);
+        } else {
+            groups.push((descriptor.option_type.clone(), vec![*descriptor]));
+        }
+    }
+    let group_index =
+        (deterministic_draw(seed, decision_index, state, 3) % groups.len() as u64) as usize;
+    let members = &groups[group_index].1;
+    let member_index =
+        (deterministic_draw(seed, decision_index, state, 4) % members.len() as u64) as usize;
+    members[member_index]
 }
 
 fn canonical_candidates(descriptors: &[OptionActionDescriptor]) -> Vec<&OptionActionDescriptor> {
@@ -810,8 +844,8 @@ pub fn ensure_generalized_value_acquisition(
             Err(TacticExplorationError::InvalidInput)
         };
     }
-    let candidates = ranked_applicable
-        .iter()
+    let candidates = interleave_ranked_action_types(ranked_applicable)
+        .into_iter()
         .take(MAX_GENERALIZED_VALUE_ACQUISITION_RANKS)
         .collect::<Vec<_>>();
     if candidates.is_empty() {
@@ -831,6 +865,36 @@ pub fn ensure_generalized_value_acquisition(
     proposals.insert(1, acquisition);
     proposals.truncate(maximum_proposals);
     Ok(())
+}
+
+fn interleave_ranked_action_types(
+    ranked: &[OptionActionDescriptor],
+) -> Vec<&OptionActionDescriptor> {
+    let mut groups = Vec::<(OptionType, Vec<&OptionActionDescriptor>)>::new();
+    for descriptor in ranked {
+        if let Some((_, members)) = groups
+            .iter_mut()
+            .find(|(option_type, _)| option_type == &descriptor.option_type)
+        {
+            members.push(descriptor);
+        } else {
+            groups.push((descriptor.option_type.clone(), vec![descriptor]));
+        }
+    }
+    let maximum_group = groups
+        .iter()
+        .map(|(_, members)| members.len())
+        .max()
+        .unwrap_or(0);
+    let mut interleaved = Vec::with_capacity(ranked.len());
+    for rank_within_type in 0..maximum_group {
+        for (_, members) in &groups {
+            if let Some(descriptor) = members.get(rank_within_type) {
+                interleaved.push(*descriptor);
+            }
+        }
+    }
+    interleaved
 }
 
 /// Make the shared model's partitioned acquisition authoritative for the
@@ -1008,67 +1072,6 @@ fn select_batch_candidate(
                 .then_with(|| right.0.cmp(&left.0))
         })
         .map(|(index, _)| index)
-}
-
-#[cfg(test)]
-fn prioritized_unsupported(
-    unsupported: &[OptionActionDescriptor],
-    escape_before_routes: bool,
-) -> Vec<&OptionActionDescriptor> {
-    let route_sequences = unsupported
-        .iter()
-        .filter(|descriptor| is_route_sequence(descriptor))
-        .collect::<Vec<_>>();
-    let escape_actions = unsupported
-        .iter()
-        .filter(|descriptor| {
-            matches!(
-                descriptor.option_type,
-                OptionType::Roll
-                    | OptionType::Interact
-                    | OptionType::Attack
-                    | OptionType::JumpAttack
-            )
-        })
-        .collect::<Vec<_>>();
-    if escape_before_routes && !escape_actions.is_empty() {
-        let semantic_escape_actions = escape_actions
-            .iter()
-            .copied()
-            .filter(|descriptor| descriptor.option_type != OptionType::Roll)
-            .collect::<Vec<_>>();
-        if !semantic_escape_actions.is_empty() {
-            return semantic_escape_actions;
-        }
-        return escape_actions;
-    }
-    if !route_sequences.is_empty() {
-        return route_sequences;
-    }
-    if !escape_actions.is_empty() {
-        return escape_actions;
-    }
-    let navigation = unsupported
-        .iter()
-        .filter(|descriptor| {
-            descriptor.parameters.contains_key("coordinate")
-                || descriptor.parameters.contains_key("control")
-                || (descriptor.parameters.contains_key("heading_radians")
-                    && matches!(
-                        descriptor.parameters.get("magnitude"),
-                        Some(OptionParameter::Unsigned(127))
-                    )
-                    && matches!(
-                        descriptor.parameters.get("maximum_ticks"),
-                        Some(OptionParameter::Unsigned(16))
-                    ))
-        })
-        .collect::<Vec<_>>();
-    if navigation.is_empty() {
-        unsupported.iter().collect()
-    } else {
-        navigation
-    }
 }
 
 fn is_route_sequence(descriptor: &OptionActionDescriptor) -> bool {
@@ -1627,50 +1630,6 @@ mod tests {
     }
 
     #[test]
-    fn bounded_coordinate_sequences_are_tried_before_atomic_navigation_probes() {
-        let mut route = descriptor(
-            "route",
-            OptionType::Custom("seek_coordinate_sequence".into()),
-        );
-        route
-            .parameters
-            .insert("coordinates".into(), OptionParameter::Text("[]".into()));
-        let mut coordinate = descriptor("coordinate", OptionType::Move);
-        coordinate.parameters.insert(
-            "coordinate".into(),
-            OptionParameter::Vec3F32Bits([0.0_f32.to_bits(); 3]),
-        );
-        let unsupported = [coordinate, route.clone()];
-        let prioritized = prioritized_unsupported(&unsupported, false);
-        assert_eq!(prioritized, vec![&route]);
-    }
-
-    #[test]
-    fn layered_goal_route_compositions_remain_in_route_exploration() {
-        let mut route = descriptor(
-            "goal.seek.route.00",
-            OptionType::Custom("seek_coordinate_sequence".into()),
-        );
-        route
-            .parameters
-            .insert("coordinates".into(), OptionParameter::Text("[]".into()));
-        let rolling_route = descriptor(
-            "goal.seek.route.00.roll.period.20.phase.00",
-            OptionType::Custom("reactive_controller".into()),
-        );
-        let mut coordinate = descriptor("coordinate", OptionType::Move);
-        coordinate.parameters.insert(
-            "coordinate".into(),
-            OptionParameter::Vec3F32Bits([0.0_f32.to_bits(); 3]),
-        );
-        let unsupported = [coordinate, rolling_route.clone(), route.clone()];
-
-        let prioritized = prioritized_unsupported(&unsupported, false);
-
-        assert_eq!(prioritized, vec![&rolling_route, &route]);
-    }
-
-    #[test]
     fn parallel_acquisition_partitions_distinct_route_families() {
         let routes = (0..3)
             .map(|route| {
@@ -2224,36 +2183,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_actions_are_tried_before_redundant_navigation_probes() {
-        let roll = descriptor("roll", OptionType::Roll);
-        let interact = descriptor("interact", OptionType::Interact);
-        let mut coordinate = descriptor("coordinate", OptionType::Move);
-        coordinate.parameters.insert(
-            "coordinate".into(),
-            OptionParameter::Vec3F32Bits([0.0_f32.to_bits(); 3]),
-        );
-        let unsupported = [coordinate, interact.clone(), roll.clone()];
-
-        let prioritized = prioritized_unsupported(&unsupported, false);
-
-        assert_eq!(prioritized, vec![&interact, &roll]);
-    }
-
-    #[test]
-    fn supported_routes_try_semantic_escapes_before_roll_variants() {
-        let attack = descriptor("attack", OptionType::Attack);
-        let interact = descriptor("interact", OptionType::Interact);
-        let roll_short = descriptor("roll-short", OptionType::Roll);
-        let roll_long = descriptor("roll-long", OptionType::Roll);
-        let unsupported = [roll_short, attack.clone(), roll_long, interact.clone()];
-
-        let prioritized = prioritized_unsupported(&unsupported, true);
-
-        assert_eq!(prioritized, vec![&attack, &interact]);
-    }
-
-    #[test]
-    fn supported_composite_navigation_makes_new_cells_try_escape_actions_first() {
+    fn new_cells_explore_factorized_action_types_without_route_priority() {
         let mut supported_route = descriptor(
             "supported-route",
             OptionType::Custom("seek_coordinate_sequence".into()),
@@ -2283,19 +2213,27 @@ mod tests {
             },
         };
 
-        let selected = choose_tactic_with_state_untried(
-            &ranking,
-            0,
-            TacticExplorationConfig {
-                seed: 1,
-                epsilon_per_million: EPSILON_SCALE,
-            },
-            &[fresh_route, roll.clone()],
-        )
-        .unwrap();
+        let mut saw_roll = false;
+        let mut saw_route = false;
+        for seed in 0..64 {
+            let selected = choose_tactic_with_state_untried(
+                &ranking,
+                0,
+                TacticExplorationConfig {
+                    seed,
+                    epsilon_per_million: EPSILON_SCALE,
+                },
+                &[fresh_route.clone(), roll.clone()],
+            )
+            .unwrap();
+            assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
+            saw_roll |= selected.descriptor.option_type == OptionType::Roll;
+            saw_route |= selected.descriptor.option_type
+                == OptionType::Custom("seek_coordinate_sequence".into());
+        }
 
-        assert_eq!(selected.descriptor, roll);
-        assert_eq!(selected.reason, TacticSelectionReason::Epsilon);
+        assert!(saw_roll);
+        assert!(saw_route);
     }
 
     #[test]
@@ -2833,6 +2771,60 @@ mod tests {
         assert_eq!(first[1].descriptor, ranked[0]);
         assert_eq!(last[1].descriptor, ranked[127]);
         assert_eq!(wrapped[1].descriptor, ranked[0]);
+    }
+
+    #[test]
+    fn generalized_value_interleaves_typed_actions_before_parameter_variants() {
+        let ranked = vec![
+            descriptor("roll/best", OptionType::Roll),
+            descriptor("roll/second", OptionType::Roll),
+            descriptor("move/best", OptionType::Move),
+            descriptor("roll/third", OptionType::Roll),
+            descriptor("neutral/best", OptionType::Neutral),
+            descriptor("move/second", OptionType::Move),
+        ];
+
+        let interleaved = interleave_ranked_action_types(&ranked)
+            .into_iter()
+            .map(|descriptor| descriptor.option_id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            interleaved,
+            vec![
+                "roll/best",
+                "move/best",
+                "neutral/best",
+                "roll/second",
+                "move/second",
+                "roll/third",
+            ]
+        );
+    }
+
+    #[test]
+    fn adding_parameter_variants_does_not_change_epsilon_action_type() {
+        let base = vec![
+            descriptor("a/move", OptionType::Move),
+            descriptor("b/roll", OptionType::Roll),
+            descriptor("c/neutral", OptionType::Neutral),
+        ];
+        let mut expanded = base.clone();
+        for index in 0..16 {
+            expanded.push(descriptor(&format!("b/roll/{index:02}"), OptionType::Roll));
+        }
+        let base = canonical_candidates(&base);
+        let expanded = canonical_candidates(&expanded);
+
+        for seed in 0..64 {
+            let selected_base = deterministic_factorized_candidate(&base, seed, 7, Digest([9; 32]));
+            let selected_expanded =
+                deterministic_factorized_candidate(&expanded, seed, 7, Digest([9; 32]));
+            assert_eq!(
+                selected_base.option_type, selected_expanded.option_type,
+                "seed {seed}"
+            );
+        }
     }
 
     #[test]
