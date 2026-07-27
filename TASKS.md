@@ -41,28 +41,6 @@ must not define privileged actions, observations, state, or terminals.
   orchestration, and persistence time. Do not hide overhead outside the
   measured boundary.
 
-## P5 - Couple search and learning around useful trials
-
-A learned treatment must share authenticated replay across fixed-size episode
-generations, refit between generations, and use that fitted model before later
-proposals. Independent empty-model episodes are structured search evidence, not
-learning evidence. The learned batch must retain one exploit control while
-spending remaining capacity on state-local untried actions.
-
-- [x] Compare the learned ranking against random valid proposals and
-      non-learning structured search under identical native-tick budgets.
-- [x] Publish failures, coverage, candidate diversity, and time to improvement;
-      do not substitute terminal success rate for route optimization.
-- [x] Demonstrate that later learned generations improve terminal route cost
-      rather than collapsing onto the first successful tactic.
-
-Acceptance:
-
-- Learning improves sub-incumbent discovery rate or best route cost over both
-  equal-budget baselines across multiple seeds.
-- Added simulation volume produces distinct useful transitions rather than
-  repeated trajectories from one parent checkpoint.
-
 ## P6 - Beat the authenticated Ordon incumbent
 
 - [ ] Run the integrated system from the exact `to_ordon_spring_q125` source

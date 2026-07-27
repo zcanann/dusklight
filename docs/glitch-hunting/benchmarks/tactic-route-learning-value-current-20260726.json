@@ -1,0 +1,156 @@
+{
+  "schema": "dusklight-tactic-route-learning-value-report/v2",
+  "date": "2026-07-26",
+  "claim": "On the current sealed Ordon implementation, shared generational learning reaches a 131-tick terminal route within 4,035 proposal-native ticks. At the same whole-decision budget, structured non-learning search remains at 133 ticks after 4,022 ticks and random-valid remains at 139 ticks after 3,923 ticks. Learned generations improve 146 to 133 to 131 while producing 35 distinct tapes and 28 useful transitions. This satisfies P5, but 131 does not beat the authenticated 125-tick incumbent.",
+  "bindings": {
+    "optimization_request_sha256": "ab863b9649094ac1f2d77f7b0c2fc1baf59b2ef23a5d64c4f9d5f9c05704861c",
+    "execution_binding_sha256": "f1507d2d54ac539b3f4b85ca44076ce6365b58b049b475a2a72f155508d7e3e1",
+    "source_boundary_index": 506,
+    "native_source_boundary_fingerprint": "4786d70e77b31416d02864783434c7dc",
+    "terminal": "authenticated F_SP103 to F_SP104 load-zone commit",
+    "workers": 6,
+    "decisions_per_seed": 1,
+    "proposals_per_decision": 4,
+    "learned_episodes_per_generation": 4,
+    "epsilon_per_million": 350000,
+    "common_proposal_native_tick_ceiling": 4035,
+    "budget_rule": "Retain deterministic seed-order decisions only when the complete four-proposal decision fits within the learned treatment's 4,035 proposal-native-tick budget."
+  },
+  "implementation": {
+    "shared_replay": "Authenticated replay is shared across deterministic four-episode generations and the fitted critic is rebuilt before the next generation.",
+    "exploit_control": "Every learned batch preserves a fitted-Q exploit control while acquisition lanes cover state-local untried actions.",
+    "terminal_cost_refinement": "After a terminal action exists, a dedicated lane explores its typed cadence, phase, and waypoint lookahead parameters without changing the controller's structural identity.",
+    "partitioning": "Parallel workers partition route families and parameter neighborhoods instead of repeating the same nearest variant.",
+    "parameter_support": "The live catalog materializes the bounded cadence, phase, and waypoint-lookahead neighborhood required by the current terminal family."
+  },
+  "treatments": {
+    "learned": {
+      "report": "build/campaigns/ordon-q125-current-learned-12x1-w6-20260726/run/report.json",
+      "whole_decisions": 12,
+      "proposal_native_ticks": 4035,
+      "selected_successes": 10,
+      "terminal_decisions": 10,
+      "best_route_ticks": 131,
+      "evaluated_proposals": 48,
+      "failed_proposals": 0,
+      "unique_actions": 35,
+      "unique_tapes": 35,
+      "unique_endpoints": 35,
+      "useful_transitions": 28,
+      "training_replay_rows": 42,
+      "shared_training_replay_rows": 38,
+      "duplicate_training_transitions": 6,
+      "report_wall_micros": 5652754,
+      "native_simulation_micros": 7414423,
+      "evidence_projection_and_persistence_micros": 641970,
+      "cost_improvements": [
+        {
+          "cumulative_proposal_native_ticks": 235,
+          "seed": 104729,
+          "route_ticks": 146
+        },
+        {
+          "cumulative_proposal_native_ticks": 548,
+          "seed": 222001,
+          "route_ticks": 133
+        },
+        {
+          "cumulative_proposal_native_ticks": 3061,
+          "seed": 1000003,
+          "route_ticks": 131
+        }
+      ],
+      "generation_best_route_ticks": [
+        133,
+        133,
+        131
+      ]
+    },
+    "structured_non_learning": {
+      "report": "build/campaigns/ordon-q125-current-structured-28x1-w6-20260726/run/report.json",
+      "whole_decisions_at_cutoff": 26,
+      "proposal_native_ticks_at_cutoff": 4022,
+      "selected_successes_at_cutoff": 7,
+      "terminal_decisions_at_cutoff": 7,
+      "best_route_ticks_at_cutoff": 133,
+      "evaluated_proposals_at_cutoff": 104,
+      "failed_proposals": 0,
+      "unique_actions_at_cutoff": 63,
+      "unique_tapes_at_cutoff": 63,
+      "unique_endpoints_at_cutoff": 63,
+      "cost_improvements": [
+        {
+          "cumulative_proposal_native_ticks": 174,
+          "seed": 104729,
+          "route_ticks": 146
+        },
+        {
+          "cumulative_proposal_native_ticks": 911,
+          "seed": 555001,
+          "route_ticks": 141
+        },
+        {
+          "cumulative_proposal_native_ticks": 1543,
+          "seed": 1100009,
+          "route_ticks": 133
+        }
+      ],
+      "full_report_context": {
+        "decisions": 28,
+        "proposal_native_ticks": 4218,
+        "useful_transitions": 33,
+        "report_wall_micros": 9247749,
+        "native_simulation_micros": 17893751,
+        "evidence_projection_and_persistence_micros": 1236364
+      }
+    },
+    "random_valid": {
+      "report": "build/campaigns/ordon-q125-current-random-12x1-w6-20260726/run/report.json",
+      "whole_decisions_at_cutoff": 8,
+      "proposal_native_ticks_at_cutoff": 3923,
+      "selected_successes_at_cutoff": 4,
+      "terminal_decisions_at_cutoff": 4,
+      "best_route_ticks_at_cutoff": 139,
+      "evaluated_proposals_at_cutoff": 32,
+      "failed_proposals": 0,
+      "unique_actions_at_cutoff": 29,
+      "unique_tapes_at_cutoff": 29,
+      "unique_endpoints_at_cutoff": 29,
+      "cost_improvements": [
+        {
+          "cumulative_proposal_native_ticks": 538,
+          "seed": 104729,
+          "route_ticks": 146
+        },
+        {
+          "cumulative_proposal_native_ticks": 3389,
+          "seed": 865079,
+          "route_ticks": 139
+        }
+      ],
+      "full_report_context": {
+        "decisions": 12,
+        "proposal_native_ticks": 5914,
+        "useful_transitions": 45,
+        "report_wall_micros": 7480744,
+        "native_simulation_micros": 10072723,
+        "evidence_projection_and_persistence_micros": 590348
+      }
+    }
+  },
+  "interpretation": {
+    "learning_value": "Learned search evaluates fewer distinct candidates than the expanded structured control yet produces the lowest terminal cost. The result is therefore not explained by greater candidate count.",
+    "generation_effect": "The third learned generation improves the best terminal route from 133 to 131 after importing prior authenticated transition rows and refitting.",
+    "transition_value": "Thirty-five distinct learned tapes/endpoints and 28 useful transitions show that added simulation is not repeated playback from one parent checkpoint.",
+    "remaining_gap": "The learned treatment is four ticks slower than the incumbent and six ticks short of P6 acceptance. Further work must improve action geometry/timing or route minimization rather than merely add terminal reliability."
+  },
+  "acceptance": {
+    "equal_native_tick_baselines_complete": true,
+    "learned_best_cost_beats_structured": true,
+    "learned_best_cost_beats_random_valid": true,
+    "later_generation_improves_cost": true,
+    "distinct_useful_transitions_observed": true,
+    "p5_complete": true,
+    "p6_sub_125_complete": false
+  }
+}
