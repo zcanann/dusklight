@@ -923,7 +923,6 @@ fn select_batch_candidate(
                         untried,
                     ),
                 },
-                descriptor.option_id.as_str(),
             ))
         })
         .max_by(|left, right| {
@@ -934,9 +933,12 @@ fn select_batch_candidate(
                 .then_with(|| left.1.2.cmp(&right.1.2))
                 .then_with(|| left.1.3.cmp(&right.1.3))
                 .then_with(|| left.1.4.cmp(&right.1.4))
-                .then_with(|| right.2.cmp(left.2))
+                // `candidates` was already deterministically rotated for this
+                // seed and boundary. Preserve that seeded coverage order
+                // instead of undoing it with an option-ID tie-break.
+                .then_with(|| right.0.cmp(&left.0))
         })
-        .map(|(index, _, _)| index)
+        .map(|(index, _)| index)
 }
 
 #[cfg(test)]
@@ -2601,5 +2603,42 @@ mod tests {
         assert_eq!(proposals[0].reason, TacticSelectionReason::Greedy);
         assert_eq!(proposals[1].descriptor, held_out_roll);
         assert_eq!(proposals[1].reason, TacticSelectionReason::GeneralizedValue);
+    }
+
+    #[test]
+    fn coverage_ties_preserve_seeded_candidate_rotation() {
+        let first_after_rotation = descriptor(
+            "route/z-after-rotation",
+            OptionType::Custom("controller".into()),
+        );
+        let lexicographically_first =
+            descriptor("route/a", OptionType::Custom("controller".into()));
+        let ranking = LiveTacticRanking {
+            learner_snapshot_sha256: Digest([41; 32]),
+            action_universe_sha256: Digest([42; 32]),
+            choices: vec![
+                choice(first_after_rotation.clone()),
+                choice(lexicographically_first.clone()),
+            ],
+            values: AvailableOptionRanking {
+                ranked: Vec::new(),
+                unsupported: vec![
+                    first_after_rotation.clone(),
+                    lexicographically_first.clone(),
+                ],
+            },
+        };
+        let candidates = vec![first_after_rotation, lexicographically_first];
+
+        assert_eq!(
+            select_batch_candidate(
+                &candidates,
+                &ranking,
+                &candidates,
+                &[OptionType::Custom("controller".into())],
+                BatchAcquisitionLane::Coverage,
+            ),
+            Some(0)
+        );
     }
 }
